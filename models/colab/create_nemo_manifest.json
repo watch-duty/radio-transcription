@@ -1,0 +1,114 @@
+{
+  "nbformat": 4,
+  "nbformat_minor": 0,
+  "metadata": {
+    "colab": {
+      "private_outputs": true,
+      "provenance": [],
+      "authorship_tag": "ABX9TyPYCBlAsfjzPeaXuvs0hkZN",
+      "include_colab_link": true
+    },
+    "kernelspec": {
+      "name": "nemo-colab-env",
+      "display_name": "Python (Nemo Env)"
+    }
+  },
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "view-in-github",
+        "colab_type": "text"
+      },
+      "source": [
+        "<a href=\"https://colab.research.google.com/github/watch-duty/radio-transcription/blob/main/models/colab/create_nemo_manifest.json\" target=\"_parent\"><img src=\"https://colab.research.google.com/assets/colab-badge.svg\" alt=\"Open In Colab\"/></a>"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "source": [
+        "## Read in csv of paths to audio files and create a manifest that can be used in NeMO\n",
+        "\n",
+        "The main thing NeMO does is add in duration into the manifest."
+      ],
+      "metadata": {
+        "id": "KxX6SB22uApI"
+      }
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "#@title Imports and constants\n",
+        "import pandas as pd\n",
+        "import torch\n",
+        "import torchaudio\n",
+        "from nemo.collections.asr.parts.utils import manifest_utils\n",
+        "\n",
+        "csv_path = '/usr/local/google/home/varungulshan/watchduty-asr/manifests/s3_samples.csv'  #@param\n",
+        "output_manifest = '/usr/local/google/home/varungulshan/watchduty-asr/manifests/s3_samples.json'  #@param"
+      ],
+      "metadata": {
+        "cellView": "form",
+        "id": "iG-RNcq1FhaI"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [
+        "def create_nemo_manifest_from_urls(csv_path, output_manifest):\n",
+        "    df = pd.read_csv(csv_path)\n",
+        "    manifest_entries = []\n",
+        "\n",
+        "    print(f\"Starting manifest creation for {len(df)} entries...\")\n",
+        "\n",
+        "    for i, row in df.iterrows():\n",
+        "        url = row.iloc[0]\n",
+        "\n",
+        "        try:\n",
+        "            # NeMo's internal data loaders use torchaudio.load()\n",
+        "            # for URLs when the ffmpeg backend is active.\n",
+        "            # We load the file to get the exact duration NeMo will 'see' at runtime.\n",
+        "            waveform, sample_rate = torchaudio.load(url)\n",
+        "\n",
+        "            # Duration = number of samples / sample rate\n",
+        "            duration = waveform.shape[1] / sample_rate\n",
+        "\n",
+        "            # Build the manifest entry with NeMo-required fields\n",
+        "            entry = {\n",
+        "                \"audio_filepath\": url,\n",
+        "                \"duration\": round(float(duration), 3),\n",
+        "                \"text\": row.get('text', \"\"),  # NeMo requires 'text' for most tasks\n",
+        "            }\n",
+        "            manifest_entries.append(entry)\n",
+        "            print(f\"[{i+1}/{len(df)}] Success: {url}\")\n",
+        "\n",
+        "        except Exception as e:\n",
+        "            print(f\"[{i+1}/{len(df)}] Failed: {url} | Error: {e}\")\n",
+        "\n",
+        "    # Use NeMo's official utility to write the manifest\n",
+        "    # This ensures the correct JSONL format (one line per entry, no commas)\n",
+        "    manifest_utils.write_manifest(output_manifest, manifest_entries)\n",
+        "    print(f\"\\nManifest successfully saved to: {output_manifest}\")\n",
+        "\n",
+        "# Usage\n",
+        "create_nemo_manifest_from_urls(csv_path, output_manifest)"
+      ],
+      "metadata": {
+        "id": "iEHhemmNHGKy"
+      },
+      "execution_count": null,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "source": [],
+      "metadata": {
+        "id": "NQfNPgaRHhk_"
+      },
+      "execution_count": null,
+      "outputs": []
+    }
+  ]
+}
