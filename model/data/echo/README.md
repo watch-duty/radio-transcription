@@ -1,4 +1,4 @@
-# Echo training data selection
+# Echo data selection
 
 ## Selecting useful streams
 
