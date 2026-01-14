@@ -15,6 +15,9 @@ A snapshot from 2026-01 is in `all_bcfy_feeds_202601.csv`.
 **Selecting candidate files**
 
 ```sh
-# see output of above for feed IDs
-python sample_broadcastify_archive.py <feed_id>
+# pass output from above
+python sample_broadcastify_archive.py <feeds_csv>
+# outputs a new CSV file with the feed ID, URL, and is_audio_trimmed columns
 ```
+
+A snapshot from 2026-01 is in `archive_urls_sample_20260114_12hrs.csv`.
