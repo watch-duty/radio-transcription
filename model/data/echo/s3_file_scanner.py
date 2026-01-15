@@ -32,13 +32,13 @@ def parse_args():
         "--start-date",
         required=True,
         type=lambda s: datetime.strptime(s, "%Y%m%d"),
-        help="Start date (YYYY-MM-DD)",
+        help="Start date (YYYYMMDD)",
     )
     parser.add_argument(
         "--end-date",
         required=True,
         type=lambda s: datetime.strptime(s, "%Y%m%d"),
-        help="End date (YYYY-MM-DD)",
+        help="End date (YYYYMMDD)",
     )
     parser.add_argument(
         "--min-size",
