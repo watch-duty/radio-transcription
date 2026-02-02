@@ -1,0 +1,31 @@
+[settings]
+# Automatically use uv virtual environment if available
+python.uv_venv_auto = true
+
+[env]
+_.file = ".env"
+
+# Set PYTHONPATH to repository root for easier imports
+PYTHONPATH = "."
+
+[vars]
+backend_dir = "backend"
+frontend_dir = "frontend"
+
+# ---------------------------------------------------------------------------- #
+#                              Code Quality Tasks                              #
+# ---------------------------------------------------------------------------- #
+
+[tasks.lint]
+depends = ["lint:ruff"]
+
+[tasks."lint:ruff"]
+description = "Run ruff Python linter with auto-fix"
+run = "uv run ruff check --fix"
+
+[tasks.format]
+depends = ["format:ruff"]
+
+[tasks."format:ruff"]
+description = "Format Python code with ruff"
+run = "uv run ruff format"
