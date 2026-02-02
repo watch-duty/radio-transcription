@@ -21,6 +21,6 @@ filtered_feeds = [f for f in all_feeds if f.data_format=="mp3" and f.channel_mod
 
 # print out a CSV
 writer = csv.writer(sys.stdout)
-writer.writerow(['feedId', 'descr', 'trim_audio'])
+writer.writerow(["feedId", "descr", "trim_audio"])
 for feed in filtered_feeds:
     writer.writerow([feed.feedId, feed.descr, feed.trim_audio])

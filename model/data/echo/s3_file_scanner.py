@@ -63,7 +63,7 @@ def parse_args():
 def read_input_csv(filepath):
     """Read the input CSV and return list of (device_name, filename_prefix) tuples."""
     entries = []
-    with open(filepath, "r") as f:
+    with open(filepath) as f:
         reader = csv.reader(f)
         for row in reader:
             if len(row) >= 2:

@@ -20,18 +20,19 @@ def extract_filename_templates(config_path) -> list[str]:
 
     Returns:
         List of filename_template values
+
     """
-    with open(config_path, 'r') as f:
+    with open(config_path) as f:
         content = f.read()
 
     # Find the devices section - need to match balanced parentheses
-    devices_start = content.find('devices:')
+    devices_start = content.find("devices:")
     if devices_start == -1:
         print("Warning: No devices section found", file=sys.stderr)
         return []
 
     # Find the opening parenthesis after "devices:"
-    paren_start = content.find('(', devices_start)
+    paren_start = content.find("(", devices_start)
     if paren_start == -1:
         print("Warning: No opening parenthesis found after devices:", file=sys.stderr)
         return []
@@ -40,9 +41,9 @@ def extract_filename_templates(config_path) -> list[str]:
     paren_level = 0
     paren_end = -1
     for i in range(paren_start, len(content)):
-        if content[i] == '(':
+        if content[i] == "(":
             paren_level += 1
-        elif content[i] == ')':
+        elif content[i] == ")":
             paren_level -= 1
             if paren_level == 0:
                 paren_end = i
@@ -61,7 +62,7 @@ def extract_filename_templates(config_path) -> list[str]:
     # These are within output blocks which are within outputs: ( ... )
 
     # Simple approach: find all blocks with type = "file" and extract filename_template
-    lines = devices_content.split('\n')
+    lines = devices_content.split("\n")
     in_file_output = False
 
     for i, line in enumerate(lines):
@@ -69,13 +70,13 @@ def extract_filename_templates(config_path) -> list[str]:
         if 'type = "file"' in line:
             in_file_output = True
         # If we're in a file output block, look for filename_template
-        elif in_file_output and 'filename_template' in line:
+        elif in_file_output and "filename_template" in line:
             template_match = re.search(r'filename_template\s*=\s*"([^"]+)"', line)
             if template_match:
                 filename_templates.append(template_match.group(1))
             in_file_output = False
         # Exit file output block if we hit a closing brace
-        elif in_file_output and '}' in line:
+        elif in_file_output and "}" in line:
             in_file_output = False
 
     return filename_templates
@@ -99,7 +100,7 @@ def main():
     # Print each template on a new line
     for template in templates:
         if not template.endswith("_tones"):
-            print('"{}","{}"'.format(echo_name, template))
+            print(f'"{echo_name}","{template}"')
 
 
 if __name__ == "__main__":

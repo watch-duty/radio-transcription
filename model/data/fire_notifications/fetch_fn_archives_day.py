@@ -8,6 +8,7 @@ Usage:
 
 import argparse
 import csv
+import random
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
@@ -50,6 +51,12 @@ def parse_args():
         default=10,
         help="Number of parallel workers for HTTP requests (default: 10)",
     )
+    parser.add_argument(
+        "--random-sample-streams",
+        type=int,
+        default=0,
+        help="If set, randomly samples N streams instead of processing all.",
+    )
     return parser.parse_args()
 
 def list_archive_urls_for_stream(path: str, date_dir: str) -> list[FNFile]:
@@ -69,15 +76,20 @@ def main():
         result = list_fn_dir(dir)
         stream_dirs.extend(result.dirs)
 
-    print(f"Found {len(stream_dirs)} streams", file=sys.stderr)
+    print(f"Found {len(stream_dirs)} total streams", file=sys.stderr)
 
     checked = 0
     found = 0
     all_files: list[FNFile] = []
     with ThreadPoolExecutor(max_workers=args.workers) as executor:
+        #
+        # comment this out to load _all_ streams
+        if args.random_sample_streams > 0:
+            stream_dirs = random.sample(stream_dirs, args.random_sample_streams)
+        print(f"Processing {len(stream_dirs)} streams", file=sys.stderr)
         futures = [
             executor.submit(list_archive_urls_for_stream, path, args.date)
-            for path in stream_dirs[:5]
+            for path in stream_dirs
         ]
 
         for future in as_completed(futures):

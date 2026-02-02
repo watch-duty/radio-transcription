@@ -15,13 +15,13 @@ input_csv = str(sys.argv[1])
 
 # read the input csv. each row is: feed ID, feed name, is audio trimmed
 feeds = []
-with open(input_csv, 'r') as f:
+with open(input_csv) as f:
     reader = csv.reader(f)
     reader.__next__()  # skip header row
     for row in reader:
         feed_id, feed_name, is_audio_trimmed = row
         feed_id = int(feed_id)
-        is_audio_trimmed = is_audio_trimmed.strip().lower() == 'true'
+        is_audio_trimmed = is_audio_trimmed.strip().lower() == "true"
         feeds.append((feed_id, feed_name, is_audio_trimmed))
 
 
