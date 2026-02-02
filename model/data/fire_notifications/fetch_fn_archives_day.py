@@ -72,7 +72,7 @@ def list_archive_urls_for_stream(path: str, date_dir: str) -> list[FNFile]:
     return date_dir_results.files
 
 
-def main():
+def main() -> None:
     args = parse_args()
 
     # Generate a list of candidate streams.

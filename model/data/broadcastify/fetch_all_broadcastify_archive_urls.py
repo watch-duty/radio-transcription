@@ -27,8 +27,7 @@ with open(input_csv) as f:
 
 def fetch_all_archives_for_feed(feed_id) -> list[str]:
     # uses the 12-hour "trial" API for now
-    files = fetch_archive_files(feed_id)
-    return files
+    return fetch_archive_files(feed_id)
 
 
 # use a threadpool to get archive URLs for all of the feeds

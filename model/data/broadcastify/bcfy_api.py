@@ -39,8 +39,7 @@ def _create_header() -> dict:
 
 def _create_payload() -> dict:
     now = int(time.time())
-    payload = {"iss": BROADCASTIFY_APP_ID, "iat": now, "exp": now + 60}
-    return payload
+    return {"iss": BROADCASTIFY_APP_ID, "iat": now, "exp": now + 60}
 
 
 def _create_signature(encoded_header: str, encoded_payload: str) -> str:

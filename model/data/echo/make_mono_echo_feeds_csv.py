@@ -85,7 +85,7 @@ def extract_filename_templates(config_path) -> list[str]:
     return filename_templates
 
 
-def main():
+def main() -> None:
     if len(sys.argv) != 2:
         print(
             "Usage: python make_mono_echo_feeds_csv.py <config_file>", file=sys.stderr
@@ -98,7 +98,7 @@ def main():
         print(f"Error: File not found: {config_path}", file=sys.stderr)
         sys.exit(1)
 
-    echo_name = config_path.stem.replace("rtl_airband-", "")
+    config_path.stem.replace("rtl_airband-", "")
     templates = extract_filename_templates(config_path)
     templates = list(set(templates))  # unique
 

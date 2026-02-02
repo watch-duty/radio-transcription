@@ -110,7 +110,7 @@ def check_file_exists_and_size(s3_client, s3_key):
         raise
 
 
-def main():
+def main() -> None:
     args = parse_args()
 
     # Read input CSV
@@ -148,7 +148,7 @@ def main():
         }
 
         for future in as_completed(future_to_path):
-            full_path, s3_key = future_to_path[future]
+            full_path, _s3_key = future_to_path[future]
             checked += 1
 
             if checked % 10000 == 0:
