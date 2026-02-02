@@ -25,6 +25,7 @@ TOPLEVEL_DIRS = [
 
 ARCHIVE_DIR_NAME = "Archive"
 
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Scan FireNotifications for mp3 files, output CSV with stream name, URL, size"
@@ -59,13 +60,17 @@ def parse_args():
     )
     return parser.parse_args()
 
+
 def list_archive_urls_for_stream(path: str, date_dir: str) -> list[FNFile]:
     stream_dir_results = list_fn_dir(path)
     if not any(d.endswith(ARCHIVE_DIR_NAME) for d in stream_dir_results.dirs):
-        print(f"WARNING: no {ARCHIVE_DIR_NAME}/ dir in {path}. skipping.", file=sys.stderr)
+        print(
+            f"WARNING: no {ARCHIVE_DIR_NAME}/ dir in {path}. skipping.", file=sys.stderr
+        )
 
     date_dir_results = list_fn_dir(f"{path}/{ARCHIVE_DIR_NAME}/{date_dir}")
     return date_dir_results.files
+
 
 def main():
     args = parse_args()
@@ -105,7 +110,10 @@ def main():
             found += len(result)
             all_files.extend([f for f in result if f.size_bytes > args.min_size])
 
-    print(f"Scan complete: {found} files, {len(all_files)} matching criteria", file=sys.stderr)
+    print(
+        f"Scan complete: {found} files, {len(all_files)} matching criteria",
+        file=sys.stderr,
+    )
 
     # Write output
     output_file = (

@@ -50,10 +50,13 @@ def extract_filename_templates(config_path) -> list[str]:
                 break
 
     if paren_end == -1:
-        print("Warning: No matching closing parenthesis found for devices section", file=sys.stderr)
+        print(
+            "Warning: No matching closing parenthesis found for devices section",
+            file=sys.stderr,
+        )
         return []
 
-    devices_content = content[paren_start+1:paren_end]
+    devices_content = content[paren_start + 1 : paren_end]
 
     filename_templates = []
 
@@ -84,7 +87,9 @@ def extract_filename_templates(config_path) -> list[str]:
 
 def main():
     if len(sys.argv) != 2:
-        print("Usage: python make_mono_echo_feeds_csv.py <config_file>", file=sys.stderr)
+        print(
+            "Usage: python make_mono_echo_feeds_csv.py <config_file>", file=sys.stderr
+        )
         sys.exit(1)
 
     config_path = Path(sys.argv[1])

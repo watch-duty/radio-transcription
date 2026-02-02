@@ -30,9 +30,17 @@ def fetch_all_archives_for_feed(feed_id) -> list[str]:
     files = fetch_archive_files(feed_id)
     return files
 
+
 # use a threadpool to get archive URLs for all of the feeds
 with ThreadPoolExecutor(max_workers=10) as executor:
-    future_to_feed = {executor.submit(fetch_all_archives_for_feed, feed_id): (feed_id, feed_name, is_audio_trimmed) for feed_id, feed_name, is_audio_trimmed in feeds}
+    future_to_feed = {
+        executor.submit(fetch_all_archives_for_feed, feed_id): (
+            feed_id,
+            feed_name,
+            is_audio_trimmed,
+        )
+        for feed_id, feed_name, is_audio_trimmed in feeds
+    }
 
     writer = csv.writer(sys.stdout)
     for future in as_completed(future_to_feed):

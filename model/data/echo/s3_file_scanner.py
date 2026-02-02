@@ -115,7 +115,10 @@ def main():
 
     # Read input CSV
     entries = read_input_csv(args.input_csv)
-    print(f"Read {len(entries)} device/prefix combinations from {args.input_csv}", file=sys.stderr)
+    print(
+        f"Read {len(entries)} device/prefix combinations from {args.input_csv}",
+        file=sys.stderr,
+    )
 
     # Generate all candidate S3 paths
     paths = generate_s3_paths(entries, args.start_date, args.end_date)
@@ -137,7 +140,10 @@ def main():
 
     with ThreadPoolExecutor(max_workers=args.workers) as executor:
         future_to_path = {
-            executor.submit(check_file_exists_and_size, s3_client, s3_key): (full_path, s3_key)
+            executor.submit(check_file_exists_and_size, s3_client, s3_key): (
+                full_path,
+                s3_key,
+            )
             for full_path, s3_key in paths
         }
 
@@ -146,7 +152,10 @@ def main():
             checked += 1
 
             if checked % 10000 == 0:
-                print(f"Progress: {checked}/{len(paths)} checked, {found} found", file=sys.stderr)
+                print(
+                    f"Progress: {checked}/{len(paths)} checked, {found} found",
+                    file=sys.stderr,
+                )
 
             try:
                 size = future.result()
@@ -162,7 +171,9 @@ def main():
     results.sort(key=lambda x: x[0])
 
     # Write output
-    output_file = open(args.output_csv, "w", newline="") if args.output_csv else sys.stdout
+    output_file = (
+        open(args.output_csv, "w", newline="") if args.output_csv else sys.stdout
+    )
     try:
         writer = csv.writer(output_file)
         for full_path, size in results:

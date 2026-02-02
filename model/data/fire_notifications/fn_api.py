@@ -78,6 +78,7 @@ def list_fn_dir(dir: str) -> FNListDirResponse:
         files=files,
     )
 
+
 def make_fn_audio_url(path: str) -> str:
     path_encoded = urllib.parse.quote(path)
     return f"{FN_AUDIO_FILE_BASE_URL}/{path_encoded}"

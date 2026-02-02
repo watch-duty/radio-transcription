@@ -65,6 +65,7 @@ def _generate_token() -> str:
 
     return f"{encoded_header}.{encoded_payload}.{signature}"
 
+
 def fetch_all_feeds(genre: BroadcastifyFeedGenre) -> list[BroadcastifyFeed]:
     jwt = _generate_token()
 
@@ -96,6 +97,7 @@ def fetch_archive_days(feed_id: int) -> list[str]:
     response.raise_for_status()
     archives = response.json()
     return [a["day"] for a in archives["days"]]
+
 
 def fetch_archive_files(feed_id: int) -> list:
     jwt = _generate_token()
