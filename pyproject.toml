@@ -150,3 +150,6 @@ max-complexity = 10
   "S105",   # Possible hardcoded password assigned to: "new_password"
   "S113",   # requests.* require timeout=
 ]
+
+[tool.ty.src]
+exclude = ["model/"]
