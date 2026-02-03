@@ -13,6 +13,7 @@ default-groups = ["dev"]
 localtest = ["locust==2.14.2"]
 dev = [
   "ruff>=0.14.14",
+  "ty>=0.0.14",
 ]
 
 [tool.ruff.lint]
