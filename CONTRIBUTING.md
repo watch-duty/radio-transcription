@@ -4,7 +4,7 @@
 
 1. Install Mise (`curl https://mise.run | sh` or `brew install mise` - https://mise.jdx.dev/getting-started.html)
 2. Install tools: `mise install`
-3. Optionall activate mise venv: `eval "$(mise activate zsh)"` (see docs above for other options)
+3. Optionally activate mise venv: `eval "$(mise activate zsh)"` (see docs above for other options)
 
 ## Dev/coding tools and best practices
 
