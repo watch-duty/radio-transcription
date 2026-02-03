@@ -1,6 +1,3 @@
-#!python
-
-
 import csv
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed

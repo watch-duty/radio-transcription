@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Scans FN archives for files on a specific archive date, and over a minimum file size.
 
@@ -77,8 +76,8 @@ def main() -> None:
 
     # Generate a list of candidate streams.
     stream_dirs = []
-    for dir in TOPLEVEL_DIRS:
-        result = list_fn_dir(dir)
+    for directory in TOPLEVEL_DIRS:
+        result = list_fn_dir(directory)
         stream_dirs.extend(result.dirs)
 
     print(f"Found {len(stream_dirs)} total streams", file=sys.stderr)
@@ -116,15 +115,17 @@ def main() -> None:
     )
 
     # Write output
-    output_file = (
-        open(args.output_csv, "w", newline="") if args.output_csv else sys.stdout
-    )
     try:
-        writer = csv.writer(output_file)
-        for fn_file in all_files:
-            stream_name = "/".join(fn_file.path.split("/")[:2])
-            url = make_fn_audio_url(fn_file.path)
-            writer.writerow([stream_name, url, fn_file.size_bytes])
+        with (
+            open(args.output_csv, "w", newline="")
+            if args.output_csv
+            else sys.stdout as output_file
+        ):
+            writer = csv.writer(output_file)
+            for fn_file in all_files:
+                stream_name = "/".join(fn_file.path.split("/")[:2])
+                url = make_fn_audio_url(fn_file.path)
+                writer.writerow([stream_name, url, fn_file.size_bytes])
     finally:
         if args.output_csv:
             output_file.close()

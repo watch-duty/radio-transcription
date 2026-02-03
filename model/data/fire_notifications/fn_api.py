@@ -26,12 +26,12 @@ def get_auth_headers() -> dict[str, str]:
     return {"Authorization": f"Basic {b64_str}"}
 
 
-def list_fn_dir(dir: str) -> FNListDirResponse:
+def list_fn_dir(directory: str) -> FNListDirResponse:
     """
     Returns a tuple of a list of sub-dirs, and a list of files. All are full paths.
     """
     # print(f"DEBUG: ls {dir}", file=sys.stderr)
-    request_url = FN_API_LIST_DIR_URL.format(dir=dir)
+    request_url = FN_API_LIST_DIR_URL.format(dir=directory)
     response = requests.get(request_url, headers=get_auth_headers())
     response.raise_for_status()
 

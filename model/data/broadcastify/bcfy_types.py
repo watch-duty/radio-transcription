@@ -15,10 +15,10 @@ class BroadcastifyFeedGenre(Enum):
 
 @dataclass(slots=True)
 class BroadcastifyFeed:
-    feedId: int
+    feedId: int  # noqa: N815
     descr: str
     sdescr: str
-    genreId: int
+    genreId: int  # noqa: N815
     status: int
     online: int
     tactical: bool

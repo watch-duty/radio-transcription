@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Extract filename_template values from file-type outputs in rtl_airband configuration files.
 
@@ -98,6 +97,7 @@ def main() -> None:
         print(f"Error: File not found: {config_path}", file=sys.stderr)
         sys.exit(1)
 
+    echo_name = config_path.stem.replace("rtl_airband-", "")
     config_path.stem.replace("rtl_airband-", "")
     templates = extract_filename_templates(config_path)
     templates = list(set(templates))  # unique

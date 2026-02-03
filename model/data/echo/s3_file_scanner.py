@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Scans S3 for echo recording files based on device/prefix combinations from a CSV,
 filtering by date range and minimum file size.
@@ -148,7 +147,7 @@ def main() -> None:
         }
 
         for future in as_completed(future_to_path):
-            full_path, _s3_key = future_to_path[future]
+            full_path, s3_key = future_to_path[future]
             checked += 1
 
             if checked % 10000 == 0:
@@ -171,13 +170,15 @@ def main() -> None:
     results.sort(key=lambda x: x[0])
 
     # Write output
-    output_file = (
-        open(args.output_csv, "w", newline="") if args.output_csv else sys.stdout
-    )
     try:
-        writer = csv.writer(output_file)
-        for full_path, size in results:
-            writer.writerow([full_path, size])
+        with (
+            open(args.output_csv, "w", newline="")
+            if args.output_csv
+            else sys.stdout as output_file
+        ):
+            writer = csv.writer(output_file)
+            for full_path, size in results:
+                writer.writerow([full_path, size])
     finally:
         if args.output_csv:
             output_file.close()
