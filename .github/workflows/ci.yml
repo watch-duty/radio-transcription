@@ -50,6 +50,7 @@ jobs:
         with:
           fetch-depth: 100
       - name: Install mise, install tools
+        # mise installs uv and other project-specific tools. see: .tool-versions
         uses: jdx/mise-action@v3
       - name: Install dependencies
         run: uv sync
