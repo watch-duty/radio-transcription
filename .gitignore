@@ -21,6 +21,7 @@ tmp/
 mise.local.toml
 mise.*.local.toml
 .vscode/settings.json
+.zed/settings.json
 
 # npm
 npm-debug.log*
