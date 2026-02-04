@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Scans FN archives for files on a specific archive date, and over a minimum file size.
 
@@ -8,6 +7,7 @@ Usage:
 
 import argparse
 import csv
+import random
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
@@ -23,6 +23,7 @@ TOPLEVEL_DIRS = [
 ]
 
 ARCHIVE_DIR_NAME = "Archive"
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -50,34 +51,49 @@ def parse_args():
         default=10,
         help="Number of parallel workers for HTTP requests (default: 10)",
     )
+    parser.add_argument(
+        "--random-sample-streams",
+        type=int,
+        default=0,
+        help="If set, randomly samples N streams instead of processing all.",
+    )
     return parser.parse_args()
+
 
 def list_archive_urls_for_stream(path: str, date_dir: str) -> list[FNFile]:
     stream_dir_results = list_fn_dir(path)
     if not any(d.endswith(ARCHIVE_DIR_NAME) for d in stream_dir_results.dirs):
-        print(f"WARNING: no {ARCHIVE_DIR_NAME}/ dir in {path}. skipping.", file=sys.stderr)
+        print(
+            f"WARNING: no {ARCHIVE_DIR_NAME}/ dir in {path}. skipping.", file=sys.stderr
+        )
 
     date_dir_results = list_fn_dir(f"{path}/{ARCHIVE_DIR_NAME}/{date_dir}")
     return date_dir_results.files
 
-def main():
+
+def main() -> None:
     args = parse_args()
 
     # Generate a list of candidate streams.
     stream_dirs = []
-    for dir in TOPLEVEL_DIRS:
-        result = list_fn_dir(dir)
+    for directory in TOPLEVEL_DIRS:
+        result = list_fn_dir(directory)
         stream_dirs.extend(result.dirs)
 
-    print(f"Found {len(stream_dirs)} streams", file=sys.stderr)
+    print(f"Found {len(stream_dirs)} total streams", file=sys.stderr)
 
     checked = 0
     found = 0
     all_files: list[FNFile] = []
     with ThreadPoolExecutor(max_workers=args.workers) as executor:
+        #
+        # comment this out to load _all_ streams
+        if args.random_sample_streams > 0:
+            stream_dirs = random.sample(stream_dirs, args.random_sample_streams)
+        print(f"Processing {len(stream_dirs)} streams", file=sys.stderr)
         futures = [
             executor.submit(list_archive_urls_for_stream, path, args.date)
-            for path in stream_dirs[:5]
+            for path in stream_dirs
         ]
 
         for future in as_completed(futures):
@@ -93,18 +109,23 @@ def main():
             found += len(result)
             all_files.extend([f for f in result if f.size_bytes > args.min_size])
 
-    print(f"Scan complete: {found} files, {len(all_files)} matching criteria", file=sys.stderr)
+    print(
+        f"Scan complete: {found} files, {len(all_files)} matching criteria",
+        file=sys.stderr,
+    )
 
     # Write output
-    output_file = (
-        open(args.output_csv, "w", newline="") if args.output_csv else sys.stdout
-    )
     try:
-        writer = csv.writer(output_file)
-        for fn_file in all_files:
-            stream_name = "/".join(fn_file.path.split("/")[:2])
-            url = make_fn_audio_url(fn_file.path)
-            writer.writerow([stream_name, url, fn_file.size_bytes])
+        with (
+            open(args.output_csv, "w", newline="")
+            if args.output_csv
+            else sys.stdout as output_file
+        ):
+            writer = csv.writer(output_file)
+            for fn_file in all_files:
+                stream_name = "/".join(fn_file.path.split("/")[:2])
+                url = make_fn_audio_url(fn_file.path)
+                writer.writerow([stream_name, url, fn_file.size_bytes])
     finally:
         if args.output_csv:
             output_file.close()

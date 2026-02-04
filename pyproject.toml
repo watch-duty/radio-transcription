@@ -13,6 +13,7 @@ default-groups = ["dev"]
 localtest = ["locust==2.14.2"]
 dev = [
   "ruff>=0.14.14",
+  "ty>=0.0.14",
 ]
 
 [tool.ruff.lint]
@@ -131,7 +132,25 @@ max-complexity = 10
   "PT019",  # Fixture `_` without value is injected as parameter, use `@pytest.mark.usefixtures` instead
   "PT028",  # Test function parameter `delay_sec` has default argument
   "RET503", # Missing explicit `return` at the end of function able to return non-`None` value
-  "RUF001", # String contains ambiguous `’` (RIGHT SINGLE QUOTATION MARK). Did you mean ``` (GRAVE ACCENT)?
   "S105",   # Possible hardcoded password assigned to: "new_password"
   "S113",   # requests.* require timeout=
 ]
+"model/data/**.py" = [
+  "T201",   # allow print()
+  "ANN001", # type annotations
+  "ANN201", # return type annotations
+  "INP001", # implicit namespaces
+  "S110",   # allow swallowing exceptions
+  "B017",   # Do not assert blind exception: `Exception`
+  "C405",   # Unnecessary list literal (rewrite as a set literal)
+  "DTZ002", # `datetime.datetime.today()` used
+  "DTZ006", # `datetime.datetime.fromtimestamp()` called without a `tz` argument
+  "N802",   # "Function name `addSuccess` should be lowercase"
+  "N806",   # "Variable `__` in function should be lowercase"
+  "RET503", # Missing explicit `return` at the end of function able to return non-`None` value
+  "S105",   # Possible hardcoded password assigned to: "new_password"
+  "S113",   # requests.* require timeout=
+]
+
+[tool.ty.src]
+exclude = ["model/"]
