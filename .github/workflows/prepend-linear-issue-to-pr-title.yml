@@ -1,0 +1,59 @@
+name: Prepend Linear Issue to PR Title
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    types: [opened, reopened, ready_for_review, edited]
+
+jobs:
+  prepend_issue_id:
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.event.pull_request.title, '[DEV-ONLY]') && !contains(github.event.pull_request.title, '[ENG-ONLY]') }}
+    outputs:
+      linear-issue-id: ${{ steps.find.outputs.linear-issue-identifier }}
+    steps:
+      - name: Find the Linear Issue
+        id: find
+        continue-on-error: true
+        uses: ctriolo/action-find-linear-issue@v0.7
+        with:
+          linear-api-key: ${{secrets.LINEAR_API_KEY}}
+
+      # # Replace above block with uncommented block below to simulate fetching a Linear issue ID. Helpeful when testing locally with act CLI
+      # - name: Find the Linear Issue
+      #   id: find
+      #   continue-on-error: true
+      #   run: |
+      #     # exit 1 # uncomment to simulate missing Linear issue
+      #     echo "linear-issue-identifier=ENG-1234" >> $GITHUB_OUTPUT
+
+      - name: Comment with warning about missing Linear issue
+        if: ${{ !steps.find.outputs.linear-issue-identifier }}
+        shell: bash
+        env:
+          PR_URL: ${{github.event.pull_request.html_url}}
+        run: |
+          # Workaround required to use `gh`: https://github.com/cli/cli/issues/9072#issuecomment-2106065080
+          git init
+          git remote add origin $GITHUB_SERVER_URL/$GITHUB_REPOSITORY
+
+          gh pr comment $PR_URL --body 'No Linear issue found for this pull request. Please add an issue ID to the start of the pull request title in brackets, like `[GOO-XXXX]`. If this is a small change that does not warrant an issue, use `[DEV-ONLY]` or `[ENG-ONLY]` instead to explicitly omit an issue ID.'
+
+          exit 1
+
+      - name: Prepend the title with the Linear Issue identifier
+        # Do not enforce that the issue ID is at the start for in the case of multiple issues in the title.
+        if: ${{ steps.find.outputs.linear-issue-identifier && !contains(github.event.pull_request.title, steps.find.outputs.linear-issue-identifier) }}
+        shell: bash
+        env:
+          PR_URL: ${{github.event.pull_request.html_url}}
+          PR_TITLE: ${{github.event.pull_request.title}}
+          LINEAR_ID: ${{ steps.find.outputs.linear-issue-identifier}}
+        run: |
+          # Workaround required to use `gh`: https://github.com/cli/cli/issues/9072#issuecomment-2106065080
+          git init
+          git remote add origin $GITHUB_SERVER_URL/$GITHUB_REPOSITORY
+
+          gh pr edit "$PR_URL" --title "[$LINEAR_ID] $PR_TITLE"
