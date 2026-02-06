@@ -16,6 +16,9 @@ dev = [
   "ty>=0.0.14",
 ]
 
+[tool.ruff]
+extend-exclude = ["model/colabs"]
+
 [tool.ruff.lint]
 select = ["ALL"]
 ignore = [
