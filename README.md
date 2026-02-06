@@ -9,3 +9,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) to get started.
 - `model/` - everything related to building the transcription model itself
 - `backend/` - everything related to the processing pipeline and backend support for the UI
 - `frontend/` - everything related to the frontend app/UI
+
+## More info!
+
+This is testing the Linear/GitHub integration.
