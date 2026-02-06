@@ -34,6 +34,7 @@ jobs:
         shell: bash
         env:
           PR_URL: ${{github.event.pull_request.html_url}}
+          GH_TOKEN: ${{ github.token }}
         run: |
           # Workaround required to use `gh`: https://github.com/cli/cli/issues/9072#issuecomment-2106065080
           git init
@@ -51,6 +52,7 @@ jobs:
           PR_URL: ${{github.event.pull_request.html_url}}
           PR_TITLE: ${{github.event.pull_request.title}}
           LINEAR_ID: ${{ steps.find.outputs.linear-issue-identifier}}
+          GH_TOKEN: ${{ github.token }}
         run: |
           # Workaround required to use `gh`: https://github.com/cli/cli/issues/9072#issuecomment-2106065080
           git init
