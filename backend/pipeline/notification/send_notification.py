@@ -16,7 +16,8 @@ ENDPOINT = os.environ.get("ENDPOINT")
 def send_notification(cloud_event: CloudEvent) -> None:
     try:
         if not ENDPOINT:
-            return "Error: Endpoint is not configured.", 500
+            msg = "ENDPOINT environment variable not set."
+            raise SystemError(msg)
 
         # Pub/Sub data is base64 encoded inside the 'data' field.
         # cloud_event.data['message']['data'] contains the actual payload.
@@ -40,5 +41,4 @@ def send_notification(cloud_event: CloudEvent) -> None:
         logger.info(f"Message sent successfully! Status code: {response.status_code}")
 
     except requests.exceptions.RequestException as e:
-        logger.exception(f"Request failed: {e}")
-        return f"Error: Request to external service failed. {e}", 500
+        logger.exception(f"POST request failed: {e}")
