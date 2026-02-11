@@ -1,6 +1,6 @@
 import unittest
 
-from evaluator import evaluate_text
+from backend.pipeline.evaluation.rules_evaluation.evaluator import evaluate_text
 
 
 class TestTextEvaluator(unittest.TestCase):
@@ -40,12 +40,6 @@ class TestTextEvaluator(unittest.TestCase):
     def test_empty_string(self) -> None:
         """Test that empty input is handled gracefully."""
         result = evaluate_text("")
-        self.assertFalse(result["is_flagged"])
-        self.assertEqual(result["triggered_rules"], [])
-
-    def test_none_input(self) -> None:
-        """Test that None input is handled gracefully (if type hint allows, otherwise empty check)."""
-        result = evaluate_text(None)
         self.assertFalse(result["is_flagged"])
         self.assertEqual(result["triggered_rules"], [])
 

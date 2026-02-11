@@ -1,26 +1,30 @@
 import base64
 import json
+import logging
 import os
 
-import evaluator
 import functions_framework
+from cloudevents.http.event import CloudEvent
 from google.cloud import pubsub_v1
+
+from backend.pipeline.evaluation.rules_evaluation import evaluator
 
 # Initialize the Publisher Client once (global scope) for performance
 publisher = pubsub_v1.PublisherClient()
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT")
 OUTPUT_TOPIC_ID = os.environ.get("OUTPUT_TOPIC")
+logger = logging.getLogger(__name__)
 
 # Construct the fully qualified topic path
 # output_topic_path will look like: "projects/my-project/topics/processed-transcriptions"
 if PROJECT_ID and OUTPUT_TOPIC_ID:
     output_topic_path = publisher.topic_path(PROJECT_ID, OUTPUT_TOPIC_ID)
 else:
-    print("WARNING: OUTPUT_TOPIC env var not set.")
+    logger.warning("OUTPUT_TOPIC or PROJECT_ID env var not set.")
     output_topic_path = None
 
 @functions_framework.cloud_event
-def evaluate_transcribed_audio_segment(cloud_event):
+def evaluate_transcribed_audio_segment(cloud_event: CloudEvent) -> None:
     """
     Triggered from a message on a Cloud Pub/Sub topic.
     """
@@ -30,7 +34,7 @@ def evaluate_transcribed_audio_segment(cloud_event):
         data_str = base64.b64decode(pubsub_message.get("data")).decode("utf-8")
         payload = json.loads(data_str)
         payload_id = payload.get("id", "unknown")
-        print(f"Processing ID: {payload_id}")
+        logger.info("Processing ID: %s", payload_id)
 
         # 2. Extract Transcription
         text_to_analyze = payload.get("transcript", "")
@@ -38,7 +42,7 @@ def evaluate_transcribed_audio_segment(cloud_event):
         # 3. Call the Logic Package
         # This is where the magic happens
         decision = evaluator.evaluate_text(text_to_analyze)
-        print(f"Decision for ID: {payload_id} is: {decision}")
+        logger.info("Decision for ID: %s is: %s", payload_id, decision)
 
         # 4. Enrich the Payload
         # We add the decision results to the original message
@@ -54,11 +58,10 @@ def evaluate_transcribed_audio_segment(cloud_event):
             future = publisher.publish(output_topic_path, new_data_bytes)
             message_id = future.result() # Block until published (ensure reliability)
 
-            print(f"Success! Published enriched message {message_id} to {OUTPUT_TOPIC_ID}")
+            logger.info("Success! Published enriched message %s to $%s", message_id, {OUTPUT_TOPIC_ID})
         else:
-            print("Skipping publish: Output topic not configured.")
+            logger.warning("Skipping publish: Output topic not configured.")
 
-    except Exception as e:
-        # In production, you might want to publish to a "Dead Letter Topic" here
-        print(f"Error processing message: {e}")
-        raise e
+    except Exception:
+        logger.exception("Error processing new audio message")
+        raise

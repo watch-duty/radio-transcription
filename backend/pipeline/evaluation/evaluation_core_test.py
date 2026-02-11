@@ -28,7 +28,7 @@ sys.modules["google.cloud.pubsub_v1"] = mock_pubsub_lib
 # ==========================================
 # 2. IMPORT MODULE UNDER TEST
 # ==========================================
-import evaluation_core 
+from backend.pipeline.evaluation import evaluation_core  # noqa: E402, I001
 
 class TestCloudFunction(unittest.TestCase):
 
@@ -50,9 +50,9 @@ class TestCloudFunction(unittest.TestCase):
         }
 
     # Patch 'evaluation_core' since that is where the objects are imported/used
-    @patch("evaluation_core.evaluator.evaluate_text")
-    @patch("evaluation_core.publisher") 
-    def test_successful_flow(self, mock_publisher, mock_evaluate) -> None:
+    @patch("backend.pipeline.evaluation.evaluation_core.evaluator.evaluate_text")
+    @patch("backend.pipeline.evaluation.evaluation_core.publisher")
+    def test_successful_flow(self, mock_publisher: MagicMock, mock_evaluate: MagicMock) -> None:
         """Test the happy path: Decode -> Evaluate -> Publish"""
         # 1. Setup the Logic Mock
         mock_evaluate.return_value = {"is_flagged": True, "triggered_rules": ["fire"]}
@@ -79,9 +79,9 @@ class TestCloudFunction(unittest.TestCase):
         self.assertEqual(sent_payload["id"], "12345")
         self.assertEqual(sent_payload["analysis"]["is_flagged"], True)
 
-    @patch("evaluation_core.evaluator.evaluate_text")
-    @patch("evaluation_core.publisher")
-    def test_missing_topic_env_var(self, mock_publisher, mock_evaluate) -> None:
+    @patch("backend.pipeline.evaluation.evaluation_core.evaluator.evaluate_text")
+    @patch("backend.pipeline.evaluation.evaluation_core.publisher")
+    def test_missing_topic_env_var(self, mock_publisher: MagicMock, mock_evaluate: MagicMock) -> None:
         # Simulate missing output topic
         evaluation_core.output_topic_path = None
         evaluation_core.evaluate_transcribed_audio_segment(self.mock_event)
