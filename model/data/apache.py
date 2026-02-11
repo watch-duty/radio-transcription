@@ -2,30 +2,47 @@ import apache_beam as beam
 from apache_beam.options.pipeline_options import PipelineOptions
 import apache_beam.io.fileio as fileio
 import argparse
+from google.cloud import storage
+import logging
+import datetime
+
+logger = logging.getLogger(__name__)
+
+# Suppress verbose logging from Beam options
+logging.getLogger("apache_beam.options.pipeline_options").setLevel(logging.ERROR)
 
 
-# This pipeline reads audio files from a specified GCS path, processes the audio data, and writes the metadata to another GCS path.
-# The processing step can be customized to perform any desired operations on the audio data.
+# This pipeline reads audio files from a specified GCS path, processes the audio data,
+# and writes the metadata to another GCS path. The processing step can be customized to
+# perform any desired operations on the audio data.
+#
 # Example command to run the pipeline:
 # python apache.py \
-#   --input_path gs://wd-radio-test/raw_data/* \
+#   --input_path gs://wd-radio-test/raw_data/*.wav \
 #   --project_id automatic-hawk-481415-m9 \
 #   --region us-central1 \
 #   --temp_location gs://wd-radio-test/temp/ \
 #   --staging_location gs://wd-radio-test/staging/ \
-#   --output-path gs://wd-radio-test/processed_data/
+#   --output_path gs://wd-radio-test/processed_data/ \
+#   --run_local
 def run_audio_pipeline(
-    input_gcs_path, project_id, region, temp_location, staging_location, output_gcs_path
+    input_gcs_path: str,
+    project_id: str,
+    region: str,
+    temp_location: str,
+    staging_location: str,
+    output_gcs_path: str,
+    run_local=False,
 ):
+    runner = "DirectRunner" if run_local else "DataflowRunner"
     pipeline_options = PipelineOptions(
-        runner="DataflowRunner",
+        runner=runner,
         project=project_id,
         region=region,
         temp_location=temp_location,
         staging_location=staging_location,
-        disk_size_gb=50,  # Adjust as needed based on your audio file sizes
+        disk_size_gb=50,
         allow_unknown_args=True,
-        # Add other options as needed, e.g., service_account_email
     )
 
     with beam.Pipeline(options=pipeline_options) as p:
@@ -34,23 +51,34 @@ def run_audio_pipeline(
             | "Match Audio Files" >> fileio.MatchFiles(input_gcs_path)
             | "Read Audio Contents" >> fileio.ReadMatches()
             | "ProcessAudio" >> beam.Map(process_audio_data)
-            | "WriteProcessedData" >> beam.io.WriteToText(output_gcs_path)
+            | "WriteProcessedData"
+            >> beam.io.WriteToText(
+                output_gcs_path,
+                file_name_suffix=f"_{datetime.datetime.now().strftime('%H:%M')}",
+            )
         )
 
 
-def process_audio_data(file_info: fileio.ReadableFile):
+def process_audio_data(file_info: fileio.ReadableFile) -> str:
     file_name = file_info.metadata.path
     audio_content_bytes = file_info.read()
 
-    # Process audio bytes here
+    # Metadata extraction from GCS blob
+    bucket_name = file_name.split("/")[2]
+    blob_name = "/".join(file_name.split("/")[3:])
+    storage_client = storage.Client()
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.get_blob(blob_name)
+
+    # TODO: Process audio bytes here
     metadata_fields = {
-        "path": file_info.metadata.path,
-        "size_in_bytes": file_info.metadata.size_in_bytes,
-        "last_updated_in_seconds": file_info.metadata.last_updated_in_seconds,
-        "all_attributes": file_info.metadata.__dict__,
+        "all_file_attributes": file_info.metadata.__dict__,
+        "blob_metadata": blob.metadata,
     }
-    print(f"Metadata fields: {metadata_fields}")
-    processed_data = f"Processed file {file_name} with {len(audio_content_bytes)} bytes. Metadata: {metadata_fields}"
+    processed_data = (
+        f"Processed file {file_name} with {len(audio_content_bytes)} bytes. "
+        f"Metadata: {metadata_fields}."
+    )
 
     return processed_data
 
@@ -90,10 +118,15 @@ if __name__ == "__main__":
         help="GCS staging bucket location",
     )
     parser.add_argument(
-        "--output-path",
+        "--output_path",
         type=str,
         required=True,
         help="GCS output path",
+    )
+    parser.add_argument(
+        "--run_local",
+        action=argparse.BooleanOptionalAction,
+        help="Whether to run the pipeline locally (DirectRunner) or on Dataflow",
     )
 
     args = parser.parse_args()
@@ -105,4 +138,5 @@ if __name__ == "__main__":
         temp_location=args.temp_location,
         staging_location=args.staging_location,
         output_gcs_path=args.output_path,
+        run_local=args.run_local,
     )
