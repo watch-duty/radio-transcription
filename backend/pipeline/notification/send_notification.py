@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 POST_TIMEOUT_SECONDS = 5
 
+
 @functions_framework.cloud_event
 def send_notification(cloud_event: CloudEvent) -> None:
     ENDPOINT = os.environ.get("ENDPOINT")
@@ -28,12 +29,10 @@ def send_notification(cloud_event: CloudEvent) -> None:
 
         # Send POST request to endpoint.
         response = requests.post(
-            ENDPOINT, 
-            data=json.dumps(payload), 
-            headers={
-                "Content-Type": "application/json"
-            },
-            timeout=POST_TIMEOUT_SECONDS
+            ENDPOINT,
+            data=json.dumps(payload),
+            headers={"Content-Type": "application/json"},
+            timeout=POST_TIMEOUT_SECONDS,
         )
 
         # Raise an exception for bad status codes
