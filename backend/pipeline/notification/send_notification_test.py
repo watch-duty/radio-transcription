@@ -5,7 +5,8 @@ from unittest import TestCase, main, mock
 
 import requests
 from cloudevents.http import CloudEvent
-from send_notification import send_notification
+
+from .send_notification import send_notification
 
 
 class TestSendNotification(TestCase):
