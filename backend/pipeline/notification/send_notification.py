@@ -10,10 +10,11 @@ from cloudevents.http.event import CloudEvent
 logger = logging.getLogger(__name__)
 
 POST_TIMEOUT_SECONDS = 5
-ENDPOINT = os.environ.get("ENDPOINT")
 
 @functions_framework.cloud_event
 def send_notification(cloud_event: CloudEvent) -> None:
+    ENDPOINT = os.environ.get("ENDPOINT")
+
     try:
         if not ENDPOINT:
             msg = "ENDPOINT environment variable not set."
@@ -42,3 +43,4 @@ def send_notification(cloud_event: CloudEvent) -> None:
 
     except requests.exceptions.RequestException as e:
         logger.exception(f"POST request failed: {e}")
+        raise
