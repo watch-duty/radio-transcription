@@ -3,7 +3,7 @@ Apache Beam pipeline for audio file processing from Google Cloud Storage.
 
 This module implements a distributed audio processing pipeline using Apache Beam
 that reads audio files from a specified Google Cloud Storage (GCS) path, processes
-the audio data, and writes metadata to another GCS path.
+the audio data, and writes metadata to another GCS path (for now, should modify later).
 
 The pipeline supports both local execution (DirectRunner) and distributed execution
 on Google Cloud Dataflow (DataflowRunner).
