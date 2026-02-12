@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 with patch("google.cloud.pubsub_v1.PublisherClient"):
     from backend.pipeline.evaluation import evaluation_core
 
+
 class TestCloudFunction(unittest.TestCase):
     def setUp(self) -> None:
         self.sample_payload = {
@@ -18,17 +19,19 @@ class TestCloudFunction(unittest.TestCase):
         self.mock_event = MagicMock()
         self.mock_event.data = {
             "message": {"data": self.data_bytes},
-            "publish_time": "2023-01-01T12:00:00Z"
+            "publish_time": "2023-01-01T12:00:00Z",
         }
 
     @patch("backend.pipeline.evaluation.evaluation_core.StaticTextEvaluator.evaluate")
     @patch("backend.pipeline.evaluation.evaluation_core.publisher")
-    def test_successful_flow(self, mock_publisher: MagicMock, mock_evaluate: MagicMock) -> None:
+    def test_successful_flow(
+        self, mock_publisher: MagicMock, mock_evaluate: MagicMock
+    ) -> None:
         """Test the happy path: Decode -> Evaluate -> Publish"""
         # 1. Setup Mock Return (TypedDict format)
         mock_evaluate.return_value = {
-            "is_flagged": True, 
-            "triggered_rules": ["basic_fire_terms"]
+            "is_flagged": True,
+            "triggered_rules": ["basic_fire_terms"],
         }
 
         # 2. Setup Publisher Future
@@ -55,12 +58,15 @@ class TestCloudFunction(unittest.TestCase):
 
     @patch("backend.pipeline.evaluation.evaluation_core.StaticTextEvaluator.evaluate")
     @patch("backend.pipeline.evaluation.evaluation_core.publisher")
-    def test_no_publish_if_no_topic(self, mock_publisher: MagicMock, mock_evaluate: MagicMock) -> None:
+    def test_no_publish_if_no_topic(
+        self, mock_publisher: MagicMock, mock_evaluate: MagicMock
+    ) -> None:
         """Logic runs, but publish is skipped if topic path is None."""
-        evaluation_core.output_topic_path = None 
+        evaluation_core.output_topic_path = None
         evaluation_core.evaluate_transcribed_audio_segment(self.mock_event)
         mock_evaluate.assert_called()
         mock_publisher.publish.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

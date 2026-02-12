@@ -42,7 +42,9 @@ def evaluate_transcribed_audio_segment(cloud_event: CloudEvent) -> None:
 
         # 3. Call the evaluator
         evaluation_result = StaticTextEvaluator.evaluate(text_to_analyze)
-        logger.info("Decision for ID: %s is: %s", payload_id, evaluation_result["is_flagged"])
+        logger.info(
+            "Decision for ID: %s is: %s", payload_id, evaluation_result["is_flagged"]
+        )
         # 4. Enrich the Payload
         payload["evaluation_result"] = evaluation_result
         payload["processed_at"] = cloud_event.data.get("publish_time")
