@@ -4,8 +4,11 @@ version = "0.0.0"
 readme = "README.md"
 requires-python = "==3.11.5"
 dependencies = [
-    "apache-beam>=2.71.0",
-    "google-cloud-storage>=3.9.0",
+  "apache-beam>=2.71.0",
+  "google-cloud-storage>=3.9.0",
+  "functions-framework",
+  "requests",
+  "cloudevents"
 ]
 
 [tool.uv]
