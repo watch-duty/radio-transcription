@@ -28,7 +28,7 @@ sys.modules["google.cloud.pubsub_v1"] = mock_pubsub_lib
 # ==========================================
 # 2. IMPORT MODULE UNDER TEST
 # ==========================================
-from backend.pipeline.evaluation import evaluation_core  # noqa: E402, I001
+from backend.pipeline.evaluation import evaluation_core  # noqa: E402
 
 
 class TestCloudFunction(unittest.TestCase):
