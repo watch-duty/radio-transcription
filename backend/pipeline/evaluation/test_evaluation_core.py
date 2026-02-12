@@ -61,3 +61,6 @@ class TestCloudFunction(unittest.TestCase):
         evaluation_core.evaluate_transcribed_audio_segment(self.mock_event)
         mock_evaluate.assert_called()
         mock_publisher.publish.assert_not_called()
+
+if __name__ == "__main__":
+    unittest.main()
