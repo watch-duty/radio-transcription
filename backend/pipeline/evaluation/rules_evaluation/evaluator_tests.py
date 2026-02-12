@@ -4,7 +4,6 @@ from backend.pipeline.evaluation.rules_evaluation.evaluator import evaluate_text
 
 
 class TestTextEvaluator(unittest.TestCase):
-
     def test_basic_match_fire(self) -> None:
         """Test that a simple sentence with 'fire' is flagged."""
         text = "There is a fire in the building."
@@ -45,7 +44,7 @@ class TestTextEvaluator(unittest.TestCase):
 
     def test_word_boundaries(self) -> None:
         r"""
-        Test that words merely containing the keyword (but not exact matches) 
+        Test that words merely containing the keyword (but not exact matches)
         are NOT flagged because of the \b regex boundary.
         """
         # 'firefly' contains 'fire', but should not match due to \b
@@ -58,11 +57,14 @@ class TestTextEvaluator(unittest.TestCase):
         result2 = evaluate_text(text2)
         self.assertFalse(result2["is_flagged"], "'sideburns' should not trigger 'burn'")
 
-    def test_punctuation_boundaries(self)-> None:
+    def test_punctuation_boundaries(self) -> None:
         """Test that keywords next to punctuation are still caught."""
         text = "Help! Fire! Run!"
         result = evaluate_text(text)
-        self.assertTrue(result["is_flagged"], "Punctuation should not prevent matching.")
+        self.assertTrue(
+            result["is_flagged"], "Punctuation should not prevent matching."
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

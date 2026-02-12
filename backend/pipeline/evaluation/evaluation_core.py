@@ -23,6 +23,7 @@ else:
     logger.warning("OUTPUT_TOPIC or PROJECT_ID env var not set.")
     output_topic_path = None
 
+
 @functions_framework.cloud_event
 def evaluate_transcribed_audio_segment(cloud_event: CloudEvent) -> None:
     """
@@ -56,9 +57,13 @@ def evaluate_transcribed_audio_segment(cloud_event: CloudEvent) -> None:
             new_data_bytes = new_data_str.encode("utf-8")
 
             future = publisher.publish(output_topic_path, new_data_bytes)
-            message_id = future.result() # Block until published (ensure reliability)
+            message_id = future.result()  # Block until published (ensure reliability)
 
-            logger.info("Success! Published enriched message %s to $%s", message_id, {OUTPUT_TOPIC_ID})
+            logger.info(
+                "Success! Published enriched message %s to $%s",
+                message_id,
+                {OUTPUT_TOPIC_ID},
+            )
         else:
             logger.warning("Skipping publish: Output topic not configured.")
 
