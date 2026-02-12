@@ -8,7 +8,6 @@ from batch_ingest import process_audio_data
 
 
 class TestAudioPipeline(unittest.TestCase):
-
     @patch("google.cloud.storage.Client")
     def test_process_audio_data_success(self, mock_storage_client: MagicMock) -> None:
         """Tests the logic of the process_audio_data function."""
