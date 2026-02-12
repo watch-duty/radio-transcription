@@ -1,5 +1,6 @@
 import unittest
 from unittest.mock import MagicMock, patch
+
 import apache_beam as beam
 from apache_beam.testing.test_pipeline import TestPipeline
 from apache_beam.testing.util import assert_that, equal_to
@@ -9,9 +10,8 @@ from batch_ingest import process_audio_data
 class TestAudioPipeline(unittest.TestCase):
 
     @patch("google.cloud.storage.Client")
-    def test_process_audio_data_success(self, mock_storage_client):
+    def test_process_audio_data_success(self, mock_storage_client: MagicMock) -> None:
         """Tests the logic of the process_audio_data function."""
-
         # 1. Setup Mock for GCS Blob Metadata
         mock_client_instance = mock_storage_client.return_value
         mock_bucket = mock_client_instance.bucket.return_value
@@ -40,9 +40,8 @@ class TestAudioPipeline(unittest.TestCase):
         mock_client_instance.bucket.assert_called_with("test-bucket")
         mock_bucket.get_blob.assert_called_with("audio/sample.wav")
 
-    def test_pipeline_integration(self):
+    def test_pipeline_integration(self) -> None:
         """Tests the pipeline flow using TestPipeline."""
-
         # Sample input data to simulate fileio.ReadMatches output
         # In a real integration test, you'd mock the whole fileio transform,
         # but here we test the pipeline logic by providing a mock input list.
