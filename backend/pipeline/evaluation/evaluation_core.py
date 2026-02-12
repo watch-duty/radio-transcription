@@ -7,7 +7,7 @@ import functions_framework
 from cloudevents.http.event import CloudEvent
 from google.cloud import pubsub_v1
 
-from backend.pipeline.evaluation.rules_evaluation import evaluator
+from backend.pipeline.evaluation.rules_evaluation.evaluator import StaticTextEvaluator
 
 # Initialize the Publisher Client once (global scope) for performance
 publisher = pubsub_v1.PublisherClient()
@@ -40,14 +40,11 @@ def evaluate_transcribed_audio_segment(cloud_event: CloudEvent) -> None:
         # 2. Extract Transcription
         text_to_analyze = payload.get("transcript", "")
 
-        # 3. Call the Logic Package
-        # This is where the magic happens
-        decision = evaluator.evaluate_text(text_to_analyze)
-        logger.info("Decision for ID: %s is: %s", payload_id, decision)
-
+        # 3. Call the evaluator
+        evaluation_result = StaticTextEvaluator.evaluate(text_to_analyze)
+        logger.info("Decision for ID: %s is: %s", payload_id, evaluation_result["is_flagged"])
         # 4. Enrich the Payload
-        # We add the decision results to the original message
-        payload["analysis"] = decision
+        payload["evaluation_result"] = evaluation_result
         payload["processed_at"] = cloud_event.data.get("publish_time")
 
         # 5. Publish to Downstream Topic
