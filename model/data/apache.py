@@ -70,7 +70,7 @@ def process_audio_data(file_info: fileio.ReadableFile) -> str:
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.get_blob(blob_name)
 
-    # TODO: Process audio bytes here
+    # Process audio bytes here
     metadata_fields = {
         "all_file_attributes": file_info.metadata.__dict__,
         "blob_metadata": blob.metadata,
