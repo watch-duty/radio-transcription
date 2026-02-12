@@ -1,46 +1,78 @@
-import apache_beam as beam
-from apache_beam.options.pipeline_options import PipelineOptions
-import apache_beam.io.fileio as fileio
+"""
+Apache Beam pipeline for audio file processing from Google Cloud Storage.
+
+This module implements a distributed audio processing pipeline using Apache Beam
+that reads audio files from a specified Google Cloud Storage (GCS) path, processes
+the audio data, and writes metadata to another GCS path.
+
+The pipeline supports both local execution (DirectRunner) and distributed execution
+on Google Cloud Dataflow (DataflowRunner).
+
+Example:
+    Run the pipeline locally with the following command:
+
+    $ python batch_ingest.py \
+        --input_path gs://wd-radio-test/raw_data/*.wav \
+        --project_id automatic-hawk-481415-m9 \
+        --region us-central1 \
+        --temp_location gs://wd-radio-test/temp/ \
+        --staging_location gs://wd-radio-test/staging/ \
+        --output_path gs://wd-radio-test/processed_data/ \
+        --run_local
+
+Attributes:
+    logger (logging.Logger): Logger instance for this module.
+
+Functions:
+    run_audio_pipeline: Configures and executes the audio processing pipeline.
+    process_audio_data: Processes individual audio files and extracts metadata.
+
+"""
+
 import argparse
-from google.cloud import storage
-import logging
 import datetime
+import logging
+from dataclasses import dataclass
+
+import apache_beam as beam
+from apache_beam.io import fileio
+from apache_beam.options.pipeline_options import PipelineOptions
+from google.cloud import storage
 
 logger = logging.getLogger(__name__)
 
-# Suppress verbose logging from Beam options
+# Suppress verbose logging from Beam options about external arguments
 logging.getLogger("apache_beam.options.pipeline_options").setLevel(logging.ERROR)
 
 
-# This pipeline reads audio files from a specified GCS path, processes the audio data,
-# and writes the metadata to another GCS path. The processing step can be customized to
-# perform any desired operations on the audio data.
-#
-# Example command to run the pipeline:
-# python apache.py \
-#   --input_path gs://wd-radio-test/raw_data/*.wav \
-#   --project_id automatic-hawk-481415-m9 \
-#   --region us-central1 \
-#   --temp_location gs://wd-radio-test/temp/ \
-#   --staging_location gs://wd-radio-test/staging/ \
-#   --output_path gs://wd-radio-test/processed_data/ \
-#   --run_local
-def run_audio_pipeline(
-    input_gcs_path: str,
-    project_id: str,
-    region: str,
-    temp_location: str,
-    staging_location: str,
-    output_gcs_path: str,
-    run_local=False,
-):
-    runner = "DirectRunner" if run_local else "DataflowRunner"
+@dataclass
+class PipelineConfig:
+    """Configuration for the audio processing pipeline."""
+
+    input_gcs_path: str
+    project_id: str
+    region: str
+    temp_location: str
+    staging_location: str
+    output_gcs_path: str
+    run_local: bool = False
+
+
+def run_audio_pipeline(config: PipelineConfig) -> None:
+    """
+    Configures and executes the audio processing pipeline.
+
+    Args:
+        config: PipelineConfig object containing all pipeline parameters.
+
+    """
+    runner = "DirectRunner" if config.run_local else "DataflowRunner"
     pipeline_options = PipelineOptions(
         runner=runner,
-        project=project_id,
-        region=region,
-        temp_location=temp_location,
-        staging_location=staging_location,
+        project=config.project_id,
+        region=config.region,
+        temp_location=config.temp_location,
+        staging_location=config.staging_location,
         disk_size_gb=50,
         allow_unknown_args=True,
     )
@@ -48,12 +80,12 @@ def run_audio_pipeline(
     with beam.Pipeline(options=pipeline_options) as p:
         (
             p
-            | "Match Audio Files" >> fileio.MatchFiles(input_gcs_path)
+            | "Match Audio Files" >> fileio.MatchFiles(config.input_gcs_path)
             | "Read Audio Contents" >> fileio.ReadMatches()
             | "ProcessAudio" >> beam.Map(process_audio_data)
             | "WriteProcessedData"
             >> beam.io.WriteToText(
-                output_gcs_path,
+                config.output_gcs_path,
                 file_name_suffix=f"_{datetime.datetime.now().strftime('%H:%M')}",
             )
         )
@@ -75,12 +107,10 @@ def process_audio_data(file_info: fileio.ReadableFile) -> str:
         "all_file_attributes": file_info.metadata.__dict__,
         "blob_metadata": blob.metadata,
     }
-    processed_data = (
+    return (
         f"Processed file {file_name} with {len(audio_content_bytes)} bytes. "
         f"Metadata: {metadata_fields}."
     )
-
-    return processed_data
 
 
 if __name__ == "__main__":
@@ -131,7 +161,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    run_audio_pipeline(
+    config = PipelineConfig(
         input_gcs_path=args.input_path,
         project_id=args.project_id,
         region=args.region,
@@ -140,3 +170,4 @@ if __name__ == "__main__":
         output_gcs_path=args.output_path,
         run_local=args.run_local,
     )
+    run_audio_pipeline(config)
