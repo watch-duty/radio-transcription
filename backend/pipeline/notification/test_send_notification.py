@@ -32,7 +32,7 @@ class TestSendNotification(TestCase):
         expected_url = "https://api.example.com/mock"
         expected_headers = {"Content-Type": "application/json"}
         mock_post.assert_called_once_with(
-            expected_url, data=payload, headers=expected_headers, timeout=5
+            expected_url, data=payload, headers=expected_headers
         )
 
     @mock.patch.dict(os.environ, {"ENDPOINT": "https://api.example.com/mock"})
