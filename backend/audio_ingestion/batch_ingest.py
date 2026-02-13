@@ -34,6 +34,7 @@ import json
 import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Any
 
 import apache_beam as beam
 from apache_beam.io import WriteToPubSub, fileio
@@ -92,7 +93,9 @@ class ProcessAudioDataDoFn(beam.DoFn):
     def setup(self) -> None:
         self.storage_client = storage.Client()
 
-    def process(self, element: fileio.ReadableFile, *args, **kwargs) -> Iterable[bytes]:
+    def process(
+        self, element: fileio.ReadableFile, *args: Any, **kwargs: Any
+    ) -> Iterable[bytes]:
         try:
             if not element.metadata or not element.metadata.path:
                 logger.warning("File metadata or path is missing. Skipping file.")
