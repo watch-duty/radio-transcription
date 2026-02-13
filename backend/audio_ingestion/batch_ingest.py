@@ -83,6 +83,8 @@ def run_audio_pipeline(config: PipelineConfig) -> None:
             p
             | "Match Audio Files" >> fileio.MatchFiles(config.input_gcs_path)
             | "Read Audio Contents" >> fileio.ReadMatches()
+            | "Batch Audio Files"
+            >> beam.BatchElements(min_batch_size=1, max_batch_size=100)
             | "ProcessAudio" >> beam.ParDo(ProcessAudioDataDoFn())
             | "WriteProcessedData"
             >> WriteToPubSub(f"projects/{config.project_id}/topics/{config.topic_id}")
@@ -93,45 +95,61 @@ class ProcessAudioDataDoFn(beam.DoFn):
     def setup(self) -> None:
         self.storage_client = storage.Client()
 
-    def process(
-        self, element: fileio.ReadableFile, *args: Any, **kwargs: Any
+    def process(  # noqa: RET503
+        self, element: list[fileio.ReadableFile], *args: Any, **kwargs: Any
     ) -> Iterable[bytes]:
-        try:
-            if not element.metadata or not element.metadata.path:
-                logger.warning("File metadata or path is missing. Skipping file.")
-                return []
+        # Map files to their corresponding blob objects to keep them synced
+        file_to_blob = {}
 
-            # get the GCS blob to access user-defined metadata fields
-            file_name = element.metadata.path
-            path_no_gs = file_name.replace("gs://", "", 1)
-            path_parts = path_no_gs.split("/", 1)
-            if len(path_parts) != 2:
+        for file in element:
+            # 1. Handle missing metadata or path safely
+            file_path = getattr(file.metadata, "path", None)
+
+            if not file_path:
                 logger.warning(
-                    f"Unexpected file path format: {file_name}. Skipping file."
+                    "File object missing metadata path. Skipping GCS lookup."
                 )
                 return []
-            bucket_name, blob_name = path_parts
-            bucket = self.storage_client.bucket(bucket_name)
-            blob = bucket.get_blob(blob_name)
 
-            if blob and blob.metadata:
-                metadata_fields = {
-                    "byte_length": element.metadata.size_in_bytes,
-                    "location": (blob.metadata.get("location", "Unknown")),
-                    "feed": (blob.metadata.get("feed", "Unknown")),
-                    "source": (blob.metadata.get("source", "Unknown")),
-                }
+            # 2. Parse GCS Path
+            path_no_gs = file_path.replace("gs://", "", 1)
+            path_parts = path_no_gs.split("/", 1)
+
+            if len(path_parts) == 2:
+                bucket_name, blob_name = path_parts
+                bucket = self.storage_client.bucket(bucket_name)
+                file_to_blob[file] = bucket.blob(blob_name)
             else:
-                metadata_fields = {
-                    "byte_length": element.metadata.size_in_bytes,
-                }
-            json_string = json.dumps(metadata_fields)
-            return [json_string.encode("utf-8")]
-        except Exception as e:
-            logger.exception(
-                f"Error processing file {element.metadata.path if element.metadata else 'unknown'}: {e}"
-            )
-            return []
+                logger.warning(f"Malformed GCS path: {file_path}. Skipping.")
+                return []
+
+        # 3. Batch reload only the valid blobs
+        if file_to_blob:
+            with self.storage_client.batch():
+                for blob in file_to_blob.values():
+                    blob.reload()
+
+        # 4. Final Processing
+        for file in element:
+            try:
+                blob = file_to_blob.get(file)
+
+                size = getattr(file.metadata, "size_in_bytes", 0)
+                metadata_fields = {"byte_length": size}
+
+                # If GCS metadata exists, merge it in
+                if blob and blob.metadata:
+                    metadata_fields.update(
+                        {
+                            "location": blob.metadata.get("location", "Unknown"),
+                            "feed": blob.metadata.get("feed", "Unknown"),
+                            "source": blob.metadata.get("source", "Unknown"),
+                        }
+                    )
+                return [json.dumps(metadata_fields).encode("utf-8")]
+            except Exception as e:
+                path_info = getattr(file.metadata, "path", "unknown")
+                logger.exception(f"Error processing file {path_info}: {e}")
 
 
 if __name__ == "__main__":

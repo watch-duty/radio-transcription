@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import TracebackType
 from unittest.mock import MagicMock, patch
 
 import apache_beam as beam
@@ -17,10 +18,29 @@ class DummyBlob:
     def __init__(self, metadata: dict | None) -> None:
         self.metadata = metadata
 
+    def reload(self) -> None:
+        pass
+
+
+class DummyBatch:
+    def __enter__(self) -> None:
+        pass
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> bool:
+        return False
+
 
 class DummyBucket:
     def __init__(self, blob: DummyBlob) -> None:
         self._blob = blob
+
+    def blob(self, blob_name: str) -> DummyBlob:
+        return self._blob
 
     def get_blob(self, blob_name: str) -> DummyBlob:
         return self._blob
@@ -32,6 +52,9 @@ class DummyStorageClient:
 
     def bucket(self, bucket_name: str) -> DummyBucket:
         return DummyBucket(self._blob)
+
+    def batch(self) -> DummyBatch:
+        return DummyBatch()
 
 
 class TestProcessAudioData(unittest.TestCase):
@@ -56,7 +79,7 @@ class TestProcessAudioData(unittest.TestCase):
         )
         dofn.storage_client = DummyStorageClient(dummy_blob)
         element = fileio.ReadableFile(metadata=metadata)
-        result = list(dofn.process(element))
+        result = list(dofn.process([element]))
 
         self.assertEqual(len(result), 1)
         data = json.loads(result[0].decode("utf-8"))
@@ -75,7 +98,7 @@ class TestProcessAudioData(unittest.TestCase):
         dummy_blob = DummyBlob(metadata=None)
         dofn.storage_client = DummyStorageClient(dummy_blob)
         element = fileio.ReadableFile(metadata=metadata)
-        result = list(dofn.process(element))
+        result = list(dofn.process([element]))
 
         self.assertEqual(len(result), 1)
         data = json.loads(result[0].decode("utf-8"))
@@ -87,7 +110,7 @@ class TestProcessAudioData(unittest.TestCase):
     def test_process_missing_metadata_path(self) -> None:
         dofn = ProcessAudioDataDoFn()
         element = fileio.ReadableFile(metadata=None)
-        result = list(dofn.process(element))
+        result = list(dofn.process([element]))
 
         self.assertEqual(result, [])
 
@@ -99,7 +122,7 @@ class TestProcessAudioData(unittest.TestCase):
 
         dofn = ProcessAudioDataDoFn()
         dofn.storage_client = DummyStorageClient(DummyBlob(metadata=None))
-        result = list(dofn.process(fileio.ReadableFile(metadata=metadata)))
+        result = list(dofn.process([fileio.ReadableFile(metadata=metadata)]))
         self.assertEqual(result, [])
 
     @patch("google.cloud.storage.Client")
@@ -107,14 +130,17 @@ class TestProcessAudioData(unittest.TestCase):
         # 1. Setup Mock for GCS Blob Metadata
         mock_client_instance = mock_storage_client.return_value
         mock_bucket = mock_client_instance.bucket.return_value
-        mock_blob = mock_bucket.get_blob.return_value
+        mock_blob = mock_bucket.blob.return_value
         mock_blob.metadata = {"location": "CA", "feed": "feed1", "source": "src1"}
+        mock_client_instance.batch.return_value.__enter__.return_value = None
+        mock_client_instance.batch.return_value.__exit__.return_value = None
 
         with TestPipeline() as p:
             results = (
                 p
                 | fileio.MatchFiles(self.test_file_path)
                 | fileio.ReadMatches()
+                | beam.BatchElements(min_batch_size=1, max_batch_size=5)
                 | beam.ParDo(ProcessAudioDataDoFn())
             )
 
