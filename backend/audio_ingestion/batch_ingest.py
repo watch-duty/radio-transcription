@@ -95,7 +95,7 @@ class ProcessAudioDataDoFn(beam.DoFn):
     def setup(self) -> None:
         self.storage_client = storage.Client()
 
-    def process(  # noqa: RET503
+    def process(
         self, element: list[fileio.ReadableFile], *args: Any, **kwargs: Any
     ) -> Iterable[bytes]:
         # Map files to their corresponding blob objects to keep them synced
@@ -150,6 +150,7 @@ class ProcessAudioDataDoFn(beam.DoFn):
             except Exception as e:
                 path_info = getattr(file.metadata, "path", "unknown")
                 logger.exception(f"Error processing file {path_info}: {e}")
+        return []
 
 
 if __name__ == "__main__":
