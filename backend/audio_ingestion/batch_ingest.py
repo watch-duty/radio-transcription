@@ -3,7 +3,7 @@ Apache Beam pipeline for audio file processing from Google Cloud Storage.
 
 This module implements a distributed audio processing pipeline using Apache Beam
 that reads audio files from a specified Google Cloud Storage (GCS) path, processes
-the audio data, and writes metadata to another GCS path (for now, should modify later).
+the audio data, and writes metadata to a Pub/Sub topic.
 
 The pipeline supports both local execution (DirectRunner) and distributed execution
 on Google Cloud Dataflow (DataflowRunner).
@@ -17,7 +17,7 @@ Example:
         --region us-central1 \
         --temp_location gs://wd-radio-test/temp/ \
         --staging_location gs://wd-radio-test/staging/ \
-        --output_path gs://wd-radio-test/processed_data/ \
+        --topic_id watch-duty-ingestion-test \
         --run_local
 
 Attributes:
@@ -30,12 +30,13 @@ Functions:
 """
 
 import argparse
-import datetime
+import json
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import apache_beam as beam
-from apache_beam.io import fileio
+from apache_beam.io import WriteToPubSub, fileio
 from apache_beam.options.pipeline_options import PipelineOptions
 from google.cloud import storage
 
@@ -54,7 +55,7 @@ class PipelineConfig:
     region: str
     temp_location: str
     staging_location: str
-    output_gcs_path: str
+    topic_id: str
     run_local: bool = False
 
 
@@ -73,7 +74,6 @@ def run_audio_pipeline(config: PipelineConfig) -> None:
         region=config.region,
         temp_location=config.temp_location,
         staging_location=config.staging_location,
-        disk_size_gb=50,
         allow_unknown_args=True,
     )
 
@@ -82,35 +82,53 @@ def run_audio_pipeline(config: PipelineConfig) -> None:
             p
             | "Match Audio Files" >> fileio.MatchFiles(config.input_gcs_path)
             | "Read Audio Contents" >> fileio.ReadMatches()
-            | "ProcessAudio" >> beam.Map(process_audio_data)
+            | "ProcessAudio" >> beam.ParDo(ProcessAudioDataDoFn())
             | "WriteProcessedData"
-            >> beam.io.WriteToText(
-                config.output_gcs_path,
-                file_name_suffix=f"_{datetime.datetime.now().strftime('%H:%M')}",
-            )
+            >> WriteToPubSub(f"projects/{config.project_id}/topics/{config.topic_id}")
         )
 
 
-def process_audio_data(file_info: fileio.ReadableFile) -> str:
-    file_name = file_info.metadata.path
-    audio_content_bytes = file_info.read()
+class ProcessAudioDataDoFn(beam.DoFn):
+    def setup(self) -> None:
+        self.storage_client = storage.Client()
 
-    # Metadata extraction from GCS blob
-    bucket_name = file_name.split("/")[2]
-    blob_name = "/".join(file_name.split("/")[3:])
-    storage_client = storage.Client()
-    bucket = storage_client.bucket(bucket_name)
-    blob = bucket.get_blob(blob_name)
+    def process(self, element: fileio.ReadableFile, *args, **kwargs) -> Iterable[bytes]:
+        try:
+            if not element.metadata or not element.metadata.path:
+                logger.warning("File metadata or path is missing. Skipping file.")
+                return []
 
-    # Process audio bytes here
-    metadata_fields = {
-        "all_file_attributes": file_info.metadata.__dict__,
-        "blob_metadata": blob.metadata,
-    }
-    return (
-        f"Processed file {file_name} with {len(audio_content_bytes)} bytes. "
-        f"Metadata: {metadata_fields}."
-    )
+            # get the GCS blob to access user-defined metadata fields
+            file_name = element.metadata.path
+            path_no_gs = file_name.replace("gs://", "", 1)
+            path_parts = path_no_gs.split("/", 1)
+            if len(path_parts) != 2:
+                logger.warning(
+                    f"Unexpected file path format: {file_name}. Skipping file."
+                )
+                return []
+            bucket_name, blob_name = path_parts
+            bucket = self.storage_client.bucket(bucket_name)
+            blob = bucket.get_blob(blob_name)
+
+            if blob and blob.metadata:
+                metadata_fields = {
+                    "byte_length": element.metadata.size_in_bytes,
+                    "location": (blob.metadata.get("location", "Unknown")),
+                    "feed": (blob.metadata.get("feed", "Unknown")),
+                    "source": (blob.metadata.get("source", "Unknown")),
+                }
+            else:
+                metadata_fields = {
+                    "byte_length": element.metadata.size_in_bytes,
+                }
+            json_string = json.dumps(metadata_fields)
+            return [json_string.encode("utf-8")]
+        except Exception as e:
+            logger.exception(
+                f"Error processing file {element.metadata.path if element.metadata else 'unknown'}: {e}"
+            )
+            return []
 
 
 if __name__ == "__main__":
@@ -148,10 +166,10 @@ if __name__ == "__main__":
         help="GCS staging bucket location",
     )
     parser.add_argument(
-        "--output_path",
+        "--topic_id",
         type=str,
         required=True,
-        help="GCS output path",
+        help="Pub/Sub topic ID",
     )
     parser.add_argument(
         "--run_local",
@@ -167,7 +185,7 @@ if __name__ == "__main__":
         region=args.region,
         temp_location=args.temp_location,
         staging_location=args.staging_location,
-        output_gcs_path=args.output_path,
+        topic_id=args.topic_id,
         run_local=args.run_local,
     )
     run_audio_pipeline(config)
