@@ -6,6 +6,7 @@ import requests
 import responses
 from apache_beam.testing.test_pipeline import TestPipeline
 from apache_beam.testing.util import assert_that, equal_to
+
 from backend.pipeline.ingestion.batch_ingest import (
     fetch_url_content,
     get_metadata_fields,
