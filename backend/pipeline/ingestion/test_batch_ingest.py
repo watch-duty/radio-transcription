@@ -91,16 +91,47 @@ class TestAudioPipeline(unittest.TestCase):
 
     @responses.activate
     def test_get_metadata_fields_error(self) -> None:
-        """Test metadata extraction from a mock audio file."""
+        """Test metadata extraction returns empty dict when HTTP 404 occurs."""
         fake_audio_data = b"fake-audio-binary-content"
         responses.add(
             responses.GET, self.long_audio_url, body=fake_audio_data, status=404
         )
 
-        expected = {}
+        expected = {"file_path": self.long_audio_url}
 
         result = get_metadata_fields(self.long_audio_url)
         self.assertEqual(result, expected)
+
+    @responses.activate
+    def test_pipeline_logic_with_metadata_error(self) -> None:
+        """
+        Tests pipeline behavior when metadata extraction fails and returns an empty dict.
+        Verifies whether empty metadata dicts are propagated through the pipeline.
+        """
+        manifest_content = self.sample_manifest_content
+        # Mock the manifest fetch
+        responses.add(
+            responses.GET, self.manifest_url, body=manifest_content, status=200
+        )
+        # Mock the audio file fetch to fail, causing get_metadata_fields to return {}
+        responses.add(responses.GET, self.long_audio_url, body=b"error", status=404)
+        # filtered out due to short length, but we mock it anyway
+        responses.add(responses.GET, self.short_audio_url, body=b"12345678", status=404)
+        # Given the current pipeline steps, an empty dict will be serialized to b'{}'
+        expected_output = [
+            json.dumps({"file_path": self.long_audio_url}).encode("utf-8")
+        ]
+        with TestPipeline() as p:
+            output = (
+                p
+                | "Start" >> beam.Create([self.manifest_url])
+                | "Fetch" >> beam.Map(fetch_url_content)
+                | "Split" >> beam.FlatMap(lambda content: content.splitlines())
+                | "Filter" >> beam.Filter(lambda line: len(line) > 115)
+                | "Metadata" >> beam.Map(get_metadata_fields)
+                | "JSON" >> beam.Map(lambda data: json.dumps(data).encode("utf-8"))
+            )
+            assert_that(output, equal_to(expected_output))
 
     @responses.activate
     def test_pipeline_logic(self) -> None:

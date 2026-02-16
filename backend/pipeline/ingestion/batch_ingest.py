@@ -1,5 +1,5 @@
 """
-Apache Beam pipeline for audio file processing from Google Cloud Storage.
+Apache Beam pipeline for audio file processing from URLs listed in a manifest file.
 
 This module implements a distributed audio processing pipeline using Apache Beam
 that reads audio files from urls specified in a manifest.txt file, processes
@@ -12,13 +12,14 @@ Example:
     Run the pipeline locally with the following command:
 
     python batch_ingest.py \
-    --txt_file https://watchduty-radio-transcription-data.s3.us-east-1.amazonaws.com/echo/manifest.txt \
-    --project_id automatic-hawk-481415-m9 \
+    --txt_file https://YOUR_MANIFEST_URL/manifest.txt \
+    --project_id YOUR_PROJECT_ID \
     --region us-central1 \
-    --temp_location gs://wd-radio-test/temp/ \
-    --staging_location gs://wd-radio-test/staging/ \
-    --topic_id watch-duty-ingestion-test \
+    --temp_location gs://YOUR_TEMP_BUCKET/temp/ \
+    --staging_location gs://YOUR_STAGING_BUCKET/staging/ \
+    --topic_id YOUR_TOPIC_ID \
     --run_local
+
 
 
 Attributes:
@@ -103,37 +104,40 @@ def fetch_url_content(url: str) -> str:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
     except requests.exceptions.HTTPError as e:
-        logger.exception(f"HTTP error fetching {url}: {e.response.status_code}")
+        logger.exception("HTTP error fetching %s: %s", url, e.response.status_code)
         raise
     except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-        logger.exception(f"Connection error fetching {url}: {e}")
+        logger.exception("Connection error fetching %s: %s", url, e)
         raise
     except Exception as e:
-        logger.exception(f"Unexpected error fetching {url}: {e}")
+        logger.exception("Unexpected error fetching %s: %s", url, e)
         raise
     else:
         return response.text
 
 
 def get_metadata_fields(file_path: str) -> dict:
-    metadata_fields = {}
+    metadata_fields = {
+        "file_path": file_path,
+    }
 
     try:
         response = requests.get(file_path, timeout=10)
         response.raise_for_status()
         audio_bytes = response.content
     except requests.exceptions.Timeout:
-        logger.exception(f"Timeout fetching {file_path}")
+        logger.exception("Timeout fetching %s", file_path)
     except requests.exceptions.HTTPError as e:
-        logger.exception(f"HTTP error for {file_path}: {e.response.status_code}")
+        logger.exception("HTTP error for %s: %s", file_path, e.response.status_code)
     except requests.exceptions.RequestException as e:
-        logger.exception(f"Request failed for {file_path}: {e}")
+        logger.exception("Request failed for %s: %s", file_path, e)
     else:
-        metadata_fields = {
-            "file_path": file_path,
-            "byte_length": len(audio_bytes),
-            "source": "Echo",
-        }
+        metadata_fields.update(
+            {
+                "byte_length": len(audio_bytes),
+                "source": "Echo",
+            }
+        )
     return metadata_fields
 
 
@@ -180,6 +184,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--run_local",
         action=argparse.BooleanOptionalAction,
+        default=False,
         help="Whether to run the pipeline locally (DirectRunner) or on Dataflow",
     )
 
