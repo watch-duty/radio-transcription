@@ -116,25 +116,25 @@ def fetch_url_content(url: str) -> str:
 
 
 def get_metadata_fields(file_path: str) -> dict:
+    metadata_fields = {}
+
     try:
         response = requests.get(file_path, timeout=10)
         response.raise_for_status()
         audio_bytes = response.content
     except requests.exceptions.Timeout:
         logger.exception(f"Timeout fetching {file_path}")
-        return {}
     except requests.exceptions.HTTPError as e:
         logger.exception(f"HTTP error for {file_path}: {e.response.status_code}")
-        return {}
     except requests.exceptions.RequestException as e:
         logger.exception(f"Request failed for {file_path}: {e}")
-        return {}
     else:
-        return {
+        metadata_fields = {
             "file_path": file_path,
             "byte_length": len(audio_bytes),
             "source": "Echo",
         }
+    return metadata_fields
 
 
 if __name__ == "__main__":
