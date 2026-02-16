@@ -34,8 +34,6 @@ Functions:
 import argparse
 import json
 import logging
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 
 import apache_beam as beam
@@ -102,21 +100,19 @@ def fetch_url_content(url: str) -> str:
         raise ValueError(msg)
 
     try:
-        with urllib.request.urlopen(url, timeout=10) as response:  # noqa: S310
-            return response.read().decode("utf-8")
-
-    except urllib.error.HTTPError as e:
-        # Handles 404, 500, etc.
-        return f"HTTP Error: {e.code}"
-    except urllib.error.URLError as e:
-        # Handles DNS failures or refused connections
-        return f"Connection Error: {e.reason}"
-    except UnicodeDecodeError:
-        # Handles cases where the content isn't valid UTF-8
-        return "Error: Content could not be decoded as UTF-8"
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+    except requests.exceptions.HTTPError as e:
+        logger.exception(f"HTTP error fetching {url}: {e.response.status_code}")
+        raise
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+        logger.exception(f"Connection error fetching {url}: {e}")
+        raise
     except Exception as e:
-        # Catch-all for unexpected issues
-        return f"Unexpected Error: {e!s}"
+        logger.exception(f"Unexpected error fetching {url}: {e}")
+        raise
+    else:
+        return response.text
 
 
 def get_metadata_fields(file_path: str) -> dict:
@@ -124,21 +120,21 @@ def get_metadata_fields(file_path: str) -> dict:
         response = requests.get(file_path, timeout=10)
         response.raise_for_status()
         audio_bytes = response.content
-
+    except requests.exceptions.Timeout:
+        logger.exception(f"Timeout fetching {file_path}")
+        return {}
+    except requests.exceptions.HTTPError as e:
+        logger.exception(f"HTTP error for {file_path}: {e.response.status_code}")
+        return {}
+    except requests.exceptions.RequestException as e:
+        logger.exception(f"Request failed for {file_path}: {e}")
+        return {}
+    else:
         return {
             "file_path": file_path,
             "byte_length": len(audio_bytes),
             "source": "Echo",
         }
-    except requests.exceptions.Timeout:
-        logger.exception(f"Timeout fetching {file_path}")
-        raise
-    except requests.exceptions.HTTPError as e:
-        logger.exception(f"HTTP error for {file_path}: {e.response.status_code}")
-        raise
-    except requests.exceptions.RequestException as e:
-        logger.exception(f"Request failed for {file_path}: {e}")
-        raise
 
 
 if __name__ == "__main__":
