@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+// Notification sent to the endpoint after the transcription is evaluated.
+message AlertNotification {
+    // Replicated google/protobuf/timestamp.proto. Deployed schema must be self contained and not have imports.
+    message Timestamp {
+        int64 seconds = 1;
+        int32 nanos = 2;
+    }
+
+    // Path to the original audio.
+    string file_path = 1;
+    // Location the audio came from.
+    string location = 2;
+    // Name of the feed.
+    string feed = 3;
+    // Unique ID to the audio.
+    string audio_id = 4;
+    // Start timestamp of the audio.
+    Timestamp start_timestamp = 5;
+    // End timestamp of the audio.
+    Timestamp end_timestamp = 6;
+    // Full transcript text evaluated from the audio.
+    string transcript = 7;
+    // List of rule IDs that matched the transcript in evaluation.
+    repeated string evaluation_decisions = 8;
+}
