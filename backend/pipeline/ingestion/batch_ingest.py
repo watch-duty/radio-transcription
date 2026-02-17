@@ -42,6 +42,8 @@ import requests
 from apache_beam.io import WriteToPubSub
 from apache_beam.options.pipeline_options import PipelineOptions
 
+from backend.constants import AudioSource
+
 logger = logging.getLogger(__name__)
 
 # Suppress verbose logging from Beam options about external arguments
@@ -140,8 +142,8 @@ def get_metadata_fields(file_path: str) -> dict:
     else:
         metadata_fields.update(
             {
-                "byte_length": len(audio_bytes),
-                "source": "Echo",
+                "byte_length": len(audio_bytes),  # Placeholder for pre-processing audio
+                "source": AudioSource.ECHO.value,  # Placeholder source value
             }
         )
     return metadata_fields
