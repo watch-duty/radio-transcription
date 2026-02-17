@@ -18,7 +18,9 @@ class TestAudioPipeline(unittest.TestCase):
         self.manifest_url = "https://example.com/manifest.txt"
         self.long_audio_url = "https://example.com/" + ("a" * 116) + ".mp3"
         self.short_audio_url = "https://example.com/short.mp3"
-        self.sample_manifest_content = f"{self.long_audio_url}\n{self.short_audio_url}"
+        self.sample_manifest_content = (
+            f"{self.long_audio_url}\n{self.short_audio_url}\n\n"
+        )
 
     @responses.activate
     def test_fetch_url_content_success(self) -> None:

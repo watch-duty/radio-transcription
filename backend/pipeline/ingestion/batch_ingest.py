@@ -84,7 +84,12 @@ def run_audio_pipeline(config: PipelineConfig) -> None:
             p
             | "Read Manifest" >> beam.Create([config.txt_file])
             | "Read Lines" >> beam.Map(fetch_url_content)
-            | "Split Lines" >> beam.FlatMap(lambda content: content.splitlines())
+            | "Split Lines"
+            >> beam.FlatMap(
+                lambda content: [
+                    line.strip() for line in content.splitlines() if line.strip()
+                ]
+            )
             | "Placeholder Filter Some Out" >> beam.Filter(lambda line: len(line) > 115)
             | "Get File Size Info" >> beam.Map(get_metadata_fields)
             | "Serialize to JSON Bytes"
@@ -117,6 +122,7 @@ def fetch_url_content(url: str) -> str:
 
 
 def get_metadata_fields(file_path: str) -> dict:
+    """Retrieves basic metadata for an audio file located at the given URL."""
     metadata_fields = {
         "file_path": file_path,
     }
