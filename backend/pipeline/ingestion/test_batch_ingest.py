@@ -89,7 +89,7 @@ class TestAudioPipeline(unittest.TestCase):
         }
 
         result = get_metadata_fields(self.long_audio_url)
-        self.assertEqual(result, expected)
+        self.assertEqual(result, json.dumps(expected).encode("utf-8"))
 
     @responses.activate
     def test_get_metadata_fields_error(self) -> None:
@@ -102,7 +102,7 @@ class TestAudioPipeline(unittest.TestCase):
         expected = {"file_path": self.long_audio_url}
 
         result = get_metadata_fields(self.long_audio_url)
-        self.assertEqual(result, expected)
+        self.assertEqual(result, json.dumps(expected).encode("utf-8"))
 
     @responses.activate
     def test_pipeline_logic_with_metadata_error(self) -> None:
@@ -131,7 +131,6 @@ class TestAudioPipeline(unittest.TestCase):
                 | "Split" >> beam.FlatMap(lambda content: content.splitlines())
                 | "Filter" >> beam.Filter(lambda line: len(line) > 115)
                 | "Metadata" >> beam.Map(get_metadata_fields)
-                | "JSON" >> beam.Map(lambda data: json.dumps(data).encode("utf-8"))
             )
             assert_that(output, equal_to(expected_output))
 
@@ -169,7 +168,6 @@ class TestAudioPipeline(unittest.TestCase):
                 | "Split" >> beam.FlatMap(lambda content: content.splitlines())
                 | "Filter" >> beam.Filter(lambda line: len(line) > 115)
                 | "Metadata" >> beam.Map(get_metadata_fields)
-                | "JSON" >> beam.Map(lambda data: json.dumps(data).encode("utf-8"))
             )
 
             assert_that(output, equal_to(expected_output))

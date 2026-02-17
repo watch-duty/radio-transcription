@@ -84,8 +84,8 @@ def run_audio_pipeline(config: PipelineConfig) -> None:
     with beam.Pipeline(options=pipeline_options) as p:
         (
             p
-            | "Read Manifest" >> beam.Create([config.txt_file])
-            | "Read Lines" >> beam.Map(fetch_url_content)
+            | "Create Manifest File" >> beam.Create([config.txt_file])
+            | "Read Manifest File" >> beam.Map(fetch_url_content)
             | "Split Lines"
             >> beam.FlatMap(
                 lambda content: [
@@ -94,8 +94,6 @@ def run_audio_pipeline(config: PipelineConfig) -> None:
             )
             | "Placeholder Filter Some Out" >> beam.Filter(lambda line: len(line) > 115)
             | "Get File Size Info" >> beam.Map(get_metadata_fields)
-            | "Serialize to JSON Bytes"
-            >> beam.Map(lambda data: json.dumps(data).encode("utf-8"))
             | "WriteProcessedData"
             >> WriteToPubSub(f"projects/{config.project_id}/topics/{config.topic_id}")
         )
@@ -123,8 +121,9 @@ def fetch_url_content(url: str) -> str:
         return response.text
 
 
-def get_metadata_fields(file_path: str) -> dict:
+def get_metadata_fields(file_path: str) -> bytes:
     """Retrieves basic metadata for an audio file located at the given URL."""
+    # TODO(ax0420): https://linear.app/watchduty/issue/GOO-50/use-protos-instead-of-json
     metadata_fields = {
         "file_path": file_path,
     }
@@ -146,7 +145,7 @@ def get_metadata_fields(file_path: str) -> dict:
                 "source": AudioSource.ECHO.value,  # Placeholder source value
             }
         )
-    return metadata_fields
+    return json.dumps(metadata_fields).encode("utf-8")
 
 
 if __name__ == "__main__":
