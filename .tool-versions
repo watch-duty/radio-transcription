@@ -1,4 +1,4 @@
 python 3.11.5
 uv 0.9.28
 nodejs 22.14.0
-protoc 33.5
+protoc 33.4
