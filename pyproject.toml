@@ -8,6 +8,7 @@ dependencies = [
     "requests",
     "cloudevents",
     "google-cloud-pubsub>=2.35.0",
+    "aiohttp>=3.13.3",
 ]
 
 [tool.uv]

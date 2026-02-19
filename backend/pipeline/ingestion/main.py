@@ -3,43 +3,48 @@ import io
 import logging
 import os
 import wave
-import functions_framework
-import functions_framework.aio
 from datetime import datetime
 
+import aiohttp
+import functions_framework
+import functions_framework.aio
+from aiohttp import web
 from google.cloud import pubsub_v1
+
+logger = logging.getLogger(__name__)
 
 # Initialize the Publisher Client once (global scope)
 publisher = pubsub_v1.PublisherClient()
 
-FEED_ID = os.getenv("FEED_ID")
 USER = os.getenv("BROADCASTIFY_USERNAME")
 PASS = os.getenv("BROADCASTIFY_PASSWORD")
 PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT")
 OUTPUT_TOPIC_ID = os.getenv("OUTPUT_TOPIC")
 # keep under 30 seconds to avoid Pub/Sub message size limits
-CHUNK_DURATION_SECONDS = os.getenv("CHUNK_DURATION_SECONDS", "15")
-
+CHUNK_DURATION_SECONDS = int(os.getenv("CHUNK_DURATION_SECONDS", "15"))
+RECONNECT_DELAY = int(os.getenv("RECONNECT_DELAY_SECONDS", "5"))
 
 SAMPLE_RATE = 16000
 SAMPLE_WIDTH = 2
-BYTES_PER_CHUNK = SAMPLE_RATE * int(CHUNK_DURATION_SECONDS) * SAMPLE_WIDTH
+BYTES_PER_CHUNK = SAMPLE_RATE * CHUNK_DURATION_SECONDS * SAMPLE_WIDTH
 
 
 # Construct the fully qualified topic path
 if PROJECT_ID and OUTPUT_TOPIC_ID:
     output_topic_path = publisher.topic_path(PROJECT_ID, OUTPUT_TOPIC_ID)
 else:
-    print("OUTPUT_TOPIC or PROJECT_ID env var not set.")
+    logger.error("PROJECT_ID or OUTPUT_TOPIC env var not set.")
     output_topic_path = None
 
 
 @functions_framework.aio.http
-async def run_logger(req: functions_framework.Request) -> tuple[str, int]:
+async def run_logger(req: web.Request) -> tuple[str, int]:
+    data = await req.json()
+    feed_id = data.get("feed_id")
     try:
-        print(f"🚀 Starting 24/7 Fire Logger: Feed {FEED_ID}")
+        logger.info(f"🚀 Starting 24/7 Fire Logger: Feed {feed_id}")
         """Single instance of the logger logic."""
-        url = f"https://{USER}:{PASS}@audio.broadcastify.com/{FEED_ID}.mp3"
+        url = f"https://{USER}:{PASS}@audio.broadcastify.com/{feed_id}.mp3"
 
         process = await asyncio.create_subprocess_exec(
             "ffmpeg",
@@ -58,7 +63,7 @@ async def run_logger(req: functions_framework.Request) -> tuple[str, int]:
             while True:
                 chunk_raw = await process.stdout.read(4096)
                 if not chunk_raw:
-                    print("📡 Feed disconnected.")
+                    logger.warning("📡 Feed disconnected.")
                     break
 
                 buffer.extend(chunk_raw)
@@ -79,11 +84,11 @@ async def run_logger(req: functions_framework.Request) -> tuple[str, int]:
                         output_topic_path,
                         wav_data,  # audio bytes
                         timestamp=timestamp,
-                        feed_id=str(FEED_ID),
+                        feed_id=str(feed_id),
                     )
                     message_id = future.result()  # Block until the publish is complete
 
-                    print(
+                    logger.info(
                         f"Success! Published enriched message {message_id} "
                         f"to {OUTPUT_TOPIC_ID} at {timestamp}"
                     )
@@ -91,8 +96,8 @@ async def run_logger(req: functions_framework.Request) -> tuple[str, int]:
             process.terminate()
             await process.wait()
     except Exception as e:
-        print(f"\n[🔄 Error in logger loop: {e}]")
+        logger.exception(f"\n[🔄 Error in logger loop: {e}]")
 
-    print("Waiting 5 seconds to reconnect...")
-    await asyncio.sleep(5)
+    logger.info(f"Waiting {RECONNECT_DELAY} seconds to reconnect...")
+    await asyncio.sleep(RECONNECT_DELAY)
     return "done", 200

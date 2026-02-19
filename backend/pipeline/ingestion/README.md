@@ -1,7 +1,11 @@
 # To use for Google Cloud Run
 
-run `gcloud run deploy --source .`
+Run `gcloud run deploy --source .` with source code (3 files - Dockerfile, requirements, and main.py).
 
-In the new service, add Env variables and re-deploy.
+In the new Cloud Run service, add Env variables and re-deploy.
 
-Run "Test" in Google Cloud for the Cloud run service with the default test command.
+Send a POST JSON with a `feed_id` like:
+
+`curl -X POST <address> -H "Content-Type: application/json" -d '{"feed_id": 46274}'`
+
+Note that the subprocess doesn't end cleanly and might continue to write Pub/Sub messages (WIP). Re-deploy to end this as a workaround.
