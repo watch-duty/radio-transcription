@@ -101,4 +101,4 @@ jobs:
       - name: Install dependencies
         run: uv sync
       - name: Run tests
-        run: uv run python -m unittest
+        run: uv run python -m unittest -b
