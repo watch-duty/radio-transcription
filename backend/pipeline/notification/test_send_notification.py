@@ -6,12 +6,12 @@ from unittest import TestCase, main, mock
 import requests
 from cloudevents.http import CloudEvent
 
-from .send_notification import send_notification
+from backend.pipeline.notification.send_notification import send_notification
 
 
 class TestSendNotification(TestCase):
     @mock.patch.dict(os.environ, {"ENDPOINT": "https://api.example.com/mock"})
-    @mock.patch("send_notification.requests.post")
+    @mock.patch("backend.pipeline.notification.send_notification.requests.post")
     def test_send_notification(self, mock_post: mock.Mock) -> None:
         mock_response = mock.MagicMock()
         mock_post.return_value = mock_response
@@ -32,11 +32,11 @@ class TestSendNotification(TestCase):
         expected_url = "https://api.example.com/mock"
         expected_headers = {"Content-Type": "application/json"}
         mock_post.assert_called_once_with(
-            expected_url, data=payload, headers=expected_headers
+            expected_url, data=payload, headers=expected_headers, timeout=5
         )
 
     @mock.patch.dict(os.environ, {"ENDPOINT": "https://api.example.com/mock"})
-    @mock.patch("send_notification.requests.post")
+    @mock.patch("backend.pipeline.notification.send_notification.requests.post")
     def test_post_error(self, mock_post: mock.Mock) -> None:
         mock_response = mock.MagicMock()
         mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
