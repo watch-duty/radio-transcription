@@ -41,12 +41,19 @@ def evaluate_transcribed_audio_segment(cloud_event: CloudEvent) -> None:
 
         audio_id = new_transcribed_audio.audio_id
         logger.info("Processing audio ID: %s", audio_id)
-        if not new_transcribed_audio.HasField("transcript") or not new_transcribed_audio.transcript.strip():
-            logger.info("No transcript for audio ID: %s. Skipping evaluation.", audio_id)
+        if (
+            not new_transcribed_audio.HasField("transcript")
+            or not new_transcribed_audio.transcript.strip()
+        ):
+            logger.info(
+                "No transcript for audio ID: %s. Skipping evaluation.", audio_id
+            )
             return
 
         # 3. Call the evaluator
-        evaluation_result = StaticTextEvaluator.evaluate(new_transcribed_audio.transcript)
+        evaluation_result = StaticTextEvaluator.evaluate(
+            new_transcribed_audio.transcript
+        )
         logger.info(
             "Decision for ID: %s is: %s", audio_id, evaluation_result.get("is_flagged")
         )
@@ -62,11 +69,11 @@ def evaluate_transcribed_audio_segment(cloud_event: CloudEvent) -> None:
             audio_id=new_transcribed_audio.audio_id,
             start_timestamp={
                 "seconds": new_transcribed_audio.start_timestamp.seconds,
-                "nanos": new_transcribed_audio.start_timestamp.nanos
+                "nanos": new_transcribed_audio.start_timestamp.nanos,
             },
             end_timestamp={
                 "seconds": new_transcribed_audio.end_timestamp.seconds,
-                "nanos": new_transcribed_audio.end_timestamp.nanos
+                "nanos": new_transcribed_audio.end_timestamp.nanos,
             },
             transcript=new_transcribed_audio.transcript,
             evaluation_decisions=evaluation_result.get("triggered_rules", []),
