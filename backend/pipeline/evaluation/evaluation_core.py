@@ -41,10 +41,7 @@ def evaluate_transcribed_audio_segment(cloud_event: CloudEvent) -> None:
 
         audio_id = new_transcribed_audio.audio_id
         logger.info("Processing audio ID: %s", audio_id)
-        if (
-            not new_transcribed_audio.HasField("transcript")
-            or not new_transcribed_audio.transcript.strip()
-        ):
+        if not new_transcribed_audio.transcript.strip():
             logger.info(
                 "No transcript for audio ID: %s. Skipping evaluation.", audio_id
             )
