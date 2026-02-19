@@ -86,3 +86,19 @@ jobs:
           else
             echo "Protobuf files are in sync."
           fi
+
+  run-tests:
+    needs: [setup]
+    if: needs.setup.outputs.should_run == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 100
+      - name: Install mise, install tools
+        # mise installs uv and other project-specific tools. see: .tool-versions
+        uses: jdx/mise-action@v3
+      - name: Install dependencies
+        run: uv sync
+      - name: Run tests
+        run: uv run python -m unittest -b
