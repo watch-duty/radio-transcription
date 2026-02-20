@@ -28,7 +28,9 @@ def parse_cloud_event(cloud_event: CloudEvent) -> EvaluatedTranscribedAudio:
     if raw_data:
         decoded_data = base64.b64decode(raw_data).decode("utf-8")
         Parse(decoded_data, evaluated_transcribed_audio)
-    return evaluated_transcribed_audio
+        return evaluated_transcribed_audio
+    logger.warning("No data provided in CloudEvent")
+    return None
 
 
 def to_iso_string(timestamp: EvaluatedTranscribedAudio.Timestamp) -> str | None:
@@ -66,8 +68,10 @@ def send_notification(cloud_event: CloudEvent) -> None:
             raise SystemError(msg)
 
         evaluated_transcribed_audio = parse_cloud_event(cloud_event)
-        alert_notification = convert_to_notification(evaluated_transcribed_audio)
+        if not evaluated_transcribed_audio:
+            return
 
+        alert_notification = convert_to_notification(evaluated_transcribed_audio)
         request_data = MessageToJson(alert_notification, indent=None)
         logger.info(f"Sending payload: {request_data}")
 
