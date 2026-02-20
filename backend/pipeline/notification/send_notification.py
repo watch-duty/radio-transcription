@@ -4,6 +4,7 @@ import logging
 import os
 
 import functions_framework
+import google.cloud.logging
 import requests
 from cloudevents.http.event import CloudEvent
 from google.protobuf.json_format import MessageToJson, Parse
@@ -13,6 +14,8 @@ from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
 
+client = google.cloud.logging.Client()
+client.setup_logging()
 logger = logging.getLogger(__name__)
 
 POST_TIMEOUT_SECONDS = 5
@@ -65,10 +68,13 @@ def send_notification(cloud_event: CloudEvent) -> None:
         evaluated_transcribed_audio = parse_cloud_event(cloud_event)
         alert_notification = convert_to_notification(evaluated_transcribed_audio)
 
+        request_data = MessageToJson(alert_notification, indent=None)
+        logger.info(f"Sending payload: {request_data}")
+
         # Send POST request to endpoint.
         response = requests.post(
             ENDPOINT,
-            data=MessageToJson(alert_notification, indent=None),
+            data=request_data,
             headers={"Content-Type": "application/json"},
             timeout=POST_TIMEOUT_SECONDS,
         )
