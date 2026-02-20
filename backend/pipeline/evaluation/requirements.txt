@@ -1,3 +1,5 @@
 functions-framework==3.*
 google-cloud-pubsub>=2.0.0
 cloudevents
+protobuf
+google-cloud-logging
