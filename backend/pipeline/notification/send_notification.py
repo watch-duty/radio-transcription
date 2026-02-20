@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 POST_TIMEOUT_SECONDS = 5
 
 
-def parse_cloud_event(cloud_event: CloudEvent) -> EvaluatedTranscribedAudio:
+def parse_cloud_event(cloud_event: CloudEvent) -> EvaluatedTranscribedAudio | None:
     pubsub_message = cloud_event.data.get("message", {})
     evaluated_transcribed_audio = EvaluatedTranscribedAudio()
     raw_data = pubsub_message.get("data", "")
