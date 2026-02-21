@@ -1,53 +1,54 @@
 import asyncio
+import hashlib
 import io
 import logging
 import os
+import time
 import wave
 from datetime import datetime
 
-import aiohttp
 import functions_framework
 import functions_framework.aio
-from aiohttp import web
 from google.cloud import pubsub_v1
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Initialize the Publisher Client once (global scope)
-publisher = pubsub_v1.PublisherClient()
 
 USER = os.getenv("BROADCASTIFY_USERNAME")
 PASS = os.getenv("BROADCASTIFY_PASSWORD")
 PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT")
 OUTPUT_TOPIC_ID = os.getenv("OUTPUT_TOPIC")
 # keep under 30 seconds to avoid Pub/Sub message size limits
-CHUNK_DURATION_SECONDS = int(os.getenv("CHUNK_DURATION_SECONDS", "15"))
-RECONNECT_DELAY = int(os.getenv("RECONNECT_DELAY_SECONDS", "5"))
+CHUNK_DURATION_SECONDS = os.getenv("CHUNK_DURATION_SECONDS", "15")
+RUN_DURATION_SECONDS = int(os.getenv("RUN_DURATION_SECONDS", "60"))
 
 SAMPLE_RATE = 16000
 SAMPLE_WIDTH = 2
-BYTES_PER_CHUNK = SAMPLE_RATE * CHUNK_DURATION_SECONDS * SAMPLE_WIDTH
-
-
-# Construct the fully qualified topic path
-if PROJECT_ID and OUTPUT_TOPIC_ID:
-    output_topic_path = publisher.topic_path(PROJECT_ID, OUTPUT_TOPIC_ID)
-else:
-    logger.error("PROJECT_ID or OUTPUT_TOPIC env var not set.")
-    output_topic_path = None
+BYTES_PER_CHUNK = SAMPLE_RATE * int(CHUNK_DURATION_SECONDS) * SAMPLE_WIDTH
 
 
 @functions_framework.aio.http
-async def run_logger(req: web.Request) -> tuple[str, int]:
+async def run_logger(req) -> tuple[str, int]:
+    # Initialize the Publisher Client once (global scope)
+    publisher = pubsub_v1.PublisherClient()
+
+    # Construct the fully qualified topic path
+    if PROJECT_ID and OUTPUT_TOPIC_ID:
+        output_topic_path = publisher.topic_path(PROJECT_ID, OUTPUT_TOPIC_ID)
+    else:
+        logger.exception("PROJECT_ID or OUTPUT_TOPIC env var not set.")
+        output_topic_path = None
+
     data = await req.json()
     feed_id = data.get("feed_id")
+    start = time.perf_counter()
     try:
         logger.info(f"🚀 Starting 24/7 Fire Logger: Feed {feed_id}")
         """Single instance of the logger logic."""
         url = f"https://{USER}:{PASS}@audio.broadcastify.com/{feed_id}.mp3"
 
         process = await asyncio.create_subprocess_exec(
-            "ffmpeg",
+            "ffmpeg", "-re",
             "-i", url,
             "-f", "s16le",
             "-acodec", "pcm_s16le",
@@ -59,8 +60,9 @@ async def run_logger(req: web.Request) -> tuple[str, int]:
         )  # fmt: skip
 
         buffer = bytearray()
+        run_loop = True
         try:
-            while True:
+            while run_loop:
                 chunk_raw = await process.stdout.read(4096)
                 if not chunk_raw:
                     logger.warning("📡 Feed disconnected.")
@@ -79,18 +81,25 @@ async def run_logger(req: web.Request) -> tuple[str, int]:
                             f.writeframes(current_chunk)
                         wav_data = wav_io.getvalue()
 
-                    timestamp = datetime.now().isoformat()
-                    future = publisher.publish(
-                        output_topic_path,
-                        wav_data,  # audio bytes
-                        timestamp=timestamp,
-                        feed_id=str(feed_id),
-                    )
-                    message_id = future.result()  # Block until the publish is complete
+                    cur_time_iso = datetime.now().isoformat()
+
+                    # Get the audio byte hash as a hexadecimal string
+                    hex_hash = hashlib.sha256(wav_data).hexdigest()
+                    logger.info(f"The SHA-256 hash is: {hex_hash}")
+
+                    # future = publisher.publish(
+                    #     output_topic_path,
+                    #     wav_data,  # audio bytes
+                    #     timestamp=cur_time_iso,
+                    #     feed_id=str(feed_id),
+                    # )
+                    # message_id = future.result(timeout=30)  # Block until the publish is complete
+
+                    run_loop = (time.perf_counter() - start) < RUN_DURATION_SECONDS
 
                     logger.info(
-                        f"Success! Published enriched message {message_id} "
-                        f"to {OUTPUT_TOPIC_ID} at {timestamp}"
+                        f"Success! Published {len(wav_data)} bytes "
+                        f"to {OUTPUT_TOPIC_ID} at {cur_time_iso}"
                     )
         finally:
             process.terminate()
@@ -98,6 +107,6 @@ async def run_logger(req: web.Request) -> tuple[str, int]:
     except Exception as e:
         logger.exception(f"\n[🔄 Error in logger loop: {e}]")
 
-    logger.info(f"Waiting {RECONNECT_DELAY} seconds to reconnect...")
-    await asyncio.sleep(RECONNECT_DELAY)
+    logger.info("Waiting 5 seconds to reconnect...")
+    await asyncio.sleep(5)
     return "done", 200
