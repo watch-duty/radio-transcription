@@ -87,13 +87,15 @@ async def run_logger(req) -> tuple[str, int]:
                     hex_hash = hashlib.sha256(wav_data).hexdigest()
                     logger.info(f"The SHA-256 hash is: {hex_hash}")
 
-                    # future = publisher.publish(
-                    #     output_topic_path,
-                    #     wav_data,  # audio bytes
-                    #     timestamp=cur_time_iso,
-                    #     feed_id=str(feed_id),
-                    # )
-                    # message_id = future.result(timeout=30)  # Block until the publish is complete
+                    future = publisher.publish(
+                        output_topic_path,
+                        wav_data,  # audio bytes
+                        timestamp=cur_time_iso,
+                        feed_id=str(feed_id),
+                    )
+                    message_id = future.result(
+                        timeout=30
+                    )  # Block until the publish is complete
 
                     run_loop = (time.perf_counter() - start) < RUN_DURATION_SECONDS
 
