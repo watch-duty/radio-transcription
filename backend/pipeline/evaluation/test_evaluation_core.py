@@ -7,7 +7,10 @@ from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
 )
 from backend.pipeline.schema_types.transcribed_audio_pb2 import TranscribedAudio
 
-with patch("google.cloud.pubsub_v1.PublisherClient"):
+with (
+    patch("google.cloud.pubsub_v1.PublisherClient"),
+    patch("google.cloud.logging.Client"),
+):
     from backend.pipeline.evaluation import evaluation_core
 
 
@@ -29,7 +32,6 @@ class TestCloudFunction(unittest.TestCase):
         ts_end.nanos = 0
         self.transcribed_audio.end_timestamp.CopyFrom(ts_end)
 
-        # Serialize
         self.data_bytes = self.transcribed_audio.SerializeToString()
         self.b64_encoded_data = base64.b64encode(self.data_bytes).decode("utf-8")
 

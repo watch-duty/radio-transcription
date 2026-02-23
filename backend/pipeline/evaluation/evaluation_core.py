@@ -3,8 +3,10 @@ import logging
 import os
 
 import functions_framework
+import google.cloud.logging
 from cloudevents.http.event import CloudEvent
 from google.cloud import pubsub_v1
+from google.protobuf.json_format import Parse
 
 from backend.pipeline.evaluation.rules_evaluation.evaluator import StaticTextEvaluator
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
@@ -16,6 +18,8 @@ from backend.pipeline.schema_types.transcribed_audio_pb2 import TranscribedAudio
 publisher = pubsub_v1.PublisherClient()
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT")
 OUTPUT_TOPIC_ID = os.environ.get("OUTPUT_TOPIC")
+client = google.cloud.logging.Client()
+client.setup_logging()
 logger = logging.getLogger(__name__)
 
 if PROJECT_ID and OUTPUT_TOPIC_ID:
@@ -25,6 +29,33 @@ else:
     output_topic_path = None
 
 
+def parse_cloud_event(cloud_event: CloudEvent) -> TranscribedAudio | None:
+    pubsub_message = cloud_event.data.get("message", {})
+    transcribed_audio = TranscribedAudio()
+    raw_data = pubsub_message.get("data", "")
+    if not raw_data:
+        logger.warning("No data provided in CloudEvent")
+        return None
+    decoded_data = base64.b64decode(raw_data)
+    transcribed_audio.ParseFromString(decoded_data)
+    return transcribed_audio
+
+
+def publish_evaluation_result(evaluated_payload: EvaluatedTranscribedAudio) -> None:
+    if output_topic_path:
+        encoded_data = evaluated_payload.SerializeToString()
+        future = publisher.publish(output_topic_path, encoded_data)
+        message_id = future.result() 
+
+        logger.info(
+            "Success! Published enriched message %s to %s",
+            message_id,
+            OUTPUT_TOPIC_ID,
+        )
+    else:
+        logger.warning("Skipping publish: Output topic not configured.")
+
+
 @functions_framework.cloud_event
 def evaluate_transcribed_audio_segment(cloud_event: CloudEvent) -> None:
     """
@@ -32,12 +63,7 @@ def evaluate_transcribed_audio_segment(cloud_event: CloudEvent) -> None:
     """
     try:
         # 1. Decode the Incoming Message
-        pubsub_message = cloud_event.data.get("message", {})
-        new_transcribed_audio = TranscribedAudio()
-        raw_data = pubsub_message.get("data", "")
-        if raw_data:
-            decoded_data = base64.b64decode(raw_data)
-            new_transcribed_audio.ParseFromString(decoded_data)
+        new_transcribed_audio = parse_cloud_event(cloud_event)
 
         audio_id = new_transcribed_audio.audio_id
         logger.info("Processing audio ID: %s", audio_id)
@@ -77,18 +103,7 @@ def evaluate_transcribed_audio_segment(cloud_event: CloudEvent) -> None:
         )
 
         # 5. Publish to Downstream Topic
-        if output_topic_path:
-            encoded_data = evaluated_payload.SerializeToString()
-            future = publisher.publish(output_topic_path, encoded_data)
-            message_id = future.result()  # Block until published (ensure reliability)
-
-            logger.info(
-                "Success! Published enriched message %s to %s",
-                message_id,
-                OUTPUT_TOPIC_ID,
-            )
-        else:
-            logger.warning("Skipping publish: Output topic not configured.")
+        publish_evaluation_result(evaluated_payload)
 
     except Exception:
         logger.exception("Error processing new audio message")
