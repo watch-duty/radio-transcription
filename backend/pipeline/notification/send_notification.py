@@ -7,7 +7,7 @@ import functions_framework
 import google.cloud.logging
 import requests
 from cloudevents.http.event import CloudEvent
-from google.protobuf.json_format import MessageToJson, Parse
+from google.protobuf.json_format import MessageToJson
 
 from backend.pipeline.schema_types.alert_notification_pb2 import AlertNotification
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
@@ -26,8 +26,8 @@ def parse_cloud_event(cloud_event: CloudEvent) -> EvaluatedTranscribedAudio | No
     evaluated_transcribed_audio = EvaluatedTranscribedAudio()
     raw_data = pubsub_message.get("data", "")
     if raw_data:
-        decoded_data = base64.b64decode(raw_data).decode("utf-8")
-        Parse(decoded_data, evaluated_transcribed_audio)
+        decoded_data = base64.b64decode(raw_data)
+        evaluated_transcribed_audio.ParseFromString(decoded_data)
         return evaluated_transcribed_audio
     logger.warning("No data provided in CloudEvent")
     return None
