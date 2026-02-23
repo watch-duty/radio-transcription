@@ -1,11 +1,9 @@
 import base64
-import json
 import os
 from unittest import TestCase, main, mock
 
 import requests
 from cloudevents.http import CloudEvent
-from google.protobuf.json_format import MessageToJson
 
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
@@ -24,8 +22,7 @@ class TestSendNotification(TestCase):
         mock_post.return_value = mock_response
 
         evaluated_payload = EvaluatedTranscribedAudio(transcript="This is a test!")
-        payload = MessageToJson(evaluated_payload, indent=None)
-        raw_data = base64.b64encode(payload.encode("utf-8")).decode("utf-8")
+        raw_data = base64.b64encode(evaluated_payload.SerializeToString())
         event_data = {"message": {"data": raw_data, "messageId": "1234"}}
 
         attributes = {
@@ -55,8 +52,8 @@ class TestSendNotification(TestCase):
         )
         mock_post.return_value = mock_response
 
-        payload = json.dumps({"transcript": "This is a test!"})
-        raw_data = base64.b64encode(payload.encode("utf-8")).decode("utf-8")
+        evaluated_payload = EvaluatedTranscribedAudio(transcript="This is a test!")
+        raw_data = base64.b64encode(evaluated_payload.SerializeToString())
         event_data = {"message": {"data": raw_data, "messageId": "1234"}}
 
         attributes = {
@@ -70,8 +67,8 @@ class TestSendNotification(TestCase):
         )
 
     def test_missing_endpoint_env_var(self) -> None:
-        payload = json.dumps({"transcript": "This is a test!"})
-        raw_data = base64.b64encode(payload.encode("utf-8")).decode("utf-8")
+        evaluated_payload = EvaluatedTranscribedAudio(transcript="This is a test!")
+        raw_data = base64.b64encode(evaluated_payload.SerializeToString())
         event_data = {"message": {"data": raw_data, "messageId": "1234"}}
 
         attributes = {
