@@ -7,10 +7,13 @@ import requests
 from cloudevents.http import CloudEvent
 from google.protobuf.json_format import MessageToJson
 
-from backend.pipeline.notification.send_notification import send_notification
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
+
+# Must be before the module import to prevent DefaultCredentialsError.
+with mock.patch("google.cloud.logging.Client") as mock_client:
+    from backend.pipeline.notification.send_notification import send_notification
 
 
 class TestSendNotification(TestCase):
