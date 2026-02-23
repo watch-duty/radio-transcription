@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x18\x61lert_notification.proto\"\xa3\x02\n\x11\x41lertNotification\x12\x11\n\tfile_path\x18\x01 \x01(\t\x12\x10\n\x08location\x18\x02 \x01(\t\x12\x0c\n\x04\x66\x65\x65\x64\x18\x03 \x01(\t\x12\x10\n\x08\x61udio_id\x18\x04 \x01(\t\x12\x35\n\x0fstart_timestamp\x18\x05 \x01(\x0b\x32\x1c.AlertNotification.Timestamp\x12\x33\n\rend_timestamp\x18\x06 \x01(\x0b\x32\x1c.AlertNotification.Timestamp\x12\x12\n\ntranscript\x18\x07 \x01(\t\x12\x1c\n\x14\x65valuation_decisions\x18\x08 \x03(\t\x1a+\n\tTimestamp\x12\x0f\n\x07seconds\x18\x01 \x01(\x03\x12\r\n\x05nanos\x18\x02 \x01(\x05\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x18\x61lert_notification.proto\"\xba\x01\n\x11\x41lertNotification\x12\x11\n\tfile_path\x18\x01 \x01(\t\x12\x10\n\x08location\x18\x02 \x01(\t\x12\x0c\n\x04\x66\x65\x65\x64\x18\x03 \x01(\t\x12\x10\n\x08\x61udio_id\x18\x04 \x01(\t\x12\x17\n\x0fstart_timestamp\x18\x05 \x01(\t\x12\x15\n\rend_timestamp\x18\x06 \x01(\t\x12\x12\n\ntranscript\x18\x07 \x01(\t\x12\x1c\n\x14\x65valuation_decisions\x18\x08 \x03(\tb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -32,7 +32,5 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'alert_notification_pb2', _g
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_ALERTNOTIFICATION']._serialized_start=29
-  _globals['_ALERTNOTIFICATION']._serialized_end=320
-  _globals['_ALERTNOTIFICATION_TIMESTAMP']._serialized_start=277
-  _globals['_ALERTNOTIFICATION_TIMESTAMP']._serialized_end=320
+  _globals['_ALERTNOTIFICATION']._serialized_end=215
 # @@protoc_insertion_point(module_scope)

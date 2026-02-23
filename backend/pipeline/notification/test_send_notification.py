@@ -5,8 +5,15 @@ from unittest import TestCase, main, mock
 
 import requests
 from cloudevents.http import CloudEvent
+from google.protobuf.json_format import MessageToJson
 
-from backend.pipeline.notification.send_notification import send_notification
+from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
+    EvaluatedTranscribedAudio,
+)
+
+# Must be before the module import to prevent DefaultCredentialsError.
+with mock.patch("google.cloud.logging.Client") as mock_client:
+    from backend.pipeline.notification.send_notification import send_notification
 
 
 class TestSendNotification(TestCase):
@@ -16,7 +23,8 @@ class TestSendNotification(TestCase):
         mock_response = mock.MagicMock()
         mock_post.return_value = mock_response
 
-        payload = json.dumps({"transcript": "This is a test!"})
+        evaluated_payload = EvaluatedTranscribedAudio(transcript="This is a test!")
+        payload = MessageToJson(evaluated_payload, indent=None)
         raw_data = base64.b64encode(payload.encode("utf-8")).decode("utf-8")
         event_data = {"message": {"data": raw_data, "messageId": "1234"}}
 
@@ -32,7 +40,10 @@ class TestSendNotification(TestCase):
         expected_url = "https://api.example.com/mock"
         expected_headers = {"Content-Type": "application/json"}
         mock_post.assert_called_once_with(
-            expected_url, data=payload, headers=expected_headers, timeout=5
+            expected_url,
+            data='{"transcript": "This is a test!"}',
+            headers=expected_headers,
+            timeout=5,
         )
 
     @mock.patch.dict(os.environ, {"ENDPOINT": "https://api.example.com/mock"})
