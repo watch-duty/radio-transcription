@@ -6,7 +6,6 @@ import functions_framework
 import google.cloud.logging
 from cloudevents.http.event import CloudEvent
 from google.cloud import pubsub_v1
-from google.protobuf.json_format import Parse
 
 from backend.pipeline.evaluation.rules_evaluation.evaluator import StaticTextEvaluator
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
@@ -45,7 +44,7 @@ def publish_evaluation_result(evaluated_payload: EvaluatedTranscribedAudio) -> N
     if output_topic_path:
         encoded_data = evaluated_payload.SerializeToString()
         future = publisher.publish(output_topic_path, encoded_data)
-        message_id = future.result() 
+        message_id = future.result()
 
         logger.info(
             "Success! Published enriched message %s to %s",
@@ -64,6 +63,11 @@ def evaluate_transcribed_audio_segment(cloud_event: CloudEvent) -> None:
     try:
         # 1. Decode the Incoming Message
         new_transcribed_audio = parse_cloud_event(cloud_event)
+        if new_transcribed_audio is None:
+            logger.warning(
+                "Transcribed audio could not be parsed. Skipping evaluation."
+            )
+            return
 
         audio_id = new_transcribed_audio.audio_id
         logger.info("Processing audio ID: %s", audio_id)
