@@ -4,6 +4,8 @@ resource "google_alloydb_cluster" "this" {
   location   = var.region
   labels     = var.labels
 
+  deletion_protection = var.deletion_protection
+
   network_config {
     network            = var.network_id
     allocated_ip_range = var.allocated_ip_range
@@ -11,6 +13,14 @@ resource "google_alloydb_cluster" "this" {
 
   initial_user {
     password = var.initial_user_password
+  }
+
+  dynamic "continuous_backup_config" {
+    for_each = var.continuous_backup_enabled ? [1] : []
+    content {
+      enabled              = true
+      recovery_window_days = var.continuous_backup_retention_days
+    }
   }
 
   dynamic "automated_backup_policy" {
@@ -23,7 +33,7 @@ resource "google_alloydb_cluster" "this" {
       weekly_schedule {
         days_of_week = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"]
         start_times {
-          hours = 2
+          hours = var.backup_start_hour
         }
       }
 
@@ -46,6 +56,16 @@ resource "google_alloydb_instance" "primary" {
 
   availability_type = var.availability_type
   database_flags    = var.database_flags
+
+  dynamic "query_insights_config" {
+    for_each = var.query_insights_enabled ? [1] : []
+    content {
+      query_string_length     = 1024
+      record_application_tags = true
+      record_client_address   = true
+      query_plans_per_minute  = var.query_insights_query_plans_per_minute
+    }
+  }
 
   connection_pool_config {
     enabled = var.connection_pooling_enabled

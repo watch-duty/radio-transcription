@@ -29,6 +29,16 @@ variable "initial_user_password" {
 }
 
 # -----------------------------------------------------------------------------
+# Optional Variables — Cluster
+# -----------------------------------------------------------------------------
+
+variable "deletion_protection" {
+  description = "Whether to enable deletion protection on the cluster. Set to false for dev/test environments."
+  type        = bool
+  default     = true
+}
+
+# -----------------------------------------------------------------------------
 # Optional Variables — Instance
 # -----------------------------------------------------------------------------
 
@@ -72,6 +82,18 @@ variable "labels" {
   default     = {}
 }
 
+variable "query_insights_enabled" {
+  description = "Enable Query Insights on the primary instance for monitoring query performance and lock waits."
+  type        = bool
+  default     = true
+}
+
+variable "query_insights_query_plans_per_minute" {
+  description = "Number of query execution plans captured per minute by Query Insights."
+  type        = number
+  default     = 5
+}
+
 # -----------------------------------------------------------------------------
 # Optional Variables — Networking
 # -----------------------------------------------------------------------------
@@ -104,6 +126,23 @@ variable "connection_pooling_flags" {
 # Optional Variables — Automated Backups
 # -----------------------------------------------------------------------------
 
+variable "continuous_backup_enabled" {
+  description = "Enable continuous backups for Point-in-Time Recovery (PITR)."
+  type        = bool
+  default     = true
+}
+
+variable "continuous_backup_retention_days" {
+  description = "Number of days to retain continuous backups for PITR."
+  type        = number
+  default     = 14
+
+  validation {
+    condition     = var.continuous_backup_retention_days >= 1 && var.continuous_backup_retention_days <= 35
+    error_message = "continuous_backup_retention_days must be between 1 and 35."
+  }
+}
+
 variable "automated_backup_enabled" {
   description = "Enable automated daily backups for the AlloyDB cluster."
   type        = bool
@@ -125,4 +164,15 @@ variable "backup_window" {
   description = "The length of the backup window in protobuf Duration format (e.g. 3600s)."
   type        = string
   default     = "3600s"
+}
+
+variable "backup_start_hour" {
+  description = "The hour (0-23 UTC) at which automated backups start."
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.backup_start_hour >= 0 && var.backup_start_hour <= 23
+    error_message = "backup_start_hour must be between 0 and 23."
+  }
 }
