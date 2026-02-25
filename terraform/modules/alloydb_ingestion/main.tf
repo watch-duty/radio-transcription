@@ -67,18 +67,23 @@ resource "google_alloydb_instance" "primary" {
     }
   }
 
-  connection_pool_config {
-    enabled = var.connection_pooling_enabled
-    flags   = var.connection_pooling_enabled ? var.connection_pooling_flags : null
+  dynamic "connection_pool_config" {
+    for_each = var.connection_pooling_enabled ? [1] : []
+    content {
+      enabled = true
+      flags   = var.connection_pooling_flags
+    }
   }
 }
 
 resource "google_alloydb_user" "worker" {
+  count = var.create_worker_user ? 1 : 0
+
   cluster        = google_alloydb_cluster.this.name
   user_id        = var.worker_user_id
   user_type      = "ALLOYDB_BUILT_IN"
   password       = var.worker_user_password
-  database_roles = ["alloydbiamuser"]
+  database_roles = var.worker_database_roles
 
   depends_on = [google_alloydb_instance.primary]
 }

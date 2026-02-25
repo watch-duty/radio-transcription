@@ -29,8 +29,14 @@ variable "initial_user_password" {
 }
 
 # -----------------------------------------------------------------------------
-# Optional Variables — Database & Users
+# Optional Variables — Worker User
 # -----------------------------------------------------------------------------
+
+variable "create_worker_user" {
+  description = "Whether to create a dedicated worker fleet user. When true, worker_user_password must be provided."
+  type        = bool
+  default     = true
+}
 
 variable "worker_user_id" {
   description = "The username for the dedicated worker fleet service account."
@@ -39,9 +45,16 @@ variable "worker_user_id" {
 }
 
 variable "worker_user_password" {
-  description = "The password for the worker fleet user."
+  description = "The password for the worker fleet user. Required when create_worker_user is true."
   type        = string
   sensitive   = true
+  default     = null
+}
+
+variable "worker_database_roles" {
+  description = "Database roles to assign to the worker user. Roles are managed at the PostgreSQL level."
+  type        = list(string)
+  default     = []
 }
 
 # -----------------------------------------------------------------------------

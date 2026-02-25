@@ -29,6 +29,6 @@ output "connection_pooling_port" {
 }
 
 output "worker_user_id" {
-  description = "The username of the dedicated worker fleet user."
-  value       = google_alloydb_user.worker.user_id
+  description = "The username of the dedicated worker fleet user, or null if not created."
+  value       = var.create_worker_user ? google_alloydb_user.worker[0].user_id : null
 }
