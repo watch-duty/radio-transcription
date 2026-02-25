@@ -29,6 +29,22 @@ variable "initial_user_password" {
 }
 
 # -----------------------------------------------------------------------------
+# Optional Variables — Database & Users
+# -----------------------------------------------------------------------------
+
+variable "worker_user_id" {
+  description = "The username for the dedicated worker fleet service account."
+  type        = string
+  default     = "worker"
+}
+
+variable "worker_user_password" {
+  description = "The password for the worker fleet user."
+  type        = string
+  sensitive   = true
+}
+
+# -----------------------------------------------------------------------------
 # Optional Variables — Cluster
 # -----------------------------------------------------------------------------
 

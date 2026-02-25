@@ -72,3 +72,13 @@ resource "google_alloydb_instance" "primary" {
     flags   = var.connection_pooling_enabled ? var.connection_pooling_flags : null
   }
 }
+
+resource "google_alloydb_user" "worker" {
+  cluster        = google_alloydb_cluster.this.name
+  user_id        = var.worker_user_id
+  user_type      = "ALLOYDB_BUILT_IN"
+  password       = var.worker_user_password
+  database_roles = ["alloydbiamuser"]
+
+  depends_on = [google_alloydb_instance.primary]
+}

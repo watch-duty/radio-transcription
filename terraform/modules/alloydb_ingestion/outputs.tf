@@ -27,3 +27,8 @@ output "connection_pooling_port" {
   description = "The port for Managed Connection Pooling connections. Workers should connect to primary_instance_ip on this port."
   value       = 6432
 }
+
+output "worker_user_id" {
+  description = "The username of the dedicated worker fleet user."
+  value       = google_alloydb_user.worker.user_id
+}
