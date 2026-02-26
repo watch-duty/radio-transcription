@@ -15,7 +15,7 @@ with mock.patch("google.cloud.logging.Client") as mock_client:
 
 
 class TestSendNotification(TestCase):
-    @mock.patch.dict(os.environ, {"ENDPOINT": "https://api.example.com/mock"})
+    @mock.patch.dict(os.environ, {"ENDPOINT": "https://api.example.com/mock", "API_KEY": "12345"})
     @mock.patch("backend.pipeline.notification.send_notification.requests.post")
     def test_send_notification(self, mock_post: mock.Mock) -> None:
         mock_response = mock.MagicMock()
@@ -35,7 +35,7 @@ class TestSendNotification(TestCase):
         self.assertIsNone(result)
 
         expected_url = "https://api.example.com/mock"
-        expected_headers = {"Content-Type": "application/json"}
+        expected_headers = {"Content-Type": "application/json", "Authorization": "Bearer 12345"}
         mock_post.assert_called_once_with(
             expected_url,
             data='{"transcript": "This is a test!"}',
