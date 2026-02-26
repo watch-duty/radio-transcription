@@ -1,8 +1,8 @@
 CREATE TABLE feeds (
     id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name                    VARCHAR(255) NOT NULL UNIQUE,
-    source_type             TEXT REFERENCES source_types(slug),
-    status                  feed_status DEFAULT 'unclaimed'::feed_status,
+    source_type             TEXT NOT NULL REFERENCES source_types(slug),
+    status                  feed_status NOT NULL DEFAULT 'unclaimed'::feed_status,
     failure_count           INT NOT NULL DEFAULT 0,
 
     -- Dynamic leasing & state columns
