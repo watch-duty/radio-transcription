@@ -87,6 +87,24 @@ jobs:
             echo "Protobuf files are in sync."
           fi
 
+  terraform-checks:
+    needs: [setup]
+    if: needs.setup.outputs.should_run == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 100
+      - name: Install mise, install tools
+        uses: jdx/mise-action@v3
+      - name: Terraform fmt check
+        run: terraform fmt -check -recursive terraform/
+      - name: Terraform validate
+        working-directory: terraform/modules/alloydb
+        run: |
+          terraform init -backend=false
+          terraform validate
+
   run-tests:
     needs: [setup]
     if: needs.setup.outputs.should_run == 'true'

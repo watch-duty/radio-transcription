@@ -38,3 +38,9 @@ package-lock.json
 !.yarn/versions
 yarn-debug.log*
 yarn-error.log*
+
+# terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfplan
