@@ -205,3 +205,31 @@ variable "backup_start_hour" {
     error_message = "backup_start_hour must be between 0 and 23."
   }
 }
+
+# -----------------------------------------------------------------------------
+# Optional Variables — Schema Application
+# -----------------------------------------------------------------------------
+
+variable "apply_schema" {
+  description = "Enable schema application via a Cloud Run Job. When false, all schema-related resources are skipped."
+  type        = bool
+  default     = false
+}
+
+variable "schema_database_name" {
+  description = "The target database name for schema DDL application."
+  type        = string
+  default     = "postgres"
+}
+
+variable "password_secret_id" {
+  description = "The Secret Manager secret ID (short name) for the database password. Required when apply_schema is true."
+  type        = string
+  default     = null
+}
+
+variable "subnetwork_id" {
+  description = "The self-link of the subnetwork for Cloud Run VPC Direct egress. Required when apply_schema is true."
+  type        = string
+  default     = null
+}
