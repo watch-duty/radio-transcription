@@ -22,7 +22,6 @@ SAMPLE_RATE = 16000
 SAMPLE_WIDTH = 2
 BYTES_PER_CHUNK = SAMPLE_RATE * CHUNK_DURATION_SECONDS * SAMPLE_WIDTH
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 if not USER or not PASS:
@@ -69,13 +68,14 @@ async def monitor_stream() -> None:
                     if len(buffer) >= BYTES_PER_CHUNK:
                         current_chunk = buffer[:BYTES_PER_CHUNK]
                         del buffer[:BYTES_PER_CHUNK]
-
                         # Offload CPU-bound WAVE formatting to a thread to keep async loop snappy
                         await asyncio.to_thread(
                             process_audio_chunk, current_chunk, feed_id, source_type
                         )
 
-            finally:  # Cleanup process strictly
+            finally:
+                # TODO(axian0420): https://linear.app/watchduty/issue/GOO-58/stream-normalizer
+                # Handle feed claim state on failure
                 if process.returncode is None:
                     try:
                         process.terminate()
@@ -91,26 +91,32 @@ def process_audio_chunk(chunk: bytearray, feed_id: int, source_type: str) -> Non
     Process a single audio chunk: convert raw PCM to WAV format and upload to GCS.
         - chunk: Raw PCM audio data
         - feed_id: Identifier for the feed, used in GCS path
-        - source_type: Category for GCS path (e.g., "bcfy_feeds")
+        - source_type: Icecast source (e.g., "bcfy_feeds")
     """
     # 1. Create the WAV in memory
-    with io.BytesIO() as wav_io:
-        with wave.open(wav_io, "wb") as f:
-            f.setnchannels(1)
-            f.setsampwidth(SAMPLE_WIDTH)
-            f.setframerate(SAMPLE_RATE)
-            f.writeframes(chunk)
-        wav_data = wav_io.getvalue()
+    try:
+        with io.BytesIO() as wav_io:
+            with wave.open(wav_io, "wb") as f:
+                f.setnchannels(1)
+                f.setsampwidth(SAMPLE_WIDTH)
+                f.setframerate(SAMPLE_RATE)
+                f.writeframes(chunk)
+            wav_data = wav_io.getvalue()
+    except Exception as e:
+        logger.exception(f"Feed {feed_id}: Failed to format WAV data: {e}")
+        return
 
     # 2. Define the destination path
     cur_time_iso = datetime.now().isoformat().replace(":", "-")
     blob_name = f"{source_type}/{feed_id}/{cur_time_iso}.wav"
 
     # 3. Upload to GCS
-    blob = bucket.blob(blob_name)
-    blob.upload_from_string(wav_data, content_type="audio/wav")
-
-    logger.info(f"Feed {feed_id}: Uploaded {len(wav_data)} bytes to {blob_name}")
+    try:
+        blob = bucket.blob(blob_name)
+        blob.upload_from_string(wav_data, content_type="audio/wav")
+        logger.info(f"Feed {feed_id}: Uploaded {len(wav_data)} bytes to {blob_name}")
+    except Exception as e:
+        logger.exception(f"Feed {feed_id}: Failed to upload {blob_name} - {e}")
 
 
 async def main() -> None:
