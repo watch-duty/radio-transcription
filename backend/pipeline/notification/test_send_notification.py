@@ -35,7 +35,7 @@ class TestSendNotification(TestCase):
         self.assertIsNone(result)
 
         expected_url = "https://api.example.com/mock"
-        expected_headers = {"Content-Type": "application/json", "Authorization": "Bearer 12345"}
+        expected_headers = {"Content-Type": "application/json", "X-Api-Key": "12345"}
         mock_post.assert_called_once_with(
             expected_url,
             data='{"transcript": "This is a test!"}',

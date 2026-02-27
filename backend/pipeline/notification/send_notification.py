@@ -79,7 +79,7 @@ def send_notification(cloud_event: CloudEvent) -> None:
         response = requests.post(
             ENDPOINT,
             data=request_data,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {os.environ.get('API_KEY')}"},
+            headers={"Content-Type": "application/json", "X-Api-Key": os.environ.get("API_KEY")},
             timeout=POST_TIMEOUT_SECONDS,
         )
 
