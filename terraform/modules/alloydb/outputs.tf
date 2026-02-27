@@ -32,3 +32,17 @@ output "worker_user_id" {
   description = "The username of the dedicated worker fleet user, or null if not created."
   value       = var.create_worker_user ? google_alloydb_user.worker[0].user_id : null
 }
+
+# -----------------------------------------------------------------------------
+# Schema Application Outputs
+# -----------------------------------------------------------------------------
+
+output "schema_migration_job_name" {
+  description = "The name of the Cloud Run Job used for schema migration, or null if schema application is disabled."
+  value       = var.apply_schema ? google_cloud_run_v2_job.schema_migration[0].name : null
+}
+
+output "schema_migrator_service_account" {
+  description = "The email of the service account used by the schema migration job, or null if schema application is disabled."
+  value       = var.apply_schema ? google_service_account.schema_migrator[0].email : null
+}
