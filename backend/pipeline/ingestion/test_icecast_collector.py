@@ -8,8 +8,11 @@ MOCK_ENV_VARS = {
     "PASSWORD": "test_pass",
     "GCS_BUCKET_NAME": "test-bucket",
 }
-# Import module under test only after env is patched.
-with patch.dict(os.environ, MOCK_ENV_VARS):
+
+with (
+    patch("google.cloud.storage.Client"),
+    patch.dict(os.environ, MOCK_ENV_VARS, clear=False),
+):
     from backend.pipeline.ingestion import icecast_collector
 
 
