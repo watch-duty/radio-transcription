@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 
 POST_TIMEOUT_SECONDS = 5
 
+NOTIFICATION_ENDPOINT = os.environ.get("NOTIFICATION_ENDPOINT")
+NOTIFICATION_ENDPOINT_API_KEY = os.environ.get("NOTIFICATION_ENDPOINT_API_KEY")
+
 
 def parse_cloud_event(cloud_event: CloudEvent) -> EvaluatedTranscribedAudio | None:
     pubsub_message = cloud_event.data.get("message", {})
@@ -60,13 +63,7 @@ def convert_to_notification(
 
 @functions_framework.cloud_event
 def send_notification(cloud_event: CloudEvent) -> None:
-    ENDPOINT = os.environ.get("ENDPOINT")
-
     try:
-        if not ENDPOINT:
-            msg = "ENDPOINT environment variable not set."
-            raise SystemError(msg)
-
         evaluated_transcribed_audio = parse_cloud_event(cloud_event)
         if not evaluated_transcribed_audio:
             return
@@ -77,9 +74,12 @@ def send_notification(cloud_event: CloudEvent) -> None:
 
         # Send POST request to endpoint.
         response = requests.post(
-            ENDPOINT,
+            NOTIFICATION_ENDPOINT,
             data=request_data,
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "X-Api-Key": NOTIFICATION_ENDPOINT_API_KEY,
+            },
             timeout=POST_TIMEOUT_SECONDS,
         )
 
