@@ -12,7 +12,7 @@ from google.cloud import storage
 # Env variables
 USER = os.getenv("USERNAME")
 PASS = os.getenv("PASSWORD")
-GCS_BUCKET_NAME = os.getenv("GCS_BUCKET_NAME", "wd-radio-test")
+GCS_BUCKET_NAME = os.getenv("GCS_BUCKET_NAME")
 CHUNK_DURATION_SECONDS = int(os.getenv("CHUNK_DURATION_SECONDS", "15"))
 NUM_STREAMS = int(os.getenv("NUM_STREAMS", "20"))
 
@@ -22,10 +22,18 @@ SAMPLE_RATE = 16000
 SAMPLE_WIDTH = 2
 BYTES_PER_CHUNK = SAMPLE_RATE * CHUNK_DURATION_SECONDS * SAMPLE_WIDTH
 
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
 logger = logging.getLogger(__name__)
 
 if not USER or not PASS:
     logger.critical("USERNAME and PASSWORD env vars must be set.")
+    sys.exit(1)
+
+if not GCS_BUCKET_NAME:
+    logger.critical("GCS_BUCKET_NAME env var must be set.")
     sys.exit(1)
 
 # Initialize the client once outside the function for better performance
@@ -60,8 +68,11 @@ async def monitor_stream() -> None:
             buffer = bytearray()
             try:
                 while True:
-                    chunk_raw = await process.stdout.read(4096)
-                    if not chunk_raw:
+                    if process.stdout:
+                        chunk_raw = await process.stdout.read(4096)
+                        if not chunk_raw:
+                            break
+                    else:
                         break
 
                     buffer.extend(chunk_raw)

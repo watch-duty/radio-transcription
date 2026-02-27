@@ -1,11 +1,16 @@
 import asyncio
+import os
 import unittest
-from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from icecast_collector import process_audio_chunk
-
-from backend.pipeline.ingestion import icecast_collector
+MOCK_ENV_VARS = {
+    "USERNAME": "test_user",
+    "PASSWORD": "test_pass",
+    "GCS_BUCKET_NAME": "test-bucket",
+}
+# Import module under test only after env is patched.
+with patch.dict(os.environ, MOCK_ENV_VARS):
+    from backend.pipeline.ingestion import icecast_collector
 
 
 class TestProcessAudioChunk(unittest.TestCase):
@@ -16,10 +21,14 @@ class TestProcessAudioChunk(unittest.TestCase):
 
         # 2. Setup Patchers for icecast_collector namespace
         self.patchers = [
-            patch("icecast_collector.bucket", self.mock_bucket),
-            patch("icecast_collector.logger", self.mock_logger),
-            patch("icecast_collector.SAMPLE_WIDTH", icecast_collector.SAMPLE_WIDTH),
-            patch("icecast_collector.SAMPLE_RATE", icecast_collector.SAMPLE_RATE),
+            patch.object(icecast_collector, "bucket", self.mock_bucket),
+            patch.object(icecast_collector, "logger", self.mock_logger),
+            patch.object(
+                icecast_collector, "SAMPLE_WIDTH", icecast_collector.SAMPLE_WIDTH
+            ),
+            patch.object(
+                icecast_collector, "SAMPLE_RATE", icecast_collector.SAMPLE_RATE
+            ),
         ]
         for p in self.patchers:
             p.start()
@@ -28,81 +37,127 @@ class TestProcessAudioChunk(unittest.TestCase):
         for p in self.patchers:
             p.stop()
 
-    @patch("icecast_collector.datetime")
+    @patch.object(icecast_collector, "datetime")
     def test_process_audio_chunk_success(self, mock_datetime: MagicMock) -> None:
         """Test a successful WAV conversion and upload with exact path verification."""
-        # Arrange: Fix the time so we can predict the filename exactly
-        fixed_now = datetime(2026, 2, 27, 14, 30, 0)
-        mock_datetime.now.return_value = fixed_now
-        expected_time_str = "2026-02-27T14-30-00"  # ISO with : replaced by -
-
-        fake_chunk = bytearray(b"\x00\x01" * 100)
-        feed_id = 123
+        # Arrange
+        chunk = b"\x00\x01" * 1000
+        feed_id = 1234
         source_type = "bcfy_feeds"
-        expected_blob_name = f"bcfy_feeds/123/{expected_time_str}.wav"
+        mock_datetime.now.return_value.isoformat.return_value = (
+            "2026-02-27T12:34:56.000000"
+        )
+
+        mock_blob = MagicMock()
+        self.mock_bucket.blob.return_value = mock_blob
 
         # Act
-        process_audio_chunk(fake_chunk, feed_id, source_type)
+        icecast_collector.process_audio_chunk(bytearray(chunk), feed_id, source_type)
 
         # Assert
-        # Verify the blob was created with the correct path
+        expected_blob_name = "bcfy_feeds/1234/2026-02-27T12-34-56.000000.wav"
         self.mock_bucket.blob.assert_called_once_with(expected_blob_name)
+        mock_blob.upload_from_string.assert_called_once()
+        upload_args, upload_kwargs = mock_blob.upload_from_string.call_args
 
-        # Verify upload content type
-        mock_blob = self.mock_bucket.blob.return_value
-        _, kwargs = mock_blob.upload_from_string.call_args
-        self.assertEqual(kwargs["content_type"], "audio/wav")
-
-        # Verify success was logged
-        self.mock_logger.info.assert_called()
+        self.assertTrue(len(upload_args[0]) > 44)  # WAV header + PCM payload
+        self.assertEqual(upload_kwargs["content_type"], "audio/wav")
+        self.mock_logger.info.assert_called_once()
+        self.mock_logger.exception.assert_not_called()
 
     def test_process_audio_chunk_wav_conversion_error(self) -> None:
         """Test handling of invalid raw data that breaks the wave module."""
-        # Act: Pass something that isn't a buffer (None)
-        process_audio_chunk(None, 123, "test")
+        # Arrange
+        chunk = b"bad-audio"
+        feed_id = 5678
+        source_type = "bcfy_feeds"
+
+        with patch.object(
+            icecast_collector.wave, "open", side_effect=Exception("wave failure")
+        ):
+            # Act
+            icecast_collector.process_audio_chunk(
+                bytearray(chunk), feed_id, source_type
+            )
 
         # Assert
-        self.mock_logger.exception.assert_called()
         self.mock_bucket.blob.assert_not_called()
+        self.mock_logger.exception.assert_called_once()
+        logged_msg = self.mock_logger.exception.call_args[0][0]
+        self.assertIn("Failed to format WAV data", logged_msg)
+        self.assertIn(str(feed_id), logged_msg)
 
-    def test_process_audio_chunk_gcs_error(self) -> None:
+    @patch.object(icecast_collector, "datetime")
+    def test_process_audio_chunk_gcs_error(self, mock_datetime: MagicMock) -> None:
         """Test handling of GCS upload exceptions."""
-        # Arrange: Make the upload throw an error
-        mock_blob = MagicMock()
-        self.mock_bucket.blob.return_value = mock_blob
-        mock_blob.upload_from_string.side_effect = Exception("Network Timeout")
+        # Arrange
+        chunk = b"\x00\x01" * 1000
+        feed_id = 9012
+        source_type = "bcfy_feeds"
+        mock_datetime.now.return_value.isoformat.return_value = (
+            "2026-02-27T23:59:59.999999"
+        )
 
-        fake_chunk = bytearray(b"\x00\x01" * 10)
+        mock_blob = MagicMock()
+        mock_blob.upload_from_string.side_effect = Exception("gcs failure")
+        self.mock_bucket.blob.return_value = mock_blob
 
         # Act
-        process_audio_chunk(fake_chunk, 123, "test")
+        icecast_collector.process_audio_chunk(bytearray(chunk), feed_id, source_type)
 
         # Assert
-        # Ensure the error was logged via logger.exception
-        self.mock_logger.exception.assert_called()
+        expected_blob_name = "bcfy_feeds/9012/2026-02-27T23-59-59.999999.wav"
+        self.mock_bucket.blob.assert_called_once_with(expected_blob_name)
+        mock_blob.upload_from_string.assert_called_once()
+        self.mock_logger.info.assert_not_called()
+        self.mock_logger.exception.assert_called_once()
+        logged_msg = self.mock_logger.exception.call_args[0][0]
+        self.assertIn("Failed to upload", logged_msg)
+        self.assertIn(expected_blob_name, logged_msg)
 
 
 class TestIcecastCollector(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        # Mock constants/globals that your function relies on
-        self.sample_rate_patch = patch("icecast_collector.SAMPLE_RATE", 16000)
-        self.bytes_patch = patch("icecast_collector.BYTES_PER_CHUNK", 480000)
-        self.throttle_patch = patch(
-            "icecast_collector.STARTUP_THROTTLE", asyncio.Semaphore(1)
-        )
-
-        self.sample_rate_patch.start()
-        self.bytes_patch.start()
-        self.throttle_patch.start()
+        self.mock_bucket = MagicMock()
+        self.mock_logger = MagicMock()
+        self.patchers = [
+            patch(
+                "backend.pipeline.ingestion.icecast_collector.bucket", self.mock_bucket
+            ),
+            patch(
+                "backend.pipeline.ingestion.icecast_collector.logger", self.mock_logger
+            ),
+            patch(
+                "backend.pipeline.ingestion.icecast_collector.SAMPLE_WIDTH",
+                icecast_collector.SAMPLE_WIDTH,
+            ),
+            patch(
+                "backend.pipeline.ingestion.icecast_collector.SAMPLE_RATE",
+                icecast_collector.SAMPLE_RATE,
+            ),
+            patch(
+                "backend.pipeline.ingestion.icecast_collector.STARTUP_THROTTLE",
+                asyncio.Semaphore(1),
+            ),
+        ]
+        for p in self.patchers:
+            p.start()
 
     def tearDown(self) -> None:
-        patch.stopall()
+        for p in self.patchers:
+            p.stop()
 
     @patch(
-        "icecast_collector.asyncio.to_thread", new_callable=AsyncMock
+        "backend.pipeline.ingestion.icecast_collector.asyncio.to_thread",
+        new_callable=AsyncMock,
     )  # Mock the offloader
-    @patch("icecast_collector.asyncio.create_subprocess_exec")
-    @patch("icecast_collector.asyncio.sleep", new_callable=AsyncMock)
+    @patch(
+        "backend.pipeline.ingestion.icecast_collector.asyncio.create_subprocess_exec"
+    )
+    @patch(
+        "backend.pipeline.ingestion.icecast_collector.asyncio.sleep",
+        new_callable=AsyncMock,
+    )
     async def test_monitor_stream_processes_data_and_restarts(
         self,
         mock_sleep: MagicMock,
@@ -138,7 +193,9 @@ class TestIcecastCollector(unittest.IsolatedAsyncioTestCase):
         # args[0] is the function, args[1] is the data chunk
         self.assertEqual(len(args[1]), 480000)
 
-    @patch("icecast_collector.asyncio.create_subprocess_exec")
+    @patch(
+        "backend.pipeline.ingestion.icecast_collector.asyncio.create_subprocess_exec"
+    )
     async def test_ffmpeg_termination_on_failure(
         self, mock_subprocess: MagicMock
     ) -> None:
@@ -152,7 +209,10 @@ class TestIcecastCollector(unittest.IsolatedAsyncioTestCase):
         mock_subprocess.return_value = mock_proc
 
         # Break the outer loop immediately
-        with patch("icecast_collector.asyncio.sleep", side_effect=RuntimeError("Stop")):
+        with patch(
+            "backend.pipeline.ingestion.icecast_collector.asyncio.sleep",
+            side_effect=RuntimeError("Stop"),
+        ):
             with self.assertRaises(RuntimeError):
                 await icecast_collector.monitor_stream()
 
