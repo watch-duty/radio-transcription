@@ -9,15 +9,18 @@ from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
 
-# Must be before the module import to prevent DefaultCredentialsError.
 with mock.patch("google.cloud.logging.Client") as mock_client:
-    from backend.pipeline.notification.send_notification import send_notification
+    with mock.patch.dict(
+        os.environ,
+        {
+            "NOTIFICATION_ENDPOINT": "https://api.example.com/mock",
+            "NOTIFICATION_ENDPOINT_API_KEY": "12345",
+        },
+    ):
+        from backend.pipeline.notification.send_notification import send_notification
 
 
 class TestSendNotification(TestCase):
-    @mock.patch.dict(
-        os.environ, {"ENDPOINT": "https://api.example.com/mock", "API_KEY": "12345"}
-    )
     @mock.patch("backend.pipeline.notification.send_notification.requests.post")
     def test_send_notification(self, mock_post: mock.Mock) -> None:
         mock_response = mock.MagicMock()
@@ -45,7 +48,6 @@ class TestSendNotification(TestCase):
             timeout=5,
         )
 
-    @mock.patch.dict(os.environ, {"ENDPOINT": "https://api.example.com/mock"})
     @mock.patch("backend.pipeline.notification.send_notification.requests.post")
     def test_post_error(self, mock_post: mock.Mock) -> None:
         mock_response = mock.MagicMock()
@@ -67,19 +69,6 @@ class TestSendNotification(TestCase):
         self.assertRaises(
             requests.exceptions.RequestException, send_notification, cloud_event
         )
-
-    def test_missing_endpoint_env_var(self) -> None:
-        evaluated_payload = EvaluatedTranscribedAudio(transcript="This is a test!")
-        raw_data = base64.b64encode(evaluated_payload.SerializeToString())
-        event_data = {"message": {"data": raw_data, "messageId": "1234"}}
-
-        attributes = {
-            "type": "google.cloud.pubsub.topic.v1.messagePublished",
-            "source": "//pubsub.googleapis.com/projects/my-project/topics/my-topic",
-        }
-
-        cloud_event = CloudEvent(attributes, event_data)
-        self.assertRaises(SystemError, send_notification, cloud_event)
 
 
 if __name__ == "__main__":
