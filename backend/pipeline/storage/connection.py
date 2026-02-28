@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import atexit
 import threading
+from typing import TYPE_CHECKING
 
-import psycopg
 from google.cloud.alloydb.connector import Connector, IPTypes
+
+if TYPE_CHECKING:
+    import psycopg
 
 # Maintain a global connector to avoid leaking background threads
 # on repeated calls to create_connection.
@@ -24,7 +27,7 @@ def close_connector() -> None:
 atexit.register(close_connector)
 
 
-def create_connection(
+def create_connection(  # noqa: PLR0913
     project_id: str,
     region: str,
     cluster_name: str,

@@ -119,12 +119,12 @@ class TestConnection(unittest.TestCase):
         )
 
         # Confirm connector was kept
-        self.assertIsNotNone(connection._connector)
+        self.assertIsNotNone(connection._connector)  # noqa: SLF001
 
         connection.close_connector()
 
         mock_connector.close.assert_called_once()
-        self.assertIsNone(connection._connector)
+        self.assertIsNone(connection._connector)  # noqa: SLF001
 
 
 if __name__ == "__main__":
