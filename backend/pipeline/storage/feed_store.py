@@ -104,7 +104,9 @@ class FeedStore:
                     return None
 
                 columns = (
-                    [desc[0] for desc in cursor.description] if cursor.description else []
+                    [desc[0] for desc in cursor.description]
+                    if cursor.description
+                    else []
                 )
                 row_dict = dict(zip(columns, row, strict=True))
 

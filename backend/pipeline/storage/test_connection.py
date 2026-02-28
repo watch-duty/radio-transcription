@@ -20,7 +20,9 @@ class TestConnection(unittest.TestCase):
         connection.close_connector()
 
     @mock.patch("backend.pipeline.storage.connection.Connector")
-    def test_create_connection_defaults(self, mock_connector_cls: mock.MagicMock) -> None:
+    def test_create_connection_defaults(
+        self, mock_connector_cls: mock.MagicMock
+    ) -> None:
         """Test create_connection with default arguments."""
         mock_connector = mock.MagicMock()
         mock_connector_cls.return_value = mock_connector
@@ -47,7 +49,9 @@ class TestConnection(unittest.TestCase):
         self.assertEqual(conn, mock_connector.connect.return_value)
 
     @mock.patch("backend.pipeline.storage.connection.Connector")
-    def test_create_connection_custom_args(self, mock_connector_cls: mock.MagicMock) -> None:
+    def test_create_connection_custom_args(
+        self, mock_connector_cls: mock.MagicMock
+    ) -> None:
         """Test create_connection with custom password and ip_type."""
         mock_connector = mock.MagicMock()
         mock_connector_cls.return_value = mock_connector
