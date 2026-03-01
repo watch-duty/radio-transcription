@@ -57,10 +57,10 @@ def create_connection(  # noqa: PLR0913
 
     """
     global _connector  # noqa: PLW0603
-    if _connector is None:
-        with _connector_lock:
-            if _connector is None:
-                _connector = Connector()
+    with _connector_lock:
+        if _connector is None:
+            _connector = Connector()
+        connector = _connector
 
     instance_uri = (
         f"projects/{project_id}/"
@@ -72,7 +72,7 @@ def create_connection(  # noqa: PLR0913
     # The connector requires a string password, even if empty for IAM authentication
     pw = password or ""
 
-    conn: psycopg.Connection = _connector.connect(
+    conn: psycopg.Connection = connector.connect(
         instance_uri,
         "psycopg3",
         user=user,
