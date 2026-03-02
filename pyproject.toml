@@ -27,6 +27,7 @@ dev = [
   "ruff>=0.14.14",
   "ty>=0.0.14",
   "testcontainers[postgres]",
+  "docker",
 ]
 
 [tool.ruff]

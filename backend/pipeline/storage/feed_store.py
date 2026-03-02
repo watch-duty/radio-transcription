@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, TypedDict
 
+from psycopg.rows import dict_row
+
 if TYPE_CHECKING:
     import uuid
 
@@ -11,9 +13,9 @@ _LEASE_FEED_SQL = """\
 WITH available_feed AS (
     SELECT id
     FROM feeds
-    WHERE status IN ('unclaimed', 'failing', 'active')
+    WHERE status IN ('unclaimed'::feed_status, 'failing'::feed_status, 'active'::feed_status)
       AND (worker_id IS NULL OR last_heartbeat < NOW() - INTERVAL '60 seconds')
-    ORDER BY (status = 'unclaimed') DESC,
+    ORDER BY (status = 'unclaimed'::feed_status) DESC,
              failure_count ASC,
              last_heartbeat ASC NULLS FIRST
     LIMIT 1
@@ -97,25 +99,18 @@ class FeedStore:
 
         """
         with self._conn.transaction():
-            with self._conn.cursor() as cursor:
+            with self._conn.cursor(row_factory=dict_row) as cursor:
                 cursor.execute(_LEASE_FEED_SQL, (worker_id,))
                 row = cursor.fetchone()
                 if row is None:
                     return None
 
-                columns = (
-                    [desc[0] for desc in cursor.description]
-                    if cursor.description
-                    else []
-                )
-                row_dict = dict(zip(columns, row, strict=True))
-
                 return LeasedFeed(
-                    id=row_dict["id"],
-                    name=row_dict["name"],
-                    source_type=row_dict["source_type"],
-                    last_processed_filename=row_dict["last_processed_filename"],
-                    stream_url=row_dict["stream_url"],
+                    id=row["id"],
+                    name=row["name"],
+                    source_type=row["source_type"],
+                    last_processed_filename=row["last_processed_filename"],
+                    stream_url=row["stream_url"],
                 )
 
     def update_feed_progress(

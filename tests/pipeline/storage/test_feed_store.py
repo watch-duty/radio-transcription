@@ -9,14 +9,12 @@ from backend.pipeline.storage.feed_store import FeedStore, LeasedFeed
 
 def _make_cursor(
     *,
-    fetchone_result: tuple | None = None,
-    description: list[tuple] | None = None,
+    fetchone_result: dict | tuple | None = None,
     rowcount: int = 0,
 ) -> mock.MagicMock:
     """Create a mock cursor with the given fetch/rowcount behaviour."""
     cursor = mock.MagicMock()
     cursor.fetchone.return_value = fetchone_result
-    cursor.description = description
     cursor.rowcount = rowcount
     return cursor
 
@@ -33,21 +31,13 @@ def _make_conn(cursor: mock.MagicMock) -> mock.MagicMock:
 _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 _WORKER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 
-_LEASE_DESCRIPTION = [
-    ("id",),
-    ("name",),
-    ("source_type",),
-    ("last_processed_filename",),
-    ("stream_url",),
-]
-
-_LEASE_ROW = (
-    _FEED_ID,
-    "My Feed",
-    "bcfy_feeds",
-    None,
-    "http://stream.example.com/feed",
-)
+_LEASE_ROW: dict = {
+    "id": _FEED_ID,
+    "name": "My Feed",
+    "source_type": "bcfy_feeds",
+    "last_processed_filename": None,
+    "stream_url": "http://stream.example.com/feed",
+}
 
 
 class TestLeaseFeed(unittest.TestCase):
@@ -55,10 +45,7 @@ class TestLeaseFeed(unittest.TestCase):
 
     def test_returns_feed_when_available(self) -> None:
         """A leased feed is returned as a LeasedFeed dict."""
-        cursor = _make_cursor(
-            fetchone_result=_LEASE_ROW,
-            description=_LEASE_DESCRIPTION,
-        )
+        cursor = _make_cursor(fetchone_result=_LEASE_ROW)
         conn = _make_conn(cursor)
         store = FeedStore(conn)
 
