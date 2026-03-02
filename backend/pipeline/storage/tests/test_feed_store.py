@@ -208,6 +208,82 @@ class TestUpdateFeedProgress(unittest.TestCase):
         cursor.__exit__.assert_called_once()
 
 
+class TestRenewHeartbeat(unittest.TestCase):
+    """Tests for FeedStore.renew_heartbeat."""
+
+    def test_returns_true_when_lease_held(self) -> None:
+        """True is returned when the heartbeat was renewed."""
+        cursor = _make_cursor(rowcount=1)
+        conn = _make_conn(cursor)
+        store = FeedStore(conn)
+
+        result = store.renew_heartbeat(_FEED_ID, _WORKER_ID)
+
+        self.assertTrue(result)
+
+    def test_returns_false_when_lease_lost(self) -> None:
+        """False is returned when the lease was lost (fence violation)."""
+        cursor = _make_cursor(rowcount=0)
+        conn = _make_conn(cursor)
+        store = FeedStore(conn)
+
+        result = store.renew_heartbeat(_FEED_ID, _WORKER_ID)
+
+        self.assertFalse(result)
+
+    def test_passes_correct_parameters(self) -> None:
+        """Parameters are passed in the correct order."""
+        cursor = _make_cursor(rowcount=1)
+        conn = _make_conn(cursor)
+        store = FeedStore(conn)
+
+        store.renew_heartbeat(_FEED_ID, _WORKER_ID)
+
+        args = cursor.execute.call_args
+        self.assertEqual(args[0][1], (_FEED_ID, _WORKER_ID))
+
+    def test_commits_on_success(self) -> None:
+        """The transaction is committed after a successful renewal."""
+        cursor = _make_cursor(rowcount=1)
+        conn = _make_conn(cursor)
+        store = FeedStore(conn)
+
+        store.renew_heartbeat(_FEED_ID, _WORKER_ID)
+
+        conn.transaction.assert_called_once()
+        tx_mock = conn.transaction.return_value
+        tx_mock.__enter__.assert_called_once()
+        tx_mock.__exit__.assert_called_once()
+
+    def test_rolls_back_and_reraises_on_error(self) -> None:
+        """The transaction is rolled back and the exception re-raised on failure."""
+        cursor = _make_cursor()
+        cursor.execute.side_effect = RuntimeError("db error")
+        conn = _make_conn(cursor)
+        store = FeedStore(conn)
+
+        with self.assertRaises(RuntimeError):
+            store.renew_heartbeat(_FEED_ID, _WORKER_ID)
+
+        conn.transaction.assert_called_once()
+        tx_mock = conn.transaction.return_value
+        tx_mock.__exit__.assert_called_once()
+        args = tx_mock.__exit__.call_args[0]
+        self.assertEqual(args[0], RuntimeError)
+
+    def test_cursor_is_closed(self) -> None:
+        """The cursor is always closed, even on error."""
+        cursor = _make_cursor()
+        cursor.execute.side_effect = RuntimeError("db error")
+        conn = _make_conn(cursor)
+        store = FeedStore(conn)
+
+        with self.assertRaises(RuntimeError):
+            store.renew_heartbeat(_FEED_ID, _WORKER_ID)
+
+        cursor.__exit__.assert_called_once()
+
+
 class TestReportFeedFailure(unittest.TestCase):
     """Tests for FeedStore.report_feed_failure."""
 

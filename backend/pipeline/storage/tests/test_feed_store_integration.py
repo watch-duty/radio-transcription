@@ -11,7 +11,7 @@ from testcontainers.postgres import PostgresContainer
 
 from backend.pipeline.storage.feed_store import FeedStore
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
+_REPO_ROOT = Path(__file__).resolve().parents[4]
 _SQL_DIR = _REPO_ROOT / "terraform" / "modules" / "alloydb" / "sql" / "ingestion"
 
 
@@ -329,6 +329,56 @@ class TestFeedStoreIntegration(unittest.TestCase):
         row = self._get_feed_status(feed_id)
         self.assertEqual(row["status"], "quarantined")
         self.assertEqual(row["failure_count"], 3)
+
+    # -- Tests: renew_heartbeat -------------------------------------------
+
+    def test_renew_heartbeat_succeeds_for_active_feed(self) -> None:
+        """Heartbeat renewal returns True and updates the timestamp."""
+        worker = uuid.uuid4()
+        feed_id = self._insert_feed(
+            "My Feed",
+            status="active",
+            worker_id=worker,
+            last_heartbeat_age_seconds=30,
+        )
+
+        # Capture the heartbeat before renewal.
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT last_heartbeat FROM feeds WHERE id = %s::uuid",
+            (str(feed_id),),
+        )
+        old_hb = cursor.fetchone()[0]  # type: ignore[index]
+        cursor.close()
+
+        result = self.store.renew_heartbeat(feed_id, worker)
+
+        self.assertTrue(result)
+
+        # Verify the heartbeat was updated.
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT last_heartbeat FROM feeds WHERE id = %s::uuid",
+            (str(feed_id),),
+        )
+        new_hb = cursor.fetchone()[0]  # type: ignore[index]
+        cursor.close()
+        self.assertGreater(new_hb, old_hb)
+
+    def test_renew_heartbeat_returns_false_for_stolen_lease(self) -> None:
+        """Renewal returns False when a different worker owns the feed."""
+        owner = uuid.uuid4()
+        impostor = uuid.uuid4()
+        feed_id = self._insert_feed(
+            "Stolen Feed",
+            status="active",
+            worker_id=owner,
+            last_heartbeat_age_seconds=10,
+        )
+
+        result = self.store.renew_heartbeat(feed_id, impostor)
+
+        self.assertFalse(result)
 
 
 if __name__ == "__main__":
