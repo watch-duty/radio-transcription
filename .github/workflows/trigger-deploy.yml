@@ -1,0 +1,20 @@
+name: 'Trigger Private Deployment'
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  notify-private-repo:
+    name: 'Send Signal to Private Repo'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Trigger Workflow in Private Repo
+      env:
+        GH_TOKEN: ${{ secrets.PRIVATE_REPO_PAT }} 
+      run: |
+        gh workflow run deploy.yml \
+          --repo ${{ secrets.PRIVATE_REPO_TARGET }} \
+          -f public_sha=${{ github.sha }}
