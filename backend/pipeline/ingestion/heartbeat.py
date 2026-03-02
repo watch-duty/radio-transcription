@@ -63,7 +63,13 @@ class HeartbeatMonitor:
         self._task = asyncio.create_task(self._run())
 
     async def stop(self) -> None:
-        """Cancel the heartbeat background task and wait for it to finish."""
+        """
+        Cancel the heartbeat background task and wait for it to finish.
+
+        Note: if a database renewal is in progress via ``asyncio.to_thread``,
+        cancellation will not take effect until the synchronous DB call
+        completes.
+        """
         if self._task is not None:
             self._task.cancel()
             try:
