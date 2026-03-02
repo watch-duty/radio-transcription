@@ -1,7 +1,7 @@
 import asyncio
 import os
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 MOCK_ENV_VARS = {
     "BROADCASTIFY_USERNAME": "test_user",
@@ -16,7 +16,7 @@ with (
     from backend.pipeline.ingestion import icecast_collector
 
 
-class TestProcessAudioChunk(unittest.TestCase):
+class TestWriteToGCS(unittest.TestCase):
     def setUp(self) -> None:
         # 1. Setup Mocks
         self.mock_bucket = MagicMock()
@@ -41,7 +41,7 @@ class TestProcessAudioChunk(unittest.TestCase):
             p.stop()
 
     @patch.object(icecast_collector, "datetime")
-    def test_process_audio_chunk_success(self, mock_datetime: MagicMock) -> None:
+    def test_write_to_gcs_success(self, mock_datetime: MagicMock) -> None:
         """Test a successful WAV conversion and upload with exact path verification."""
         # Arrange
         chunk = b"\x00\x01" * 1000
@@ -55,7 +55,7 @@ class TestProcessAudioChunk(unittest.TestCase):
         self.mock_bucket.blob.return_value = mock_blob
 
         # Act
-        icecast_collector.process_audio_chunk(
+        icecast_collector.write_to_gcs(
             bytearray(chunk), feed_id, source_type, "2026-02-27T12-34-56.000000"
         )
 
@@ -70,7 +70,7 @@ class TestProcessAudioChunk(unittest.TestCase):
         self.mock_logger.info.assert_called_once()
         self.mock_logger.exception.assert_not_called()
 
-    def test_process_audio_chunk_wav_conversion_error(self) -> None:
+    def test_write_to_gcs_wav_conversion_error(self) -> None:
         """Test handling of invalid raw data that breaks the wave module."""
         # Arrange
         chunk = b"bad-audio"
@@ -81,7 +81,7 @@ class TestProcessAudioChunk(unittest.TestCase):
             icecast_collector.wave, "open", side_effect=Exception("wave failure")
         ):
             # Act
-            icecast_collector.process_audio_chunk(
+            icecast_collector.write_to_gcs(
                 bytearray(chunk), feed_id, source_type, "2026-02-27T12-34-56.000000"
             )
 
@@ -93,7 +93,7 @@ class TestProcessAudioChunk(unittest.TestCase):
         self.assertIn(str(feed_id), logged_msg)
 
     @patch.object(icecast_collector, "datetime")
-    def test_process_audio_chunk_gcs_error(self, mock_datetime: MagicMock) -> None:
+    def test_write_to_gcs_gcs_error(self, mock_datetime: MagicMock) -> None:
         """Test handling of GCS upload exceptions."""
         # Arrange
         chunk = b"\x00\x01" * 1000
@@ -108,7 +108,7 @@ class TestProcessAudioChunk(unittest.TestCase):
         self.mock_bucket.blob.return_value = mock_blob
 
         # Act
-        icecast_collector.process_audio_chunk(
+        icecast_collector.write_to_gcs(
             bytearray(chunk), feed_id, source_type, "2026-02-27T23-59-59.999999"
         )
 
@@ -192,7 +192,7 @@ class TestIcecastCollector(unittest.IsolatedAsyncioTestCase):
                 raise
 
         # 4. Assertions
-        # Verify to_thread was called with (func, chunk, feed_id, type)
+        # Verify to_thread was called
         mock_to_thread.assert_called_once()
 
         # Access the arguments of the first call to to_thread
@@ -229,6 +229,103 @@ class TestIcecastCollector(unittest.IsolatedAsyncioTestCase):
 
         # Verify cleanup logic
         mock_proc.terminate.assert_called_once()
+
+    @patch(
+        "backend.pipeline.ingestion.icecast_collector.asyncio.sleep",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.icecast_collector._cleanup_stream",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.icecast_collector._process_stream_chunks",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_monitor_stream_exponential_backoff_consecutive_failures(
+        self,
+        mock_create_ffmpeg: AsyncMock,
+        mock_process_chunks: AsyncMock,
+        mock_cleanup: AsyncMock,
+        mock_sleep: AsyncMock,
+    ) -> None:
+        """Backoff should grow exponentially for consecutive zero-chunk failures."""
+        mock_proc = MagicMock()
+        mock_proc.pid = 321
+        mock_proc.returncode = 1
+        mock_create_ffmpeg.return_value = mock_proc
+
+        # Three failed iterations (no chunks), then stop.
+        mock_process_chunks.side_effect = [0, 0, 0]
+        mock_sleep.side_effect = [None, None, RuntimeError("Stop")]
+
+        with self.assertRaises(RuntimeError):
+            await icecast_collector.monitor_stream()
+
+        self.assertEqual(
+            mock_sleep.await_args_list,
+            [
+                call(10),
+                call(20),
+                call(40),
+            ],
+        )
+        self.assertEqual(mock_create_ffmpeg.await_count, 3)
+        self.assertEqual(mock_process_chunks.await_count, 3)
+        self.assertEqual(mock_cleanup.await_count, 3)
+
+    @patch(
+        "backend.pipeline.ingestion.icecast_collector.asyncio.sleep",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.icecast_collector._cleanup_stream",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.icecast_collector._process_stream_chunks",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_monitor_stream_backoff_resets_after_single_chunk_iteration(
+        self,
+        mock_create_ffmpeg: AsyncMock,
+        mock_process_chunks: AsyncMock,
+        mock_cleanup: AsyncMock,
+        mock_sleep: AsyncMock,
+    ) -> None:
+        """A single-chunk iteration resets backoff before the next failure."""
+        mock_proc = MagicMock()
+        mock_proc.pid = 654
+        mock_proc.returncode = 1
+        mock_create_ffmpeg.return_value = mock_proc
+
+        # failure, failure, success(1 chunk), failure, then stop.
+        mock_process_chunks.side_effect = [0, 0, 1, 0]
+        mock_sleep.side_effect = [None, None, None, RuntimeError("Stop")]
+
+        with self.assertRaises(RuntimeError):
+            await icecast_collector.monitor_stream()
+
+        self.assertEqual(
+            mock_sleep.await_args_list,
+            [
+                call(10),
+                call(20),
+                call(5),
+                call(10),
+            ],
+        )
+        self.assertEqual(mock_create_ffmpeg.await_count, 4)
+        self.assertEqual(mock_process_chunks.await_count, 4)
+        self.assertEqual(mock_cleanup.await_count, 4)
 
 
 if __name__ == "__main__":

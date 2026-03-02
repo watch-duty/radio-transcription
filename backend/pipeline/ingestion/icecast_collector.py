@@ -189,7 +189,7 @@ async def _upload_chunk_with_semaphore(
     """
     async with semaphore:
         await asyncio.to_thread(
-            process_audio_chunk,
+            write_to_gcs,
             chunk,
             feed_id,
             source_type,
@@ -266,14 +266,15 @@ async def _handle_stream_completion(
     return consecutive_failures, backoff_delay
 
 
-def process_audio_chunk(
+def write_to_gcs(
     chunk: bytearray, feed_id: int, source_type: str, cur_time_iso: str
 ) -> None:
     """
-    Process a single audio chunk: convert raw PCM to WAV format and upload to GCS.
+    Upload a single audio chunk to GCS: convert raw PCM to WAV format and upload.
         - chunk: Raw PCM audio data
         - feed_id: Identifier for the feed, used in GCS path
         - source_type: Icecast source (e.g., "bcfy_feeds")
+        - cur_time_iso: Current timestamp in ISO format for filename
     """
     # 1. Create the WAV in memory
     try:
