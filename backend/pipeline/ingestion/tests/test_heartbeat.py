@@ -12,7 +12,9 @@ _FEED_A = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 _FEED_B = uuid.UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
 
 
-def _make_conn(renew_results: dict[uuid.UUID, bool | Exception] | None = None) -> mock.MagicMock:
+def _make_conn(
+    renew_results: dict[uuid.UUID, bool | Exception] | None = None,
+) -> mock.MagicMock:
     """Build a mock connection whose FeedStore.renew_heartbeat follows *renew_results*."""
     conn = mock.MagicMock()
     cursor = mock.MagicMock()
