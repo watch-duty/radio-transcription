@@ -10,6 +10,8 @@ dependencies = [
     "google-cloud-pubsub>=2.35.0",
     "google-cloud-logging",
     "google-cloud-storage>=3.9.0",
+    "psycopg[binary]",
+    "google-cloud-alloydb-connector[psycopg3]",
 ]
 
 [tool.uv]
@@ -24,6 +26,8 @@ default = true
 dev = [
   "ruff>=0.14.14",
   "ty>=0.0.14",
+  "testcontainers[postgres]",
+  "docker",
 ]
 
 [tool.ruff]
