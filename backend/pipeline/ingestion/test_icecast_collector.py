@@ -4,8 +4,8 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 MOCK_ENV_VARS = {
-    "USERNAME": "test_user",
-    "PASSWORD": "test_pass",
+    "BROADCASTIFY_USERNAME": "test_user",
+    "BROADCASTIFY_PASSWORD": "test_pass",
     "GCS_BUCKET_NAME": "test-bucket",
 }
 
@@ -55,7 +55,9 @@ class TestProcessAudioChunk(unittest.TestCase):
         self.mock_bucket.blob.return_value = mock_blob
 
         # Act
-        icecast_collector.process_audio_chunk(bytearray(chunk), feed_id, source_type)
+        icecast_collector.process_audio_chunk(
+            bytearray(chunk), feed_id, source_type, "2026-02-27T12-34-56.000000"
+        )
 
         # Assert
         expected_blob_name = "bcfy_feeds/1234/2026-02-27T12-34-56.000000.wav"
@@ -80,7 +82,7 @@ class TestProcessAudioChunk(unittest.TestCase):
         ):
             # Act
             icecast_collector.process_audio_chunk(
-                bytearray(chunk), feed_id, source_type
+                bytearray(chunk), feed_id, source_type, "2026-02-27T12-34-56.000000"
             )
 
         # Assert
@@ -106,7 +108,9 @@ class TestProcessAudioChunk(unittest.TestCase):
         self.mock_bucket.blob.return_value = mock_blob
 
         # Act
-        icecast_collector.process_audio_chunk(bytearray(chunk), feed_id, source_type)
+        icecast_collector.process_audio_chunk(
+            bytearray(chunk), feed_id, source_type, "2026-02-27T23-59-59.999999"
+        )
 
         # Assert
         expected_blob_name = "bcfy_feeds/9012/2026-02-27T23-59-59.999999.wav"
@@ -195,6 +199,10 @@ class TestIcecastCollector(unittest.IsolatedAsyncioTestCase):
         args, _ = mock_to_thread.call_args
         # args[0] is the function, args[1] is the data chunk
         self.assertEqual(len(args[1]), 480000)
+
+        # Verify that create_subprocess_exec was called twice
+        # (once for initial startup, once after the first iteration restart)
+        self.assertEqual(mock_subprocess.call_count, 2)
 
     @patch(
         "backend.pipeline.ingestion.icecast_collector.asyncio.create_subprocess_exec"
