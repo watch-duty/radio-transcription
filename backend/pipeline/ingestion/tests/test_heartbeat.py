@@ -190,6 +190,8 @@ class TestHeartbeatMonitorRenewal(unittest.IsolatedAsyncioTestCase):
         """If conn_factory raises, the loop continues and no tasks are cancelled."""
         conn_factory = mock.Mock(side_effect=RuntimeError("connection refused"))
         monitor = HeartbeatMonitor(conn_factory, _WORKER_ID, interval_sec=0.01)
+        # Ensure _get_conn tries to create (no existing conn).
+        monitor._conn = None  # noqa: SLF001
 
         task = asyncio.create_task(asyncio.sleep(10))
         monitor.register(_FEED_A, task)
@@ -319,9 +321,10 @@ class TestHeartbeatMonitorLifecycle(unittest.IsolatedAsyncioTestCase):
 class TestHeartbeatMonitorConnectionScoping(unittest.IsolatedAsyncioTestCase):
     """Tests for DB connection lifecycle within the heartbeat loop."""
 
-    async def test_connection_created_and_closed_per_iteration(self) -> None:
-        """Each heartbeat iteration opens a new connection and closes it."""
+    async def test_connection_created_once_and_reused(self) -> None:
+        """Connection is created lazily on first cycle and reused across iterations."""
         conn = _make_conn({_FEED_A: True})
+        conn.closed = False
         conn_factory = mock.Mock(return_value=conn)
         monitor = HeartbeatMonitor(conn_factory, _WORKER_ID, interval_sec=0.01)
 
@@ -332,10 +335,48 @@ class TestHeartbeatMonitorConnectionScoping(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.05)
         await monitor.stop()
 
-        # conn_factory should be called at least once.
-        self.assertGreaterEqual(conn_factory.call_count, 1)
-        # conn.close() should be called the same number of times.
-        self.assertEqual(conn.close.call_count, conn_factory.call_count)
+        # conn_factory should be called exactly once (lazy creation).
+        conn_factory.assert_called_once()
+        # Connection should be closed by stop(), not per iteration.
+        conn.close.assert_called_once()
+
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+    async def test_connection_recreated_when_closed(self) -> None:
+        """If the connection is closed server-side, a new one is created."""
+        conn1 = _make_conn({_FEED_A: True})
+        conn1.closed = False
+        conn2 = _make_conn({_FEED_A: True})
+        conn2.closed = False
+
+        call_count = 0
+
+        def _factory() -> mock.MagicMock:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return conn1
+            return conn2
+
+        conn_factory = mock.Mock(side_effect=_factory)
+        monitor = HeartbeatMonitor(conn_factory, _WORKER_ID, interval_sec=0.01)
+
+        task = asyncio.create_task(asyncio.sleep(10))
+        monitor.register(_FEED_A, task)
+        monitor.start()
+
+        # Let the first iteration run and establish the connection.
+        await asyncio.sleep(0.03)
+        # Simulate server-side disconnect.
+        conn1.closed = True
+        # Let the next iteration detect and reconnect.
+        await asyncio.sleep(0.03)
+        await monitor.stop()
+
+        # Should have called factory twice (initial + reconnect).
+        self.assertEqual(conn_factory.call_count, 2)
 
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):
