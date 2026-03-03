@@ -13,25 +13,17 @@ _FEED_B = uuid.UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
 
 
 def _make_conn(
-    renew_results: dict[uuid.UUID, bool | Exception] | None = None,
+    renewed_ids: set[uuid.UUID] | None = None,
 ) -> mock.MagicMock:
-    """Build a mock connection whose FeedStore.renew_heartbeat follows *renew_results*."""
+    """Build a mock connection whose batch renewal returns *renewed_ids*."""
     conn = mock.MagicMock()
     cursor = mock.MagicMock()
     cursor.__enter__ = mock.Mock(return_value=cursor)
     cursor.__exit__ = mock.Mock(return_value=False)
     conn.cursor.return_value = cursor
 
-    if renew_results is not None:
-
-        def _execute(sql, params) -> None:  # noqa: ANN001
-            feed_id = params[0]
-            val = renew_results.get(feed_id)
-            if isinstance(val, Exception):
-                raise val
-            cursor.rowcount = 1 if val else 0
-
-        cursor.execute.side_effect = _execute
+    if renewed_ids is not None:
+        cursor.fetchall.return_value = [(fid,) for fid in renewed_ids]
 
     return conn
 
@@ -40,8 +32,9 @@ class TestHeartbeatMonitorRenewal(unittest.IsolatedAsyncioTestCase):
     """Tests for the heartbeat renewal loop."""
 
     async def test_renew_heartbeat_keeps_task_alive(self) -> None:
-        """When renew returns True the task is NOT cancelled."""
-        conn = _make_conn({_FEED_A: True})
+        """When batch renew returns the feed ID the task is NOT cancelled."""
+        conn = _make_conn({_FEED_A})
+        conn.closed = False
         conn_factory = mock.Mock(return_value=conn)
         monitor = HeartbeatMonitor(conn_factory, _WORKER_ID, interval_sec=0.01)
 
@@ -58,8 +51,9 @@ class TestHeartbeatMonitorRenewal(unittest.IsolatedAsyncioTestCase):
             await task
 
     async def test_fence_violation_cancels_task(self) -> None:
-        """When renew returns False the feed task is cancelled and removed."""
-        conn = _make_conn({_FEED_A: False})
+        """When batch renew omits the feed ID the task is cancelled and removed."""
+        conn = _make_conn(set())
+        conn.closed = False
         conn_factory = mock.Mock(return_value=conn)
         monitor = HeartbeatMonitor(conn_factory, _WORKER_ID, interval_sec=0.01)
 
@@ -71,7 +65,6 @@ class TestHeartbeatMonitorRenewal(unittest.IsolatedAsyncioTestCase):
         await monitor.stop()
 
         self.assertTrue(task.cancelled())
-        # Feed should be removed from the internal registry.
         self.assertNotIn(_FEED_A, monitor._feeds)  # noqa: SLF001
 
     async def test_fence_violation_preserves_reregistered_task(self) -> None:
@@ -83,7 +76,8 @@ class TestHeartbeatMonitorRenewal(unittest.IsolatedAsyncioTestCase):
         same feed_id.  The identity check must prevent eviction of the new
         task.
         """
-        conn = _make_conn({_FEED_A: False})
+        conn = _make_conn(set())
+        conn.closed = False
         conn_factory = mock.Mock(return_value=conn)
         monitor = HeartbeatMonitor(conn_factory, _WORKER_ID, interval_sec=100)
 
@@ -117,7 +111,11 @@ class TestHeartbeatMonitorRenewal(unittest.IsolatedAsyncioTestCase):
 
     async def test_exception_does_not_cancel_task(self) -> None:
         """A transient DB error is logged but does NOT cancel the feed task."""
-        conn = _make_conn({_FEED_A: RuntimeError("transient db error")})
+        conn = _make_conn(set())
+        conn.closed = False
+        # Make the batch query itself raise.
+        cursor = conn.cursor.return_value
+        cursor.execute.side_effect = RuntimeError("transient db error")
         conn_factory = mock.Mock(return_value=conn)
         monitor = HeartbeatMonitor(conn_factory, _WORKER_ID, interval_sec=0.01)
 
@@ -136,8 +134,9 @@ class TestHeartbeatMonitorRenewal(unittest.IsolatedAsyncioTestCase):
             await task
 
     async def test_mixed_results_only_cancels_fenced_feed(self) -> None:
-        """One feed renewed, one fenced — only the fenced task is cancelled."""
-        conn = _make_conn({_FEED_A: True, _FEED_B: False})
+        """One feed renewed, one missing — only the missing task is cancelled."""
+        conn = _make_conn({_FEED_A})
+        conn.closed = False
         conn_factory = mock.Mock(return_value=conn)
         monitor = HeartbeatMonitor(conn_factory, _WORKER_ID, interval_sec=0.01)
 
@@ -159,38 +158,10 @@ class TestHeartbeatMonitorRenewal(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await task_a
 
-    async def test_mixed_results_success_and_exception(self) -> None:
-        """One feed renewed, one raises — only the raised feed is logged, neither cancelled."""
-        conn = _make_conn({_FEED_A: True, _FEED_B: RuntimeError("transient")})
-        conn_factory = mock.Mock(return_value=conn)
-        monitor = HeartbeatMonitor(conn_factory, _WORKER_ID, interval_sec=0.01)
-
-        task_a = asyncio.create_task(asyncio.sleep(10))
-        task_b = asyncio.create_task(asyncio.sleep(10))
-        monitor.register(_FEED_A, task_a)
-        monitor.register(_FEED_B, task_b)
-        monitor.start()
-
-        await asyncio.sleep(0.05)
-        await monitor.stop()
-
-        self.assertFalse(task_a.cancelled())
-        self.assertFalse(task_b.cancelled())
-        self.assertIn(_FEED_A, monitor._feeds)  # noqa: SLF001
-        self.assertIn(_FEED_B, monitor._feeds)  # noqa: SLF001
-
-        task_a.cancel()
-        task_b.cancel()
-        with self.assertRaises(asyncio.CancelledError):
-            await task_a
-        with self.assertRaises(asyncio.CancelledError):
-            await task_b
-
     async def test_conn_factory_failure_does_not_crash_loop(self) -> None:
         """If conn_factory raises, the loop continues and no tasks are cancelled."""
         conn_factory = mock.Mock(side_effect=RuntimeError("connection refused"))
         monitor = HeartbeatMonitor(conn_factory, _WORKER_ID, interval_sec=0.01)
-        # Ensure _get_conn tries to create (no existing conn).
         monitor._conn = None  # noqa: SLF001
 
         task = asyncio.create_task(asyncio.sleep(10))
@@ -212,7 +183,8 @@ class TestHeartbeatMonitorCleanup(unittest.IsolatedAsyncioTestCase):
 
     async def test_done_task_is_removed_silently(self) -> None:
         """A task that completed before the heartbeat cycle is removed."""
-        conn = _make_conn({})
+        conn = _make_conn(set())
+        conn.closed = False
         conn_factory = mock.Mock(return_value=conn)
         monitor = HeartbeatMonitor(conn_factory, _WORKER_ID, interval_sec=0.01)
 
@@ -238,7 +210,8 @@ class TestHeartbeatMonitorCleanup(unittest.IsolatedAsyncioTestCase):
         # Let the task finish with an exception.
         await asyncio.sleep(0)
 
-        conn = _make_conn({})
+        conn = _make_conn(set())
+        conn.closed = False
         conn_factory = mock.Mock(return_value=conn)
         monitor = HeartbeatMonitor(conn_factory, _WORKER_ID, interval_sec=0.01)
         monitor.register(_FEED_A, task)
@@ -260,7 +233,7 @@ class TestHeartbeatMonitorLifecycle(unittest.IsolatedAsyncioTestCase):
 
     async def test_stop_swallows_cancelled_error(self) -> None:
         """stop() awaits the background task and swallows CancelledError."""
-        conn = _make_conn({})
+        conn = _make_conn(set())
         conn_factory = mock.Mock(return_value=conn)
         monitor = HeartbeatMonitor(conn_factory, _WORKER_ID, interval_sec=10)
 
@@ -296,7 +269,7 @@ class TestHeartbeatMonitorLifecycle(unittest.IsolatedAsyncioTestCase):
 
     async def test_double_start_raises(self) -> None:
         """Calling start() twice raises RuntimeError."""
-        conn = _make_conn({})
+        conn = _make_conn(set())
         conn_factory = mock.Mock(return_value=conn)
         monitor = HeartbeatMonitor(conn_factory, _WORKER_ID, interval_sec=10)
 
@@ -307,7 +280,7 @@ class TestHeartbeatMonitorLifecycle(unittest.IsolatedAsyncioTestCase):
 
     async def test_start_after_stop_succeeds(self) -> None:
         """A stopped monitor can be restarted."""
-        conn = _make_conn({})
+        conn = _make_conn(set())
         conn_factory = mock.Mock(return_value=conn)
         monitor = HeartbeatMonitor(conn_factory, _WORKER_ID, interval_sec=10)
 
@@ -323,7 +296,7 @@ class TestHeartbeatMonitorConnectionScoping(unittest.IsolatedAsyncioTestCase):
 
     async def test_connection_created_once_and_reused(self) -> None:
         """Connection is created lazily on first cycle and reused across iterations."""
-        conn = _make_conn({_FEED_A: True})
+        conn = _make_conn({_FEED_A})
         conn.closed = False
         conn_factory = mock.Mock(return_value=conn)
         monitor = HeartbeatMonitor(conn_factory, _WORKER_ID, interval_sec=0.01)
@@ -346,9 +319,9 @@ class TestHeartbeatMonitorConnectionScoping(unittest.IsolatedAsyncioTestCase):
 
     async def test_connection_recreated_when_closed(self) -> None:
         """If the connection is closed server-side, a new one is created."""
-        conn1 = _make_conn({_FEED_A: True})
+        conn1 = _make_conn({_FEED_A})
         conn1.closed = False
-        conn2 = _make_conn({_FEED_A: True})
+        conn2 = _make_conn({_FEED_A})
         conn2.closed = False
 
         call_count = 0
@@ -399,8 +372,8 @@ class TestHeartbeatMonitorSnapshotSafety(unittest.IsolatedAsyncioTestCase):
 
     async def test_unregister_during_renewal_does_not_raise(self) -> None:
         """Unregistering a feed while a renewal is in-flight is safe."""
-        # Use a slow conn_factory to give us time to unregister.
-        real_conn = _make_conn({_FEED_A: True, _FEED_B: True})
+        real_conn = _make_conn({_FEED_A, _FEED_B})
+        real_conn.closed = False
 
         def _slow_factory() -> mock.MagicMock:
             return real_conn

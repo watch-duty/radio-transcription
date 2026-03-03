@@ -104,27 +104,20 @@ class HeartbeatMonitor:
     def _renew_all(
         self,
         feed_ids: list[uuid.UUID],
-    ) -> dict[uuid.UUID, bool | Exception]:
+    ) -> set[uuid.UUID]:
         """
-        Renew heartbeats for *feed_ids* using a persistent DB connection.
+        Batch-renew heartbeats using a single query.
 
         This synchronous helper runs inside ``asyncio.to_thread`` so it
         never blocks the event loop.  The connection is reused across
         iterations to avoid the overhead of establishing a new TLS tunnel
         through the AlloyDB Connector on every cycle.
+
+        Returns the set of feed_ids that were successfully renewed.
         """
         conn = self._get_conn()
-        results: dict[uuid.UUID, bool | Exception] = {}
         store = FeedStore(conn)
-        for feed_id in feed_ids:
-            try:
-                results[feed_id] = store.renew_heartbeat(
-                    feed_id,
-                    self._worker_id,
-                )
-            except Exception as exc:
-                results[feed_id] = exc
-        return results
+        return store.renew_heartbeats_batch(feed_ids, self._worker_id)
 
     async def _run(self) -> None:
         """Main heartbeat loop."""
@@ -151,33 +144,30 @@ class HeartbeatMonitor:
 
             if feed_ids:
                 try:
-                    results = await asyncio.to_thread(
+                    renewed_ids = await asyncio.to_thread(
                         self._renew_all,
                         feed_ids,
                     )
                 except Exception:
                     logger.exception("Heartbeat renewal batch failed")
                 else:
-                    for feed_id in feed_ids:
-                        result = results.get(feed_id)
-                        if isinstance(result, Exception):
-                            logger.exception(
-                                "Failed to renew heartbeat for feed %s",
-                                feed_id,
-                                exc_info=result,
-                            )
-                        elif result is False:
-                            logger.warning(
-                                "Fence violation for feed %s; cancelling task",
-                                feed_id,
-                            )
-                            stale_task = snapshot[feed_id]
-                            stale_task.cancel()
-                            # Only evict if the registry still holds the same
-                            # task.  A concurrent register() may have already
-                            # replaced it with a fresh task for a new lease.
-                            if self._feeds.get(feed_id) is stale_task:
-                                del self._feeds[feed_id]
+                    lost_ids = set(feed_ids) - renewed_ids
+                    # Filter out tasks that completed between snapshot and
+                    # DB query to avoid false positives (their worker_id
+                    # was released normally, not stolen).
+                    lost_ids = {fid for fid in lost_ids if fid in self._feeds}
+                    for feed_id in lost_ids:
+                        logger.warning(
+                            "Fence violation for feed %s; cancelling task",
+                            feed_id,
+                        )
+                        stale_task = snapshot[feed_id]
+                        stale_task.cancel()
+                        # Only evict if the registry still holds the same
+                        # task.  A concurrent register() may have already
+                        # replaced it with a fresh task for a new lease.
+                        if self._feeds.get(feed_id) is stale_task:
+                            del self._feeds[feed_id]
 
             # --- Sleep until next cycle ----------------------------------
             await asyncio.sleep(self._interval)

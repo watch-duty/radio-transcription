@@ -380,6 +380,57 @@ class TestFeedStoreIntegration(unittest.TestCase):
 
         self.assertFalse(result)
 
+    # -- Tests: renew_heartbeats_batch ------------------------------------
+
+    def test_batch_renew_returns_all_active_feeds(self) -> None:
+        """All feeds owned by the worker are returned in the renewed set."""
+        worker = uuid.uuid4()
+        feed_a = self._insert_feed(
+            "Feed A",
+            status="active",
+            worker_id=worker,
+            last_heartbeat_age_seconds=30,
+        )
+        feed_b = self._insert_feed(
+            "Feed B",
+            status="active",
+            worker_id=worker,
+            last_heartbeat_age_seconds=30,
+        )
+
+        result = self.store.renew_heartbeats_batch([feed_a, feed_b], worker)
+
+        self.assertEqual(result, {feed_a, feed_b})
+
+    def test_batch_renew_excludes_stolen_feeds(self) -> None:
+        """Only feeds still owned by the worker are returned."""
+        worker = uuid.uuid4()
+        other_worker = uuid.uuid4()
+        owned_feed = self._insert_feed(
+            "Owned Feed",
+            status="active",
+            worker_id=worker,
+            last_heartbeat_age_seconds=30,
+        )
+        stolen_feed = self._insert_feed(
+            "Stolen Feed",
+            status="active",
+            worker_id=other_worker,
+            last_heartbeat_age_seconds=30,
+        )
+
+        result = self.store.renew_heartbeats_batch(
+            [owned_feed, stolen_feed], worker,
+        )
+
+        self.assertEqual(result, {owned_feed})
+
+    def test_batch_renew_returns_empty_set_for_empty_input(self) -> None:
+        """Empty input returns empty set without hitting the database."""
+        result = self.store.renew_heartbeats_batch([], uuid.uuid4())
+
+        self.assertEqual(result, set())
+
 
 if __name__ == "__main__":
     unittest.main()
