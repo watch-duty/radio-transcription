@@ -12,6 +12,8 @@ dependencies = [
     "google-cloud-storage>=3.9.0",
     "psycopg[binary]",
     "google-cloud-alloydb-connector[psycopg3]",
+    "aiohttp>=3.13.3",
+    "gcloud-aio-storage>=9.6.4",
 ]
 
 [tool.uv]
