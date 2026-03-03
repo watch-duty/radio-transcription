@@ -20,7 +20,7 @@ resource "google_cloudfunctions2_function" "default" {
 
   build_config {
     runtime     = var.runtime
-    entry_point = var.entry_point 
+    entry_point = var.entry_point
     source {
       storage_source {
         bucket = var.source_bucket_name

@@ -4,14 +4,14 @@ variable "entry_point" { type = string }
 variable "source_dir" { type = string }
 variable "source_bucket_name" { type = string }
 
-variable "description" { 
-  type    = string 
-  default = "Deployed via Terraform" 
+variable "description" {
+  type    = string
+  default = "Deployed via Terraform"
 }
 
-variable "runtime" { 
-  type    = string 
-  default = "python311" 
+variable "runtime" {
+  type    = string
+  default = "python311"
 }
 
 variable "environment_variables" {
