@@ -113,16 +113,18 @@ class HeartbeatMonitor:
             # --- Completed-task cleanup (before renewals) ----------------
             snapshot = dict(self._feeds)
             for feed_id, task in snapshot.items():
-                if task.done():
-                    self._feeds.pop(feed_id, None)
-                    if not task.cancelled():
-                        exc = task.exception()
-                        if exc is not None:
-                            logger.error(
-                                "Feed processing task crashed for feed %s",
-                                feed_id,
-                                exc_info=exc,
-                            )
+                if not task.done():
+                    continue
+                self._feeds.pop(feed_id, None)
+                if task.cancelled():
+                    continue
+                exc = task.exception()
+                if exc is not None:
+                    logger.error(
+                        "Feed processing task crashed for feed %s",
+                        feed_id,
+                        exc_info=exc,
+                    )
 
             # --- Renew heartbeats ----------------------------------------
             snapshot = dict(self._feeds)
