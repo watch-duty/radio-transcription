@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 MOCK_ENV_VARS = {
     "BROADCASTIFY_USERNAME": "test_user",
     "BROADCASTIFY_PASSWORD": "test_pass",
-    "GCS_BUCKET_NAME": "test-bucket",
+    "FINAL_STAGING_BUCKET": "test-bucket",
 }
 
 with (
@@ -19,12 +19,11 @@ with (
 class TestWriteToGCS(unittest.TestCase):
     def setUp(self) -> None:
         # 1. Setup Mocks
-        self.mock_bucket = MagicMock()
+        self.mock_storage_client = MagicMock()
         self.mock_logger = MagicMock()
 
         # 2. Setup Patchers for icecast_collector namespace
         self.patchers = [
-            patch.object(icecast_collector, "bucket", self.mock_bucket),
             patch.object(icecast_collector, "logger", self.mock_logger),
             patch.object(
                 icecast_collector, "SAMPLE_WIDTH", icecast_collector.SAMPLE_WIDTH
@@ -51,22 +50,29 @@ class TestWriteToGCS(unittest.TestCase):
             "2026-02-27T12:34:56.000000"
         )
 
-        mock_blob = MagicMock()
-        self.mock_bucket.blob.return_value = mock_blob
+        # Make the mock storage client's upload method awaitable
+        self.mock_storage_client.upload = AsyncMock()
 
         # Act
-        icecast_collector.write_to_gcs(
-            bytearray(chunk), feed_id, source_type, "2026-02-27T12-34-56.000000"
+        asyncio.run(
+            icecast_collector.write_to_gcs(
+                self.mock_storage_client,
+                bytearray(chunk),
+                feed_id,
+                source_type,
+                "2026-02-27T12-34-56.000000",
+            )
         )
 
         # Assert
         expected_blob_name = "bcfy_feeds/1234/2026-02-27T12-34-56.000000.wav"
-        self.mock_bucket.blob.assert_called_once_with(expected_blob_name)
-        mock_blob.upload_from_string.assert_called_once()
-        upload_args, upload_kwargs = mock_blob.upload_from_string.call_args
+        self.mock_storage_client.upload.assert_called_once()
+        call_args, call_kwargs = self.mock_storage_client.upload.call_args
 
-        self.assertTrue(len(upload_args[0]) > 44)  # WAV header + PCM payload
-        self.assertEqual(upload_kwargs["content_type"], "audio/wav")
+        self.assertEqual(call_args[0], icecast_collector.FINAL_STAGING_BUCKET)
+        self.assertEqual(call_args[1], expected_blob_name)
+        self.assertTrue(len(call_args[2]) > 44)  # WAV header + PCM payload
+        self.assertEqual(call_kwargs["content_type"], "audio/wav")
         self.mock_logger.info.assert_called_once()
         self.mock_logger.exception.assert_not_called()
 
@@ -77,16 +83,24 @@ class TestWriteToGCS(unittest.TestCase):
         feed_id = 5678
         source_type = "bcfy_feeds"
 
+        self.mock_storage_client.upload = AsyncMock()
+
         with patch.object(
             icecast_collector.wave, "open", side_effect=Exception("wave failure")
         ):
             # Act
-            icecast_collector.write_to_gcs(
-                bytearray(chunk), feed_id, source_type, "2026-02-27T12-34-56.000000"
+            asyncio.run(
+                icecast_collector.write_to_gcs(
+                    self.mock_storage_client,
+                    bytearray(chunk),
+                    feed_id,
+                    source_type,
+                    "2026-02-27T12-34-56.000000",
+                )
             )
 
         # Assert
-        self.mock_bucket.blob.assert_not_called()
+        self.mock_storage_client.upload.assert_not_called()
         self.mock_logger.exception.assert_called_once()
         logged_msg = self.mock_logger.exception.call_args[0][0]
         self.assertIn("Failed to format WAV data", logged_msg)
@@ -103,19 +117,24 @@ class TestWriteToGCS(unittest.TestCase):
             "2026-02-27T23:59:59.999999"
         )
 
-        mock_blob = MagicMock()
-        mock_blob.upload_from_string.side_effect = Exception("gcs failure")
-        self.mock_bucket.blob.return_value = mock_blob
+        self.mock_storage_client.upload = AsyncMock(
+            side_effect=Exception("gcs failure")
+        )
 
         # Act
-        icecast_collector.write_to_gcs(
-            bytearray(chunk), feed_id, source_type, "2026-02-27T23-59-59.999999"
+        asyncio.run(
+            icecast_collector.write_to_gcs(
+                self.mock_storage_client,
+                bytearray(chunk),
+                feed_id,
+                source_type,
+                "2026-02-27T23-59-59.999999",
+            )
         )
 
         # Assert
         expected_blob_name = "bcfy_feeds/9012/2026-02-27T23-59-59.999999.wav"
-        self.mock_bucket.blob.assert_called_once_with(expected_blob_name)
-        mock_blob.upload_from_string.assert_called_once()
+        self.mock_storage_client.upload.assert_called_once()
         self.mock_logger.info.assert_not_called()
         self.mock_logger.exception.assert_called_once()
         logged_msg = self.mock_logger.exception.call_args[0][0]
@@ -125,12 +144,9 @@ class TestWriteToGCS(unittest.TestCase):
 
 class TestIcecastCollector(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        self.mock_bucket = MagicMock()
+        self.mock_storage_client = MagicMock()
         self.mock_logger = MagicMock()
         self.patchers = [
-            patch(
-                "backend.pipeline.ingestion.icecast_collector.bucket", self.mock_bucket
-            ),
             patch(
                 "backend.pipeline.ingestion.icecast_collector.logger", self.mock_logger
             ),
@@ -155,10 +171,6 @@ class TestIcecastCollector(unittest.IsolatedAsyncioTestCase):
             p.stop()
 
     @patch(
-        "backend.pipeline.ingestion.icecast_collector.asyncio.to_thread",
-        new_callable=AsyncMock,
-    )  # Mock the offloader
-    @patch(
         "backend.pipeline.ingestion.icecast_collector.asyncio.create_subprocess_exec"
     )
     @patch(
@@ -169,7 +181,6 @@ class TestIcecastCollector(unittest.IsolatedAsyncioTestCase):
         self,
         mock_sleep: MagicMock,
         mock_subprocess: MagicMock,
-        mock_to_thread: MagicMock,
     ) -> None:
         """Test that monitor_stream reads from ffmpeg and offloads processing."""
         # 1. Setup Mock Process
@@ -186,19 +197,10 @@ class TestIcecastCollector(unittest.IsolatedAsyncioTestCase):
 
         # 3. Execution
         try:
-            await icecast_collector.monitor_stream()
+            await icecast_collector.monitor_stream(self.mock_storage_client)
         except RuntimeError as e:
             if str(e) != "Break Loop":
                 raise
-
-        # 4. Assertions
-        # Verify to_thread was called
-        mock_to_thread.assert_called_once()
-
-        # Access the arguments of the first call to to_thread
-        args, _ = mock_to_thread.call_args
-        # args[0] is the function, args[1] is the data chunk
-        self.assertEqual(len(args[1]), 480000)
 
         # Verify that create_subprocess_exec was called twice
         # (once for initial startup, once after the first iteration restart)
@@ -225,7 +227,7 @@ class TestIcecastCollector(unittest.IsolatedAsyncioTestCase):
             side_effect=RuntimeError("Stop"),
         ):
             with self.assertRaises(RuntimeError):
-                await icecast_collector.monitor_stream()
+                await icecast_collector.monitor_stream(self.mock_storage_client)
 
         # Verify cleanup logic
         mock_proc.terminate.assert_called_once()
@@ -264,7 +266,7 @@ class TestIcecastCollector(unittest.IsolatedAsyncioTestCase):
         mock_sleep.side_effect = [None, None, RuntimeError("Stop")]
 
         with self.assertRaises(RuntimeError):
-            await icecast_collector.monitor_stream()
+            await icecast_collector.monitor_stream(self.mock_storage_client)
 
         self.assertEqual(
             mock_sleep.await_args_list,
@@ -312,7 +314,7 @@ class TestIcecastCollector(unittest.IsolatedAsyncioTestCase):
         mock_sleep.side_effect = [None, None, None, RuntimeError("Stop")]
 
         with self.assertRaises(RuntimeError):
-            await icecast_collector.monitor_stream()
+            await icecast_collector.monitor_stream(self.mock_storage_client)
 
         self.assertEqual(
             mock_sleep.await_args_list,

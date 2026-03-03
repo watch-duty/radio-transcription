@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import io
 import logging
 import os
@@ -7,12 +8,19 @@ import sys
 import wave
 from datetime import datetime
 
-from google.cloud import storage
+import aiohttp
+from gcloud.aio.storage import Storage
+
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
+logger = logging.getLogger(__name__)
 
 # Env variables
 USER = os.getenv("BROADCASTIFY_USERNAME")
 PASS = os.getenv("BROADCASTIFY_PASSWORD")
-GCS_BUCKET_NAME = os.getenv("GCS_BUCKET_NAME")
+FINAL_STAGING_BUCKET = os.getenv("FINAL_STAGING_BUCKET", "")
 CHUNK_DURATION_SECONDS = int(os.getenv("CHUNK_DURATION_SECONDS", "15"))
 NUM_STREAMS = int(os.getenv("NUM_STREAMS", "20"))
 STARTUP_THROTTLE_NUM = int(os.getenv("STARTUP_THROTTLE", "5"))
@@ -30,26 +38,66 @@ MAX_CONCURRENT_UPLOADS = 10
 BASE_BACKOFF = 5  # Initial retry delay in seconds
 MAX_BACKOFF = 300  # Maximum retry delay (5 minutes)
 
-logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
-logger = logging.getLogger(__name__)
-
 if not USER or not PASS:
     logger.critical("USERNAME and PASSWORD env vars must be set.")
     sys.exit(1)
 
-if not GCS_BUCKET_NAME:
-    logger.critical("GCS_BUCKET_NAME env var must be set.")
+if not FINAL_STAGING_BUCKET:
+    logger.critical("FINAL_STAGING_BUCKET env var must be set.")
     sys.exit(1)
 
-# Initialize the client once outside the function for better performance
-storage_client = storage.Client()
-bucket = storage_client.bucket(GCS_BUCKET_NAME)
+
+# Create the Basic Auth header value for ffmpeg
+credentials = f"{USER}:{PASS}"
+encoded_bytes = base64.b64encode(credentials.encode("utf-8"))
+encoded_string = encoded_bytes.decode("utf-8")
+auth_header = f"Authorization: Basic {encoded_string}\r\n"
 
 
-async def monitor_stream() -> None:
+async def write_to_gcs(
+    storage_client: Storage,
+    chunk: bytearray,
+    feed_id: int,
+    source_type: str,
+    cur_time_iso: str,
+) -> None:
+    """
+    Upload a single audio chunk to GCS: convert raw PCM to WAV format and upload.
+        - chunk: Raw PCM audio data
+        - feed_id: Identifier for the feed, used in GCS path
+        - source_type: Icecast source (e.g., "bcfy_feeds")
+        - cur_time_iso: Current timestamp in ISO format for filename
+    """
+    # 1. Create the WAV in memory
+    try:
+        with io.BytesIO() as wav_io:
+            with wave.open(wav_io, "wb") as f:
+                f.setnchannels(1)
+                f.setsampwidth(SAMPLE_WIDTH)
+                f.setframerate(SAMPLE_RATE)
+                f.writeframes(chunk)
+            wav_data = wav_io.getvalue()
+    except Exception as e:
+        logger.exception(f"Feed {feed_id}: Failed to format WAV data: {e}")
+        return
+
+    # 2. Define the destination path
+    blob_name = f"{source_type}/{feed_id}/{cur_time_iso}.wav"
+
+    # 3. Upload to GCS
+    try:
+        await storage_client.upload(
+            FINAL_STAGING_BUCKET,
+            blob_name,
+            wav_data,
+            content_type="audio/wav",
+        )
+        logger.info(f"Feed {feed_id}: Uploaded {len(wav_data)} bytes to {blob_name}")
+    except Exception as e:
+        logger.exception(f"Feed {feed_id}: Failed to upload {blob_name} - {e}")
+
+
+async def monitor_stream(storage_client: Storage) -> None:
     """Robust 24/7 monitor for a single ffmpeg process."""
     consecutive_failures = 0
 
@@ -57,7 +105,7 @@ async def monitor_stream() -> None:
         # TODO(axian0420): https://linear.app/watchduty/issue/GOO-58/stream-normalizer
         # REPLACE WITH FEED FETCHER UTILITY LATER
         feed_id = random.randint(1000, 9999)  # noqa: S311
-        url = f"https://{USER}:{PASS}@audio.broadcastify.com/{feed_id}.mp3"
+        url = f"https://audio.broadcastify.com/{feed_id}.mp3"
         source_type = "bcfy_feeds"
 
         chunks_processed = 0
@@ -68,6 +116,7 @@ async def monitor_stream() -> None:
 
         try:
             chunks_processed = await _process_stream_chunks(
+                storage_client,
                 process,
                 upload_semaphore,
                 upload_tasks,
@@ -105,6 +154,7 @@ async def _create_ffmpeg_process(url: str, feed_id: int) -> asyncio.subprocess.P
     async with STARTUP_THROTTLE:
         process = await asyncio.create_subprocess_exec(
             "ffmpeg", "-nostdin", "-re",
+            "-headers", auth_header,
             "-i", url,
             "-f", "s16le",
             "-acodec", "pcm_s16le",
@@ -118,7 +168,8 @@ async def _create_ffmpeg_process(url: str, feed_id: int) -> asyncio.subprocess.P
     return process
 
 
-async def _process_stream_chunks(
+async def _process_stream_chunks(  # noqa: PLR0913
+    storage_client: Storage,
     process: asyncio.subprocess.Process,
     upload_semaphore: asyncio.Semaphore,
     upload_tasks: set[asyncio.Task],
@@ -129,12 +180,12 @@ async def _process_stream_chunks(
     Read from stream and process audio chunks.
 
     Args:
+        storage_client: The GCS storage client for uploads
         process: The ffmpeg subprocess
         upload_semaphore: Semaphore for controlling concurrent uploads
         upload_tasks: Set to track active upload tasks
         feed_id: Feed identifier
         source_type: Source type identifier
-
     Returns:
         Number of chunks processed
 
@@ -160,6 +211,7 @@ async def _process_stream_chunks(
             # This prevents ffmpeg's stdout pipe buffer from filling up
             task = asyncio.create_task(
                 _upload_chunk_with_semaphore(
+                    storage_client,
                     upload_semaphore,
                     current_chunk,
                     feed_id,
@@ -176,7 +228,8 @@ async def _process_stream_chunks(
     return chunks_processed
 
 
-async def _upload_chunk_with_semaphore(
+async def _upload_chunk_with_semaphore(  # noqa: PLR0913
+    storage_client: Storage,
     semaphore: asyncio.Semaphore,
     chunk: bytearray,
     feed_id: int,
@@ -188,8 +241,8 @@ async def _upload_chunk_with_semaphore(
     This prevents unbounded accumulation of upload tasks.
     """
     async with semaphore:
-        await asyncio.to_thread(
-            write_to_gcs,
+        await write_to_gcs(
+            storage_client,
             chunk,
             feed_id,
             source_type,
@@ -266,44 +319,12 @@ async def _handle_stream_completion(
     return consecutive_failures, backoff_delay
 
 
-def write_to_gcs(
-    chunk: bytearray, feed_id: int, source_type: str, cur_time_iso: str
-) -> None:
-    """
-    Upload a single audio chunk to GCS: convert raw PCM to WAV format and upload.
-        - chunk: Raw PCM audio data
-        - feed_id: Identifier for the feed, used in GCS path
-        - source_type: Icecast source (e.g., "bcfy_feeds")
-        - cur_time_iso: Current timestamp in ISO format for filename
-    """
-    # 1. Create the WAV in memory
-    try:
-        with io.BytesIO() as wav_io:
-            with wave.open(wav_io, "wb") as f:
-                f.setnchannels(1)
-                f.setsampwidth(SAMPLE_WIDTH)
-                f.setframerate(SAMPLE_RATE)
-                f.writeframes(chunk)
-            wav_data = wav_io.getvalue()
-    except Exception as e:
-        logger.exception(f"Feed {feed_id}: Failed to format WAV data: {e}")
-        return
-
-    # 2. Define the destination path
-    blob_name = f"{source_type}/{feed_id}/{cur_time_iso}.wav"
-
-    # 3. Upload to GCS
-    try:
-        blob = bucket.blob(blob_name)
-        blob.upload_from_string(wav_data, content_type="audio/wav")
-        logger.info(f"Feed {feed_id}: Uploaded {len(wav_data)} bytes to {blob_name}")
-    except Exception as e:
-        logger.exception(f"Feed {feed_id}: Failed to upload {blob_name} - {e}")
-
-
 async def main() -> None:
-    tasks = [monitor_stream() for _ in range(NUM_STREAMS)]
-    await asyncio.gather(*tasks)
+    # Use a single session for all streams to benefit from connection pooling
+    async with aiohttp.ClientSession() as session:
+        storage_client = Storage(session=session)
+        tasks = [monitor_stream(storage_client) for _ in range(NUM_STREAMS)]
+        await asyncio.gather(*tasks)
 
 
 if __name__ == "__main__":
