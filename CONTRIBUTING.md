@@ -25,6 +25,6 @@
 * Testing: [Vitest](https://vitest.dev/) with [React Testing Library](https://testing-library.com/react)
 
 
-### Making Changes to Terraform Files
-* run `terraform fmt -recursive` to format
-* run `terraform validate` and `terraform fmt -check -recursive` to ensure changes will pass pre-submits.
+### Making Changes to Files
+* run `mise format`
+* run `mise lint`
