@@ -420,7 +420,8 @@ class TestFeedStoreIntegration(unittest.TestCase):
         )
 
         result = self.store.renew_heartbeats_batch(
-            [owned_feed, stolen_feed], worker,
+            [owned_feed, stolen_feed],
+            worker,
         )
 
         self.assertEqual(result, {owned_feed})
