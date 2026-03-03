@@ -5,6 +5,7 @@
 1. Install Mise (`curl https://mise.run | sh` or `brew install mise` - https://mise.jdx.dev/getting-started.html)
 2. Install tools: `mise install`
 3. Optionally activate mise venv: `eval "$(mise activate zsh)"` (see docs above for other options)
+4. Install Docker: `brew install --cask docker`
 
 ## Dev/coding tools and best practices
 
@@ -28,3 +29,6 @@
 ### Making Changes to Files
 * run `mise format`
 * run `mise lint`
+
+### Deployments and Local Testing
+* Docker
