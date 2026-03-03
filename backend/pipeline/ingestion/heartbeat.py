@@ -20,8 +20,9 @@ class HeartbeatMonitor:
     Background async task that periodically renews database heartbeats.
 
     For every feed registered with this monitor, the heartbeat loop calls
-    ``FeedStore.renew_heartbeat`` once per interval.  If the renewal indicates
-    a fence violation (another worker stole the lease), the corresponding
+    ``FeedStore.renew_heartbeats_batch`` once per interval to renew all feeds
+    in a single query.  If any feed is missing from the returned set (fence
+    violation — another worker stole the lease), the corresponding
     ``asyncio.Task`` is cancelled immediately to prevent split-brain ingestion.
 
     Args:
