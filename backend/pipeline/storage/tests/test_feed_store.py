@@ -29,6 +29,7 @@ def _make_conn(cursor: mock.MagicMock) -> mock.MagicMock:
 
 
 _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+_FEED_ID_B = uuid.UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
 _WORKER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 
 _LEASE_ROW: dict = {
@@ -204,6 +205,157 @@ class TestUpdateFeedProgress(unittest.TestCase):
             store.update_feed_progress(
                 _FEED_ID, _WORKER_ID, "gs://bucket/path/file.ogg"
             )
+
+        cursor.__exit__.assert_called_once()
+
+
+class TestRenewHeartbeat(unittest.TestCase):
+    """Tests for FeedStore.renew_heartbeat."""
+
+    def test_returns_true_when_lease_held(self) -> None:
+        """True is returned when the heartbeat was renewed."""
+        cursor = _make_cursor(rowcount=1)
+        conn = _make_conn(cursor)
+        store = FeedStore(conn)
+
+        result = store.renew_heartbeat(_FEED_ID, _WORKER_ID)
+
+        self.assertTrue(result)
+
+    def test_returns_false_when_lease_lost(self) -> None:
+        """False is returned when the lease was lost (fence violation)."""
+        cursor = _make_cursor(rowcount=0)
+        conn = _make_conn(cursor)
+        store = FeedStore(conn)
+
+        result = store.renew_heartbeat(_FEED_ID, _WORKER_ID)
+
+        self.assertFalse(result)
+
+    def test_passes_correct_parameters(self) -> None:
+        """Parameters are passed in the correct order."""
+        cursor = _make_cursor(rowcount=1)
+        conn = _make_conn(cursor)
+        store = FeedStore(conn)
+
+        store.renew_heartbeat(_FEED_ID, _WORKER_ID)
+
+        args = cursor.execute.call_args
+        self.assertEqual(args[0][1], (_FEED_ID, _WORKER_ID))
+
+    def test_commits_on_success(self) -> None:
+        """The transaction is committed after a successful renewal."""
+        cursor = _make_cursor(rowcount=1)
+        conn = _make_conn(cursor)
+        store = FeedStore(conn)
+
+        store.renew_heartbeat(_FEED_ID, _WORKER_ID)
+
+        conn.transaction.assert_called_once()
+        tx_mock = conn.transaction.return_value
+        tx_mock.__enter__.assert_called_once()
+        tx_mock.__exit__.assert_called_once()
+
+    def test_rolls_back_and_reraises_on_error(self) -> None:
+        """The transaction is rolled back and the exception re-raised on failure."""
+        cursor = _make_cursor()
+        cursor.execute.side_effect = RuntimeError("db error")
+        conn = _make_conn(cursor)
+        store = FeedStore(conn)
+
+        with self.assertRaises(RuntimeError):
+            store.renew_heartbeat(_FEED_ID, _WORKER_ID)
+
+        conn.transaction.assert_called_once()
+        tx_mock = conn.transaction.return_value
+        tx_mock.__exit__.assert_called_once()
+        args = tx_mock.__exit__.call_args[0]
+        self.assertEqual(args[0], RuntimeError)
+
+    def test_cursor_is_closed(self) -> None:
+        """The cursor is always closed, even on error."""
+        cursor = _make_cursor()
+        cursor.execute.side_effect = RuntimeError("db error")
+        conn = _make_conn(cursor)
+        store = FeedStore(conn)
+
+        with self.assertRaises(RuntimeError):
+            store.renew_heartbeat(_FEED_ID, _WORKER_ID)
+
+        cursor.__exit__.assert_called_once()
+
+
+class TestRenewHeartbeatsBatch(unittest.TestCase):
+    """Tests for FeedStore.renew_heartbeats_batch."""
+
+    def test_returns_renewed_ids(self) -> None:
+        """Returned set contains the IDs from RETURNING rows."""
+        cursor = _make_cursor()
+        cursor.fetchall.return_value = [(_FEED_ID,), (_FEED_ID_B,)]
+        conn = _make_conn(cursor)
+        store = FeedStore(conn)
+
+        result = store.renew_heartbeats_batch([_FEED_ID, _FEED_ID_B], _WORKER_ID)
+
+        self.assertEqual(result, {_FEED_ID, _FEED_ID_B})
+
+    def test_returns_empty_set_for_no_matches(self) -> None:
+        """Empty set is returned when no rows match (all leases lost)."""
+        cursor = _make_cursor()
+        cursor.fetchall.return_value = []
+        conn = _make_conn(cursor)
+        store = FeedStore(conn)
+
+        result = store.renew_heartbeats_batch([_FEED_ID], _WORKER_ID)
+
+        self.assertEqual(result, set())
+
+    def test_short_circuits_on_empty_input(self) -> None:
+        """Empty feed_ids list returns empty set without executing a query."""
+        conn = mock.MagicMock()
+        store = FeedStore(conn)
+
+        result = store.renew_heartbeats_batch([], _WORKER_ID)
+
+        self.assertEqual(result, set())
+        conn.transaction.assert_not_called()
+
+    def test_passes_correct_parameters(self) -> None:
+        """Parameters are passed as (feed_ids_list, worker_id)."""
+        cursor = _make_cursor()
+        cursor.fetchall.return_value = [(_FEED_ID,)]
+        conn = _make_conn(cursor)
+        store = FeedStore(conn)
+        feed_ids = [_FEED_ID, _FEED_ID_B]
+
+        store.renew_heartbeats_batch(feed_ids, _WORKER_ID)
+
+        args = cursor.execute.call_args
+        self.assertEqual(args[0][1], (feed_ids, _WORKER_ID))
+
+    def test_commits_on_success(self) -> None:
+        """The transaction is committed after a successful batch renewal."""
+        cursor = _make_cursor()
+        cursor.fetchall.return_value = [(_FEED_ID,)]
+        conn = _make_conn(cursor)
+        store = FeedStore(conn)
+
+        store.renew_heartbeats_batch([_FEED_ID], _WORKER_ID)
+
+        conn.transaction.assert_called_once()
+        tx_mock = conn.transaction.return_value
+        tx_mock.__enter__.assert_called_once()
+        tx_mock.__exit__.assert_called_once()
+
+    def test_cursor_is_closed(self) -> None:
+        """The cursor is always closed, even on error."""
+        cursor = _make_cursor()
+        cursor.execute.side_effect = RuntimeError("db error")
+        conn = _make_conn(cursor)
+        store = FeedStore(conn)
+
+        with self.assertRaises(RuntimeError):
+            store.renew_heartbeats_batch([_FEED_ID], _WORKER_ID)
 
         cursor.__exit__.assert_called_once()
 

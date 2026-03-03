@@ -56,6 +56,19 @@ SET status = CASE WHEN failure_count + 1 >= 3
 WHERE id = %s AND worker_id = %s
 """
 
+_RENEW_HEARTBEAT_SQL = """\
+UPDATE feeds
+SET last_heartbeat = NOW()
+WHERE id = %s AND worker_id = %s
+"""
+
+_RENEW_HEARTBEATS_BATCH_SQL = """\
+UPDATE feeds
+SET last_heartbeat = NOW()
+WHERE id = ANY(%s) AND worker_id = %s
+RETURNING id
+"""
+
 
 class LeasedFeed(TypedDict):
     """Feed details returned after a successful lease acquisition."""
@@ -143,6 +156,68 @@ class FeedStore:
                     (new_gcs_path, feed_id, worker_id),
                 )
                 return cursor.rowcount > 0
+
+    def renew_heartbeat(
+        self,
+        feed_id: uuid.UUID,
+        worker_id: uuid.UUID,
+    ) -> bool:
+        """
+        Renew the heartbeat timestamp for a leased feed.
+
+        This is a fenced operation — it only succeeds if the given worker still
+        holds the lease. A ``False`` return indicates a fence violation: another
+        worker has stolen the lease and this worker must stop processing.
+
+        Args:
+            feed_id: UUID of the feed to renew.
+            worker_id: UUID of the worker holding the lease.
+
+        Returns:
+            ``True`` if the heartbeat was renewed (lease still held), ``False``
+            if the lease was lost.
+
+        """
+        with self._conn.transaction():
+            with self._conn.cursor() as cursor:
+                cursor.execute(
+                    _RENEW_HEARTBEAT_SQL,
+                    (feed_id, worker_id),
+                )
+                return cursor.rowcount > 0
+
+    def renew_heartbeats_batch(
+        self,
+        feed_ids: list[uuid.UUID],
+        worker_id: uuid.UUID,
+    ) -> set[uuid.UUID]:
+        """
+        Batch-renew heartbeats for multiple feeds in a single query.
+
+        Returns the set of feed_ids that were successfully renewed.
+        Any feed_id in the input that is missing from the returned set
+        indicates a fence violation — another worker has stolen the lease.
+
+        This reduces heartbeat DB load from O(N) queries to O(1) per cycle,
+        which is critical at 250 feeds per worker.
+
+        Args:
+            feed_ids: List of feed UUIDs to renew.
+            worker_id: UUID of the worker holding the leases.
+
+        Returns:
+            Set of feed_ids whose heartbeats were renewed.
+
+        """
+        if not feed_ids:
+            return set()
+        with self._conn.transaction():
+            with self._conn.cursor() as cursor:
+                cursor.execute(
+                    _RENEW_HEARTBEATS_BATCH_SQL,
+                    (feed_ids, worker_id),
+                )
+                return {row[0] for row in cursor.fetchall()}
 
     def report_feed_failure(
         self,
