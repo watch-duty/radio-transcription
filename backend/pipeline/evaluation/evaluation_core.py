@@ -17,9 +17,17 @@ from backend.pipeline.schema_types.transcribed_audio_pb2 import TranscribedAudio
 publisher = pubsub_v1.PublisherClient()
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT")
 OUTPUT_TOPIC_ID = os.environ.get("OUTPUT_TOPIC")
-client = google.cloud.logging.Client()
-client.setup_logging()
 logger = logging.getLogger(__name__)
+
+if not os.environ.get("LOCAL_DEV"):
+    client = google.cloud.logging.Client()
+    client.setup_logging()
+else:
+    # If local, just print normally to the Docker console
+    logger.setLevel(logging.INFO)
+    handler = logging.StreamHandler()
+    logger.addHandler(handler)
+    logger.info("Running in LOCAL_DEV mode. Logs will print here.")
 
 if PROJECT_ID and OUTPUT_TOPIC_ID:
     output_topic_path = publisher.topic_path(PROJECT_ID, OUTPUT_TOPIC_ID)
