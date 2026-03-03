@@ -23,3 +23,8 @@
 * Formatting and linting: `prettier` and `eslint`
 * Bundling: `vite` (https://vite.dev/)
 * Testing: [Vitest](https://vitest.dev/) with [React Testing Library](https://testing-library.com/react)
+
+
+### Making Changes to Files
+* run `mise format`
+* run `mise lint`

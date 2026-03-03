@@ -17,7 +17,7 @@ frontend_dir = "frontend"
 # ---------------------------------------------------------------------------- #
 
 [tasks.lint]
-depends = ["lint:ruff", "lint:ty"]
+depends = ["lint:ruff", "lint:ty", "lint:terraform"]
 
 [tasks."lint:ruff"]
 description = "Run ruff Python linter with auto-fix"
@@ -27,9 +27,20 @@ run = "uv run ruff check --fix"
 description = "Run ty Python type-checker"
 run = "uv run ty check"
 
+[tasks."lint:terraform"]
+description = "Validate Terraform code and check formatting for pre-submits"
+run = """
+terraform validate
+terraform fmt -check -recursive
+"""
+
 [tasks.format]
-depends = ["format:ruff"]
+depends = ["format:ruff", "format:terraform"]
 
 [tasks."format:ruff"]
 description = "Format Python code with ruff"
 run = "uv run ruff format"
+
+[tasks."format:terraform"]
+description = "Format Terraform code"
+run = "terraform fmt -recursive"
