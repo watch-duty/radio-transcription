@@ -26,8 +26,9 @@ class HeartbeatMonitor:
 
     Args:
         conn_factory: Callable that returns a new ``psycopg.Connection``.
-            A fresh connection is created and closed on every loop iteration
-            to avoid holding open sessions between heartbeat cycles.
+            A single connection is created lazily on the first heartbeat
+            cycle and reused across iterations.  If the connection is lost
+            (e.g. server-side disconnect), it is recreated transparently.
         worker_id: UUID of the worker that owns the leased feeds.
         interval_sec: Seconds to sleep between heartbeat cycles (default 15).
 
@@ -44,6 +45,7 @@ class HeartbeatMonitor:
         self._interval = interval_sec
         self._feeds: dict[uuid.UUID, asyncio.Task] = {}
         self._task: asyncio.Task | None = None
+        self._conn: psycopg.Connection | None = None
 
     # -- Public API -------------------------------------------------------
 
@@ -66,6 +68,8 @@ class HeartbeatMonitor:
         """
         Cancel the heartbeat background task and wait for it to finish.
 
+        Also closes the persistent database connection if one is open.
+
         Note: if a database renewal is in progress via ``asyncio.to_thread``,
         cancellation will not take effect until the synchronous DB call
         completes.
@@ -77,34 +81,49 @@ class HeartbeatMonitor:
             except asyncio.CancelledError:
                 pass
             self._task = None
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            except Exception:
+                logger.debug("Error closing heartbeat connection", exc_info=True)
+            self._conn = None
 
     # -- Internal ---------------------------------------------------------
+
+    def _get_conn(self) -> psycopg.Connection:
+        """
+        Return the persistent connection, creating one lazily if needed.
+
+        If the existing connection is closed (e.g. server-side disconnect),
+        a new one is created transparently.
+        """
+        if self._conn is None or self._conn.closed:
+            self._conn = self._conn_factory()
+        return self._conn
 
     def _renew_all(
         self,
         feed_ids: list[uuid.UUID],
     ) -> dict[uuid.UUID, bool | Exception]:
         """
-        Renew heartbeats for *feed_ids* using a scoped DB session.
+        Renew heartbeats for *feed_ids* using a persistent DB connection.
 
         This synchronous helper runs inside ``asyncio.to_thread`` so it
-        never blocks the event loop.  A single connection is opened for
-        the entire batch and closed in a ``finally`` block.
+        never blocks the event loop.  The connection is reused across
+        iterations to avoid the overhead of establishing a new TLS tunnel
+        through the AlloyDB Connector on every cycle.
         """
-        conn = self._conn_factory()
+        conn = self._get_conn()
         results: dict[uuid.UUID, bool | Exception] = {}
-        try:
-            store = FeedStore(conn)
-            for feed_id in feed_ids:
-                try:
-                    results[feed_id] = store.renew_heartbeat(
-                        feed_id,
-                        self._worker_id,
-                    )
-                except Exception as exc:
-                    results[feed_id] = exc
-        finally:
-            conn.close()
+        store = FeedStore(conn)
+        for feed_id in feed_ids:
+            try:
+                results[feed_id] = store.renew_heartbeat(
+                    feed_id,
+                    self._worker_id,
+                )
+            except Exception as exc:
+                results[feed_id] = exc
         return results
 
     async def _run(self) -> None:
