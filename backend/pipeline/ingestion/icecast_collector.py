@@ -150,7 +150,7 @@ async def _create_ffmpeg_process(url: str) -> asyncio.subprocess.Process:
         )  # fmt: skip
 
 
-def _pcm_to_wav(pcm_data: bytes, feed_name: str) -> bytes:
+def _pcm_to_wav(pcm_data: bytearray, feed_name: str) -> bytes:
     """
     Convert raw PCM audio data to WAV format.
 

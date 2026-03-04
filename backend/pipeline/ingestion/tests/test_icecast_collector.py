@@ -1,7 +1,11 @@
 import asyncio
 import os
 import unittest
+import uuid
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
+
+from backend.pipeline.storage.feed_store import LeasedFeed
 
 MOCK_ENV_VARS = {
     "BROADCASTIFY_USERNAME": "test_user",
@@ -12,6 +16,16 @@ with (
     patch.dict(os.environ, MOCK_ENV_VARS, clear=False),
 ):
     from backend.pipeline.ingestion import icecast_collector
+
+
+def _make_feed(name: str, stream_url: str | None) -> LeasedFeed:
+    return LeasedFeed(
+        id=uuid.uuid4(),
+        name=name,
+        source_type="icecast",
+        last_processed_filename=None,
+        stream_url=stream_url,
+    )
 
 
 class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
@@ -46,10 +60,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         chunk_size = 480000  # BYTES_PER_CHUNK
         mock_proc.stdout.read.return_value = b"x" * chunk_size
 
-        feed = {
-            "name": "test-feed",
-            "stream_url": "http://example.com/stream",
-        }
+        feed = _make_feed("test-feed", "http://example.com/stream")
         shutdown_event = asyncio.Event()
 
         # Act
@@ -79,10 +90,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         chunk_size = 480000
         mock_proc.stdout.read.return_value = b"y" * chunk_size
 
-        feed = {
-            "name": "shutdown-feed",
-            "stream_url": "http://example.com/stream",
-        }
+        feed = _make_feed("shutdown-feed", "http://example.com/stream")
         shutdown_event = asyncio.Event()
 
         # Act
@@ -113,10 +121,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         mock_proc.wait = AsyncMock(return_value=1)
         mock_create_ffmpeg.return_value = mock_proc
 
-        feed = {
-            "name": "error-exit-feed",
-            "stream_url": "http://example.com/stream",
-        }
+        feed = _make_feed("error-exit-feed", "http://example.com/stream")
         shutdown_event = asyncio.Event()
 
         # Act & Assert
@@ -130,10 +135,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_input_none_stream_url_raises_value_error(self) -> None:
         """Test invalid input: feed with None stream_url raises ValueError."""
         # Arrange
-        feed = {
-            "name": "none-stream-feed",
-            "stream_url": None,
-        }
+        feed = _make_feed("none-stream-feed", None)
         shutdown_event = asyncio.Event()
 
         # Act & Assert
@@ -149,10 +151,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Test invalid input: feed with empty stream_url raises ValueError."""
         # Arrange
-        feed = {
-            "name": "empty-stream-feed",
-            "stream_url": "",
-        }
+        feed = _make_feed("empty-stream-feed", "")
         shutdown_event = asyncio.Event()
 
         # Act & Assert
@@ -178,10 +177,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         mock_proc.wait = AsyncMock(return_value=0)
         mock_create_ffmpeg.return_value = mock_proc
 
-        feed = {
-            "name": "exit-zero-feed",
-            "stream_url": "http://example.com/stream",
-        }
+        feed = _make_feed("exit-zero-feed", "http://example.com/stream")
         shutdown_event = asyncio.Event()
 
         # Act & Assert - should exit cleanly without raising
@@ -206,10 +202,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
 
         mock_create_ffmpeg.return_value = mock_proc
 
-        feed = {
-            "name": "bad-feed",
-            "stream_url": "http://example.com/stream",
-        }
+        feed = _make_feed("bad-feed", "http://example.com/stream")
         shutdown_event = asyncio.Event()
 
         # Act & Assert
@@ -222,10 +215,15 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_input_missing_stream_url(self) -> None:
         """Test invalid input: feed missing stream_url raises KeyError."""
         # Arrange
-        feed = {
-            "name": "incomplete-feed",
-            # stream_url is missing
-        }
+        feed = cast(
+            "LeasedFeed",
+            {
+                "id": uuid.uuid4(),
+                "name": "incomplete-feed",
+                "source_type": "icecast",
+                "last_processed_filename": None,
+            },
+        )
         shutdown_event = asyncio.Event()
 
         # Act & Assert
@@ -236,10 +234,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_input_none_stream_url(self) -> None:
         """Test invalid input: feed with None stream_url raises ValueError."""
         # Arrange
-        feed = {
-            "name": "none-stream-feed",
-            "stream_url": None,
-        }
+        feed = _make_feed("none-stream-feed", None)
         shutdown_event = asyncio.Event()
 
         # Act & Assert
@@ -263,10 +258,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         mock_proc.stdout = None
         mock_create_ffmpeg.return_value = mock_proc
 
-        feed = {
-            "name": "no-stdout-feed",
-            "stream_url": "http://example.com/stream",
-        }
+        feed = _make_feed("no-stdout-feed", "http://example.com/stream")
         shutdown_event = asyncio.Event()
 
         # Act & Assert
@@ -293,10 +285,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         mock_proc.wait = AsyncMock()
         mock_create_ffmpeg.return_value = mock_proc
 
-        feed = {
-            "name": "read-error-feed",
-            "stream_url": "http://example.com/stream",
-        }
+        feed = _make_feed("read-error-feed", "http://example.com/stream")
         shutdown_event = asyncio.Event()
 
         # Act & Assert
@@ -327,10 +316,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             b"a" * (chunk_size * 2),
         ]
 
-        feed = {
-            "name": "multi-chunk-feed",
-            "stream_url": "http://example.com/stream",
-        }
+        feed = _make_feed("multi-chunk-feed", "http://example.com/stream")
         shutdown_event = asyncio.Event()
 
         # Act - collect both chunks
