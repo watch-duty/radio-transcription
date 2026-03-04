@@ -115,8 +115,8 @@ class NormalizerRuntime:
             db_name=s.db_name,
             password=s.db_password,
             port=s.db_port,
-            min_size=s.pool_min_size,
-            max_size=s.pool_max_size,
+            min_size=s.db_pool_min_size,
+            max_size=s.db_pool_max_size,
             command_timeout=s.db_command_timeout_sec,
             timeout=s.db_connect_timeout_sec,
         )
@@ -172,6 +172,12 @@ class NormalizerRuntime:
             try:
                 capacity = self._settings.max_feeds_per_worker - len(self._feed_tasks)
                 if capacity > 0:
+                    logger.info(
+                        "Attempting to acquire up to %d feeds (%d/%d active)",
+                        capacity,
+                        len(self._feed_tasks),
+                        self._settings.max_feeds_per_worker,
+                    )
                     leases = await self._store.acquire_feeds_batch(
                         self._settings.worker_id,
                         self._settings.abandonment_window_sec,
@@ -192,7 +198,8 @@ class NormalizerRuntime:
                         )
             except Exception:
                 logger.exception(
-                    "Lease acquisition failed -- will retry next cycle",
+                    "Lease acquisition failed -- will retry in %.1fs",
+                    self._settings.lease_poll_interval_sec,
                 )
 
             if await self._sleep_or_shutdown(
@@ -210,10 +217,11 @@ class NormalizerRuntime:
                 pass  # normal — task was cancelled by shutdown
             else:
                 if exc is not None:
-                    logger.warning(
+                    logger.error(
                         "Feed task %s failed: %s",
                         task.get_name(),
                         exc,
+                        exc_info=exc,
                     )
 
     # -- Per-feed pipeline ------------------------------------------------
@@ -273,7 +281,7 @@ class NormalizerRuntime:
                 await self._store.report_feed_failure(
                     feed["id"],
                     worker_id,
-                    self._settings.failure_threshold,
+                    self._settings.feed_failure_threshold,
                 )
             except Exception:
                 logger.exception(
@@ -347,6 +355,15 @@ class NormalizerRuntime:
             self._settings.worker_id,
         )
 
+        # A feed missing from renewed_ids is NOT a violation if:
+        #   - active[fid].done(): task finished between snapshot and DB response
+        #   - fid in _releasing_feeds: task is mid-await on release_feed /
+        #     record_failure — DB has set worker_id=NULL but task hasn't returned
+        # Any remaining feed is a true fence violation: another worker stole the
+        # lease while this task was still running unaware.  Because the heartbeat
+        # is batched, a single stolen lease implies a systemic failure (the
+        # heartbeat mechanism itself broke), so we terminate the entire process
+        # rather than cancelling one task while 249 others may also be compromised.
         lost_ids = {
             fid
             for fid in active

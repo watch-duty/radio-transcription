@@ -85,7 +85,7 @@ class TestFeedStoreIntegration(unittest.IsolatedAsyncioTestCase):
 
     # -- Helpers ----------------------------------------------------------
 
-    async def _insert_feed(  # noqa: PLR0913
+    async def _insert_feed(
         self,
         name: str,
         source_type: str = "bcfy_feeds",
@@ -102,7 +102,7 @@ class TestFeedStoreIntegration(unittest.IsolatedAsyncioTestCase):
             heartbeat_expr = f"NOW() - INTERVAL '{last_heartbeat_age_seconds} seconds'"
 
         feed_id = await self.pool.fetchval(
-            f"INSERT INTO feeds (name, source_type, status, failure_count,"  # noqa: S608
+            f"INSERT INTO feeds (name, source_type, status, failure_count,"
             f" worker_id, last_heartbeat)"
             f" VALUES ($1, $2, $3::feed_status, $4, $5::uuid, {heartbeat_expr})"
             f" RETURNING id",

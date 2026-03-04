@@ -139,6 +139,10 @@ max-complexity = 10
 
 [tool.ruff.lint.per-file-ignores]
 "**/**/test*.py" = [
+  "ANN001", # Missing type annotation for function argument
+  "ANN002", # Missing type annotation for *args
+  "ANN003", # Missing type annotation for **kwargs
+  "ANN202", # Missing return type annotation for public method
   "ANN206", # "Missing return type annotation for classmethod `setUpTestData`"
   "B017",   # Do not assert blind exception: `Exception`
   "C405",   # Unnecessary list literal (rewrite as a set literal)
@@ -147,12 +151,15 @@ max-complexity = 10
   "N802",   # "Function name `addSuccess` should be lowercase"
   "N806",   # "Variable `__` in function should be lowercase"
   "N815",   # Variable `feedId` in class scope should not be mixedCase
+  "PLR0913", # Too many arguments in function definition
   "PT018",  # Break assertions into separate statements
   "PT019",  # Fixture `_` without value is injected as parameter, use `@pytest.mark.usefixtures` instead
   "PT028",  # Test function parameter `delay_sec` has default argument
   "RET503", # Missing explicit `return` at the end of function able to return non-`None` value
   "S105",   # Possible hardcoded password assigned to: "new_password"
   "S113",   # requests.* require timeout=
+  "S608",   # Possible SQL injection via string-based query construction
+  "SLF001", # Private member accessed
 ]
 "model/data/**.py" = [
   "T201",   # allow print()

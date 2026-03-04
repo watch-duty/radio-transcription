@@ -55,7 +55,7 @@ class TestHeartbeatMonitorRenewal(unittest.IsolatedAsyncioTestCase):
         await monitor.stop()
 
         self.assertTrue(task.cancelled())
-        self.assertNotIn(_FEED_A, monitor._feeds)  # noqa: SLF001
+        self.assertNotIn(_FEED_A, monitor._feeds)
 
     async def test_fence_violation_preserves_reregistered_task(self) -> None:
         """
@@ -73,16 +73,16 @@ class TestHeartbeatMonitorRenewal(unittest.IsolatedAsyncioTestCase):
         new_task = asyncio.create_task(asyncio.sleep(10))
         monitor.register(_FEED_A, old_task)
 
-        original_batch = monitor._store.renew_heartbeats_batch  # noqa: SLF001
+        original_batch = monitor._store.renew_heartbeats_batch
 
-        async def _intercept(*args, **kwargs) -> set[uuid.UUID]:  # noqa: ANN002, ANN003
+        async def _intercept(*args, **kwargs) -> set[uuid.UUID]:
             result = await original_batch(*args, **kwargs)
             # Inject re-registration between the async call returning and
             # the monitor loop processing the results.
             monitor.register(_FEED_A, new_task)
             return result
 
-        monitor._store.renew_heartbeats_batch = _intercept  # type: ignore[assignment]  # noqa: SLF001
+        monitor._store.renew_heartbeats_batch = _intercept  # type: ignore[assignment]
         monitor.start()
         await asyncio.sleep(0.05)
         await monitor.stop()
@@ -90,7 +90,7 @@ class TestHeartbeatMonitorRenewal(unittest.IsolatedAsyncioTestCase):
         # Old task must be cancelled (fence violation).
         self.assertTrue(old_task.cancelled())
         # New task must NOT be evicted from the registry.
-        self.assertIs(monitor._feeds.get(_FEED_A), new_task)  # noqa: SLF001
+        self.assertIs(monitor._feeds.get(_FEED_A), new_task)
         self.assertFalse(new_task.cancelled())
 
         new_task.cancel()
@@ -112,7 +112,7 @@ class TestHeartbeatMonitorRenewal(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(task.cancelled())
         # Feed should remain in the registry.
-        self.assertIn(_FEED_A, monitor._feeds)  # noqa: SLF001
+        self.assertIn(_FEED_A, monitor._feeds)
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await task
@@ -133,8 +133,8 @@ class TestHeartbeatMonitorRenewal(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(task_a.cancelled())
         self.assertTrue(task_b.cancelled())
-        self.assertIn(_FEED_A, monitor._feeds)  # noqa: SLF001
-        self.assertNotIn(_FEED_B, monitor._feeds)  # noqa: SLF001
+        self.assertIn(_FEED_A, monitor._feeds)
+        self.assertNotIn(_FEED_B, monitor._feeds)
 
         task_a.cancel()
         with self.assertRaises(asyncio.CancelledError):
@@ -158,7 +158,7 @@ class TestHeartbeatMonitorCleanup(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.05)
         await monitor.stop()
 
-        self.assertNotIn(_FEED_A, monitor._feeds)  # noqa: SLF001
+        self.assertNotIn(_FEED_A, monitor._feeds)
 
     async def test_done_task_with_exception_is_cleaned_up_and_logged(self) -> None:
         """A task that raised is removed and its exception is logged."""
@@ -180,7 +180,7 @@ class TestHeartbeatMonitorCleanup(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.05)
             await monitor.stop()
 
-        self.assertNotIn(_FEED_A, monitor._feeds)  # noqa: SLF001
+        self.assertNotIn(_FEED_A, monitor._feeds)
         # The crash should have been logged at ERROR level with the feed_id.
         mock_logger.error.assert_called()
         log_args = mock_logger.error.call_args
@@ -214,7 +214,7 @@ class TestHeartbeatMonitorLifecycle(unittest.IsolatedAsyncioTestCase):
 
         monitor.unregister(_FEED_A)
 
-        self.assertNotIn(_FEED_A, monitor._feeds)  # noqa: SLF001
+        self.assertNotIn(_FEED_A, monitor._feeds)
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await task
@@ -280,7 +280,7 @@ class TestHeartbeatMonitorSnapshotSafety(unittest.IsolatedAsyncioTestCase):
         await monitor.stop()
 
         # The loop should not have raised.  Feed B should still be tracked.
-        self.assertNotIn(_FEED_A, monitor._feeds)  # noqa: SLF001
+        self.assertNotIn(_FEED_A, monitor._feeds)
 
         task_a.cancel()
         task_b.cancel()

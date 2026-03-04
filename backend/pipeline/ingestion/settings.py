@@ -14,7 +14,7 @@ def _require_env(name: str) -> str:
     return value
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class NormalizerSettings:
     """
     Configuration for the NormalizerRuntime, loaded from environment variables.
@@ -66,11 +66,11 @@ class NormalizerSettings:
     )
 
     # Database pool
-    pool_min_size: int = field(
-        default_factory=lambda: int(os.environ.get("POOL_MIN_SIZE", "10")),
+    db_pool_min_size: int = field(
+        default_factory=lambda: int(os.environ.get("DB_POOL_MIN_SIZE", "10")),
     )
-    pool_max_size: int = field(
-        default_factory=lambda: int(os.environ.get("POOL_MAX_SIZE", "10")),
+    db_pool_max_size: int = field(
+        default_factory=lambda: int(os.environ.get("DB_POOL_MAX_SIZE", "10")),
     )
 
     # Timeouts
@@ -86,9 +86,9 @@ class NormalizerSettings:
     )
 
     # Feed lifecycle
-    failure_threshold: int = field(
+    feed_failure_threshold: int = field(
         default_factory=lambda: int(
-            os.environ.get("FAILURE_THRESHOLD", "3"),
+            os.environ.get("FEED_FAILURE_THRESHOLD", "3"),
         ),
     )
     abandonment_window_sec: float = field(
