@@ -10,8 +10,8 @@ dependencies = [
     "google-cloud-pubsub>=2.35.0",
     "google-cloud-logging",
     "google-cloud-storage>=3.9.0",
-    "psycopg[binary]",
-    "google-cloud-alloydb-connector[psycopg3]",
+    "asyncpg>=0.29.0",
+    "google-cloud-alloydb-connector[asyncpg]",
     "aiohttp>=3.13.3",
     "gcloud-aio-storage>=9.6.4",
 ]

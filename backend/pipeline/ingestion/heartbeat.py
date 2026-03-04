@@ -8,9 +8,8 @@ from backend.pipeline.storage.feed_store import FeedStore
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Callable
 
-    import psycopg
+    import asyncpg
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +25,7 @@ class HeartbeatMonitor:
     ``asyncio.Task`` is cancelled immediately to prevent split-brain ingestion.
 
     Args:
-        conn_factory: Callable that returns a new ``psycopg.Connection``.
-            A single connection is created lazily on the first heartbeat
-            cycle and reused across iterations.  If the connection is lost
-            (e.g. server-side disconnect), it is recreated transparently.
+        pool: An asyncpg connection pool to the AlloyDB instance.
         worker_id: UUID of the worker that owns the leased feeds.
         interval_sec: Seconds to sleep between heartbeat cycles (default 15).
 
@@ -37,16 +33,15 @@ class HeartbeatMonitor:
 
     def __init__(
         self,
-        conn_factory: Callable[[], psycopg.Connection],
+        pool: asyncpg.Pool,
         worker_id: uuid.UUID,
         interval_sec: float = 15.0,
     ) -> None:
-        self._conn_factory = conn_factory
+        self._store = FeedStore(pool)
         self._worker_id = worker_id
         self._interval = interval_sec
         self._feeds: dict[uuid.UUID, asyncio.Task] = {}
         self._task: asyncio.Task | None = None
-        self._conn: psycopg.Connection | None = None
 
     # -- Public API -------------------------------------------------------
 
@@ -66,15 +61,7 @@ class HeartbeatMonitor:
         self._task = asyncio.create_task(self._run())
 
     async def stop(self) -> None:
-        """
-        Cancel the heartbeat background task and wait for it to finish.
-
-        Also closes the persistent database connection if one is open.
-
-        Note: if a database renewal is in progress via ``asyncio.to_thread``,
-        cancellation will not take effect until the synchronous DB call
-        completes.
-        """
+        """Cancel the heartbeat background task and wait for it to finish."""
         if self._task is not None:
             self._task.cancel()
             try:
@@ -82,43 +69,8 @@ class HeartbeatMonitor:
             except asyncio.CancelledError:
                 pass
             self._task = None
-        if self._conn is not None:
-            try:
-                self._conn.close()
-            except Exception:
-                logger.debug("Error closing heartbeat connection", exc_info=True)
-            self._conn = None
 
     # -- Internal ---------------------------------------------------------
-
-    def _get_conn(self) -> psycopg.Connection:
-        """
-        Return the persistent connection, creating one lazily if needed.
-
-        If the existing connection is closed (e.g. server-side disconnect),
-        a new one is created transparently.
-        """
-        if self._conn is None or self._conn.closed:
-            self._conn = self._conn_factory()
-        return self._conn
-
-    def _renew_all(
-        self,
-        feed_ids: list[uuid.UUID],
-    ) -> set[uuid.UUID]:
-        """
-        Batch-renew heartbeats using a single query.
-
-        This synchronous helper runs inside ``asyncio.to_thread`` so it
-        never blocks the event loop.  The connection is reused across
-        iterations to avoid the overhead of establishing a new TLS tunnel
-        through the AlloyDB Connector on every cycle.
-
-        Returns the set of feed_ids that were successfully renewed.
-        """
-        conn = self._get_conn()
-        store = FeedStore(conn)
-        return store.renew_heartbeats_batch(feed_ids, self._worker_id)
 
     async def _run(self) -> None:
         """Main heartbeat loop."""
@@ -145,9 +97,8 @@ class HeartbeatMonitor:
 
             if feed_ids:
                 try:
-                    renewed_ids = await asyncio.to_thread(
-                        self._renew_all,
-                        feed_ids,
+                    renewed_ids = await self._store.renew_heartbeats_batch(
+                        feed_ids, self._worker_id,
                     )
                 except Exception:
                     logger.exception("Heartbeat renewal batch failed")
