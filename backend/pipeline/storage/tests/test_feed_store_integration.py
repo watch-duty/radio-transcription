@@ -58,7 +58,7 @@ class TestFeedStoreIntegration(unittest.IsolatedAsyncioTestCase):
                 await conn.execute(sql_file.read_text())
             await conn.close()
 
-        asyncio.get_event_loop().run_until_complete(_setup_schema())
+        asyncio.run(_setup_schema())
 
     @classmethod
     def tearDownClass(cls) -> None:
