@@ -1,167 +1,26 @@
 import asyncio
 import os
 import unittest
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 MOCK_ENV_VARS = {
     "BROADCASTIFY_USERNAME": "test_user",
     "BROADCASTIFY_PASSWORD": "test_pass",
-    "FINAL_STAGING_BUCKET": "test-bucket",
 }
 
 with (
-    patch("google.cloud.storage.Client"),
     patch.dict(os.environ, MOCK_ENV_VARS, clear=False),
 ):
     from backend.pipeline.ingestion import icecast_collector
 
 
-class TestWriteToGCS(unittest.TestCase):
-    def setUp(self) -> None:
-        # 1. Setup Mocks
-        self.mock_storage_client = MagicMock()
-        self.mock_logger = MagicMock()
+class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
+    """Tests for the public capture_icecast_stream API."""
 
-        # 2. Setup Patchers for icecast_collector namespace
+    def setUp(self) -> None:
+        self.mock_logger = MagicMock()
         self.patchers = [
             patch.object(icecast_collector, "logger", self.mock_logger),
-            patch.object(
-                icecast_collector, "SAMPLE_WIDTH", icecast_collector.SAMPLE_WIDTH
-            ),
-            patch.object(
-                icecast_collector, "SAMPLE_RATE", icecast_collector.SAMPLE_RATE
-            ),
-        ]
-        for p in self.patchers:
-            p.start()
-
-    def tearDown(self) -> None:
-        for p in self.patchers:
-            p.stop()
-
-    @patch.object(icecast_collector, "datetime")
-    def test_write_to_gcs_success(self, mock_datetime: MagicMock) -> None:
-        """Test a successful WAV conversion and upload with exact path verification."""
-        # Arrange
-        chunk = b"\x00\x01" * 1000
-        feed_id = 1234
-        source_type = "bcfy_feeds"
-        mock_datetime.now.return_value.isoformat.return_value = (
-            "2026-02-27T12:34:56.000000"
-        )
-
-        # Make the mock storage client's upload method awaitable
-        self.mock_storage_client.upload = AsyncMock()
-
-        # Act
-        asyncio.run(
-            icecast_collector.write_to_gcs(
-                self.mock_storage_client,
-                bytearray(chunk),
-                feed_id,
-                source_type,
-                "2026-02-27T12-34-56.000000",
-            )
-        )
-
-        # Assert
-        expected_blob_name = "bcfy_feeds/1234/2026-02-27T12-34-56.000000.wav"
-        self.mock_storage_client.upload.assert_called_once()
-        call_args, call_kwargs = self.mock_storage_client.upload.call_args
-
-        self.assertEqual(call_args[0], icecast_collector.FINAL_STAGING_BUCKET)
-        self.assertEqual(call_args[1], expected_blob_name)
-        self.assertTrue(len(call_args[2]) > 44)  # WAV header + PCM payload
-        self.assertEqual(call_kwargs["content_type"], "audio/wav")
-        self.mock_logger.info.assert_called_once()
-        self.mock_logger.exception.assert_not_called()
-
-    def test_write_to_gcs_wav_conversion_error(self) -> None:
-        """Test handling of invalid raw data that breaks the wave module."""
-        # Arrange
-        chunk = b"bad-audio"
-        feed_id = 5678
-        source_type = "bcfy_feeds"
-
-        self.mock_storage_client.upload = AsyncMock()
-
-        with patch.object(
-            icecast_collector.wave, "open", side_effect=Exception("wave failure")
-        ):
-            # Act
-            asyncio.run(
-                icecast_collector.write_to_gcs(
-                    self.mock_storage_client,
-                    bytearray(chunk),
-                    feed_id,
-                    source_type,
-                    "2026-02-27T12-34-56.000000",
-                )
-            )
-
-        # Assert
-        self.mock_storage_client.upload.assert_not_called()
-        self.mock_logger.exception.assert_called_once()
-        logged_msg = self.mock_logger.exception.call_args[0][0]
-        self.assertIn("Failed to format WAV data", logged_msg)
-        self.assertIn(str(feed_id), logged_msg)
-
-    @patch.object(icecast_collector, "datetime")
-    def test_write_to_gcs_gcs_error(self, mock_datetime: MagicMock) -> None:
-        """Test handling of GCS upload exceptions."""
-        # Arrange
-        chunk = b"\x00\x01" * 1000
-        feed_id = 9012
-        source_type = "bcfy_feeds"
-        mock_datetime.now.return_value.isoformat.return_value = (
-            "2026-02-27T23:59:59.999999"
-        )
-
-        self.mock_storage_client.upload = AsyncMock(
-            side_effect=Exception("gcs failure")
-        )
-
-        # Act
-        asyncio.run(
-            icecast_collector.write_to_gcs(
-                self.mock_storage_client,
-                bytearray(chunk),
-                feed_id,
-                source_type,
-                "2026-02-27T23-59-59.999999",
-            )
-        )
-
-        # Assert
-        expected_blob_name = "bcfy_feeds/9012/2026-02-27T23-59-59.999999.wav"
-        self.mock_storage_client.upload.assert_called_once()
-        self.mock_logger.info.assert_not_called()
-        self.mock_logger.exception.assert_called_once()
-        logged_msg = self.mock_logger.exception.call_args[0][0]
-        self.assertIn("Failed to upload", logged_msg)
-        self.assertIn(expected_blob_name, logged_msg)
-
-
-class TestIcecastCollector(unittest.IsolatedAsyncioTestCase):
-    def setUp(self) -> None:
-        self.mock_storage_client = MagicMock()
-        self.mock_logger = MagicMock()
-        self.patchers = [
-            patch(
-                "backend.pipeline.ingestion.icecast_collector.logger", self.mock_logger
-            ),
-            patch(
-                "backend.pipeline.ingestion.icecast_collector.SAMPLE_WIDTH",
-                icecast_collector.SAMPLE_WIDTH,
-            ),
-            patch(
-                "backend.pipeline.ingestion.icecast_collector.SAMPLE_RATE",
-                icecast_collector.SAMPLE_RATE,
-            ),
-            patch(
-                "backend.pipeline.ingestion.icecast_collector.STARTUP_THROTTLE",
-                asyncio.Semaphore(1),
-            ),
         ]
         for p in self.patchers:
             p.start()
@@ -171,163 +30,323 @@ class TestIcecastCollector(unittest.IsolatedAsyncioTestCase):
             p.stop()
 
     @patch(
-        "backend.pipeline.ingestion.icecast_collector.asyncio.create_subprocess_exec"
-    )
-    @patch(
-        "backend.pipeline.ingestion.icecast_collector.asyncio.sleep",
+        "backend.pipeline.ingestion.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
-    async def test_monitor_stream_processes_data_and_restarts(
-        self,
-        mock_sleep: MagicMock,
-        mock_subprocess: MagicMock,
+    async def test_normal_capture_yields_wav_chunks(
+        self, mock_create_ffmpeg: AsyncMock
     ) -> None:
-        """Test that monitor_stream reads from ffmpeg and offloads processing."""
-        # 1. Setup Mock Process
+        """Test normal case: successfully capture and yield WAV audio chunks."""
+        # Arrange
         mock_proc = AsyncMock()
         mock_proc.pid = 1234
-        mock_proc.returncode = 0
+        mock_create_ffmpeg.return_value = mock_proc
 
-        # Simulate exactly one full chunk (480000 bytes) then EOF
-        mock_proc.stdout.read.side_effect = [b"a" * 480000, b""]
-        mock_subprocess.return_value = mock_proc
+        # Return enough data to yield one complete chunk
+        chunk_size = 480000  # BYTES_PER_CHUNK
+        mock_proc.stdout.read.return_value = b"x" * chunk_size
 
-        # 2. Break the infinite loop on the first restart
-        mock_sleep.side_effect = [None, RuntimeError("Break Loop")]
+        feed = {
+            "name": "test-feed",
+            "stream_url": "http://example.com/stream",
+        }
+        shutdown_event = asyncio.Event()
 
-        # 3. Execution
-        try:
-            await icecast_collector.monitor_stream(self.mock_storage_client)
-        except RuntimeError as e:
-            if str(e) != "Break Loop":
-                raise
+        # Act
+        chunks = []
+        gen = icecast_collector.capture_icecast_stream(feed, shutdown_event)
+        chunk = await gen.__anext__()
+        chunks.append(chunk)
 
-        # Verify that create_subprocess_exec was called twice
-        # (once for initial startup, once after the first iteration restart)
-        self.assertEqual(mock_subprocess.call_count, 2)
+        # Assert - chunk should be WAV formatted
+        self.assertEqual(len(chunks), 1)
+        self.assertIsInstance(chunks[0], bytes)
+        self.assertGreater(len(chunks[0]), 44)  # WAV header is at least 44 bytes
 
     @patch(
-        "backend.pipeline.ingestion.icecast_collector.asyncio.create_subprocess_exec"
+        "backend.pipeline.ingestion.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
     )
-    async def test_ffmpeg_termination_on_failure(
-        self, mock_subprocess: MagicMock
+    async def test_shutdown_signal_stops_capture(
+        self, mock_create_ffmpeg: AsyncMock
     ) -> None:
-        """Ensure process.terminate() is called if the loop crashes."""
+        """Test edge case: shutdown event is checked on each iteration."""
+        # Arrange
         mock_proc = AsyncMock()
-        mock_proc.pid = 999
-        mock_proc.returncode = None  # Process still "running"
+        mock_proc.pid = 5555
+        mock_create_ffmpeg.return_value = mock_proc
 
-        # Force an error immediately inside the try block
-        mock_proc.stdout.read.side_effect = Exception("System Failure")
-        mock_subprocess.return_value = mock_proc
+        chunk_size = 480000
+        mock_proc.stdout.read.return_value = b"y" * chunk_size
 
-        # Break the outer loop immediately
-        with patch(
-            "backend.pipeline.ingestion.icecast_collector.asyncio.sleep",
-            side_effect=RuntimeError("Stop"),
-        ):
-            with self.assertRaises(RuntimeError):
-                await icecast_collector.monitor_stream(self.mock_storage_client)
+        feed = {
+            "name": "shutdown-feed",
+            "stream_url": "http://example.com/stream",
+        }
+        shutdown_event = asyncio.Event()
 
-        # Verify cleanup logic
+        # Act
+        gen = icecast_collector.capture_icecast_stream(feed, shutdown_event)
+
+        # Get one chunk
+        chunk = await gen.__anext__()
+        self.assertIsNotNone(chunk)
+
+        # Set shutdown and try next iteration - should exit cleanly
+        shutdown_event.set()
+        with self.assertRaises(StopAsyncIteration):
+            await gen.__anext__()
+
+    @patch(
+        "backend.pipeline.ingestion.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_ffmpeg_error_exit_code_raises_runtime_error(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Test invalid case: ffmpeg exits with non-zero code raises RuntimeError."""
+        # Arrange
+        mock_proc = AsyncMock()
+        mock_proc.pid = 7777
+        mock_proc.returncode = 1
+        mock_proc.stdout.read.return_value = b""  # EOF
+        mock_proc.wait = AsyncMock(return_value=1)
+        mock_create_ffmpeg.return_value = mock_proc
+
+        feed = {
+            "name": "error-exit-feed",
+            "stream_url": "http://example.com/stream",
+        }
+        shutdown_event = asyncio.Event()
+
+        # Act & Assert
+        gen = icecast_collector.capture_icecast_stream(feed, shutdown_event)
+        with self.assertRaises(RuntimeError) as context:
+            await gen.__anext__()
+
+        self.assertIn("ffmpeg exited with code 1", str(context.exception))
+        self.assertIn("error-exit-feed", str(context.exception))
+
+    async def test_invalid_input_none_stream_url_raises_value_error(self) -> None:
+        """Test invalid input: feed with None stream_url raises ValueError."""
+        # Arrange
+        feed = {
+            "name": "none-stream-feed",
+            "stream_url": None,
+        }
+        shutdown_event = asyncio.Event()
+
+        # Act & Assert
+        gen = icecast_collector.capture_icecast_stream(feed, shutdown_event)
+        with self.assertRaises(ValueError) as context:
+            await gen.__anext__()
+
+        self.assertIn("missing stream_url", str(context.exception))
+        self.assertIn("none-stream-feed", str(context.exception))
+
+    async def test_invalid_input_empty_string_stream_url_raises_value_error(
+        self,
+    ) -> None:
+        """Test invalid input: feed with empty stream_url raises ValueError."""
+        # Arrange
+        feed = {
+            "name": "empty-stream-feed",
+            "stream_url": "",
+        }
+        shutdown_event = asyncio.Event()
+
+        # Act & Assert
+        gen = icecast_collector.capture_icecast_stream(feed, shutdown_event)
+        with self.assertRaises(ValueError) as context:
+            await gen.__anext__()
+
+        self.assertIn("missing stream_url", str(context.exception))
+
+    @patch(
+        "backend.pipeline.ingestion.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_ffmpeg_normal_exit_code_zero(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Test edge case: ffmpeg exits normally with code 0."""
+        # Arrange
+        mock_proc = AsyncMock()
+        mock_proc.pid = 6666
+        mock_proc.returncode = 0
+        mock_proc.stdout.read.return_value = b""  # EOF - signals end of stream
+        mock_proc.wait = AsyncMock(return_value=0)
+        mock_create_ffmpeg.return_value = mock_proc
+
+        feed = {
+            "name": "exit-zero-feed",
+            "stream_url": "http://example.com/stream",
+        }
+        shutdown_event = asyncio.Event()
+
+        # Act & Assert - should exit cleanly without raising
+        gen = icecast_collector.capture_icecast_stream(feed, shutdown_event)
+        with self.assertRaises(StopAsyncIteration):
+            await gen.__anext__()
+        mock_proc.wait.assert_called_once()
+
+    @patch(
+        "backend.pipeline.ingestion.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_ffmpeg_error_exit_code_nonzero(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Test error case: ffmpeg exits with non-zero code raises RuntimeError."""
+        # Arrange
+        mock_proc = AsyncMock()
+        mock_proc.pid = 9999
+        mock_proc.stdout.read.side_effect = [b""]  # EOF
+        mock_proc.wait.return_value = 1
+
+        mock_create_ffmpeg.return_value = mock_proc
+
+        feed = {
+            "name": "bad-feed",
+            "stream_url": "http://example.com/stream",
+        }
+        shutdown_event = asyncio.Event()
+
+        # Act & Assert
+        gen = icecast_collector.capture_icecast_stream(feed, shutdown_event)
+        with self.assertRaises(RuntimeError) as context:
+            await gen.__anext__()
+
+        self.assertIn("ffmpeg exited with code 1", str(context.exception))
+
+    async def test_invalid_input_missing_stream_url(self) -> None:
+        """Test invalid input: feed missing stream_url raises KeyError."""
+        # Arrange
+        feed = {
+            "name": "incomplete-feed",
+            # stream_url is missing
+        }
+        shutdown_event = asyncio.Event()
+
+        # Act & Assert
+        gen = icecast_collector.capture_icecast_stream(feed, shutdown_event)
+        with self.assertRaises(KeyError):
+            await gen.__anext__()
+
+    async def test_invalid_input_none_stream_url(self) -> None:
+        """Test invalid input: feed with None stream_url raises ValueError."""
+        # Arrange
+        feed = {
+            "name": "none-stream-feed",
+            "stream_url": None,
+        }
+        shutdown_event = asyncio.Event()
+
+        # Act & Assert
+        gen = icecast_collector.capture_icecast_stream(feed, shutdown_event)
+        with self.assertRaises(ValueError) as context:
+            await gen.__anext__()
+
+        self.assertIn("missing stream_url", str(context.exception))
+
+    @patch(
+        "backend.pipeline.ingestion.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_ffmpeg_stdout_is_none_raises_error(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Test edge case: ffmpeg stdout is None raises RuntimeError."""
+        # Arrange
+        mock_proc = AsyncMock()
+        mock_proc.pid = 8888
+        mock_proc.stdout = None
+        mock_create_ffmpeg.return_value = mock_proc
+
+        feed = {
+            "name": "no-stdout-feed",
+            "stream_url": "http://example.com/stream",
+        }
+        shutdown_event = asyncio.Event()
+
+        # Act & Assert
+        gen = icecast_collector.capture_icecast_stream(feed, shutdown_event)
+        with self.assertRaises(RuntimeError) as context:
+            await gen.__anext__()
+
+        self.assertIn("ffmpeg stdout is None", str(context.exception))
+        self.assertIn("no-stdout-feed", str(context.exception))
+
+    @patch(
+        "backend.pipeline.ingestion.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_cleanup_process_on_exception(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Test cleanup: ffmpeg process is terminated on exception in read loop."""
+        # Arrange
+        mock_proc = AsyncMock()
+        mock_proc.pid = 9999
+        mock_proc.returncode = None  # Still running
+        mock_proc.stdout.read.side_effect = RuntimeError("Read failed")
+        mock_proc.wait = AsyncMock()
+        mock_create_ffmpeg.return_value = mock_proc
+
+        feed = {
+            "name": "read-error-feed",
+            "stream_url": "http://example.com/stream",
+        }
+        shutdown_event = asyncio.Event()
+
+        # Act & Assert
+        gen = icecast_collector.capture_icecast_stream(feed, shutdown_event)
+        with self.assertRaises(RuntimeError):
+            await gen.__anext__()
+
+        # Process should be terminated in finally block
         mock_proc.terminate.assert_called_once()
+        mock_proc.wait.assert_called_once()
 
-    @patch(
-        "backend.pipeline.ingestion.icecast_collector.asyncio.sleep",
-        new_callable=AsyncMock,
-    )
-    @patch(
-        "backend.pipeline.ingestion.icecast_collector._cleanup_stream",
-        new_callable=AsyncMock,
-    )
-    @patch(
-        "backend.pipeline.ingestion.icecast_collector._process_stream_chunks",
-        new_callable=AsyncMock,
-    )
     @patch(
         "backend.pipeline.ingestion.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
-    async def test_monitor_stream_exponential_backoff_consecutive_failures(
-        self,
-        mock_create_ffmpeg: AsyncMock,
-        mock_process_chunks: AsyncMock,
-        mock_cleanup: AsyncMock,
-        mock_sleep: AsyncMock,
+    async def test_yields_multiple_chunks_from_continuous_stream(
+        self, mock_create_ffmpeg: AsyncMock
     ) -> None:
-        """Backoff should grow exponentially for consecutive zero-chunk failures."""
-        mock_proc = MagicMock()
-        mock_proc.pid = 321
-        mock_proc.returncode = 1
+        """Test normal case: yields multiple full chunks from stream data."""
+        # Arrange
+        mock_proc = AsyncMock()
+        mock_proc.pid = 1111
         mock_create_ffmpeg.return_value = mock_proc
 
-        # Three failed iterations (no chunks), then stop.
-        mock_process_chunks.side_effect = [0, 0, 0]
-        mock_sleep.side_effect = [None, None, RuntimeError("Stop")]
+        chunk_size = 480000
+        # Return enough data for two complete chunks in one read
+        mock_proc.stdout.read.side_effect = [
+            b"a" * (chunk_size * 2),
+        ]
 
-        with self.assertRaises(RuntimeError):
-            await icecast_collector.monitor_stream(self.mock_storage_client)
+        feed = {
+            "name": "multi-chunk-feed",
+            "stream_url": "http://example.com/stream",
+        }
+        shutdown_event = asyncio.Event()
 
-        self.assertEqual(
-            mock_sleep.await_args_list,
-            [
-                call(10),
-                call(20),
-                call(40),
-            ],
-        )
-        self.assertEqual(mock_create_ffmpeg.await_count, 3)
-        self.assertEqual(mock_process_chunks.await_count, 3)
-        self.assertEqual(mock_cleanup.await_count, 3)
+        # Act - collect both chunks
+        chunks = []
+        gen = icecast_collector.capture_icecast_stream(feed, shutdown_event)
 
-    @patch(
-        "backend.pipeline.ingestion.icecast_collector.asyncio.sleep",
-        new_callable=AsyncMock,
-    )
-    @patch(
-        "backend.pipeline.ingestion.icecast_collector._cleanup_stream",
-        new_callable=AsyncMock,
-    )
-    @patch(
-        "backend.pipeline.ingestion.icecast_collector._process_stream_chunks",
-        new_callable=AsyncMock,
-    )
-    @patch(
-        "backend.pipeline.ingestion.icecast_collector._create_ffmpeg_process",
-        new_callable=AsyncMock,
-    )
-    async def test_monitor_stream_backoff_resets_after_single_chunk_iteration(
-        self,
-        mock_create_ffmpeg: AsyncMock,
-        mock_process_chunks: AsyncMock,
-        mock_cleanup: AsyncMock,
-        mock_sleep: AsyncMock,
-    ) -> None:
-        """A single-chunk iteration resets backoff before the next failure."""
-        mock_proc = MagicMock()
-        mock_proc.pid = 654
-        mock_proc.returncode = 1
-        mock_create_ffmpeg.return_value = mock_proc
+        chunk1 = await gen.__anext__()
+        chunks.append(chunk1)
+        chunk2 = await gen.__anext__()
+        chunks.append(chunk2)
 
-        # failure, failure, success(1 chunk), failure, then stop.
-        mock_process_chunks.side_effect = [0, 0, 1, 0]
-        mock_sleep.side_effect = [None, None, None, RuntimeError("Stop")]
-
-        with self.assertRaises(RuntimeError):
-            await icecast_collector.monitor_stream(self.mock_storage_client)
-
-        self.assertEqual(
-            mock_sleep.await_args_list,
-            [
-                call(10),
-                call(20),
-                call(5),
-                call(10),
-            ],
-        )
-        self.assertEqual(mock_create_ffmpeg.await_count, 4)
-        self.assertEqual(mock_process_chunks.await_count, 4)
-        self.assertEqual(mock_cleanup.await_count, 4)
+        # Assert
+        self.assertEqual(len(chunks), 2)
+        for chunk in chunks:
+            self.assertIsInstance(chunk, bytes)
+            self.assertGreater(len(chunk), 44)  # WAV header minimum
 
 
 if __name__ == "__main__":

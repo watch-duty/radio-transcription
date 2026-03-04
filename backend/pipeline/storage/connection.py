@@ -34,6 +34,10 @@ async def create_pool(  # noqa: PLR0913
     Returns:
         An asyncpg connection pool.
 
+    Raises:
+        TimeoutError: If connection cannot be established within timeout.
+        ConnectionError: If connection fails for other reasons.
+
     """
     kwargs: dict = {
         "host": host,
@@ -48,7 +52,22 @@ async def create_pool(  # noqa: PLR0913
         kwargs["command_timeout"] = command_timeout
     if timeout is not None:
         kwargs["timeout"] = timeout
-    return await asyncpg.create_pool(**kwargs)
+
+    try:
+        return await asyncpg.create_pool(**kwargs)
+    except TimeoutError as e:
+        msg = (
+            f"Failed to connect to AlloyDB at {host}:{port} within {timeout}s. "
+            "If running locally, ensure AlloyDB Auth Proxy is running. "
+            "See run_alloydb_proxy.sh for setup instructions."
+        )
+        raise TimeoutError(msg) from e
+    except Exception as e:
+        msg = (
+            f"Failed to connect to AlloyDB: {e}. "
+            f"Check credentials and network connectivity to {host}:{port}"
+        )
+        raise ConnectionError(msg) from e
 
 
 async def close_pool(pool: asyncpg.Pool) -> None:

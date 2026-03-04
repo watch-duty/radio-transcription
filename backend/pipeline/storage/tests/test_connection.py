@@ -104,6 +104,55 @@ class TestCreatePool(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result, mock_pool)
 
+    @mock.patch(
+        "backend.pipeline.storage.connection.asyncpg.create_pool",
+        new_callable=mock.AsyncMock,
+    )
+    async def test_create_pool_timeout_error(
+        self,
+        mock_create_pool: mock.AsyncMock,
+    ) -> None:
+        """Test create_pool handles TimeoutError with custom message."""
+        mock_create_pool.side_effect = TimeoutError("asyncpg timeout")
+
+        with self.assertRaises(TimeoutError) as context:
+            await connection.create_pool(
+                host="10.0.0.1",
+                user="my-user",
+                db_name="my-db",
+                timeout=10.0,
+            )
+
+        error_message = str(context.exception)
+        self.assertIn("Failed to connect to AlloyDB", error_message)
+        self.assertIn("10.0.0.1:5432", error_message)
+        self.assertIn("10.0s", error_message)
+        self.assertIn("AlloyDB Auth Proxy", error_message)
+
+    @mock.patch(
+        "backend.pipeline.storage.connection.asyncpg.create_pool",
+        new_callable=mock.AsyncMock,
+    )
+    async def test_create_pool_connection_error(
+        self,
+        mock_create_pool: mock.AsyncMock,
+    ) -> None:
+        """Test create_pool handles generic Exception as ConnectionError."""
+        original_error = RuntimeError("Invalid credentials")
+        mock_create_pool.side_effect = original_error
+
+        with self.assertRaises(ConnectionError) as context:
+            await connection.create_pool(
+                host="10.0.0.1",
+                user="my-user",
+                db_name="my-db",
+            )
+
+        error_message = str(context.exception)
+        self.assertIn("Failed to connect to AlloyDB", error_message)
+        self.assertIn("Invalid credentials", error_message)
+        self.assertIn("10.0.0.1:5432", error_message)
+
 
 class TestClosePool(unittest.IsolatedAsyncioTestCase):
     """Tests for close_pool."""

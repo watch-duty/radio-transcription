@@ -1,53 +1,39 @@
+from __future__ import annotations
+
 import asyncio
 import base64
 import io
 import logging
 import os
-import random
 import sys
 import wave
-from datetime import datetime
+from typing import TYPE_CHECKING
 
-import aiohttp
-from gcloud.aio.storage import Storage
+from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
+from backend.pipeline.ingestion.settings import NormalizerSettings
 
-logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from backend.pipeline.storage.feed_store import LeasedFeed
+
 logger = logging.getLogger(__name__)
 
-# Env variables
-USER = os.getenv("BROADCASTIFY_USERNAME")
-PASS = os.getenv("BROADCASTIFY_PASSWORD")
-FINAL_STAGING_BUCKET = os.getenv("FINAL_STAGING_BUCKET", "")
-CHUNK_DURATION_SECONDS = int(os.getenv("CHUNK_DURATION_SECONDS", "15"))
-NUM_STREAMS = int(os.getenv("NUM_STREAMS", "20"))
-STARTUP_THROTTLE_NUM = int(os.getenv("STARTUP_THROTTLE", "5"))
-
-# Limit concurrent starts to avoid a CPU "thundering herd" on launch
-STARTUP_THROTTLE = asyncio.Semaphore(STARTUP_THROTTLE_NUM)
+# Audio processing constants
+CHUNK_DURATION_SECONDS = 15
 SAMPLE_RATE = 16000
 SAMPLE_WIDTH = 2
 BYTES_PER_CHUNK = SAMPLE_RATE * CHUNK_DURATION_SECONDS * SAMPLE_WIDTH
 
-# Limit concurrent uploads per stream to prevent unbounded task accumulation
-MAX_CONCURRENT_UPLOADS = 10
-
-# Exponential backoff configuration
-BASE_BACKOFF = 5  # Initial retry delay in seconds
-MAX_BACKOFF = 300  # Maximum retry delay (5 minutes)
+# Authentication for Icecast/Broadcastify streams
+USER = os.getenv("BROADCASTIFY_USERNAME")
+PASS = os.getenv("BROADCASTIFY_PASSWORD")
 
 if not USER or not PASS:
     logger.critical(
         "BROADCASTIFY_USERNAME and BROADCASTIFY_PASSWORD env vars must be set."
     )
     sys.exit(1)
-
-if not FINAL_STAGING_BUCKET:
-    logger.critical("FINAL_STAGING_BUCKET env var must be set.")
-    sys.exit(1)
-
 
 # Create the Basic Auth header value for ffmpeg
 credentials = f"{USER}:{PASS}"
@@ -56,105 +42,101 @@ encoded_string = encoded_bytes.decode("utf-8")
 auth_header = f"Authorization: Basic {encoded_string}\r\n"
 
 
-async def write_to_gcs(
-    storage_client: Storage,
-    chunk: bytearray,
-    feed_id: int,
-    source_type: str,
-    cur_time_iso: str,
-) -> None:
+async def capture_icecast_stream(
+    feed: LeasedFeed,
+    shutdown_event: asyncio.Event,
+) -> AsyncIterator[bytes]:
     """
-    Upload a single audio chunk to GCS: convert raw PCM to WAV format and upload.
-        - chunk: Raw PCM audio data
-        - feed_id: Identifier for the feed, used in GCS path
-        - source_type: Icecast source (e.g., "bcfy_feeds")
-        - cur_time_iso: Current timestamp in ISO format for filename
+    Capture audio chunks from an Icecast stream using ffmpeg.
+
+    This is the core capture function used by NormalizerRuntime. It:
+    1. Spawns ffmpeg to connect to the stream URL with Basic Auth
+    2. Reads raw PCM audio from ffmpeg's stdout
+    3. Converts chunks to WAV format
+    4. Yields WAV bytes for the runtime to upload to GCS
+
+    Args:
+        feed: Leased feed containing stream_url and metadata
+        shutdown_event: Signals graceful shutdown request
+
+    Yields:
+        WAV-formatted audio chunks of CHUNK_DURATION_SECONDS each
+
+    Raises:
+        ValueError: If stream_url is missing from feed properties
+        RuntimeError: If ffmpeg subprocess fails to start or exits prematurely
+
     """
-    # 1. Create the WAV in memory
+    if not feed["stream_url"]:
+        msg = f"Feed {feed['name']} missing stream_url in feed_properties_icecast"
+        raise ValueError(msg)
+
+    url = feed["stream_url"]
+    feed_name = feed["name"]
+
+    # Launch ffmpeg subprocess
+    process = await _create_ffmpeg_process(url)
+    logger.info(f"Feed {feed_name}: Started ffmpeg (PID: {process.pid})")
+
+    buffer = bytearray()
+
     try:
-        with io.BytesIO() as wav_io:
-            with wave.open(wav_io, "wb") as f:
-                f.setnchannels(1)
-                f.setsampwidth(SAMPLE_WIDTH)
-                f.setframerate(SAMPLE_RATE)
-                f.writeframes(chunk)
-            wav_data = wav_io.getvalue()
-    except Exception as e:
-        logger.exception(f"Feed {feed_id}: Failed to format WAV data: {e}")
-        return
+        while True:
+            # Check for shutdown signal
+            if shutdown_event.is_set():
+                logger.info(f"Feed {feed_name}: Shutdown requested, stopping capture")
+                return
 
-    # 2. Define the destination path
-    blob_name = f"{source_type}/{feed_id}/{cur_time_iso}.wav"
+            # Read from ffmpeg stdout
+            if process.stdout:
+                chunk_raw = await process.stdout.read(4096)
+                if not chunk_raw:
+                    # ffmpeg exited
+                    exit_code = await process.wait()
+                    if exit_code != 0:
+                        msg = f"Feed {feed_name}: ffmpeg exited with code {exit_code}"
+                        raise RuntimeError(msg)
+                    logger.info(f"Feed {feed_name}: ffmpeg exited normally")
+                    return
+            else:
+                msg = f"Feed {feed_name}: ffmpeg stdout is None"
+                raise RuntimeError(msg)
 
-    # 3. Upload to GCS
-    try:
-        await storage_client.upload(
-            FINAL_STAGING_BUCKET,
-            blob_name,
-            wav_data,
-            content_type="audio/wav",
-        )
-        logger.info(f"Feed {feed_id}: Uploaded {len(wav_data)} bytes to {blob_name}")
-    except Exception as e:
-        logger.exception(f"Feed {feed_id}: Failed to upload {blob_name} - {e}")
+            buffer.extend(chunk_raw)
 
+            # Process complete chunks
+            while len(buffer) >= BYTES_PER_CHUNK:
+                current_chunk = buffer[:BYTES_PER_CHUNK]
+                del buffer[:BYTES_PER_CHUNK]
 
-async def monitor_stream(storage_client: Storage) -> None:
-    """Robust 24/7 monitor for a single ffmpeg process."""
-    consecutive_failures = 0
+                # Convert raw PCM to WAV format
+                wav_data = _pcm_to_wav(current_chunk, feed_name)
+                yield wav_data
 
-    while True:  # Auto-restart loop
-        # TODO(axian0420): https://linear.app/watchduty/issue/GOO-58/stream-normalizer
-        # REPLACE WITH FEED FETCHER UTILITY LATER
-        feed_id = random.randint(1000, 9999)  # noqa: S311
-        url = f"https://audio.broadcastify.com/{feed_id}.mp3"
-        source_type = "bcfy_feeds"
-
-        chunks_processed = 0
-        upload_tasks: set[asyncio.Task] = set()
-        upload_semaphore = asyncio.Semaphore(MAX_CONCURRENT_UPLOADS)
-
-        process = await _create_ffmpeg_process(url, feed_id)
-
-        try:
-            chunks_processed = await _process_stream_chunks(
-                storage_client,
-                process,
-                upload_semaphore,
-                upload_tasks,
-                feed_id,
-                source_type,
-            )
-            # Reset failure count after successfully processing chunks
-            if chunks_processed == 1:
-                consecutive_failures = 0
-
-        finally:
-            await _cleanup_stream(process, upload_tasks, feed_id)
-            exit_code = process.returncode
-            consecutive_failures, backoff_delay = await _handle_stream_completion(
-                exit_code,
-                chunks_processed,
-                feed_id,
-                consecutive_failures,
-            )
-            await asyncio.sleep(backoff_delay)
+    finally:
+        # Cleanup: terminate ffmpeg if still running
+        if process.returncode is None:
+            try:
+                process.terminate()
+                await asyncio.wait_for(process.wait(), timeout=5)
+            except TimeoutError:
+                process.kill()
+                logger.warning(f"Feed {feed_name}: Force-killed ffmpeg process")
+                await process.wait()
 
 
-async def _create_ffmpeg_process(url: str, feed_id: int) -> asyncio.subprocess.Process:
+async def _create_ffmpeg_process(url: str) -> asyncio.subprocess.Process:
     """
     Create and launch ffmpeg subprocess.
 
     Args:
         url: The stream URL to connect to
-        feed_id: Feed identifier for logging
 
     Returns:
         The subprocess process object
 
     """
-    async with STARTUP_THROTTLE:
-        process = await asyncio.create_subprocess_exec(
+    return await asyncio.create_subprocess_exec(
             "ffmpeg", "-nostdin", "-re",
             "-headers", auth_header,
             "-i", url,
@@ -166,171 +148,48 @@ async def _create_ffmpeg_process(url: str, feed_id: int) -> asyncio.subprocess.P
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )  # fmt: skip
-        logger.info(f"Launched {feed_id} (PID: {process.pid})")
-    return process
 
 
-async def _process_stream_chunks(  # noqa: PLR0913
-    storage_client: Storage,
-    process: asyncio.subprocess.Process,
-    upload_semaphore: asyncio.Semaphore,
-    upload_tasks: set[asyncio.Task],
-    feed_id: int,
-    source_type: str,
-) -> int:
+def _pcm_to_wav(pcm_data: bytes, feed_name: str) -> bytes:
     """
-    Read from stream and process audio chunks.
+    Convert raw PCM audio data to WAV format.
 
     Args:
-        storage_client: The GCS storage client for uploads
-        process: The ffmpeg subprocess
-        upload_semaphore: Semaphore for controlling concurrent uploads
-        upload_tasks: Set to track active upload tasks
-        feed_id: Feed identifier
-        source_type: Source type identifier
-    Returns:
-        Number of chunks processed
+        pcm_data: Raw PCM s16le audio bytes
+        feed_name: Name of the feed (for logging context)
 
-    """
-    buffer = bytearray()
-    chunks_processed = 0
-
-    while True:
-        if process.stdout:
-            chunk_raw = await process.stdout.read(4096)
-            if not chunk_raw:
-                break
-        else:
-            break
-
-        buffer.extend(chunk_raw)
-        if len(buffer) >= BYTES_PER_CHUNK:
-            current_chunk = buffer[:BYTES_PER_CHUNK]
-            del buffer[:BYTES_PER_CHUNK]
-
-            cur_time_iso = datetime.now().isoformat().replace(":", "-")
-            # Fire-and-forget upload to avoid blocking the read loop
-            # This prevents ffmpeg's stdout pipe buffer from filling up
-            task = asyncio.create_task(
-                _upload_chunk_with_semaphore(
-                    storage_client,
-                    upload_semaphore,
-                    current_chunk,
-                    feed_id,
-                    source_type,
-                    cur_time_iso,
-                )
-            )
-            upload_tasks.add(task)
-            # Clean up completed tasks to prevent unbounded memory growth
-            task.add_done_callback(upload_tasks.discard)
-
-            chunks_processed += 1
-
-    return chunks_processed
-
-
-async def _upload_chunk_with_semaphore(  # noqa: PLR0913
-    storage_client: Storage,
-    semaphore: asyncio.Semaphore,
-    chunk: bytearray,
-    feed_id: int,
-    source_type: str,
-    cur_time_iso: str,
-) -> None:
-    """
-    Upload audio chunk with semaphore-based concurrency control.
-    This prevents unbounded accumulation of upload tasks.
-    """
-    async with semaphore:
-        await write_to_gcs(
-            storage_client,
-            chunk,
-            feed_id,
-            source_type,
-            cur_time_iso,
-        )
-
-
-async def _cleanup_stream(
-    process: asyncio.subprocess.Process,
-    upload_tasks: set[asyncio.Task],
-    feed_id: int,
-) -> None:
-    """
-    Cleanup stream resources and wait for pending uploads.
-
-    Args:
-        process: The ffmpeg subprocess to terminate
-        upload_tasks: Set of pending upload tasks
-        feed_id: Feed identifier for logging
-
-    """
-    # Await all pending uploads before terminating the process
-    if upload_tasks:
-        logger.info(
-            f"Feed {feed_id}: Waiting for {len(upload_tasks)} pending uploads to complete..."
-        )
-        await asyncio.gather(*upload_tasks, return_exceptions=True)
-    # TODO(axian0420): https://linear.app/watchduty/issue/GOO-58/stream-normalizer
-    # Handle feed claim state on failure
-    if process.returncode is None:
-        try:
-            process.terminate()
-            await asyncio.wait_for(process.wait(), timeout=5)
-        except TimeoutError:
-            process.kill()  # Force kill if terminate fails
-
-
-async def _handle_stream_completion(
-    exit_code: int | None,
-    chunks_processed: int,
-    feed_id: int,
-    consecutive_failures: int,
-) -> tuple[int, float]:
-    """
-    Handle stream completion: update failure count, calculate backoff, and log.
-
-    Args:
-        exit_code: Process exit code
-        chunks_processed: Number of chunks successfully processed
-        feed_id: Feed identifier
-        consecutive_failures: Current consecutive failure count
 
     Returns:
-        Tuple of (updated_consecutive_failures, backoff_delay)
+        WAV-formatted audio bytes
 
     """
-    # If no chunks were processed, this is a failure
-    if chunks_processed == 0:
-        consecutive_failures += 1
-
-    # Calculate exponential backoff delay
-    backoff_delay = min(BASE_BACKOFF * (2**consecutive_failures), MAX_BACKOFF)
-
-    if exit_code == 0:
-        logger.info(
-            f"Feed {feed_id} exited normally (exit code 0). Restarting in {backoff_delay:.1f}s..."
-        )
-    else:
-        logger.warning(
-            f"Feed {feed_id} crashed or exited with code {exit_code}. "
-            f"Retry {consecutive_failures}, restarting in {backoff_delay:.1f}s..."
-        )
-
-    return consecutive_failures, backoff_delay
+    try:
+        with io.BytesIO() as wav_io:
+            with wave.open(wav_io, "wb") as f:
+                f.setnchannels(1)
+                f.setsampwidth(SAMPLE_WIDTH)
+                f.setframerate(SAMPLE_RATE)
+                f.writeframes(pcm_data)
+            wav_data = wav_io.getvalue()
+    except Exception as e:
+        logger.exception(f"Feed {feed_name}: Failed to format WAV data: {e}")
+    return wav_data
 
 
-async def main() -> None:
-    # Use a single session for all streams to benefit from connection pooling
-    async with aiohttp.ClientSession() as session:
-        storage_client = Storage(session=session)
-        tasks = [monitor_stream(storage_client) for _ in range(NUM_STREAMS)]
-        await asyncio.gather(*tasks)
+def main() -> None:
+    """
+    Entry point for the Icecast stream collector.
+
+    Initializes NormalizerRuntime with the Icecast capture function and
+    blocks until graceful shutdown completes.
+    """
+    settings = NormalizerSettings()
+    runtime = NormalizerRuntime(capture_icecast_stream, settings)
+    runtime.run()
 
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        main()
     except KeyboardInterrupt:
         pass
