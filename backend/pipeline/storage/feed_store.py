@@ -43,17 +43,6 @@ SET last_processed_filename = $1,
 WHERE id = $2 AND worker_id = $3
 """
 
-_REPORT_FAILURE_SQL = """\
-UPDATE feeds
-SET status = CASE WHEN failure_count + 1 >= 3
-                  THEN 'quarantined'::feed_status
-                  ELSE 'failing'::feed_status END,
-    failure_count = failure_count + 1,
-    worker_id = NULL,
-    last_heartbeat = NOW()
-WHERE id = $1 AND worker_id = $2
-"""
-
 _RENEW_HEARTBEAT_SQL = """\
 UPDATE feeds
 SET last_heartbeat = NOW()
