@@ -11,7 +11,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2 # Required to see what changed
+          fetch-depth: 2 
 
       - name: Check for Module Changes
         id: filter
@@ -28,11 +28,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.PRIVATE_REPO_PAT }}
         run: |
-          # Decide which workflow to trigger based on what changed
           if [ "${{ steps.filter.outputs.infra_change }}" == "true" ]; then
-            echo "Module changed! Triggering Infrastructure Update..."
-            gh workflow run terraform.yml --repo ${{ secrets.PRIVATE_REPO_TARGET }} -f public_sha=${{ github.sha }}
+            echo "Infra change detected. Triggering Infrastructure (Waterfall will release app aswell)..."
+            gh workflow run terraform_deploy.yml --repo ${{ secrets.PRIVATE_REPO_TARGET }} -f public_sha=${{ github.sha }}
           else
-            echo "Only code changed. Triggering App Deployment..."
-            gh workflow run app-deploy.yml --repo ${{ secrets.PRIVATE_REPO_TARGET }} -f public_sha=${{ github.sha }}
+            echo "App code change only. Triggering App Deployment..."
+            gh workflow run app_deploy.yml --repo ${{ secrets.PRIVATE_REPO_TARGET }} -f public_sha=${{ github.sha }}
           fi
