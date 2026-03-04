@@ -82,7 +82,9 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         result = await store.update_feed_progress(
-            _FEED_ID, _WORKER_ID, "gs://bucket/path/file.ogg",
+            _FEED_ID,
+            _WORKER_ID,
+            "gs://bucket/path/file.ogg",
         )
 
         self.assertTrue(result)
@@ -93,7 +95,9 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         result = await store.update_feed_progress(
-            _FEED_ID, _WORKER_ID, "gs://bucket/path/file.ogg",
+            _FEED_ID,
+            _WORKER_ID,
+            "gs://bucket/path/file.ogg",
         )
 
         self.assertFalse(result)
@@ -153,7 +157,8 @@ class TestRenewHeartbeatsBatch(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         result = await store.renew_heartbeats_batch(
-            [_FEED_ID, _FEED_ID_B], _WORKER_ID,
+            [_FEED_ID, _FEED_ID_B],
+            _WORKER_ID,
         )
 
         self.assertEqual(result, {_FEED_ID, _FEED_ID_B})

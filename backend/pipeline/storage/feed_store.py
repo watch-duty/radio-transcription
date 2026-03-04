@@ -184,7 +184,10 @@ class FeedStore:
 
         """
         result = await self._pool.execute(
-            _UPDATE_PROGRESS_SQL, new_gcs_path, feed_id, worker_id,
+            _UPDATE_PROGRESS_SQL,
+            new_gcs_path,
+            feed_id,
+            worker_id,
         )
         return result == "UPDATE 1"
 
@@ -210,7 +213,9 @@ class FeedStore:
 
         """
         result = await self._pool.execute(
-            _RENEW_HEARTBEAT_SQL, feed_id, worker_id,
+            _RENEW_HEARTBEAT_SQL,
+            feed_id,
+            worker_id,
         )
         return result == "UPDATE 1"
 
@@ -240,7 +245,9 @@ class FeedStore:
         if not feed_ids:
             return set()
         rows = await self._pool.fetch(
-            _RENEW_HEARTBEATS_BATCH_SQL, feed_ids, worker_id,
+            _RENEW_HEARTBEATS_BATCH_SQL,
+            feed_ids,
+            worker_id,
         )
         return {row["id"] for row in rows}
 
@@ -270,7 +277,9 @@ class FeedStore:
 
         """
         result = await self._pool.execute(
-            _REPORT_FAILURE_PARAMETERIZED_SQL, feed_id, worker_id,
+            _REPORT_FAILURE_PARAMETERIZED_SQL,
+            feed_id,
+            worker_id,
             failure_threshold,
         )
         return result == "UPDATE 1"
@@ -300,7 +309,9 @@ class FeedStore:
 
         """
         result = await self._pool.execute(
-            _RELEASE_FEED_SQL, feed_id, worker_id,
+            _RELEASE_FEED_SQL,
+            feed_id,
+            worker_id,
         )
         return result == "UPDATE 1"
 
@@ -342,5 +353,3 @@ class FeedStore:
             )
             for row in rows
         ]
-
-

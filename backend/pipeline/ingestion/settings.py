@@ -26,9 +26,11 @@ class NormalizerSettings:
 
     # Worker identity
     worker_id: uuid.UUID = field(
-        default_factory=lambda: uuid.UUID(os.environ["WORKER_ID"])
-        if "WORKER_ID" in os.environ
-        else uuid.uuid4(),
+        default_factory=lambda: (
+            uuid.UUID(os.environ["WORKER_ID"])
+            if "WORKER_ID" in os.environ
+            else uuid.uuid4()
+        ),
     )
 
     # Feed orchestration

@@ -9,9 +9,13 @@ from backend.pipeline.storage import connection
 class TestCreatePool(unittest.IsolatedAsyncioTestCase):
     """Tests for create_pool."""
 
-    @mock.patch("backend.pipeline.storage.connection.asyncpg.create_pool", new_callable=mock.AsyncMock)
+    @mock.patch(
+        "backend.pipeline.storage.connection.asyncpg.create_pool",
+        new_callable=mock.AsyncMock,
+    )
     async def test_create_pool_defaults(
-        self, mock_create_pool: mock.AsyncMock,
+        self,
+        mock_create_pool: mock.AsyncMock,
     ) -> None:
         """Test create_pool with default arguments."""
         mock_pool = mock.AsyncMock()
@@ -34,9 +38,13 @@ class TestCreatePool(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result, mock_pool)
 
-    @mock.patch("backend.pipeline.storage.connection.asyncpg.create_pool", new_callable=mock.AsyncMock)
+    @mock.patch(
+        "backend.pipeline.storage.connection.asyncpg.create_pool",
+        new_callable=mock.AsyncMock,
+    )
     async def test_create_pool_custom_args(
-        self, mock_create_pool: mock.AsyncMock,
+        self,
+        mock_create_pool: mock.AsyncMock,
     ) -> None:
         """Test create_pool with custom arguments."""
         mock_pool = mock.AsyncMock()
@@ -63,10 +71,13 @@ class TestCreatePool(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result, mock_pool)
 
-
-    @mock.patch("backend.pipeline.storage.connection.asyncpg.create_pool", new_callable=mock.AsyncMock)
+    @mock.patch(
+        "backend.pipeline.storage.connection.asyncpg.create_pool",
+        new_callable=mock.AsyncMock,
+    )
     async def test_create_pool_with_timeouts(
-        self, mock_create_pool: mock.AsyncMock,
+        self,
+        mock_create_pool: mock.AsyncMock,
     ) -> None:
         """Test create_pool forwards command_timeout and timeout."""
         mock_pool = mock.AsyncMock()

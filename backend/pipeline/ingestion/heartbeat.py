@@ -98,7 +98,8 @@ class HeartbeatMonitor:
             if feed_ids:
                 try:
                     renewed_ids = await self._store.renew_heartbeats_batch(
-                        feed_ids, self._worker_id,
+                        feed_ids,
+                        self._worker_id,
                     )
                 except Exception:
                     logger.exception("Heartbeat renewal batch failed")
