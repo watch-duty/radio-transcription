@@ -6,17 +6,18 @@ import uuid
 from unittest import mock
 
 from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
+from backend.pipeline.storage.feed_store import LeasedFeed
 
 _WORKER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 
-_FEED: dict = {
-    "id": _FEED_ID,
-    "name": "Test Feed",
-    "source_type": "bcfy_feeds",
-    "last_processed_filename": None,
-    "stream_url": "http://stream.example.com/feed",
-}
+_FEED = LeasedFeed(
+    id=_FEED_ID,
+    name="Test Feed",
+    source_type="bcfy_feeds",
+    last_processed_filename=None,
+    stream_url="http://stream.example.com/feed",
+)
 
 
 def _make_settings(**overrides) -> mock.MagicMock:  # noqa: ANN003

@@ -82,7 +82,7 @@ class TestHeartbeatMonitorRenewal(unittest.IsolatedAsyncioTestCase):
             monitor.register(_FEED_A, new_task)
             return result
 
-        monitor._store.renew_heartbeats_batch = _intercept  # noqa: SLF001
+        monitor._store.renew_heartbeats_batch = _intercept  # type: ignore[assignment]  # noqa: SLF001
         monitor.start()
         await asyncio.sleep(0.05)
         await monitor.stop()

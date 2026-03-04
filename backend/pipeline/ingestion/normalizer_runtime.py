@@ -57,15 +57,18 @@ class NormalizerRuntime:
         self._capture_fn = capture_fn
         self._settings = settings
         self._thread_stop = threading.Event()
-        self._shutdown: asyncio.Event | None = None
-        self._pool: asyncpg.Pool | None = None
-        self._heartbeat_pool: asyncpg.Pool | None = None
-        self._loop: asyncio.AbstractEventLoop | None = None
+        # These fields are initialized in _main() before any method reads them.
+        # Typed without None so the type checker doesn't require narrowing at
+        # every usage site.  Accessing before _main() is a programming error.
+        self._shutdown: asyncio.Event = None  # set in _main()
+        self._pool: asyncpg.Pool = None  # set in _main()
+        self._heartbeat_pool: asyncpg.Pool = None  # set in _main()
+        self._loop: asyncio.AbstractEventLoop = None  # set in _main()
         self._feed_tasks: dict[uuid.UUID, asyncio.Task] = {}
         self._releasing_feeds: set[uuid.UUID] = set()
         self._heartbeat_thread: threading.Thread | None = None
-        self._store: FeedStore | None = None
-        self._heartbeat_store: FeedStore | None = None
+        self._store: FeedStore = None  # set in _main()
+        self._heartbeat_store: FeedStore = None  # set in _main()
 
     # -- Entry point ------------------------------------------------------
 
