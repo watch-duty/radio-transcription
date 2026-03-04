@@ -7,4 +7,4 @@ each inference output implies.
 | JSON manifest | Linear issue tracker link |
 | ------------- | ------------------------- |
 | playground\_parakeet\_and\_canary\_flash.json | https://linear.app/watchduty/issue/GOO-20/run-inference-with-3-chosen-models#comment-6705c94d |
-| playground\_all\_models.jsonl | (N/A) |
+| playground\_all\_models.jsonl | https://linear.app/watchduty/issue/GOO-23/setup-chirp-v3-evaluation-to-produce-nemo-consistent-json-output |
