@@ -336,13 +336,16 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
         rt._pool = mock.AsyncMock()  # noqa: SLF001
         rt._heartbeat_pool = mock.AsyncMock()  # noqa: SLF001
 
-        with mock.patch(
-            "backend.pipeline.ingestion.normalizer_runtime.close_client",
-            new_callable=mock.AsyncMock,
-        ), mock.patch(
-            "backend.pipeline.ingestion.normalizer_runtime.close_pool",
-            new_callable=mock.AsyncMock,
-        ) as mock_close_pool:
+        with (
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.close_client",
+                new_callable=mock.AsyncMock,
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.close_pool",
+                new_callable=mock.AsyncMock,
+            ) as mock_close_pool,
+        ):
             await rt._shutdown_sequence()  # noqa: SLF001
 
         rt._heartbeat_pool.close.assert_awaited_once()  # noqa: SLF001

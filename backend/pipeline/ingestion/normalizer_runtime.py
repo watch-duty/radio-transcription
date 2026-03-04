@@ -96,7 +96,8 @@ class NormalizerRuntime:
         def _on_signal(sig: signal.Signals) -> None:
             if not self._shutdown.is_set():
                 logger.info(
-                    "Received %s -- initiating graceful shutdown", sig.name,
+                    "Received %s -- initiating graceful shutdown",
+                    sig.name,
                 )
                 self._shutdown.set()
                 self._thread_stop.set()
@@ -166,9 +167,7 @@ class NormalizerRuntime:
             self._reap_completed_tasks()
 
             try:
-                capacity = (
-                    self._settings.max_feeds_per_worker - len(self._feed_tasks)
-                )
+                capacity = self._settings.max_feeds_per_worker - len(self._feed_tasks)
                 if capacity > 0:
                     leases = await self._store.acquire_feeds_batch(
                         self._settings.worker_id,
@@ -200,9 +199,7 @@ class NormalizerRuntime:
 
     def _reap_completed_tasks(self) -> None:
         """Remove completed tasks and consume their exceptions."""
-        for feed_id in [
-            fid for fid, t in self._feed_tasks.items() if t.done()
-        ]:
+        for feed_id in [fid for fid, t in self._feed_tasks.items() if t.done()]:
             task = self._feed_tasks.pop(feed_id)
             try:
                 exc = task.exception()
@@ -211,7 +208,9 @@ class NormalizerRuntime:
             else:
                 if exc is not None:
                     logger.warning(
-                        "Feed task %s failed: %s", task.get_name(), exc,
+                        "Feed task %s failed: %s",
+                        task.get_name(),
+                        exc,
                     )
 
     # -- Per-feed pipeline ------------------------------------------------
@@ -228,7 +227,8 @@ class NormalizerRuntime:
 
         try:
             async for audio_chunk in self._capture_fn(
-                feed, self._shutdown,
+                feed,
+                self._shutdown,
             ):
                 gcs_path = await upload_audio(
                     audio_chunk,
@@ -239,12 +239,13 @@ class NormalizerRuntime:
                 chunk_seq += 1
 
                 ok = await self._store.update_feed_progress(
-                    feed["id"], worker_id, gcs_path,
+                    feed["id"],
+                    worker_id,
+                    gcs_path,
                 )
                 if not ok:
                     logger.critical(
-                        "Fence violation on bookmark for feed %s "
-                        "-- terminating",
+                        "Fence violation on bookmark for feed %s -- terminating",
                         feed["name"],
                     )
                     logging.shutdown()
@@ -252,8 +253,7 @@ class NormalizerRuntime:
 
                 if self._shutdown.is_set():
                     logger.info(
-                        "Shutdown -- stopping feed %s cleanly after "
-                        "chunk %d",
+                        "Shutdown -- stopping feed %s cleanly after chunk %d",
                         feed["name"],
                         chunk_seq,
                     )
@@ -274,7 +274,8 @@ class NormalizerRuntime:
                 )
             except Exception:
                 logger.exception(
-                    "Failed to record failure for feed %s", feed["name"],
+                    "Failed to record failure for feed %s",
+                    feed["name"],
                 )
             finally:
                 self._releasing_feeds.discard(feed["id"])
@@ -308,7 +309,8 @@ class NormalizerRuntime:
 
             try:
                 future = asyncio.run_coroutine_threadsafe(
-                    self._heartbeat_cycle(), self._loop,
+                    self._heartbeat_cycle(),
+                    self._loop,
                 )
                 future.result(
                     timeout=self._settings.heartbeat_stall_timeout_sec,
@@ -338,7 +340,8 @@ class NormalizerRuntime:
             return
 
         renewed_ids = await self._heartbeat_store.renew_heartbeats_batch(
-            list(active.keys()), self._settings.worker_id,
+            list(active.keys()),
+            self._settings.worker_id,
         )
 
         lost_ids = {
@@ -350,13 +353,13 @@ class NormalizerRuntime:
         }
         if not lost_ids:
             logger.debug(
-                "Heartbeat renewed for %d feeds", len(renewed_ids),
+                "Heartbeat renewed for %d feeds",
+                len(renewed_ids),
             )
             return
 
         logger.critical(
-            "Heartbeat fence violation -- %d feed(s) lost: %s. "
-            "Terminating.",
+            "Heartbeat fence violation -- %d feed(s) lost: %s. Terminating.",
             len(lost_ids),
             ", ".join(str(fid) for fid in lost_ids),
         )
@@ -371,14 +374,12 @@ class NormalizerRuntime:
         close GCS client and database pools.
         """
         logger.info(
-            "Shutting down -- %d active feed tasks", len(self._feed_tasks),
+            "Shutting down -- %d active feed tasks",
+            len(self._feed_tasks),
         )
         self._thread_stop.set()
 
-        if (
-            self._heartbeat_thread is not None
-            and self._heartbeat_thread.is_alive()
-        ):
+        if self._heartbeat_thread is not None and self._heartbeat_thread.is_alive():
             await asyncio.to_thread(self._heartbeat_thread.join, timeout=5)
 
         # Cancel all feed tasks
