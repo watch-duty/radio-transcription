@@ -40,7 +40,7 @@ class NormalizerRuntime:
     yields audio chunks. The runtime handles everything else.
 
     Args:
-        capture_fn: Async generator factory ``(feed, shutdown_event) -> bytes``.
+        capture_fn: Async generator factory ``(feed, shutdown_event) -> AsyncIterator[bytes]``.
         settings: Runtime configuration. Defaults to ``NormalizerSettings()``.
 
     """

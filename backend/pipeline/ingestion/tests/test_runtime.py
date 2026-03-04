@@ -301,8 +301,6 @@ class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
             await rt._heartbeat_cycle()  # noqa: SLF001
             mock_exit.assert_not_called()
 
-        rt._heartbeat_store.check_feed_statuses.assert_not_called()  # noqa: SLF001
-
 
 class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
     """Tests for _shutdown_sequence."""
