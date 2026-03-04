@@ -1,20 +1,37 @@
-name: 'Trigger Private Deployment'
+name: Trigger Private Deployment
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
 
 jobs:
-  notify-private-repo:
-    name: 'Send Signal to Private Repo'
+  signal-private:
     runs-on: ubuntu-latest
-    
     steps:
-    - name: Trigger Workflow in Private Repo
-      env:
-        GH_TOKEN: ${{ secrets.PRIVATE_REPO_PAT }} 
-      run: |
-        gh workflow run deploy.yml \
-          --repo ${{ secrets.PRIVATE_REPO_TARGET }} \
-          -f public_sha=${{ github.sha }}
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2 
+
+      - name: Check for Module Changes
+        id: filter
+        run: |
+          # Check if any files in the terraform/modules directory changed
+          MOD_CHANGED=$(git diff --name-only HEAD^ HEAD | grep 'terraform/modules/' || true)
+          if [ -n "$MOD_CHANGED" ]; then
+            echo "infra_change=true" >> $GITHUB_OUTPUT
+          else
+            echo "infra_change=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Notify Private Repo
+        env:
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_PAT }}
+        run: |
+          if [ "${{ steps.filter.outputs.infra_change }}" == "true" ]; then
+            echo "Infra change detected. Triggering Infrastructure (Waterfall will release app aswell)..."
+            gh workflow run terraform_deploy.yml --repo ${{ secrets.PRIVATE_REPO_TARGET }} -f public_sha=${{ github.sha }}
+          else
+            echo "App code change only. Triggering App Deployment..."
+            gh workflow run app_deploy.yml --repo ${{ secrets.PRIVATE_REPO_TARGET }} -f public_sha=${{ github.sha }}
+          fi
