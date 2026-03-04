@@ -61,7 +61,7 @@ class NormalizerRuntime:
         # Typed without None so the type checker doesn't require narrowing at
         # every usage site.  Accessing before _main() is a programming error.
         self._shutdown: asyncio.Event = None  # set in _main()
-        self._pool: asyncpg.Pool = None  # set in _main()
+        self._data_pool: asyncpg.Pool = None  # set in _main()
         self._heartbeat_pool: asyncpg.Pool = None  # set in _main()
         self._loop: asyncio.AbstractEventLoop = None  # set in _main()
         self._feed_tasks: dict[uuid.UUID, asyncio.Task] = {}
@@ -109,7 +109,7 @@ class NormalizerRuntime:
             self._loop.add_signal_handler(sig, _on_signal, sig)
 
         s = self._settings
-        self._pool = await create_pool(
+        self._data_pool = await create_pool(
             host=s.db_host,
             user=s.db_user,
             db_name=s.db_name,
@@ -120,7 +120,7 @@ class NormalizerRuntime:
             command_timeout=s.db_command_timeout_sec,
             timeout=s.db_connect_timeout_sec,
         )
-        self._store = FeedStore(self._pool)
+        self._store = FeedStore(self._data_pool)
 
         self._heartbeat_pool = await asyncpg.create_pool(
             host=s.db_host,
@@ -419,7 +419,7 @@ class NormalizerRuntime:
             except Exception:  # noqa: S110
                 pass  # expected if heartbeat cycle was mid-query
 
-        if self._pool is not None:
-            await close_pool(self._pool)
+        if self._data_pool is not None:
+            await close_pool(self._data_pool)
 
         logger.info("Shutdown complete")

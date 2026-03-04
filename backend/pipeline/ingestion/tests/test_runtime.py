@@ -313,7 +313,7 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
         rt._thread_stop = mock.MagicMock()
         rt._heartbeat_thread = None
         rt._store = mock.AsyncMock()
-        rt._pool = mock.AsyncMock()
+        rt._data_pool = mock.AsyncMock()
         rt._heartbeat_pool = mock.AsyncMock()
 
         task = asyncio.create_task(asyncio.sleep(1000))
@@ -334,7 +334,7 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
         rt._thread_stop = mock.MagicMock()
         rt._heartbeat_thread = None
         rt._store = mock.AsyncMock()
-        rt._pool = mock.AsyncMock()
+        rt._data_pool = mock.AsyncMock()
         rt._heartbeat_pool = mock.AsyncMock()
 
         with (
@@ -350,7 +350,7 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
             await rt._shutdown_sequence()
 
         rt._heartbeat_pool.close.assert_awaited_once()
-        mock_close_pool.assert_awaited_once_with(rt._pool)
+        mock_close_pool.assert_awaited_once_with(rt._data_pool)
 
 
 if __name__ == "__main__":
