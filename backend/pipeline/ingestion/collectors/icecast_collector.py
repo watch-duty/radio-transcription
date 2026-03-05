@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import io
 import logging
 import os
+import struct
 import sys
-import wave
 from typing import TYPE_CHECKING
 
 from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
@@ -110,8 +109,11 @@ async def capture_icecast_stream(
                 current_chunk = buffer[:BYTES_PER_CHUNK]
                 del buffer[:BYTES_PER_CHUNK]
 
-                # Convert raw PCM to WAV format
-                wav_data = _pcm_to_wav(current_chunk, feed_name)
+                # Prepend WAV header to raw PCM data
+                wav_header = _get_wav_header(
+                    len(current_chunk), SAMPLE_RATE, NUM_CHANNELS, SAMPLE_WIDTH
+                )
+                wav_data = wav_header + current_chunk
                 yield wav_data
 
     finally:
@@ -151,30 +153,51 @@ async def _create_ffmpeg_process(url: str) -> asyncio.subprocess.Process:
         )  # fmt: skip
 
 
-def _pcm_to_wav(pcm_data: bytearray, feed_name: str) -> bytes:
+def _get_wav_header(
+    pcm_length: int, sample_rate: int, num_channels: int, sample_width: int
+) -> bytes:
     """
-    Convert raw PCM audio data to WAV format.
+    Generates a canonical 44-byte WAV (RIFF) header for PCM data.
 
     Args:
-        pcm_data: Raw PCM s16le audio bytes
-        feed_name: Name of the feed (for logging context)
-
+        pcm_length: Total bytes of raw PCM data (data chunk size).
+        sample_rate: e.g., 16000, 44100.
+        num_channels: 1 for mono, 2 for stereo.
+        sample_width: Bytes per sample (e.g., 2 for 16-bit).
 
     Returns:
-        WAV-formatted audio bytes
+        A bytes object containing the WAV header to be prepended to PCM data.
 
     """
-    try:
-        with io.BytesIO() as wav_io:
-            with wave.open(wav_io, "wb") as f:
-                f.setnchannels(NUM_CHANNELS)
-                f.setsampwidth(SAMPLE_WIDTH)
-                f.setframerate(SAMPLE_RATE)
-                f.writeframes(pcm_data)
-            wav_data = wav_io.getvalue()
-    except Exception as e:
-        logger.exception(f"Feed {feed_name}: Failed to format WAV data: {e}")
-    return wav_data
+    header = bytearray(44)
+
+    # --- RIFF Chunk Descriptor ---
+    header[0:4] = b"RIFF"
+    # File size - 8 bytes (the 'RIFF' and 'size' fields themselves aren't counted)
+    struct.pack_into("<I", header, 4, 36 + pcm_length)
+    header[8:12] = b"WAVE"
+
+    # --- The "fmt " (format) Sub-chunk ---
+    header[12:16] = b"fmt "
+    struct.pack_into(
+        "<IHHIIHH",
+        header,  # Buffer to write into
+        16,  # Offset to start writing
+        16,  # Subchunk1Size (16 for PCM)
+        1,  # AudioFormat (1 = PCM / Linear Quantization)
+        num_channels,
+        sample_rate,
+        sample_rate * num_channels * sample_width,  # ByteRate
+        num_channels * sample_width,  # BlockAlign
+        sample_width * 8,  # BitsPerSample (e.g., 16)
+    )
+
+    # --- The "data" Sub-chunk ---
+    header[36:40] = b"data"
+    # Size of the actual raw PCM data following this header
+    struct.pack_into("<I", header, 40, pcm_length)
+
+    return bytes(header)
 
 
 def main() -> None:

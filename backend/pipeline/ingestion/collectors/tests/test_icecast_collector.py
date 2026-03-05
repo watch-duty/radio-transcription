@@ -72,7 +72,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         # Assert - chunk should be WAV formatted
         self.assertEqual(len(chunks), 1)
         self.assertIsInstance(chunks[0], bytes)
-        self.assertGreater(len(chunks[0]), 44)  # WAV header is at least 44 bytes
+        self.assertEqual(len(chunks[0]), chunk_size + 44)  # Chunk data + WAV header
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
@@ -295,7 +295,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(chunks), 2)
         for chunk in chunks:
             self.assertIsInstance(chunk, bytes)
-            self.assertGreater(len(chunk), 44)  # WAV header minimum
+            self.assertEqual(len(chunk), chunk_size + 44)  # Each chunk + WAV header
 
 
 if __name__ == "__main__":
