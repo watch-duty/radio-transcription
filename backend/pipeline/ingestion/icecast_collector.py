@@ -39,7 +39,9 @@ BASE_BACKOFF = 5  # Initial retry delay in seconds
 MAX_BACKOFF = 300  # Maximum retry delay (5 minutes)
 
 if not USER or not PASS:
-    logger.critical("BROADCASTIFY_USERNAME and BROADCASTIFY_PASSWORD env vars must be set.")
+    logger.critical(
+        "BROADCASTIFY_USERNAME and BROADCASTIFY_PASSWORD env vars must be set."
+    )
     sys.exit(1)
 
 if not FINAL_STAGING_BUCKET:
