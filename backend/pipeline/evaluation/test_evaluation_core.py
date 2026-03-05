@@ -20,8 +20,10 @@ class TestCloudFunction(unittest.TestCase):
         self.transcribed_audio.audio_id = "12345"
         self.transcribed_audio.transcript = "There is a fire"
         self.transcribed_audio.file_path = "test/path.wav"
-        self.transcribed_audio.location = "test_location"
-        self.transcribed_audio.feed = "test_feed"
+        self.transcribed_audio.source = "test_location"
+        self.transcribed_audio.feed_id = "1234"
+        self.transcribed_audio.feed_name = "test_feed"
+        self.transcribed_audio.context["tag"] = "foo"
         ts_start = TranscribedAudio.Timestamp()
         ts_start.seconds = 1234567890
         ts_start.nanos = 0
