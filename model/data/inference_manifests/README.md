@@ -7,3 +7,4 @@ each inference output implies.
 | JSON manifest | Linear issue tracker link |
 | ------------- | ------------------------- |
 | playground\_parakeet\_and\_canary\_flash.json | https://linear.app/watchduty/issue/GOO-20/run-inference-with-3-chosen-models#comment-6705c94d |
+| playground_parakeet_and_canary_flash_and_gemma3n_e2b_it.json | https://linear.app/watchduty/issue/GOO-34/run-gemma-3n-inference-within-nemo |
