@@ -15,7 +15,7 @@ MOCK_ENV_VARS = {
 with (
     patch.dict(os.environ, MOCK_ENV_VARS, clear=False),
 ):
-    from backend.pipeline.ingestion import icecast_collector
+    from backend.pipeline.ingestion.collectors import icecast_collector
 
 
 def _make_feed(name: str, stream_url: str | None) -> LeasedFeed:
@@ -44,7 +44,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             p.stop()
 
     @patch(
-        "backend.pipeline.ingestion.icecast_collector._create_ffmpeg_process",
+        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_normal_capture_yields_wav_chunks(
@@ -75,7 +75,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(len(chunks[0]), 44)  # WAV header is at least 44 bytes
 
     @patch(
-        "backend.pipeline.ingestion.icecast_collector._create_ffmpeg_process",
+        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_shutdown_signal_stops_capture(
@@ -156,7 +156,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.assertIn("missing stream_url", str(context.exception))
 
     @patch(
-        "backend.pipeline.ingestion.icecast_collector._create_ffmpeg_process",
+        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_ffmpeg_normal_exit_code_zero(
@@ -181,7 +181,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         mock_proc.wait.assert_called_once()
 
     @patch(
-        "backend.pipeline.ingestion.icecast_collector._create_ffmpeg_process",
+        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_ffmpeg_error_exit_code_raises_runtime_error(
@@ -208,7 +208,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.assertIn("error-exit-feed", str(context.exception))
 
     @patch(
-        "backend.pipeline.ingestion.icecast_collector._create_ffmpeg_process",
+        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_ffmpeg_stdout_is_none_raises_error(
@@ -233,7 +233,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.assertIn("no-stdout-feed", str(context.exception))
 
     @patch(
-        "backend.pipeline.ingestion.icecast_collector._create_ffmpeg_process",
+        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_cleanup_process_on_exception(
@@ -261,7 +261,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         mock_proc.wait.assert_called_once()
 
     @patch(
-        "backend.pipeline.ingestion.icecast_collector._create_ffmpeg_process",
+        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_yields_multiple_chunks_from_continuous_stream(

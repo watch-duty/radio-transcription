@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Audio processing constants
+NUM_CHANNELS = 1
 CHUNK_DURATION_SECONDS = 15
 SAMPLE_RATE = 16000
 SAMPLE_WIDTH = 2
@@ -166,7 +167,7 @@ def _pcm_to_wav(pcm_data: bytearray, feed_name: str) -> bytes:
     try:
         with io.BytesIO() as wav_io:
             with wave.open(wav_io, "wb") as f:
-                f.setnchannels(1)
+                f.setnchannels(NUM_CHANNELS)
                 f.setsampwidth(SAMPLE_WIDTH)
                 f.setframerate(SAMPLE_RATE)
                 f.writeframes(pcm_data)
