@@ -24,15 +24,19 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x17transcribed_audio.proto\"\x82\x02\n\x10TranscribedAudio\x12\x11\n\tfile_path\x18\x01 \x01(\t\x12\x10\n\x08location\x18\x02 \x01(\t\x12\x0c\n\x04\x66\x65\x65\x64\x18\x03 \x01(\t\x12\x10\n\x08\x61udio_id\x18\x04 \x01(\t\x12\x34\n\x0fstart_timestamp\x18\x05 \x01(\x0b\x32\x1b.TranscribedAudio.Timestamp\x12\x32\n\rend_timestamp\x18\x06 \x01(\x0b\x32\x1b.TranscribedAudio.Timestamp\x12\x12\n\ntranscript\x18\x07 \x01(\t\x1a+\n\tTimestamp\x12\x0f\n\x07seconds\x18\x01 \x01(\x03\x12\r\n\x05nanos\x18\x02 \x01(\x05\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x17transcribed_audio.proto\"\xf7\x02\n\x10TranscribedAudio\x12\x11\n\tfile_path\x18\x01 \x01(\t\x12\x0e\n\x06source\x18\x02 \x01(\t\x12\x11\n\tfeed_name\x18\x03 \x01(\t\x12\x0f\n\x07\x66\x65\x65\x64_id\x18\x04 \x01(\t\x12\x10\n\x08\x61udio_id\x18\x05 \x01(\t\x12\x34\n\x0fstart_timestamp\x18\x06 \x01(\x0b\x32\x1b.TranscribedAudio.Timestamp\x12\x32\n\rend_timestamp\x18\x07 \x01(\x0b\x32\x1b.TranscribedAudio.Timestamp\x12\x12\n\ntranscript\x18\x08 \x01(\t\x12/\n\x07\x63ontext\x18\t \x03(\x0b\x32\x1e.TranscribedAudio.ContextEntry\x1a+\n\tTimestamp\x12\x0f\n\x07seconds\x18\x01 \x01(\x03\x12\r\n\x05nanos\x18\x02 \x01(\x05\x1a.\n\x0c\x43ontextEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'transcribed_audio_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
+  _globals['_TRANSCRIBEDAUDIO_CONTEXTENTRY']._loaded_options = None
+  _globals['_TRANSCRIBEDAUDIO_CONTEXTENTRY']._serialized_options = b'8\001'
   _globals['_TRANSCRIBEDAUDIO']._serialized_start=28
-  _globals['_TRANSCRIBEDAUDIO']._serialized_end=286
-  _globals['_TRANSCRIBEDAUDIO_TIMESTAMP']._serialized_start=243
-  _globals['_TRANSCRIBEDAUDIO_TIMESTAMP']._serialized_end=286
+  _globals['_TRANSCRIBEDAUDIO']._serialized_end=403
+  _globals['_TRANSCRIBEDAUDIO_TIMESTAMP']._serialized_start=312
+  _globals['_TRANSCRIBEDAUDIO_TIMESTAMP']._serialized_end=355
+  _globals['_TRANSCRIBEDAUDIO_CONTEXTENTRY']._serialized_start=357
+  _globals['_TRANSCRIBEDAUDIO_CONTEXTENTRY']._serialized_end=403
 # @@protoc_insertion_point(module_scope)

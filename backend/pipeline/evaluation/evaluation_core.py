@@ -99,8 +99,8 @@ def evaluate_transcribed_audio_segment(cloud_event: CloudEvent) -> None:
         # 4. Create Evaluation Result Payload
         evaluated_payload = EvaluatedTranscribedAudio(
             file_path=new_transcribed_audio.file_path,
-            location=new_transcribed_audio.location,
-            feed=new_transcribed_audio.feed,
+            source=new_transcribed_audio.source,
+            feed_id=new_transcribed_audio.feed_id,
             audio_id=new_transcribed_audio.audio_id,
             start_timestamp={
                 "seconds": new_transcribed_audio.start_timestamp.seconds,
@@ -111,6 +111,7 @@ def evaluate_transcribed_audio_segment(cloud_event: CloudEvent) -> None:
                 "nanos": new_transcribed_audio.end_timestamp.nanos,
             },
             transcript=new_transcribed_audio.transcript,
+            context=new_transcribed_audio.context,
             evaluation_decisions=evaluation_result.get("triggered_rules", []),
         )
 
