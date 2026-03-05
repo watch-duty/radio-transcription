@@ -22,7 +22,7 @@ message AlertNotification {
     Timestamp end_timestamp = 6;
     // Full transcript text evaluated from the audio.
     string transcript = 7;
-    // Additional context that can provide metadata about this notification.
+    // Additional context that can provide metadata about this audio/feed.
     map<string, string> context = 8;
     // List of rule IDs that matched the transcript in evaluation.
     repeated string evaluation_decisions = 9;

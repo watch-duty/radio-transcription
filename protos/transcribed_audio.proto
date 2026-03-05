@@ -24,6 +24,6 @@ message TranscribedAudio {
     Timestamp end_timestamp = 7;
     // Full transcript text evaluated from the audio.
     string transcript = 8;
-    // Additional context that can provide metadata about this notification.
+    // Additional context that can provide metadata about this audio/feed.
     map<string, string> context = 9;
 }
