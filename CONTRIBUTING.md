@@ -41,7 +41,7 @@ export FINAL_STAGING_BUCKET=wd-radio-test
 python backend/pipeline/ingestion/icecast_collector.py
 ```
 
-*Building & Running from Docker*
+*Building & Running with Docker*
 ```
 # Assuming you're running from the top level of the root dir.
 # Run this command if you are running this for the first time.
