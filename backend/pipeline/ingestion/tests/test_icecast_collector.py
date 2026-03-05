@@ -105,32 +105,26 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(StopAsyncIteration):
             await gen.__anext__()
 
-    @patch(
-        "backend.pipeline.ingestion.icecast_collector._create_ffmpeg_process",
-        new_callable=AsyncMock,
-    )
-    async def test_ffmpeg_error_exit_code_raises_runtime_error(
-        self, mock_create_ffmpeg: AsyncMock
-    ) -> None:
-        """Test invalid case: ffmpeg exits with non-zero code raises RuntimeError."""
+    async def test_invalid_input_missing_stream_url(self) -> None:
+        """Test invalid input: feed missing stream_url raises ValueError."""
         # Arrange
-        mock_proc = AsyncMock()
-        mock_proc.pid = 7777
-        mock_proc.returncode = 1
-        mock_proc.stdout.read.return_value = b""  # EOF
-        mock_proc.wait = AsyncMock(return_value=1)
-        mock_create_ffmpeg.return_value = mock_proc
-
-        feed = _make_feed("error-exit-feed", "http://example.com/stream")
+        feed = cast(
+            "LeasedFeed",
+            {
+                "id": uuid.uuid4(),
+                "name": "incomplete-feed",
+                "source_type": "icecast",
+                "last_processed_filename": None,
+            },
+        )
         shutdown_event = asyncio.Event()
 
         # Act & Assert
         gen = icecast_collector.capture_icecast_stream(feed, shutdown_event)
-        with self.assertRaises(RuntimeError) as context:
+        with self.assertRaises(ValueError) as context:
             await gen.__anext__()
 
-        self.assertIn("ffmpeg exited with code 1", str(context.exception))
-        self.assertIn("error-exit-feed", str(context.exception))
+        self.assertIn("missing stream_url", str(context.exception))
 
     async def test_invalid_input_none_stream_url_raises_value_error(self) -> None:
         """Test invalid input: feed with None stream_url raises ValueError."""
@@ -190,19 +184,19 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
-    async def test_ffmpeg_error_exit_code_nonzero(
+    async def test_ffmpeg_error_exit_code_raises_runtime_error(
         self, mock_create_ffmpeg: AsyncMock
     ) -> None:
-        """Test error case: ffmpeg exits with non-zero code raises RuntimeError."""
+        """Test invalid case: ffmpeg exits with non-zero code raises RuntimeError."""
         # Arrange
         mock_proc = AsyncMock()
-        mock_proc.pid = 9999
-        mock_proc.stdout.read.side_effect = [b""]  # EOF
-        mock_proc.wait.return_value = 1
-
+        mock_proc.pid = 7777
+        mock_proc.returncode = 1
+        mock_proc.stdout.read.return_value = b""  # EOF
+        mock_proc.wait = AsyncMock(return_value=1)
         mock_create_ffmpeg.return_value = mock_proc
 
-        feed = _make_feed("bad-feed", "http://example.com/stream")
+        feed = _make_feed("error-exit-feed", "http://example.com/stream")
         shutdown_event = asyncio.Event()
 
         # Act & Assert
@@ -211,38 +205,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             await gen.__anext__()
 
         self.assertIn("ffmpeg exited with code 1", str(context.exception))
-
-    async def test_invalid_input_missing_stream_url(self) -> None:
-        """Test invalid input: feed missing stream_url raises KeyError."""
-        # Arrange
-        feed = cast(
-            "LeasedFeed",
-            {
-                "id": uuid.uuid4(),
-                "name": "incomplete-feed",
-                "source_type": "icecast",
-                "last_processed_filename": None,
-            },
-        )
-        shutdown_event = asyncio.Event()
-
-        # Act & Assert
-        gen = icecast_collector.capture_icecast_stream(feed, shutdown_event)
-        with self.assertRaises(KeyError):
-            await gen.__anext__()
-
-    async def test_invalid_input_none_stream_url(self) -> None:
-        """Test invalid input: feed with None stream_url raises ValueError."""
-        # Arrange
-        feed = _make_feed("none-stream-feed", None)
-        shutdown_event = asyncio.Event()
-
-        # Act & Assert
-        gen = icecast_collector.capture_icecast_stream(feed, shutdown_event)
-        with self.assertRaises(ValueError) as context:
-            await gen.__anext__()
-
-        self.assertIn("missing stream_url", str(context.exception))
+        self.assertIn("error-exit-feed", str(context.exception))
 
     @patch(
         "backend.pipeline.ingestion.icecast_collector._create_ffmpeg_process",

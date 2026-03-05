@@ -67,7 +67,8 @@ async def capture_icecast_stream(
         RuntimeError: If ffmpeg subprocess fails to start or exits prematurely
 
     """
-    if not feed["stream_url"]:
+    stream_url = feed.get("stream_url")
+    if not stream_url:
         msg = f"Feed {feed['name']} missing stream_url in feed_properties_icecast"
         raise ValueError(msg)
 
