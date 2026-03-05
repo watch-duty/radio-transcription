@@ -16,6 +16,48 @@
 * Type-checking: TBD (`ty` or `mypy`?)
 * Unit testing: Python `unittest`
 
+#### Audio Ingestion
+##### Icecast Collector
+*Installation*
+1. Install ffmpeg
+```
+brew install ffmpeg
+```
+
+2. Install the gcloud cli tool
+https://docs.cloud.google.com/sdk/docs/install-sdk
+```
+gcloud init
+gcloud auth login
+```
+
+*Building & Running Locally*
+```
+# Assuming you're running from the top level of the root dir
+source .venv/bin/activate
+export BROADCASTIFY_USERNAME=<your broadcastify username>
+export BROADCASTIFY_PASSWORD=<your broadcastify pword>
+export FINAL_STAGING_BUCKET=wd-radio-test
+python backend/pipeline/ingestion/icecast_collector.py
+```
+
+*Building & Running from Docker*
+```
+# Assuming you're running from the top level of the root dir.
+# Run this command if you are running this for the first time.
+cat <<EOF > backend/pipeline/ingestion/.icecast_env
+BROADCASTIFY_USERNAME=<your broadcastify username>
+BROADCASTIFY_PASSWORD=<your broadcastify pword>
+FINAL_STAGING_BUCKET=wd-radio-test
+EOF
+
+docker build -t "icecast" -f backend/pipeline/ingestion/Dockerfile .
+docker run -v ~/.config/gcloud:/.config/gcloud \
+           --env-file backend/pipeline/ingestion/.icecast_env \
+           -e GOOGLE_APPLICATION_CREDENTIALS=/.config/gcloud/application_default_credentials.json \
+           -it icecast
+```
+
 ### Frontend tools
 
 * Language: Typescript
