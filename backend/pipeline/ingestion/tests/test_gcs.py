@@ -1,7 +1,19 @@
 import unittest
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.pipeline.ingestion import gcs
+from backend.pipeline.storage.feed_store import LeasedFeed
+
+
+def _make_feed(source_type: str, feed_id: int) -> LeasedFeed:
+    return LeasedFeed(
+        id=uuid.UUID(int=feed_id),
+        name=f"test-{source_type}-{feed_id}",
+        source_type=source_type,
+        last_processed_filename=None,
+        stream_url=None,
+    )
 
 
 class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
@@ -36,7 +48,8 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         mock_storage_class.return_value = mock_storage
 
         audio_chunk = b"\x00\x01" * 1000
-        feed = {"source_type": "bcfy_feeds", "id": 1234}
+        feed_id = uuid.UUID(int=1234)
+        feed = _make_feed("bcfy_feeds", 1234)
         bucket = "test-bucket"
         chunk_seq = 5
 
@@ -44,7 +57,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         result = await gcs.upload_audio(audio_chunk, feed, bucket, chunk_seq)
 
         # Assert
-        expected_object_name = "bcfy_feeds/1234/20260305T120000Z_5.wav"
+        expected_object_name = f"bcfy_feeds/{feed_id}/20260305T120000Z_5.wav"
         expected_path = f"gs://{bucket}/{expected_object_name}"
 
         mock_storage.upload.assert_called_once_with(
@@ -70,7 +83,8 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         mock_storage_class.return_value = mock_storage
 
         audio_chunk = b""
-        feed = {"source_type": "echo_feeds", "id": 5678}
+        feed_id = uuid.UUID(int=5678)
+        feed = _make_feed("echo_feeds", 5678)
         bucket = "test-bucket"
         chunk_seq = 0
 
@@ -78,41 +92,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         result = await gcs.upload_audio(audio_chunk, feed, bucket, chunk_seq)
 
         # Assert
-        expected_object_name = "echo_feeds/5678/20260305T120000Z_0.wav"
-        expected_path = f"gs://{bucket}/{expected_object_name}"
-
-        mock_storage.upload.assert_called_once_with(
-            bucket, expected_object_name, audio_chunk
-        )
-        self.assertEqual(result, expected_path)
-
-    @patch("backend.pipeline.ingestion.gcs.Storage")
-    @patch("backend.pipeline.ingestion.gcs.aiohttp.ClientSession")
-    @patch("backend.pipeline.ingestion.gcs.datetime")
-    async def test_upload_audio_special_characters_in_feed_id(
-        self,
-        mock_datetime: MagicMock,
-        mock_session_class: MagicMock,
-        mock_storage_class: MagicMock,
-    ) -> None:
-        """Test upload with special characters in feed ID."""
-        # Arrange
-        mock_datetime.datetime.now.return_value.strftime.return_value = (
-            "20260305T120000Z"
-        )
-        mock_storage = AsyncMock()
-        mock_storage_class.return_value = mock_storage
-
-        audio_chunk = b"\x00\x01" * 100
-        feed = {"source_type": "test_source", "id": "feed-123-abc"}
-        bucket = "test-bucket"
-        chunk_seq = 1
-
-        # Act
-        result = await gcs.upload_audio(audio_chunk, feed, bucket, chunk_seq)
-
-        # Assert
-        expected_object_name = "test_source/feed-123-abc/20260305T120000Z_1.wav"
+        expected_object_name = f"echo_feeds/{feed_id}/20260305T120000Z_0.wav"
         expected_path = f"gs://{bucket}/{expected_object_name}"
 
         mock_storage.upload.assert_called_once_with(
@@ -139,7 +119,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         mock_storage_class.return_value = mock_storage
 
         audio_chunk = b"\x00\x01" * 1000
-        feed = {"source_type": "bcfy_feeds", "id": 1234}
+        feed = _make_feed("bcfy_feeds", 1234)
         bucket = "test-bucket"
         chunk_seq = 5
 
@@ -163,7 +143,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         mock_storage_class.return_value = mock_storage
 
         audio_chunk = b"\x00\x01" * 100
-        feed = {"source_type": "bcfy_feeds", "id": 1234}
+        feed = _make_feed("bcfy_feeds", 1234)
         bucket = "test-bucket"
 
         # Act - Upload twice
@@ -192,7 +172,8 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         mock_storage_class.return_value = mock_storage
 
         audio_chunk = b"\x00\x01" * 100
-        feed = {"source_type": "bcfy_feeds", "id": 1234}
+        feed_id = uuid.UUID(int=1234)
+        feed = _make_feed("bcfy_feeds", 1234)
         bucket = "test-bucket"
         chunk_seq = 999999999
 
@@ -200,7 +181,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         result = await gcs.upload_audio(audio_chunk, feed, bucket, chunk_seq)
 
         # Assert
-        expected_object_name = "bcfy_feeds/1234/20260305T120000Z_999999999.wav"
+        expected_object_name = f"bcfy_feeds/{feed_id}/20260305T120000Z_999999999.wav"
         expected_path = f"gs://{bucket}/{expected_object_name}"
 
         self.assertEqual(result, expected_path)
