@@ -35,7 +35,7 @@ gcloud auth login
 *Building & Running Locally*
 ```
 # Assuming you're running from the top level of the root dir
-# Note: requires AlloyDB setup (TODO)
+# TO BE UPDATED: requires AlloyDB setup to work
 source .venv/bin/activate
 export BROADCASTIFY_USERNAME=<your broadcastify username>
 export BROADCASTIFY_PASSWORD=<your broadcastify pword>
