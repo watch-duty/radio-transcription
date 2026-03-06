@@ -200,7 +200,8 @@ class NormalizerRuntime:
     # -- Leasing ----------------------------------------------------------
 
     async def _leasing_loop(self) -> None:
-        """Continuously lease feeds in batches and spawn processing tasks.
+        """
+        Continuously lease feeds in batches and spawn processing tasks.
 
         Uses ``acquire_feeds_batch`` with ``FOR UPDATE SKIP LOCKED`` for
         single-roundtrip batch acquisition. On startup with 250 empty slots
@@ -262,7 +263,8 @@ class NormalizerRuntime:
                 return
 
     def _reap_completed_tasks(self) -> None:
-        """Remove completed tasks and consume their exceptions.
+        """
+        Remove completed tasks and consume their exceptions.
 
         Must call ``task.exception()`` to retrieve the stored exception —
         without this, asyncio logs a "Task exception was never retrieved"
