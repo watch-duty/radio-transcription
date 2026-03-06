@@ -1,0 +1,3 @@
+aiohttp
+gcloud-aio-storage
+google-auth
