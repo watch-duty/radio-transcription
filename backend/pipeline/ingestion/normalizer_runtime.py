@@ -40,8 +40,8 @@ class NormalizerRuntime:
     yields audio chunks. The runtime handles everything else.
 
     Design target: 250 concurrent feeds per GCE instance on a Managed
-    Instance Group (MIG). The Stream Capturer MIG scales horizontally based 
-    on Stream Utilization % (number of active streams per instance), preventing 
+    Instance Group (MIG). The Stream Capturer MIG scales horizontally based
+    on Stream Utilization % (number of active streams per instance), preventing
     data loss by ensuring fleet size is proportional to the stateful workload.
     Composition over inheritance — the capture function is passed in, not subclassed.
 
