@@ -17,10 +17,13 @@ with (
 ):
     from backend.pipeline.ingestion.collectors import icecast_collector
 
+# Static UUID for consistent test assertions
+TEST_FEED_ID = uuid.UUID("12345678-1234-5678-1234-567812345678")
+
 
 def _make_feed(name: str, stream_url: str | None) -> LeasedFeed:
     return LeasedFeed(
-        id=uuid.uuid4(),
+        id=TEST_FEED_ID,
         name=name,
         source_type="icecast",
         last_processed_filename=None,
@@ -138,6 +141,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             await gen.__anext__()
 
         self.assertIn("missing stream_url", str(context.exception))
+        self.assertIn(str(TEST_FEED_ID), str(context.exception))
         self.assertIn("none-stream-feed", str(context.exception))
 
     async def test_invalid_input_empty_string_stream_url_raises_value_error(
@@ -153,6 +157,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError) as context:
             await gen.__anext__()
 
+        self.assertIn(str(TEST_FEED_ID), str(context.exception))
         self.assertIn("missing stream_url", str(context.exception))
 
     @patch(
@@ -205,6 +210,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             await gen.__anext__()
 
         self.assertIn("ffmpeg exited with code 1", str(context.exception))
+        self.assertIn(str(TEST_FEED_ID), str(context.exception))
         self.assertIn("error-exit-feed", str(context.exception))
 
     @patch(
@@ -230,6 +236,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             await gen.__anext__()
 
         self.assertIn("ffmpeg stdout is None", str(context.exception))
+        self.assertIn(str(TEST_FEED_ID), str(context.exception))
         self.assertIn("no-stdout-feed", str(context.exception))
 
     @patch(

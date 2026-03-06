@@ -58,8 +58,7 @@ async def create_pool(  # noqa: PLR0913
     except TimeoutError as e:
         msg = (
             f"Failed to connect to AlloyDB at {host}:{port} within {timeout}s. "
-            "If running locally, ensure AlloyDB Auth Proxy is running. "
-            "See run_alloydb_proxy.sh for setup instructions."
+            "If running locally, ensure AlloyDB Auth Proxy is running."
         )
         raise TimeoutError(msg) from e
     except Exception as e:

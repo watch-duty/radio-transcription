@@ -68,15 +68,15 @@ async def capture_icecast_stream(
 
     """
     url = feed.get("stream_url")
+    feed_id = feed.get("id")
+    feed_name = feed.get("name")
     if not url:
-        msg = f"Feed {feed['name']} missing stream_url in feed_properties_icecast"
+        msg = f"Feed {feed_id} ({feed_name}) missing stream_url in feed_properties_icecast"
         raise ValueError(msg)
-
-    feed_name = feed["name"]
 
     # Launch ffmpeg subprocess
     process = await _create_ffmpeg_process(url)
-    logger.info(f"Feed {feed_name}: Started ffmpeg (PID: {process.pid})")
+    logger.info(f"Feed {feed_id} ({feed_name}): Started ffmpeg (PID: {process.pid})")
 
     buffer = bytearray()
 
@@ -84,7 +84,9 @@ async def capture_icecast_stream(
         while True:
             # Check for shutdown signal
             if shutdown_event.is_set():
-                logger.info(f"Feed {feed_name}: Shutdown requested, stopping capture")
+                logger.info(
+                    f"Feed {feed_id} ({feed_name}): Shutdown requested, stopping capture"
+                )
                 return
 
             # Read from ffmpeg stdout
@@ -94,12 +96,12 @@ async def capture_icecast_stream(
                     # ffmpeg exited
                     exit_code = await process.wait()
                     if exit_code != 0:
-                        msg = f"Feed {feed_name}: ffmpeg exited with code {exit_code}"
+                        msg = f"Feed {feed_id} ({feed_name}): ffmpeg exited with code {exit_code}"
                         raise RuntimeError(msg)
-                    logger.info(f"Feed {feed_name}: ffmpeg exited normally")
+                    logger.info(f"Feed {feed_id} ({feed_name}): ffmpeg exited normally")
                     return
             else:
-                msg = f"Feed {feed_name}: ffmpeg stdout is None"
+                msg = f"Feed {feed_id} ({feed_name}): ffmpeg stdout is None"
                 raise RuntimeError(msg)
 
             buffer.extend(chunk_raw)
@@ -124,8 +126,14 @@ async def capture_icecast_stream(
                 await asyncio.wait_for(process.wait(), timeout=5)
             except TimeoutError:
                 process.kill()
-                logger.warning(f"Feed {feed_name}: Force-killed ffmpeg process")
+                logger.warning(
+                    f"Feed {feed_id} ({feed_name}): Force-killed ffmpeg process"
+                )
                 await process.wait()
+            except Exception as e:
+                logger.exception(
+                    f"Feed {feed_id} ({feed_name}): Error terminating ffmpeg: {e}"
+                )
 
 
 async def _create_ffmpeg_process(url: str) -> asyncio.subprocess.Process:
