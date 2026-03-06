@@ -11,11 +11,12 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg
 
-COPY backend/pipeline/ingestion/requirements.txt .
+COPY backend/pipeline/ingestion/collectors/requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY backend/pipeline/ingestion/ ./ingestion
+# All shared logic is within pipeline directory
+COPY backend/pipeline/ ./pipeline
 
 # Run Icecast Server
-CMD ["python", "ingestion/icecast_collector.py"]
+CMD ["python", "pipeline/ingestion/collectors/icecast_collector.py"]

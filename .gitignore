@@ -46,4 +46,4 @@ yarn-error.log*
 *.tfplan
 
 # audio ingestion
-backend/pipeline/ingestion/.*
+backend/pipeline/ingestion/collectors/.*
