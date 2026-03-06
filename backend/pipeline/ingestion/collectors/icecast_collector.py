@@ -55,6 +55,19 @@ async def capture_icecast_stream(
     3. Converts chunks to WAV format
     4. Yields WAV bytes for the runtime to upload to GCS
 
+    Integration Contract:
+    Should check shutdown.is_set() between I/O operations for prompt
+    SIGTERM response. During graceful shutdown, the runtime gives tasks
+    a 5-second grace period to notice shutdown.is_set() and exit
+    cleanly before forcibly cancelling stragglers. Checking the event
+    lets the generator close network connections gracefully via the
+    normal cleanup path rather than being interrupted mid-stream.
+
+    IMPORTANT: Implement read timeouts on all network I/O (e.g. timeout
+    for process.stdout.read). The runtime enforces a max silence timeout
+    as defense-in-depth, but normalizers should detect dead connections
+    quickly via their own read timeouts and not block the event loop.
+
     Args:
         feed: Leased feed containing stream_url and metadata
         shutdown_event: Signals graceful shutdown request
