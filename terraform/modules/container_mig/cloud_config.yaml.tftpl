@@ -25,6 +25,9 @@ ${env_file_content}
     ExecStop=/usr/bin/docker stop -t 30 ${service_name}
     TimeoutStopSec=45
 
+    [Install]
+    WantedBy=multi-user.target
+
 runcmd:
 - systemctl daemon-reload
-- systemctl start ${service_name}.service
+- systemctl enable --now ${service_name}.service
