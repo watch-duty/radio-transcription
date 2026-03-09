@@ -80,6 +80,11 @@ class GeminiTranscriber(BaseTranscriber):
                     system_instruction=SYSTEM_PROMPT,
                     response_mime_type="application/json",
                     response_schema=DispatchLog,
+                    # Thinking config enables Chain-of-Thought reasoning for complex logic (like speaker ID).
+                    # Levels: LOW (faster/coarse), MEDIUM (balanced), HIGH (deep/slower).
+                    # Documentation: https://ai.google.dev/gemini-api/docs/reasoning
+                    # MEDIUM as it provides a solid balance for the reasoning required to identify speakers
+                    # and roles from radio protocol without excessively increasing latency.
                     thinking_config=types.ThinkingConfig(thinking_level="MEDIUM"),  # type: ignore[invalid-argument-type]
                     temperature=0.0,
                     candidate_count=1,
