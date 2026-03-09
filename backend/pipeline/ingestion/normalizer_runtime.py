@@ -74,13 +74,13 @@ class NormalizerRuntime:
         # Typed without None so the type checker doesn't require narrowing at
         # every usage site.  Accessing before _main() is a programming error.
         # asyncio.Event must be created inside a running event loop.
-        self._shutdown: asyncio.Event = None  # set in _main()
-        self._data_pool: asyncpg.Pool = None  # set in _main()
+        self._shutdown: asyncio.Event = None  # type: ignore # set in _main()
+        self._data_pool: asyncpg.Pool = None  # type: ignore # set in _main()
         # Dedicated 1-connection pool for heartbeat (control-plane / data-plane
         # separation). Prevents 250 bookmark/upload ops on the main pool from
         # starving heartbeat queries, which would cause false stall detection.
-        self._heartbeat_pool: asyncpg.Pool = None  # set in _main()
-        self._loop: asyncio.AbstractEventLoop = None  # set in _main()
+        self._heartbeat_pool: asyncpg.Pool = None  # type: ignore # set in _main()
+        self._loop: asyncio.AbstractEventLoop = None  # type: ignore # set in _main()
         self._feed_tasks: dict[uuid.UUID, asyncio.Task] = {}
         # Tracks feeds currently mid-await on release_feed/record_failure.
         # Without this, the heartbeat would see worker_id=NULL (set by the DB)
@@ -88,8 +88,8 @@ class NormalizerRuntime:
         # release as a fence violation and triggering os._exit(1).
         self._releasing_feeds: set[uuid.UUID] = set()
         self._heartbeat_thread: threading.Thread | None = None
-        self._store: FeedStore = None  # set in _main()
-        self._heartbeat_store: FeedStore = None  # set in _main()
+        self._store: FeedStore = None  # type: ignore # set in _main()
+        self._heartbeat_store: FeedStore = None  # type: ignore # set in _main()
 
     # -- Entry point ------------------------------------------------------
 
