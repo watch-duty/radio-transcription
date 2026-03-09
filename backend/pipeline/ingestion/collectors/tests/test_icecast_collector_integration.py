@@ -358,3 +358,37 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         # Assert: DB bookmark reflects single upload
         row = await self._get_feed_row(feed["id"])
         self.assertEqual(row["last_processed_filename"], gcs_paths[0])
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_ffmpeg_error_reports_failure_in_db(
+        self, mock_create_ffmpeg,
+    ) -> None:
+        """ffmpeg exit code 1 -> RuntimeError -> feed status = 'failing'."""
+        await self._insert_feed("error-feed")
+        feed = await self.store.lease_feed(self.worker_id)
+        self.assertIsNotNone(feed)
+
+        # Mock ffmpeg: immediate EOF with exit code 1
+        mock_proc = self._mock_ffmpeg_process([], exit_code=1)
+        mock_create_ffmpeg.return_value = mock_proc
+
+        shutdown = asyncio.Event()
+        with self.assertRaises(RuntimeError) as ctx:
+            async for _wav_chunk in icecast_collector.capture_icecast_stream(
+                feed, shutdown,
+            ):
+                pass  # Should not yield any chunks
+
+        self.assertIn("ffmpeg exited with code 1", str(ctx.exception))
+
+        # Simulate what NormalizerRuntime._process_feed does on exception
+        await self.store.report_feed_failure(feed["id"], self.worker_id)
+
+        # Assert: feed transitioned to 'failing'
+        row = await self._get_feed_row(feed["id"])
+        self.assertEqual(row["status"], "failing")
+        self.assertEqual(row["failure_count"], 1)
+        self.assertIsNone(row["worker_id"])
