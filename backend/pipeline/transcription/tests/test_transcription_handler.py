@@ -3,10 +3,11 @@ import os
 import unittest
 from unittest.mock import MagicMock, patch
 
-from backend.pipeline.transcription.transcriber import BaseTranscriber
-from backend.pipeline.transcription.transcription_handler import (
-    handle_transcription_event,
-)
+with patch("google.cloud.logging.Client"), patch("google.cloud.pubsub_v1.PublisherClient"):
+    from backend.pipeline.transcription.transcriber import BaseTranscriber
+    from backend.pipeline.transcription.transcription_handler import (
+        handle_transcription_event,
+    )
 
 
 class MockTranscriber(BaseTranscriber):
