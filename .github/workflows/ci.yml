@@ -55,7 +55,7 @@ jobs:
       - name: Install dependencies
         run: uv sync
       - name: Generate Protobuf Python files
-        run: uv run python -m grpc_tools.protoc -I protos --python_out=backend/pipeline/schema_types --grpc_python_out=backend/pipeline/schema_types --pyi_out=backend/pipeline/schema_types protos/*.proto
+        run: mise run generate:protos
       - name: Ruff check
         run: uv run ruff check
       - name: Ruff format check
@@ -95,6 +95,6 @@ jobs:
       - name: Install dependencies
         run: uv sync
       - name: Generate Protobuf Python files
-        run: uv run python -m grpc_tools.protoc -I protos --python_out=backend/pipeline/schema_types --grpc_python_out=backend/pipeline/schema_types --pyi_out=backend/pipeline/schema_types protos/*.proto
+        run: mise run generate:protos
       - name: Run tests
         run: uv run python -m unittest -b
