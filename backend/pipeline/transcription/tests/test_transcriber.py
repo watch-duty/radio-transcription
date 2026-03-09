@@ -1,7 +1,10 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-with patch("google.cloud.logging.Client"), patch("google.cloud.pubsub_v1.PublisherClient"):
+with (
+    patch("google.cloud.logging.Client"),
+    patch("google.cloud.pubsub_v1.PublisherClient"),
+):
     from backend.pipeline.transcription.transcriber import (
         BaseTranscriber,
         GeminiTranscriber,
