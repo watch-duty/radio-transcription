@@ -25,6 +25,11 @@ variable "region" {
 variable "memory_size_gb" {
     description = "Redis memory size in GiB."
     type        = number
+    
+    validation {
+      condition = var.read_replicas_mode == "READ_REPLICAS_DISABLED" || var.memory_size_gb >= 5
+      error_message = "Minimum capacity is 5 GB when read replicas are enabled"
+    }
 }
 
 variable "network_id" {
