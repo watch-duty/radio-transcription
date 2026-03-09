@@ -1,0 +1,30 @@
+#cloud-config
+
+write_files:
+- path: /etc/container-env/${service_name}.env
+  permissions: "0600"
+  content: |
+    ${env_file_content}
+- path: /etc/systemd/system/${service_name}.service
+  permissions: "0644"
+  content: |
+    [Unit]
+    Description=${service_name} container
+    After=docker.service network-online.target
+    Wants=docker.service network-online.target
+
+    [Service]
+    Type=simple
+    Restart=always
+    RestartSec=10
+    Environment=HOME=/root
+    ExecStartPre=/usr/bin/docker-credential-gcr configure-docker --registries ${registry_host}
+    ExecStartPre=-/usr/bin/docker rm -f ${service_name}
+    ExecStartPre=/usr/bin/docker pull ${container_image}
+    ExecStart=/usr/bin/docker run --rm --name ${service_name} --env-file /etc/container-env/${service_name}.env ${container_image}
+    ExecStop=/usr/bin/docker stop -t 30 ${service_name}
+    TimeoutStopSec=45
+
+runcmd:
+- systemctl daemon-reload
+- systemctl start ${service_name}.service
