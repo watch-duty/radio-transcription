@@ -14,7 +14,7 @@
 * Language: Python
 * Package management: `uv`
 * Formatting and linting: `ruff`
-* Type-checking: TBD (`ty` or `mypy`?)
+* Type-checking: `ty check`
 * Unit testing: Python `unittest`
 
 #### Audio Ingestion
