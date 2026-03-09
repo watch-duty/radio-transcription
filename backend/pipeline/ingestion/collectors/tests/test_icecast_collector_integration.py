@@ -260,10 +260,15 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         chunks_uploaded = []
         async for wav_chunk in icecast_collector.capture_icecast_stream(feed, shutdown):
             gcs_path = await gcs.upload_audio(
-                wav_chunk, feed, _TEST_BUCKET, len(chunks_uploaded),
+                wav_chunk,
+                feed,
+                _TEST_BUCKET,
+                len(chunks_uploaded),
             )
             ok = await self.store.update_feed_progress(
-                feed["id"], self.worker_id, gcs_path,
+                feed["id"],
+                self.worker_id,
+                gcs_path,
             )
             self.assertTrue(ok)
             chunks_uploaded.append((wav_chunk, gcs_path))
@@ -304,7 +309,9 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         async for wav_chunk in icecast_collector.capture_icecast_stream(feed, shutdown):
             gcs_path = await gcs.upload_audio(wav_chunk, feed, _TEST_BUCKET, seq)
             await self.store.update_feed_progress(
-                feed["id"], self.worker_id, gcs_path,
+                feed["id"],
+                self.worker_id,
+                gcs_path,
             )
             gcs_paths.append(gcs_path)
             seq += 1
@@ -327,7 +334,8 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     async def test_shutdown_stops_capture_after_partial_upload(
-        self, mock_create_ffmpeg,
+        self,
+        mock_create_ffmpeg,
     ) -> None:
         """Shutdown after 1st chunk: generator stops, only 1 GCS object exists."""
         await self._insert_feed("shutdown-feed")
@@ -335,7 +343,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(feed)
 
         # Mock ffmpeg: 3 separate reads (shutdown checked between reads)
-        chunk = b"\xAB" * _BYTES_PER_CHUNK
+        chunk = b"\xab" * _BYTES_PER_CHUNK
         mock_proc = self._mock_ffmpeg_process([chunk, chunk, chunk])
         mock_create_ffmpeg.return_value = mock_proc
 
@@ -345,7 +353,9 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         async for wav_chunk in icecast_collector.capture_icecast_stream(feed, shutdown):
             gcs_path = await gcs.upload_audio(wav_chunk, feed, _TEST_BUCKET, seq)
             await self.store.update_feed_progress(
-                feed["id"], self.worker_id, gcs_path,
+                feed["id"],
+                self.worker_id,
+                gcs_path,
             )
             gcs_paths.append(gcs_path)
             seq += 1
@@ -364,7 +374,8 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     async def test_ffmpeg_error_reports_failure_in_db(
-        self, mock_create_ffmpeg,
+        self,
+        mock_create_ffmpeg,
     ) -> None:
         """Ffmpeg exit code 1 -> RuntimeError -> feed status = 'failing'."""
         await self._insert_feed("error-feed")
@@ -378,7 +389,8 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         with self.assertRaises(RuntimeError) as ctx:
             async for _wav_chunk in icecast_collector.capture_icecast_stream(
-                feed, shutdown,
+                feed,
+                shutdown,
             ):
                 pass  # Should not yield any chunks
 
@@ -398,7 +410,8 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     async def test_wav_header_fields_correct_after_gcs_roundtrip(
-        self, mock_create_ffmpeg,
+        self,
+        mock_create_ffmpeg,
     ) -> None:
         """Upload WAV to GCS, download, parse header, verify all fields."""
         await self._insert_feed("wav-header-feed")
@@ -450,7 +463,8 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         with self.assertRaises(ValueError) as ctx:
             async for _wav_chunk in icecast_collector.capture_icecast_stream(
-                feed, shutdown,
+                feed,
+                shutdown,
             ):
                 pass
 
