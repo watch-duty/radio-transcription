@@ -321,3 +321,40 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         # Assert: DB bookmark points to last uploaded path
         row = await self._get_feed_row(feed["id"])
         self.assertEqual(row["last_processed_filename"], gcs_paths[-1])
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_shutdown_stops_capture_after_partial_upload(
+        self, mock_create_ffmpeg,
+    ) -> None:
+        """Shutdown after 1st chunk: generator stops, only 1 GCS object exists."""
+        await self._insert_feed("shutdown-feed")
+        feed = await self.store.lease_feed(self.worker_id)
+        self.assertIsNotNone(feed)
+
+        # Mock ffmpeg: 3 separate reads (shutdown checked between reads)
+        chunk = b"\xAB" * _BYTES_PER_CHUNK
+        mock_proc = self._mock_ffmpeg_process([chunk, chunk, chunk])
+        mock_create_ffmpeg.return_value = mock_proc
+
+        shutdown = asyncio.Event()
+        gcs_paths = []
+        seq = 0
+        async for wav_chunk in icecast_collector.capture_icecast_stream(feed, shutdown):
+            gcs_path = await gcs.upload_audio(wav_chunk, feed, _TEST_BUCKET, seq)
+            await self.store.update_feed_progress(
+                feed["id"], self.worker_id, gcs_path,
+            )
+            gcs_paths.append(gcs_path)
+            seq += 1
+            # Signal shutdown after first chunk
+            shutdown.set()
+
+        # Assert: only 1 chunk made it through
+        self.assertEqual(len(gcs_paths), 1)
+
+        # Assert: DB bookmark reflects single upload
+        row = await self._get_feed_row(feed["id"])
+        self.assertEqual(row["last_processed_filename"], gcs_paths[0])
