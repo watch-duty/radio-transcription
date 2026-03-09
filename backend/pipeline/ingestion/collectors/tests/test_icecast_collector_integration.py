@@ -282,3 +282,42 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         row = await self._get_feed_row(feed["id"])
         self.assertEqual(row["last_processed_filename"], gcs_path)
         self.assertEqual(row["failure_count"], 0)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_multiple_chunks_uploaded_to_gcs(self, mock_create_ffmpeg) -> None:
+        """3 chunks captured, all uploaded to GCS with correct WAV data."""
+        await self._insert_feed("multi-chunk-feed")
+        feed = await self.store.lease_feed(self.worker_id)
+        self.assertIsNotNone(feed)
+
+        # Mock ffmpeg: return 3 chunks worth of data in one read then EOF
+        pcm_data = b"\x42" * (_BYTES_PER_CHUNK * 3)
+        mock_proc = self._mock_ffmpeg_process([pcm_data])
+        mock_create_ffmpeg.return_value = mock_proc
+
+        shutdown = asyncio.Event()
+        gcs_paths = []
+        seq = 0
+        async for wav_chunk in icecast_collector.capture_icecast_stream(feed, shutdown):
+            gcs_path = await gcs.upload_audio(wav_chunk, feed, _TEST_BUCKET, seq)
+            await self.store.update_feed_progress(
+                feed["id"], self.worker_id, gcs_path,
+            )
+            gcs_paths.append(gcs_path)
+            seq += 1
+
+        # Assert: 3 distinct uploads
+        self.assertEqual(len(gcs_paths), 3)
+
+        # Assert: each GCS object is downloadable and is WAV-sized
+        for path in gcs_paths:
+            object_name = path.replace(f"gs://{_TEST_BUCKET}/", "")
+            downloaded = await self._download_gcs_object(object_name)
+            self.assertEqual(len(downloaded), _BYTES_PER_CHUNK + _WAV_HEADER_SIZE)
+
+        # Assert: DB bookmark points to last uploaded path
+        row = await self._get_feed_row(feed["id"])
+        self.assertEqual(row["last_processed_filename"], gcs_paths[-1])
