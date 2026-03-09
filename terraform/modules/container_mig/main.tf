@@ -13,8 +13,10 @@ locals {
 
   # Docker --env-file format: KEY=VALUE per line, no quoting needed.
   # Values are taken literally — safe for special chars like $ ' " \
+  # Each line is pre-indented with 4 spaces to satisfy the YAML block
+  # scalar in cloud_config.yaml.tftpl (content: |).
   env_file_content = join("\n", [
-    for k, v in var.container_env : "${k}=${v}"
+    for k, v in var.container_env : "    ${k}=${v}"
   ])
 }
 
@@ -59,7 +61,7 @@ resource "google_compute_instance_template" "this" {
       service_name     = var.name_prefix
       registry_host    = local.registry_host
       container_image  = var.container_image
-      env_file_content = indent(4, local.env_file_content)
+      env_file_content = local.env_file_content
     })
   }
 

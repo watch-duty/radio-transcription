@@ -22,8 +22,8 @@ variable "name_prefix" {
   type        = string
 
   validation {
-    condition     = length(var.name_prefix) >= 1 && length(var.name_prefix) <= 48
-    error_message = "name_prefix must be between 1 and 48 characters."
+    condition     = can(regex("^[a-z][-a-z0-9]{0,47}$", var.name_prefix))
+    error_message = "name_prefix must be 1-48 chars, start with a lowercase letter, and contain only lowercase letters, digits, and hyphens."
   }
 }
 
