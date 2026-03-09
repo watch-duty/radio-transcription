@@ -1,0 +1,7 @@
+functions-framework
+requests
+cloudevents
+google-cloud-pubsub>=2.35.0
+google-cloud-logging
+google-genai>=1.3.0
+pydantic>=2.10.6
