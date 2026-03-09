@@ -26,7 +26,7 @@ MOCK_ENV_VARS = {
 with patch.dict(os.environ, MOCK_ENV_VARS, clear=False):
     from backend.pipeline.ingestion.collectors import icecast_collector
 
-from backend.pipeline.ingestion import gcs
+from backend.pipeline.ingestion import gcs  # noqa: E402
 
 _REPO_ROOT = Path(__file__).resolve().parents[5]
 _SQL_DIR = _REPO_ROOT / "terraform" / "modules" / "alloydb" / "sql" / "ingestion"
@@ -196,7 +196,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def _download_gcs_object(self, object_name: str) -> bytes:
         """Download an object from the fake GCS server via HTTP."""
-        import aiohttp
+        import aiohttp  # noqa: PLC0415
 
         url = f"{self._gcs_url}/download/storage/v1/b/{_TEST_BUCKET}/o/{object_name}?alt=media"
         async with aiohttp.ClientSession() as session, session.get(url) as resp:
@@ -366,7 +366,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
     async def test_ffmpeg_error_reports_failure_in_db(
         self, mock_create_ffmpeg,
     ) -> None:
-        """ffmpeg exit code 1 -> RuntimeError -> feed status = 'failing'."""
+        """Ffmpeg exit code 1 -> RuntimeError -> feed status = 'failing'."""
         await self._insert_feed("error-feed")
         feed = await self.store.lease_feed(self.worker_id)
         self.assertIsNotNone(feed)
@@ -438,3 +438,29 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         # Verify PCM payload survived roundtrip
         pcm_payload = downloaded[_WAV_HEADER_SIZE:]
         self.assertEqual(pcm_payload, pcm_pattern)
+
+    async def test_missing_stream_url_raises_without_side_effects(self) -> None:
+        """Feed without icecast properties -> ValueError, no GCS upload."""
+        # Insert feed WITHOUT stream_url (no feed_properties_icecast row)
+        await self._insert_feed("no-url-feed", stream_url=None)
+        feed = await self.store.lease_feed(self.worker_id)
+        self.assertIsNotNone(feed)
+        self.assertIsNone(feed["stream_url"])
+
+        shutdown = asyncio.Event()
+        with self.assertRaises(ValueError) as ctx:
+            async for _wav_chunk in icecast_collector.capture_icecast_stream(
+                feed, shutdown,
+            ):
+                pass
+
+        self.assertIn("missing stream_url", str(ctx.exception))
+
+        # Assert: DB state unchanged (still active, no bookmark)
+        row = await self._get_feed_row(feed["id"])
+        self.assertEqual(row["status"], "active")
+        self.assertIsNone(row["last_processed_filename"])
+
+
+if __name__ == "__main__":
+    unittest.main()
