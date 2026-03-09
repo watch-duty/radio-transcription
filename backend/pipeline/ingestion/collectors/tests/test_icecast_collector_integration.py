@@ -248,7 +248,9 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         # Arrange: insert feed, lease it
         await self._insert_feed("integration-feed")
         feed = await self.store.lease_feed(self.worker_id)
-        self.assertIsNotNone(feed)
+        if feed is None:
+            msg = "Expected a LeasedFeed, got None"
+            raise AssertionError(msg)
 
         # Mock ffmpeg: return exactly 1 chunk of PCM data then EOF
         pcm_data = b"\x80" * _BYTES_PER_CHUNK
@@ -296,7 +298,9 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         """3 chunks captured, all uploaded to GCS with correct WAV data."""
         await self._insert_feed("multi-chunk-feed")
         feed = await self.store.lease_feed(self.worker_id)
-        self.assertIsNotNone(feed)
+        if feed is None:
+            msg = "Expected a LeasedFeed, got None"
+            raise AssertionError(msg)
 
         # Mock ffmpeg: return 3 chunks worth of data in one read then EOF
         pcm_data = b"\x42" * (_BYTES_PER_CHUNK * 3)
@@ -340,7 +344,9 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         """Shutdown after 1st chunk: generator stops, only 1 GCS object exists."""
         await self._insert_feed("shutdown-feed")
         feed = await self.store.lease_feed(self.worker_id)
-        self.assertIsNotNone(feed)
+        if feed is None:
+            msg = "Expected a LeasedFeed, got None"
+            raise AssertionError(msg)
 
         # Mock ffmpeg: 3 separate reads (shutdown checked between reads)
         chunk = b"\xab" * _BYTES_PER_CHUNK
@@ -380,7 +386,9 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         """Ffmpeg exit code 1 -> RuntimeError -> feed status = 'failing'."""
         await self._insert_feed("error-feed")
         feed = await self.store.lease_feed(self.worker_id)
-        self.assertIsNotNone(feed)
+        if feed is None:
+            msg = "Expected a LeasedFeed, got None"
+            raise AssertionError(msg)
 
         # Mock ffmpeg: immediate EOF with exit code 1
         mock_proc = self._mock_ffmpeg_process([], exit_code=1)
@@ -416,7 +424,9 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         """Upload WAV to GCS, download, parse header, verify all fields."""
         await self._insert_feed("wav-header-feed")
         feed = await self.store.lease_feed(self.worker_id)
-        self.assertIsNotNone(feed)
+        if feed is None:
+            msg = "Expected a LeasedFeed, got None"
+            raise AssertionError(msg)
 
         # Known PCM pattern for payload verification
         pcm_pattern = bytes(range(256)) * (_BYTES_PER_CHUNK // 256)
@@ -429,7 +439,9 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             gcs_path = await gcs.upload_audio(wav_chunk, feed, _TEST_BUCKET, 0)
             break  # Only need first chunk
 
-        self.assertIsNotNone(gcs_path)
+        if gcs_path is None:
+            msg = "Expected a GCS path, got None"
+            raise AssertionError(msg)
         object_name = gcs_path.replace(f"gs://{_TEST_BUCKET}/", "")
         downloaded = await self._download_gcs_object(object_name)
 
@@ -457,7 +469,9 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         # Insert feed WITHOUT stream_url (no feed_properties_icecast row)
         await self._insert_feed("no-url-feed", stream_url=None)
         feed = await self.store.lease_feed(self.worker_id)
-        self.assertIsNotNone(feed)
+        if feed is None:
+            msg = "Expected a LeasedFeed, got None"
+            raise AssertionError(msg)
         self.assertIsNone(feed["stream_url"])
 
         shutdown = asyncio.Event()
