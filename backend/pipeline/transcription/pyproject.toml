@@ -1,0 +1,37 @@
+[project]
+name = "transcription-pipeline"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+dependencies = [
+    "apache-beam[gcp]>=2.56.0",
+    "crcmod>=1.7",
+    "google-cloud-monitoring>=2.29.1",
+    "google-cloud-speech>=2.37.0",
+    "google-cloud-storage>=2.0.0",
+    "protobuf>=6",
+    "pydub>=0.25.0",
+    "ten-vad>=1.0.6.8",
+]
+
+[project.optional-dependencies]
+test = [
+    "unittest-xml-reporting",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-cov>=7.0.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = [".", "..", "../.."]
+filterwarnings = [
+    # audioop module is slated for removal in Python 3.13; waiting for upstream pydub update
+    "ignore::DeprecationWarning:pydub.*",
+    # httplib2 < 0.23.0 is constrained by apache-beam[gcp]; uses deprecated pyparsing methods
+    "ignore::DeprecationWarning:httplib2.*",
+    "ignore::DeprecationWarning:pyparsing.*"
+]
+
