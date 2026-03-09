@@ -392,3 +392,49 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["status"], "failing")
         self.assertEqual(row["failure_count"], 1)
         self.assertIsNone(row["worker_id"])
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_wav_header_fields_correct_after_gcs_roundtrip(
+        self, mock_create_ffmpeg,
+    ) -> None:
+        """Upload WAV to GCS, download, parse header, verify all fields."""
+        await self._insert_feed("wav-header-feed")
+        feed = await self.store.lease_feed(self.worker_id)
+        self.assertIsNotNone(feed)
+
+        # Known PCM pattern for payload verification
+        pcm_pattern = bytes(range(256)) * (_BYTES_PER_CHUNK // 256)
+        mock_proc = self._mock_ffmpeg_process([pcm_pattern])
+        mock_create_ffmpeg.return_value = mock_proc
+
+        shutdown = asyncio.Event()
+        gcs_path = None
+        async for wav_chunk in icecast_collector.capture_icecast_stream(feed, shutdown):
+            gcs_path = await gcs.upload_audio(wav_chunk, feed, _TEST_BUCKET, 0)
+            break  # Only need first chunk
+
+        self.assertIsNotNone(gcs_path)
+        object_name = gcs_path.replace(f"gs://{_TEST_BUCKET}/", "")
+        downloaded = await self._download_gcs_object(object_name)
+
+        # Parse and verify WAV header
+        hdr = self._parse_wav_header(downloaded)
+        self.assertEqual(hdr["riff"], b"RIFF")
+        self.assertEqual(hdr["wave"], b"WAVE")
+        self.assertEqual(hdr["fmt"], b"fmt ")
+        self.assertEqual(hdr["data_tag"], b"data")
+        self.assertEqual(hdr["audio_format"], 1)  # PCM
+        self.assertEqual(hdr["num_channels"], 1)  # mono
+        self.assertEqual(hdr["sample_rate"], 16000)
+        self.assertEqual(hdr["bits_per_sample"], 16)
+        self.assertEqual(hdr["byte_rate"], 16000 * 1 * 2)  # 32000
+        self.assertEqual(hdr["block_align"], 1 * 2)  # 2
+        self.assertEqual(hdr["data_size"], _BYTES_PER_CHUNK)
+        self.assertEqual(hdr["file_size"], 36 + _BYTES_PER_CHUNK)
+
+        # Verify PCM payload survived roundtrip
+        pcm_payload = downloaded[_WAV_HEADER_SIZE:]
+        self.assertEqual(pcm_payload, pcm_pattern)
