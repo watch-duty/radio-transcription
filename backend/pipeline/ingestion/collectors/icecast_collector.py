@@ -24,6 +24,7 @@ CHUNK_DURATION_SECONDS = 15
 SAMPLE_RATE = 16000
 SAMPLE_WIDTH = 2
 BYTES_PER_CHUNK = SAMPLE_RATE * CHUNK_DURATION_SECONDS * SAMPLE_WIDTH
+READ_TIMEOUT_SEC = 30
 
 # Authentication for Icecast/Broadcastify streams
 USER = os.getenv("BROADCASTIFY_USERNAME")
@@ -104,7 +105,10 @@ async def capture_icecast_stream(
 
             # Read from ffmpeg stdout
             if process.stdout:
-                chunk_raw = await process.stdout.read(4096)
+                chunk_raw = await asyncio.wait_for(
+                    process.stdout.read(4096),
+                    timeout=READ_TIMEOUT_SEC,
+                )
                 if not chunk_raw:
                     # ffmpeg exited
                     exit_code = await process.wait()
