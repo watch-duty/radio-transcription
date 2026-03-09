@@ -236,3 +236,49 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             "data_tag": data_tag,
             "data_size": data_size,
         }
+
+    # -- Tests ------------------------------------------------------------
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_capture_upload_and_bookmark(self, mock_create_ffmpeg) -> None:
+        """Happy path: lease -> capture 1 chunk -> upload to GCS -> bookmark in DB."""
+        # Arrange: insert feed, lease it
+        await self._insert_feed("integration-feed")
+        feed = await self.store.lease_feed(self.worker_id)
+        self.assertIsNotNone(feed)
+
+        # Mock ffmpeg: return exactly 1 chunk of PCM data then EOF
+        pcm_data = b"\x80" * _BYTES_PER_CHUNK
+        mock_proc = self._mock_ffmpeg_process([pcm_data])
+        mock_create_ffmpeg.return_value = mock_proc
+
+        # Act: capture -> upload -> bookmark
+        shutdown = asyncio.Event()
+        chunks_uploaded = []
+        async for wav_chunk in icecast_collector.capture_icecast_stream(feed, shutdown):
+            gcs_path = await gcs.upload_audio(
+                wav_chunk, feed, _TEST_BUCKET, len(chunks_uploaded),
+            )
+            ok = await self.store.update_feed_progress(
+                feed["id"], self.worker_id, gcs_path,
+            )
+            self.assertTrue(ok)
+            chunks_uploaded.append((wav_chunk, gcs_path))
+
+        # Assert: exactly 1 chunk uploaded
+        self.assertEqual(len(chunks_uploaded), 1)
+
+        # Assert: GCS object content matches yielded WAV
+        wav_chunk, gcs_path = chunks_uploaded[0]
+        # gcs_path is "gs://bucket/source_type/feed_id/timestamp_seq.wav"
+        object_name = gcs_path.replace(f"gs://{_TEST_BUCKET}/", "")
+        downloaded = await self._download_gcs_object(object_name)
+        self.assertEqual(downloaded, wav_chunk)
+
+        # Assert: DB bookmark updated
+        row = await self._get_feed_row(feed["id"])
+        self.assertEqual(row["last_processed_filename"], gcs_path)
+        self.assertEqual(row["failure_count"], 0)
