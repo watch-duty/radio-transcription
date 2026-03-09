@@ -1,9 +1,9 @@
 resource "google_redis_instance" "this" {
     name = var.name
     display_name = var.display_name
-
     region = var.region
     project = var.project_id
+    
     memory_size_gb = var.memory_size_gb
     tier = var.tier
     read_replicas_mode = var.read_replicas_mode
