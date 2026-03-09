@@ -15,8 +15,8 @@ COPY backend/pipeline/ingestion/collectors/requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-# All shared logic is within pipeline directory
-COPY backend/pipeline/ ./pipeline
+COPY backend/pipeline/ingestion/ ./ingestion
+COPY backend/pipeline/storage/ ./storage
 
 # Run Icecast Server
-CMD ["python", "pipeline/ingestion/collectors/icecast_collector.py"]
+CMD ["python", "ingestion/collectors/icecast_collector.py"]

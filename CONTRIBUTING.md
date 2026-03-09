@@ -32,7 +32,7 @@ gcloud init
 gcloud auth login
 ```
 
-*Building & Running Locally (TO BE FIXED: requires AlloyDB setup to work)*
+*[BROKEN] Building & Running Locally (TODO GOO-120 - requires alloyDB setup)*
 ```
 # Assuming you're running from the top level of the root dir
 source .venv/bin/activate
