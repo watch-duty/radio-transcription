@@ -1,0 +1,23 @@
+# Python
+**/__pycache__/
+*.py[cod]
+*$py.class
+**/.pytest_cache/
+**/.ruff_cache/
+**/.venv/
+**/.mise/
+
+# Project specific
+**/tests/
+**/test_*.py
+
+# Git
+.git/
+.github/
+
+# Other
+.DS_Store
+README.md
+CONTRIBUTING.md
+pyproject.toml
+uv.lock
