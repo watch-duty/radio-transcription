@@ -22,8 +22,8 @@ variable "name_prefix" {
   type        = string
 
   validation {
-    condition     = length(var.name_prefix) <= 48
-    error_message = "name_prefix must be 48 characters or fewer (GCE appends random suffixes)."
+    condition     = length(var.name_prefix) >= 1 && length(var.name_prefix) <= 48
+    error_message = "name_prefix must be between 1 and 48 characters."
   }
 }
 
