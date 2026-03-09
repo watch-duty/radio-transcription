@@ -59,7 +59,7 @@ resource "google_compute_instance_template" "this" {
       service_name     = var.name_prefix
       registry_host    = local.registry_host
       container_image  = var.container_image
-      env_file_content = local.env_file_content
+      env_file_content = indent(4, local.env_file_content)
     })
   }
 
