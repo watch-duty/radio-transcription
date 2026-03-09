@@ -25,6 +25,7 @@ else:
     logger.addHandler(handler)
     logger.info("Running in LOCAL_DEV mode. Logs will print here.")
 
+
 def handle_transcription_event(
     cloud_event: CloudEvent, transcriber: BaseTranscriber | None = None
 ) -> None:
@@ -70,16 +71,17 @@ def handle_transcription_event(
     logger.info("Success! translated bytes to transcription %s", transcript)
 
     # 5. Build and publish TranscribedAudio message
-    transcribed_payload = TranscribedAudio(
-        transcript=transcript,
-        feed_id=feed_id
-    )
+    transcribed_payload = TranscribedAudio(transcript=transcript, feed_id=feed_id)
 
     publisher = pubsub_v1.PublisherClient()
     if project_id and output_topic_id:
         output_topic_path = publisher.topic_path(project_id, output_topic_id)
     else:
-        logger.warning("OUTPUT_TOPIC or PROJECT_ID env var not set: project_id=%s, output_topic_id=%s", project_id, output_topic_id)
+        logger.warning(
+            "OUTPUT_TOPIC or PROJECT_ID env var not set: project_id=%s, output_topic_id=%s",
+            project_id,
+            output_topic_id,
+        )
         output_topic_path = None
 
     if output_topic_path:

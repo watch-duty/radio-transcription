@@ -19,8 +19,12 @@ class MockTranscriber(BaseTranscriber):
 class TestTranscriptionHandler(unittest.TestCase):
     """Tests for the transcription event handler."""
 
-    @patch("backend.pipeline.transcription.transcription_handler.pubsub_v1.PublisherClient")
-    def test_handle_transcription_event_polymorphism(self, mock_publisher_class) -> None:
+    @patch(
+        "backend.pipeline.transcription.transcription_handler.pubsub_v1.PublisherClient"
+    )
+    def test_handle_transcription_event_polymorphism(
+        self, mock_publisher_class
+    ) -> None:
         """Test the handler works with a custom polymorphic transcriber."""
         # Mock Publisher
         mock_publisher = MagicMock()
@@ -34,8 +38,8 @@ class TestTranscriptionHandler(unittest.TestCase):
                 "data": base64.b64encode(b"audio_bytes").decode("utf-8"),
                 "attributes": {
                     "feed_id": "feed_poly",
-                    "timestamp": "2024-01-01T00:00:00Z"
-                }
+                    "timestamp": "2024-01-01T00:00:00Z",
+                },
             }
         }
         mock_event = MagicMock()
@@ -43,7 +47,10 @@ class TestTranscriptionHandler(unittest.TestCase):
 
         custom_transcriber = MockTranscriber()
 
-        env_vars = {"GOOGLE_CLOUD_PROJECT": "test-project", "OUTPUT_TOPIC": "test-topic"}
+        env_vars = {
+            "GOOGLE_CLOUD_PROJECT": "test-project",
+            "OUTPUT_TOPIC": "test-topic",
+        }
         with patch.dict(os.environ, env_vars):
             handle_transcription_event(mock_event, transcriber=custom_transcriber)
 
@@ -53,13 +60,19 @@ class TestTranscriptionHandler(unittest.TestCase):
         published_data = call_args[0][1]
         self.assertIn(b"MockUnit", published_data)
 
-    @patch("backend.pipeline.transcription.transcription_handler.pubsub_v1.PublisherClient")
+    @patch(
+        "backend.pipeline.transcription.transcription_handler.pubsub_v1.PublisherClient"
+    )
     @patch("backend.pipeline.transcription.transcription_handler.GeminiTranscriber")
-    def test_handle_transcription_event_default_success(self, mock_transcriber_class, mock_publisher_class) -> None:
+    def test_handle_transcription_event_default_success(
+        self, mock_transcriber_class, mock_publisher_class
+    ) -> None:
         """Test the default Gemini flow on success."""
         mock_transcriber = MagicMock()
         mock_transcriber_class.return_value = mock_transcriber
-        mock_transcriber.transcribe.return_value = '{"events": [{"unit": "Dispatch", "message": "Copy", "is_dispatch": true}]}'
+        mock_transcriber.transcribe.return_value = (
+            '{"events": [{"unit": "Dispatch", "message": "Copy", "is_dispatch": true}]}'
+        )
 
         mock_publisher = MagicMock()
         mock_publisher_class.return_value = mock_publisher
@@ -71,14 +84,17 @@ class TestTranscriptionHandler(unittest.TestCase):
                 "data": base64.b64encode(b"audio_bytes").decode("utf-8"),
                 "attributes": {
                     "feed_id": "feed_1",
-                    "timestamp": "2024-01-01T00:00:00Z"
-                }
+                    "timestamp": "2024-01-01T00:00:00Z",
+                },
             }
         }
         mock_event = MagicMock()
         mock_event.data = data
 
-        env_vars = {"GOOGLE_CLOUD_PROJECT": "test-project", "OUTPUT_TOPIC": "test-topic"}
+        env_vars = {
+            "GOOGLE_CLOUD_PROJECT": "test-project",
+            "OUTPUT_TOPIC": "test-topic",
+        }
         with patch.dict(os.environ, env_vars):
             handle_transcription_event(mock_event)
 
