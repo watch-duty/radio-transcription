@@ -6,6 +6,7 @@ import uuid
 from unittest import mock
 
 from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
+from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.storage.feed_store import LeasedFeed
 
 _WORKER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
@@ -228,6 +229,40 @@ class TestProcessFeedNormalCompletion(unittest.IsolatedAsyncioTestCase):
             await rt._process_feed(_FEED)
 
         self.assertEqual(rt._releasing_feeds, set())
+
+
+class TestProcessFeedTimestamps(unittest.IsolatedAsyncioTestCase):
+    """Tests for _process_feed timestamp population."""
+
+    async def test_sets_start_timestamp_on_audio_chunk(self) -> None:
+        """The start_timestamp field must be populated before publishing."""
+        async def _one_chunk(feed, shutdown):
+            yield b"audio"
+
+        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress.return_value = True
+        rt._releasing_feeds = set()
+
+        with (
+            _mock_upload_audio(),
+            _mock_pubsub_publish() as mock_publish,
+        ):
+            await rt._process_feed(_FEED)
+
+            # 1. Get the published data
+            mock_publish.assert_called_once()
+            _, args, _ = mock_publish.mock_calls[0]
+            published_bytes = args[1]
+
+            # 2. Parse back and verify
+            chunk = AudioChunk()
+            chunk.ParseFromString(published_bytes)
+
+            self.assertTrue(chunk.HasField("start_timestamp"))
+            # Just ensure it's not the default (epoch 0)
+            self.assertGreater(chunk.start_timestamp.seconds, 1700000000)
 
 
 class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
