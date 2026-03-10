@@ -4,7 +4,7 @@ from typing import ClassVar as _ClassVar, Optional as _Optional
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
-class Audio(_message.Message):
+class AudioChunk(_message.Message):
     __slots__ = ("gcs_file_path",)
     GCS_FILE_PATH_FIELD_NUMBER: _ClassVar[int]
     gcs_file_path: str

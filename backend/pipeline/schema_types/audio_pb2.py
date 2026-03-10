@@ -24,13 +24,13 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0b\x61udio.proto\"\x1e\n\x05\x41udio\x12\x15\n\rgcs_file_path\x18\x01 \x01(\tb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0b\x61udio.proto\"#\n\nAudioChunk\x12\x15\n\rgcs_file_path\x18\x01 \x01(\tb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'audio_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_AUDIO']._serialized_start=15
-  _globals['_AUDIO']._serialized_end=45
+  _globals['_AUDIOCHUNK']._serialized_start=15
+  _globals['_AUDIOCHUNK']._serialized_end=50
 # @@protoc_insertion_point(module_scope)

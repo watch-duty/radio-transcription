@@ -1,7 +1,7 @@
 syntax = "proto3";
 
-// File path of the audio
-message Audio {
-    // Path to the original audio.
+// Information about the saved audio chunk.
+message AudioChunk {
+    // Path to the audio chunk.
     string gcs_file_path = 1;
 }
