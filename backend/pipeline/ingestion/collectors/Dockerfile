@@ -11,7 +11,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg
 
-COPY backend/pipeline/ingestion/requirements.txt .
+COPY backend/pipeline/ingestion/collectors/requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
