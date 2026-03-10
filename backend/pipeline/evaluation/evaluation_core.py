@@ -77,11 +77,12 @@ def evaluate_transcribed_audio_segment(cloud_event: CloudEvent) -> None:
             )
             return
 
-        audio_id = new_transcribed_audio.audio_id
-        logger.info("Processing audio ID: %s", audio_id)
+        transmission_id = new_transcribed_audio.transmission_id
+        logger.info("Processing transmission ID: %s", transmission_id)
         if not new_transcribed_audio.transcript.strip():
             logger.info(
-                "No transcript for audio ID: %s. Skipping evaluation.", audio_id
+                "No transcript for transmission ID: %s. Skipping evaluation.",
+                transmission_id,
             )
             return
 
@@ -90,18 +91,21 @@ def evaluate_transcribed_audio_segment(cloud_event: CloudEvent) -> None:
             new_transcribed_audio.transcript
         )
         logger.info(
-            "Decision for ID: %s is: %s", audio_id, evaluation_result.get("is_flagged")
+            "Decision for ID: %s is: %s",
+            transmission_id,
+            evaluation_result.get("is_flagged"),
         )
         # 3a. If not flagged, we can skip publishing to the downstream topic
         if not evaluation_result.get("is_flagged"):
-            logger.info("No rules triggered for ID: %s. Skipping publish.", audio_id)
+            logger.info(
+                "No rules triggered for ID: %s. Skipping publish.", transmission_id
+            )
             return
         # 4. Create Evaluation Result Payload
         evaluated_payload = EvaluatedTranscribedAudio(
-            file_path=new_transcribed_audio.file_path,
-            source=new_transcribed_audio.source,
             feed_id=new_transcribed_audio.feed_id,
-            audio_id=new_transcribed_audio.audio_id,
+            transmission_id=new_transcribed_audio.transmission_id,
+            source_chunk_ids=new_transcribed_audio.source_chunk_ids,
             start_timestamp={
                 "seconds": new_transcribed_audio.start_timestamp.seconds,
                 "nanos": new_transcribed_audio.start_timestamp.nanos,
@@ -111,7 +115,6 @@ def evaluate_transcribed_audio_segment(cloud_event: CloudEvent) -> None:
                 "nanos": new_transcribed_audio.end_timestamp.nanos,
             },
             transcript=new_transcribed_audio.transcript,
-            context=new_transcribed_audio.context,
             evaluation_decisions=evaluation_result.get("triggered_rules", []),
         )
 

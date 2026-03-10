@@ -17,13 +17,10 @@ with (
 class TestCloudFunction(unittest.TestCase):
     def setUp(self) -> None:
         self.transcribed_audio = TranscribedAudio()
-        self.transcribed_audio.audio_id = "12345"
+        self.transcribed_audio.transmission_id = "12345"
         self.transcribed_audio.transcript = "There is a fire"
-        self.transcribed_audio.file_path = "test/path.wav"
-        self.transcribed_audio.source = "test_location"
         self.transcribed_audio.feed_id = "1234"
-        self.transcribed_audio.feed_name = "test_feed"
-        self.transcribed_audio.context["tag"] = "foo"
+        self.transcribed_audio.source_chunk_ids.append("chunk_1")
         ts_start = TranscribedAudio.Timestamp()
         ts_start.seconds = 1234567890
         ts_start.nanos = 0
@@ -69,7 +66,7 @@ class TestCloudFunction(unittest.TestCase):
         result_proto = EvaluatedTranscribedAudio()
         result_proto.ParseFromString(sent_proto_bytes)
 
-        self.assertEqual(result_proto.audio_id, "12345")
+        self.assertEqual(result_proto.transmission_id, "12345")
         self.assertEqual(result_proto.transcript, "There is a fire")
         self.assertEqual(result_proto.evaluation_decisions, ["basic_fire_terms"])
 

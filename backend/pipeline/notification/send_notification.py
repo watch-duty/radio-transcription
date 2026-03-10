@@ -39,10 +39,9 @@ def convert_to_notification(
     evaluated_transcribed_audio: EvaluatedTranscribedAudio,
 ) -> AlertNotification:
     return AlertNotification(
-        file_path=evaluated_transcribed_audio.file_path,
-        source=evaluated_transcribed_audio.source,
-        feed_name=evaluated_transcribed_audio.feed_name,
         feed_id=evaluated_transcribed_audio.feed_id,
+        transmission_id=evaluated_transcribed_audio.transmission_id,
+        source_chunk_ids=evaluated_transcribed_audio.source_chunk_ids,
         start_timestamp={
             "seconds": evaluated_transcribed_audio.start_timestamp.seconds,
             "nanos": evaluated_transcribed_audio.start_timestamp.nanos,
@@ -57,7 +56,6 @@ def convert_to_notification(
         else None,
         transcript=evaluated_transcribed_audio.transcript,
         evaluation_decisions=evaluated_transcribed_audio.evaluation_decisions,
-        context=evaluated_transcribed_audio.context,
     )
 
 

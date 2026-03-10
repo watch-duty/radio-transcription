@@ -1,7 +1,5 @@
 syntax = "proto3";
 
-package ingestion.audio.v1;
-
 // Represents the SED (Speech Event Detection) metadata for an audio chunk.
 message SedMetadata {
   // Replicated google/protobuf/timestamp.proto.
