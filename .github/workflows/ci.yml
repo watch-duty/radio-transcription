@@ -99,9 +99,13 @@ jobs:
       - name: Run tests
         run: uv run python -m unittest -b
 
-  # Builds each service's Dockerfile and verifies all transitive imports resolve.
-  # This catches missing dependencies in per-service requirements.txt files that
-  # unit tests miss (unit tests install from pyproject.toml which has all deps).
+  # Builds each service's Dockerfile and verifies all transitive imports resolve
+  # and required environment variables are documented. This catches:
+  #   1. Missing dependencies in per-service requirements.txt (unit tests install
+  #      from pyproject.toml which has all deps, masking per-service gaps).
+  #   2. New required env vars added via _require_env() but not yet wired into
+  #      the deployment Terraform — the settings instantiation step fails if any
+  #      required var is missing from the explicit -e list below.
   # NOTE: evaluation/notification/transcription are excluded because their
   # Dockerfiles don't generate protobuf files yet. Add them here once their
   # Dockerfiles include protobuf generation.
@@ -113,6 +117,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build ingestion Docker image
         run: docker build -t ingestion-smoke-test -f backend/pipeline/ingestion/collectors/Dockerfile .
+      # PUBSUB_EMULATOR_HOST bypasses GCP credential resolution in the
+      # module-level PublisherClient() instantiation in normalizer_runtime.py.
+      # Without it, the Pub/Sub SDK attempts ADC which fails inside Docker.
       - name: Verify ingestion imports
         run: |
           docker run --rm \
@@ -121,3 +128,16 @@ jobs:
             -e PUBSUB_EMULATOR_HOST=localhost:8085 \
             ingestion-smoke-test \
             python -c "import backend.pipeline.ingestion.collectors.icecast_collector"
+      - name: Verify ingestion settings instantiation
+        run: |
+          docker run --rm \
+            -e BROADCASTIFY_USERNAME=smoke-test \
+            -e BROADCASTIFY_PASSWORD=smoke-test \
+            -e PUBSUB_EMULATOR_HOST=localhost:8085 \
+            -e FINAL_STAGING_BUCKET=smoke-test-bucket \
+            -e PUBSUB_TOPIC_PATH=projects/test/topics/test \
+            -e ALLOYDB_HOST=localhost \
+            -e ALLOYDB_USER=worker \
+            -e ALLOYDB_DB=postgres \
+            ingestion-smoke-test \
+            python -c "from backend.pipeline.ingestion.settings import NormalizerSettings; NormalizerSettings()"
