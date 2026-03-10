@@ -14,14 +14,8 @@ message SadMetadata {
         int32 nanos = 2;
     }
 
-    // The unique identifier for the source audio chunk (e.g., UUID or filename).
-    string source_chunk_id = 1;
-
-    // The exact time the normalization/SAD process completed.
-    Timestamp processed_at = 2;
-
     // A collection of segments where speech was identified.
-    repeated SpeechSegment segments = 3;
+    repeated SpeechSegment segments = 1;
 }
 
 // Defines a specific time range where speech is present.

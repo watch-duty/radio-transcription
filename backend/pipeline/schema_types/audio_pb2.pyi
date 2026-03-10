@@ -13,7 +13,7 @@ class AudioChunk(_message.Message):
     def __init__(self, gcs_file_path: _Optional[str] = ...) -> None: ...
 
 class SadMetadata(_message.Message):
-    __slots__ = ("source_chunk_id", "processed_at", "segments")
+    __slots__ = ("segments",)
     class Timestamp(_message.Message):
         __slots__ = ("seconds", "nanos")
         SECONDS_FIELD_NUMBER: _ClassVar[int]
@@ -21,13 +21,9 @@ class SadMetadata(_message.Message):
         seconds: int
         nanos: int
         def __init__(self, seconds: _Optional[int] = ..., nanos: _Optional[int] = ...) -> None: ...
-    SOURCE_CHUNK_ID_FIELD_NUMBER: _ClassVar[int]
-    PROCESSED_AT_FIELD_NUMBER: _ClassVar[int]
     SEGMENTS_FIELD_NUMBER: _ClassVar[int]
-    source_chunk_id: str
-    processed_at: SadMetadata.Timestamp
     segments: _containers.RepeatedCompositeFieldContainer[SpeechSegment]
-    def __init__(self, source_chunk_id: _Optional[str] = ..., processed_at: _Optional[_Union[SadMetadata.Timestamp, _Mapping]] = ..., segments: _Optional[_Iterable[_Union[SpeechSegment, _Mapping]]] = ...) -> None: ...
+    def __init__(self, segments: _Optional[_Iterable[_Union[SpeechSegment, _Mapping]]] = ...) -> None: ...
 
 class SpeechSegment(_message.Message):
     __slots__ = ("start_sec", "end_sec")
