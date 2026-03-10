@@ -22,4 +22,6 @@ COPY backend/pipeline/ingestion/ ./backend/pipeline/ingestion/
 COPY backend/pipeline/storage/ ./backend/pipeline/storage/
 COPY backend/pipeline/schema_types/ ./backend/pipeline/schema_types
 
+RUN protoc --proto_path=. --python_out=. backend/pipeline/schema_types/*.proto
+
 CMD ["python", "-m", "backend.pipeline.ingestion.collectors.icecast_collector"]
