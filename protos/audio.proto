@@ -5,3 +5,31 @@ message AudioChunk {
     // Path to the audio chunk.
     string gcs_file_path = 1;
 }
+
+// Represents the SAD (Speech Activity Detection) metadata for an audio chunk.
+message SadMetadata {
+    // Replicated google/protobuf/timestamp.proto. Deployed schema must be self contained and not have imports.
+    message Timestamp {
+        int64 seconds = 1;
+        int32 nanos = 2;
+    }
+
+    // The unique identifier for the source audio chunk (e.g., UUID or filename).
+    string source_chunk_id = 1;
+
+    // The exact time the normalization/SAD process completed.
+    Timestamp processed_at = 2;
+
+    // A collection of segments where speech was identified.
+    repeated SpeechSegment segments = 3;
+}
+
+// Defines a specific time range where speech is present.
+message SpeechSegment {
+    // Start of speech in seconds from the beginning of the chunk.
+    float start_sec = 1;
+
+    // End of speech in seconds from the beginning of the chunk.
+    float end_sec = 2;
+}
+
