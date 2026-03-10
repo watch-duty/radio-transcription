@@ -7,7 +7,6 @@ import uuid
 import google.cloud.logging
 from cloudevents.http.event import CloudEvent
 from google.cloud import pubsub_v1
-from google.protobuf.json_format import MessageToJson
 
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.schema_types.transcribed_audio_pb2 import TranscribedAudio
@@ -96,7 +95,9 @@ def handle_transcription_event(
     # 6. Set Absolute Timestamps
     # Trust the start_timestamp from the AudioChunk (Producer must set this)
     transcribed_payload.start_timestamp.CopyFrom(audio_chunk.start_timestamp)
-    transcribed_payload.end_timestamp.FromDatetime(datetime.datetime.now(tz=datetime.UTC))
+    transcribed_payload.end_timestamp.FromDatetime(
+        datetime.datetime.now(tz=datetime.UTC)
+    )
 
     publisher = pubsub_v1.PublisherClient()
     if project_id and output_topic_id:
@@ -110,8 +111,7 @@ def handle_transcription_event(
         output_topic_path = None
 
     if output_topic_path:
-        json_string = MessageToJson(transcribed_payload, indent=None)
-        encoded_data = json_string.encode("utf-8")
+        encoded_data = transcribed_payload.SerializeToString()
         try:
             future = publisher.publish(output_topic_path, encoded_data)
             message_id = future.result()  # Block until published (ensure reliability)
