@@ -118,5 +118,6 @@ jobs:
           docker run --rm \
             -e BROADCASTIFY_USERNAME=smoke-test \
             -e BROADCASTIFY_PASSWORD=smoke-test \
+            -e PUBSUB_EMULATOR_HOST=localhost:8085 \
             ingestion-smoke-test \
             python -c "import backend.pipeline.ingestion.collectors.icecast_collector"
