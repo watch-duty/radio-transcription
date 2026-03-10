@@ -14,6 +14,7 @@ MOCK_ENV_VARS = {
 
 with (
     patch.dict(os.environ, MOCK_ENV_VARS, clear=False),
+    patch("google.cloud.pubsub_v1.PublisherClient"),
 ):
     from backend.pipeline.ingestion.collectors import icecast_collector
 
