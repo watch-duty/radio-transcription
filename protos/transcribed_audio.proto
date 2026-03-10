@@ -1,12 +1,11 @@
 syntax = "proto3";
 
-import "google/protobuf/timestamp.proto";
 
-// File path and context of transcribed audio with an evaluation descision.
+// File path and context of transcribed audio with an evaluation decision.
 message TranscribedAudio {
     // Replicated google/protobuf/timestamp.proto.
-    // Rationale: Deployed schema registries (e.g. Pub/Sub, Kafka, BigQuery) often require schemas 
-    // to be uploaded as a single, flat string. They do not have access to standard google proto library 
+    // Rationale: Deployed schema registries (e.g. Pub/Sub, Kafka, BigQuery) often require schemas
+    // to be uploaded as a single, flat string. They do not have access to standard google proto library
     // paths and cannot resolve `import` statements. Therefore, this schema must remain 100% self-contained.
     message Timestamp {
         int64 seconds = 1;
@@ -15,7 +14,7 @@ message TranscribedAudio {
 
     // List of unique IDs for the audio segments that make up this transmission.
     repeated string audio_ids = 1;
-    // Name of the feed ID.
+    // Unique ID of the feed.
     string feed_id = 2;
     // Start timestamp of the audio.
     Timestamp start_timestamp = 3;
