@@ -13,8 +13,8 @@ message SedMetadata {
       int32 nanos = 2;
   }
 
-  // The unique identifier for the source audio (e.g., UUID from the source filename).
-  string source_id = 1;
+  // The unique identifier for the source audio chunk (e.g., UUID from the source filename).
+  string source_chunk_id = 1;
   
   // The exact time the SED process completed.
   Timestamp processed_at = 2;
