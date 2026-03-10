@@ -1,7 +1,7 @@
 syntax = "proto3";
 
 
-// File path and context of transcribed audio with an evaluation decision.
+// Represents a processed audio transmission, including its metadata, source segment IDs, and the resulting transcript.
 message TranscribedAudio {
     // Replicated google/protobuf/timestamp.proto.
     // Rationale: Deployed schema registries (e.g. Pub/Sub, Kafka, BigQuery) often require schemas
