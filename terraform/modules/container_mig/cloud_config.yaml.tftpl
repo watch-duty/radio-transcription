@@ -11,13 +11,13 @@ ${env_file_content}
     [Unit]
     Description=${service_name} container
     After=docker.service network-online.target
-    Wants=docker.service network-online.target
+    Requires=docker.service network-online.target
 
     [Service]
     Type=simple
     Restart=always
     RestartSec=10
-    Environment=HOME=/root
+    Environment=HOME=/home
     ExecStartPre=/usr/bin/docker-credential-gcr configure-docker --registries ${registry_host}
     ExecStartPre=-/usr/bin/docker rm -f ${service_name}
     ExecStartPre=/usr/bin/docker pull ${container_image}
