@@ -19,4 +19,4 @@ If you don't use `mise`, you can run the following from the root:
 uv run python -m grpc_tools.protoc -I protos --python_out=backend/pipeline/schema_types --grpc_python_out=backend/pipeline/schema_types --pyi_out=backend/pipeline/schema_types protos/*.proto
 ```
 
-Because `backend/pipeline/schema_types/__init__.py` exposes these wrappers, other local components will immediately be able to import the schemas.
+Once the wrappers are generated into `backend/pipeline/schema_types`, other local components can immediately import the generated schema modules (for example, `backend.pipeline.schema_types.<name>_pb2`).
