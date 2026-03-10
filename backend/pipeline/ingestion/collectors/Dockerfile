@@ -9,7 +9,8 @@ ENV PYTHONPATH=/app
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        ffmpeg
+        ffmpeg \
+        protobuf-compiler
 
 COPY backend/pipeline/ingestion/collectors/requirements.txt .
 
