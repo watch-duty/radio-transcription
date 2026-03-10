@@ -15,8 +15,10 @@ COPY backend/pipeline/ingestion/collectors/requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY backend/pipeline/ingestion/ ./ingestion
-COPY backend/pipeline/storage/ ./storage
+# Copy the full package structure to preserve Python import paths
+COPY backend/__init__.py ./backend/__init__.py
+COPY backend/pipeline/__init__.py ./backend/pipeline/__init__.py
+COPY backend/pipeline/ingestion/ ./backend/pipeline/ingestion/
+COPY backend/pipeline/storage/ ./backend/pipeline/storage/
 
-# Run Icecast Server
-CMD ["python", "ingestion/collectors/icecast_collector.py"]
+CMD ["python", "-m", "backend.pipeline.ingestion.collectors.icecast_collector"]

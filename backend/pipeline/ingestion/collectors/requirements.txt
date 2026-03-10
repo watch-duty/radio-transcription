@@ -1,3 +1,4 @@
 aiohttp
+asyncpg
 gcloud-aio-storage
 google-auth
