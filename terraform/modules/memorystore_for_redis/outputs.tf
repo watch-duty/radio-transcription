@@ -6,5 +6,5 @@ output "host" {
 
 output "port" {
   description = "The port of the instance."
-  value = google_redis_instance.this.port
+  value       = google_redis_instance.this.port
 }
