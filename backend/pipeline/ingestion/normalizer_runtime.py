@@ -13,6 +13,7 @@ import asyncpg
 from google.cloud import pubsub_v1
 
 from backend.pipeline.ingestion.gcs import close_client, upload_audio
+from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.storage.connection import close_pool, create_pool
 from backend.pipeline.storage.feed_store import FeedStore
 
@@ -315,8 +316,14 @@ class NormalizerRuntime:
                     self._settings.final_staging_bucket,
                     chunk_seq,
                 )
-                publisher.publish(
-                    self._settings.pubsub_topic_path, gcs_path.encode("utf-8")
+                evaluated_payload = AudioChunk(gcs_file_path=gcs_path)
+                encoded_data = evaluated_payload.SerializeToString()
+                future = publisher.publish(
+                    self._settings.pubsub_topic_path, encoded_data
+                )
+                message_id = future.result()
+                logger.info(
+                    "Published message %s for feed %s", message_id, feed["name"]
                 )
                 chunk_seq += 1
 
