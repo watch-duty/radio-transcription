@@ -117,6 +117,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build ingestion Docker image
         run: docker build -t ingestion-smoke-test -f backend/pipeline/ingestion/collectors/Dockerfile .
+      # PUBSUB_EMULATOR_HOST bypasses GCP credential resolution in the
+      # module-level PublisherClient() instantiation in normalizer_runtime.py.
+      # Without it, the Pub/Sub SDK attempts ADC which fails inside Docker.
       - name: Verify ingestion imports
         run: |
           docker run --rm \
