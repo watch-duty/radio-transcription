@@ -20,6 +20,25 @@ _FEED = LeasedFeed(
 )
 
 
+def _mock_pubsub_publish(message_id: str = "test-message-id") -> mock._patch:
+    """Patch publisher.publish to return a future with a fixed message id."""
+    publish_future = mock.MagicMock()
+    publish_future.result.return_value = message_id
+    return mock.patch(
+        "backend.pipeline.ingestion.normalizer_runtime.publisher.publish",
+        return_value=publish_future,
+    )
+
+
+def _mock_upload_audio(gcs_path: str = "gs://b/p") -> mock._patch:
+    """Patch upload_audio to return a deterministic GCS path."""
+    return mock.patch(
+        "backend.pipeline.ingestion.normalizer_runtime.upload_audio",
+        new_callable=mock.AsyncMock,
+        return_value=gcs_path,
+    )
+
+
 def _make_settings(**overrides) -> mock.MagicMock:
     """Build a mock NormalizerSettings with sensible defaults."""
     defaults = {
@@ -140,11 +159,8 @@ class TestProcessFeedFenceViolation(unittest.IsolatedAsyncioTestCase):
         rt._releasing_feeds = set()
 
         with (
-            mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.upload_audio",
-                new_callable=mock.AsyncMock,
-                return_value="gs://b/p",
-            ),
+            _mock_upload_audio(),
+            _mock_pubsub_publish(),
             mock.patch(
                 "backend.pipeline.ingestion.normalizer_runtime.os._exit",
             ) as mock_exit,
@@ -170,11 +186,7 @@ class TestProcessFeedShutdown(unittest.IsolatedAsyncioTestCase):
         rt._store.update_feed_progress.return_value = True
         rt._releasing_feeds = set()
 
-        with mock.patch(
-            "backend.pipeline.ingestion.normalizer_runtime.upload_audio",
-            new_callable=mock.AsyncMock,
-            return_value="gs://b/p",
-        ):
+        with _mock_upload_audio(), _mock_pubsub_publish():
             await rt._process_feed(_FEED)
 
         rt._store.release_feed.assert_not_called()
@@ -195,11 +207,7 @@ class TestProcessFeedNormalCompletion(unittest.IsolatedAsyncioTestCase):
         rt._store.update_feed_progress.return_value = True
         rt._releasing_feeds = set()
 
-        with mock.patch(
-            "backend.pipeline.ingestion.normalizer_runtime.upload_audio",
-            new_callable=mock.AsyncMock,
-            return_value="gs://b/p",
-        ):
+        with _mock_upload_audio(), _mock_pubsub_publish():
             await rt._process_feed(_FEED)
 
         rt._store.release_feed.assert_awaited_once()
@@ -216,11 +224,7 @@ class TestProcessFeedNormalCompletion(unittest.IsolatedAsyncioTestCase):
         rt._store.update_feed_progress.return_value = True
         rt._releasing_feeds = set()
 
-        with mock.patch(
-            "backend.pipeline.ingestion.normalizer_runtime.upload_audio",
-            new_callable=mock.AsyncMock,
-            return_value="gs://b/p",
-        ):
+        with _mock_upload_audio(), _mock_pubsub_publish():
             await rt._process_feed(_FEED)
 
         self.assertEqual(rt._releasing_feeds, set())
