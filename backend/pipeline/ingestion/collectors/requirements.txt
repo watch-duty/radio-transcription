@@ -1,3 +1,5 @@
 aiohttp
+asyncpg
 gcloud-aio-storage
 google-auth
+google-cloud-pubsub>=2.35.0

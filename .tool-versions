@@ -1,5 +1,4 @@
-python 3.11.5
 uv 0.9.28
+python 3.11.5
 nodejs 22.14.0
-protoc 33.4
 terraform 1.14.5

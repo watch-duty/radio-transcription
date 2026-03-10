@@ -15,6 +15,7 @@ tsconfig.tsbuildinfo
 # misc
 .DS_Store
 .env*
+.coverage
 __pycache__/
 tmp/
 .tmpwork/
@@ -46,7 +47,12 @@ yarn-error.log*
 *.tfplan
 
 # audio ingestion
-backend/pipeline/ingestion/.*
+backend/pipeline/ingestion/collectors/.*
 
 # worktrees
 .worktrees/
+
+# Generated protobuf files
+*_pb2.py
+*_pb2.pyi
+*_pb2_grpc.py

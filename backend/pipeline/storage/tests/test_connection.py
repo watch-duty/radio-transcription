@@ -35,6 +35,7 @@ class TestCreatePool(unittest.IsolatedAsyncioTestCase):
             database="my-db",
             min_size=10,
             max_size=10,
+            statement_cache_size=0,
         )
         self.assertEqual(result, mock_pool)
 
@@ -68,6 +69,7 @@ class TestCreatePool(unittest.IsolatedAsyncioTestCase):
             database="my-db",
             min_size=5,
             max_size=20,
+            statement_cache_size=0,
         )
         self.assertEqual(result, mock_pool)
 
@@ -99,6 +101,7 @@ class TestCreatePool(unittest.IsolatedAsyncioTestCase):
             database="my-db",
             min_size=10,
             max_size=10,
+            statement_cache_size=0,
             command_timeout=30.0,
             timeout=10.0,
         )

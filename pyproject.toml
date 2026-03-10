@@ -14,6 +14,8 @@ dependencies = [
     "google-cloud-alloydb-connector[asyncpg]",
     "aiohttp>=3.13.3",
     "gcloud-aio-storage>=9.6.4",
+    "google-genai>=1.3.0",
+    "pydantic>=2.10.6",
 ]
 
 [tool.uv]
@@ -27,13 +29,14 @@ default = true
 [dependency-groups]
 dev = [
   "ruff>=0.14.14",
-  "ty>=0.0.14",
+  "ty>=0.0.21",
+  "grpcio-tools>=1.65.5",
   "testcontainers[postgres]",
   "docker",
 ]
 
 [tool.ruff]
-extend-exclude = ["model/colabs", "backend/pipeline/schema_types"]
+extend-exclude = ["model/colabs", "backend/pipeline/schema_types", "**/*_pb2.py", "**/*_pb2.pyi"]
 
 [tool.ruff.lint]
 select = ["ALL"]
@@ -160,6 +163,7 @@ max-complexity = 10
   "S113",   # requests.* require timeout=
   "S608",   # Possible SQL injection via string-based query construction
   "SLF001", # Private member accessed
+  "S101",   # Use of assert detected
 ]
 "model/data/**.py" = [
   "T201",   # allow print()

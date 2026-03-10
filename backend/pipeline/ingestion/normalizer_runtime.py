@@ -10,8 +10,10 @@ import time
 from typing import TYPE_CHECKING
 
 import asyncpg
+from google.cloud import pubsub_v1
 
 from backend.pipeline.ingestion.gcs import close_client, upload_audio
+from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.storage.connection import close_pool, create_pool
 from backend.pipeline.storage.feed_store import FeedStore
 
@@ -25,6 +27,8 @@ if TYPE_CHECKING:
     CaptureFn = Callable[[LeasedFeed, asyncio.Event], AsyncIterator[bytes]]
 
 logger = logging.getLogger(__name__)
+
+publisher = pubsub_v1.PublisherClient()
 
 
 class NormalizerRuntime:
@@ -74,13 +78,13 @@ class NormalizerRuntime:
         # Typed without None so the type checker doesn't require narrowing at
         # every usage site.  Accessing before _main() is a programming error.
         # asyncio.Event must be created inside a running event loop.
-        self._shutdown: asyncio.Event = None  # set in _main()
-        self._data_pool: asyncpg.Pool = None  # set in _main()
+        self._shutdown: asyncio.Event = None  # type: ignore # set in _main()
+        self._data_pool: asyncpg.Pool = None  # type: ignore # set in _main()
         # Dedicated 1-connection pool for heartbeat (control-plane / data-plane
         # separation). Prevents 250 bookmark/upload ops on the main pool from
         # starving heartbeat queries, which would cause false stall detection.
-        self._heartbeat_pool: asyncpg.Pool = None  # set in _main()
-        self._loop: asyncio.AbstractEventLoop = None  # set in _main()
+        self._heartbeat_pool: asyncpg.Pool = None  # type: ignore # set in _main()
+        self._loop: asyncio.AbstractEventLoop = None  # type: ignore # set in _main()
         self._feed_tasks: dict[uuid.UUID, asyncio.Task] = {}
         # Tracks feeds currently mid-await on release_feed/record_failure.
         # Without this, the heartbeat would see worker_id=NULL (set by the DB)
@@ -88,8 +92,8 @@ class NormalizerRuntime:
         # release as a fence violation and triggering os._exit(1).
         self._releasing_feeds: set[uuid.UUID] = set()
         self._heartbeat_thread: threading.Thread | None = None
-        self._store: FeedStore = None  # set in _main()
-        self._heartbeat_store: FeedStore = None  # set in _main()
+        self._store: FeedStore = None  # type: ignore # set in _main()
+        self._heartbeat_store: FeedStore = None  # type: ignore # set in _main()
 
     # -- Entry point ------------------------------------------------------
 
@@ -163,6 +167,7 @@ class NormalizerRuntime:
             max_size=1,
             command_timeout=s.db_command_timeout_sec,
             timeout=s.db_connect_timeout_sec,
+            statement_cache_size=0,
         )
         self._heartbeat_store = FeedStore(self._heartbeat_pool)
 
@@ -310,6 +315,15 @@ class NormalizerRuntime:
                     feed,
                     self._settings.final_staging_bucket,
                     chunk_seq,
+                )
+                evaluated_payload = AudioChunk(gcs_file_path=gcs_path)
+                encoded_data = evaluated_payload.SerializeToString()
+                future = publisher.publish(
+                    self._settings.pubsub_topic_path, encoded_data
+                )
+                message_id = future.result()
+                logger.info(
+                    "Published message %s for feed %s", message_id, feed["name"]
                 )
                 chunk_seq += 1
 

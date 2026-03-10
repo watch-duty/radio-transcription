@@ -20,6 +20,25 @@ _FEED = LeasedFeed(
 )
 
 
+def _mock_pubsub_publish(message_id: str = "test-message-id") -> mock._patch:
+    """Patch publisher.publish to return a future with a fixed message id."""
+    publish_future = mock.MagicMock()
+    publish_future.result.return_value = message_id
+    return mock.patch(
+        "backend.pipeline.ingestion.normalizer_runtime.publisher.publish",
+        return_value=publish_future,
+    )
+
+
+def _mock_upload_audio(gcs_path: str = "gs://b/p") -> mock._patch:
+    """Patch upload_audio to return a deterministic GCS path."""
+    return mock.patch(
+        "backend.pipeline.ingestion.normalizer_runtime.upload_audio",
+        new_callable=mock.AsyncMock,
+        return_value=gcs_path,
+    )
+
+
 def _make_settings(**overrides) -> mock.MagicMock:
     """Build a mock NormalizerSettings with sensible defaults."""
     defaults = {
@@ -30,6 +49,7 @@ def _make_settings(**overrides) -> mock.MagicMock:
         "heartbeat_stall_timeout_sec": 45.0,
         "graceful_shutdown_timeout_sec": 10.0,
         "final_staging_bucket": "test-bucket",
+        "pubsub_topic_path": "projects/p/topics/t",
         "db_pool_min_size": 2,
         "db_pool_max_size": 5,
         "db_host": "10.0.0.1",
@@ -139,11 +159,8 @@ class TestProcessFeedFenceViolation(unittest.IsolatedAsyncioTestCase):
         rt._releasing_feeds = set()
 
         with (
-            mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.upload_audio",
-                new_callable=mock.AsyncMock,
-                return_value="gs://b/p",
-            ),
+            _mock_upload_audio(),
+            _mock_pubsub_publish(),
             mock.patch(
                 "backend.pipeline.ingestion.normalizer_runtime.os._exit",
             ) as mock_exit,
@@ -169,11 +186,7 @@ class TestProcessFeedShutdown(unittest.IsolatedAsyncioTestCase):
         rt._store.update_feed_progress.return_value = True
         rt._releasing_feeds = set()
 
-        with mock.patch(
-            "backend.pipeline.ingestion.normalizer_runtime.upload_audio",
-            new_callable=mock.AsyncMock,
-            return_value="gs://b/p",
-        ):
+        with _mock_upload_audio(), _mock_pubsub_publish():
             await rt._process_feed(_FEED)
 
         rt._store.release_feed.assert_not_called()
@@ -194,11 +207,7 @@ class TestProcessFeedNormalCompletion(unittest.IsolatedAsyncioTestCase):
         rt._store.update_feed_progress.return_value = True
         rt._releasing_feeds = set()
 
-        with mock.patch(
-            "backend.pipeline.ingestion.normalizer_runtime.upload_audio",
-            new_callable=mock.AsyncMock,
-            return_value="gs://b/p",
-        ):
+        with _mock_upload_audio(), _mock_pubsub_publish():
             await rt._process_feed(_FEED)
 
         rt._store.release_feed.assert_awaited_once()
@@ -215,11 +224,7 @@ class TestProcessFeedNormalCompletion(unittest.IsolatedAsyncioTestCase):
         rt._store.update_feed_progress.return_value = True
         rt._releasing_feeds = set()
 
-        with mock.patch(
-            "backend.pipeline.ingestion.normalizer_runtime.upload_audio",
-            new_callable=mock.AsyncMock,
-            return_value="gs://b/p",
-        ):
+        with _mock_upload_audio(), _mock_pubsub_publish():
             await rt._process_feed(_FEED)
 
         self.assertEqual(rt._releasing_feeds, set())
@@ -301,6 +306,41 @@ class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
         ) as mock_exit:
             await rt._heartbeat_cycle()
             mock_exit.assert_not_called()
+
+
+class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
+    """Tests for pool creation in _main."""
+
+    @mock.patch(
+        "backend.pipeline.ingestion.normalizer_runtime.FeedStore",
+    )
+    @mock.patch(
+        "backend.pipeline.ingestion.normalizer_runtime.asyncpg.create_pool",
+        new_callable=mock.AsyncMock,
+    )
+    @mock.patch(
+        "backend.pipeline.ingestion.normalizer_runtime.create_pool",
+        new_callable=mock.AsyncMock,
+    )
+    async def test_heartbeat_pool_disables_statement_cache(
+        self,
+        mock_create_pool: mock.AsyncMock,
+        mock_asyncpg_create_pool: mock.AsyncMock,
+        mock_feed_store: mock.MagicMock,
+    ) -> None:
+        """Heartbeat pool must use statement_cache_size=0 for PgBouncer compat."""
+        rt = _make_runtime()
+
+        with (
+            mock.patch.object(rt, "_leasing_loop", new_callable=mock.AsyncMock),
+            mock.patch.object(rt, "_shutdown_sequence", new_callable=mock.AsyncMock),
+            mock.patch("threading.Thread"),
+        ):
+            await rt._main()
+
+        mock_asyncpg_create_pool.assert_called_once()
+        call_kwargs = mock_asyncpg_create_pool.call_args.kwargs
+        self.assertEqual(call_kwargs["statement_cache_size"], 0)
 
 
 class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
