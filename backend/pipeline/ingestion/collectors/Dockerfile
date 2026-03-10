@@ -21,5 +21,6 @@ COPY backend/pipeline/__init__.py ./backend/pipeline/__init__.py
 COPY backend/pipeline/ingestion/ ./backend/pipeline/ingestion/
 COPY backend/pipeline/storage/ ./backend/pipeline/storage/
 COPY backend/pipeline/schema_types/ ./backend/pipeline/schema_types
+RUN find backend/pipeline/schema_types/ -name "*.py"
 
 CMD ["python", "-m", "backend.pipeline.ingestion.collectors.icecast_collector"]
