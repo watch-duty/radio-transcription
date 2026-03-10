@@ -24,7 +24,6 @@ COPY backend/__init__.py ./backend/__init__.py
 COPY backend/pipeline/__init__.py ./backend/pipeline/__init__.py
 COPY backend/pipeline/ingestion/ ./backend/pipeline/ingestion/
 COPY backend/pipeline/storage/ ./backend/pipeline/storage/
-COPY backend/pipeline/schema_types/ ./backend/pipeline/schema_types/
 COPY protos/ ./protos
 
 RUN protoc --proto_path=protos --python_out=backend/pipeline/schema_types protos/*.proto
