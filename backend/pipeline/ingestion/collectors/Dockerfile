@@ -15,12 +15,6 @@ COPY backend/pipeline/ingestion/collectors/requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the full package structure to preserve Python import paths
-COPY backend/__init__.py ./backend/__init__.py
-COPY backend/pipeline/__init__.py ./backend/pipeline/__init__.py
-COPY backend/pipeline/ingestion/ ./backend/pipeline/ingestion/
-COPY backend/pipeline/storage/ ./backend/pipeline/storage/
-COPY backend/pipeline/schema_types/ ./backend/pipeline/schema_types
-RUN find backend/pipeline/schema_types/ -name "*.py"
+COPY backend/ ./backend/
 
 CMD ["python", "-m", "backend.pipeline.ingestion.collectors.icecast_collector"]

@@ -15,7 +15,6 @@ COPY backend/__init__.py ./backend/__init__.py
 COPY backend/pipeline/__init__.py ./backend/pipeline/__init__.py
 COPY backend/pipeline/transcription/ ./backend/pipeline/transcription
 COPY backend/pipeline/schema_types/ ./backend/pipeline/schema_types
-COPY backend/pipeline/schema_types/ ./backend/pipeline/schema_types
 
 CMD ["functions-framework", \
      "--source=backend/pipeline/transcription/main.py", \
