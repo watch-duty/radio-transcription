@@ -47,6 +47,7 @@ async def create_pool(  # noqa: PLR0913
         "database": db_name,
         "min_size": min_size,
         "max_size": max_size,
+        "statement_cache_size": 0,
     }
     if command_timeout is not None:
         kwargs["command_timeout"] = command_timeout
