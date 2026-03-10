@@ -98,3 +98,34 @@ jobs:
         run: mise run generate:protos
       - name: Run tests
         run: uv run python -m unittest -b
+
+  # Builds each service's Dockerfile and verifies the entrypoint module can be
+  # imported. This catches missing dependencies in per-service requirements.txt
+  # files that unit tests miss (unit tests install from pyproject.toml which has
+  # all dependencies).
+  docker-smoke-test:
+    needs: [setup]
+    if: needs.setup.outputs.should_run == 'true'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: evaluation
+            dockerfile: backend/pipeline/evaluation/Dockerfile
+            import: backend.pipeline.evaluation.evaluation_core
+          - service: notification
+            dockerfile: backend/pipeline/notification/Dockerfile
+            import: backend.pipeline.notification.send_notification
+          - service: transcription
+            dockerfile: backend/pipeline/transcription/Dockerfile
+            import: backend.pipeline.transcription.main
+          - service: ingestion
+            dockerfile: backend/pipeline/ingestion/collectors/Dockerfile
+            import: backend.pipeline.ingestion.collectors.icecast_collector
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: docker build -t ${{ matrix.service }}-smoke-test -f ${{ matrix.dockerfile }} .
+      - name: Verify entrypoint imports
+        run: docker run --rm ${{ matrix.service }}-smoke-test python -c "import ${{ matrix.import }}"
