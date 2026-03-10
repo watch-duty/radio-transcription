@@ -166,6 +166,7 @@ class NormalizerRuntime:
             max_size=1,
             command_timeout=s.db_command_timeout_sec,
             timeout=s.db_connect_timeout_sec,
+            statement_cache_size=0,
         )
         self._heartbeat_store = FeedStore(self._heartbeat_pool)
 
