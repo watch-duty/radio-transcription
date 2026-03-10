@@ -30,6 +30,7 @@ def _make_settings(**overrides) -> mock.MagicMock:
         "heartbeat_stall_timeout_sec": 45.0,
         "graceful_shutdown_timeout_sec": 10.0,
         "final_staging_bucket": "test-bucket",
+        "pubsub_topic_path": "projects/p/topics/t",
         "db_pool_min_size": 2,
         "db_pool_max_size": 5,
         "db_host": "10.0.0.1",

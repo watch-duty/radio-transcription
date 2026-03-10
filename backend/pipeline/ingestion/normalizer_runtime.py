@@ -10,6 +10,7 @@ import time
 from typing import TYPE_CHECKING
 
 import asyncpg
+from google.cloud import pubsub_v1
 
 from backend.pipeline.ingestion.gcs import close_client, upload_audio
 from backend.pipeline.storage.connection import close_pool, create_pool
@@ -25,6 +26,8 @@ if TYPE_CHECKING:
     CaptureFn = Callable[[LeasedFeed, asyncio.Event], AsyncIterator[bytes]]
 
 logger = logging.getLogger(__name__)
+
+publisher = pubsub_v1.PublisherClient()
 
 
 class NormalizerRuntime:
@@ -310,6 +313,9 @@ class NormalizerRuntime:
                     feed,
                     self._settings.final_staging_bucket,
                     chunk_seq,
+                )
+                publisher.publish(
+                    self._settings.pubsub_topic_path, gcs_path.encode("utf-8")
                 )
                 chunk_seq += 1
 

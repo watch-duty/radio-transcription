@@ -23,7 +23,10 @@ MOCK_ENV_VARS = {
     "BROADCASTIFY_PASSWORD": "test_pass",
 }
 
-with patch.dict(os.environ, MOCK_ENV_VARS, clear=False):
+with (
+    patch.dict(os.environ, MOCK_ENV_VARS, clear=False),
+    patch("google.cloud.pubsub_v1.PublisherClient"),
+):
     from backend.pipeline.ingestion.collectors import icecast_collector
 
 from backend.pipeline.ingestion import gcs  # noqa: E402
