@@ -17,7 +17,7 @@ ${env_file_content}
     Type=simple
     Restart=always
     RestartSec=10
-    Environment=HOME=/root
+    Environment=HOME=/home
     ExecStartPre=/usr/bin/docker-credential-gcr configure-docker --registries ${registry_host}
     ExecStartPre=-/usr/bin/docker rm -f ${service_name}
     ExecStartPre=/usr/bin/docker pull ${container_image}
