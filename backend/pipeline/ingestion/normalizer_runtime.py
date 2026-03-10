@@ -12,9 +12,8 @@ from collections.abc import AsyncIterator, Callable
 import asyncpg
 from google.cloud import pubsub_v1
 
-from backend.pipeline.ingestion.settings import NormalizerSettings
-
 from backend.pipeline.ingestion.gcs import close_client, upload_audio
+from backend.pipeline.ingestion.settings import NormalizerSettings
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.storage.connection import close_pool, create_pool
 from backend.pipeline.storage.feed_store import FeedStore, LeasedFeed
