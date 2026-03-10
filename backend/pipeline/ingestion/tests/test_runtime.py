@@ -304,6 +304,43 @@ class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
             mock_exit.assert_not_called()
 
 
+class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
+    """Tests for pool creation in _main."""
+
+    @mock.patch(
+        "backend.pipeline.ingestion.normalizer_runtime.FeedStore",
+    )
+    @mock.patch(
+        "backend.pipeline.ingestion.normalizer_runtime.asyncpg.create_pool",
+        new_callable=mock.AsyncMock,
+    )
+    @mock.patch(
+        "backend.pipeline.ingestion.normalizer_runtime.create_pool",
+        new_callable=mock.AsyncMock,
+    )
+    async def test_heartbeat_pool_disables_statement_cache(
+        self,
+        mock_create_pool: mock.AsyncMock,
+        mock_asyncpg_create_pool: mock.AsyncMock,
+        mock_feed_store: mock.MagicMock,
+    ) -> None:
+        """Heartbeat pool must use statement_cache_size=0 for PgBouncer compat."""
+        rt = _make_runtime()
+
+        with (
+            mock.patch.object(rt, "_leasing_loop", new_callable=mock.AsyncMock),
+            mock.patch.object(
+                rt, "_shutdown_sequence", new_callable=mock.AsyncMock
+            ),
+            mock.patch("threading.Thread"),
+        ):
+            await rt._main()
+
+        mock_asyncpg_create_pool.assert_called_once()
+        call_kwargs = mock_asyncpg_create_pool.call_args.kwargs
+        self.assertEqual(call_kwargs["statement_cache_size"], 0)
+
+
 class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
     """Tests for _shutdown_sequence."""
 
