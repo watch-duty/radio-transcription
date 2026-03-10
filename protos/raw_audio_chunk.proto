@@ -1,7 +1,9 @@
 syntax = "proto3";
+import "google/protobuf/timestamp.proto";
 
-// Information about the saved audio chunk.
 message AudioChunk {
-    // Path to the audio chunk.
-    string gcs_file_path = 1;
+  string gcs_uri = 1;
+
+  // The absolute wall-clock time when this chunk started recording.
+  google.protobuf.Timestamp start_timestamp = 2;
 }

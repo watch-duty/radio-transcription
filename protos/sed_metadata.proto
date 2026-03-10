@@ -1,13 +1,6 @@
 syntax = "proto3";
-
- // Replicated google/protobuf/timestamp.proto.
- // Rationale: Deployed schema registries (e.g. Pub/Sub, Kafka, BigQuery) often require schemas
- // to be uploaded as a single, flat string. They do not have access to standard google proto library
- // paths and cannot resolve `import` statements. Therefore, this schema must remain 100% self-contained.
-message Timestamp {
-  int64 seconds = 1;
-  int32 nanos   = 2;
-}
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
 
 // Represents the SED (Speech Event Detection) metadata for an audio chunk.
 message SedMetadata {
@@ -16,13 +9,16 @@ message SedMetadata {
 
   // A collection of segments where sound was identified.
   repeated SoundEvent sound_events = 2;
+
+  // The absolute wall-clock time when this chunk started recording.
+  google.protobuf.Timestamp start_timestamp = 3;
 }
 
 // Defines a specific time range where sound is present.
 message SoundEvent {
-  // Start of sound from the beginning of the chunk.
-  Timestamp start_timestamp = 1;
+  // Time from the beginning of the chunk where sound starts.
+  google.protobuf.Duration start_time = 1;
 
-  // End of sound from the beginning of the chunk.
-  Timestamp end_timestamp = 2;
+  // How long the sound lasted.
+  google.protobuf.Duration duration = 2;
 }

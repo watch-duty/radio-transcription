@@ -106,17 +106,13 @@ def evaluate_transcribed_audio_segment(cloud_event: CloudEvent) -> None:
             feed_id=new_transcribed_audio.feed_id,
             transmission_id=new_transcribed_audio.transmission_id,
             source_chunk_ids=new_transcribed_audio.source_chunk_ids,
-            start_timestamp={
-                "seconds": new_transcribed_audio.start_timestamp.seconds,
-                "nanos": new_transcribed_audio.start_timestamp.nanos,
-            },
-            end_timestamp={
-                "seconds": new_transcribed_audio.end_timestamp.seconds,
-                "nanos": new_transcribed_audio.end_timestamp.nanos,
-            },
             transcript=new_transcribed_audio.transcript,
             evaluation_decisions=evaluation_result.get("triggered_rules", []),
         )
+        evaluated_payload.start_timestamp.CopyFrom(
+            new_transcribed_audio.start_timestamp
+        )
+        evaluated_payload.end_timestamp.CopyFrom(new_transcribed_audio.end_timestamp)
 
         # 5. Publish to Downstream Topic
         publish_evaluation_result(evaluated_payload)
