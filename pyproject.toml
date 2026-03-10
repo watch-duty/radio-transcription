@@ -36,7 +36,7 @@ dev = [
 ]
 
 [tool.ruff]
-extend-exclude = ["model/colabs", "backend/pipeline/schema_types", "**/_pb2.py", "**/_pb2.pyi"]
+extend-exclude = ["model/colabs", "backend/pipeline/schema_types", "**/*_pb2.py", "**/*_pb2.pyi"]
 
 [tool.ruff.lint]
 select = ["ALL"]
