@@ -7,13 +7,16 @@ WORKDIR /app
 
 ENV PYTHONPATH=/app
 
+# 1. Install the protobuf compiler and ffmpeg for audio processing
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg \
-        protobuf-compiler
+        protobuf-compiler && \
+    rm -rf /var/lib/apt/lists/*
 
+
+# 2. Install dependencies
 COPY backend/pipeline/ingestion/collectors/requirements.txt .
-
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the full package structure to preserve Python import paths
