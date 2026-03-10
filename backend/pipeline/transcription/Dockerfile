@@ -19,5 +19,4 @@ COPY backend/pipeline/schema_types/ ./backend/pipeline/schema_types
 CMD ["functions-framework", \
      "--source=backend/pipeline/transcription/main.py", \
      "--target=transcribe_audio", \
-     "--signature-type=cloudevent", \
-     "--port=8080"]
+     "--signature-type=cloudevent"]
