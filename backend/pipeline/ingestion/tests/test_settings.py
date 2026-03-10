@@ -8,6 +8,7 @@ from backend.pipeline.ingestion.settings import NormalizerSettings
 def _required_env() -> dict[str, str]:
     return {
         "FINAL_STAGING_BUCKET": "staging-bucket",
+        "PUBSUB_TOPIC_PATH": "projects/test-project/topics/test-topic",
         "ALLOYDB_HOST": "127.0.0.1",
         "ALLOYDB_USER": "radio_user",
         "ALLOYDB_DB": "radio_db",

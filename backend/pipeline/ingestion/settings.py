@@ -65,6 +65,12 @@ class NormalizerSettings:
         default_factory=lambda: _require_env("FINAL_STAGING_BUCKET"),
     )
 
+    # Pub/Sub
+    # topic_path is in the form `projects/{project_id}/topics/{topic_id}`
+    pubsub_topic_path: str = field(
+        default_factory=lambda: _require_env("PUBSUB_TOPIC_PATH"),
+    )
+
     # Database pool
     db_pool_min_size: int = field(
         default_factory=lambda: int(os.environ.get("DB_POOL_MIN_SIZE", "10")),
