@@ -26,6 +26,8 @@ COPY backend/pipeline/ingestion/ ./backend/pipeline/ingestion/
 COPY backend/pipeline/storage/ ./backend/pipeline/storage/
 COPY protos/ ./protos
 
+# 3. Create the directory for the generated files
+RUN mkdir -p ./backend/pipeline/schema_types
 RUN protoc --proto_path=protos --python_out=backend/pipeline/schema_types protos/*.proto
 
 CMD ["python", "-m", "backend.pipeline.ingestion.collectors.icecast_collector"]
