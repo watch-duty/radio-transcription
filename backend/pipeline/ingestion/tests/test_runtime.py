@@ -329,9 +329,7 @@ class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
 
         with (
             mock.patch.object(rt, "_leasing_loop", new_callable=mock.AsyncMock),
-            mock.patch.object(
-                rt, "_shutdown_sequence", new_callable=mock.AsyncMock
-            ),
+            mock.patch.object(rt, "_shutdown_sequence", new_callable=mock.AsyncMock),
             mock.patch("threading.Thread"),
         ):
             await rt._main()
