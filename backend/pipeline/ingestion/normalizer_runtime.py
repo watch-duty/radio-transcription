@@ -314,10 +314,14 @@ class NormalizerRuntime:
                 audio_chunk_msg = AudioChunk(gcs_uri=gcs_uri)
                 now = datetime.datetime.now(tz=datetime.UTC)
                 audio_chunk_msg.start_timestamp.FromDatetime(now)
-                publisher.publish(
+                future = publisher.publish(
                     self._settings.pubsub_topic_path,
                     audio_chunk_msg.SerializeToString(),
                     feed_id=str(feed["id"]),
+                )
+                message_id = future.result()
+                logger.info(
+                    "Published message %s for feed %s", message_id, feed["name"]
                 )
                 chunk_seq += 1
 
