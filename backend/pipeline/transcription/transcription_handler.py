@@ -7,7 +7,9 @@ from cloudevents.http.event import CloudEvent
 from google.cloud import pubsub_v1
 from google.protobuf.json_format import MessageToJson
 
+from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.schema_types.transcribed_audio_pb2 import TranscribedAudio
+from backend.pipeline.transcription.audio_fetcher import AudioFetcher, GCSAudioFetcher
 from backend.pipeline.transcription.transcriber import (
     BaseTranscriber,
     GeminiTranscriber,
@@ -27,7 +29,9 @@ else:
 
 
 def handle_transcription_event(
-    cloud_event: CloudEvent, transcriber: BaseTranscriber | None = None
+    cloud_event: CloudEvent,
+    transcriber: BaseTranscriber | None = None,
+    audio_fetcher: AudioFetcher | None = None,
 ) -> None:
     """
     Orchestrates audio transcription and publishing.
@@ -35,6 +39,7 @@ def handle_transcription_event(
     Args:
         cloud_event: The Pub/Sub event wrapper.
         transcriber: An optional BaseTranscriber implementation. Defaults to GeminiTranscriber.
+        audio_fetcher: An optional AudioFetcher implementation. Defaults to GCSAudioFetcher.
 
     """
     project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
@@ -55,7 +60,16 @@ def handle_transcription_event(
         logger.info("No data in pubsub message, skipping")
         return
 
-    wav_data = base64.b64decode(pubsub_data)
+    decoded_data = base64.b64decode(pubsub_data)
+
+    audio_chunk = AudioChunk()
+    audio_chunk.ParseFromString(decoded_data)
+    gcs_file_path = audio_chunk.gcs_file_path
+
+    if audio_fetcher is None:
+        audio_fetcher = GCSAudioFetcher()
+
+    wav_data = audio_fetcher.fetch(gcs_file_path)
     logger.info("processing wav data for feed: %s at: %s", feed_id, timestamp)
 
     # 4. Transcribe using provided or default transcriber
