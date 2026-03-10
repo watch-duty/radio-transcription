@@ -32,29 +32,29 @@ gcloud init
 gcloud auth login
 ```
 
-*Building & Running Locally*
+*[BROKEN] Building & Running Locally (TODO GOO-120 - requires alloyDB setup)*
 ```
 # Assuming you're running from the top level of the root dir
 source .venv/bin/activate
 export BROADCASTIFY_USERNAME=<your broadcastify username>
 export BROADCASTIFY_PASSWORD=<your broadcastify pword>
 export FINAL_STAGING_BUCKET=wd-radio-test
-python backend/pipeline/ingestion/icecast_collector.py
+python backend/pipeline/ingestion/collectors/icecast_collector.py
 ```
 
 *Building & Running with Docker*
 ```
 # Assuming you're running from the top level of the root dir.
 # Run this command if you are running this for the first time.
-cat <<EOF > backend/pipeline/ingestion/.icecast_env
+cat <<EOF > backend/pipeline/ingestion/collectors/.icecast_env
 BROADCASTIFY_USERNAME=<your broadcastify username>
 BROADCASTIFY_PASSWORD=<your broadcastify pword>
 FINAL_STAGING_BUCKET=wd-radio-test
 EOF
 
-docker build -t "icecast" -f backend/pipeline/ingestion/Dockerfile .
+docker build -t "icecast" -f backend/pipeline/ingestion/collectors/Dockerfile .
 docker run -v ~/.config/gcloud:/.config/gcloud \
-           --env-file backend/pipeline/ingestion/.icecast_env \
+           --env-file backend/pipeline/ingestion/collectors/.icecast_env \
            -e GOOGLE_APPLICATION_CREDENTIALS=/.config/gcloud/application_default_credentials.json \
            -it icecast
 ```
