@@ -16,5 +16,4 @@ COPY backend ./backend
 CMD ["functions-framework", \
      "--source=backend/pipeline/evaluation/evaluation_core.py", \
      "--target=evaluate_transcribed_audio_segment", \
-     "--signature-type=cloudevent", \
-     "--port=8080"]
+     "--signature-type=cloudevent"]
