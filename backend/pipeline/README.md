@@ -1,6 +1,5 @@
 # Radio Transcription Pipeline Backend
 
-The directory contains the processing pipelines and backend systems that power the Radio Transcription application.
 
 ## Protobuf Generation
 
