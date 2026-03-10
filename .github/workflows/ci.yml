@@ -98,3 +98,26 @@ jobs:
         run: mise run generate:protos
       - name: Run tests
         run: uv run python -m unittest -b
+
+  # Builds each service's Dockerfile and verifies all transitive imports resolve.
+  # This catches missing dependencies in per-service requirements.txt files that
+  # unit tests miss (unit tests install from pyproject.toml which has all deps).
+  # NOTE: evaluation/notification/transcription are excluded because their
+  # Dockerfiles don't generate protobuf files yet. Add them here once their
+  # Dockerfiles include protobuf generation.
+  docker-smoke-test:
+    needs: [setup]
+    if: needs.setup.outputs.should_run == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build ingestion Docker image
+        run: docker build -t ingestion-smoke-test -f backend/pipeline/ingestion/collectors/Dockerfile .
+      - name: Verify ingestion imports
+        run: |
+          docker run --rm \
+            -e BROADCASTIFY_USERNAME=smoke-test \
+            -e BROADCASTIFY_PASSWORD=smoke-test \
+            -e PUBSUB_EMULATOR_HOST=localhost:8085 \
+            ingestion-smoke-test \
+            python -c "import backend.pipeline.ingestion.collectors.icecast_collector"
