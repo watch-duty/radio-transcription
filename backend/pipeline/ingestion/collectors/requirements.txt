@@ -2,3 +2,4 @@ aiohttp
 asyncpg
 gcloud-aio-storage
 google-auth
+google-cloud-pubsub
