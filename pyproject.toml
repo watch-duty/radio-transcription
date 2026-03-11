@@ -16,6 +16,7 @@ dependencies = [
     "gcloud-aio-storage>=9.6.4",
     "google-genai>=1.3.0",
     "pydantic>=2.10.6",
+    "protobuf>=4.25.3",
 ]
 
 [tool.uv]
