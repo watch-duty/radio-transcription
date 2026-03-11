@@ -36,6 +36,39 @@ dev = [
   "docker",
 ]
 
+# Dependency groups for Docker builds
+ingestion = [
+  "aiohttp>=3.13.3",
+  "asyncpg>=0.29.0",
+  "gcloud-aio-storage>=9.6.4",
+  "google-cloud-pubsub>=2.35.0",
+]
+
+transcription = [
+  "functions-framework",
+  "requests",
+  "cloudevents",
+  "google-cloud-pubsub>=2.35.0",
+  "google-cloud-logging",
+  "google-genai>=1.3.0",
+  "pydantic>=2.10.6",
+]
+
+evaluation = [
+  "functions-framework",
+  "cloudevents",
+  "google-cloud-logging",
+  "google-cloud-pubsub>=2.35.0",
+]
+
+notification = [
+  "functions-framework",
+  "requests",
+  "cloudevents",
+  "protobuf>=4.25.3",
+  "google-cloud-logging",
+]
+
 [tool.ruff]
 extend-exclude = ["model/colabs", "backend/pipeline/schema_types", "**/*_pb2.py", "**/*_pb2.pyi"]
 
