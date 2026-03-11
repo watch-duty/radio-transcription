@@ -236,6 +236,7 @@ class TestProcessFeedTimestamps(unittest.IsolatedAsyncioTestCase):
 
     async def test_sets_start_timestamp_on_audio_chunk(self) -> None:
         """The start_timestamp field must be populated before publishing."""
+
         async def _one_chunk(feed, shutdown):
             yield b"audio"
 
