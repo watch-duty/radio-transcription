@@ -32,14 +32,14 @@ gcloud init
 gcloud auth login
 ```
 
-*[BROKEN] Building & Running Locally (TODO GOO-120 - requires alloyDB setup)*
+*Building & Running Locally (TODO GOO-120 - requires alloyDB setup)*
 ```
 # Assuming you're running from the top level of the root dir
 source .venv/bin/activate
 export BROADCASTIFY_USERNAME=<your broadcastify username>
 export BROADCASTIFY_PASSWORD=<your broadcastify pword>
-export FINAL_STAGING_BUCKET=wd-radio-test
-python backend/pipeline/ingestion/collectors/icecast_collector.py
+export ICECAST_STREAM_URL=https://example.com
+python backend/pipeline/ingestion/collectors/local_icecast_collector.py
 ```
 
 *Building & Running with Docker*

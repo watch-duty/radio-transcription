@@ -166,8 +166,13 @@ async def _create_ffmpeg_process(url: str) -> asyncio.subprocess.Process:
     """
     return await asyncio.create_subprocess_exec(
             "ffmpeg", "-nostdin", "-re",
+            # Low-latency demux/decode settings for live Icecast streams.
+            "-fflags", "nobuffer",
+            "-flags", "low_delay",
+            "-analyzeduration", "0",
             "-headers", auth_header,
             "-i", url,
+            "-vn", "-sn", "-dn",
             "-f", "s16le",
             "-acodec", "pcm_s16le",
             "-ac", "1",
@@ -238,7 +243,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        pass
+    main()
