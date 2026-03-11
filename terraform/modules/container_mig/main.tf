@@ -57,6 +57,7 @@ resource "google_compute_instance_template" "this" {
   }
 
   metadata = {
+    google-logging-enabled = "true"
     user-data = templatefile("${path.module}/cloud_config.yaml.tftpl", {
       service_name     = var.name_prefix
       registry_host    = local.registry_host
