@@ -85,7 +85,7 @@ class GeminiTranscriber(BaseTranscriber):
                     # Documentation: https://ai.google.dev/gemini-api/docs/thinking#thinking-levels
                     # MEDIUM as it provides a solid balance for the reasoning required to identify speakers
                     # and roles from radio protocol without excessively increasing latency.
-                    thinking_config=types.ThinkingConfig(thinking_level="MEDIUM"),
+                    thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.MEDIUM),
                     temperature=0.0,
                     candidate_count=1,
                 ),
