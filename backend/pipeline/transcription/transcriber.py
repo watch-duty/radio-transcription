@@ -70,8 +70,8 @@ class GeminiTranscriber(BaseTranscriber):
     def transcribe(self, wav_data: bytes) -> str | None:
         """Transcribe audio using Gemini AI."""
         if self._client is None:
-            logger.warning("No Gemini API key provided, returning mock transcription.")
-            return '{"events": [{"unit": "Dispatch", "message": "a fire has been transcribed", "is_dispatch": true}]}'
+            logger.warning("No Gemini API key provided")
+            return None
 
         try:
             response = self._client.models.generate_content(
