@@ -115,10 +115,6 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install mise, install tools
-        uses: jdx/mise-action@v3
-      - name: Generate requirements.txt for Docker
-        run: uv export --no-hashes --no-dev --no-emit-project -o backend/pipeline/requirements.txt
       - name: Build ingestion Docker image
         run: docker build -t ingestion-smoke-test -f backend/pipeline/ingestion/collectors/Dockerfile .
       # PUBSUB_EMULATOR_HOST bypasses GCP credential resolution in the

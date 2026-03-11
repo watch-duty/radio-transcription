@@ -19,5 +19,3 @@
 .DS_Store
 README.md
 CONTRIBUTING.md
-pyproject.toml
-uv.lock

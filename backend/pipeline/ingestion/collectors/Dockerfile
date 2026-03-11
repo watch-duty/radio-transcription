@@ -13,9 +13,12 @@ RUN apt-get update && \
         ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
-# 2. Install dependencies (generated from pyproject.toml via: uv export --no-hashes --no-dev --no-emit-project -o backend/pipeline/requirements.txt)
-COPY backend/pipeline/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt grpcio-tools
+# 2. Install dependencies
+COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
+COPY pyproject.toml uv.lock ./
+ENV UV_PROJECT_ENVIRONMENT=/app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
+RUN uv sync --frozen --no-dev && uv pip install grpcio-tools
 
 # Copy the full package structure to preserve Python import paths
 COPY backend/__init__.py ./backend/__init__.py
