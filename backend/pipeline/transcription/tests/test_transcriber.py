@@ -20,12 +20,10 @@ class TestGeminiTranscriber(unittest.TestCase):
             BaseTranscriber()
 
     def test_transcriber_mock_mode(self) -> None:
-        """Test transcriber returns mock transcript when no API key is provided."""
+        """Test transcriber returns None when no API key is provided."""
         transcriber = GeminiTranscriber(api_key=None)
         result = transcriber.transcribe(b"dummy_data")
-        self.assertIsInstance(result, str)
-        if isinstance(result, str):
-            self.assertIn("a fire has been transcribed", result)
+        self.assertIsNone(result)
 
     @patch("google.genai.Client")
     def test_transcriber_success(self, mock_client_class) -> None:
