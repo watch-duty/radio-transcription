@@ -7,17 +7,18 @@ WORKDIR /app
 
 ENV PYTHONPATH=/app
 
-# 1. Install the protobuf compiler and ffmpeg for audio processing
+# 1. Install ffmpeg for audio processing
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        ffmpeg \
-        protobuf-compiler && \
+        ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
-
 # 2. Install dependencies
-COPY backend/pipeline/ingestion/collectors/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
+COPY pyproject.toml uv.lock ./
+ENV UV_PROJECT_ENVIRONMENT=/app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
+RUN uv sync --frozen --no-dev && uv pip install grpcio-tools
 
 # Copy the full package structure to preserve Python import paths
 COPY backend/__init__.py ./backend/__init__.py
@@ -28,6 +29,7 @@ COPY protos/ ./protos
 
 # 3. Create the directory for the generated files
 RUN mkdir -p ./backend/pipeline/schema_types
-RUN protoc --proto_path=protos --python_out=backend/pipeline/schema_types protos/*.proto
+RUN touch ./backend/pipeline/schema_types/__init__.py
+RUN python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto
 
 CMD ["python", "-m", "backend.pipeline.ingestion.collectors.icecast_collector"]
