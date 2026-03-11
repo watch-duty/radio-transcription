@@ -88,7 +88,7 @@ class GeminiTranscriber(BaseTranscriber):
                     thinking_config=types.ThinkingConfig(
                         thinking_level=types.ThinkingLevel.MEDIUM
                     ),
-                    temperature=0.0,
+                    temperature=1.0,  # The recommended temperature for this model is 1.0
                     candidate_count=1,
                 ),
                 contents=[types.Part.from_bytes(data=wav_data, mime_type="audio/wav")],
