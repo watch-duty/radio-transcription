@@ -48,7 +48,8 @@ class TestTranscriptionHandler(unittest.TestCase):
 
         # Mock AudioChunk
         gcs_uri = "gs://test-bucket/test.wav"
-        audio_chunk = AudioChunk(gcs_file_path=gcs_uri)
+        audio_chunk = AudioChunk(gcs_uri=gcs_uri)
+        audio_chunk.start_timestamp.GetCurrentTime()
         message_data = audio_chunk.SerializeToString()
         encoded_data = base64.b64encode(message_data).decode("utf-8")
 
@@ -58,7 +59,6 @@ class TestTranscriptionHandler(unittest.TestCase):
                 "data": encoded_data,
                 "attributes": {
                     "feed_id": "feed_poly",
-                    "timestamp": "2024-01-01T00:00:00Z",
                 },
             }
         }
@@ -110,7 +110,8 @@ class TestTranscriptionHandler(unittest.TestCase):
         mock_publisher.publish.return_value.result.return_value = "msg_id_123"
 
         gcs_uri = "gs://test-bucket/test.wav"
-        audio_chunk = AudioChunk(gcs_file_path=gcs_uri)
+        audio_chunk = AudioChunk(gcs_uri=gcs_uri)
+        audio_chunk.start_timestamp.GetCurrentTime()
         message_data = audio_chunk.SerializeToString()
         encoded_data = base64.b64encode(message_data).decode("utf-8")
 
@@ -119,7 +120,6 @@ class TestTranscriptionHandler(unittest.TestCase):
                 "data": encoded_data,
                 "attributes": {
                     "feed_id": "feed_1",
-                    "timestamp": "2024-01-01T00:00:00Z",
                 },
             }
         }

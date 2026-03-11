@@ -1,31 +1,21 @@
 syntax = "proto3";
+import "google/protobuf/timestamp.proto";
 
-// File path and context of transcribed audio with an evaluation descision.
+// Identifiers, timestamps, transcript, and evaluation decisions for transcribed audio.
 message EvaluatedTranscribedAudio {
-    // Replicated google/protobuf/timestamp.proto. Deployed schema must be self contained and not have imports.
-    message Timestamp {
-        int64 seconds = 1;
-        int32 nanos = 2;
-    }
 
-    // Path to the original audio.
-    string file_path = 1;
-    // Source the audio came from (i.e., Broadcastify, Echo, etc.)
-    string source = 2;
-    // Name of the feed.
-    string feed_name = 3;
-    // Unique ID to the feed.
-    string feed_id = 4;
-    // Unique ID to the audio.
-    string audio_id = 5;
-    // Start timestamp of the audio.
-    Timestamp start_timestamp = 6;
-    // End timestamp of the audio.
-    Timestamp end_timestamp = 7;
-    // Full transcript text evaluated from the audio.
-    string transcript = 8;
-    // Additional context that can provide metadata about this audio/feed.
-    map<string, string> context = 9;
-    // List of rule IDs that matched the transcript in evaluation.
-    repeated string evaluation_decisions = 10;
+  // Unique ID to the feed.
+  string feed_id = 1;
+  // Unique ID for the generated transmission.
+  string transmission_id = 2;
+  // List of unique IDs for the audio segments that make up this transmission.
+  repeated string source_chunk_ids = 3;
+  // Start timestamp of the audio.
+  google.protobuf.Timestamp start_timestamp = 4;
+  // End timestamp of the audio.
+  google.protobuf.Timestamp end_timestamp = 5;
+  // Full transcript text evaluated from the audio.
+  string transcript = 6;
+  // List of rule IDs that matched the transcript in evaluation.
+  repeated string evaluation_decisions = 7;
 }
