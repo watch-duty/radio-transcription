@@ -1,10 +1,7 @@
-import importlib.util
 import os
-import sys
 import tempfile
 import unittest
 import uuid
-from types import ModuleType
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -15,24 +12,9 @@ MOCK_ENV_VARS = {
     "BROADCASTIFY_PASSWORD": "test_pass",
 }
 
-pubsub_stub_modules: dict[str, ModuleType] = {}
-if importlib.util.find_spec("google.cloud.pubsub_v1") is None:
-    google_cloud_module = ModuleType("google.cloud")
-    google_pubsub_module = ModuleType("google.cloud.pubsub_v1")
-    if not hasattr(google_pubsub_module, "PublisherClient"):
-        google_pubsub_module.PublisherClient = MagicMock()
-    pubsub_stub_modules = {
-        "google.cloud": google_cloud_module,
-        "google.cloud.pubsub_v1": google_pubsub_module,
-    }
 
 with (
     patch.dict(os.environ, MOCK_ENV_VARS, clear=False),
-    patch.dict(
-        sys.modules,
-        pubsub_stub_modules,
-        clear=False,
-    ),
 ):
     from backend.pipeline.ingestion.collectors import local_icecast_collector
 

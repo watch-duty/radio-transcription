@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 async def run_local_capture() -> None:
     """
-    Run Icecast capture directly for local debugging.
+    Run Icecast capture directly for local debugging, writes to disk instead of GCS.
 
     Environment variables:
     - ICECAST_STREAM_URL: Required stream URL. Example: "https://example.com:8000/stream"
