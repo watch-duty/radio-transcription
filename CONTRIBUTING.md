@@ -40,6 +40,9 @@ export BROADCASTIFY_USERNAME=<your broadcastify username>
 export BROADCASTIFY_PASSWORD=<your broadcastify pword>
 export ICECAST_STREAM_URL=https://example.com
 python backend/pipeline/ingestion/collectors/local_icecast_collector.py
+
+<optional env variable>
+export ICECAST_LOCAL_OUTPUT_DIR="/tmp/audio_chunks"
 ```
 
 *Building & Running with Docker*
