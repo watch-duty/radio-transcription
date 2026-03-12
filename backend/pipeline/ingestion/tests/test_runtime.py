@@ -7,7 +7,7 @@ from unittest import mock
 
 from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
-from backend.pipeline.storage.feed_store import LeasedFeed
+from backend.pipeline.storage.feed_store import HeartbeatResult, LeasedFeed
 
 _WORKER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
@@ -269,6 +269,21 @@ class TestProcessFeedTimestamps(unittest.IsolatedAsyncioTestCase):
 class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
     """Tests for _heartbeat_cycle."""
 
+    @staticmethod
+    def _diag(
+        feed_id: uuid.UUID,
+        *,
+        worker: uuid.UUID = _WORKER_ID,
+        status: str = "active",
+        renewed: bool = True,
+    ) -> HeartbeatResult:
+        return HeartbeatResult(
+            id=feed_id,
+            current_worker=worker,
+            current_status=status,
+            renewed=renewed,
+        )
+
     async def test_all_renewed_no_action(self) -> None:
         """When all feeds are renewed, no action is taken."""
         rt = _make_runtime()
@@ -276,7 +291,9 @@ class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
         rt._feed_tasks[_FEED_ID] = task
         rt._releasing_feeds = set()
         rt._heartbeat_store = mock.AsyncMock()
-        rt._heartbeat_store.renew_heartbeats_batch.return_value = {_FEED_ID}
+        rt._heartbeat_store.renew_heartbeats_batch_diagnostic.return_value = [
+            self._diag(_FEED_ID, renewed=True),
+        ]
 
         await rt._heartbeat_cycle()
 
@@ -287,12 +304,15 @@ class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
 
     async def test_lost_feeds_trigger_exit(self) -> None:
         """When any feed is lost from heartbeat renewal, os._exit is called."""
+        other_worker = uuid.UUID("99999999-8888-7777-6666-555555555555")
         rt = _make_runtime()
         task = asyncio.create_task(asyncio.sleep(100))
         rt._feed_tasks[_FEED_ID] = task
         rt._releasing_feeds = set()
         rt._heartbeat_store = mock.AsyncMock()
-        rt._heartbeat_store.renew_heartbeats_batch.return_value = set()
+        rt._heartbeat_store.renew_heartbeats_batch_diagnostic.return_value = [
+            self._diag(_FEED_ID, worker=other_worker, renewed=False),
+        ]
 
         with (
             mock.patch(
@@ -309,12 +329,15 @@ class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
 
     async def test_releasing_feeds_excluded_from_lost(self) -> None:
         """Feeds in _releasing_feeds are not flagged as lost."""
+        other_worker = uuid.UUID("99999999-8888-7777-6666-555555555555")
         rt = _make_runtime()
         task = asyncio.create_task(asyncio.sleep(100))
         rt._feed_tasks[_FEED_ID] = task
         rt._releasing_feeds = {_FEED_ID}
         rt._heartbeat_store = mock.AsyncMock()
-        rt._heartbeat_store.renew_heartbeats_batch.return_value = set()
+        rt._heartbeat_store.renew_heartbeats_batch_diagnostic.return_value = [
+            self._diag(_FEED_ID, worker=other_worker, renewed=False),
+        ]
 
         with mock.patch(
             "backend.pipeline.ingestion.normalizer_runtime.os._exit",
@@ -329,19 +352,94 @@ class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
 
     async def test_done_tasks_excluded_from_lost(self) -> None:
         """Tasks that completed between snapshot and DB response are excluded."""
+        other_worker = uuid.UUID("99999999-8888-7777-6666-555555555555")
         rt = _make_runtime()
         task = asyncio.create_task(asyncio.sleep(0))
         await task  # let it complete
         rt._feed_tasks[_FEED_ID] = task
         rt._releasing_feeds = set()
         rt._heartbeat_store = mock.AsyncMock()
-        rt._heartbeat_store.renew_heartbeats_batch.return_value = set()
+        rt._heartbeat_store.renew_heartbeats_batch_diagnostic.return_value = [
+            self._diag(_FEED_ID, worker=other_worker, renewed=False),
+        ]
 
         with mock.patch(
             "backend.pipeline.ingestion.normalizer_runtime.os._exit",
         ) as mock_exit:
             await rt._heartbeat_cycle()
             mock_exit.assert_not_called()
+
+    async def test_diagnostic_info_logged_on_fence_violation(self) -> None:
+        """Per-feed diagnostic details are logged before termination."""
+        other_worker = uuid.UUID("99999999-8888-7777-6666-555555555555")
+        rt = _make_runtime()
+        task = asyncio.create_task(asyncio.sleep(100))
+        rt._feed_tasks[_FEED_ID] = task
+        rt._releasing_feeds = set()
+        rt._heartbeat_store = mock.AsyncMock()
+        rt._heartbeat_store.renew_heartbeats_batch_diagnostic.return_value = [
+            self._diag(
+                _FEED_ID,
+                worker=other_worker,
+                status="active",
+                renewed=False,
+            ),
+        ]
+
+        with (
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.os._exit",
+            ),
+            mock.patch("logging.shutdown"),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.logger",
+            ) as mock_logger,
+        ):
+            await rt._heartbeat_cycle()
+
+        # Should have logged per-feed diagnostic info
+        critical_calls = [
+            c for c in mock_logger.critical.call_args_list if "current_worker" in str(c)
+        ]
+        self.assertEqual(len(critical_calls), 1)
+        self.assertIn(str(other_worker), str(critical_calls[0]))
+
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+    async def test_deleted_feed_logs_no_db_row(self) -> None:
+        """A feed missing from DB results logs 'no DB row returned'."""
+        rt = _make_runtime()
+        task = asyncio.create_task(asyncio.sleep(100))
+        rt._feed_tasks[_FEED_ID] = task
+        rt._releasing_feeds = set()
+        rt._heartbeat_store = mock.AsyncMock()
+        # DB returns empty list — feed row was deleted
+        rt._heartbeat_store.renew_heartbeats_batch_diagnostic.return_value = []
+
+        with (
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.os._exit",
+            ),
+            mock.patch("logging.shutdown"),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.logger",
+            ) as mock_logger,
+        ):
+            await rt._heartbeat_cycle()
+
+        critical_calls = [
+            c
+            for c in mock_logger.critical.call_args_list
+            if "no DB row returned" in str(c)
+        ]
+        self.assertEqual(len(critical_calls), 1)
+        self.assertIn(str(_FEED_ID), str(critical_calls[0]))
+
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
 
 
 class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
