@@ -132,8 +132,8 @@ class TestRetryShutdown(unittest.IsolatedAsyncioTestCase):
             )
         fn.assert_not_awaited()
 
-    async def test_reraises_original_on_shutdown_before_retry(self) -> None:
-        """On shutdown after a failed attempt, re-raise the last exception."""
+    async def test_raises_cancelled_on_shutdown_after_failed_attempt(self) -> None:
+        """On shutdown after a failed attempt, raise CancelledError."""
         shutdown = asyncio.Event()
 
         async def _fail_then_signal(*args: object) -> str:
@@ -143,7 +143,7 @@ class TestRetryShutdown(unittest.IsolatedAsyncioTestCase):
 
         fn = mock.AsyncMock(side_effect=_fail_then_signal)
 
-        with self.assertRaises(OSError):
+        with self.assertRaises(asyncio.CancelledError):
             await retry_with_lease_check(
                 fn,
                 lease_lost=asyncio.Event(),
@@ -152,10 +152,10 @@ class TestRetryShutdown(unittest.IsolatedAsyncioTestCase):
                 base_delay_sec=0.0,
                 retryable=(OSError,),
             )
-        # First attempt fails and sets shutdown, then loop-top check re-raises
+        # First attempt fails and sets shutdown, then loop-top check raises CancelledError
         self.assertEqual(fn.await_count, 1)
 
-    async def test_reraises_original_during_backoff_on_shutdown(self) -> None:
+    async def test_raises_cancelled_during_backoff_on_shutdown(self) -> None:
         fn = mock.AsyncMock(side_effect=OSError("transient"))
         shutdown = asyncio.Event()
 
@@ -164,7 +164,7 @@ class TestRetryShutdown(unittest.IsolatedAsyncioTestCase):
             shutdown.set()
 
         task = asyncio.create_task(_set_shutdown_soon())
-        with self.assertRaises(OSError):
+        with self.assertRaises(asyncio.CancelledError):
             await retry_with_lease_check(
                 fn,
                 lease_lost=asyncio.Event(),

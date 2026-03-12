@@ -33,8 +33,7 @@ async def retry_with_lease_check(  # noqa: PLR0913
 
     Control flow per attempt:
     1. Check lease_lost → raise LeaseExpiredError
-    2. Check shutdown → re-raise last exception, or CancelledError if
-       no attempt has been made yet
+    2. Check shutdown → raise CancelledError
     3. Call fn(*args) → return on success
     4. On retryable exception: jittered backoff, racing against both
        lease_lost and shutdown for interruptibility
@@ -65,8 +64,6 @@ async def retry_with_lease_check(  # noqa: PLR0913
             msg = f"Heartbeat lost before {operation_name} attempt {attempt}"
             raise LeaseExpiredError(msg)
         if shutdown.is_set():
-            if last_exception is not None:
-                raise last_exception
             raise asyncio.CancelledError
 
         try:
@@ -122,7 +119,7 @@ async def retry_with_lease_check(  # noqa: PLR0913
                 msg = f"Heartbeat lost during {operation_name} backoff"
                 raise LeaseExpiredError(msg) from last_exception
             if shutdown.is_set():
-                raise last_exception
+                raise asyncio.CancelledError
 
     # Unreachable — loop always returns or raises — but satisfies type checker.
     msg = f"{operation_name} retry logic reached unreachable state"

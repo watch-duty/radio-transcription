@@ -8,12 +8,10 @@ import threading
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
-from typing import TYPE_CHECKING
 
+import aiohttp
+import asyncpg
 from google.cloud import pubsub_v1
-
-if TYPE_CHECKING:
-    import asyncpg
 
 from backend.pipeline.ingestion.gcs import close_client, upload_audio
 from backend.pipeline.ingestion.retry import LeaseExpiredError, retry_with_lease_check
@@ -306,9 +304,6 @@ class NormalizerRuntime:
         Iterates the capture generator, uploads each chunk to GCS, and
         bookmarks progress with fence violation detection.
         """
-        import aiohttp  # noqa: PLC0415
-        import asyncpg  # noqa: PLC0415
-
         chunk_seq = 0
         worker_id = self._settings.worker_id
         s = self._settings
