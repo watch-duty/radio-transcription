@@ -51,7 +51,7 @@ async def run_local_capture() -> None:
         chunk_count += 1
         timestamp = datetime.now(UTC).isoformat(timespec="milliseconds")
         file_timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S_%fZ")
-        file_name = f"chunk_{chunk_count:06d}_{file_timestamp}.wav"
+        file_name = f"chunk_{chunk_count:06d}_{file_timestamp}.flac"
         file_path = output_dir / file_name
         await asyncio.to_thread(file_path.write_bytes, audio_data)
         logger.info(
