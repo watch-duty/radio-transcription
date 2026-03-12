@@ -19,16 +19,16 @@ from apache_beam.transforms.userstate import (
     on_timer,
 )
 from apache_beam.utils.timestamp import Timestamp
-from audio_processor import AudioProcessor
-from constants import (
+from backend.pipeline.transcription.audio_processor import AudioProcessor
+from backend.pipeline.transcription.constants import (
     AUDIO_FORMAT,
     DEAD_LETTER_QUEUE_TAG,
     MS_PER_SECOND,
 )
-from enums import MetricsExporterType, TranscriberType, VadType
+from backend.pipeline.transcription.enums import MetricsExporterType, TranscriberType, VadType
 from pydub import AudioSegment
-from telemetry import get_metrics_exporter
-from transcribers import Transcriber, get_transcriber
+from backend.pipeline.transcription.telemetry import get_metrics_exporter
+from backend.pipeline.transcription.transcribers import Transcriber, get_transcriber
 
 from backend.pipeline.schema_types.transcribed_audio_pb2 import (
     TranscribedAudio,

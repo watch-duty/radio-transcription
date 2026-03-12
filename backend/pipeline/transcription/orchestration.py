@@ -11,14 +11,14 @@ import logging
 import apache_beam as beam
 from apache_beam.io.gcp.pubsub import ReadFromPubSub, WriteToPubSub
 from apache_beam.options.pipeline_options import PipelineOptions, StandardOptions
-from constants import (
+from backend.pipeline.transcription.constants import (
     DEAD_LETTER_QUEUE_TAG,
     DEFAULT_SIGNIFICANT_GAP_SEC,
     DEFAULT_STALE_TIMEOUT_SEC,
     MAIN_TAG,
 )
-from options import TranscriptionOptions
-from transforms import (
+from backend.pipeline.transcription.options import TranscriptionOptions
+from backend.pipeline.transcription.transforms import (
     AddEventTimestamp,
     ParseAndKeyFn,
     SerializeToPubSubMessageFn,
