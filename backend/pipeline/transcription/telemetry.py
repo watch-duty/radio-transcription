@@ -5,7 +5,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from enums import MetricsExporterType
+from backend.pipeline.transcription.enums import MetricsExporterType
 from google.cloud import monitoring_v3
 
 logger = logging.getLogger(__name__)

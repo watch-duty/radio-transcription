@@ -9,8 +9,8 @@ import logging
 import sys
 
 from apache_beam.options.pipeline_options import PipelineOptions
-from options import TranscriptionOptions
-from orchestration import get_pipeline
+from backend.pipeline.transcription.options import TranscriptionOptions
+from backend.pipeline.transcription.orchestration import get_pipeline
 
 logger = logging.getLogger(__name__)
 

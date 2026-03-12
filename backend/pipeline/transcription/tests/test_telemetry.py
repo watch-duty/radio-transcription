@@ -1,8 +1,8 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from enums import MetricsExporterType
-from telemetry import (
+from backend.pipeline.transcription.enums import MetricsExporterType
+from backend.pipeline.transcription.telemetry import (
     GcpMonitoringConfig,
     GcpMonitoringExporter,
     MultiExporter,
@@ -23,7 +23,7 @@ class TestMetricsExporters(unittest.TestCase):
         config_empty = GcpMonitoringConfig.from_json("")
         self.assertIsInstance(config_empty, GcpMonitoringConfig)
 
-    @patch("telemetry.monitoring_v3.MetricServiceClient")
+    @patch("backend.pipeline.transcription.telemetry.monitoring_v3.MetricServiceClient")
     def test_gcp_exporter_setup_and_record(self, mock_client_class: MagicMock) -> None:
         mock_client_inst = MagicMock()
         mock_client_class.return_value = mock_client_inst
@@ -48,7 +48,7 @@ class TestMetricsExporters(unittest.TestCase):
         self.assertEqual(series.metric.labels["feed_id"], "f1")
         self.assertEqual(series.points[0].value.int64_value, 100)
 
-    @patch("telemetry.monitoring_v3.MetricServiceClient")
+    @patch("backend.pipeline.transcription.telemetry.monitoring_v3.MetricServiceClient")
     def test_gcp_exporter_handles_exception(self, mock_client_class: MagicMock) -> None:
         mock_client_inst = MagicMock()
         mock_client_inst.create_time_series.side_effect = Exception("Network failure")
@@ -76,7 +76,7 @@ class TestMetricsExporters(unittest.TestCase):
         mock_exp1.record_transcription_time.assert_called_once_with(feed_id="f1", duration_ms=250)
         mock_exp2.record_transcription_time.assert_called_once_with(feed_id="f1", duration_ms=250)
 
-    @patch("telemetry.GcpMonitoringExporter")
+    @patch("backend.pipeline.transcription.telemetry.GcpMonitoringExporter")
     def test_get_metrics_exporter(self, mock_gcp_exporter_class: MagicMock) -> None:
         # Test NONE or empty
         exporter_none = get_metrics_exporter([MetricsExporterType.NONE], "proj", "{}")

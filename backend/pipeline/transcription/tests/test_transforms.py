@@ -13,11 +13,11 @@ from apache_beam.testing.test_pipeline import TestPipeline as BeamTestPipeline
 from apache_beam.testing.test_stream import TestStream as BeamTestStream
 from apache_beam.testing.util import assert_that, equal_to
 from apache_beam.transforms.window import TimestampedValue
-from constants import DEAD_LETTER_QUEUE_TAG, MAIN_TAG
-from enums import TranscriberType, VadType
+from backend.pipeline.transcription.constants import DEAD_LETTER_QUEUE_TAG, MAIN_TAG
+from backend.pipeline.transcription.enums import TranscriberType, VadType
 from pydub import AudioSegment
-from transcribers import Transcriber
-from transforms import (
+from backend.pipeline.transcription.transcribers import Transcriber
+from backend.pipeline.transcription.transforms import (
     AddEventTimestamp,
     FlushRequest,
     ParseAndKeyFn,
@@ -130,7 +130,7 @@ class AddEventTimestampTest(unittest.TestCase):
 
 
 class StitchAndTranscribeTest(unittest.TestCase):
-    @patch("transforms.AudioProcessor")
+    @patch("backend.pipeline.transcription.transforms.AudioProcessor")
     def test_stitching_and_silence_flush_logic(
         self, mock_audio_processor: MagicMock
     ) -> None:
@@ -238,8 +238,8 @@ class StitchAndTranscribeTest(unittest.TestCase):
                 results[MAIN_TAG], assert_transcripts, label="CheckMainTranscripts"
             )  # type: ignore
 
-    @patch("transforms.time")
-    @patch("transforms.AudioProcessor")
+    @patch("backend.pipeline.transcription.transforms.time")
+    @patch("backend.pipeline.transcription.transforms.AudioProcessor")
     def test_stale_transmission_timer(
         self,
         mock_audio_processor: MagicMock,
@@ -311,7 +311,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
                 label="CheckStaleEmptyDLQ",
             )
 
-    @patch("transforms.AudioProcessor")
+    @patch("backend.pipeline.transcription.transforms.AudioProcessor")
     def test_dlq_routing(self, mock_audio_processor: MagicMock) -> None:
         mock_processor_inst = mock_audio_processor.return_value
         mock_processor_inst.check_vad.return_value = True
@@ -378,7 +378,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
             assert_that(results.main, equal_to([]), label="CheckEmptyMain")  # type: ignore
             assert_that(results[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ")  # type: ignore
 
-    @patch("transforms.AudioProcessor")
+    @patch("backend.pipeline.transcription.transforms.AudioProcessor")
     def test_missing_gcs_file(self, mock_audio_processor: MagicMock) -> None:
         mock_processor_inst = mock_audio_processor.return_value
         mock_processor_inst.download_audio_and_sad.side_effect = FileNotFoundError(
@@ -409,8 +409,11 @@ class StitchAndTranscribeTest(unittest.TestCase):
                 results[DEAD_LETTER_QUEUE_TAG], assert_missing, label="CheckDLQM"
             )
 
-    @patch("transforms.get_transcriber")
-    def test_missing_uuid_dlq(self, mock_get_transcriber: MagicMock) -> None:
+    @patch("backend.pipeline.transcription.transforms.AudioProcessor")
+    @patch("backend.pipeline.transcription.transforms.get_transcriber")
+    def test_missing_uuid_dlq(
+        self, mock_get_transcriber: MagicMock, mock_audio_processor: MagicMock
+    ) -> None:
         config = get_test_config()
         with BeamTestPipeline() as p:  # type: ignore
             elements = p | beam.Create(  # type: ignore
@@ -429,7 +432,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
                 results[DEAD_LETTER_QUEUE_TAG], assert_invalid, label="CheckDLQI"
             )
 
-    @patch("transforms.AudioProcessor")
+    @patch("backend.pipeline.transcription.transforms.AudioProcessor")
     def test_concurrent_transcription_execution(
         self, mock_audio_processor: MagicMock
     ) -> None:
