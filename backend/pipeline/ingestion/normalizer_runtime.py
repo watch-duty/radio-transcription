@@ -19,7 +19,7 @@ from backend.pipeline.ingestion.gcs import close_client, upload_audio
 from backend.pipeline.ingestion.settings import NormalizerSettings
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.storage.connection import close_pool, create_pool
-from backend.pipeline.storage.feed_store import FeedStore, LeasedFeed
+from backend.pipeline.storage.feed_store import FeedStore, HeartbeatResult, LeasedFeed
 
 FeedID = uuid.UUID
 CaptureFn = Callable[[LeasedFeed, asyncio.Event], AsyncIterator[bytes]]
@@ -474,10 +474,14 @@ class NormalizerRuntime:
         if not active:
             return
 
-        renewed_ids = await self._heartbeat_store.renew_heartbeats_batch(
-            list(active.keys()),
-            self._settings.worker_id,
+        results: list[HeartbeatResult] = (
+            await self._heartbeat_store.renew_heartbeats_batch_diagnostic(
+                list(active.keys()),
+                self._settings.worker_id,
+            )
         )
+
+        renewed_ids = {r["id"] for r in results if r["renewed"]}
 
         # A feed missing from renewed_ids is NOT a violation if:
         #   - active[fid].done(): task finished between snapshot and DB response
@@ -502,6 +506,19 @@ class NormalizerRuntime:
                 len(renewed_ids),
             )
             return
+
+        # Log diagnostic details for each lost feed before terminating.
+        diag_by_id = {r["id"]: r for r in results}
+        for fid in lost_ids:
+            diag = diag_by_id.get(fid)
+            if diag:
+                logger.critical(
+                    "Feed %s lost: current_worker=%s current_status=%s renewed=%s",
+                    fid,
+                    diag["current_worker"],
+                    diag["current_status"],
+                    diag["renewed"],
+                )
 
         logger.critical(
             "Heartbeat fence violation -- %d feed(s) lost: %s. Terminating.",
