@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     import asyncpg
 
 from backend.pipeline.ingestion.gcs import close_client, upload_audio
-from backend.pipeline.ingestion.retry import LeaseExpiredError, retry_with_lease_check
+from backend.pipeline.ingestion.retry import retry_with_lease_check
 from backend.pipeline.ingestion.settings import NormalizerSettings
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.storage.connection import close_pool, create_pool

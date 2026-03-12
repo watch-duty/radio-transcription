@@ -632,7 +632,6 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
 
     async def test_lease_lost_during_upload_aborts(self) -> None:
         """LeaseExpiredError from upload falls through to report_feed_failure."""
-        import aiohttp  # noqa: PLC0415
 
         async def _one_chunk(feed, shutdown):
             yield b"audio"

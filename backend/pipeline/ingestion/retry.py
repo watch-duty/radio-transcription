@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
-from collections.abc import Awaitable, Callable
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +17,7 @@ class LeaseExpiredError(Exception):
     """Raised when a retry loop detects heartbeat loss."""
 
 
-async def retry_with_lease_check(
+async def retry_with_lease_check(  # noqa: PLR0913
     fn: Callable[..., Awaitable[T]],
     *args: object,
     lease_lost: asyncio.Event,
@@ -59,9 +61,8 @@ async def retry_with_lease_check(
 
     for attempt in range(max_retries + 1):
         if lease_lost.is_set():
-            raise LeaseExpiredError(
-                f"Heartbeat lost before {operation_name} attempt {attempt}"
-            )
+            msg = f"Heartbeat lost before {operation_name} attempt {attempt}"
+            raise LeaseExpiredError(msg)
         if shutdown.is_set() and last_exception is not None:
             raise last_exception
 
@@ -101,7 +102,7 @@ async def retry_with_lease_check(
             lease_task = asyncio.create_task(lease_lost.wait())
             shutdown_task = asyncio.create_task(shutdown.wait())
             try:
-                done, pending = await asyncio.wait(
+                _done, _pending = await asyncio.wait(
                     [lease_task, shutdown_task],
                     timeout=delay,
                     return_when=asyncio.FIRST_COMPLETED,
@@ -115,9 +116,8 @@ async def retry_with_lease_check(
                         pass
 
             if lease_lost.is_set():
-                raise LeaseExpiredError(
-                    f"Heartbeat lost during {operation_name} backoff"
-                ) from last_exception
+                msg = f"Heartbeat lost during {operation_name} backoff"
+                raise LeaseExpiredError(msg) from last_exception
             if shutdown.is_set():
                 raise last_exception
 
