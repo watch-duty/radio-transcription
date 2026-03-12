@@ -5,6 +5,7 @@ on: [push, workflow_call]
 permissions:
   contents: read
   actions: read
+  packages: read
 
 jobs:
   setup:
