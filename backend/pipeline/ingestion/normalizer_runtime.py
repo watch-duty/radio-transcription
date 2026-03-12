@@ -9,7 +9,6 @@ import threading
 import time
 from typing import TYPE_CHECKING
 
-import asyncpg
 from google.cloud import pubsub_v1
 
 from backend.pipeline.ingestion.gcs import close_client, upload_audio
@@ -20,6 +19,8 @@ from backend.pipeline.storage.feed_store import FeedStore
 if TYPE_CHECKING:
     import uuid
     from collections.abc import AsyncIterator, Callable
+
+    import asyncpg
 
     from backend.pipeline.ingestion.settings import NormalizerSettings
     from backend.pipeline.storage.feed_store import LeasedFeed
