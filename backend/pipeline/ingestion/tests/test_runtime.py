@@ -53,7 +53,7 @@ def _make_settings(**overrides) -> mock.MagicMock:
         "db_pool_min_size": 2,
         "db_pool_max_size": 5,
         "db_host": "10.0.0.1",
-        "db_port": 5432,
+        "db_port": 6432,
         "db_user": "user",
         "db_name": "db",
         "db_password": "pass",
