@@ -1,4 +1,5 @@
 import io
+import shutil
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -50,12 +51,14 @@ class AudioProcessorTest(unittest.TestCase):
         self.assertIsInstance(processed, AudioSegment)
         self.assertEqual(len(processed), 1000)
 
+    @unittest.skipIf(shutil.which("ffmpeg") is None, "ffmpeg is required for pydub I/O tests")
     def test_export_flac(self) -> None:
         audio = AudioSegment.silent(duration=500)
         flac_bytes = self.processor.export_flac(audio)
         self.assertIsInstance(flac_bytes, bytes)
         self.assertTrue(flac_bytes.startswith(b"fLaC"))
 
+    @unittest.skipIf(shutil.which("ffmpeg") is None, "ffmpeg is required for pydub I/O tests")
     @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
     @patch("backend.pipeline.transcription.audio_processor.read_sed_segments_from_blob")
     def test_download_audio_and_sed(
