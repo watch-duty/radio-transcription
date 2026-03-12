@@ -9,6 +9,7 @@ import logging
 import sys
 
 from apache_beam.options.pipeline_options import PipelineOptions
+
 from backend.pipeline.transcription.options import TranscriptionOptions
 from backend.pipeline.transcription.orchestration import get_pipeline
 

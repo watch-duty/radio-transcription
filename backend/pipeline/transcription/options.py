@@ -1,8 +1,16 @@
 import argparse
 
 from apache_beam.options.pipeline_options import PipelineOptions
-from backend.pipeline.transcription.constants import DEFAULT_SIGNIFICANT_GAP_SEC, DEFAULT_STALE_TIMEOUT_SEC
-from backend.pipeline.transcription.enums import MetricsExporterType, TranscriberType, VadType
+
+from backend.pipeline.transcription.constants import (
+    DEFAULT_SIGNIFICANT_GAP_SEC,
+    DEFAULT_STALE_TIMEOUT_SEC,
+)
+from backend.pipeline.transcription.enums import (
+    MetricsExporterType,
+    TranscriberType,
+    VadType,
+)
 
 
 class TranscriptionOptions(PipelineOptions):
