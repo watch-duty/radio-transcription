@@ -102,7 +102,8 @@ class ChunkContext:
     current_buffer: AudioSegment | None
     processed_uuids: set[str]
     last_segment_end_time: float
-    chunk_start_time: float | None
+    transmission_start_time: float | None
+    chunk_start_sec: float
 
 
 @dataclass(frozen=True)
@@ -395,7 +396,7 @@ class StitchAndTranscribeFn(beam.DoFn):
     def _fetch_and_validate_audio(
         self, *, feed_id: str, gcs_path: str, processed_uuids: set[str]
     ) -> Generator[
-        tuple[str, AudioSegment, list[tuple[float, float]]] | beam.pvalue.TaggedOutput,
+        tuple[str, float, AudioSegment, list[tuple[float, float]]] | beam.pvalue.TaggedOutput,
         None,
         None,
     ]:
@@ -420,10 +421,16 @@ class StitchAndTranscribeFn(beam.DoFn):
                 source_file_uuid,
                 feed_id,
             )
-            full_audio_segment, speech_segments = (
+            chunk_start_sec, full_audio_segment, speech_segments = (
                 self.audio_processor.download_audio_and_sed(gcs_path)
             )
-            yield source_file_uuid, full_audio_segment, speech_segments
+            # Fallback to parsing filename for chunk_start_sec if absent in proto
+            if chunk_start_sec is None:
+                _, _, filename = gcs_path.rpartition("/")
+                timestamp_str, _, _ = filename.partition("-")
+                chunk_start_sec = float(timestamp_str) if timestamp_str.isdigit() else 0.0
+
+            yield source_file_uuid, chunk_start_sec, full_audio_segment, speech_segments
         except Exception as e:
             self.dlq_count.inc()
             action = "downloading" if isinstance(e, FileNotFoundError) else "processing"
@@ -448,7 +455,7 @@ class StitchAndTranscribeFn(beam.DoFn):
         if ctx.current_buffer:
             logger.info("Silent file received. Flushing previous transmission.")
             start_time = (
-                ctx.chunk_start_time if ctx.chunk_start_time is not None else 0.0
+                ctx.transmission_start_time if ctx.transmission_start_time is not None else ctx.chunk_start_sec
             )
             end_time = ctx.last_segment_end_time or start_time + (
                 len(ctx.current_buffer) / float(MS_PER_SECOND)
@@ -483,12 +490,12 @@ class StitchAndTranscribeFn(beam.DoFn):
         emit_start = state.stale_start_time.read()
         if emit_start is None:
             emit_start = (
-                ctx.chunk_start_time if ctx.chunk_start_time is not None else 0.0
+                ctx.transmission_start_time if ctx.transmission_start_time is not None else ctx.chunk_start_sec
             )
 
         if ctx.current_buffer is None:
             msg = "Cannot flush empty buffer."
-            raise ValueError(msg)
+            raise RuntimeError(msg)
 
         flush_req = FlushRequest(
             buffer=ctx.current_buffer,
@@ -513,9 +520,12 @@ class StitchAndTranscribeFn(beam.DoFn):
     ) -> list[FlushRequest]:
         pending_flushes = []
 
-        for start_sec, end_sec in speech_segments:
-            if (
-                start_sec - ctx.last_segment_end_time
+        for rel_start_sec, rel_end_sec in speech_segments:
+            abs_start_sec = ctx.chunk_start_sec + rel_start_sec
+            abs_end_sec = ctx.chunk_start_sec + rel_end_sec
+
+            if ctx.last_segment_end_time > 0 and (
+                abs_start_sec - ctx.last_segment_end_time
             ) > self.config.significant_gap_sec:
                 if ctx.current_buffer:
                     flush_req, new_processed_uuids = self._trigger_gap_flush(
@@ -527,16 +537,16 @@ class StitchAndTranscribeFn(beam.DoFn):
 
                 ctx.current_buffer = None
 
-            if ctx.current_buffer is None and ctx.chunk_start_time is None:
-                ctx.chunk_start_time = start_sec
+            if ctx.current_buffer is None and ctx.transmission_start_time is None:
+                ctx.transmission_start_time = abs_start_sec
 
             new_segment = full_audio_segment[
-                int(start_sec * MS_PER_SECOND) : int(end_sec * MS_PER_SECOND)
+                int(rel_start_sec * MS_PER_SECOND) : int(rel_end_sec * MS_PER_SECOND)
             ]
             ctx.current_buffer = (
                 ctx.current_buffer + new_segment if ctx.current_buffer else new_segment
             )
-            ctx.last_segment_end_time = end_sec
+            ctx.last_segment_end_time = abs_end_sec
 
             ctx.processed_uuids.add(ctx.source_file_uuid)
 
@@ -598,10 +608,10 @@ class StitchAndTranscribeFn(beam.DoFn):
             state.buffer.write(buf.getvalue())
             state.last_end_time.write(ctx.last_segment_end_time)
 
-            if ctx.chunk_start_time is not None:
+            if ctx.transmission_start_time is not None:
                 existing_start = state.stale_start_time.read()
                 if existing_start is None:
-                    state.stale_start_time.write(ctx.chunk_start_time)
+                    state.stale_start_time.write(ctx.transmission_start_time)
 
             state.contributing_uuids.write(ctx.processed_uuids)
             if state.stale_timer:
@@ -646,7 +656,7 @@ class StitchAndTranscribeFn(beam.DoFn):
         if not audio_data:
             return
 
-        source_file_uuid, full_audio_segment, speech_segments = audio_data
+        source_file_uuid, chunk_start_sec, full_audio_segment, speech_segments = audio_data
 
         current_buffer = self._load_current_buffer(state.buffer)
         last_segment_end_time = state.last_end_time.read() or 0.0
@@ -657,9 +667,10 @@ class StitchAndTranscribeFn(beam.DoFn):
             current_buffer=current_buffer,
             processed_uuids=processed_uuids,
             last_segment_end_time=last_segment_end_time,
-            chunk_start_time=state.stale_start_time.read() or 0.0
+            transmission_start_time=state.stale_start_time.read() or chunk_start_sec
             if not speech_segments
             else None,
+            chunk_start_sec=chunk_start_sec,
         )
 
         if not speech_segments:

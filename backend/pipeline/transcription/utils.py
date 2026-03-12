@@ -20,10 +20,13 @@ def get_gcs_client() -> storage.Client:
     return storage.Client()
 
 
-def read_sed_segments_from_blob(blob: storage.Blob) -> list[tuple[float, float]]:
+def read_sed_segments_from_blob(
+    blob: storage.Blob,
+) -> tuple[float | None, list[tuple[float, float]]]:
     """
     Parses a pre-computed Speech Activity Detection (SED) profile from a GCS blob's custom metadata.
-    Returns a list of (start_sec, end_sec) tuples denoting periods of active speech.
+    Returns the chunk's absolute start timestamp in seconds (if present) and a list of (start_sec, end_sec)
+    tuples denoting periods of active speech relative to the start of the chunk.
     """
     blob.reload()  # Ensure metadata is loaded
     if not blob.metadata or "sed_metadata" not in blob.metadata:
@@ -36,7 +39,14 @@ def read_sed_segments_from_blob(blob: storage.Blob) -> list[tuple[float, float]]
     sed_metadata = SedMetadata()
     sed_metadata.ParseFromString(metadata_bytes)
 
-    return [
+    chunk_start_sec = None
+    if sed_metadata.HasField("start_timestamp"):
+        chunk_start_sec = (
+            sed_metadata.start_timestamp.seconds
+            + sed_metadata.start_timestamp.nanos / 1e9
+        )
+
+    segments = [
         (
             seg.start_time.seconds + seg.start_time.nanos / 1e9,
             seg.start_time.seconds
@@ -46,3 +56,4 @@ def read_sed_segments_from_blob(blob: storage.Blob) -> list[tuple[float, float]]
         )
         for seg in sed_metadata.sound_events
     ]
+    return chunk_start_sec, segments

@@ -39,8 +39,8 @@ class AudioProcessor:
 
     def download_audio_and_sed(
         self, gcs_path: str
-    ) -> tuple[AudioSegment, list[tuple[float, float]]]:
-        """Downloads FLAC bytes and SED metadata from GCS, returning a parsed AudioSegment."""
+    ) -> tuple[float | None, AudioSegment, list[tuple[float, float]]]:
+        """Downloads FLAC bytes and SED metadata from GCS, returning the absolute start timestamp, parsed AudioSegment, and active speech segments."""
         gcs_client = get_gcs_client()
         parsed_uri = urllib.parse.urlparse(gcs_path)
         bucket_name = parsed_uri.netloc
@@ -58,9 +58,9 @@ class AudioProcessor:
 
         full_audio_segment = AudioSegment.from_file(in_mem_file, format=AUDIO_FORMAT)
 
-        speech_segments = read_sed_segments_from_blob(blob)
+        chunk_start_sec, speech_segments = read_sed_segments_from_blob(blob)
 
-        return full_audio_segment, speech_segments
+        return chunk_start_sec, full_audio_segment, speech_segments
 
     def check_vad(self, audio_buffer: AudioSegment) -> bool:
         """Evaluates audio buffer with TenVAD and returns True if speech is detected."""
