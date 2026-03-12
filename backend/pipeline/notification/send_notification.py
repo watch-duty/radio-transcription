@@ -38,27 +38,20 @@ def parse_cloud_event(cloud_event: CloudEvent) -> EvaluatedTranscribedAudio | No
 def convert_to_notification(
     evaluated_transcribed_audio: EvaluatedTranscribedAudio,
 ) -> AlertNotification:
-    return AlertNotification(
-        file_path=evaluated_transcribed_audio.file_path,
-        source=evaluated_transcribed_audio.source,
-        feed_name=evaluated_transcribed_audio.feed_name,
+    notification = AlertNotification(
         feed_id=evaluated_transcribed_audio.feed_id,
-        start_timestamp={
-            "seconds": evaluated_transcribed_audio.start_timestamp.seconds,
-            "nanos": evaluated_transcribed_audio.start_timestamp.nanos,
-        }
-        if evaluated_transcribed_audio.start_timestamp.seconds
-        else None,
-        end_timestamp={
-            "seconds": evaluated_transcribed_audio.end_timestamp.seconds,
-            "nanos": evaluated_transcribed_audio.end_timestamp.nanos,
-        }
-        if evaluated_transcribed_audio.end_timestamp.seconds
-        else None,
+        transmission_id=evaluated_transcribed_audio.transmission_id,
+        source_chunk_ids=evaluated_transcribed_audio.source_chunk_ids,
         transcript=evaluated_transcribed_audio.transcript,
         evaluation_decisions=evaluated_transcribed_audio.evaluation_decisions,
-        context=evaluated_transcribed_audio.context,
     )
+    if evaluated_transcribed_audio.start_timestamp.seconds:
+        notification.start_timestamp.CopyFrom(
+            evaluated_transcribed_audio.start_timestamp
+        )
+    if evaluated_transcribed_audio.end_timestamp.seconds:
+        notification.end_timestamp.CopyFrom(evaluated_transcribed_audio.end_timestamp)
+    return notification
 
 
 @functions_framework.cloud_event

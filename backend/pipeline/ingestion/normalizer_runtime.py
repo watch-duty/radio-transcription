@@ -1,31 +1,28 @@
-from __future__ import annotations
-
 import asyncio
 import concurrent.futures
+import datetime
 import logging
 import os
 import signal
 import threading
 import time
+import uuid
+from collections.abc import AsyncIterator, Callable
 from typing import TYPE_CHECKING
 
 from google.cloud import pubsub_v1
 
-from backend.pipeline.ingestion.gcs import close_client, upload_audio
-from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
-from backend.pipeline.storage.connection import close_pool, create_pool
-from backend.pipeline.storage.feed_store import FeedStore
-
 if TYPE_CHECKING:
-    import uuid
-    from collections.abc import AsyncIterator, Callable
-
     import asyncpg
 
-    from backend.pipeline.ingestion.settings import NormalizerSettings
-    from backend.pipeline.storage.feed_store import LeasedFeed
+from backend.pipeline.ingestion.gcs import close_client, upload_audio
+from backend.pipeline.ingestion.settings import NormalizerSettings
+from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
+from backend.pipeline.storage.connection import close_pool, create_pool
+from backend.pipeline.storage.feed_store import FeedStore, LeasedFeed
 
-    CaptureFn = Callable[[LeasedFeed, asyncio.Event], AsyncIterator[bytes]]
+FeedID = uuid.UUID
+CaptureFn = Callable[[LeasedFeed, asyncio.Event], AsyncIterator[bytes]]
 
 logger = logging.getLogger(__name__)
 
@@ -86,12 +83,12 @@ class NormalizerRuntime:
         # starving heartbeat queries, which would cause false stall detection.
         self._heartbeat_pool: asyncpg.Pool = None  # type: ignore # set in _main()
         self._loop: asyncio.AbstractEventLoop = None  # type: ignore # set in _main()
-        self._feed_tasks: dict[uuid.UUID, asyncio.Task] = {}
+        self._feed_tasks: dict[FeedID, asyncio.Task] = {}
         # Tracks feeds currently mid-await on release_feed/record_failure.
         # Without this, the heartbeat would see worker_id=NULL (set by the DB)
         # while the task is not yet .done(), misinterpreting the intentional
         # release as a fence violation and triggering os._exit(1).
-        self._releasing_feeds: set[uuid.UUID] = set()
+        self._releasing_feeds: set[FeedID] = set()
         self._heartbeat_thread: threading.Thread | None = None
         self._store: FeedStore = None  # type: ignore # set in _main()
         self._heartbeat_store: FeedStore = None  # type: ignore # set in _main()
@@ -310,16 +307,19 @@ class NormalizerRuntime:
                 feed,
                 self._shutdown,
             ):
-                gcs_path = await upload_audio(
+                gcs_uri = await upload_audio(
                     audio_chunk,
                     feed,
                     self._settings.final_staging_bucket,
                     chunk_seq,
                 )
-                evaluated_payload = AudioChunk(gcs_file_path=gcs_path)
-                encoded_data = evaluated_payload.SerializeToString()
+                audio_chunk_msg = AudioChunk(gcs_uri=gcs_uri)
+                now = datetime.datetime.now(tz=datetime.UTC)
+                audio_chunk_msg.start_timestamp.FromDatetime(now)
                 future = publisher.publish(
-                    self._settings.pubsub_topic_path, encoded_data
+                    self._settings.pubsub_topic_path,
+                    audio_chunk_msg.SerializeToString(),
+                    feed_id=str(feed["id"]),
                 )
                 message_id = future.result()
                 logger.info(
@@ -330,7 +330,7 @@ class NormalizerRuntime:
                 ok = await self._store.update_feed_progress(
                     feed["id"],
                     worker_id,
-                    gcs_path,
+                    gcs_uri,
                 )
                 if not ok:
                     # If the batched heartbeat is healthy (renewing every 15s),
