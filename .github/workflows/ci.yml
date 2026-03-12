@@ -89,6 +89,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 100
+      - name: Install ffmpeg (needed for pydub tests)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
       - name: Install mise, install tools
         # mise installs uv and other project-specific tools. see: .tool-versions
         uses: jdx/mise-action@v3

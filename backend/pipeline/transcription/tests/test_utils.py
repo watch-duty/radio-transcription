@@ -1,3 +1,4 @@
+import base64
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -8,7 +9,6 @@ from backend.pipeline.transcription.utils import (
     get_gcs_client,
     read_sed_segments_from_blob,
 )
-import base64
 
 
 class TestUtils(unittest.TestCase):
@@ -29,7 +29,9 @@ class TestUtils(unittest.TestCase):
         seg1.duration.nanos = 0
 
         metadata_bytes = sed_metadata.SerializeToString()
-        mock_blob.metadata = {"sed_metadata": base64.b64encode(metadata_bytes).decode('utf-8')}
+        mock_blob.metadata = {
+            "sed_metadata": base64.b64encode(metadata_bytes).decode("utf-8")
+        }
 
         segments = read_sed_segments_from_blob(mock_blob)
         self.assertEqual(len(segments), 1)

@@ -4,8 +4,8 @@ These functions handle external I/O (like fetching blobs from GCS)
 that are required by the pipeline's core transforms.
 """
 
+import base64
 import logging
-import urllib.parse
 
 from google.cloud import storage
 
@@ -19,8 +19,6 @@ logger = logging.getLogger(__name__)
 def get_gcs_client() -> storage.Client:
     return storage.Client()
 
-
-import base64
 
 def read_sed_segments_from_blob(blob: storage.Blob) -> list[tuple[float, float]]:
     """
@@ -41,7 +39,10 @@ def read_sed_segments_from_blob(blob: storage.Blob) -> list[tuple[float, float]]
     return [
         (
             seg.start_time.seconds + seg.start_time.nanos / 1e9,
-            seg.start_time.seconds + seg.start_time.nanos / 1e9 + seg.duration.seconds + seg.duration.nanos / 1e9
+            seg.start_time.seconds
+            + seg.start_time.nanos / 1e9
+            + seg.duration.seconds
+            + seg.duration.nanos / 1e9,
         )
         for seg in sed_metadata.sound_events
     ]
