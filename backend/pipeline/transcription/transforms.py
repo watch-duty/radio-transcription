@@ -24,7 +24,7 @@ from pydub import AudioSegment
 from backend.pipeline.schema_types.transcribed_audio_pb2 import (
     TranscribedAudio,
 )
-from backend.pipeline.transcription.audio_processor import AudioProcessor
+from backend.pipeline.transcription.audio_processor import AudioProcessor, AudioChunkData
 from backend.pipeline.transcription.constants import (
     AUDIO_FORMAT,
     DEAD_LETTER_QUEUE_TAG,
@@ -396,7 +396,7 @@ class StitchAndTranscribeFn(beam.DoFn):
     def _fetch_and_validate_audio(
         self, *, feed_id: str, gcs_path: str, processed_uuids: set[str]
     ) -> Generator[
-        tuple[str, float, AudioSegment, list[tuple[float, float]]] | beam.pvalue.TaggedOutput,
+        tuple[str, AudioChunkData] | beam.pvalue.TaggedOutput,
         None,
         None,
     ]:
@@ -421,16 +421,24 @@ class StitchAndTranscribeFn(beam.DoFn):
                 source_file_uuid,
                 feed_id,
             )
-            chunk_start_sec, full_audio_segment, speech_segments = (
+            chunk_data = (
                 self.audio_processor.download_audio_and_sed(gcs_path)
             )
             # Fallback to parsing filename for chunk_start_sec if absent in proto
+            chunk_start_sec = chunk_data.start_sec
             if chunk_start_sec is None:
                 _, _, filename = gcs_path.rpartition("/")
                 timestamp_str, _, _ = filename.partition("-")
                 chunk_start_sec = float(timestamp_str) if timestamp_str.isdigit() else 0.0
 
-            yield source_file_uuid, chunk_start_sec, full_audio_segment, speech_segments
+            # Override with fallback if needed
+            chunk_data = AudioChunkData(
+                start_sec=chunk_start_sec,
+                audio=chunk_data.audio,
+                speech_segments=chunk_data.speech_segments,
+            )
+
+            yield source_file_uuid, chunk_data
         except Exception as e:
             self.dlq_count.inc()
             action = "downloading" if isinstance(e, FileNotFoundError) else "processing"
@@ -656,7 +664,7 @@ class StitchAndTranscribeFn(beam.DoFn):
         if not audio_data:
             return
 
-        source_file_uuid, chunk_start_sec, full_audio_segment, speech_segments = audio_data
+        source_file_uuid, chunk_data = audio_data
 
         current_buffer = self._load_current_buffer(state.buffer)
         last_segment_end_time = state.last_end_time.read() or 0.0
@@ -667,13 +675,13 @@ class StitchAndTranscribeFn(beam.DoFn):
             current_buffer=current_buffer,
             processed_uuids=processed_uuids,
             last_segment_end_time=last_segment_end_time,
-            transmission_start_time=state.stale_start_time.read() or chunk_start_sec
-            if not speech_segments
+            transmission_start_time=state.stale_start_time.read() or chunk_data.start_sec
+            if not chunk_data.speech_segments
             else None,
-            chunk_start_sec=chunk_start_sec,
+            chunk_start_sec=chunk_data.start_sec,
         )
 
-        if not speech_segments:
+        if not chunk_data.speech_segments:
             logger.info("No speech segments in chunk %s. Dropping.", gcs_path)
             self.vad_silence_count.inc()
             yield from self._handle_silent_file(
@@ -685,8 +693,8 @@ class StitchAndTranscribeFn(beam.DoFn):
             return
 
         pending_flushes = self._stitch_speech_segments(
-            speech_segments=speech_segments,
-            full_audio_segment=full_audio_segment,
+            speech_segments=chunk_data.speech_segments,
+            full_audio_segment=chunk_data.audio,
             ctx=ctx,
             state=state,
         )
