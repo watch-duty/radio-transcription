@@ -321,7 +321,7 @@ class NormalizerRuntime:
                     audio_chunk_msg.SerializeToString(),
                     feed_id=str(feed["id"]),
                 )
-                message_id = future.result()
+                message_id = await asyncio.to_thread(future.result)
                 logger.info(
                     "Published message %s for feed %s", message_id, feed["name"]
                 )
