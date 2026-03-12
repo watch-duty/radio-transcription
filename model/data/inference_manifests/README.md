@@ -8,3 +8,4 @@ each inference output implies.
 | ------------- | ------------------------- |
 | playground\_parakeet\_and\_canary\_flash.json | https://linear.app/watchduty/issue/GOO-20/run-inference-with-3-chosen-models#comment-6705c94d |
 | playground\_parakeet\_and\_canary\_flash\_and\_chirp\_with\_context.jsonl | https://linear.app/watchduty/issue/GOO-23/setup-chirp-v3-evaluation-to-produce-nemo-consistent-json-output |
+| playground\_parakeet\_and\_canary\_flash\_and\_chirp.jsonl | https://linear.app/watchduty/issue/GOO-23/setup-chirp-v3-evaluation-to-produce-nemo-consistent-json-output |
