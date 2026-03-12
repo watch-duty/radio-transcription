@@ -630,8 +630,8 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upload_mock.await_count, 2)
         rt._store.release_feed.assert_awaited_once()
 
-    async def test_lease_lost_during_upload_aborts(self) -> None:
-        """LeaseExpiredError from upload falls through to report_feed_failure."""
+    async def test_lease_lost_during_upload_aborts_without_db_write(self) -> None:
+        """LeaseExpiredError aborts cleanly — no report_feed_failure call."""
 
         async def _one_chunk(feed, shutdown):
             yield b"audio"
@@ -652,8 +652,44 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         ):
             await rt._process_feed(_FEED)
 
-        # LeaseExpiredError falls through to except Exception → report_feed_failure
-        rt._store.report_feed_failure.assert_awaited_once()
+        # LeaseExpiredError caught by dedicated handler — no DB write attempted
+        rt._store.report_feed_failure.assert_not_awaited()
+        rt._store.release_feed.assert_not_awaited()
+
+    async def test_lease_lost_during_bookmark_backoff_aborts(self) -> None:
+        """Lease loss during bookmark retry aborts without DB write."""
+        import asyncpg as _asyncpg  # noqa: PLC0415
+
+        async def _one_chunk(feed, shutdown):
+            yield b"audio"
+
+        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        # Bookmark fails with a retryable error, then lease is lost
+        rt._store.update_feed_progress.side_effect = _asyncpg.InterfaceError(
+            "connection lost"
+        )
+        rt._releasing_feeds = set()
+
+        async def _set_lease_lost_soon() -> None:
+            await asyncio.sleep(0.01)
+            rt._lease_lost.set()
+
+        with (
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.upload_audio",
+                mock.AsyncMock(return_value="gs://b/p"),
+            ),
+            _mock_pubsub_publish(),
+        ):
+            task = asyncio.create_task(_set_lease_lost_soon())
+            await rt._process_feed(_FEED)
+            await task
+
+        # LeaseExpiredError caught by dedicated handler — no DB write attempted
+        rt._store.report_feed_failure.assert_not_awaited()
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     import asyncpg
 
 from backend.pipeline.ingestion.gcs import close_client, upload_audio
-from backend.pipeline.ingestion.retry import retry_with_lease_check
+from backend.pipeline.ingestion.retry import LeaseExpiredError, retry_with_lease_check
 from backend.pipeline.ingestion.settings import NormalizerSettings
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.storage.connection import close_pool, create_pool
@@ -395,6 +395,18 @@ class NormalizerRuntime:
 
         except asyncio.CancelledError:
             logger.info("Feed %s task cancelled", feed["name"])
+            return
+
+        except LeaseExpiredError:
+            # Lease validity is uncertain (heartbeat DB error or fence
+            # violation).  Do NOT attempt report_feed_failure — the DB
+            # connection that feeds it may be unreachable, causing this
+            # coroutine to hang.  The 60s abandonment window is the
+            # safety net; another worker will re-lease the feed.
+            logger.warning(
+                "Lease lost for feed %s -- aborting without DB write",
+                feed["name"],
+            )
             return
 
         except Exception:
