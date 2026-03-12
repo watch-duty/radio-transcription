@@ -8,9 +8,12 @@ import threading
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
+from typing import TYPE_CHECKING
 
-import asyncpg
 from google.cloud import pubsub_v1
+
+if TYPE_CHECKING:
+    import asyncpg
 
 from backend.pipeline.ingestion.gcs import close_client, upload_audio
 from backend.pipeline.ingestion.settings import NormalizerSettings
@@ -152,17 +155,16 @@ class NormalizerRuntime:
         # Dedicated 1-connection pool ensures heartbeat queries never queue
         # behind 250 bookmark/upload operations on the main pool. Without
         # this, pool contention causes false stall-timeout kills.
-        self._heartbeat_pool = await asyncpg.create_pool(
+        self._heartbeat_pool = await create_pool(
             host=s.db_host,
-            port=s.db_port,
             user=s.db_user,
+            db_name=s.db_name,
             password=s.db_password,
-            database=s.db_name,
+            port=s.db_port,
             min_size=1,
             max_size=1,
             command_timeout=s.db_command_timeout_sec,
             timeout=s.db_connect_timeout_sec,
-            statement_cache_size=0,
         )
         self._heartbeat_store = FeedStore(self._heartbeat_pool)
 

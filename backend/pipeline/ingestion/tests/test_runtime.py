@@ -54,7 +54,7 @@ def _make_settings(**overrides) -> mock.MagicMock:
         "db_pool_min_size": 2,
         "db_pool_max_size": 5,
         "db_host": "10.0.0.1",
-        "db_port": 5432,
+        "db_port": 6432,
         "db_user": "user",
         "db_name": "db",
         "db_password": "pass",
@@ -351,20 +351,15 @@ class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.normalizer_runtime.FeedStore",
     )
     @mock.patch(
-        "backend.pipeline.ingestion.normalizer_runtime.asyncpg.create_pool",
-        new_callable=mock.AsyncMock,
-    )
-    @mock.patch(
         "backend.pipeline.ingestion.normalizer_runtime.create_pool",
         new_callable=mock.AsyncMock,
     )
-    async def test_heartbeat_pool_disables_statement_cache(
+    async def test_heartbeat_pool_uses_create_pool_helper(
         self,
         mock_create_pool: mock.AsyncMock,
-        mock_asyncpg_create_pool: mock.AsyncMock,
         mock_feed_store: mock.MagicMock,
     ) -> None:
-        """Heartbeat pool must use statement_cache_size=0 for PgBouncer compat."""
+        """Heartbeat pool must use create_pool helper with min/max_size=1."""
         rt = _make_runtime()
 
         with (
@@ -374,9 +369,10 @@ class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
         ):
             await rt._main()
 
-        mock_asyncpg_create_pool.assert_called_once()
-        call_kwargs = mock_asyncpg_create_pool.call_args.kwargs
-        self.assertEqual(call_kwargs["statement_cache_size"], 0)
+        self.assertEqual(mock_create_pool.call_count, 2)
+        heartbeat_call = mock_create_pool.call_args_list[1]
+        self.assertEqual(heartbeat_call.kwargs["min_size"], 1)
+        self.assertEqual(heartbeat_call.kwargs["max_size"], 1)
 
 
 class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):

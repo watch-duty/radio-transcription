@@ -71,13 +71,13 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.heartbeat_interval_sec, 15.0)
         self.assertEqual(settings.heartbeat_stall_timeout_sec, 45.0)
         self.assertEqual(settings.graceful_shutdown_timeout_sec, 10.0)
-        self.assertEqual(settings.db_pool_min_size, 10)
-        self.assertEqual(settings.db_pool_max_size, 10)
+        self.assertEqual(settings.db_pool_min_size, 5)
+        self.assertEqual(settings.db_pool_max_size, 5)
         self.assertEqual(settings.db_command_timeout_sec, 30.0)
         self.assertEqual(settings.db_connect_timeout_sec, 10.0)
         self.assertEqual(settings.feed_failure_threshold, 3)
         self.assertEqual(settings.abandonment_window_sec, 60.0)
-        self.assertEqual(settings.db_port, 5432)
+        self.assertEqual(settings.db_port, 6432)
         self.assertEqual(settings.db_password, "")
 
     def test_edge_case_zero_and_negative_numeric_values_parse(self) -> None:
