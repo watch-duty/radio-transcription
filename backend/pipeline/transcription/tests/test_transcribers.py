@@ -1,16 +1,18 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from constants import BYTES_PER_SECOND_16KHZ_MONO
-from enums import TranscriberType
-from transcribers import get_transcriber
+from backend.pipeline.transcription.constants import BYTES_PER_SECOND_16KHZ_MONO
+from backend.pipeline.transcription.enums import TranscriberType
+from backend.pipeline.transcription.transcribers import get_transcriber
 
 
 class TestTranscribers(unittest.TestCase):
     def test_google_chirp_transcriber_success(self) -> None:
 
         # Mock SpeechClient to avoid initializing Google credentials
-        with patch("transcribers.SpeechClient") as mock_speech_client_cls:
+        with patch(
+            "backend.pipeline.transcription.transcribers.SpeechClient"
+        ) as mock_speech_client_cls:
             mock_client_instance = MagicMock()
             mock_speech_client_cls.return_value = mock_client_instance
 
@@ -42,7 +44,9 @@ class TestTranscribers(unittest.TestCase):
 
     def test_google_chirp_transcriber_background(self) -> None:
 
-        with patch("transcribers.SpeechClient") as mock_speech_client_cls:
+        with patch(
+            "backend.pipeline.transcription.transcribers.SpeechClient"
+        ) as mock_speech_client_cls:
             mock_client_instance = MagicMock()
             mock_speech_client_cls.return_value = mock_client_instance
 

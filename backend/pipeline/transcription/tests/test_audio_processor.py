@@ -2,17 +2,18 @@ import io
 import unittest
 from unittest.mock import MagicMock, patch
 
-from audio_processor import AudioProcessor
-from constants import AUDIO_FORMAT, SAMPLE_RATE_HZ
-from enums import VadType
 from pydub import AudioSegment
+
+from backend.pipeline.transcription.audio_processor import AudioProcessor
+from backend.pipeline.transcription.constants import AUDIO_FORMAT, SAMPLE_RATE_HZ
+from backend.pipeline.transcription.enums import VadType
 
 
 class AudioProcessorTest(unittest.TestCase):
     def setUp(self) -> None:
         self.processor = AudioProcessor(vad_type=VadType.TEN_VAD)
 
-    @patch("audio_processor.get_vad_plugin")
+    @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
     def test_setup_initializes_vad(self, mock_get_vad: MagicMock) -> None:
         self.processor.setup()
         mock_get_vad.assert_called_once_with(VadType.TEN_VAD, "{}")
@@ -23,7 +24,7 @@ class AudioProcessorTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.processor.check_vad(audio)
 
-    @patch("audio_processor.get_vad_plugin")
+    @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
     def test_check_vad_evaluates_speech(self, mock_get_vad: MagicMock) -> None:
         self.processor.setup()
         mock_vad_instance = mock_get_vad.return_value
@@ -55,10 +56,10 @@ class AudioProcessorTest(unittest.TestCase):
         self.assertIsInstance(flac_bytes, bytes)
         self.assertTrue(flac_bytes.startswith(b"fLaC"))
 
-    @patch("audio_processor.get_gcs_client")
-    @patch("audio_processor.read_sad_segments_from_gcs")
-    def test_download_audio_and_sad(
-        self, mock_read_sad: MagicMock, mock_gcs_client: MagicMock
+    @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
+    @patch("backend.pipeline.transcription.audio_processor.read_sed_segments_from_blob")
+    def test_download_audio_and_sed(
+        self, mock_read_sed: MagicMock, mock_gcs_client: MagicMock
     ) -> None:
         mock_bucket = MagicMock()
         mock_blob = MagicMock()
@@ -76,23 +77,25 @@ class AudioProcessorTest(unittest.TestCase):
         mock_bucket.get_blob.return_value = mock_blob
         mock_gcs_client.return_value.bucket.return_value = mock_bucket
 
-        mock_read_sad.return_value = [(0.0, 0.1)]
+        mock_read_sed.return_value = [(0.0, 0.1)]
 
-        result_audio, result_sad = self.processor.download_audio_and_sad(
+        result_audio, result_sed = self.processor.download_audio_and_sed(
             "gs://bucket/path/to/file.flac"
         )
 
+        mock_read_sed.assert_called_once_with(mock_blob)
+
         self.assertIsInstance(result_audio, AudioSegment)
         self.assertAlmostEqual(result_audio.duration_seconds, 0.1, places=2)
-        self.assertEqual(result_sad, [(0.0, 0.1)])
+        self.assertEqual(result_sed, [(0.0, 0.1)])
         mock_gcs_client.return_value.bucket.assert_called_with("bucket")
         mock_bucket.get_blob.assert_called_with("path/to/file.flac")
 
-    @patch("audio_processor.get_gcs_client")
+    @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
     def test_download_audio_not_found(self, mock_gcs_client: MagicMock) -> None:
         mock_bucket = MagicMock()
         mock_bucket.get_blob.return_value = None
         mock_gcs_client.return_value.bucket.return_value = mock_bucket
 
         with self.assertRaises(FileNotFoundError):
-            self.processor.download_audio_and_sad("gs://bucket/path/to/missing.flac")
+            self.processor.download_audio_and_sed("gs://bucket/path/to/missing.flac")
