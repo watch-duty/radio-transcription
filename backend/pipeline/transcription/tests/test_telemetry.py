@@ -44,7 +44,10 @@ class TestMetricsExporters(unittest.TestCase):
         self.assertEqual(kwargs["name"], "projects/test-project")
 
         series = kwargs["time_series"][0]
-        self.assertEqual(series.metric.type, "custom.googleapis.com/radio_transcription/transcription_time")
+        self.assertEqual(
+            series.metric.type,
+            "custom.googleapis.com/radio_transcription/transcription_time",
+        )
         self.assertEqual(series.metric.labels["feed_id"], "f1")
         self.assertEqual(series.points[0].value.int64_value, 100)
 
@@ -73,8 +76,12 @@ class TestMetricsExporters(unittest.TestCase):
 
         multi.record_transcription_time(feed_id="f1", duration_ms=250)
 
-        mock_exp1.record_transcription_time.assert_called_once_with(feed_id="f1", duration_ms=250)
-        mock_exp2.record_transcription_time.assert_called_once_with(feed_id="f1", duration_ms=250)
+        mock_exp1.record_transcription_time.assert_called_once_with(
+            feed_id="f1", duration_ms=250
+        )
+        mock_exp2.record_transcription_time.assert_called_once_with(
+            feed_id="f1", duration_ms=250
+        )
 
     @patch("backend.pipeline.transcription.telemetry.GcpMonitoringExporter")
     def test_get_metrics_exporter(self, mock_gcp_exporter_class: MagicMock) -> None:

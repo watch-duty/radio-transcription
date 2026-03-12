@@ -11,6 +11,7 @@ import logging
 import apache_beam as beam
 from apache_beam.io.gcp.pubsub import ReadFromPubSub, WriteToPubSub
 from apache_beam.options.pipeline_options import PipelineOptions, StandardOptions
+
 from backend.pipeline.transcription.constants import (
     DEAD_LETTER_QUEUE_TAG,
     DEFAULT_SIGNIFICANT_GAP_SEC,

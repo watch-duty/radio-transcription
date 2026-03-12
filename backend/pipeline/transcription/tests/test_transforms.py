@@ -13,9 +13,10 @@ from apache_beam.testing.test_pipeline import TestPipeline as BeamTestPipeline
 from apache_beam.testing.test_stream import TestStream as BeamTestStream
 from apache_beam.testing.util import assert_that, equal_to
 from apache_beam.transforms.window import TimestampedValue
+from pydub import AudioSegment
+
 from backend.pipeline.transcription.constants import DEAD_LETTER_QUEUE_TAG, MAIN_TAG
 from backend.pipeline.transcription.enums import TranscriberType, VadType
-from pydub import AudioSegment
 from backend.pipeline.transcription.transcribers import Transcriber
 from backend.pipeline.transcription.transforms import (
     AddEventTimestamp,
@@ -67,7 +68,7 @@ def get_test_config(**kwargs: Any) -> StitchAndTranscribeConfig:
 
 class ParseAndKeyTimestampTest(unittest.TestCase):
     def test_parse_and_key_success(self) -> None:
-        mock_msg = beam.io.gcp.pubsub.PubsubMessage(  # type: ignore
+        mock_msg = beam.io.gcp.pubsub.PubsubMessage(
             b"test_payload",
             {
                 "feed_id": "test-feed",
@@ -75,28 +76,28 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
                 "objectId": "path/to/test.flac",
             },
         )
-        with BeamTestPipeline() as p:  # type: ignore
-            messages = p | beam.Create([mock_msg])  # type: ignore
-            parsed = messages | beam.ParDo(ParseAndKeyFn()).with_outputs(  # type: ignore
+        with BeamTestPipeline() as p:
+            messages = p | beam.Create([mock_msg])
+            parsed = messages | beam.ParDo(ParseAndKeyFn()).with_outputs(
                 DEAD_LETTER_QUEUE_TAG, main="main"
             )
-            assert_that(  # type: ignore
+            assert_that(
                 parsed.main,
-                equal_to([("test-feed", "gs://test-bucket/path/to/test.flac")]),  # type: ignore
+                equal_to([("test-feed", "gs://test-bucket/path/to/test.flac")]),
             )
-            assert_that(  # type: ignore
+            assert_that(
                 parsed[DEAD_LETTER_QUEUE_TAG],
-                equal_to([]),  # type: ignore
+                equal_to([]),
                 label="CheckEmptyDLQ",
             )
 
     def test_parse_and_key_dlq(self) -> None:
-        mock_msg = beam.io.gcp.pubsub.PubsubMessage(  # type: ignore
+        mock_msg = beam.io.gcp.pubsub.PubsubMessage(
             b"test_payload", {"feed_id": "test-feed"}
         )
-        with BeamTestPipeline() as p:  # type: ignore
-            messages = p | beam.Create([mock_msg])  # type: ignore
-            parsed = messages | beam.ParDo(ParseAndKeyFn()).with_outputs(  # type: ignore
+        with BeamTestPipeline() as p:
+            messages = p | beam.Create([mock_msg])
+            parsed = messages | beam.ParDo(ParseAndKeyFn()).with_outputs(
                 DEAD_LETTER_QUEUE_TAG, main="main"
             )
 
@@ -104,8 +105,8 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
                 assert len(elements) == 1
                 assert "Missing required payload attribute" in elements[0]["error"]
 
-            assert_that(parsed.main, equal_to([]), label="CheckEmptyMain")  # type: ignore
-            assert_that(parsed[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ")  # type: ignore
+            assert_that(parsed.main, equal_to([]), label="CheckEmptyMain")
+            assert_that(parsed[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ")
 
 
 class AddEventTimestampTest(unittest.TestCase):
@@ -114,17 +115,17 @@ class AddEventTimestampTest(unittest.TestCase):
             "test-feed",
             "gs://bucket/hash/feed_id/YYYY-MM-DD/1678123456-uuid1.flac",
         )
-        with BeamTestPipeline() as p:  # type: ignore
-            elements = p | beam.Create([element])  # type: ignore
-            timestamped = elements | beam.ParDo(AddEventTimestamp())  # type: ignore
-            assert_that(timestamped, equal_to([element]))  # type: ignore
+        with BeamTestPipeline() as p:
+            elements = p | beam.Create([element])
+            timestamped = elements | beam.ParDo(AddEventTimestamp())
+            assert_that(timestamped, equal_to([element]))
 
     def test_invalid_timestamp_raises_value_error(self) -> None:
         element = (
             "test-feed",
             "gs://bucket/hash/feed_id/YYYY-MM-DD/invalid-uuid1.flac",
         )
-        fn = AddEventTimestamp()  # type: ignore
+        fn = AddEventTimestamp()
         with self.assertRaises(ValueError):
             list(fn.process(element))
 
@@ -150,16 +151,16 @@ class StitchAndTranscribeTest(unittest.TestCase):
             filename = path.rsplit("/", maxsplit=1)[-1]
             return AudioSegment.silent(duration=20000), sad_map.get(filename, [])
 
-        mock_processor_inst.download_audio_and_sad.side_effect = mock_download
+        mock_processor_inst.download_audio_and_sed.side_effect = mock_download
 
         options = PipelineOptions()
         options.view_as(StandardOptions).streaming = True
 
         config = get_test_config(significant_gap_sec=3.0)
 
-        with BeamTestPipeline(options=options) as p:  # type: ignore
+        with BeamTestPipeline(options=options) as p:
             test_stream = (
-                BeamTestStream(  # type: ignore
+                BeamTestStream(
                     coder=beam.coders.TupleCoder(
                         (beam.coders.StrUtf8Coder(), beam.coders.StrUtf8Coder())
                     )
@@ -218,7 +219,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
             results = (
                 p
                 | test_stream
-                | beam.ParDo(  # type: ignore
+                | beam.ParDo(
                     StitchAndTranscribeFn(
                         config=config,
                         transcriber_factory=get_mock_factory("Simulated transcript."),
@@ -236,7 +237,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
 
             assert_that(
                 results[MAIN_TAG], assert_transcripts, label="CheckMainTranscripts"
-            )  # type: ignore
+            )
 
     @patch("backend.pipeline.transcription.transforms.time")
     @patch("backend.pipeline.transcription.transforms.AudioProcessor")
@@ -250,7 +251,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
         mock_processor_inst.check_vad.return_value = True
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
         mock_processor_inst.export_flac.return_value = b"flac_bytes"
-        mock_processor_inst.download_audio_and_sad.return_value = (
+        mock_processor_inst.download_audio_and_sed.return_value = (
             AudioSegment.silent(duration=20000),
             [(12.5, 15.0)],
         )
@@ -260,9 +261,9 @@ class StitchAndTranscribeTest(unittest.TestCase):
 
         config = get_test_config()
 
-        with BeamTestPipeline(options=options) as p:  # type: ignore
+        with BeamTestPipeline(options=options) as p:
             test_stream = (
-                BeamTestStream(  # type: ignore
+                BeamTestStream(
                     coder=beam.coders.TupleCoder(
                         (beam.coders.StrUtf8Coder(), beam.coders.StrUtf8Coder())
                     )
@@ -286,7 +287,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
             results = (
                 p
                 | test_stream
-                | beam.ParDo(  # type: ignore
+                | beam.ParDo(
                     StitchAndTranscribeFn(
                         config=config,
                         transcriber_factory=get_mock_factory("Simulated transcript."),
@@ -300,14 +301,14 @@ class StitchAndTranscribeTest(unittest.TestCase):
                 assert res.feed_id == "feed-123"
                 assert res.transcript == "Simulated transcript."
 
-            assert_that(  # type: ignore
+            assert_that(
                 results[MAIN_TAG],
                 assert_stale_match,
                 label="CheckStaleMain",
             )
-            assert_that(  # type: ignore
+            assert_that(
                 results[DEAD_LETTER_QUEUE_TAG],
-                equal_to([]),  # type: ignore
+                equal_to([]),
                 label="CheckStaleEmptyDLQ",
             )
 
@@ -323,13 +324,13 @@ class StitchAndTranscribeTest(unittest.TestCase):
                 return AudioSegment.silent(duration=500), []
             return AudioSegment.silent(duration=500), [(0.0, 1.0)]
 
-        mock_processor_inst.download_audio_and_sad.side_effect = mock_download
+        mock_processor_inst.download_audio_and_sed.side_effect = mock_download
 
         config = get_test_config()
 
-        with BeamTestPipeline() as p:  # type: ignore
+        with BeamTestPipeline() as p:
             test_stream = (
-                BeamTestStream(  # type: ignore
+                BeamTestStream(
                     coder=beam.coders.TupleCoder(
                         (beam.coders.StrUtf8Coder(), beam.coders.StrUtf8Coder())
                     )
@@ -363,7 +364,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
             results = (
                 p
                 | test_stream
-                | beam.ParDo(  # type: ignore
+                | beam.ParDo(
                     StitchAndTranscribeFn(
                         config=config,
                         transcriber_factory=get_mock_factory(raise_exception=True),
@@ -375,25 +376,25 @@ class StitchAndTranscribeTest(unittest.TestCase):
                 assert len(elements) == 1
                 assert "Transcription API outage!" in elements[0]["error"]
 
-            assert_that(results.main, equal_to([]), label="CheckEmptyMain")  # type: ignore
-            assert_that(results[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ")  # type: ignore
+            assert_that(results.main, equal_to([]), label="CheckEmptyMain")
+            assert_that(results[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ")
 
     @patch("backend.pipeline.transcription.transforms.AudioProcessor")
     def test_missing_gcs_file(self, mock_audio_processor: MagicMock) -> None:
         mock_processor_inst = mock_audio_processor.return_value
-        mock_processor_inst.download_audio_and_sad.side_effect = FileNotFoundError(
+        mock_processor_inst.download_audio_and_sed.side_effect = FileNotFoundError(
             "Not found"
         )
 
         config = get_test_config()
 
-        with BeamTestPipeline() as p:  # type: ignore
+        with BeamTestPipeline() as p:
             input_elements = [("feed-123", "gs://fake-bucket/123-missing.flac")]
             results = (
                 p
-                | "Create" >> beam.Create(input_elements)  # type: ignore
+                | "Create" >> beam.Create(input_elements)
                 | "Process"
-                >> beam.ParDo(  # type: ignore
+                >> beam.ParDo(
                     StitchAndTranscribeFn(
                         config=config,
                         transcriber_factory=get_mock_factory("Simulated transcript."),
@@ -405,7 +406,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
                 assert len(elements) == 1
                 assert "Not found" in elements[0]["error"]
 
-            assert_that(  # type: ignore
+            assert_that(
                 results[DEAD_LETTER_QUEUE_TAG], assert_missing, label="CheckDLQM"
             )
 
@@ -415,11 +416,11 @@ class StitchAndTranscribeTest(unittest.TestCase):
         self, mock_get_transcriber: MagicMock, mock_audio_processor: MagicMock
     ) -> None:
         config = get_test_config()
-        with BeamTestPipeline() as p:  # type: ignore
-            elements = p | beam.Create(  # type: ignore
+        with BeamTestPipeline() as p:
+            elements = p | beam.Create(
                 [("feed-123", "gs://fake-bucket/no_dashes_here.flac")]
             )
-            results = elements | beam.ParDo(  # type: ignore
+            results = elements | beam.ParDo(
                 StitchAndTranscribeFn(config=config)
             ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
 
@@ -427,8 +428,8 @@ class StitchAndTranscribeTest(unittest.TestCase):
                 assert len(elements) == 1
                 assert "Could not extract UUID from filename" in elements[0]["error"]
 
-            assert_that(results.main, equal_to([]), label="CheckEmptyMain")  # type: ignore
-            assert_that(  # type: ignore
+            assert_that(results.main, equal_to([]), label="CheckEmptyMain")
+            assert_that(
                 results[DEAD_LETTER_QUEUE_TAG], assert_invalid, label="CheckDLQI"
             )
 
@@ -468,7 +469,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
             end_sec=5.0,
         )
 
-        results = list(fn._execute_concurrent_flushes(flush_queue=[req, req]))  # noqa: SLF001
+        results = list(fn._execute_concurrent_flushes(flush_queue=[req, req]))
         fn.teardown()
 
         self.assertEqual(len(results), 2)

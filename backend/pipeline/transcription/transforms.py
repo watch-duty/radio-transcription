@@ -19,20 +19,24 @@ from apache_beam.transforms.userstate import (
     on_timer,
 )
 from apache_beam.utils.timestamp import Timestamp
+from pydub import AudioSegment
+
+from backend.pipeline.schema_types.transcribed_audio_pb2 import (
+    TranscribedAudio,
+)
 from backend.pipeline.transcription.audio_processor import AudioProcessor
 from backend.pipeline.transcription.constants import (
     AUDIO_FORMAT,
     DEAD_LETTER_QUEUE_TAG,
     MS_PER_SECOND,
 )
-from backend.pipeline.transcription.enums import MetricsExporterType, TranscriberType, VadType
-from pydub import AudioSegment
+from backend.pipeline.transcription.enums import (
+    MetricsExporterType,
+    TranscriberType,
+    VadType,
+)
 from backend.pipeline.transcription.telemetry import get_metrics_exporter
 from backend.pipeline.transcription.transcribers import Transcriber, get_transcriber
-
-from backend.pipeline.schema_types.transcribed_audio_pb2 import (
-    TranscribedAudio,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -185,12 +189,12 @@ class SerializeToPubSubMessageFn(beam.DoFn):
     ) -> Generator[PubsubMessage, None, None]:
         proto = TranscribedAudio(
             feed_id=element.feed_id,
-            audio_ids=element.audio_ids,
+            source_chunk_ids=element.audio_ids,
             transmission_id=str(uuid.uuid4()),
             transcript=element.transcript,
-            start_sec=element.start_sec,
-            end_sec=element.end_sec,
         )
+        proto.start_timestamp.FromMicroseconds(int(element.start_sec * 1e6))
+        proto.end_timestamp.FromMicroseconds(int(element.end_sec * 1e6))
         yield PubsubMessage(
             data=proto.SerializeToString(),
             attributes={},
@@ -417,7 +421,7 @@ class StitchAndTranscribeFn(beam.DoFn):
                 feed_id,
             )
             full_audio_segment, speech_segments = (
-                self.audio_processor.download_audio_and_sad(gcs_path)
+                self.audio_processor.download_audio_and_sed(gcs_path)
             )
             yield source_file_uuid, full_audio_segment, speech_segments
         except Exception as e:
@@ -443,7 +447,9 @@ class StitchAndTranscribeFn(beam.DoFn):
         """
         if ctx.current_buffer:
             logger.info("Silent file received. Flushing previous transmission.")
-            start_time = ctx.chunk_start_time if ctx.chunk_start_time is not None else 0.0
+            start_time = (
+                ctx.chunk_start_time if ctx.chunk_start_time is not None else 0.0
+            )
             end_time = ctx.last_segment_end_time or start_time + (
                 len(ctx.current_buffer) / float(MS_PER_SECOND)
             )
@@ -476,7 +482,9 @@ class StitchAndTranscribeFn(beam.DoFn):
         logger.info("Gap detected. Flushing complete transmission.")
         emit_start = state.stale_start_time.read()
         if emit_start is None:
-            emit_start = ctx.chunk_start_time if ctx.chunk_start_time is not None else 0.0
+            emit_start = (
+                ctx.chunk_start_time if ctx.chunk_start_time is not None else 0.0
+            )
 
         if ctx.current_buffer is None:
             msg = "Cannot flush empty buffer."
@@ -485,7 +493,9 @@ class StitchAndTranscribeFn(beam.DoFn):
         flush_req = FlushRequest(
             buffer=ctx.current_buffer,
             feed_id=ctx.feed_id,
-            processed_uuids=set(ctx.processed_uuids),  # Create copy before clearing state
+            processed_uuids=set(
+                ctx.processed_uuids
+            ),  # Create copy before clearing state
             start_sec=emit_start,
             end_sec=ctx.last_segment_end_time,
         )
@@ -504,7 +514,9 @@ class StitchAndTranscribeFn(beam.DoFn):
         pending_flushes = []
 
         for start_sec, end_sec in speech_segments:
-            if (start_sec - ctx.last_segment_end_time) > self.config.significant_gap_sec:
+            if (
+                start_sec - ctx.last_segment_end_time
+            ) > self.config.significant_gap_sec:
                 if ctx.current_buffer:
                     flush_req, new_processed_uuids = self._trigger_gap_flush(
                         ctx=ctx,
@@ -645,7 +657,9 @@ class StitchAndTranscribeFn(beam.DoFn):
             current_buffer=current_buffer,
             processed_uuids=processed_uuids,
             last_segment_end_time=last_segment_end_time,
-            chunk_start_time=state.stale_start_time.read() or 0.0 if not speech_segments else None
+            chunk_start_time=state.stale_start_time.read() or 0.0
+            if not speech_segments
+            else None,
         )
 
         if not speech_segments:
