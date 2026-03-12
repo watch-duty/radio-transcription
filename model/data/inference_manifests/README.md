@@ -4,8 +4,8 @@ documents issue trackers for each json in this directory, so we can trace what
 each inference output implies.
 
 ## Inference output files in this directory
-| JSON manifest | Linear issue tracker link |
-| ------------- | ------------------------- |
-| playground\_parakeet\_and\_canary\_flash.json | https://linear.app/watchduty/issue/GOO-20/run-inference-with-3-chosen-models#comment-6705c94d |
-| playground\_parakeet\_and\_canary\_flash\_and\_chirp\_with\_context.jsonl | https://linear.app/watchduty/issue/GOO-23/setup-chirp-v3-evaluation-to-produce-nemo-consistent-json-output |
-| playground\_parakeet\_and\_canary\_flash\_and\_chirp.jsonl | https://linear.app/watchduty/issue/GOO-23/setup-chirp-v3-evaluation-to-produce-nemo-consistent-json-output |
+| JSON manifest | Linear issue tracker link | Comment |
+| ------------- | ------------------------- | ------- |
+| playground\_parakeet\_and\_canary\_flash.json | https://linear.app/watchduty/issue/GOO-20/run-inference-with-3-chosen-models#comment-6705c94d | |
+| playground\_parakeet\_and\_canary\_flash\_and\_chirp\_with\_context.jsonl | https://linear.app/watchduty/issue/GOO-23/setup-chirp-v3-evaluation-to-produce-nemo-consistent-json-output | Produced using full audio file |
+| playground\_parakeet\_and\_canary\_flash\_and\_chirp.jsonl | https://linear.app/watchduty/issue/GOO-23/setup-chirp-v3-evaluation-to-produce-nemo-consistent-json-output | Produced using the specified segments in the manifest |
