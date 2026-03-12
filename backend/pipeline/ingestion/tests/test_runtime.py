@@ -62,6 +62,14 @@ def _make_settings(**overrides) -> mock.MagicMock:
         "db_connect_timeout_sec": 10.0,
         "feed_failure_threshold": 3,
         "abandonment_window_sec": 60.0,
+        # Retry settings — must be real numbers so min()/random.uniform()
+        # don't blow up on MagicMock auto-created attributes.
+        "gcs_upload_max_retries": 3,
+        "gcs_upload_retry_base_delay_sec": 0.5,
+        "gcs_upload_retry_max_delay_sec": 8.0,
+        "bookmark_max_retries": 2,
+        "bookmark_retry_base_delay_sec": 0.5,
+        "bookmark_retry_max_delay_sec": 4.0,
     }
     defaults.update(overrides)
     return mock.MagicMock(**defaults)
@@ -74,7 +82,10 @@ def _make_runtime(**settings_overrides) -> NormalizerRuntime:
         yield b"chunk"
 
     settings = _make_settings(**settings_overrides)
-    return NormalizerRuntime(capture_fn=_dummy_capture, settings=settings)
+    rt = NormalizerRuntime(capture_fn=_dummy_capture, settings=settings)
+    # Pre-initialize _lease_lost so tests don't need _main().
+    rt._lease_lost = asyncio.Event()
+    return rt
 
 
 class TestSleepOrShutdown(unittest.IsolatedAsyncioTestCase):
@@ -155,6 +166,7 @@ class TestProcessFeedFenceViolation(unittest.IsolatedAsyncioTestCase):
 
         rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress.return_value = False
         rt._releasing_feeds = set()
@@ -183,6 +195,7 @@ class TestProcessFeedShutdown(unittest.IsolatedAsyncioTestCase):
         rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._shutdown.set()
+        rt._lease_lost = asyncio.Event()
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress.return_value = True
         rt._releasing_feeds = set()
@@ -204,6 +217,7 @@ class TestProcessFeedNormalCompletion(unittest.IsolatedAsyncioTestCase):
 
         rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress.return_value = True
         rt._releasing_feeds = set()
@@ -221,6 +235,7 @@ class TestProcessFeedNormalCompletion(unittest.IsolatedAsyncioTestCase):
 
         rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress.return_value = True
         rt._releasing_feeds = set()
@@ -242,6 +257,7 @@ class TestProcessFeedTimestamps(unittest.IsolatedAsyncioTestCase):
 
         rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress.return_value = True
         rt._releasing_feeds = set()
@@ -521,6 +537,124 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
 
         rt._heartbeat_pool.close.assert_awaited_once()
         mock_close_pool.assert_awaited_once_with(rt._data_pool)
+
+
+class TestHeartbeatLoopSetsLeaseLost(unittest.IsolatedAsyncioTestCase):
+    """Tests for _heartbeat_loop setting _lease_lost on exception."""
+
+    async def test_heartbeat_exception_sets_lease_lost(self) -> None:
+        """Transient heartbeat error sets _lease_lost via call_soon_threadsafe."""
+        rt = _make_runtime()
+        rt._loop = asyncio.get_running_loop()
+        rt._thread_stop = mock.MagicMock()
+        # Simulate: first wait returns False (tick), second returns True (stop).
+        rt._thread_stop.is_set.side_effect = [False, True]
+        rt._thread_stop.wait.return_value = False
+
+        with mock.patch(
+            "asyncio.run_coroutine_threadsafe",
+        ) as mock_run:
+            future = mock.MagicMock()
+            future.result.side_effect = RuntimeError("DB gone")
+            mock_run.return_value = future
+            rt._heartbeat_loop()
+
+        # _lease_lost should have been set via call_soon_threadsafe.
+        # Since we're already on the event loop, we can check directly.
+        # The call_soon_threadsafe was scheduled but we need to yield.
+        await asyncio.sleep(0)
+        self.assertTrue(rt._lease_lost.is_set())
+
+    async def test_fence_violation_sets_lease_lost(self) -> None:
+        """Fence violation in _heartbeat_cycle sets _lease_lost before exit."""
+        other_worker = uuid.UUID("99999999-8888-7777-6666-555555555555")
+        rt = _make_runtime()
+        task = asyncio.create_task(asyncio.sleep(100))
+        rt._feed_tasks[_FEED_ID] = task
+        rt._releasing_feeds = set()
+        rt._heartbeat_store = mock.AsyncMock()
+        rt._heartbeat_store.renew_heartbeats_batch_diagnostic.return_value = [
+            HeartbeatResult(
+                id=_FEED_ID,
+                current_worker=other_worker,
+                current_status="active",
+                renewed=False,
+            ),
+        ]
+
+        with (
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.os._exit",
+            ),
+            mock.patch("logging.shutdown"),
+        ):
+            await rt._heartbeat_cycle()
+
+        self.assertTrue(rt._lease_lost.is_set())
+
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+
+class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
+    """Tests for _process_feed with transient upload failures triggering retry."""
+
+    async def test_transient_upload_failure_retries_and_succeeds(self) -> None:
+        """GCS upload fails once then succeeds — pipeline continues."""
+        import aiohttp  # noqa: PLC0415
+
+        async def _one_chunk(feed, shutdown):
+            yield b"audio"
+
+        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress.return_value = True
+        rt._releasing_feeds = set()
+
+        upload_mock = mock.AsyncMock(
+            side_effect=[aiohttp.ClientError("transient"), "gs://b/p"],
+        )
+
+        with (
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.upload_audio",
+                upload_mock,
+            ),
+            _mock_pubsub_publish(),
+        ):
+            await rt._process_feed(_FEED)
+
+        self.assertEqual(upload_mock.await_count, 2)
+        rt._store.release_feed.assert_awaited_once()
+
+    async def test_lease_lost_during_upload_aborts(self) -> None:
+        """LeaseExpiredError from upload falls through to report_feed_failure."""
+        import aiohttp  # noqa: PLC0415
+
+        async def _one_chunk(feed, shutdown):
+            yield b"audio"
+
+        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._lease_lost.set()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+
+        with (
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.upload_audio",
+                mock.AsyncMock(return_value="gs://b/p"),
+            ),
+            _mock_pubsub_publish(),
+        ):
+            await rt._process_feed(_FEED)
+
+        # LeaseExpiredError falls through to except Exception → report_feed_failure
+        rt._store.report_feed_failure.assert_awaited_once()
 
 
 if __name__ == "__main__":

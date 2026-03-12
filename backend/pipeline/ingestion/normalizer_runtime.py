@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     import asyncpg
 
 from backend.pipeline.ingestion.gcs import close_client, upload_audio
+from backend.pipeline.ingestion.retry import LeaseExpiredError, retry_with_lease_check
 from backend.pipeline.ingestion.settings import NormalizerSettings
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.storage.connection import close_pool, create_pool
@@ -77,6 +78,11 @@ class NormalizerRuntime:
         # every usage site.  Accessing before _main() is a programming error.
         # asyncio.Event must be created inside a running event loop.
         self._shutdown: asyncio.Event = None  # type: ignore # set in _main()
+        # Monotonic (set-only, never cleared) signal: once the lease is flagged
+        # as uncertain it stays flagged.  Prevents a race where a successful
+        # heartbeat clears a set() from a failed heartbeat, allowing retry
+        # loops to continue when they should be aborting.
+        self._lease_lost: asyncio.Event = None  # type: ignore # set in _main()
         self._data_pool: asyncpg.Pool = None  # type: ignore # set in _main()
         # Dedicated 1-connection pool for heartbeat (control-plane / data-plane
         # separation). Prevents 250 bookmark/upload ops on the main pool from
@@ -118,6 +124,7 @@ class NormalizerRuntime:
         """Top-level async entry: setup, run leasing loop, then shutdown."""
         self._loop = asyncio.get_running_loop()
         self._shutdown = asyncio.Event()
+        self._lease_lost = asyncio.Event()
 
         def _on_signal(sig: signal.Signals) -> None:
             if not self._shutdown.is_set():
@@ -299,19 +306,31 @@ class NormalizerRuntime:
         Iterates the capture generator, uploads each chunk to GCS, and
         bookmarks progress with fence violation detection.
         """
+        import aiohttp  # noqa: PLC0415
+        import asyncpg as _asyncpg  # noqa: PLC0415
+
         chunk_seq = 0
         worker_id = self._settings.worker_id
+        s = self._settings
 
         try:
             async for audio_chunk in self._capture_fn(
                 feed,
                 self._shutdown,
             ):
-                gcs_uri = await upload_audio(
+                gcs_uri = await retry_with_lease_check(
+                    upload_audio,
                     audio_chunk,
                     feed,
-                    self._settings.final_staging_bucket,
+                    s.final_staging_bucket,
                     chunk_seq,
+                    lease_lost=self._lease_lost,
+                    shutdown=self._shutdown,
+                    max_retries=s.gcs_upload_max_retries,
+                    base_delay_sec=s.gcs_upload_retry_base_delay_sec,
+                    max_delay_sec=s.gcs_upload_retry_max_delay_sec,
+                    retryable=(aiohttp.ClientError, asyncio.TimeoutError, OSError),
+                    operation_name="GCS upload",
                 )
                 audio_chunk_msg = AudioChunk(gcs_uri=gcs_uri)
                 now = datetime.datetime.now(tz=datetime.UTC)
@@ -327,10 +346,22 @@ class NormalizerRuntime:
                 )
                 chunk_seq += 1
 
-                ok = await self._store.update_feed_progress(
+                ok = await retry_with_lease_check(
+                    self._store.update_feed_progress,
                     feed["id"],
                     worker_id,
                     gcs_uri,
+                    lease_lost=self._lease_lost,
+                    shutdown=self._shutdown,
+                    max_retries=s.bookmark_max_retries,
+                    base_delay_sec=s.bookmark_retry_base_delay_sec,
+                    max_delay_sec=s.bookmark_retry_max_delay_sec,
+                    retryable=(
+                        _asyncpg.PostgresConnectionError,
+                        _asyncpg.InterfaceError,
+                        OSError,
+                    ),
+                    operation_name="bookmark write",
                 )
                 if not ok:
                     # If the batched heartbeat is healthy (renewing every 15s),
@@ -453,6 +484,10 @@ class NormalizerRuntime:
                 # os._exit(1) across the MIG during a DB outage would cause
                 # a thundering herd cold-start on recovery.
                 logger.exception("Heartbeat renewal error")
+                # Signal retry loops that lease validity is uncertain.
+                # Must use call_soon_threadsafe from the OS thread since
+                # asyncio.Event.set() is not thread-safe.
+                self._loop.call_soon_threadsafe(self._lease_lost.set)
 
             # Advance ticker. If cycle took longer than one interval, the next
             # sleep_time clamps to 0 — fires immediately to catch up.
@@ -530,6 +565,9 @@ class NormalizerRuntime:
             len(lost_ids),
             ", ".join(str(fid) for fid in lost_ids),
         )
+        # Belt-and-suspenders: signal retry loops in the narrow window
+        # before process death.
+        self._lease_lost.set()
         logging.shutdown()  # flush before os._exit bypasses handlers
         os._exit(1)
 
