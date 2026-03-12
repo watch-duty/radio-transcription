@@ -9,8 +9,8 @@ async def create_pool(  # noqa: PLR0913
     db_name: str,
     password: str = "",
     port: int = 6432,
-    min_size: int = 10,
-    max_size: int = 10,
+    min_size: int = 5,
+    max_size: int = 5,
     command_timeout: float | None = None,
     timeout: float | None = None,  # noqa: ASYNC109
 ) -> asyncpg.Pool:
