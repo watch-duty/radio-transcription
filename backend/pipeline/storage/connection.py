@@ -8,7 +8,7 @@ async def create_pool(  # noqa: PLR0913
     user: str,
     db_name: str,
     password: str = "",
-    port: int = 5432,
+    port: int = 6432,
     min_size: int = 10,
     max_size: int = 10,
     command_timeout: float | None = None,
@@ -25,7 +25,7 @@ async def create_pool(  # noqa: PLR0913
         user: Database username.
         db_name: Target database name.
         password: Database password.
-        port: Database port (default 5432).
+        port: Database port (default 6432, AlloyDB managed pooling).
         min_size: Minimum number of connections in the pool.
         max_size: Maximum number of connections in the pool.
         command_timeout: Query execution timeout in seconds.
@@ -47,7 +47,7 @@ async def create_pool(  # noqa: PLR0913
         "database": db_name,
         "min_size": min_size,
         "max_size": max_size,
-        "statement_cache_size": 0,
+        "statement_cache_size": 0,  # Required for PgBouncer transaction-mode pooling.
     }
     if command_timeout is not None:
         kwargs["command_timeout"] = command_timeout

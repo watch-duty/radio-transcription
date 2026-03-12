@@ -73,10 +73,10 @@ class NormalizerSettings:
 
     # Database pool
     db_pool_min_size: int = field(
-        default_factory=lambda: int(os.environ.get("DB_POOL_MIN_SIZE", "10")),
+        default_factory=lambda: int(os.environ.get("DB_POOL_MIN_SIZE", "5")),
     )
     db_pool_max_size: int = field(
-        default_factory=lambda: int(os.environ.get("DB_POOL_MAX_SIZE", "10")),
+        default_factory=lambda: int(os.environ.get("DB_POOL_MAX_SIZE", "5")),
     )
 
     # Timeouts
@@ -108,7 +108,7 @@ class NormalizerSettings:
         default_factory=lambda: _require_env("ALLOYDB_HOST"),
     )
     db_port: int = field(
-        default_factory=lambda: int(os.environ.get("ALLOYDB_PORT", "5432")),
+        default_factory=lambda: int(os.environ.get("ALLOYDB_PORT", "6432")),
     )
     db_user: str = field(
         default_factory=lambda: _require_env("ALLOYDB_USER"),

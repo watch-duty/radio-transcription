@@ -29,7 +29,7 @@ class TestCreatePool(unittest.IsolatedAsyncioTestCase):
 
         mock_create_pool.assert_called_once_with(
             host="10.0.0.1",
-            port=5432,
+            port=6432,
             user="my-user",
             password="",
             database="my-db",
@@ -95,7 +95,7 @@ class TestCreatePool(unittest.IsolatedAsyncioTestCase):
 
         mock_create_pool.assert_called_once_with(
             host="10.0.0.1",
-            port=5432,
+            port=6432,
             user="my-user",
             password="",
             database="my-db",
@@ -128,7 +128,7 @@ class TestCreatePool(unittest.IsolatedAsyncioTestCase):
 
         error_message = str(context.exception)
         self.assertIn("Failed to connect to AlloyDB", error_message)
-        self.assertIn("10.0.0.1:5432", error_message)
+        self.assertIn("10.0.0.1:6432", error_message)
         self.assertIn("10.0s", error_message)
         self.assertIn("AlloyDB Auth Proxy", error_message)
 
@@ -154,7 +154,7 @@ class TestCreatePool(unittest.IsolatedAsyncioTestCase):
         error_message = str(context.exception)
         self.assertIn("Failed to connect to AlloyDB", error_message)
         self.assertIn("Invalid credentials", error_message)
-        self.assertIn("10.0.0.1:5432", error_message)
+        self.assertIn("10.0.0.1:6432", error_message)
 
 
 class TestClosePool(unittest.IsolatedAsyncioTestCase):
