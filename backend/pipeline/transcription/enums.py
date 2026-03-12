@@ -1,14 +1,14 @@
-from enum import StrEnum
+import enum
 
 
-class TranscriberType(StrEnum):
-    GOOGLE_CHIRP_V3 = "google_chirp_v3"
+class TranscriberType(enum.Enum):
+    GOOGLE_CHIRP_V3 = enum.auto()
 
 
-class VadType(StrEnum):
-    TEN_VAD = "ten_vad"
+class VadType(enum.Enum):
+    TEN_VAD = enum.auto()
 
 
-class MetricsExporterType(StrEnum):
-    NONE = "none"
-    GCP = "gcp"
+class MetricsExporterType(enum.Enum):
+    NONE = enum.auto()
+    GCP = enum.auto()
