@@ -474,11 +474,11 @@ class NormalizerRuntime:
         if not active:
             return
 
-        results: list[HeartbeatResult] = (
-            await self._heartbeat_store.renew_heartbeats_batch_diagnostic(
-                list(active.keys()),
-                self._settings.worker_id,
-            )
+        results: list[
+            HeartbeatResult
+        ] = await self._heartbeat_store.renew_heartbeats_batch_diagnostic(
+            list(active.keys()),
+            self._settings.worker_id,
         )
 
         renewed_ids = {r["id"] for r in results if r["renewed"]}

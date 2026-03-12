@@ -399,8 +399,7 @@ class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
 
         # Should have logged per-feed diagnostic info
         critical_calls = [
-            c for c in mock_logger.critical.call_args_list
-            if "current_worker" in str(c)
+            c for c in mock_logger.critical.call_args_list if "current_worker" in str(c)
         ]
         self.assertEqual(len(critical_calls), 1)
         self.assertIn(str(other_worker), str(critical_calls[0]))

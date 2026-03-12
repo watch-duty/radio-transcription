@@ -8,7 +8,6 @@ if TYPE_CHECKING:
     import asyncpg
 
 
-
 _LEASE_FEED_SQL = """\
 WITH available_feed AS (
     SELECT id
