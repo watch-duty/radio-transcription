@@ -9,6 +9,7 @@ import asyncpg
 import docker
 from testcontainers.postgres import PostgresContainer
 
+from backend.pipeline.storage.connection import create_pool
 from backend.pipeline.storage.feed_store import FeedStore
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -67,12 +68,12 @@ class TestFeedStoreIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         """Create pool, truncate feeds, and set up store."""
-        self.pool = await asyncpg.create_pool(
+        self.pool = await create_pool(
             host=self._host,
             port=self._port,
             user="postgres",
             password="postgres",
-            database="postgres",
+            db_name="postgres",
             min_size=2,
             max_size=5,
         )
