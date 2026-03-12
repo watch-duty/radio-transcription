@@ -64,7 +64,9 @@ def _make_settings(**overrides) -> mock.MagicMock:
         "abandonment_window_sec": 60.0,
     }
     defaults.update(overrides)
-    return mock.MagicMock(**defaults)
+    m = mock.MagicMock()
+    m.configure_mock(**defaults)
+    return m
 
 
 def _make_runtime(**settings_overrides) -> NormalizerRuntime:

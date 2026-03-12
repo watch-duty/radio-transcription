@@ -9,8 +9,8 @@ import urllib.parse
 
 from google.cloud import storage
 
-from backend.pipeline.schema_types.sad_metadata_pb2 import (
-    SadMetadata,
+from backend.pipeline.schema_types.sed_metadata_pb2 import (
+    SedMetadata,
 )
 
 logger = logging.getLogger(__name__)
@@ -20,20 +20,28 @@ def get_gcs_client() -> storage.Client:
     return storage.Client()
 
 
-def read_sad_segments_from_gcs(gcs_path: str) -> list[tuple[float, float]]:
+import base64
+
+def read_sed_segments_from_blob(blob: storage.Blob) -> list[tuple[float, float]]:
     """
-    Downloads and parses a pre-computed Speech Activity Detection (SAD) profile for an audio chunk.
+    Parses a pre-computed Speech Activity Detection (SED) profile from a GCS blob's custom metadata.
     Returns a list of (start_sec, end_sec) tuples denoting periods of active speech.
     """
-    gcs_client = get_gcs_client()
-    parsed_uri = urllib.parse.urlparse(gcs_path)
-    bucket_name = parsed_uri.netloc
-    blob_name = parsed_uri.path.lstrip("/")
-    blob = gcs_client.bucket(bucket_name).get_blob(blob_name)
-    if not blob:
-        err_msg = f"SAD GCS object not found: {gcs_path}"
+    blob.reload()  # Ensure metadata is loaded
+    if not blob.metadata or "sed_metadata" not in blob.metadata:
+        err_msg = f"SED metadata not found on blob: {blob.name}"
         logger.error(err_msg)
         raise FileNotFoundError(err_msg)
-    sad_bytes = blob.download_as_bytes()
-    sad_metadata = SadMetadata.FromString(sad_bytes)
-    return [(seg.start_sec, seg.end_sec) for seg in sad_metadata.segments]
+
+    metadata_b64 = blob.metadata["sed_metadata"]
+    metadata_bytes = base64.b64decode(metadata_b64)
+    sed_metadata = SedMetadata()
+    sed_metadata.ParseFromString(metadata_bytes)
+
+    return [
+        (
+            seg.start_time.seconds + seg.start_time.nanos / 1e9,
+            seg.start_time.seconds + seg.start_time.nanos / 1e9 + seg.duration.seconds + seg.duration.nanos / 1e9
+        )
+        for seg in sed_metadata.sound_events
+    ]

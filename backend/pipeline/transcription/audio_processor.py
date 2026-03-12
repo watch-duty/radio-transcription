@@ -2,15 +2,19 @@ import io
 import logging
 import urllib.parse
 
-from constants import (
+from pydub import AudioSegment, effects
+
+from backend.pipeline.transcription.constants import (
     AUDIO_CHANNELS,
     AUDIO_FORMAT,
     SAMPLE_RATE_HZ,
 )
-from enums import VadType
-from pydub import AudioSegment, effects
-from utils import get_gcs_client, read_sad_segments_from_gcs
-from vads import VoiceActivityDetector, get_vad_plugin
+from backend.pipeline.transcription.enums import VadType
+from backend.pipeline.transcription.utils import (
+    get_gcs_client,
+    read_sed_segments_from_blob,
+)
+from backend.pipeline.transcription.vads import VoiceActivityDetector, get_vad_plugin
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +37,10 @@ class AudioProcessor:
         """Initializes the VAD plugin once per worker."""
         self.vad = get_vad_plugin(self.vad_type, self.vad_config)
 
-    def download_audio_and_sad(
+    def download_audio_and_sed(
         self, gcs_path: str
     ) -> tuple[AudioSegment, list[tuple[float, float]]]:
-        """Downloads FLAC bytes and SAD metadata from GCS, returning a parsed AudioSegment."""
+        """Downloads FLAC bytes and SED metadata from GCS, returning a parsed AudioSegment."""
         gcs_client = get_gcs_client()
         parsed_uri = urllib.parse.urlparse(gcs_path)
         bucket_name = parsed_uri.netloc
@@ -54,8 +58,7 @@ class AudioProcessor:
 
         full_audio_segment = AudioSegment.from_file(in_mem_file, format=AUDIO_FORMAT)
 
-        sad_path = gcs_path.replace(f".{AUDIO_FORMAT}", ".sad.pb")
-        speech_segments = read_sad_segments_from_gcs(sad_path)
+        speech_segments = read_sed_segments_from_blob(blob)
 
         return full_audio_segment, speech_segments
 

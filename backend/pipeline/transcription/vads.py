@@ -12,7 +12,9 @@ import logging
 from dataclasses import dataclass
 
 import ten_vad
-from enums import VadType
+from typing import Any, cast
+
+from backend.pipeline.transcription.enums import VadType
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +83,8 @@ class TenVadPlugin(VoiceActivityDetector):
     def evaluate(self, audio_data: bytes, sample_rate: int) -> bool:
         # ten_vad evaluate returns a list of dictionaries with speech segments:
         # {'start': 0.1, 'end': 0.5}, ...]
-        results = self.vad.evaluate(audio_data, sample_rate=sample_rate)  # type: ignore[unresolved-attribute]
+        vad_instance = cast(Any, self.vad)
+        results = vad_instance.evaluate(audio_data, sample_rate=sample_rate)
         return bool(results)
 
 

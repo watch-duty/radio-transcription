@@ -1,14 +1,14 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from enums import VadType
-from vads import TenVadPlugin, get_vad_plugin
+from backend.pipeline.transcription.enums import VadType
+from backend.pipeline.transcription.vads import TenVadPlugin, get_vad_plugin
 
 
 class TestVadPlugins(unittest.TestCase):
     def test_get_vad_plugin_ten_vad(self) -> None:
         """Test that the factory returns a TenVadPlugin and calls setup."""
-        with patch("vads.TenVadPlugin.setup") as mock_setup:
+        with patch("backend.pipeline.transcription.vads.TenVadPlugin.setup") as mock_setup:
             plugin = get_vad_plugin(VadType.TEN_VAD, '{"threshold": 0.5}')
             self.assertIsInstance(plugin, TenVadPlugin)
             mock_setup.assert_called_once_with('{"threshold": 0.5}')
@@ -16,7 +16,7 @@ class TestVadPlugins(unittest.TestCase):
     def test_get_vad_plugin_unknown(self) -> None:
         """Test that the factory raises ValueError for unknown plugin types."""
         with self.assertRaises(ValueError):
-            get_vad_plugin("unknown_type", "{}")  # type: ignore
+            get_vad_plugin("unknown_type", "{}")  # type: ignore[invalid-argument-type]
 
     def test_get_vad_plugin_invalid_json(self) -> None:
         """Test that the factory raises ValueError for invalid JSON config."""
