@@ -519,6 +519,11 @@ class NormalizerRuntime:
                     diag["current_status"],
                     diag["renewed"],
                 )
+            else:
+                logger.critical(
+                    "Feed %s lost: no DB row returned (deleted from database?)",
+                    fid,
+                )
 
         logger.critical(
             "Heartbeat fence violation -- %d feed(s) lost: %s. Terminating.",

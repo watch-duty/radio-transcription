@@ -408,6 +408,39 @@ class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await task
 
+    async def test_deleted_feed_logs_no_db_row(self) -> None:
+        """A feed missing from DB results logs 'no DB row returned'."""
+        rt = _make_runtime()
+        task = asyncio.create_task(asyncio.sleep(100))
+        rt._feed_tasks[_FEED_ID] = task
+        rt._releasing_feeds = set()
+        rt._heartbeat_store = mock.AsyncMock()
+        # DB returns empty list — feed row was deleted
+        rt._heartbeat_store.renew_heartbeats_batch_diagnostic.return_value = []
+
+        with (
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.os._exit",
+            ),
+            mock.patch("logging.shutdown"),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.logger",
+            ) as mock_logger,
+        ):
+            await rt._heartbeat_cycle()
+
+        critical_calls = [
+            c
+            for c in mock_logger.critical.call_args_list
+            if "no DB row returned" in str(c)
+        ]
+        self.assertEqual(len(critical_calls), 1)
+        self.assertIn(str(_FEED_ID), str(critical_calls[0]))
+
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
 
 class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
     """Tests for pool creation in _main."""
