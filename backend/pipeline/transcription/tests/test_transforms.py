@@ -26,6 +26,7 @@ from backend.pipeline.transcription.transforms import (
     StitchAndTranscribeFn,
     TranscriptionResult,
 )
+from backend.pipeline.transcription.audio_processor import AudioChunkData
 
 
 class MockTranscriberFactory:
@@ -147,10 +148,10 @@ class StitchAndTranscribeTest(unittest.TestCase):
             "104-uuid_silent.flac": [],
         }
 
-        def mock_download(path: str) -> tuple[float | None, AudioSegment, list[tuple[float, float]]]:
+        def mock_download(path: str) -> AudioChunkData:
             filename = path.rsplit("/", maxsplit=1)[-1]
             chunk_start = float(filename.split("-")[0]) if "-" in filename else 0.0
-            return chunk_start, AudioSegment.silent(duration=20000), sad_map.get(filename, [])
+            return AudioChunkData(start_sec=chunk_start, audio=AudioSegment.silent(duration=20000), speech_segments=sad_map.get(filename, []))
 
         mock_processor_inst.download_audio_and_sed.side_effect = mock_download
 
@@ -252,10 +253,10 @@ class StitchAndTranscribeTest(unittest.TestCase):
         mock_processor_inst.check_vad.return_value = True
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
         mock_processor_inst.export_flac.return_value = b"flac_bytes"
-        mock_processor_inst.download_audio_and_sed.return_value = (
-            101.0,
-            AudioSegment.silent(duration=20000),
-            [(12.5, 15.0)],
+        mock_processor_inst.download_audio_and_sed.return_value = AudioChunkData(
+            start_sec=101.0,
+            audio=AudioSegment.silent(duration=20000),
+            speech_segments=[(12.5, 15.0)],
         )
 
         options = PipelineOptions()
@@ -321,12 +322,12 @@ class StitchAndTranscribeTest(unittest.TestCase):
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
         mock_processor_inst.export_flac.return_value = b"flac_bytes"
 
-        def mock_download(path: str) -> tuple[float | None, AudioSegment, list[tuple[float, float]]]:
+        def mock_download(path: str) -> AudioChunkData:
             filename = path.rsplit("/", maxsplit=1)[-1]
             chunk_start = float(filename.split("-")[0]) if "-" in filename else 0.0
             if "silent" in path:
-                return chunk_start, AudioSegment.silent(duration=500), []
-            return chunk_start, AudioSegment.silent(duration=500), [(0.0, 1.0)]
+                return AudioChunkData(start_sec=chunk_start, audio=AudioSegment.silent(duration=500), speech_segments=[])
+            return AudioChunkData(start_sec=chunk_start, audio=AudioSegment.silent(duration=500), speech_segments=[(0.0, 1.0)])
 
         mock_processor_inst.download_audio_and_sed.side_effect = mock_download
 
