@@ -551,9 +551,12 @@ class TestHeartbeatLoopSetsLeaseLost(unittest.IsolatedAsyncioTestCase):
         rt._thread_stop.is_set.side_effect = [False, True]
         rt._thread_stop.wait.return_value = False
 
-        with mock.patch(
-            "asyncio.run_coroutine_threadsafe",
-        ) as mock_run:
+        with (
+            mock.patch.object(rt, "_heartbeat_cycle", return_value=None),
+            mock.patch(
+                "asyncio.run_coroutine_threadsafe",
+            ) as mock_run,
+        ):
             future = mock.MagicMock()
             future.result.side_effect = RuntimeError("DB gone")
             mock_run.return_value = future

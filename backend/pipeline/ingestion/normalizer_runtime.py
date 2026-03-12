@@ -307,7 +307,7 @@ class NormalizerRuntime:
         bookmarks progress with fence violation detection.
         """
         import aiohttp  # noqa: PLC0415
-        import asyncpg as _asyncpg  # noqa: PLC0415
+        import asyncpg  # noqa: PLC0415
 
         chunk_seq = 0
         worker_id = self._settings.worker_id
@@ -357,8 +357,8 @@ class NormalizerRuntime:
                     base_delay_sec=s.bookmark_retry_base_delay_sec,
                     max_delay_sec=s.bookmark_retry_max_delay_sec,
                     retryable=(
-                        _asyncpg.PostgresConnectionError,
-                        _asyncpg.InterfaceError,
+                        asyncpg.PostgresConnectionError,
+                        asyncpg.InterfaceError,
                         OSError,
                     ),
                     operation_name="bookmark write",
