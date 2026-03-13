@@ -52,7 +52,14 @@ export ICECAST_LOCAL_OUTPUT_DIR="/tmp/audio_chunks"
 cat <<EOF > backend/pipeline/ingestion/collectors/.icecast_env
 BROADCASTIFY_USERNAME=<your broadcastify username>
 BROADCASTIFY_PASSWORD=<your broadcastify pword>
-AUDIO_STAGING_BUCKET=wd-radio-test
+AUDIO_STAGING_BUCKET=<your audio staging bucket>
+PUBSUB_TOPIC_PATH=<your pubsub topic path>
+ALLOYDB_HOST=<your alloydb host>
+ALLOYDB_USER=<your alloydb user>
+ALLOYDB_DB=<your alloydb database name>
+# Optional: uncomment and set if needed by your deployment
+# ALLOYDB_PORT=<your alloydb port, e.g. 5432>
+# ALLOYDB_PASSWORD=<your alloydb password>
 EOF
 
 docker build -t "icecast" -f backend/pipeline/ingestion/collectors/Dockerfile .
