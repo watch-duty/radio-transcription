@@ -100,7 +100,7 @@ class GoogleChirpV3Transcriber(Transcriber):
         duration_sec = len(audio_data) / BYTES_PER_SECOND_16KHZ_MONO
 
         logger.info(
-            "--- TRANSCRIBING --- duration: %.2fs",
+            "Transcribing %.3fs of audio",
             duration_sec,
         )
 
