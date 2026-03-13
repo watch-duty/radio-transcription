@@ -25,7 +25,9 @@ def main() -> None:
     options = pipeline_options.view_as(TranscriptionOptions)
 
     logger.info(
-        f"Starting pipeline: input={options.input_topic}, output={options.output_topic}"
+        "Starting pipeline: input=%s, output=%s",
+        options.input_topic,
+        options.output_topic,
     )
 
     try:

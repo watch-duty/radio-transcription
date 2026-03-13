@@ -5,28 +5,38 @@ that are required by the pipeline's core transforms.
 """
 
 import base64
+import dataclasses
+import json
 import logging
+from typing import Self
 
 from google.cloud import storage
 
 from backend.pipeline.schema_types.sed_metadata_pb2 import (
     SedMetadata,
 )
+from backend.pipeline.transcription.constants import (
+    MS_PER_SECOND,
+    NANOS_PER_MS,
+)
+from backend.pipeline.transcription.datatypes import TimeRange
 
 logger = logging.getLogger(__name__)
 
-
 def get_gcs_client() -> storage.Client:
+    """Initialize and return a GCS Client."""
     return storage.Client()
 
 
 def read_sed_segments_from_blob(
     blob: storage.Blob,
-) -> tuple[float | None, list[tuple[float, float]]]:
+) -> tuple[int, list[TimeRange]]:
     """
-    Parses a pre-computed Speech Activity Detection (SED) profile from a GCS blob's custom metadata.
-    Returns the chunk's absolute start timestamp in seconds (if present) and a list of (start_sec, end_sec)
-    tuples denoting periods of active speech relative to the start of the chunk.
+    Parse SED metadata from a GCS blob.
+
+    Returns:
+        tuple containing (start_ms, list of speech segment TimeRanges).
+
     """
     blob.reload()  # Ensure metadata is loaded
     if not blob.metadata or "sed_metadata" not in blob.metadata:
@@ -39,21 +49,48 @@ def read_sed_segments_from_blob(
     sed_metadata = SedMetadata()
     sed_metadata.ParseFromString(metadata_bytes)
 
-    chunk_start_sec = None
-    if sed_metadata.HasField("start_timestamp"):
-        chunk_start_sec = (
-            sed_metadata.start_timestamp.seconds
-            + sed_metadata.start_timestamp.nanos / 1e9
-        )
+    if not sed_metadata.HasField("start_timestamp"):
+        err_msg = f"SED metadata missing required 'start_timestamp' on blob: {blob.name}"
+        logger.error(err_msg)
+        raise ValueError(err_msg)
 
-    segments = [
-        (
-            seg.start_time.seconds + seg.start_time.nanos / 1e9,
-            seg.start_time.seconds
-            + seg.start_time.nanos / 1e9
-            + seg.duration.seconds
-            + seg.duration.nanos / 1e9,
-        )
-        for seg in sed_metadata.sound_events
-    ]
-    return chunk_start_sec, segments
+    chunk_start_ms = (
+        sed_metadata.start_timestamp.seconds * MS_PER_SECOND
+        + sed_metadata.start_timestamp.nanos // NANOS_PER_MS
+    )
+
+    segments = []
+    for i, seg in enumerate(sed_metadata.sound_events):
+        if not seg.HasField("start_time"):
+            err_msg = f"SED metadata sound event {i} missing 'start_time' on blob: {blob.name}"
+            logger.error(err_msg)
+            raise ValueError(err_msg)
+        if not seg.HasField("duration"):
+            err_msg = f"SED metadata sound event {i} missing 'duration' on blob: {blob.name}"
+            logger.error(err_msg)
+            raise ValueError(err_msg)
+
+        start_ms = seg.start_time.seconds * MS_PER_SECOND + seg.start_time.nanos // NANOS_PER_MS
+        duration_ms = seg.duration.seconds * MS_PER_SECOND + seg.duration.nanos // NANOS_PER_MS
+        segments.append(TimeRange(start_ms=start_ms, end_ms=start_ms + duration_ms))
+
+    return chunk_start_ms, segments
+
+
+class JsonConfigMixin:
+    """Provides a classmethod to parse JSON into a dataclass, filtering out unknown keys."""
+
+    @classmethod
+    def from_json(cls, json_str: str) -> Self:
+        if not json_str:
+            return cls()
+        try:
+            config_dict = json.loads(json_str)
+            # Filter out unknown keys to prevent TypeError on instantiation
+            valid_keys = {f.name for f in dataclasses.fields(cls)}
+            filtered_dict = {k: v for k, v in config_dict.items() if k in valid_keys}
+            return cls(**filtered_dict)
+        except json.JSONDecodeError as e:
+            logger.exception("Failed to parse config JSON for %s: %s", cls.__name__, json_str)
+            msg = f"Invalid config JSON for {cls.__name__}: {e}"
+            raise ValueError(msg) from e

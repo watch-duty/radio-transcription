@@ -1,5 +1,4 @@
 import abc
-import json
 import logging
 import time
 from collections.abc import Sequence
@@ -8,6 +7,7 @@ from dataclasses import dataclass
 from google.cloud import monitoring_v3
 
 from backend.pipeline.transcription.enums import MetricsExporterType
+from backend.pipeline.transcription.utils import JsonConfigMixin
 
 logger = logging.getLogger(__name__)
 
@@ -27,25 +27,11 @@ class MetricsExporter(abc.ABC):
 
 
 @dataclass(frozen=True)
-class GcpMonitoringConfig:
+class GcpMonitoringConfig(JsonConfigMixin):
     """Strongly typed configuration for the GCP Monitoring Exporter."""
 
     metric_prefix: str = "custom.googleapis.com/radio_transcription"
     duration_metric_name: str = "transcription_time"
-
-    @classmethod
-    def from_json(cls, json_str: str) -> "GcpMonitoringConfig":
-        if not json_str:
-            return cls()
-        try:
-            config_dict = json.loads(json_str)
-            valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
-            filtered_dict = {k: v for k, v in config_dict.items() if k in valid_keys}
-            return cls(**filtered_dict)
-        except json.JSONDecodeError as e:
-            msg = f"Failed to parse metrics_config JSON: {json_str}"
-            logger.exception(msg)
-            raise ValueError(msg) from e
 
 
 class GcpMonitoringExporter(MetricsExporter):

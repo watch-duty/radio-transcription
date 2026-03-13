@@ -7,15 +7,17 @@ allowing the Beam pipeline to dynamically swap between different engines
 """
 
 import abc
-import json
 import logging
 from dataclasses import dataclass, field
 
+import tenacity
+from google.api_core.exceptions import GoogleAPIError, RetryError
 from google.cloud import speech_v2 as cloud_speech
 from google.cloud.speech_v2 import SpeechClient
 
 from backend.pipeline.transcription.constants import BYTES_PER_SECOND_16KHZ_MONO
 from backend.pipeline.transcription.enums import TranscriberType
+from backend.pipeline.transcription.utils import JsonConfigMixin
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +48,7 @@ class Transcriber(abc.ABC):
 
 
 @dataclass(frozen=True)
-class ChirpConfig:
+class ChirpConfig(JsonConfigMixin):
     """Strongly typed configuration for the Google Chirp V3 Transcriber."""
 
     location: str = "us"
@@ -55,21 +57,6 @@ class ChirpConfig:
     language_codes: list[str] = field(default_factory=lambda: ["en-US"])
     enable_automatic_punctuation: bool = True
     enable_word_time_offsets: bool = False
-
-    @classmethod
-    def from_json(cls, json_str: str) -> "ChirpConfig":
-        if not json_str:
-            return cls()
-        try:
-            config_dict = json.loads(json_str)
-            # Filter out unknown keys to prevent TypeError on instantiation
-            valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
-            filtered_dict = {k: v for k, v in config_dict.items() if k in valid_keys}
-            return cls(**filtered_dict)
-        except json.JSONDecodeError as e:
-            logger.exception("Failed to parse transcriber_config JSON: %s", json_str)
-            msg = f"Invalid transcriber_config JSON: {e}"
-            raise ValueError(msg) from e
 
 
 class GoogleChirpV3Transcriber(Transcriber):
@@ -94,6 +81,12 @@ class GoogleChirpV3Transcriber(Transcriber):
         self.client = SpeechClient()
         self.config = ChirpConfig.from_json(self.config_json)
 
+    @tenacity.retry(
+        wait=tenacity.wait_exponential(multiplier=1, max=10),
+        stop=tenacity.stop_after_attempt(5),
+        retry=tenacity.retry_if_exception_type((GoogleAPIError, RetryError)),
+        reraise=True,
+    )
     def transcribe(
         self,
         *,

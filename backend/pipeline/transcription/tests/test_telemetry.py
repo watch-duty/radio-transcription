@@ -1,3 +1,5 @@
+"""Unit tests for the telemetry metrics exporters."""
+
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -11,7 +13,10 @@ from backend.pipeline.transcription.telemetry import (
 
 
 class TestMetricsExporters(unittest.TestCase):
+    """Tests for the metrics exporters."""
+
     def test_gcp_monitoring_config_parsing(self) -> None:
+        """Test that the GCP monitoring config parses valid JSON and rejects invalid JSON."""
         config = GcpMonitoringConfig.from_json('{"some_unknown_key": "val"}')
         self.assertIsInstance(config, GcpMonitoringConfig)
 
@@ -25,6 +30,7 @@ class TestMetricsExporters(unittest.TestCase):
 
     @patch("backend.pipeline.transcription.telemetry.monitoring_v3.MetricServiceClient")
     def test_gcp_exporter_setup_and_record(self, mock_client_class: MagicMock) -> None:
+        """Test that GCP exporter setup establishes a client and record sends the metric."""
         mock_client_inst = MagicMock()
         mock_client_class.return_value = mock_client_inst
 
@@ -53,6 +59,7 @@ class TestMetricsExporters(unittest.TestCase):
 
     @patch("backend.pipeline.transcription.telemetry.monitoring_v3.MetricServiceClient")
     def test_gcp_exporter_handles_exception(self, mock_client_class: MagicMock) -> None:
+        """Test that GCP exporter ignores and logs exceptions instead of crashing."""
         mock_client_inst = MagicMock()
         mock_client_inst.create_time_series.side_effect = Exception("Network failure")
         mock_client_class.return_value = mock_client_inst
@@ -65,6 +72,7 @@ class TestMetricsExporters(unittest.TestCase):
         self.assertEqual(mock_client_inst.create_time_series.call_count, 1)
 
     def test_multi_exporter(self) -> None:
+        """Test that MultiExporter delegates setup and record effectively to multiple backends."""
         mock_exp1 = MagicMock()
         mock_exp2 = MagicMock()
 
@@ -85,6 +93,7 @@ class TestMetricsExporters(unittest.TestCase):
 
     @patch("backend.pipeline.transcription.telemetry.GcpMonitoringExporter")
     def test_get_metrics_exporter(self, mock_gcp_exporter_class: MagicMock) -> None:
+        """Test the exporter factory handles GCP and empty list configurations."""
         # Test NONE or empty
         exporter_none = get_metrics_exporter([MetricsExporterType.NONE], "proj", "{}")
         self.assertIsInstance(exporter_none, MultiExporter)
