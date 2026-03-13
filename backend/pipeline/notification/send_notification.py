@@ -13,9 +13,16 @@ from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
 
-client = google.cloud.logging.Client()
-client.setup_logging()
-logger = logging.getLogger(__name__)
+if not os.environ.get("LOCAL_DEV"):
+    client = google.cloud.logging.Client()
+    client.setup_logging()
+    logger = logging.getLogger(__name__)
+else:
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
+    handler = logging.StreamHandler()
+    logger.addHandler(handler)
+    logger.info("Running in LOCAL_DEV mode. Logs will print to console instead of configurable endpoint.")
 
 POST_TIMEOUT_SECONDS = 5
 
