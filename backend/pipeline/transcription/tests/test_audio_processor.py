@@ -42,11 +42,14 @@ class AudioProcessorTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.processor.download_audio_and_sed("gs://bucket/path/to/missing.flac")
 
+    @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
     @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
-    def test_check_vad_evaluates_speech(self, mock_get_vad: MagicMock) -> None:
+    def test_check_vad_evaluates_speech(self, mock_get_vad: MagicMock, mock_get_gcs: MagicMock) -> None:
         """Test check_vad correctly evaluating audio data."""
-        mock_vad_instance = mock_get_vad.return_value
+        mock_vad_instance = MagicMock()
         mock_vad_instance.evaluate.return_value = True
+        mock_get_vad.return_value = mock_vad_instance
+
         self.processor.setup()
 
         audio = AudioSegment.silent(duration=1000)
@@ -54,7 +57,6 @@ class AudioProcessorTest(unittest.TestCase):
 
         self.assertTrue(result)
         mock_vad_instance.evaluate.assert_called_once()
-        # Ensure it got PCM bytes of the right format
         args, kwargs = mock_vad_instance.evaluate.call_args
         self.assertIsInstance(args[0], bytes)
         self.assertEqual(kwargs["sample_rate"], SAMPLE_RATE_HZ)
