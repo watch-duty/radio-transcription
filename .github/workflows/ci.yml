@@ -111,7 +111,7 @@ jobs:
   #   2. New required env vars added via _require_env() but not yet wired into
   #      the deployment Terraform — the settings instantiation step fails if any
   #      required var is missing from the explicit -e list below.
-  # NOTE: evaluation/notification/transcription are excluded because their
+  # NOTE: evaluation/notification are excluded because their
   # Dockerfiles don't generate protobuf files yet. Add them here once their
   # Dockerfiles include protobuf generation.
   docker-smoke-test:
@@ -122,6 +122,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build ingestion Docker image
         run: docker build -t ingestion-smoke-test -f backend/pipeline/ingestion/collectors/Dockerfile .
+      - name: Build transcription Docker image
+        run: docker build -t transcription-smoke-test -f backend/pipeline/transcription/Dockerfile .
       # PUBSUB_EMULATOR_HOST bypasses GCP credential resolution in the
       # module-level PublisherClient() instantiation in normalizer_runtime.py.
       # Without it, the Pub/Sub SDK attempts ADC which fails inside Docker.
