@@ -232,7 +232,9 @@ class NormalizerRuntime:
             # a thundering herd cold-start on recovery. Since the DB is down,
             # no other worker can steal leases either.
             try:
-                capacity = self._normalizer_settings.max_feeds_per_worker - len(self._feed_tasks)
+                capacity = self._normalizer_settings.max_feeds_per_worker - len(
+                    self._feed_tasks
+                )
                 if capacity > 0:
                     logger.info(
                         "Attempting to acquire up to %d feeds (%d/%d active)",
