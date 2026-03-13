@@ -1,6 +1,6 @@
-FROM apache/beam_python312_sdk:2.56.0
+FROM apache/beam_python3.12_sdk:2.71.0
 
-# 1. Install ffmpeg and libomp5
+# Install OS dependencies: ffmpeg and libomp5
 USER root
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -8,7 +8,7 @@ RUN apt-get update && \
         libomp5 \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Install dependencies via uv
+# Install Python dependencies via uv
 COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
