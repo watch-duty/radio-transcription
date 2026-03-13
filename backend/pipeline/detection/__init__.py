@@ -1,4 +1,13 @@
+from .detector_factory import DetectorFactory
 from .protocol import SoundEventDetector
-from .types import DetectionResult
+from .sound_event_signal_combiner import SoundEventSignalCombiner
+from .types import CombinedResult, DetectionResult, SpeechRegion
 
-__all__ = ["DetectionResult", "SoundEventDetector"]
+__all__ = [
+    "CombinedResult",
+    "DetectionResult",
+    "DetectorFactory",
+    "SoundEventDetector",
+    "SoundEventSignalCombiner",
+    "SpeechRegion",
+]

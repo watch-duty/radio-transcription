@@ -11,22 +11,8 @@ class _StubDetector:
     def detector_type(self) -> str:
         return "test_stub"
 
-    @property
-    def sample_rate(self) -> int:
-        return 16000
-
-    @property
-    def is_healthy(self) -> bool:
-        return True
-
-    def feed(self, samples) -> None:
-        pass
-
-    def pop_results(self) -> list[DetectionResult]:
-        return []
-
-    def reset(self) -> None:
-        pass
+    def detect(self, samples) -> DetectionResult:
+        return DetectionResult(speech_regions=(), detector_type="test_stub")
 
 
 class TestSoundEventDetectorProtocol(unittest.TestCase):
@@ -37,50 +23,22 @@ class TestSoundEventDetectorProtocol(unittest.TestCase):
         detector = _StubDetector()
         self.assertIsInstance(detector, SoundEventDetector)
 
-    def test_missing_feed_fails_isinstance(self) -> None:
-        """A class missing the feed method is not recognized."""
+    def test_missing_detect_fails_isinstance(self) -> None:
+        """A class missing the detect method is not recognized."""
 
-        class _NoFeed:
+        class _NoDetect:
             @property
             def detector_type(self) -> str:
                 return "broken"
 
-            @property
-            def sample_rate(self) -> int:
-                return 16000
-
-            @property
-            def is_healthy(self) -> bool:
-                return True
-
-            def pop_results(self) -> list[DetectionResult]:
-                return []
-
-            def reset(self) -> None:
-                pass
-
-        self.assertNotIsInstance(_NoFeed(), SoundEventDetector)
+        self.assertNotIsInstance(_NoDetect(), SoundEventDetector)
 
     def test_missing_detector_type_fails_isinstance(self) -> None:
         """A class missing the detector_type property is not recognized."""
 
         class _NoDetectorType:
-            @property
-            def sample_rate(self) -> int:
-                return 16000
-
-            @property
-            def is_healthy(self) -> bool:
-                return True
-
-            def feed(self, samples) -> None:
-                pass
-
-            def pop_results(self) -> list[DetectionResult]:
-                return []
-
-            def reset(self) -> None:
-                pass
+            def detect(self, samples):
+                return DetectionResult(speech_regions=(), detector_type="x")
 
         self.assertNotIsInstance(_NoDetectorType(), SoundEventDetector)
 
