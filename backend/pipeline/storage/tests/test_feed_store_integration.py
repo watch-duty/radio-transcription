@@ -9,6 +9,7 @@ import asyncpg
 import docker
 from testcontainers.postgres import PostgresContainer
 
+from backend.pipeline.storage.connection import create_pool
 from backend.pipeline.storage.feed_store import FeedStore
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -67,12 +68,12 @@ class TestFeedStoreIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         """Create pool, truncate feeds, and set up store."""
-        self.pool = await asyncpg.create_pool(
+        self.pool = await create_pool(
             host=self._host,
             port=self._port,
             user="postgres",
             password="postgres",
-            database="postgres",
+            db_name="postgres",
             min_size=2,
             max_size=5,
         )
@@ -318,52 +319,10 @@ class TestFeedStoreIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["status"], "quarantined")
         self.assertEqual(row["failure_count"], 3)
 
-    # -- Tests: renew_heartbeat -------------------------------------------
+    # -- Tests: renew_heartbeats_batch_diagnostic --------------------------
 
-    async def test_renew_heartbeat_succeeds_for_active_feed(self) -> None:
-        """Heartbeat renewal returns True and updates the timestamp."""
-        worker = uuid.uuid4()
-        feed_id = await self._insert_feed(
-            "My Feed",
-            status="active",
-            worker_id=worker,
-            last_heartbeat_age_seconds=30,
-        )
-
-        old_hb = await self.pool.fetchval(
-            "SELECT last_heartbeat FROM feeds WHERE id = $1::uuid",
-            str(feed_id),
-        )
-
-        result = await self.store.renew_heartbeat(feed_id, worker)
-
-        self.assertTrue(result)
-
-        new_hb = await self.pool.fetchval(
-            "SELECT last_heartbeat FROM feeds WHERE id = $1::uuid",
-            str(feed_id),
-        )
-        self.assertGreater(new_hb, old_hb)
-
-    async def test_renew_heartbeat_returns_false_for_stolen_lease(self) -> None:
-        """Renewal returns False when a different worker owns the feed."""
-        owner = uuid.uuid4()
-        impostor = uuid.uuid4()
-        feed_id = await self._insert_feed(
-            "Stolen Feed",
-            status="active",
-            worker_id=owner,
-            last_heartbeat_age_seconds=10,
-        )
-
-        result = await self.store.renew_heartbeat(feed_id, impostor)
-
-        self.assertFalse(result)
-
-    # -- Tests: renew_heartbeats_batch ------------------------------------
-
-    async def test_batch_renew_returns_all_active_feeds(self) -> None:
-        """All feeds owned by the worker are returned in the renewed set."""
+    async def test_diagnostic_renew_returns_all_owned_feeds(self) -> None:
+        """Owned feeds are returned with renewed=True and correct diagnostics."""
         worker = uuid.uuid4()
         feed_a = await self._insert_feed(
             "Feed A",
@@ -378,12 +337,20 @@ class TestFeedStoreIntegration(unittest.IsolatedAsyncioTestCase):
             last_heartbeat_age_seconds=30,
         )
 
-        result = await self.store.renew_heartbeats_batch([feed_a, feed_b], worker)
+        results = await self.store.renew_heartbeats_batch_diagnostic(
+            [feed_a, feed_b],
+            worker,
+        )
 
-        self.assertEqual(result, {feed_a, feed_b})
+        self.assertEqual(len(results), 2)
+        by_id = {r["id"]: r for r in results}
+        self.assertTrue(by_id[feed_a]["renewed"])
+        self.assertTrue(by_id[feed_b]["renewed"])
+        self.assertEqual(by_id[feed_a]["current_worker"], worker)
+        self.assertEqual(by_id[feed_a]["current_status"], "active")
 
-    async def test_batch_renew_excludes_stolen_feeds(self) -> None:
-        """Only feeds still owned by the worker are returned."""
+    async def test_diagnostic_renew_stolen_feed(self) -> None:
+        """Stolen feed returns renewed=False with the thief's worker_id."""
         worker = uuid.uuid4()
         other_worker = uuid.uuid4()
         owned_feed = await self._insert_feed(
@@ -399,18 +366,44 @@ class TestFeedStoreIntegration(unittest.IsolatedAsyncioTestCase):
             last_heartbeat_age_seconds=30,
         )
 
-        result = await self.store.renew_heartbeats_batch(
+        results = await self.store.renew_heartbeats_batch_diagnostic(
             [owned_feed, stolen_feed],
             worker,
         )
 
-        self.assertEqual(result, {owned_feed})
+        by_id = {r["id"]: r for r in results}
+        self.assertTrue(by_id[owned_feed]["renewed"])
+        self.assertFalse(by_id[stolen_feed]["renewed"])
+        self.assertEqual(by_id[stolen_feed]["current_worker"], other_worker)
 
-    async def test_batch_renew_returns_empty_set_for_empty_input(self) -> None:
-        """Empty input returns empty set without hitting the database."""
-        result = await self.store.renew_heartbeats_batch([], uuid.uuid4())
+    async def test_diagnostic_renew_quarantined_feed(self) -> None:
+        """Quarantined feed returns renewed=False with quarantined status."""
+        worker = uuid.uuid4()
+        feed_id = await self._insert_feed(
+            "Quarantined Feed",
+            status="quarantined",
+            worker_id=None,
+            failure_count=3,
+        )
 
-        self.assertEqual(result, set())
+        results = await self.store.renew_heartbeats_batch_diagnostic(
+            [feed_id],
+            worker,
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertFalse(results[0]["renewed"])
+        self.assertEqual(results[0]["current_status"], "quarantined")
+        self.assertIsNone(results[0]["current_worker"])
+
+    async def test_diagnostic_renew_empty_input(self) -> None:
+        """Empty input returns empty list without hitting the database."""
+        results = await self.store.renew_heartbeats_batch_diagnostic(
+            [],
+            uuid.uuid4(),
+        )
+
+        self.assertEqual(results, [])
 
     # -- Tests: release_feed ----------------------------------------------
 

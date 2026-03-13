@@ -25,11 +25,6 @@ variable "region" {
 variable "memory_size_gb" {
   description = "Redis memory size in GiB."
   type        = number
-
-  validation {
-    condition     = var.read_replicas_mode == "READ_REPLICAS_DISABLED" || var.memory_size_gb >= 5
-    error_message = "Minimum capacity is 5 GB when read replicas are enabled"
-  }
 }
 
 variable "network_id" {
@@ -73,14 +68,6 @@ variable "replica_count" {
   description = "The number of read replicas."
   type        = number
   default     = 0
-
-  validation {
-    # The valid range for the Standard Tier with read replicas enabled is [1-5] and defaults to 2. 
-    # If read replicas are not enabled for a Standard Tier instance, the only valid value is 1 and the default is 1.
-    # The valid value for basic tier is 0 and the default is also 0.
-    condition     = var.tier == "BASIC" ? var.replica_count == 0 : var.read_replicas_mode == "READ_REPLICAS_DISABLED" ? var.replica_count == 1 : var.replica_count >= 1 && var.replica_count <= 5
-    error_message = "Invalid value for replica_count for tier/replica mode."
-  }
 }
 
 variable "auth_enabled" {

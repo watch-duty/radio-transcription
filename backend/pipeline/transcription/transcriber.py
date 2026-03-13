@@ -70,12 +70,12 @@ class GeminiTranscriber(BaseTranscriber):
     def transcribe(self, wav_data: bytes) -> str | None:
         """Transcribe audio using Gemini AI."""
         if self._client is None:
-            logger.warning("No Gemini API key provided, returning mock transcription.")
-            return '{"events": [{"unit": "Dispatch", "message": "a fire has been transcribed", "is_dispatch": true}]}'
-
+            logger.warning("No Gemini API key provided")
+            return None
+        model = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
         try:
             response = self._client.models.generate_content(
-                model="gemini-2.0-flash-exp",
+                model=model,
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_PROMPT,
                     response_mime_type="application/json",
@@ -85,8 +85,10 @@ class GeminiTranscriber(BaseTranscriber):
                     # Documentation: https://ai.google.dev/gemini-api/docs/thinking#thinking-levels
                     # MEDIUM as it provides a solid balance for the reasoning required to identify speakers
                     # and roles from radio protocol without excessively increasing latency.
-                    thinking_config=types.ThinkingConfig(thinking_level="MEDIUM"),  # type: ignore[invalid-argument-type]
-                    temperature=0.0,
+                    thinking_config=types.ThinkingConfig(
+                        thinking_level=types.ThinkingLevel.MEDIUM
+                    ),
+                    temperature=1.0,  # The recommended temperature for this model is 1.0
                     candidate_count=1,
                 ),
                 contents=[types.Part.from_bytes(data=wav_data, mime_type="audio/wav")],

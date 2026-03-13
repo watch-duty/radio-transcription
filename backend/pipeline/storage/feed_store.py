@@ -7,6 +7,7 @@ if TYPE_CHECKING:
 
     import asyncpg
 
+
 _LEASE_FEED_SQL = """\
 WITH available_feed AS (
     SELECT id
@@ -43,17 +44,25 @@ SET last_processed_filename = $1,
 WHERE id = $2 AND worker_id = $3
 """
 
-_RENEW_HEARTBEAT_SQL = """\
-UPDATE feeds
-SET last_heartbeat = NOW()
-WHERE id = $1 AND worker_id = $2
-"""
-
-_RENEW_HEARTBEATS_BATCH_SQL = """\
-UPDATE feeds
-SET last_heartbeat = NOW()
-WHERE id = ANY($1::uuid[]) AND worker_id = $2
-RETURNING id
+_RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL = """\
+WITH current_state AS (
+    SELECT id, worker_id, status
+    FROM feeds WHERE id = ANY($1::uuid[])
+    FOR UPDATE
+),
+do_update AS (
+    UPDATE feeds SET last_heartbeat = NOW()
+    FROM current_state
+    WHERE feeds.id = current_state.id AND current_state.worker_id = $2
+    RETURNING feeds.id
+)
+SELECT
+    current_state.id,
+    current_state.worker_id AS current_worker,
+    current_state.status::text AS current_status,
+    (do_update.id IS NOT NULL) AS renewed
+FROM current_state
+LEFT JOIN do_update ON current_state.id = do_update.id;
 """
 
 _RELEASE_FEED_SQL = """\
@@ -112,6 +121,15 @@ class LeasedFeed(TypedDict):
     source_type: str
     last_processed_filename: str | None
     stream_url: str | None
+
+
+class HeartbeatResult(TypedDict):
+    """Per-feed diagnostic info returned by diagnostic heartbeat renewal."""
+
+    id: uuid.UUID
+    current_worker: uuid.UUID | None
+    current_status: str
+    renewed: bool
 
 
 class FeedStore:
@@ -191,65 +209,43 @@ class FeedStore:
         )
         return result == "UPDATE 1"
 
-    async def renew_heartbeat(
-        self,
-        feed_id: uuid.UUID,
-        worker_id: uuid.UUID,
-    ) -> bool:
-        """
-        Renew the heartbeat timestamp for a leased feed.
-
-        This is a fenced operation — it only succeeds if the given worker still
-        holds the lease. A ``False`` return indicates a fence violation: another
-        worker has stolen the lease and this worker must stop processing.
-
-        Args:
-            feed_id: UUID of the feed to renew.
-            worker_id: UUID of the worker holding the lease.
-
-        Returns:
-            ``True`` if the heartbeat was renewed (lease still held), ``False``
-            if the lease was lost.
-
-        """
-        result = await self._pool.execute(
-            _RENEW_HEARTBEAT_SQL,
-            feed_id,
-            worker_id,
-        )
-        return result == "UPDATE 1"
-
-    async def renew_heartbeats_batch(
+    async def renew_heartbeats_batch_diagnostic(
         self,
         feed_ids: list[uuid.UUID],
         worker_id: uuid.UUID,
-    ) -> set[uuid.UUID]:
+    ) -> list[HeartbeatResult]:
         """
-        Batch-renew heartbeats for multiple feeds in a single query.
+        Batch-renew heartbeats with per-feed diagnostic info.
 
-        Returns the set of feed_ids that were successfully renewed.
-        Any feed_id in the input that is missing from the returned set
-        indicates a fence violation — another worker has stolen the lease.
-
-        This reduces heartbeat DB load from O(N) queries to O(1) per cycle,
-        which is critical at 250 feeds per worker.
+        Uses an atomic CTE that locks rows, conditionally updates, and
+        always returns per-feed state in a single round-trip. This enables
+        the caller to log *why* a feed wasn't renewed (stolen by another
+        worker, quarantined, etc.) before taking action.
 
         Args:
             feed_ids: List of feed UUIDs to renew.
             worker_id: UUID of the worker holding the leases.
 
         Returns:
-            Set of feed_ids whose heartbeats were renewed.
+            List of ``HeartbeatResult`` dicts, one per input feed_id.
 
         """
         if not feed_ids:
-            return set()
+            return []
         rows = await self._pool.fetch(
-            _RENEW_HEARTBEATS_BATCH_SQL,
+            _RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
             feed_ids,
             worker_id,
         )
-        return {row["id"] for row in rows}
+        return [
+            HeartbeatResult(
+                id=row["id"],
+                current_worker=row["current_worker"],
+                current_status=row["current_status"],
+                renewed=row["renewed"],
+            )
+            for row in rows
+        ]
 
     async def report_feed_failure(
         self,

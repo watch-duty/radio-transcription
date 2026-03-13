@@ -1,11 +1,12 @@
 import base64
+import datetime
 import logging
 import os
+import uuid
 
 import google.cloud.logging
 from cloudevents.http.event import CloudEvent
 from google.cloud import pubsub_v1
-from google.protobuf.json_format import MessageToJson
 
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.schema_types.transcribed_audio_pb2 import TranscribedAudio
@@ -52,7 +53,6 @@ def handle_transcription_event(
     # 2. Access custom attributes from the message dictionary
     attributes = message.get("attributes", {})
     feed_id = attributes.get("feed_id")
-    timestamp = attributes.get("timestamp")
 
     # 3. Decode the base64 data (wav_data)
     pubsub_data = message.get("data")
@@ -64,13 +64,13 @@ def handle_transcription_event(
 
     audio_chunk = AudioChunk()
     audio_chunk.ParseFromString(decoded_data)
-    gcs_file_path = audio_chunk.gcs_file_path
+    gcs_uri = audio_chunk.gcs_uri
 
     if audio_fetcher is None:
         audio_fetcher = GCSAudioFetcher()
 
-    wav_data = audio_fetcher.fetch(gcs_file_path)
-    logger.info("processing wav data for feed: %s at: %s", feed_id, timestamp)
+    wav_data = audio_fetcher.fetch(gcs_uri)
+    logger.info("processing wav data for feed: %s", feed_id)
 
     # 4. Transcribe using provided or default transcriber
     if transcriber is None:
@@ -85,7 +85,19 @@ def handle_transcription_event(
     logger.info("Success! translated bytes to transcription %s", transcript)
 
     # 5. Build and publish TranscribedAudio message
-    transcribed_payload = TranscribedAudio(transcript=transcript, feed_id=feed_id)
+    transcribed_payload = TranscribedAudio(
+        transcript=transcript,
+        feed_id=feed_id,
+        transmission_id=str(uuid.uuid4()),
+        source_chunk_ids=[gcs_uri],
+    )
+
+    # 6. Set Absolute Timestamps
+    # Trust the start_timestamp from the AudioChunk (Producer must set this)
+    transcribed_payload.start_timestamp.CopyFrom(audio_chunk.start_timestamp)
+    transcribed_payload.end_timestamp.FromDatetime(
+        datetime.datetime.now(tz=datetime.UTC)
+    )
 
     publisher = pubsub_v1.PublisherClient()
     if project_id and output_topic_id:
@@ -99,8 +111,7 @@ def handle_transcription_event(
         output_topic_path = None
 
     if output_topic_path:
-        json_string = MessageToJson(transcribed_payload, indent=None)
-        encoded_data = json_string.encode("utf-8")
+        encoded_data = transcribed_payload.SerializeToString()
         try:
             future = publisher.publish(output_topic_path, encoded_data)
             message_id = future.result()  # Block until published (ensure reliability)

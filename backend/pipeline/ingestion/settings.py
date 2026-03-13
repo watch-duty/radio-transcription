@@ -73,10 +73,10 @@ class NormalizerSettings:
 
     # Database pool
     db_pool_min_size: int = field(
-        default_factory=lambda: int(os.environ.get("DB_POOL_MIN_SIZE", "10")),
+        default_factory=lambda: int(os.environ.get("DB_POOL_MIN_SIZE", "5")),
     )
     db_pool_max_size: int = field(
-        default_factory=lambda: int(os.environ.get("DB_POOL_MAX_SIZE", "10")),
+        default_factory=lambda: int(os.environ.get("DB_POOL_MAX_SIZE", "5")),
     )
 
     # Timeouts
@@ -103,12 +103,46 @@ class NormalizerSettings:
         ),
     )
 
+    # Retry: GCS uploads
+    gcs_upload_max_retries: int = field(
+        default_factory=lambda: int(
+            os.environ.get("GCS_UPLOAD_MAX_RETRIES", "3"),
+        ),
+    )
+    gcs_upload_retry_base_delay_sec: float = field(
+        default_factory=lambda: float(
+            os.environ.get("GCS_UPLOAD_RETRY_BASE_DELAY_SEC", "0.5"),
+        ),
+    )
+    gcs_upload_retry_max_delay_sec: float = field(
+        default_factory=lambda: float(
+            os.environ.get("GCS_UPLOAD_RETRY_MAX_DELAY_SEC", "8.0"),
+        ),
+    )
+
+    # Retry: bookmark (AlloyDB progress writes)
+    bookmark_max_retries: int = field(
+        default_factory=lambda: int(
+            os.environ.get("BOOKMARK_MAX_RETRIES", "2"),
+        ),
+    )
+    bookmark_retry_base_delay_sec: float = field(
+        default_factory=lambda: float(
+            os.environ.get("BOOKMARK_RETRY_BASE_DELAY_SEC", "0.5"),
+        ),
+    )
+    bookmark_retry_max_delay_sec: float = field(
+        default_factory=lambda: float(
+            os.environ.get("BOOKMARK_RETRY_MAX_DELAY_SEC", "4.0"),
+        ),
+    )
+
     # AlloyDB connection
     db_host: str = field(
         default_factory=lambda: _require_env("ALLOYDB_HOST"),
     )
     db_port: int = field(
-        default_factory=lambda: int(os.environ.get("ALLOYDB_PORT", "5432")),
+        default_factory=lambda: int(os.environ.get("ALLOYDB_PORT", "6432")),
     )
     db_user: str = field(
         default_factory=lambda: _require_env("ALLOYDB_USER"),

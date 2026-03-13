@@ -36,6 +36,12 @@ class TestNormalizerSettings(unittest.TestCase):
             "ABANDONMENT_WINDOW_SEC": "120.0",
             "ALLOYDB_PORT": "6543",
             "ALLOYDB_PASSWORD": "secret",
+            "GCS_UPLOAD_MAX_RETRIES": "5",
+            "GCS_UPLOAD_RETRY_BASE_DELAY_SEC": "1.0",
+            "GCS_UPLOAD_RETRY_MAX_DELAY_SEC": "16.0",
+            "BOOKMARK_MAX_RETRIES": "4",
+            "BOOKMARK_RETRY_BASE_DELAY_SEC": "0.25",
+            "BOOKMARK_RETRY_MAX_DELAY_SEC": "2.0",
         }
 
         with patch.dict("os.environ", env, clear=True):
@@ -59,6 +65,12 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.db_user, "radio_user")
         self.assertEqual(settings.db_name, "radio_db")
         self.assertEqual(settings.db_password, "secret")
+        self.assertEqual(settings.gcs_upload_max_retries, 5)
+        self.assertEqual(settings.gcs_upload_retry_base_delay_sec, 1.0)
+        self.assertEqual(settings.gcs_upload_retry_max_delay_sec, 16.0)
+        self.assertEqual(settings.bookmark_max_retries, 4)
+        self.assertEqual(settings.bookmark_retry_base_delay_sec, 0.25)
+        self.assertEqual(settings.bookmark_retry_max_delay_sec, 2.0)
 
     def test_edge_case_uses_defaults_and_generates_worker_id(self) -> None:
         """Uses defaults for optional settings when only required vars are set."""
@@ -71,14 +83,20 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.heartbeat_interval_sec, 15.0)
         self.assertEqual(settings.heartbeat_stall_timeout_sec, 45.0)
         self.assertEqual(settings.graceful_shutdown_timeout_sec, 10.0)
-        self.assertEqual(settings.db_pool_min_size, 10)
-        self.assertEqual(settings.db_pool_max_size, 10)
+        self.assertEqual(settings.db_pool_min_size, 5)
+        self.assertEqual(settings.db_pool_max_size, 5)
         self.assertEqual(settings.db_command_timeout_sec, 30.0)
         self.assertEqual(settings.db_connect_timeout_sec, 10.0)
         self.assertEqual(settings.feed_failure_threshold, 3)
         self.assertEqual(settings.abandonment_window_sec, 60.0)
-        self.assertEqual(settings.db_port, 5432)
+        self.assertEqual(settings.db_port, 6432)
         self.assertEqual(settings.db_password, "")
+        self.assertEqual(settings.gcs_upload_max_retries, 3)
+        self.assertEqual(settings.gcs_upload_retry_base_delay_sec, 0.5)
+        self.assertEqual(settings.gcs_upload_retry_max_delay_sec, 8.0)
+        self.assertEqual(settings.bookmark_max_retries, 2)
+        self.assertEqual(settings.bookmark_retry_base_delay_sec, 0.5)
+        self.assertEqual(settings.bookmark_retry_max_delay_sec, 4.0)
 
     def test_edge_case_zero_and_negative_numeric_values_parse(self) -> None:
         """Allows zero/negative values because parsing does not enforce ranges."""
