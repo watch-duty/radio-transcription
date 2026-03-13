@@ -76,7 +76,6 @@ class TestTranscribers(unittest.TestCase):
 
             self.assertIn("returned [BACKGROUND] only", str(context.exception))
 
-
     def test_google_chirp_transcriber_retry_on_google_api_error(self) -> None:
         """Test retry logic recovers from transient Google API errors."""
         with patch(

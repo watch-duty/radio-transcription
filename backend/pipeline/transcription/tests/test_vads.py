@@ -78,7 +78,9 @@ class TestVadPlugins(unittest.TestCase):
             plugin.setup('{"min_speech_sec": 0.25}')
         except OSError as e:
             if "libc++.so.1" in str(e):
-                self.skipTest("Skipping integration test: libc++.so.1 not found on system.")
+                self.skipTest(
+                    "Skipping integration test: libc++.so.1 not found on system."
+                )
             raise
 
         # 1 second of absolute silence at 16kHz

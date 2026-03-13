@@ -21,7 +21,9 @@ class AudioProcessorTest(unittest.TestCase):
 
     @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
     @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
-    def test_setup_initializes_vad_and_gcs(self, mock_get_vad: MagicMock, mock_get_gcs: MagicMock) -> None:
+    def test_setup_initializes_vad_and_gcs(
+        self, mock_get_vad: MagicMock, mock_get_gcs: MagicMock
+    ) -> None:
         """Test that setup initializes the VAD plugin and GCS client correctly."""
         self.processor.setup()
         mock_get_vad.assert_called_once_with(VadType.TEN_VAD, "{}")
@@ -82,9 +84,7 @@ class AudioProcessorTest(unittest.TestCase):
         shutil.which("ffmpeg") is None, "ffmpeg is required for pydub I/O tests"
     )
     @patch("backend.pipeline.transcription.audio_processor.read_sed_segments_from_blob")
-    def test_download_audio_and_sed(
-        self, mock_read_sed: MagicMock
-    ) -> None:
+    def test_download_audio_and_sed(self, mock_read_sed: MagicMock) -> None:
         """Test downloading and parsing an audio chunk from GCS."""
         self.processor.gcs_client = MagicMock()
         mock_bucket = MagicMock()
@@ -105,9 +105,7 @@ class AudioProcessorTest(unittest.TestCase):
 
         mock_read_sed.return_value = (500, [TimeRange(0, 100)])
 
-        result = self.processor.download_audio_and_sed(
-            "gs://bucket/path/to/file.flac"
-        )
+        result = self.processor.download_audio_and_sed("gs://bucket/path/to/file.flac")
 
         mock_read_sed.assert_called_once_with(mock_blob)
 

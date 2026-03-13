@@ -45,9 +45,9 @@ logger = logging.getLogger(__name__)
 # ==============================================================================
 # In a distributed streaming pipeline, individual elements (audio chunks) are processed
 # independently and statelessly by default. To stitch audio together, we must explicitly
-# declare State and Timer specifications that Beam will persist between processing 
-# discrete elements for the same key (feed_id). When running on Google Cloud Dataflow, 
-# this state is natively managed by Dataflow's worker disks or Streaming Engine—no 
+# declare State and Timer specifications that Beam will persist between processing
+# discrete elements for the same key (feed_id). When running on Google Cloud Dataflow,
+# this state is natively managed by Dataflow's worker disks or Streaming Engine—no
 # external databases are required.
 # ==============================================================================
 
@@ -61,7 +61,7 @@ logger = logging.getLogger(__name__)
 #    to prevent duplicate processing if Pub/Sub delivers the same event multiple times.
 # 4. STALE_START_TIME (Float): The absolute start time (ms) of the *current* transmission buffer.
 #    Used to calculate the transcriber API deadline for the stale timer.
-# 5. STALE_TIMER (Timer): A Beam Watermark timer. If no new data advances the watermark past 
+# 5. STALE_TIMER (Timer): A Beam Watermark timer. If no new data advances the watermark past
 #    its deadline, it fires to flush whatever audio is stranded in the TRANSMISSION_BUFFER.
 # ==============================================================================
 
@@ -100,8 +100,8 @@ class StitchAndTranscribeFn(beam.DoFn):
     2. Gap Detection: If an incoming chunk's start time is significantly later than the end time
        of the previous chunk, we assume the previous transmission has ended. We flush the buffer
        to the transcriber API and clear all states to start a fresh transmission.
-    3. Stale Timers: In distributed systems, a stream might silently disconnect. We register a 
-       latency watermark timer (`stale_timer`). If no new data arrives before the timer fires, 
+    3. Stale Timers: In distributed systems, a stream might silently disconnect. We register a
+       latency watermark timer (`stale_timer`). If no new data arrives before the timer fires,
        Beam automatically invokes `handle_stale_transmission` to flush any stranded audio.
     4. Concurrency: Transcription API calls (e.g., Google Cloud Speech) block execution. We use
        a ThreadPoolExecutor to batch process these network calls asynchronously to prevent stalling
@@ -318,14 +318,14 @@ class StitchAndTranscribeFn(beam.DoFn):
                 source_file_uuid,
                 feed_id,
             )
-            chunk_data = (
-                self.audio_processor.download_audio_and_sed(gcs_path)
-            )
+            chunk_data = self.audio_processor.download_audio_and_sed(gcs_path)
             # start_ms is guaranteed to be present by strict validation in utils.py
 
             yield source_file_uuid, chunk_data
         except FileNotFoundError:
-            logger.info("GCS object not found yet (eventual consistency?). Re-raising to NACK Pub/Sub message.")
+            logger.info(
+                "GCS object not found yet (eventual consistency?). Re-raising to NACK Pub/Sub message."
+            )
             raise
         except Exception as e:
             self.dlq_count.inc()
@@ -403,7 +403,7 @@ class StitchAndTranscribeFn(beam.DoFn):
         ctx.processed_uuids.add(ctx.source_file_uuid)
         # Persist this UUID so we don't accidentally append it again on a PubSub retry
         state.contributing_uuids.write(ctx.processed_uuids)
-        # Continuously bump the end marker so the Gap Detection logic 
+        # Continuously bump the end marker so the Gap Detection logic
         # in the next processing step knows exactly where this transmission left off.
         state.last_end_time.write(ctx.chunk_start_ms + global_end_ms)
 
@@ -451,9 +451,9 @@ class StitchAndTranscribeFn(beam.DoFn):
             )
             return
 
-        # Because we establish event-time ordering upstream, we can evaluate the semantic gap 
+        # Because we establish event-time ordering upstream, we can evaluate the semantic gap
         # between sequential chunks. If the gap exceeds our configured threshold, the current
-        # transmission has logically ended. We must yield a FlushRequest to transcribe the 
+        # transmission has logically ended. We must yield a FlushRequest to transcribe the
         # preceding buffer before appending the current segment to a fresh state.
         is_significant_gap = (
             ctx.last_segment_end_time_ms
@@ -462,7 +462,9 @@ class StitchAndTranscribeFn(beam.DoFn):
         )
 
         if is_significant_gap and ctx.current_buffer:
-            logger.info("Significant gap detected. Flushing preceding continuous audio.")
+            logger.info(
+                "Significant gap detected. Flushing preceding continuous audio."
+            )
             if ctx.transmission_start_time_ms is None:
                 yield beam.pvalue.TaggedOutput(
                     DEAD_LETTER_QUEUE_TAG,
@@ -492,8 +494,8 @@ class StitchAndTranscribeFn(beam.DoFn):
             state=state,
         )
 
-        # Because the buffer was successfully mutated without triggering a flush, we must 
-        # explicitly schedule the stale timer to ensure Dataflow eventually flushes this 
+        # Because the buffer was successfully mutated without triggering a flush, we must
+        # explicitly schedule the stale timer to ensure Dataflow eventually flushes this
         # stranded audio if the radio stream suddenly goes offline.
         if state.stale_timer:
             transmission_start_time_ms = state.stale_start_time.read()
@@ -568,7 +570,9 @@ class StitchAndTranscribeFn(beam.DoFn):
                         yield transcribed
                 except Exception as e:
                     self.dlq_count.inc()
-                    logger.exception("Error concurrently flushing buffer for feed %s", key)
+                    logger.exception(
+                        "Error concurrently flushing buffer for feed %s", key
+                    )
                     msg = str(e)
                     yield beam.pvalue.TaggedOutput(
                         DEAD_LETTER_QUEUE_TAG, {"error": msg, "feed_id": key}
@@ -584,10 +588,10 @@ class StitchAndTranscribeFn(beam.DoFn):
         contributing_uuids: ReadModifyWriteRuntimeState = CONTRIBUTING_UUIDS_STATE,  # type: ignore
     ) -> Generator[TranscriptionResult | beam.pvalue.TaggedOutput, None, None]:
         """
-        Invoked asynchronously by the Beam Runner when the event-time watermark 
-        passes the timestamp previously scheduled on the `stale_timer`. This provides a critical 
-        safety net: if a radio feed abruptly drops offline, this timer guarantees that any 
-        audio remaining in the buffer will eventually be flushed and transcribed, preventing 
+        Invoked asynchronously by the Beam Runner when the event-time watermark
+        passes the timestamp previously scheduled on the `stale_timer`. This provides a critical
+        safety net: if a radio feed abruptly drops offline, this timer guarantees that any
+        audio remaining in the buffer will eventually be flushed and transcribed, preventing
         data loss from stranded state.
         """
         state = TransmissionState(
