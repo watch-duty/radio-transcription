@@ -34,6 +34,7 @@ dev = [
   "grpcio-tools>=1.65.5",
   "testcontainers[postgres]",
   "docker",
+  "numpy>=1.24.0",
 ]
 
 [tool.ruff]
