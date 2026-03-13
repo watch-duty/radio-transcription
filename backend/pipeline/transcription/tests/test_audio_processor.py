@@ -45,9 +45,9 @@ class AudioProcessorTest(unittest.TestCase):
     @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
     def test_check_vad_evaluates_speech(self, mock_get_vad: MagicMock) -> None:
         """Test check_vad correctly evaluating audio data."""
-        self.processor.setup()
         mock_vad_instance = mock_get_vad.return_value
         mock_vad_instance.evaluate.return_value = True
+        self.processor.setup()
 
         audio = AudioSegment.silent(duration=1000)
         result = self.processor.check_vad(audio)
