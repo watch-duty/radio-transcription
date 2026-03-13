@@ -5,6 +5,9 @@ import unittest
 import uuid
 from unittest import mock
 
+import aiohttp
+import asyncpg
+
 from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.storage.feed_store import HeartbeatResult, LeasedFeed
@@ -605,7 +608,6 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
 
     async def test_transient_upload_failure_retries_and_succeeds(self) -> None:
         """GCS upload fails once then succeeds — pipeline continues."""
-        import aiohttp  # noqa: PLC0415
 
         async def _one_chunk(feed, shutdown):
             yield b"audio"
@@ -661,7 +663,6 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
 
     async def test_lease_lost_during_bookmark_backoff_aborts(self) -> None:
         """Lease loss during bookmark retry aborts without DB write."""
-        import asyncpg as _asyncpg  # noqa: PLC0415
 
         async def _one_chunk(feed, shutdown):
             yield b"audio"
@@ -671,7 +672,7 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         rt._lease_lost = asyncio.Event()
         rt._store = mock.AsyncMock()
         # Bookmark fails with a retryable error, then lease is lost
-        rt._store.update_feed_progress.side_effect = _asyncpg.InterfaceError(
+        rt._store.update_feed_progress.side_effect = asyncpg.InterfaceError(
             "connection lost"
         )
         rt._releasing_feeds = set()
