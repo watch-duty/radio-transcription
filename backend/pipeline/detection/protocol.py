@@ -46,10 +46,6 @@ class SoundEventDetector(Protocol):
     is_healthy
         ``True`` while the detector is operational.  Set to ``False``
         internally on persistent errors.
-    needs_executor
-        ``True`` if the detector performs CPU-intensive work (e.g. ML
-        inference) that should be offloaded to a thread or process
-        executor rather than running inline on the event loop.
 
     Methods
     -------
@@ -75,9 +71,6 @@ class SoundEventDetector(Protocol):
 
     @property
     def is_healthy(self) -> bool: ...
-
-    @property
-    def needs_executor(self) -> bool: ...
 
     def feed(self, samples: np.ndarray) -> None: ...
 

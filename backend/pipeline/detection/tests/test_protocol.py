@@ -19,10 +19,6 @@ class _StubDetector:
     def is_healthy(self) -> bool:
         return True
 
-    @property
-    def needs_executor(self) -> bool:
-        return False
-
     def feed(self, samples) -> None:
         pass
 
@@ -57,10 +53,6 @@ class TestSoundEventDetectorProtocol(unittest.TestCase):
             def is_healthy(self) -> bool:
                 return True
 
-            @property
-            def needs_executor(self) -> bool:
-                return False
-
             def pop_results(self) -> list[DetectionResult]:
                 return []
 
@@ -81,10 +73,6 @@ class TestSoundEventDetectorProtocol(unittest.TestCase):
             def is_healthy(self) -> bool:
                 return True
 
-            @property
-            def needs_executor(self) -> bool:
-                return False
-
             def feed(self, samples) -> None:
                 pass
 
@@ -95,33 +83,6 @@ class TestSoundEventDetectorProtocol(unittest.TestCase):
                 pass
 
         self.assertNotIsInstance(_NoDetectorType(), SoundEventDetector)
-
-    def test_missing_needs_executor_fails_isinstance(self) -> None:
-        """A class missing the needs_executor property is not recognized."""
-
-        class _NoNeedsExecutor:
-            @property
-            def detector_type(self) -> str:
-                return "broken"
-
-            @property
-            def sample_rate(self) -> int:
-                return 16000
-
-            @property
-            def is_healthy(self) -> bool:
-                return True
-
-            def feed(self, samples) -> None:
-                pass
-
-            def pop_results(self) -> list[DetectionResult]:
-                return []
-
-            def reset(self) -> None:
-                pass
-
-        self.assertNotIsInstance(_NoNeedsExecutor(), SoundEventDetector)
 
 
 if __name__ == "__main__":

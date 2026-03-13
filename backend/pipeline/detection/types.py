@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -21,11 +20,6 @@ class DetectionResult:
             of the detector that produced this result.  Used as the
             tracking key in the combiner, the provenance field in the
             sidecar proto, and the factory registry key.
-        metadata: Detector-specific key-value data.  Each detector
-            implementation populates this with its own diagnostics
-            (e.g. ``{"rms_db": -42.1}`` for energy squelch,
-            ``{"vad_prob": 0.87}`` for Silero VAD).  Defaults to an
-            empty dict when not provided.
 
     """
 
@@ -33,7 +27,6 @@ class DetectionResult:
     confidence: float
     timestamp_ns: int
     detector_type: str
-    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.confidence <= 1.0:

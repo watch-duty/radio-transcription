@@ -7,7 +7,7 @@ class TestDetectionResult(unittest.TestCase):
     """Tests for the DetectionResult frozen dataclass."""
 
     def test_valid_construction(self) -> None:
-        """Creates a valid result with required fields; metadata defaults to empty."""
+        """Creates a valid result with all fields."""
         result = DetectionResult(
             signal_present=True,
             confidence=0.85,
@@ -19,20 +19,6 @@ class TestDetectionResult(unittest.TestCase):
         self.assertEqual(result.confidence, 0.85)
         self.assertEqual(result.timestamp_ns, 1_000_000)
         self.assertEqual(result.detector_type, "silero_vad")
-        self.assertEqual(result.metadata, {})
-
-    def test_construction_with_metadata(self) -> None:
-        """Creates a result with an explicit metadata dict."""
-        meta = {"vad_prob": 0.87, "model": "silero_v5"}
-        result = DetectionResult(
-            signal_present=True,
-            confidence=0.87,
-            timestamp_ns=500_000,
-            detector_type="silero_vad",
-            metadata=meta,
-        )
-
-        self.assertEqual(result.metadata, meta)
 
     def test_frozen_immutability(self) -> None:
         """Assigning to a field raises FrozenInstanceError."""
