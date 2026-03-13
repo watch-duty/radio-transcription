@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import os
-import struct
 import unittest
 import uuid
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import asyncpg
 import docker
@@ -37,9 +36,8 @@ _SQL_DIR = _REPO_ROOT / "terraform" / "modules" / "alloydb" / "sql" / "ingestion
 _FAKE_GCS_PORT = 4443
 _TEST_BUCKET = "test-audio-bucket"
 
-# Audio constants (mirrors icecast_collector.py)
-_BYTES_PER_CHUNK = 480_000
-_WAV_HEADER_SIZE = 44
+# Audio constants
+_FLAC_MAGIC = b"fLaC"
 
 
 def _docker_available() -> bool:
@@ -179,23 +177,37 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             raise AssertionError(msg)
         return dict(row)
 
-    def _mock_ffmpeg_process(
+    def _mock_create_ffmpeg(
         self,
-        pcm_data_reads: list[bytes],
+        segments: list[bytes],
+        *,
         exit_code: int = 0,
-    ) -> AsyncMock:
-        """Create a mock ffmpeg process yielding given data reads then EOF."""
-        mock_proc = AsyncMock()
-        mock_proc.pid = 12345
-        mock_proc.returncode = None
-        mock_proc.stdout.read.side_effect = [*pcm_data_reads, b""]
+        wait_delay: float = 0.01,
+        wait_exception: Exception | None = None,
+    ):
+        """Create side effect for _create_ffmpeg_process that writes segment files."""
 
-        def _set_returncode(*_args):
-            mock_proc.returncode = exit_code
-            return exit_code
+        async def _factory(_url: str, segment_pattern: str) -> AsyncMock:
+            segment_dir = Path(segment_pattern).parent
+            for index, segment in enumerate(segments):
+                (segment_dir / f"chunk_{index:06d}.flac").write_bytes(segment)
 
-        mock_proc.wait = AsyncMock(side_effect=_set_returncode)
-        return mock_proc
+            mock_proc = AsyncMock()
+            mock_proc.pid = 12345
+            mock_proc.returncode = None
+            mock_proc.terminate = MagicMock()
+
+            async def _wait_impl() -> int:
+                await asyncio.sleep(wait_delay)
+                if wait_exception is not None:
+                    raise wait_exception
+                mock_proc.returncode = exit_code
+                return exit_code
+
+            mock_proc.wait = AsyncMock(side_effect=_wait_impl)
+            return mock_proc
+
+        return _factory
 
     async def _download_gcs_object(self, object_name: str) -> bytes:
         """Download an object from the fake GCS server via HTTP."""
@@ -205,40 +217,6 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         async with aiohttp.ClientSession() as session, session.get(url) as resp:
             resp.raise_for_status()
             return await resp.read()
-
-    def _parse_wav_header(self, wav_data: bytes) -> dict:
-        """Parse the 44-byte WAV header and return field dict."""
-        self.assertTrue(len(wav_data) >= _WAV_HEADER_SIZE)
-        riff = wav_data[0:4]
-        file_size = struct.unpack_from("<I", wav_data, 4)[0]
-        wave = wav_data[8:12]
-        fmt = wav_data[12:16]
-        (
-            subchunk1_size,
-            audio_format,
-            num_channels,
-            sample_rate,
-            byte_rate,
-            block_align,
-            bits_per_sample,
-        ) = struct.unpack_from("<IHHIIHH", wav_data, 16)
-        data_tag = wav_data[36:40]
-        data_size = struct.unpack_from("<I", wav_data, 40)[0]
-        return {
-            "riff": riff,
-            "file_size": file_size,
-            "wave": wave,
-            "fmt": fmt,
-            "subchunk1_size": subchunk1_size,
-            "audio_format": audio_format,
-            "num_channels": num_channels,
-            "sample_rate": sample_rate,
-            "byte_rate": byte_rate,
-            "block_align": block_align,
-            "bits_per_sample": bits_per_sample,
-            "data_tag": data_tag,
-            "data_size": data_size,
-        }
 
     # -- Tests ------------------------------------------------------------
 
@@ -255,17 +233,18 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             msg = "Expected a LeasedFeed, got None"
             raise AssertionError(msg)
 
-        # Mock ffmpeg: return exactly 1 chunk of PCM data then EOF
-        pcm_data = b"\x80" * _BYTES_PER_CHUNK
-        mock_proc = self._mock_ffmpeg_process([pcm_data])
-        mock_create_ffmpeg.return_value = mock_proc
+        # Mock ffmpeg: one finalized FLAC segment
+        flac_chunk = _FLAC_MAGIC + b"\x80" * 1024
+        mock_create_ffmpeg.side_effect = self._mock_create_ffmpeg([flac_chunk])
 
         # Act: capture -> upload -> bookmark
         shutdown = asyncio.Event()
         chunks_uploaded = []
-        async for wav_chunk in icecast_collector.capture_icecast_stream(feed, shutdown):
+        async for flac_chunk in icecast_collector.capture_icecast_stream(
+            feed, shutdown
+        ):
             gcs_path = await gcs.upload_audio(
-                wav_chunk,
+                flac_chunk,
                 feed,
                 _TEST_BUCKET,
                 len(chunks_uploaded),
@@ -276,17 +255,18 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 gcs_path,
             )
             self.assertTrue(ok)
-            chunks_uploaded.append((wav_chunk, gcs_path))
+            chunks_uploaded.append((flac_chunk, gcs_path))
 
         # Assert: exactly 1 chunk uploaded
         self.assertEqual(len(chunks_uploaded), 1)
 
-        # Assert: GCS object content matches yielded WAV
-        wav_chunk, gcs_path = chunks_uploaded[0]
+        # Assert: GCS object content matches yielded segment bytes
+        yielded_chunk, gcs_path = chunks_uploaded[0]
         # gcs_path is "gs://bucket/source_type/feed_id/timestamp_seq.wav"
         object_name = gcs_path.replace(f"gs://{_TEST_BUCKET}/", "")
         downloaded = await self._download_gcs_object(object_name)
-        self.assertEqual(downloaded, wav_chunk)
+        self.assertEqual(downloaded, yielded_chunk)
+        self.assertEqual(downloaded[:4], _FLAC_MAGIC)
 
         # Assert: DB bookmark updated
         row = await self._get_feed_row(feed["id"])
@@ -298,23 +278,28 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     async def test_multiple_chunks_uploaded_to_gcs(self, mock_create_ffmpeg) -> None:
-        """3 chunks captured, all uploaded to GCS with correct WAV data."""
+        """3 segments captured and uploaded to GCS."""
         await self._insert_feed("multi-chunk-feed")
         feed = await self.store.lease_feed(self.worker_id)
         if feed is None:
             msg = "Expected a LeasedFeed, got None"
             raise AssertionError(msg)
 
-        # Mock ffmpeg: return 3 chunks worth of data in one read then EOF
-        pcm_data = b"\x42" * (_BYTES_PER_CHUNK * 3)
-        mock_proc = self._mock_ffmpeg_process([pcm_data])
-        mock_create_ffmpeg.return_value = mock_proc
+        # Mock ffmpeg: three finalized FLAC segments
+        segments = [
+            _FLAC_MAGIC + b"\x42" * 120,
+            _FLAC_MAGIC + b"\x24" * 140,
+            _FLAC_MAGIC + b"\x66" * 160,
+        ]
+        mock_create_ffmpeg.side_effect = self._mock_create_ffmpeg(segments)
 
         shutdown = asyncio.Event()
         gcs_paths = []
         seq = 0
-        async for wav_chunk in icecast_collector.capture_icecast_stream(feed, shutdown):
-            gcs_path = await gcs.upload_audio(wav_chunk, feed, _TEST_BUCKET, seq)
+        async for flac_chunk in icecast_collector.capture_icecast_stream(
+            feed, shutdown
+        ):
+            gcs_path = await gcs.upload_audio(flac_chunk, feed, _TEST_BUCKET, seq)
             await self.store.update_feed_progress(
                 feed["id"],
                 self.worker_id,
@@ -326,11 +311,12 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         # Assert: 3 distinct uploads
         self.assertEqual(len(gcs_paths), 3)
 
-        # Assert: each GCS object is downloadable and is WAV-sized
-        for path in gcs_paths:
+        # Assert: each GCS object is downloadable and looks like FLAC bytes
+        for i, path in enumerate(gcs_paths):
             object_name = path.replace(f"gs://{_TEST_BUCKET}/", "")
             downloaded = await self._download_gcs_object(object_name)
-            self.assertEqual(len(downloaded), _BYTES_PER_CHUNK + _WAV_HEADER_SIZE)
+            self.assertEqual(downloaded, segments[i])
+            self.assertEqual(downloaded[:4], _FLAC_MAGIC)
 
         # Assert: DB bookmark points to last uploaded path
         row = await self._get_feed_row(feed["id"])
@@ -351,16 +337,21 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             msg = "Expected a LeasedFeed, got None"
             raise AssertionError(msg)
 
-        # Mock ffmpeg: 3 separate reads (shutdown checked between reads)
-        chunk = b"\xab" * _BYTES_PER_CHUNK
-        mock_proc = self._mock_ffmpeg_process([chunk, chunk, chunk])
-        mock_create_ffmpeg.return_value = mock_proc
+        # Mock ffmpeg: 3 finalized segments; shutdown is checked between yields
+        segments = [
+            _FLAC_MAGIC + b"\xab" * 90,
+            _FLAC_MAGIC + b"\xcd" * 100,
+            _FLAC_MAGIC + b"\xef" * 110,
+        ]
+        mock_create_ffmpeg.side_effect = self._mock_create_ffmpeg(segments)
 
         shutdown = asyncio.Event()
         gcs_paths = []
         seq = 0
-        async for wav_chunk in icecast_collector.capture_icecast_stream(feed, shutdown):
-            gcs_path = await gcs.upload_audio(wav_chunk, feed, _TEST_BUCKET, seq)
+        async for flac_chunk in icecast_collector.capture_icecast_stream(
+            feed, shutdown
+        ):
+            gcs_path = await gcs.upload_audio(flac_chunk, feed, _TEST_BUCKET, seq)
             await self.store.update_feed_progress(
                 feed["id"],
                 self.worker_id,
@@ -393,13 +384,12 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             msg = "Expected a LeasedFeed, got None"
             raise AssertionError(msg)
 
-        # Mock ffmpeg: immediate EOF with exit code 1
-        mock_proc = self._mock_ffmpeg_process([], exit_code=1)
-        mock_create_ffmpeg.return_value = mock_proc
+        # Mock ffmpeg: no segments and non-zero exit
+        mock_create_ffmpeg.side_effect = self._mock_create_ffmpeg([], exit_code=1)
 
         shutdown = asyncio.Event()
         with self.assertRaises(RuntimeError) as ctx:
-            async for _wav_chunk in icecast_collector.capture_icecast_stream(
+            async for _chunk in icecast_collector.capture_icecast_stream(
                 feed,
                 shutdown,
             ):
@@ -420,26 +410,26 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
-    async def test_wav_header_fields_correct_after_gcs_roundtrip(
+    async def test_flac_segment_bytes_roundtrip(
         self,
         mock_create_ffmpeg,
     ) -> None:
-        """Upload WAV to GCS, download, parse header, verify all fields."""
-        await self._insert_feed("wav-header-feed")
+        """Upload FLAC segment bytes to GCS and verify exact roundtrip content."""
+        await self._insert_feed("flac-roundtrip-feed")
         feed = await self.store.lease_feed(self.worker_id)
         if feed is None:
             msg = "Expected a LeasedFeed, got None"
             raise AssertionError(msg)
 
-        # Known PCM pattern for payload verification
-        pcm_pattern = bytes(range(256)) * (_BYTES_PER_CHUNK // 256)
-        mock_proc = self._mock_ffmpeg_process([pcm_pattern])
-        mock_create_ffmpeg.return_value = mock_proc
+        expected_segment = _FLAC_MAGIC + bytes(range(64)) * 8
+        mock_create_ffmpeg.side_effect = self._mock_create_ffmpeg([expected_segment])
 
         shutdown = asyncio.Event()
         gcs_path = None
-        async for wav_chunk in icecast_collector.capture_icecast_stream(feed, shutdown):
-            gcs_path = await gcs.upload_audio(wav_chunk, feed, _TEST_BUCKET, 0)
+        async for flac_chunk in icecast_collector.capture_icecast_stream(
+            feed, shutdown
+        ):
+            gcs_path = await gcs.upload_audio(flac_chunk, feed, _TEST_BUCKET, 0)
             break  # Only need first chunk
 
         if gcs_path is None:
@@ -448,24 +438,8 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         object_name = gcs_path.replace(f"gs://{_TEST_BUCKET}/", "")
         downloaded = await self._download_gcs_object(object_name)
 
-        # Parse and verify WAV header
-        hdr = self._parse_wav_header(downloaded)
-        self.assertEqual(hdr["riff"], b"RIFF")
-        self.assertEqual(hdr["wave"], b"WAVE")
-        self.assertEqual(hdr["fmt"], b"fmt ")
-        self.assertEqual(hdr["data_tag"], b"data")
-        self.assertEqual(hdr["audio_format"], 1)  # PCM
-        self.assertEqual(hdr["num_channels"], 1)  # mono
-        self.assertEqual(hdr["sample_rate"], 16000)
-        self.assertEqual(hdr["bits_per_sample"], 16)
-        self.assertEqual(hdr["byte_rate"], 16000 * 1 * 2)  # 32000
-        self.assertEqual(hdr["block_align"], 1 * 2)  # 2
-        self.assertEqual(hdr["data_size"], _BYTES_PER_CHUNK)
-        self.assertEqual(hdr["file_size"], 36 + _BYTES_PER_CHUNK)
-
-        # Verify PCM payload survived roundtrip
-        pcm_payload = downloaded[_WAV_HEADER_SIZE:]
-        self.assertEqual(pcm_payload, pcm_pattern)
+        self.assertEqual(downloaded, expected_segment)
+        self.assertEqual(downloaded[:4], _FLAC_MAGIC)
 
     async def test_missing_stream_url_raises_without_side_effects(self) -> None:
         """Feed without icecast properties -> ValueError, no GCS upload."""
@@ -479,7 +453,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
         shutdown = asyncio.Event()
         with self.assertRaises(ValueError) as ctx:
-            async for _wav_chunk in icecast_collector.capture_icecast_stream(
+            async for _chunk in icecast_collector.capture_icecast_stream(
                 feed,
                 shutdown,
             ):
