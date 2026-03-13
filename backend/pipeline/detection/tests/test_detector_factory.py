@@ -38,9 +38,12 @@ class _AnotherFakeDetector:
 class TestRegister(unittest.TestCase):
     """Tests for DetectorFactory.register / unregister."""
 
+    def setUp(self) -> None:
+        self._saved_registry = DetectorFactory._registry.copy()
+
     def tearDown(self) -> None:
-        DetectorFactory.unregister("fake")
-        DetectorFactory.unregister("another")
+        DetectorFactory._registry.clear()
+        DetectorFactory._registry.update(self._saved_registry)
 
     def test_register_and_lookup(self) -> None:
         DetectorFactory.register("fake", _FakeDetector)
@@ -66,12 +69,13 @@ class TestCreateEnsemble(unittest.TestCase):
     """Tests for DetectorFactory.create_ensemble."""
 
     def setUp(self) -> None:
+        self._saved_registry = DetectorFactory._registry.copy()
         DetectorFactory.register("fake", _FakeDetector)
         DetectorFactory.register("another", _AnotherFakeDetector)
 
     def tearDown(self) -> None:
-        DetectorFactory.unregister("fake")
-        DetectorFactory.unregister("another")
+        DetectorFactory._registry.clear()
+        DetectorFactory._registry.update(self._saved_registry)
 
     def test_returns_detectors_and_combiner(self) -> None:
         config = {"detectors": [{"type": "fake"}]}
@@ -82,13 +86,21 @@ class TestCreateEnsemble(unittest.TestCase):
     def test_kwargs_forwarded(self) -> None:
         config = {"detectors": [{"type": "fake", "threshold": 0.4, "mode": "fast"}]}
         detectors, _ = DetectorFactory.create_ensemble(config)
-        self.assertEqual(detectors[0].kwargs, {"threshold": 0.4, "mode": "fast"})
+        detector = detectors[0]
+        assert isinstance(detector, _FakeDetector)
+        self.assertEqual(detector.kwargs, {"threshold": 0.4, "mode": "fast"})
 
     def test_unknown_detector_type_raises(self) -> None:
         config = {"detectors": [{"type": "unknown"}]}
         with self.assertRaises(KeyError) as ctx:
             DetectorFactory.create_ensemble(config)
         self.assertIn("unknown", str(ctx.exception))
+
+    def test_missing_type_key_raises(self) -> None:
+        config = {"detectors": [{"threshold": 0.4}]}
+        with self.assertRaises(KeyError) as ctx:
+            DetectorFactory.create_ensemble(config)
+        self.assertIn("type", str(ctx.exception))
 
     def test_empty_detectors_list(self) -> None:
         config = {"detectors": []}

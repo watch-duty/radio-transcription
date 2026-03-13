@@ -80,7 +80,10 @@ class DetectorFactory:
 
         for entry in detector_configs:
             entry_copy = {**entry}
-            dtype = entry_copy.pop("type")
+            dtype = entry_copy.pop("type", None)
+            if dtype is None:
+                msg = "Detector config entry missing required 'type' key"
+                raise KeyError(msg)
             if dtype not in cls._registry:
                 msg = f"Unknown detector type: {dtype!r}"
                 raise KeyError(msg)
