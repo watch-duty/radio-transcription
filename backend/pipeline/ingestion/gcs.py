@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 import aiohttp
 from gcloud.aio.storage import Storage
 
+from backend.pipeline.schema_types.sed_metadata_pb2 import SedMetadata
+
 if TYPE_CHECKING:
     from backend.pipeline.storage.feed_store import LeasedFeed
 
@@ -30,6 +32,7 @@ async def upload_audio(
     feed: LeasedFeed,
     bucket: str,
     chunk_seq: int,
+    sed_metadata: SedMetadata | None = None,
 ) -> str:
     """
     Upload an audio chunk to GCS and return the object path.
@@ -42,6 +45,7 @@ async def upload_audio(
         feed: The leased feed this chunk belongs to.
         bucket: GCS bucket name.
         chunk_seq: Monotonically increasing sequence number for this feed.
+        sed_metadata: Optional SED metadata serialized into object metadata.
 
     Returns:
         The full GCS path (``gs://bucket/object``).
@@ -52,7 +56,12 @@ async def upload_audio(
         "%Y%m%dT%H%M%SZ",
     )
     object_name = f"{feed['source_type']}/{feed['id']}/{timestamp}_{chunk_seq}.wav"
-    await storage.upload(bucket, object_name, audio_chunk)
+    upload_kwargs = (
+        {"metadata": sed_metadata.SerializeToString()}
+        if sed_metadata is not None
+        else {}
+    )
+    await storage.upload(bucket, object_name, audio_chunk, **upload_kwargs)
     return f"gs://{bucket}/{object_name}"
 
 

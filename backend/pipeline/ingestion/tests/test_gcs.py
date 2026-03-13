@@ -2,7 +2,10 @@ import unittest
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from google.protobuf.duration_pb2 import Duration
+
 from backend.pipeline.ingestion import gcs
+from backend.pipeline.schema_types.sed_metadata_pb2 import SedMetadata, SoundEvent
 from backend.pipeline.storage.feed_store import LeasedFeed
 
 
@@ -29,6 +32,56 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         # Reset module-level globals
         gcs._session = None
         gcs._storage = None
+
+    @patch("backend.pipeline.ingestion.gcs.Storage")
+    @patch("backend.pipeline.ingestion.gcs.aiohttp.ClientSession")
+    @patch("backend.pipeline.ingestion.gcs.datetime")
+    async def test_upload_audio_with_sed_metadata(
+        self,
+        mock_datetime: MagicMock,
+        mock_session_class: MagicMock,
+        mock_storage_class: MagicMock,
+    ) -> None:
+        """Test upload includes serialized SED metadata when provided."""
+        # Arrange
+        mock_datetime.datetime.now.return_value.strftime.return_value = (
+            "20260305T120000Z"
+        )
+        mock_storage = AsyncMock()
+        mock_storage_class.return_value = mock_storage
+
+        audio_chunk = b"\x00\x01" * 100
+        feed_id = uuid.UUID(int=1234)
+        feed = _make_feed("bcfy_feeds", 1234)
+        bucket = "test-bucket"
+        chunk_seq = 42
+        sound_event = SoundEvent(
+            start_time=Duration(seconds=1, nanos=500_000_000),
+            duration=Duration(seconds=2),
+        )
+        sed_metadata = SedMetadata(source_chunk_id="chunk-123")
+        sed_metadata.sound_events.append(sound_event)
+
+        # Act
+        result = await gcs.upload_audio(
+            audio_chunk,
+            feed,
+            bucket,
+            chunk_seq,
+            sed_metadata=sed_metadata,
+        )
+
+        # Assert
+        expected_object_name = f"bcfy_feeds/{feed_id}/20260305T120000Z_42.wav"
+        expected_path = f"gs://{bucket}/{expected_object_name}"
+
+        mock_storage.upload.assert_called_once_with(
+            bucket,
+            expected_object_name,
+            audio_chunk,
+            metadata=sed_metadata.SerializeToString(),
+        )
+        self.assertEqual(result, expected_path)
 
     @patch("backend.pipeline.ingestion.gcs.Storage")
     @patch("backend.pipeline.ingestion.gcs.aiohttp.ClientSession")
