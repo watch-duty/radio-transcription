@@ -14,8 +14,8 @@ from apache_beam.options.pipeline_options import PipelineOptions, StandardOption
 
 from backend.pipeline.transcription.constants import (
     DEAD_LETTER_QUEUE_TAG,
-    DEFAULT_SIGNIFICANT_GAP_SEC,
-    DEFAULT_STALE_TIMEOUT_SEC,
+    DEFAULT_SIGNIFICANT_GAP_MS,
+    DEFAULT_STALE_TIMEOUT_MS,
     MAIN_TAG,
 )
 from backend.pipeline.transcription.datatypes import StitchAndTranscribeConfig
@@ -62,10 +62,10 @@ def get_pipeline(
                 vad_config=options.vad_config,
                 metrics_exporter_type=options.metrics_exporter_type,
                 metrics_config=options.metrics_config,
-                significant_gap_sec=options.significant_gap_sec
-                or DEFAULT_SIGNIFICANT_GAP_SEC,
-                stale_timeout_sec=options.stale_timeout_sec
-                or DEFAULT_STALE_TIMEOUT_SEC,
+                significant_gap_ms=options.significant_gap_ms
+                or DEFAULT_SIGNIFICANT_GAP_MS,
+                stale_timeout_ms=options.stale_timeout_ms
+                or DEFAULT_STALE_TIMEOUT_MS,
             )
         )
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)

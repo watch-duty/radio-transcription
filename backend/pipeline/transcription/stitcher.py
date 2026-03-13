@@ -371,8 +371,8 @@ class StitchAndTranscribeFn(beam.DoFn):
             return
 
         expected_stale_deadline = (
-            ctx.transmission_start_time_ms / MS_PER_SECOND
-        ) + self.config.stale_timeout_sec
+            ctx.transmission_start_time_ms + self.config.stale_timeout_ms
+        ) / MS_PER_SECOND
         if state.stale_timer is not None:
             state.stale_timer.set(Timestamp(seconds=expected_stale_deadline))
 
@@ -458,7 +458,7 @@ class StitchAndTranscribeFn(beam.DoFn):
         is_significant_gap = (
             ctx.last_segment_end_time_ms
             and (chunk_start_ms - ctx.last_segment_end_time_ms)
-            >= self.config.significant_gap_sec * MS_PER_SECOND
+            >= self.config.significant_gap_ms
         )
 
         if is_significant_gap and ctx.current_buffer:
@@ -501,8 +501,8 @@ class StitchAndTranscribeFn(beam.DoFn):
             transmission_start_time_ms = state.stale_start_time.read()
             if transmission_start_time_ms:
                 expected_stale_deadline = (
-                    transmission_start_time_ms / MS_PER_SECOND
-                ) + self.config.stale_timeout_sec
+                    transmission_start_time_ms + self.config.stale_timeout_ms
+                ) / MS_PER_SECOND
                 if state.stale_timer is not None:
                     state.stale_timer.set(Timestamp(seconds=expected_stale_deadline))
 

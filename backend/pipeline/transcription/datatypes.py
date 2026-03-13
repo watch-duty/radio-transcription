@@ -80,8 +80,8 @@ class StitchAndTranscribeConfig:
     vad_config: str
     metrics_exporter_type: str
     metrics_config: str
-    significant_gap_sec: float
-    stale_timeout_sec: float
+    significant_gap_ms: int
+    stale_timeout_ms: int
 
 
 @dataclass(frozen=True)

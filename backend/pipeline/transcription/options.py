@@ -3,8 +3,8 @@ import argparse
 from apache_beam.options.pipeline_options import PipelineOptions
 
 from backend.pipeline.transcription.constants import (
-    DEFAULT_SIGNIFICANT_GAP_SEC,
-    DEFAULT_STALE_TIMEOUT_SEC,
+    DEFAULT_SIGNIFICANT_GAP_MS,
+    DEFAULT_STALE_TIMEOUT_MS,
 )
 from backend.pipeline.transcription.enums import (
     MetricsExporterType,
@@ -73,14 +73,14 @@ class TranscriptionOptions(PipelineOptions):
             help="JSON string of metrics-specific configuration.",
         )
         parser.add_argument(
-            "--significant_gap_sec",
-            type=float,
-            default=DEFAULT_SIGNIFICANT_GAP_SEC,
+            "--significant_gap_ms",
+            type=int,
+            default=DEFAULT_SIGNIFICANT_GAP_MS,
             help="Silence gap required to flush a transmission.",
         )
         parser.add_argument(
-            "--stale_timeout_sec",
-            type=float,
-            default=DEFAULT_STALE_TIMEOUT_SEC,
-            help="Seconds before an incomplete transmission is flushed.",
+            "--stale_timeout_ms",
+            type=int,
+            default=DEFAULT_STALE_TIMEOUT_MS,
+            help="Milliseconds before an incomplete transmission is flushed.",
         )
