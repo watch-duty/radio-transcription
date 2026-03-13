@@ -52,7 +52,7 @@ export ICECAST_LOCAL_OUTPUT_DIR="/tmp/audio_chunks"
 cat <<EOF > backend/pipeline/ingestion/collectors/.icecast_env
 BROADCASTIFY_USERNAME=<your broadcastify username>
 BROADCASTIFY_PASSWORD=<your broadcastify pword>
-FINAL_STAGING_BUCKET=wd-radio-test
+AUDIO_STAGING_BUCKET=wd-radio-test
 EOF
 
 docker build -t "icecast" -f backend/pipeline/ingestion/collectors/Dockerfile .
