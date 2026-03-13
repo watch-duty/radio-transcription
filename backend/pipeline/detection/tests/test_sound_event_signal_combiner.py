@@ -6,11 +6,10 @@ from backend.pipeline.detection.sound_event_signal_combiner import (
 from backend.pipeline.detection.types import DetectionResult, SpeechRegion
 
 
-def _region(start, end, confidence=0.8, detector_type="vad"):
+def _region(start, end, detector_type="vad"):
     return SpeechRegion(
         start_sec=start,
         end_sec=end,
-        confidence=confidence,
         detector_type=detector_type,
     )
 
@@ -61,15 +60,14 @@ class TestCombineSingleDetector(unittest.TestCase):
     def test_overlapping_regions_merge(self) -> None:
         result = _result(
             [
-                _region(0.0, 1.0, confidence=0.7),
-                _region(0.5, 1.5, confidence=0.9),
+                _region(0.0, 1.0),
+                _region(0.5, 1.5),
             ]
         )
         combined = self.combiner.combine([result])
         self.assertEqual(len(combined.speech_regions), 1)
         self.assertEqual(combined.speech_regions[0].start_sec, 0.0)
         self.assertEqual(combined.speech_regions[0].end_sec, 1.5)
-        self.assertEqual(combined.speech_regions[0].confidence, 0.9)
 
     def test_non_overlapping_stay_separate(self) -> None:
         result = _result(
@@ -100,11 +98,11 @@ class TestCombineMultipleDetectors(unittest.TestCase):
 
     def test_overlapping_from_different_detectors_merge(self) -> None:
         r1 = _result(
-            [_region(0.0, 1.0, confidence=0.6, detector_type="vad")],
+            [_region(0.0, 1.0, detector_type="vad")],
             detector_type="vad",
         )
         r2 = _result(
-            [_region(0.5, 1.5, confidence=0.9, detector_type="energy")],
+            [_region(0.5, 1.5, detector_type="energy")],
             detector_type="energy",
         )
         combined = self.combiner.combine([r1, r2])
@@ -112,7 +110,6 @@ class TestCombineMultipleDetectors(unittest.TestCase):
         region = combined.speech_regions[0]
         self.assertEqual(region.start_sec, 0.0)
         self.assertEqual(region.end_sec, 1.5)
-        self.assertEqual(region.confidence, 0.9)
         self.assertEqual(region.detector_type, "energy,vad")
 
     def test_chain_merge(self) -> None:
@@ -124,16 +121,6 @@ class TestCombineMultipleDetectors(unittest.TestCase):
         self.assertEqual(len(combined.speech_regions), 1)
         self.assertEqual(combined.speech_regions[0].start_sec, 0.0)
         self.assertEqual(combined.speech_regions[0].end_sec, 3.0)
-
-    def test_max_confidence(self) -> None:
-        r1 = _result(
-            [_region(0.0, 1.0, confidence=0.6, detector_type="a")], detector_type="a"
-        )
-        r2 = _result(
-            [_region(0.5, 1.5, confidence=0.9, detector_type="b")], detector_type="b"
-        )
-        combined = self.combiner.combine([r1, r2])
-        self.assertEqual(combined.speech_regions[0].confidence, 0.9)
 
     def test_detector_type_comma_joined_sorted(self) -> None:
         r1 = _result([_region(0.0, 1.0, detector_type="zebra")], detector_type="zebra")
@@ -158,17 +145,12 @@ class TestCombineEdgeCases(unittest.TestCase):
 
     def test_contained_region(self) -> None:
         """A region fully contained in another merges into the outer."""
-        r1 = _result(
-            [_region(0.0, 3.0, confidence=0.7, detector_type="a")], detector_type="a"
-        )
-        r2 = _result(
-            [_region(1.0, 2.0, confidence=0.9, detector_type="b")], detector_type="b"
-        )
+        r1 = _result([_region(0.0, 3.0, detector_type="a")], detector_type="a")
+        r2 = _result([_region(1.0, 2.0, detector_type="b")], detector_type="b")
         combined = self.combiner.combine([r1, r2])
         self.assertEqual(len(combined.speech_regions), 1)
         self.assertEqual(combined.speech_regions[0].start_sec, 0.0)
         self.assertEqual(combined.speech_regions[0].end_sec, 3.0)
-        self.assertEqual(combined.speech_regions[0].confidence, 0.9)
 
     def test_touching_regions_merge(self) -> None:
         """Regions that touch exactly (start == end) merge."""

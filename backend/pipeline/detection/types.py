@@ -11,7 +11,6 @@ class SpeechRegion:
     Attributes:
         start_sec: Start of the region in seconds from the audio window start.
         end_sec: End of the region in seconds from the audio window start.
-        confidence: Detection confidence in the range [0.0, 1.0].
         detector_type: Identifier of the detector(s) that produced this region.
             For regions produced by a single detector this matches the
             detector's ``detector_type`` property.  After merging by the
@@ -22,7 +21,6 @@ class SpeechRegion:
 
     start_sec: float
     end_sec: float
-    confidence: float
     detector_type: str
 
     def __post_init__(self) -> None:
@@ -31,9 +29,6 @@ class SpeechRegion:
             raise ValueError(msg)
         if self.end_sec < self.start_sec:
             msg = f"end_sec ({self.end_sec}) must be >= start_sec ({self.start_sec})"
-            raise ValueError(msg)
-        if not 0.0 <= self.confidence <= 1.0:
-            msg = f"confidence must be in [0.0, 1.0], got {self.confidence}"
             raise ValueError(msg)
         if not self.detector_type:
             msg = "detector_type must be non-empty"
