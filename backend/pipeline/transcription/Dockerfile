@@ -12,17 +12,23 @@ RUN apt-get update && \
 COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
-COPY backend/pipeline/transcription/pyproject.toml ./backend/pipeline/transcription/pyproject.toml
+# We intentionally copy the entire backend/ directory before running uv sync.
+# This ensures that ALL workspace sub-projects (e.g. transcription, ingestion) have
+# their corresponding pyproject.toml files present. Without this, uv cannot resolve
+# the local workspace dependencies defined in the root pyproject.toml.
+COPY backend/ ./backend/
 
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev && uv pip install grpcio-tools
 
-# Copy the actual code to resolve local packages
-COPY backend/__init__.py ./backend/__init__.py
-COPY backend/pipeline/__init__.py ./backend/pipeline/__init__.py
-COPY backend/pipeline/transcription/ ./backend/pipeline/transcription/
+COPY protos/ ./protos
+
+# Create the directory for the generated files
+RUN mkdir -p ./backend/pipeline/schema_types
+RUN touch ./backend/pipeline/schema_types/__init__.py
+RUN python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto
 
 # Set the entrypoint to the Beam worker harness
 ENTRYPOINT ["/opt/apache/beam/boot"]
