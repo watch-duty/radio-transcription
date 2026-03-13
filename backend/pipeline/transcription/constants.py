@@ -5,8 +5,8 @@ Constants shared across the pipeline and tests.
 DEAD_LETTER_QUEUE_TAG = "transcription_dlq"
 
 # Pipeline Defaults
-DEFAULT_SIGNIFICANT_GAP_SEC = 0.5
-DEFAULT_STALE_TIMEOUT_SEC = 60.0
+DEFAULT_SIGNIFICANT_GAP_MS = 500
+DEFAULT_STALE_TIMEOUT_MS = 60000
 MAIN_TAG = "main"
 
 # Time Conversions

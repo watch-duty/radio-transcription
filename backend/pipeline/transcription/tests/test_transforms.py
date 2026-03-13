@@ -69,8 +69,8 @@ def get_test_config(**kwargs: Any) -> StitchAndTranscribeConfig:
         "vad_config": "{}",
         "metrics_exporter_type": "",
         "metrics_config": "{}",
-        "significant_gap_sec": 0.5,
-        "stale_timeout_sec": 60.0,
+        "significant_gap_ms": 500,
+        "stale_timeout_ms": 60000,
     }
     defaults.update(kwargs)
     return StitchAndTranscribeConfig(**defaults)  # type: ignore
@@ -197,7 +197,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
         options = PipelineOptions()
         options.view_as(StandardOptions).streaming = True
 
-        config = get_test_config(significant_gap_sec=3.0)
+        config = get_test_config(significant_gap_ms=3000)
 
         with BeamTestPipeline(options=options) as p:
             test_stream = (
@@ -541,7 +541,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
         options = PipelineOptions()
         options.view_as(StandardOptions).streaming = True
 
-        config = get_test_config(significant_gap_sec=2.0)
+        config = get_test_config(significant_gap_ms=2000)
 
         with BeamTestPipeline(options=options) as p:
             test_stream = (
