@@ -54,13 +54,13 @@ class ParseAndKeyFn(beam.DoFn):
 
 class AddEventTimestamp(beam.DoFn):
     """
-    Extracts the event timestamp directly from the `AudioChunk` protobuf 
+    Extracts the event timestamp directly from the `AudioChunk` protobuf
     and assigns it as the Beam windowing `TimestampedValue`, yielding the GCS URI.
 
     Why this matters:
     Streaming pipelines differentiate between "Processing Time" (when the worker
     sees the data) and "Event Time" (when the data actually occurred). By explicitly
-    assigning the hardware Event Time here, we ensure that Beam logic (like Watermarks and 
+    assigning the hardware Event Time here, we ensure that Beam logic (like Watermarks and
     Timers) accurately respects the true chronological ordering of the audio,
     even if messages arrive out-of-order or are delayed by network partitions.
     """
@@ -92,6 +92,7 @@ class AddEventTimestamp(beam.DoFn):
 
         yield window.TimestampedValue((feed_id, chunk_proto.gcs_uri), timestamp_sec)
 
+
 class SerializeToPubSubMessageFn(beam.DoFn):
     """
     Converts a `TranscriptionResult` dataclass into a serialized `TranscribedAudio` Protobuf payload
@@ -102,7 +103,9 @@ class SerializeToPubSubMessageFn(beam.DoFn):
         self, element: TranscriptionResult, *args: Any, **kwargs: Any
     ) -> Generator[PubsubMessage, None, None]:
         # Create a deterministic UUID using uuid5 so that Beam retries produce the exact same ID
-        deterministic_id_string = f"{element.feed_id}_{element.start_ms}_{element.end_ms}"
+        deterministic_id_string = (
+            f"{element.feed_id}_{element.start_ms}_{element.end_ms}"
+        )
         deterministic_uuid = uuid.uuid5(uuid.NAMESPACE_OID, deterministic_id_string)
 
         proto = TranscribedAudio(

@@ -25,7 +25,6 @@ class AudioChunkData:
     speech_segments: list[TimeRange]
 
 
-
 @dataclass(frozen=True)
 class TranscriptionResult:
     """Picklable dataclass to hold intermediate transcription results before Protobuf serialization."""
@@ -68,6 +67,7 @@ class ChunkContext:
     last_segment_end_time_ms: int
     transmission_start_time_ms: int | None
     chunk_start_ms: int
+
 
 @dataclass(frozen=True)
 class StitchAndTranscribeConfig:

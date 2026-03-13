@@ -43,9 +43,7 @@ class AudioProcessor:
         self.vad = get_vad_plugin(self.vad_type, self.vad_config)
         self.gcs_client = get_gcs_client()
 
-    def download_audio_and_sed(
-        self, gcs_path: str
-    ) -> AudioChunkData:
+    def download_audio_and_sed(self, gcs_path: str) -> AudioChunkData:
         """Downloads FLAC bytes and SED metadata from GCS, returning an AudioChunkData."""
         if not self.gcs_client:
             msg = "GCS client not initialized. Call setup() first."

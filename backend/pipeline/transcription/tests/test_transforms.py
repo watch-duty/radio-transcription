@@ -107,8 +107,8 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
         """Test that missing feed_id routes to DLQ."""
         chunk = AudioChunk(gcs_uri="gs://test-bucket/path/to/test.flac")
         mock_msg = PubsubMessage(
-            chunk.SerializeToString(), 
-            {} # Missing feed_id
+            chunk.SerializeToString(),
+            {},  # Missing feed_id
         )
         with BeamTestPipeline() as p:
             messages = p | beam.Create([mock_msg])
@@ -129,7 +129,9 @@ class AddEventTimestampTest(unittest.TestCase):
 
     def test_valid_timestamp_extraction(self) -> None:
         """Test successful timestamp extraction."""
-        chunk = AudioChunk(gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-uuid1.flac")
+        chunk = AudioChunk(
+            gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-uuid1.flac"
+        )
         chunk.start_timestamp.FromMicroseconds(1678886400000000)
         element = ("test-feed", chunk.SerializeToString())
         fn = AddEventTimestamp()
@@ -138,21 +140,23 @@ class AddEventTimestampTest(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertIsInstance(result[0], TimestampedValue)
         self.assertEqual(
-            result[0].value, # type: ignore
+            result[0].value,  # type: ignore
             ("test-feed", "gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-uuid1.flac"),
         )
-        self.assertEqual(result[0].timestamp, 1678886400) # type: ignore
+        self.assertEqual(result[0].timestamp, 1678886400)  # type: ignore
 
     def test_invalid_timestamp_raises_value_error(self) -> None:
         """Test invalid timestamp routes to DLQ."""
-        chunk = AudioChunk(gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/invalid-uuid1.flac")
+        chunk = AudioChunk(
+            gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/invalid-uuid1.flac"
+        )
         element = ("test-feed", chunk.SerializeToString())
         fn = AddEventTimestamp()
 
         result = list(fn.process(element))
         self.assertEqual(len(result), 1)
         self.assertIsInstance(result[0], beam.pvalue.TaggedOutput)
-        self.assertEqual(result[0].tag, DEAD_LETTER_QUEUE_TAG) # type: ignore
+        self.assertEqual(result[0].tag, DEAD_LETTER_QUEUE_TAG)  # type: ignore
 
 
 class StitchAndTranscribeTest(unittest.TestCase):
@@ -182,7 +186,10 @@ class StitchAndTranscribeTest(unittest.TestCase):
             return AudioChunkData(
                 start_ms=int(chunk_start * 1000),
                 audio=AudioSegment.silent(duration=20000),
-                speech_segments=[TimeRange(int(s * 1000), int(e * 1000)) for s, e in sed_map.get(filename, [])]
+                speech_segments=[
+                    TimeRange(int(s * 1000), int(e * 1000))
+                    for s, e in sed_map.get(filename, [])
+                ],
             )
 
         mock_processor_inst.download_audio_and_sed.side_effect = mock_download
@@ -272,6 +279,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
                     )
                 ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
             )
+
             def assert_transcripts(elements: list[TranscriptionResult]) -> None:
                 assert len(elements) == 2, (
                     f"Expected 2 transcripts, got {len(elements)}: {elements}"
@@ -280,9 +288,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
                 assert {"uuid_starts", "uuid_completes_contains"} in uuids_list
                 assert {"uuid_silent", "uuid_starts_again"} in uuids_list
 
-            assert_that(
-                results.main, assert_transcripts, label="CheckMainTranscripts"
-            )
+            assert_that(results.main, assert_transcripts, label="CheckMainTranscripts")
 
     @unittest.skip("DirectRunner timer advancing is buggy and unsupported natively.")
     @patch("backend.pipeline.transcription.stitcher.time")
@@ -375,12 +381,12 @@ class StitchAndTranscribeTest(unittest.TestCase):
                 return AudioChunkData(
                     start_ms=int(chunk_start * 1000),
                     audio=AudioSegment.silent(duration=500),
-                    speech_segments=[]
+                    speech_segments=[],
                 )
             return AudioChunkData(
                 start_ms=int(chunk_start * 1000),
                 audio=AudioSegment.silent(duration=500),
-                speech_segments=[TimeRange(0, 1000)]
+                speech_segments=[TimeRange(0, 1000)],
             )
 
         mock_processor_inst.download_audio_and_sed.side_effect = mock_download
@@ -508,7 +514,9 @@ class StitchAndTranscribeTest(unittest.TestCase):
                 time.sleep(0.1)
                 return "Mock Output"
 
-        def tracking_factory(t_type: TranscriberType, p_id: str, cfg: str) -> Transcriber:
+        def tracking_factory(
+            t_type: TranscriberType, p_id: str, cfg: str
+        ) -> Transcriber:
             return MockTrackingTranscriber()
 
         mock_processor_inst = mock_audio_processor.return_value
@@ -521,9 +529,9 @@ class StitchAndTranscribeTest(unittest.TestCase):
             filename = path.rsplit("/", maxsplit=1)[-1]
             chunk_start = float(filename.split("-")[0]) if "-" in filename else 0.0
             return AudioChunkData(
-                start_ms=int(chunk_start * 100000), # 100s apart to force flushes
+                start_ms=int(chunk_start * 100000),  # 100s apart to force flushes
                 audio=AudioSegment.silent(duration=1000),
-                speech_segments=[TimeRange(0, 1000)]
+                speech_segments=[TimeRange(0, 1000)],
             )
 
         mock_processor_inst.download_audio_and_sed.side_effect = mock_download
@@ -549,7 +557,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
                         TimestampedValue(("feed-123", "gs://b/0.0-uuid1.flac"), 0),
                     ]
                 )
-                .advance_watermark_to(5) # create gap
+                .advance_watermark_to(5)  # create gap
                 .add_elements(
                     [
                         TimestampedValue(("feed-123", "gs://b/5.0-uuid2.flac"), 5),

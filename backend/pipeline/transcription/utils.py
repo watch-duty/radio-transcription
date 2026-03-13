@@ -23,6 +23,7 @@ from backend.pipeline.transcription.datatypes import TimeRange
 
 logger = logging.getLogger(__name__)
 
+
 def get_gcs_client() -> storage.Client:
     """Initialize and return a GCS Client."""
     return storage.Client()
@@ -50,7 +51,9 @@ def read_sed_segments_from_blob(
     sed_metadata.ParseFromString(metadata_bytes)
 
     if not sed_metadata.HasField("start_timestamp"):
-        err_msg = f"SED metadata missing required 'start_timestamp' on blob: {blob.name}"
+        err_msg = (
+            f"SED metadata missing required 'start_timestamp' on blob: {blob.name}"
+        )
         logger.error(err_msg)
         raise ValueError(err_msg)
 
@@ -66,12 +69,19 @@ def read_sed_segments_from_blob(
             logger.error(err_msg)
             raise ValueError(err_msg)
         if not seg.HasField("duration"):
-            err_msg = f"SED metadata sound event {i} missing 'duration' on blob: {blob.name}"
+            err_msg = (
+                f"SED metadata sound event {i} missing 'duration' on blob: {blob.name}"
+            )
             logger.error(err_msg)
             raise ValueError(err_msg)
 
-        start_ms = seg.start_time.seconds * MS_PER_SECOND + seg.start_time.nanos // NANOS_PER_MS
-        duration_ms = seg.duration.seconds * MS_PER_SECOND + seg.duration.nanos // NANOS_PER_MS
+        start_ms = (
+            seg.start_time.seconds * MS_PER_SECOND
+            + seg.start_time.nanos // NANOS_PER_MS
+        )
+        duration_ms = (
+            seg.duration.seconds * MS_PER_SECOND + seg.duration.nanos // NANOS_PER_MS
+        )
         segments.append(TimeRange(start_ms=start_ms, end_ms=start_ms + duration_ms))
 
     return chunk_start_ms, segments
@@ -91,6 +101,8 @@ class JsonConfigMixin:
             filtered_dict = {k: v for k, v in config_dict.items() if k in valid_keys}
             return cls(**filtered_dict)
         except json.JSONDecodeError as e:
-            logger.exception("Failed to parse config JSON for %s: %s", cls.__name__, json_str)
+            logger.exception(
+                "Failed to parse config JSON for %s: %s", cls.__name__, json_str
+            )
             msg = f"Invalid config JSON for {cls.__name__}: {e}"
             raise ValueError(msg) from e
