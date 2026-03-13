@@ -67,17 +67,12 @@ class GoogleChirpV3Transcriber(Transcriber):
 
     def __init__(self, project_id: str, config_json: str) -> None:
         self.project_id = project_id
-        # We hold the raw string in __init__ because Apache Beam pickles this object
-        # to send it to workers. We will parse it in setup().
         self.config_json = config_json
 
-        # We don't initialize SpeechClient in __init__ because the object
-        # must be pickled by Apache Beam to distribute to workers.
         self.client: SpeechClient | None = None
         self.config: ChirpConfig | None = None
 
     def setup(self) -> None:
-        """Initializes the SpeechClient and parses the config locally on the worker node."""
         self.client = SpeechClient()
         self.config = ChirpConfig.from_json(self.config_json)
 
