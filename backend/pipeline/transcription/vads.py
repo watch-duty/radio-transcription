@@ -7,14 +7,19 @@ from being sent to the expensive transcription APIs.
 """
 
 import abc
-import json
 import logging
 from dataclasses import dataclass
-from typing import Any, cast
 
+import numpy as np
 import ten_vad
 
+from backend.pipeline.transcription.constants import (
+    DEFAULT_TENVAD_HOP_SIZE,
+    DEFAULT_TENVAD_MIN_SPEECH_SEC,
+    DEFAULT_TENVAD_THRESHOLD,
+)
 from backend.pipeline.transcription.enums import VadType
+from backend.pipeline.transcription.utils import JsonConfigMixin
 
 logger = logging.getLogger(__name__)
 
@@ -41,32 +46,22 @@ class VoiceActivityDetector(abc.ABC):
 
 
 @dataclass(frozen=True)
-class TenVadConfig:
+class TenVadConfig(JsonConfigMixin):
     """Strongly typed configuration for the TenVAD plugin."""
 
     # VAD tuning parameters
-    threshold: float = 0.5
-    hop_size: int = 256
-
-    @classmethod
-    def from_json(cls, json_str: str) -> "TenVadConfig":
-        if not json_str:
-            return cls()
-        try:
-            config_dict = json.loads(json_str)
-            valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
-            filtered_dict = {k: v for k, v in config_dict.items() if k in valid_keys}
-            return cls(**filtered_dict)
-        except json.JSONDecodeError as e:
-            logger.exception("Failed to parse vad_config JSON: %s", json_str)
-            msg = f"Invalid vad_config JSON: {e}"
-            raise ValueError(msg) from e
+    threshold: float = DEFAULT_TENVAD_THRESHOLD
+    hop_size: int = DEFAULT_TENVAD_HOP_SIZE
+    min_speech_sec: float = DEFAULT_TENVAD_MIN_SPEECH_SEC
 
 
 class TenVadPlugin(VoiceActivityDetector):
     """
     VAD Plugin utilizing the local `ten_vad` library.
     """
+
+    config: TenVadConfig
+    vad: ten_vad.TenVad
 
     def setup(self, config_json: str) -> None:
 
@@ -81,11 +76,36 @@ class TenVadPlugin(VoiceActivityDetector):
         )
 
     def evaluate(self, audio_data: bytes, sample_rate: int) -> bool:
-        # ten_vad evaluate returns a list of dictionaries with speech segments:
-        # {'start': 0.1, 'end': 0.5}, ...]
-        vad_instance = cast("Any", self.vad)
-        results = vad_instance.evaluate(audio_data, sample_rate=sample_rate)
-        return bool(results)
+        # Convert raw PCM bytes to int16 numpy array
+        audio_array = np.frombuffer(audio_data, dtype=np.int16)
+
+        speech_frames = 0
+        hop_size = self.config.hop_size
+
+        for i in range(0, len(audio_array), hop_size):
+            chunk = audio_array[i : i + hop_size]
+            if len(chunk) < hop_size:
+                # Pad the last chunk with zeros if necessary
+                padded_chunk = np.zeros(hop_size, dtype=np.int16)
+                padded_chunk[: len(chunk)] = chunk
+                chunk = padded_chunk
+
+            prob, _flags = self.vad.process(chunk)
+
+            if prob >= self.config.threshold:
+                speech_frames += 1
+
+        total_speech_sec = (speech_frames * hop_size) / sample_rate
+
+        if total_speech_sec < self.config.min_speech_sec:
+            logger.info(
+                "TenVAD detected %.3fs speech, below %.3fs threshold. Discarding.",
+                total_speech_sec,
+                self.config.min_speech_sec,
+            )
+            return False
+
+        return True
 
 
 def get_vad_plugin(vad_type: VadType, vad_config: str) -> VoiceActivityDetector:

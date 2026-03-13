@@ -18,13 +18,13 @@ from backend.pipeline.transcription.constants import (
     DEFAULT_STALE_TIMEOUT_SEC,
     MAIN_TAG,
 )
+from backend.pipeline.transcription.datatypes import StitchAndTranscribeConfig
 from backend.pipeline.transcription.options import TranscriptionOptions
+from backend.pipeline.transcription.stitcher import StitchAndTranscribeFn
 from backend.pipeline.transcription.transforms import (
     AddEventTimestamp,
     ParseAndKeyFn,
     SerializeToPubSubMessageFn,
-    StitchAndTranscribeConfig,
-    StitchAndTranscribeFn,
 )
 
 logger = logging.getLogger(__name__)
