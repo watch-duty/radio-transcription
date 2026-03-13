@@ -1,4 +1,4 @@
-FROM apache/beam_python3.12_sdk:2.56.0
+FROM apache/beam_python312_sdk:2.56.0
 
 # 1. Install ffmpeg and libomp5
 USER root
