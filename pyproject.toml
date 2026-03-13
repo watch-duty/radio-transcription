@@ -209,3 +209,4 @@ exclude = ["model/"]
 [tool.pyright]
 pythonVersion = "3.12"
 
+
