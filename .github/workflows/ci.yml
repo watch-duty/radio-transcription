@@ -111,10 +111,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 100
-      - name: Install ffmpeg (needed for pydub tests)
+      - name: Install system dependencies (ffmpeg for pydub, libomp5 for TenVAD)
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg libomp5
       - name: Install mise, install tools
         # mise installs uv and other project-specific tools. see: .tool-versions
         uses: jdx/mise-action@v3
