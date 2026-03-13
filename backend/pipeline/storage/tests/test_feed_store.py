@@ -1,38 +1,17 @@
 from __future__ import annotations
 
+import datetime
 import unittest
 import uuid
 from unittest import mock
 
-from backend.pipeline.storage.feed_store import FeedStore, LeasedFeed
-
-
-def _make_cursor(
-    *,
-    fetchone_result: dict | tuple | None = None,
-    rowcount: int = 0,
-) -> mock.MagicMock:
-    """Create a mock cursor with the given fetch/rowcount behaviour."""
-    cursor = mock.MagicMock()
-    cursor.fetchone.return_value = fetchone_result
-    cursor.rowcount = rowcount
-    return cursor
-
-
-def _make_conn(cursor: mock.MagicMock) -> mock.MagicMock:
-    """Create a mock connection whose ``cursor()`` returns *cursor*."""
-    conn = mock.MagicMock()
-    cursor.__enter__ = mock.Mock(return_value=cursor)
-    cursor.__exit__ = mock.Mock(return_value=False)
-    conn.cursor.return_value = cursor
-    return conn
-
+from backend.pipeline.storage.feed_store import FeedStore, HeartbeatResult, LeasedFeed
 
 _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 _FEED_ID_B = uuid.UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
 _WORKER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 
-_LEASE_ROW: dict = {
+_LEASE_ROW = {
     "id": _FEED_ID,
     "name": "My Feed",
     "source_type": "bcfy_feeds",
@@ -41,16 +20,29 @@ _LEASE_ROW: dict = {
 }
 
 
-class TestLeaseFeed(unittest.TestCase):
+def _make_pool(
+    *,
+    fetchrow_result: dict | None = None,
+    execute_result: str = "UPDATE 0",
+    fetch_result: list | None = None,
+) -> mock.AsyncMock:
+    """Create a mock asyncpg.Pool with the given return values."""
+    pool = mock.AsyncMock()
+    pool.fetchrow.return_value = fetchrow_result
+    pool.execute.return_value = execute_result
+    pool.fetch.return_value = fetch_result or []
+    return pool
+
+
+class TestLeaseFeed(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.lease_feed."""
 
-    def test_returns_feed_when_available(self) -> None:
+    async def test_returns_feed_when_available(self) -> None:
         """A leased feed is returned as a LeasedFeed dict."""
-        cursor = _make_cursor(fetchone_result=_LEASE_ROW)
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
+        pool = _make_pool(fetchrow_result=_LEASE_ROW)
+        store = FeedStore(pool)
 
-        result = store.lease_feed(_WORKER_ID)
+        result = await store.lease_feed(_WORKER_ID)
 
         expected: LeasedFeed = {
             "id": _FEED_ID,
@@ -61,379 +53,317 @@ class TestLeaseFeed(unittest.TestCase):
         }
         self.assertEqual(result, expected)
 
-    def test_returns_none_when_no_feed_available(self) -> None:
+    async def test_returns_none_when_no_feed_available(self) -> None:
         """None is returned when no feed can be leased."""
-        cursor = _make_cursor(fetchone_result=None)
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
+        pool = _make_pool(fetchrow_result=None)
+        store = FeedStore(pool)
 
-        result = store.lease_feed(_WORKER_ID)
+        result = await store.lease_feed(_WORKER_ID)
 
         self.assertIsNone(result)
 
-    def test_passes_worker_id_as_parameter(self) -> None:
-        """The worker_id is passed as a string parameter to the query."""
-        cursor = _make_cursor(fetchone_result=None)
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
+    async def test_passes_worker_id_as_parameter(self) -> None:
+        """The worker_id is passed as a parameter to the query."""
+        pool = _make_pool(fetchrow_result=None)
+        store = FeedStore(pool)
 
-        store.lease_feed(_WORKER_ID)
+        await store.lease_feed(_WORKER_ID)
 
-        args = cursor.execute.call_args
-        self.assertEqual(args[0][1], (_WORKER_ID,))
-
-    def test_commits_on_success(self) -> None:
-        """The transaction is committed after a successful lease."""
-        cursor = _make_cursor(fetchone_result=None)
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
-
-        store.lease_feed(_WORKER_ID)
-
-        conn.transaction.assert_called_once()
-        tx_mock = conn.transaction.return_value
-        tx_mock.__enter__.assert_called_once()
-        tx_mock.__exit__.assert_called_once()
-
-    def test_rolls_back_and_reraises_on_error(self) -> None:
-        """The transaction is rolled back and the exception re-raised on failure."""
-        cursor = _make_cursor()
-        cursor.execute.side_effect = RuntimeError("db error")
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
-
-        with self.assertRaises(RuntimeError):
-            store.lease_feed(_WORKER_ID)
-
-        conn.transaction.assert_called_once()
-        tx_mock = conn.transaction.return_value
-        tx_mock.__exit__.assert_called_once()
-        args = tx_mock.__exit__.call_args[0]
-        self.assertEqual(args[0], RuntimeError)
-
-    def test_cursor_is_closed(self) -> None:
-        """The cursor is always closed, even on error."""
-        cursor = _make_cursor()
-        cursor.execute.side_effect = RuntimeError("db error")
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
-
-        with self.assertRaises(RuntimeError):
-            store.lease_feed(_WORKER_ID)
-
-        cursor.__exit__.assert_called_once()
+        args = pool.fetchrow.call_args
+        self.assertEqual(args[0][1], _WORKER_ID)
 
 
-class TestUpdateFeedProgress(unittest.TestCase):
+class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.update_feed_progress."""
 
-    def test_returns_true_when_lease_held(self) -> None:
+    async def test_returns_true_when_lease_held(self) -> None:
         """True is returned when the fenced update succeeds."""
-        cursor = _make_cursor(rowcount=1)
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
+        pool = _make_pool(execute_result="UPDATE 1")
+        store = FeedStore(pool)
 
-        result = store.update_feed_progress(
-            _FEED_ID, _WORKER_ID, "gs://bucket/path/file.ogg"
+        result = await store.update_feed_progress(
+            _FEED_ID,
+            _WORKER_ID,
+            "gs://bucket/path/file.ogg",
         )
 
         self.assertTrue(result)
 
-    def test_returns_false_when_lease_lost(self) -> None:
+    async def test_returns_false_when_lease_lost(self) -> None:
         """False is returned when no row matches (lease was lost)."""
-        cursor = _make_cursor(rowcount=0)
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
+        pool = _make_pool(execute_result="UPDATE 0")
+        store = FeedStore(pool)
 
-        result = store.update_feed_progress(
-            _FEED_ID, _WORKER_ID, "gs://bucket/path/file.ogg"
+        result = await store.update_feed_progress(
+            _FEED_ID,
+            _WORKER_ID,
+            "gs://bucket/path/file.ogg",
         )
 
         self.assertFalse(result)
 
-    def test_passes_correct_parameters(self) -> None:
+    async def test_passes_correct_parameters(self) -> None:
         """Parameters are passed in the correct order."""
-        cursor = _make_cursor(rowcount=1)
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
+        pool = _make_pool(execute_result="UPDATE 1")
+        store = FeedStore(pool)
         gcs_path = "gs://bucket/path/file.ogg"
 
-        store.update_feed_progress(_FEED_ID, _WORKER_ID, gcs_path)
+        await store.update_feed_progress(_FEED_ID, _WORKER_ID, gcs_path)
 
-        args = cursor.execute.call_args
-        self.assertEqual(args[0][1], (gcs_path, _FEED_ID, _WORKER_ID))
-
-    def test_commits_on_success(self) -> None:
-        """The transaction is committed after a successful update."""
-        cursor = _make_cursor(rowcount=1)
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
-
-        store.update_feed_progress(_FEED_ID, _WORKER_ID, "gs://bucket/path/file.ogg")
-
-        conn.transaction.assert_called_once()
-        tx_mock = conn.transaction.return_value
-        tx_mock.__enter__.assert_called_once()
-        tx_mock.__exit__.assert_called_once()
-
-    def test_rolls_back_and_reraises_on_error(self) -> None:
-        """The transaction is rolled back and the exception re-raised on failure."""
-        cursor = _make_cursor()
-        cursor.execute.side_effect = RuntimeError("db error")
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
-
-        with self.assertRaises(RuntimeError):
-            store.update_feed_progress(
-                _FEED_ID, _WORKER_ID, "gs://bucket/path/file.ogg"
-            )
-
-        conn.transaction.assert_called_once()
-        tx_mock = conn.transaction.return_value
-        tx_mock.__exit__.assert_called_once()
-        args = tx_mock.__exit__.call_args[0]
-        self.assertEqual(args[0], RuntimeError)
-
-    def test_cursor_is_closed(self) -> None:
-        """The cursor is always closed, even on error."""
-        cursor = _make_cursor()
-        cursor.execute.side_effect = RuntimeError("db error")
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
-
-        with self.assertRaises(RuntimeError):
-            store.update_feed_progress(
-                _FEED_ID, _WORKER_ID, "gs://bucket/path/file.ogg"
-            )
-
-        cursor.__exit__.assert_called_once()
+        args = pool.execute.call_args[0]
+        self.assertEqual(args[1:], (gcs_path, _FEED_ID, _WORKER_ID))
 
 
-class TestRenewHeartbeat(unittest.TestCase):
-    """Tests for FeedStore.renew_heartbeat."""
+class TestRenewHeartbeatsBatchDiagnostic(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.renew_heartbeats_batch_diagnostic."""
 
-    def test_returns_true_when_lease_held(self) -> None:
-        """True is returned when the heartbeat was renewed."""
-        cursor = _make_cursor(rowcount=1)
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
+    async def test_returns_diagnostic_results(self) -> None:
+        """Returned list contains HeartbeatResult dicts with diagnostic info."""
+        other_worker = uuid.UUID("22222222-3333-4444-5555-666666666666")
+        pool = _make_pool(
+            fetch_result=[
+                {
+                    "id": _FEED_ID,
+                    "current_worker": _WORKER_ID,
+                    "current_status": "active",
+                    "renewed": True,
+                },
+                {
+                    "id": _FEED_ID_B,
+                    "current_worker": other_worker,
+                    "current_status": "active",
+                    "renewed": False,
+                },
+            ],
+        )
+        store = FeedStore(pool)
 
-        result = store.renew_heartbeat(_FEED_ID, _WORKER_ID)
+        result = await store.renew_heartbeats_batch_diagnostic(
+            [_FEED_ID, _FEED_ID_B],
+            _WORKER_ID,
+        )
 
-        self.assertTrue(result)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(
+            result[0],
+            HeartbeatResult(
+                id=_FEED_ID,
+                current_worker=_WORKER_ID,
+                current_status="active",
+                renewed=True,
+            ),
+        )
+        self.assertEqual(
+            result[1],
+            HeartbeatResult(
+                id=_FEED_ID_B,
+                current_worker=other_worker,
+                current_status="active",
+                renewed=False,
+            ),
+        )
 
-    def test_returns_false_when_lease_lost(self) -> None:
-        """False is returned when the lease was lost (fence violation)."""
-        cursor = _make_cursor(rowcount=0)
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
+    async def test_short_circuits_on_empty_input(self) -> None:
+        """Empty feed_ids list returns empty list without executing a query."""
+        pool = mock.AsyncMock()
+        store = FeedStore(pool)
 
-        result = store.renew_heartbeat(_FEED_ID, _WORKER_ID)
+        result = await store.renew_heartbeats_batch_diagnostic([], _WORKER_ID)
 
-        self.assertFalse(result)
+        self.assertEqual(result, [])
+        pool.fetch.assert_not_called()
 
-    def test_passes_correct_parameters(self) -> None:
-        """Parameters are passed in the correct order."""
-        cursor = _make_cursor(rowcount=1)
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
-
-        store.renew_heartbeat(_FEED_ID, _WORKER_ID)
-
-        args = cursor.execute.call_args
-        self.assertEqual(args[0][1], (_FEED_ID, _WORKER_ID))
-
-    def test_commits_on_success(self) -> None:
-        """The transaction is committed after a successful renewal."""
-        cursor = _make_cursor(rowcount=1)
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
-
-        store.renew_heartbeat(_FEED_ID, _WORKER_ID)
-
-        conn.transaction.assert_called_once()
-        tx_mock = conn.transaction.return_value
-        tx_mock.__enter__.assert_called_once()
-        tx_mock.__exit__.assert_called_once()
-
-    def test_rolls_back_and_reraises_on_error(self) -> None:
-        """The transaction is rolled back and the exception re-raised on failure."""
-        cursor = _make_cursor()
-        cursor.execute.side_effect = RuntimeError("db error")
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
-
-        with self.assertRaises(RuntimeError):
-            store.renew_heartbeat(_FEED_ID, _WORKER_ID)
-
-        conn.transaction.assert_called_once()
-        tx_mock = conn.transaction.return_value
-        tx_mock.__exit__.assert_called_once()
-        args = tx_mock.__exit__.call_args[0]
-        self.assertEqual(args[0], RuntimeError)
-
-    def test_cursor_is_closed(self) -> None:
-        """The cursor is always closed, even on error."""
-        cursor = _make_cursor()
-        cursor.execute.side_effect = RuntimeError("db error")
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
-
-        with self.assertRaises(RuntimeError):
-            store.renew_heartbeat(_FEED_ID, _WORKER_ID)
-
-        cursor.__exit__.assert_called_once()
-
-
-class TestRenewHeartbeatsBatch(unittest.TestCase):
-    """Tests for FeedStore.renew_heartbeats_batch."""
-
-    def test_returns_renewed_ids(self) -> None:
-        """Returned set contains the IDs from RETURNING rows."""
-        cursor = _make_cursor()
-        cursor.fetchall.return_value = [(_FEED_ID,), (_FEED_ID_B,)]
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
-
-        result = store.renew_heartbeats_batch([_FEED_ID, _FEED_ID_B], _WORKER_ID)
-
-        self.assertEqual(result, {_FEED_ID, _FEED_ID_B})
-
-    def test_returns_empty_set_for_no_matches(self) -> None:
-        """Empty set is returned when no rows match (all leases lost)."""
-        cursor = _make_cursor()
-        cursor.fetchall.return_value = []
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
-
-        result = store.renew_heartbeats_batch([_FEED_ID], _WORKER_ID)
-
-        self.assertEqual(result, set())
-
-    def test_short_circuits_on_empty_input(self) -> None:
-        """Empty feed_ids list returns empty set without executing a query."""
-        conn = mock.MagicMock()
-        store = FeedStore(conn)
-
-        result = store.renew_heartbeats_batch([], _WORKER_ID)
-
-        self.assertEqual(result, set())
-        conn.transaction.assert_not_called()
-
-    def test_passes_correct_parameters(self) -> None:
+    async def test_passes_correct_parameters(self) -> None:
         """Parameters are passed as (feed_ids_list, worker_id)."""
-        cursor = _make_cursor()
-        cursor.fetchall.return_value = [(_FEED_ID,)]
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
+        pool = _make_pool(
+            fetch_result=[
+                {
+                    "id": _FEED_ID,
+                    "current_worker": _WORKER_ID,
+                    "current_status": "active",
+                    "renewed": True,
+                },
+            ],
+        )
+        store = FeedStore(pool)
         feed_ids = [_FEED_ID, _FEED_ID_B]
 
-        store.renew_heartbeats_batch(feed_ids, _WORKER_ID)
+        await store.renew_heartbeats_batch_diagnostic(feed_ids, _WORKER_ID)
 
-        args = cursor.execute.call_args
-        self.assertEqual(args[0][1], (feed_ids, _WORKER_ID))
+        args = pool.fetch.call_args[0]
+        self.assertEqual(args[1:], (feed_ids, _WORKER_ID))
 
-    def test_commits_on_success(self) -> None:
-        """The transaction is committed after a successful batch renewal."""
-        cursor = _make_cursor()
-        cursor.fetchall.return_value = [(_FEED_ID,)]
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
+    async def test_mixed_renewed_and_unrenewed(self) -> None:
+        """Results correctly distinguish renewed vs unrenewed feeds."""
+        pool = _make_pool(
+            fetch_result=[
+                {
+                    "id": _FEED_ID,
+                    "current_worker": _WORKER_ID,
+                    "current_status": "active",
+                    "renewed": True,
+                },
+                {
+                    "id": _FEED_ID_B,
+                    "current_worker": None,
+                    "current_status": "unclaimed",
+                    "renewed": False,
+                },
+            ],
+        )
+        store = FeedStore(pool)
 
-        store.renew_heartbeats_batch([_FEED_ID], _WORKER_ID)
+        result = await store.renew_heartbeats_batch_diagnostic(
+            [_FEED_ID, _FEED_ID_B],
+            _WORKER_ID,
+        )
 
-        conn.transaction.assert_called_once()
-        tx_mock = conn.transaction.return_value
-        tx_mock.__enter__.assert_called_once()
-        tx_mock.__exit__.assert_called_once()
-
-    def test_cursor_is_closed(self) -> None:
-        """The cursor is always closed, even on error."""
-        cursor = _make_cursor()
-        cursor.execute.side_effect = RuntimeError("db error")
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
-
-        with self.assertRaises(RuntimeError):
-            store.renew_heartbeats_batch([_FEED_ID], _WORKER_ID)
-
-        cursor.__exit__.assert_called_once()
+        renewed = [r for r in result if r["renewed"]]
+        not_renewed = [r for r in result if not r["renewed"]]
+        self.assertEqual(len(renewed), 1)
+        self.assertEqual(renewed[0]["id"], _FEED_ID)
+        self.assertEqual(len(not_renewed), 1)
+        self.assertEqual(not_renewed[0]["current_status"], "unclaimed")
 
 
-class TestReportFeedFailure(unittest.TestCase):
+class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.report_feed_failure."""
 
-    def test_returns_true_when_lease_held(self) -> None:
+    async def test_returns_true_when_lease_held(self) -> None:
         """True is returned when the failure was recorded."""
-        cursor = _make_cursor(rowcount=1)
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
+        pool = _make_pool(execute_result="UPDATE 1")
+        store = FeedStore(pool)
 
-        result = store.report_feed_failure(_FEED_ID, _WORKER_ID)
+        result = await store.report_feed_failure(_FEED_ID, _WORKER_ID)
 
         self.assertTrue(result)
 
-    def test_returns_false_when_lease_lost(self) -> None:
+    async def test_returns_false_when_lease_lost(self) -> None:
         """False is returned when the lease was already lost."""
-        cursor = _make_cursor(rowcount=0)
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
+        pool = _make_pool(execute_result="UPDATE 0")
+        store = FeedStore(pool)
 
-        result = store.report_feed_failure(_FEED_ID, _WORKER_ID)
+        result = await store.report_feed_failure(_FEED_ID, _WORKER_ID)
 
         self.assertFalse(result)
 
-    def test_passes_correct_parameters(self) -> None:
+    async def test_passes_correct_parameters(self) -> None:
         """Parameters are passed in the correct order."""
-        cursor = _make_cursor(rowcount=1)
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
+        pool = _make_pool(execute_result="UPDATE 1")
+        store = FeedStore(pool)
 
-        store.report_feed_failure(_FEED_ID, _WORKER_ID)
+        await store.report_feed_failure(_FEED_ID, _WORKER_ID)
 
-        args = cursor.execute.call_args
-        self.assertEqual(args[0][1], (_FEED_ID, _WORKER_ID))
+        args = pool.execute.call_args[0]
+        self.assertEqual(args[1:], (_FEED_ID, _WORKER_ID, 3))
 
-    def test_commits_on_success(self) -> None:
-        """The transaction is committed after recording the failure."""
-        cursor = _make_cursor(rowcount=1)
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
 
-        store.report_feed_failure(_FEED_ID, _WORKER_ID)
+class TestReleaseFeed(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.release_feed."""
 
-        conn.transaction.assert_called_once()
-        tx_mock = conn.transaction.return_value
-        tx_mock.__enter__.assert_called_once()
-        tx_mock.__exit__.assert_called_once()
+    async def test_returns_true_when_lease_held(self) -> None:
+        """True is returned when the feed was released."""
+        pool = _make_pool(execute_result="UPDATE 1")
+        store = FeedStore(pool)
 
-    def test_rolls_back_and_reraises_on_error(self) -> None:
-        """The transaction is rolled back and the exception re-raised on failure."""
-        cursor = _make_cursor()
-        cursor.execute.side_effect = RuntimeError("db error")
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
+        result = await store.release_feed(_FEED_ID, _WORKER_ID)
 
-        with self.assertRaises(RuntimeError):
-            store.report_feed_failure(_FEED_ID, _WORKER_ID)
+        self.assertTrue(result)
 
-        conn.transaction.assert_called_once()
-        tx_mock = conn.transaction.return_value
-        tx_mock.__exit__.assert_called_once()
-        args = tx_mock.__exit__.call_args[0]
-        self.assertEqual(args[0], RuntimeError)
+    async def test_returns_false_when_lease_lost(self) -> None:
+        """False is returned when the lease was already lost."""
+        pool = _make_pool(execute_result="UPDATE 0")
+        store = FeedStore(pool)
 
-    def test_cursor_is_closed(self) -> None:
-        """The cursor is always closed, even on error."""
-        cursor = _make_cursor()
-        cursor.execute.side_effect = RuntimeError("db error")
-        conn = _make_conn(cursor)
-        store = FeedStore(conn)
+        result = await store.release_feed(_FEED_ID, _WORKER_ID)
 
-        with self.assertRaises(RuntimeError):
-            store.report_feed_failure(_FEED_ID, _WORKER_ID)
+        self.assertFalse(result)
 
-        cursor.__exit__.assert_called_once()
+    async def test_passes_correct_parameters(self) -> None:
+        """Parameters are passed in the correct order."""
+        pool = _make_pool(execute_result="UPDATE 1")
+        store = FeedStore(pool)
+
+        await store.release_feed(_FEED_ID, _WORKER_ID)
+
+        args = pool.execute.call_args[0]
+        self.assertEqual(args[1:], (_FEED_ID, _WORKER_ID))
+
+
+class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.acquire_feeds_batch."""
+
+    async def test_returns_list_of_feeds(self) -> None:
+        """Multiple feeds are returned as a list of LeasedFeed dicts."""
+        rows = [
+            {
+                "id": _FEED_ID,
+                "name": "Feed A",
+                "source_type": "bcfy_feeds",
+                "last_processed_filename": None,
+                "stream_url": "http://stream.example.com/a",
+            },
+            {
+                "id": _FEED_ID_B,
+                "name": "Feed B",
+                "source_type": "bcfy_feeds",
+                "last_processed_filename": "gs://bucket/path",
+                "stream_url": None,
+            },
+        ]
+        pool = _make_pool(fetch_result=rows)
+        store = FeedStore(pool)
+
+        result = await store.acquire_feeds_batch(_WORKER_ID, 60.0, limit=10)
+
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["id"], _FEED_ID)
+        self.assertEqual(result[1]["id"], _FEED_ID_B)
+
+    async def test_returns_empty_list_when_none_available(self) -> None:
+        """Empty list returned when no feeds can be leased."""
+        pool = _make_pool(fetch_result=[])
+        store = FeedStore(pool)
+
+        result = await store.acquire_feeds_batch(_WORKER_ID, 60.0, limit=10)
+
+        self.assertEqual(result, [])
+
+    async def test_passes_correct_parameters(self) -> None:
+        """Parameters include worker_id, timedelta, and limit."""
+        pool = _make_pool(fetch_result=[])
+        store = FeedStore(pool)
+
+        await store.acquire_feeds_batch(_WORKER_ID, 60.0, limit=5)
+
+        args = pool.fetch.call_args[0]
+        self.assertEqual(args[1], _WORKER_ID)
+        self.assertEqual(args[2], datetime.timedelta(seconds=60.0))
+        self.assertEqual(args[3], 5)
+
+
+class TestReportFeedFailureWithThreshold(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.report_feed_failure with custom threshold."""
+
+    async def test_passes_custom_threshold(self) -> None:
+        """Custom failure_threshold is passed as query parameter."""
+        pool = _make_pool(execute_result="UPDATE 1")
+        store = FeedStore(pool)
+
+        await store.report_feed_failure(_FEED_ID, _WORKER_ID, failure_threshold=5)
+
+        args = pool.execute.call_args[0]
+        self.assertEqual(args[3], 5)
+
+    async def test_default_threshold_is_3(self) -> None:
+        """Default threshold is 3 for backward compatibility."""
+        pool = _make_pool(execute_result="UPDATE 1")
+        store = FeedStore(pool)
+
+        await store.report_feed_failure(_FEED_ID, _WORKER_ID)
+
+        args = pool.execute.call_args[0]
+        self.assertEqual(args[3], 3)
 
 
 if __name__ == "__main__":

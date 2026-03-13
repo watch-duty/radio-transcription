@@ -44,3 +44,7 @@ run = "uv run ruff format"
 [tasks."format:terraform"]
 description = "Format Terraform code"
 run = "terraform fmt -recursive"
+
+[tasks."generate:protos"]
+description = "Generate Python code from Protobuf definitions"
+run = "uv run python -m grpc_tools.protoc --proto_path=protos --python_out=backend/pipeline/schema_types --grpc_python_out=backend/pipeline/schema_types --pyi_out=backend/pipeline/schema_types protos/*.proto"

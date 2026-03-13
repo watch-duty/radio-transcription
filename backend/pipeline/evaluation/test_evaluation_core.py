@@ -17,20 +17,14 @@ with (
 class TestCloudFunction(unittest.TestCase):
     def setUp(self) -> None:
         self.transcribed_audio = TranscribedAudio()
-        self.transcribed_audio.audio_id = "12345"
+        self.transcribed_audio.transmission_id = "12345"
         self.transcribed_audio.transcript = "There is a fire"
-        self.transcribed_audio.file_path = "test/path.wav"
-        self.transcribed_audio.location = "test_location"
-        self.transcribed_audio.feed = "test_feed"
-        ts_start = TranscribedAudio.Timestamp()
-        ts_start.seconds = 1234567890
-        ts_start.nanos = 0
-        self.transcribed_audio.start_timestamp.CopyFrom(ts_start)
-
-        ts_end = TranscribedAudio.Timestamp()
-        ts_end.seconds = 1234567999
-        ts_end.nanos = 0
-        self.transcribed_audio.end_timestamp.CopyFrom(ts_end)
+        self.transcribed_audio.feed_id = "1234"
+        self.transcribed_audio.source_chunk_ids.append("chunk_1")
+        self.transcribed_audio.start_timestamp.seconds = 1234567890
+        self.transcribed_audio.start_timestamp.nanos = 0
+        self.transcribed_audio.end_timestamp.seconds = 1234567999
+        self.transcribed_audio.end_timestamp.nanos = 0
 
         self.data_bytes = self.transcribed_audio.SerializeToString()
         self.b64_encoded_data = base64.b64encode(self.data_bytes).decode("utf-8")
@@ -67,7 +61,7 @@ class TestCloudFunction(unittest.TestCase):
         result_proto = EvaluatedTranscribedAudio()
         result_proto.ParseFromString(sent_proto_bytes)
 
-        self.assertEqual(result_proto.audio_id, "12345")
+        self.assertEqual(result_proto.transmission_id, "12345")
         self.assertEqual(result_proto.transcript, "There is a fire")
         self.assertEqual(result_proto.evaluation_decisions, ["basic_fire_terms"])
 

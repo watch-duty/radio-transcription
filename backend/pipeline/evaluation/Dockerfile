@@ -7,14 +7,24 @@ WORKDIR /app
 
 ENV PYTHONPATH=/app
 
-COPY backend/pipeline/evaluation/requirements.txt .
+# 1. Install dependencies
+COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
+COPY pyproject.toml uv.lock ./
+ENV UV_PROJECT_ENVIRONMENT=/app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
+RUN uv sync --frozen --no-dev && uv pip install grpcio-tools
 
-RUN pip install --no-cache-dir -r requirements.txt
+COPY backend/__init__.py ./backend/__init__.py
+COPY backend/pipeline/__init__.py ./backend/pipeline/__init__.py
+COPY backend/pipeline/evaluation/ ./backend/pipeline/evaluation
+COPY protos/ ./protos
 
-COPY backend ./backend
+# 2. Create the directory for the generated files
+RUN mkdir -p ./backend/pipeline/schema_types
+RUN touch ./backend/pipeline/schema_types/__init__.py
+RUN python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto
 
 CMD ["functions-framework", \
      "--source=backend/pipeline/evaluation/evaluation_core.py", \
      "--target=evaluate_transcribed_audio_segment", \
-     "--signature-type=cloudevent", \
-     "--port=8080"]
+     "--signature-type=cloudevent"]

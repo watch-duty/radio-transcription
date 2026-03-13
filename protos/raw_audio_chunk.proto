@@ -1,0 +1,9 @@
+syntax = "proto3";
+import "google/protobuf/timestamp.proto";
+
+message AudioChunk {
+  string gcs_uri = 1;
+
+  // The absolute wall-clock time when this chunk started recording.
+  google.protobuf.Timestamp start_timestamp = 2;
+}

@@ -1,21 +1,21 @@
 syntax = "proto3";
+import "google/protobuf/timestamp.proto";
 
 // Notification sent to the endpoint after the transcription is evaluated.
 message AlertNotification {
-    // Path to the original audio.
-    string file_path = 1;
-    // Location the audio came from.
-    string location = 2;
-    // Name of the feed.
-    string feed = 3;
-    // Unique ID to the audio.
-    string audio_id = 4;
-    // Start timestamp of the audio, in ISO 8601 format.
-    string start_timestamp = 5;
-    // End timestamp of the audio, in ISO 8601 format.
-    string end_timestamp = 6;
-    // Full transcript text evaluated from the audio.
-    string transcript = 7;
-    // List of rule IDs that matched the transcript in evaluation.
-    repeated string evaluation_decisions = 8;
+
+  // Unique ID to the feed.
+  string feed_id = 1;
+  // Unique ID for the generated transmission.
+  string transmission_id = 2;
+  // List of unique IDs for the audio segments that make up this transmission.
+  repeated string source_chunk_ids = 3;
+  // Start timestamp of the audio.
+  google.protobuf.Timestamp start_timestamp = 4;
+  // End timestamp of the audio.
+  google.protobuf.Timestamp end_timestamp = 5;
+  // Full transcript text evaluated from the audio.
+  string transcript = 6;
+  // List of rule IDs that matched the transcript in evaluation.
+  repeated string evaluation_decisions = 7;
 }

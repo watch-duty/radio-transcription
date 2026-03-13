@@ -3,8 +3,9 @@ combinations, so we can compute metrics over the saved outputs. The table below
 documents issue trackers for each json in this directory, so we can trace what
 each inference output implies.
 
-## Inference output files in this directory
-| JSON manifest | Linear issue tracker link |
-| ------------- | ------------------------- |
-| playground\_parakeet\_and\_canary\_flash.json | https://linear.app/watchduty/issue/GOO-20/run-inference-with-3-chosen-models#comment-6705c94d |
-| playground_parakeet_and_canary_flash_and_gemma3n_e2b_it.json | https://linear.app/watchduty/issue/GOO-34/run-gemma-3n-inference-within-nemo |
+| JSON manifest | Linear issue tracker link | Comment |
+| ------------- | ------------------------- | ------- |
+| playground\_parakeet\_and\_canary\_flash.json | https://linear.app/watchduty/issue/GOO-20/run-inference-with-3-chosen-models#comment-6705c94d | |
+| playground\_parakeet\_and\_canary\_flash\_and\_chirp\_with\_context.jsonl | https://linear.app/watchduty/issue/GOO-23/setup-chirp-v3-evaluation-to-produce-nemo-consistent-json-output | Produced using full audio file |
+| playground\_parakeet\_and\_canary\_flash\_and\_chirp.jsonl | https://linear.app/watchduty/issue/GOO-23/setup-chirp-v3-evaluation-to-produce-nemo-consistent-json-output | Produced using the specified segments in the manifest |
+| playground\_parakeet\_and\_canary\_flash\_and\_gemma3n\_e2b\_it.json | https://linear.app/watchduty/issue/GOO-34/run-gemma-3n-inference-within-nemo | |

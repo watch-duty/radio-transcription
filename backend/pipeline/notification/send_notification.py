@@ -1,5 +1,4 @@
 import base64
-import datetime
 import logging
 import os
 
@@ -36,29 +35,23 @@ def parse_cloud_event(cloud_event: CloudEvent) -> EvaluatedTranscribedAudio | No
     return None
 
 
-def to_iso_string(timestamp: EvaluatedTranscribedAudio.Timestamp) -> str | None:
-    if not timestamp or not timestamp.seconds or not timestamp.nanos:
-        return None
-
-    dt = datetime.datetime.fromtimestamp(
-        timestamp.seconds + (timestamp.nanos / 1e9), tz=datetime.UTC
-    )
-    return dt.isoformat(timespec="microseconds")
-
-
 def convert_to_notification(
     evaluated_transcribed_audio: EvaluatedTranscribedAudio,
 ) -> AlertNotification:
-    return AlertNotification(
-        file_path=evaluated_transcribed_audio.file_path,
-        location=evaluated_transcribed_audio.location,
-        feed=evaluated_transcribed_audio.feed,
-        audio_id=evaluated_transcribed_audio.audio_id,
-        start_timestamp=to_iso_string(evaluated_transcribed_audio.start_timestamp),
-        end_timestamp=to_iso_string(evaluated_transcribed_audio.end_timestamp),
+    notification = AlertNotification(
+        feed_id=evaluated_transcribed_audio.feed_id,
+        transmission_id=evaluated_transcribed_audio.transmission_id,
+        source_chunk_ids=evaluated_transcribed_audio.source_chunk_ids,
         transcript=evaluated_transcribed_audio.transcript,
         evaluation_decisions=evaluated_transcribed_audio.evaluation_decisions,
     )
+    if evaluated_transcribed_audio.start_timestamp.seconds:
+        notification.start_timestamp.CopyFrom(
+            evaluated_transcribed_audio.start_timestamp
+        )
+    if evaluated_transcribed_audio.end_timestamp.seconds:
+        notification.end_timestamp.CopyFrom(evaluated_transcribed_audio.end_timestamp)
+    return notification
 
 
 @functions_framework.cloud_event
