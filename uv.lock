@@ -2993,6 +2993,7 @@ dependencies = [
     { name = "protobuf", version = "6.33.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },
     { name = "pydantic" },
     { name = "requests" },
+    { name = "transcription-pipeline" },
 ]
 
 [package.dev-dependencies]
@@ -3022,6 +3023,7 @@ requires-dist = [
     { name = "protobuf", specifier = ">=4.25.3" },
     { name = "pydantic", specifier = ">=2.10.6" },
     { name = "requests" },
+    { name = "transcription-pipeline", editable = "backend/pipeline/transcription" },
 ]
 
 [package.metadata.requires-dev]
@@ -3301,7 +3303,7 @@ wheels = [
 [[package]]
 name = "transcription-pipeline"
 version = "0.1.0"
-source = { virtual = "backend/pipeline/transcription" }
+source = { editable = "backend/pipeline/transcription" }
 dependencies = [
     { name = "apache-beam", version = "2.70.0", source = { registry = "https://pypi.org/simple" }, extra = ["gcp"], marker = "python_full_version >= '3.13'" },
     { name = "apache-beam", version = "2.71.0", source = { registry = "https://pypi.org/simple" }, extra = ["gcp"], marker = "python_full_version < '3.13'" },
