@@ -442,6 +442,8 @@ class StitchAndTranscribeFn(beam.DoFn):
             chunk_start_ms=chunk_start_ms,
         )
 
+        # If there are no speech segments, we might still need to flush the buffer
+        # if there's a gap between the last segment and this silent chunk.
         if not chunk_data.speech_segments:
             yield from self._handle_silent_file(
                 feed_id=feed_id,
@@ -451,48 +453,76 @@ class StitchAndTranscribeFn(beam.DoFn):
             )
             return
 
-        # Because we establish event-time ordering upstream, we can evaluate the semantic gap
-        # between sequential chunks. If the gap exceeds our configured threshold, the current
-        # transmission has logically ended. We must yield a FlushRequest to transcribe the
-        # preceding buffer before appending the current segment to a fresh state.
-        is_significant_gap = (
-            ctx.last_segment_end_time_ms
-            and (chunk_start_ms - ctx.last_segment_end_time_ms)
-            >= self.config.significant_gap_ms
-        )
-
-        if is_significant_gap and ctx.current_buffer:
-            logger.info(
-                "Significant gap detected. Flushing preceding continuous audio."
+        # Because we establish event-time ordering upstream, we can evaluate the semantic
+        # gap between sequential chunks, as well as distinct gaps *within* a single chunk.
+        # If the gap between the last recorded speech and the current VAD segment exceeds
+        # our configured threshold, the current transmission has logically ended. We must
+        # yield a FlushRequest to transcribe the preceding buffer before appending the
+        # current segment to a fresh state.
+        for segment in chunk_data.speech_segments:
+            global_start_ms = segment.start_ms
+            global_end_ms = segment.end_ms
+            
+            # 1. Check if there's a significant gap between the last recorded end time
+            # and the start of THIS specific VAD segment.
+            is_significant_gap = (
+                ctx.last_segment_end_time_ms
+                and ((chunk_start_ms + global_start_ms) - ctx.last_segment_end_time_ms)
+                >= self.config.significant_gap_ms
             )
-            if ctx.transmission_start_time_ms is None:
-                yield beam.pvalue.TaggedOutput(
-                    DEAD_LETTER_QUEUE_TAG,
-                    {
-                        "error": "State mismatch: transmission has buffer but no start_time. Dropping segment.",
-                        "feed_id": feed_id,
-                    },
+
+            # 2. If there is a gap, flush whatever is in the buffer currently.
+            if is_significant_gap and ctx.current_buffer:
+                logger.info(
+                    "Significant gap detected. Flushing preceding continuous audio."
                 )
+                if ctx.transmission_start_time_ms is None:
+                    yield beam.pvalue.TaggedOutput(
+                        DEAD_LETTER_QUEUE_TAG,
+                        {
+                            "error": "State mismatch: transmission has buffer but no start_time. Dropping segment.",
+                            "feed_id": feed_id,
+                        },
+                    )
+                else:
+                    yield FlushRequest(
+                        buffer=ctx.current_buffer,
+                        feed_id=feed_id,
+                        processed_uuids=set(ctx.processed_uuids),
+                        start_ms=ctx.transmission_start_time_ms,
+                        end_ms=ctx.last_segment_end_time_ms,
+                    )
+
+                # Reset state for the current new segment following the gap
+                state.clear_all()
+                ctx.current_buffer = None
+                ctx.processed_uuids = set()
+                ctx.transmission_start_time_ms = None
+
+            # 3. Append this specific speech segment to the state
+            speech_audio = chunk_data.audio[global_start_ms:global_end_ms]
+
+            if not ctx.current_buffer:
+                ctx.current_buffer = speech_audio
+                # Lock in the chronological start time of this transmission
+                ctx.transmission_start_time_ms = chunk_start_ms + global_start_ms
+                state.stale_start_time.write(ctx.transmission_start_time_ms)
             else:
-                yield FlushRequest(
-                    buffer=ctx.current_buffer,
-                    feed_id=feed_id,
-                    processed_uuids=set(ctx.processed_uuids),
-                    start_ms=ctx.transmission_start_time_ms,
-                    end_ms=ctx.last_segment_end_time_ms,
-                )
+                ctx.current_buffer += speech_audio
 
-            # Reset state for the current new segment following the gap
-            state.clear_all()
-            ctx.current_buffer = None
-            ctx.processed_uuids = set()
-            ctx.transmission_start_time_ms = None
+            ctx.processed_uuids.add(ctx.source_file_uuid)
+            # Persist this UUID so we don't accidentally append it again on a PubSub retry
+            state.contributing_uuids.write(ctx.processed_uuids)
 
-        self._append_speech_segment(
-            chunk_data=chunk_data,
-            ctx=ctx,
-            state=state,
-        )
+            # Continuously bump the end marker
+            ctx.last_segment_end_time_ms = chunk_start_ms + global_end_ms
+            state.last_end_time.write(ctx.last_segment_end_time_ms)
+
+        # Append the raw audio bytes to the persistent buffer AFTER processing all segments
+        if ctx.current_buffer:
+            byte_stream = io.BytesIO()
+            ctx.current_buffer.export(byte_stream, format=AUDIO_FORMAT)
+            state.buffer.write(byte_stream.getvalue())
 
         # Because the buffer was successfully mutated without triggering a flush, we must
         # explicitly schedule the stale timer to ensure Dataflow eventually flushes this
@@ -550,7 +580,7 @@ class StitchAndTranscribeFn(beam.DoFn):
                     elif isinstance(out, FlushRequest):
                         flush_queue.append(out)
 
-        # Batch execute all transcription API calls concurrently
+        # Batch execute all segment transcription API calls concurrently
         if flush_queue:
             futures = [
                 self.executor.submit(
