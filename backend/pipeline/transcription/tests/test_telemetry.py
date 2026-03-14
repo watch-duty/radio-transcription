@@ -3,6 +3,8 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
+from google.api_core.exceptions import GoogleAPIError
+
 from backend.pipeline.transcription.enums import MetricsExporterType
 from backend.pipeline.transcription.telemetry import (
     GcpMonitoringConfig,
@@ -61,7 +63,9 @@ class TestMetricsExporters(unittest.TestCase):
     def test_gcp_exporter_handles_exception(self, mock_client_class: MagicMock) -> None:
         """Test that GCP exporter ignores and logs exceptions instead of crashing."""
         mock_client_inst = MagicMock()
-        mock_client_inst.create_time_series.side_effect = Exception("Network failure")
+        mock_client_inst.create_time_series.side_effect = GoogleAPIError(
+            "Network failure"
+        )
         mock_client_class.return_value = mock_client_inst
 
         exporter = GcpMonitoringExporter("test-project", "{}")

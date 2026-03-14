@@ -26,15 +26,21 @@ from backend.pipeline.transcription.constants import (
 from backend.pipeline.transcription.datatypes import (
     AudioChunkData,
     ChunkContext,
+    DropAction,
+    FlushAction,
     FlushRequest,
+    ScheduleStaleTimerAction,
+    StateMachineAction,
     StitchAndTranscribeConfig,
     TranscriptionResult,
     TransmissionState,
+    UpdateStateAction,
 )
 from backend.pipeline.transcription.enums import (
     MetricsExporterType,
     TranscriberType,
 )
+from backend.pipeline.transcription.stitcher_state import AudioStitchingStateMachine
 from backend.pipeline.transcription.telemetry import get_metrics_exporter
 from backend.pipeline.transcription.transcribers import Transcriber, get_transcriber
 
@@ -90,6 +96,9 @@ STALE_TIMER_PARAM = beam.DoFn.TimerParam(STALE_TIMER_SPEC)
 class StitchAndTranscribeFn(beam.DoFn):
     """
     A stateful Beam DoFn responsible for maintaining chronological continuous audio state per radio feed.
+    It delegates the core state transition logic to `AudioStitchingStateMachine` while mapping the resulting
+    actions to Beam's state and timer APIs.
+
     It buffers incoming audio chunks, runs Voice Activity Detection (VAD) to identify speech segments,
     and flushes completed speech segments concurrently to the configured `Transcriber` plugin.
     Outputs `TranscriptionResult` objects containing the final transcripts.
@@ -116,8 +125,8 @@ class StitchAndTranscribeFn(beam.DoFn):
     ) -> None:
         self.config = config
         self.transcriber_factory = transcriber_factory or get_transcriber
-        
-        # Underlying network sockets or C-bindings cannot be pickled. These are set to `None` here and  
+
+        # Underlying network sockets or C-bindings cannot be pickled. These are set to `None` here and
         # instantiated in `setup()` which runs on every worker machine.
         self.audio_processor: AudioProcessor | None = None
         self.transcriber: Transcriber | None = None
@@ -347,78 +356,60 @@ class StitchAndTranscribeFn(beam.DoFn):
                 DEAD_LETTER_QUEUE_TAG, {"error": msg, "feed_id": feed_id}
             )
 
-    def _handle_silent_file(
-        self,
-        *,
-        feed_id: str,
-        gcs_path: str,
-        ctx: ChunkContext,
-        state: TransmissionState,
-    ) -> Generator[FlushRequest | beam.pvalue.TaggedOutput, None, None]:
-        """
-        Appends the UUID to the current segment if one exists for continuity. Otherwise discards.
-        Does not flush the buffer. Ensures the stale timer is pushed backward if a buffer exists.
-        """
-        if not ctx.current_buffer:
-            logger.info("Discarding silent file: %s", gcs_path)
-            if state.stale_timer is not None:
-                state.stale_timer.clear()
-            return
-
-        logger.info(
-            "Appending silent file to existing buffer for continuity: %s", gcs_path
-        )
-        ctx.processed_uuids.add(ctx.source_file_uuid)
-        state.contributing_uuids.write(ctx.processed_uuids)
-
-        if ctx.transmission_start_time_ms is None:
-            yield beam.pvalue.TaggedOutput(
-                DEAD_LETTER_QUEUE_TAG,
-                {
-                    "error": "State mismatch: transmission has buffer but no start_time.",
-                    "feed_id": feed_id,
-                },
-            )
-            return
-
-        expected_stale_deadline = (
-            ctx.last_segment_end_time_ms + self.config.stale_timeout_ms
-        ) / MS_PER_SECOND
-        if state.stale_timer is not None:
-            state.stale_timer.set(Timestamp(seconds=expected_stale_deadline))
-
-    def _yield_flush_and_reset(
-        self,
-        *,
-        feed_id: str,
-        ctx: ChunkContext,
-        state: TransmissionState,
-        reason: str,
-    ) -> Generator[FlushRequest | beam.pvalue.TaggedOutput, None, None]:
-        """Yields a flush request if a buffer exists, then resets the state."""
-        if ctx.current_buffer:
-            logger.info(f"{reason}. Flushing preceding continuous audio.")
-            if ctx.transmission_start_time_ms is None:
-                yield beam.pvalue.TaggedOutput(
-                    DEAD_LETTER_QUEUE_TAG,
-                    {
-                        "error": "State mismatch: transmission has buffer but no start_time. Dropping segment.",
-                        "feed_id": feed_id,
-                    },
-                )
-            else:
-                yield FlushRequest(
-                    buffer=ctx.current_buffer,
-                    feed_id=feed_id,
-                    processed_uuids=set(ctx.processed_uuids),
-                    start_ms=ctx.transmission_start_time_ms,
-                    end_ms=ctx.last_segment_end_time_ms,
-                )
-
+    def _apply_flush_action(
+        self, action: FlushAction, state: TransmissionState
+    ) -> Generator[FlushRequest, None, None]:
+        if "Maximum transmission duration" in action.reason:
+            self.max_duration_flush_count.inc()
+        elif "Significant gap" in action.reason:
+            self.gap_flush_count.inc()
+        logger.info(f"{action.reason}. Flushing preceding continuous audio.")
+        yield action.flush_request
         state.clear_all()
-        ctx.current_buffer = None
-        ctx.processed_uuids = set()
-        ctx.transmission_start_time_ms = None
+
+    def _apply_update_state_action(
+        self, state: TransmissionState, ctx: ChunkContext
+    ) -> None:
+        state.contributing_uuids.write(ctx.processed_uuids)
+        if ctx.transmission_start_time_ms is not None:
+            state.stale_start_time.write(ctx.transmission_start_time_ms)
+        if ctx.last_segment_end_time_ms:
+            state.last_end_time.write(ctx.last_segment_end_time_ms)
+
+        if ctx.current_buffer:
+            byte_stream = io.BytesIO()
+            ctx.current_buffer.export(byte_stream, format=AUDIO_FORMAT)
+            state.buffer.write(byte_stream.getvalue())
+        else:
+            state.buffer.clear()
+
+    def _apply_schedule_stale_timer_action(
+        self, action: ScheduleStaleTimerAction, state: TransmissionState
+    ) -> None:
+        if state.stale_timer is not None:
+            if action.deadline_ms > 0:
+                deadline_s = action.deadline_ms / MS_PER_SECOND
+                state.stale_timer.set(Timestamp(seconds=deadline_s))
+            else:
+                state.stale_timer.clear()
+
+    def _apply_state_actions(
+        self,
+        *,
+        actions: list[StateMachineAction],
+        state: TransmissionState,
+        ctx: ChunkContext,
+        gcs_path: str,
+    ) -> Generator[FlushRequest, None, None]:
+        for action in actions:
+            if isinstance(action, FlushAction):
+                yield from self._apply_flush_action(action, state)
+            elif isinstance(action, UpdateStateAction):
+                self._apply_update_state_action(state, ctx)
+            elif isinstance(action, ScheduleStaleTimerAction):
+                self._apply_schedule_stale_timer_action(action, state)
+            elif isinstance(action, DropAction):
+                logger.info(f"{action.reason}: {gcs_path}")
 
     def _process_audio_chunk(
         self,
@@ -450,120 +441,12 @@ class StitchAndTranscribeFn(beam.DoFn):
             chunk_start_ms=chunk_start_ms,
         )
 
-        # If there are no speech segments, we might still need to flush the buffer
-        # if there's a gap between the last segment and this silent chunk.
-        if not chunk_data.speech_segments:
-            # Check if this silent chunk extends the time since the last speech segment past our gap threshold
-            is_significant_gap = (
-                ctx.last_segment_end_time_ms
-                and ((chunk_start_ms + len(chunk_data.audio)) - ctx.last_segment_end_time_ms)
-                >= self.config.significant_gap_ms
-            )
-            is_max_duration_exceeded = (
-                ctx.transmission_start_time_ms is not None
-                and ((chunk_start_ms + len(chunk_data.audio)) - ctx.transmission_start_time_ms)
-                >= self.config.max_transmission_duration_ms
-            )
+        pipeline = AudioStitchingStateMachine(self.config)
+        actions = pipeline.process_chunk(chunk_data, ctx)
 
-            if is_significant_gap or is_max_duration_exceeded:
-                if is_significant_gap:
-                    self.gap_flush_count.inc()
-                    reason = "Significant gap detected from silent file"
-                else:
-                    self.max_duration_flush_count.inc()
-                    reason = "Maximum transmission duration exceeded by silent file"
-
-                yield from self._yield_flush_and_reset(
-                    feed_id=feed_id, ctx=ctx, state=state, reason=reason
-                )
-                
-                # Reset state, but ensure this silent chunk's UUID is still recorded 
-                # so we don't re-process it if Pub/Sub redelivers
-                state.contributing_uuids.write({ctx.source_file_uuid})
-                return
-
-            yield from self._handle_silent_file(
-                feed_id=feed_id,
-                gcs_path=gcs_path,
-                ctx=ctx,
-                state=state,
-            )
-            return
-
-        # Because we establish event-time ordering upstream, we can evaluate the semantic
-        # gap between sequential chunks, as well as distinct gaps *within* a single chunk.
-        # If the gap between the last recorded speech and the current VAD segment exceeds
-        # our configured threshold, the current transmission has logically ended. We must
-        # yield a FlushRequest to transcribe the preceding buffer before appending the
-        # current segment to a fresh state.
-        for segment in chunk_data.speech_segments:
-            global_start_ms = segment.start_ms
-            global_end_ms = segment.end_ms
-            
-            # 1. Check if there's a significant gap between the last recorded end time
-            # and the start of THIS specific VAD segment.
-            is_significant_gap = (
-                ctx.last_segment_end_time_ms
-                and ((chunk_start_ms + global_start_ms) - ctx.last_segment_end_time_ms)
-                >= self.config.significant_gap_ms
-            )
-            
-            # 2. Check if this segment would exceed the maximum allowed duration of a transmission.
-            is_max_duration_exceeded = (
-                ctx.transmission_start_time_ms is not None
-                and ((chunk_start_ms + global_start_ms) - ctx.transmission_start_time_ms)
-                >= self.config.max_transmission_duration_ms
-            )
-
-            # 3. If there is a gap OR max duration is exceeded, flush whatever is in the buffer currently.
-            if is_significant_gap or is_max_duration_exceeded:
-                if is_significant_gap:
-                    self.gap_flush_count.inc()
-                    reason = "Significant gap detected"
-                else:
-                    self.max_duration_flush_count.inc()
-                    reason = "Maximum transmission duration exceeded"
-
-                yield from self._yield_flush_and_reset(
-                    feed_id=feed_id, ctx=ctx, state=state, reason=reason
-                )
-
-            # 3. Append this specific speech segment to the state
-            speech_audio = chunk_data.audio[global_start_ms:global_end_ms]
-
-            if not ctx.current_buffer:
-                ctx.current_buffer = speech_audio
-                # Lock in the chronological start time of this transmission
-                ctx.transmission_start_time_ms = chunk_start_ms + global_start_ms
-                state.stale_start_time.write(ctx.transmission_start_time_ms)
-            else:
-                ctx.current_buffer += speech_audio
-
-            ctx.processed_uuids.add(ctx.source_file_uuid)
-            # Persist this UUID so we don't accidentally append it again on a PubSub retry
-            state.contributing_uuids.write(ctx.processed_uuids)
-
-            # Continuously bump the end marker
-            ctx.last_segment_end_time_ms = chunk_start_ms + global_end_ms
-            state.last_end_time.write(ctx.last_segment_end_time_ms)
-
-        # Append the raw audio bytes to the persistent buffer AFTER processing all segments
-        if ctx.current_buffer:
-            byte_stream = io.BytesIO()
-            ctx.current_buffer.export(byte_stream, format=AUDIO_FORMAT)
-            state.buffer.write(byte_stream.getvalue())
-
-        # Because the buffer was successfully mutated without triggering a flush, we must
-        # explicitly schedule the stale timer to ensure Dataflow eventually flushes this
-        # stranded audio if the radio stream suddenly goes offline.
-        if state.stale_timer:
-            last_end_time_ms = state.last_end_time.read()
-            if last_end_time_ms:
-                expected_stale_deadline = (
-                    last_end_time_ms + self.config.stale_timeout_ms
-                ) / MS_PER_SECOND
-                if state.stale_timer is not None:
-                    state.stale_timer.set(Timestamp(seconds=expected_stale_deadline))
+        yield from self._apply_state_actions(
+            actions=actions, state=state, ctx=ctx, gcs_path=gcs_path
+        )
 
     def process(  # type: ignore[override] # noqa: PLR0913
         self,
@@ -668,7 +551,9 @@ class StitchAndTranscribeFn(beam.DoFn):
         if audio_buffer and start_time_ms and end_time_ms:
             try:
                 self.stale_flush_count.inc()
-                logger.info("Flushing stale transmission buffer for feed: %s", key)
+                logger.info(
+                    f"STALE FLUSH: start={start_time_ms}, end={end_time_ms}, uuids={processed_uuids}, len(buffer)={len(audio_buffer)}"
+                )
 
                 transcribed = self._flush_buffer(
                     buffer=audio_buffer,

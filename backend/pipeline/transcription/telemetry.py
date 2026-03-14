@@ -4,6 +4,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from google.api_core.exceptions import GoogleAPIError
 from google.cloud import monitoring_v3
 
 from backend.pipeline.transcription.enums import MetricsExporterType
@@ -70,7 +71,7 @@ class GcpMonitoringExporter(MetricsExporter):
         series.points = [point]
         try:
             self.client.create_time_series(name=project_name, time_series=[series])
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.warning("Failed to export GCP metric: %s", e)
 
 

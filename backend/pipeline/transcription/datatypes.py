@@ -86,15 +86,17 @@ class StitchAndTranscribeConfig:
 
     def __post_init__(self) -> None:
         if self.significant_gap_ms <= 0:
-            raise ValueError("significant_gap_ms must be > 0")
+            msg = "significant_gap_ms must be > 0"
+            raise ValueError(msg)
         if self.stale_timeout_ms <= 0:
-            raise ValueError("stale_timeout_ms must be > 0")
+            msg = "stale_timeout_ms must be > 0"
+            raise ValueError(msg)
         if self.max_transmission_duration_ms <= 0:
-            raise ValueError("max_transmission_duration_ms must be > 0")
+            msg = "max_transmission_duration_ms must be > 0"
+            raise ValueError(msg)
         if self.significant_gap_ms >= self.max_transmission_duration_ms:
-            raise ValueError(
-                "significant_gap_ms must be strictly less than max_transmission_duration_ms"
-            )
+            msg = "significant_gap_ms must be strictly less than max_transmission_duration_ms"
+            raise ValueError(msg)
 
 
 @dataclass(frozen=True)
@@ -106,3 +108,29 @@ class FlushRequest:
     processed_uuids: set[str]
     start_ms: int
     end_ms: int
+
+
+@dataclass(frozen=True)
+class StateMachineAction:
+    """Base class for all actions emitted by the AudioStitchingStateMachine."""
+
+
+@dataclass(frozen=True)
+class DropAction(StateMachineAction):
+    reason: str
+
+
+@dataclass(frozen=True)
+class FlushAction(StateMachineAction):
+    reason: str
+    flush_request: FlushRequest
+
+
+@dataclass(frozen=True)
+class UpdateStateAction(StateMachineAction):
+    pass
+
+
+@dataclass(frozen=True)
+class ScheduleStaleTimerAction(StateMachineAction):
+    deadline_ms: int
