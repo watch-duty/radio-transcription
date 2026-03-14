@@ -18,6 +18,7 @@ dependencies = [
     "pydantic>=2.10.6",
     "protobuf>=4.25.3",
     "transcription-pipeline",
+    "chardet<6",
 ]
 
 [tool.uv]
@@ -201,3 +202,11 @@ members = [
 [tool.uv.sources]
 transcription-pipeline = { workspace = true }
 
+[tool.pytest.ini_options]
+filterwarnings = [
+    # httplib2 uses deprecated pyparsing methods under the hood which trickle up from GCP auth plugins
+    "ignore::DeprecationWarning:httplib2.*",
+    # pydub depends on the 'audioop' standard library module which is deprecated in Python 3.11/3.12 and slated for removal in Python 3.13 (PEP 594).
+    # We ignore it here to keep output clean on 3.12, but this will break if upgrading to Python 3.13 unless pydub updates.
+    "ignore::DeprecationWarning:pydub.*",
+]

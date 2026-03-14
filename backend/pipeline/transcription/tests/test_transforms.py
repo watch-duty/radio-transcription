@@ -179,6 +179,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
             "130-uuid_starts_again.flac": [(0.0, 2.5)],
             "150-uuid_silent.flac": [],
             "160-uuid_trigger_final.flac": [(0.0, 2.0)],
+            "190-uuid_trigger_real_final.flac": [(0.0, 2.0)],
         }
 
         def mock_download(path: str) -> AudioChunkData:
@@ -267,6 +268,18 @@ class StitchAndTranscribeTest(unittest.TestCase):
                         )
                     ]
                 )
+                .advance_watermark_to(190)
+                .add_elements(
+                    [
+                        TimestampedValue(
+                            (
+                                "feed-123",
+                                "gs://fake-bucket/ab12/feed-123/2026-03-06/190-uuid_trigger_real_final.flac",
+                            ),
+                            190,
+                        )
+                    ]
+                )
                 .advance_watermark_to_infinity()
             )
 
@@ -282,12 +295,13 @@ class StitchAndTranscribeTest(unittest.TestCase):
             )
 
             def assert_transcripts(elements: list[TranscriptionResult]) -> None:
-                assert len(elements) == 2, (
-                    f"Expected 2 transcripts, got {len(elements)}: {elements}"
+                assert len(elements) == 3, (
+                    f"Expected 3 transcripts, got {len(elements)}: {elements}"
                 )
                 uuids_list = [set(el.audio_ids) for el in elements]
                 assert {"uuid_starts", "uuid_completes_contains"} in uuids_list
-                assert {"uuid_silent", "uuid_starts_again"} in uuids_list
+                assert {"uuid_starts_again"} in uuids_list
+                assert {"uuid_trigger_final"} in uuids_list
 
             assert_that(results.main, assert_transcripts, label="CheckMainTranscripts")
 
@@ -305,6 +319,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
             "100-uuid_starts_long.flac": [(0.0, 5.0)],
             "105-uuid_continues_long.flac": [(0.0, 5.0)],
             "110-uuid_exceeds_max.flac": [(0.0, 5.0)],
+            "130-uuid_trigger.flac": [(0.0, 2.0)],
         }
 
         def mock_download(path: str) -> AudioChunkData:
@@ -325,7 +340,9 @@ class StitchAndTranscribeTest(unittest.TestCase):
         options.view_as(StandardOptions).streaming = True
 
         # Set max duration to 10 seconds.
-        config = get_test_config(max_transmission_duration_ms=10000, significant_gap_ms=50000)
+        config = get_test_config(
+            max_transmission_duration_ms=10000, significant_gap_ms=9999
+        )
 
         with BeamTestPipeline(options=options) as p:
             test_stream = (
@@ -370,6 +387,18 @@ class StitchAndTranscribeTest(unittest.TestCase):
                         )
                     ]
                 )
+                .advance_watermark_to(130)
+                .add_elements(
+                    [
+                        TimestampedValue(
+                            (
+                                "feed-max",
+                                "gs://fake-bucket/ab12/feed-max/2026-03-06/130-uuid_trigger.flac",
+                            ),
+                            130,
+                        )
+                    ]
+                )
                 .advance_watermark_to_infinity()
             )
 
@@ -379,7 +408,9 @@ class StitchAndTranscribeTest(unittest.TestCase):
                 | beam.ParDo(
                     StitchAndTranscribeFn(
                         config=config,
-                        transcriber_factory=get_mock_factory("Simulated long transcript."),
+                        transcriber_factory=get_mock_factory(
+                            "Simulated long transcript."
+                        ),
                     )
                 ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
             )
@@ -392,7 +423,9 @@ class StitchAndTranscribeTest(unittest.TestCase):
                 assert {"uuid_starts_long", "uuid_continues_long"} in uuids_list
                 assert {"uuid_exceeds_max"} in uuids_list
 
-            assert_that(results.main, assert_transcripts, label="CheckMaxDurationTranscripts")
+            assert_that(
+                results.main, assert_transcripts, label="CheckMaxDurationTranscripts"
+            )
 
     @unittest.skip("DirectRunner timer advancing is buggy and unsupported natively.")
     @patch("backend.pipeline.transcription.stitcher.time")

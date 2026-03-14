@@ -6,6 +6,7 @@ from typing import Any
 import apache_beam as beam
 from apache_beam import window  # type: ignore[import-untyped, unresolved-import]
 from apache_beam.io.gcp.pubsub import PubsubMessage
+from google.protobuf.message import DecodeError
 
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import (
     AudioChunk,
@@ -73,7 +74,7 @@ class AddEventTimestamp(beam.DoFn):
         chunk_proto = AudioChunk()
         try:
             chunk_proto.ParseFromString(chunk_data)
-        except Exception as e:
+        except DecodeError as e:
             msg = f"Failed to parse AudioChunk proto: {e}"
             yield beam.pvalue.TaggedOutput(
                 DEAD_LETTER_QUEUE_TAG, {"error": msg, "feed_id": feed_id}
