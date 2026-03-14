@@ -44,7 +44,7 @@ class TestVadPlugins(unittest.TestCase):
         mock_ten_vad_class.return_value = mock_instance
 
         plugin = TenVadPlugin()
-        plugin.setup('{"min_speech_sec": 0.25}')
+        plugin.setup('{"min_speech_ms": 250}')
 
         # 30 frames * 256 samples = 7680 samples. * 2 bytes = 15360 bytes.
         dummy_pcm_data = b"\x00" * 15360
@@ -63,7 +63,7 @@ class TestVadPlugins(unittest.TestCase):
         mock_ten_vad_class.return_value = mock_instance
 
         plugin = TenVadPlugin()
-        plugin.setup('{"min_speech_sec": 0.25}')
+        plugin.setup('{"min_speech_ms": 250}')
 
         dummy_silence_data = b"\x00" * 15360
         result = plugin.evaluate(dummy_silence_data, 16000)
@@ -75,7 +75,7 @@ class TestVadPlugins(unittest.TestCase):
         plugin = TenVadPlugin()
         try:
             # Ensure it requires at least 0.25s of speech to pass
-            plugin.setup('{"min_speech_sec": 0.25}')
+            plugin.setup('{"min_speech_ms": 250}')
         except OSError as e:
             if "libc++.so.1" in str(e):
                 self.skipTest(

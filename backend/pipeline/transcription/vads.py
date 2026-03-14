@@ -15,7 +15,7 @@ import ten_vad
 
 from backend.pipeline.transcription.constants import (
     DEFAULT_TENVAD_HOP_SIZE,
-    DEFAULT_TENVAD_MIN_SPEECH_SEC,
+    DEFAULT_TENVAD_MIN_SPEECH_MS,
     DEFAULT_TENVAD_THRESHOLD,
 )
 from backend.pipeline.transcription.enums import VadType
@@ -52,7 +52,7 @@ class TenVadConfig(JsonConfigMixin):
     # VAD tuning parameters
     threshold: float = DEFAULT_TENVAD_THRESHOLD
     hop_size: int = DEFAULT_TENVAD_HOP_SIZE
-    min_speech_sec: float = DEFAULT_TENVAD_MIN_SPEECH_SEC
+    min_speech_ms: int = DEFAULT_TENVAD_MIN_SPEECH_MS
 
 
 class TenVadPlugin(VoiceActivityDetector):
@@ -95,13 +95,13 @@ class TenVadPlugin(VoiceActivityDetector):
             if prob >= self.config.threshold:
                 speech_frames += 1
 
-        total_speech_sec = (speech_frames * hop_size) / sample_rate
+        total_speech_ms = int((speech_frames * hop_size * 1000) / sample_rate)
 
-        if total_speech_sec < self.config.min_speech_sec:
+        if total_speech_ms < self.config.min_speech_ms:
             logger.info(
-                "TenVAD detected %.3fs speech, below %.3fs threshold. Discarding.",
-                total_speech_sec,
-                self.config.min_speech_sec,
+                "TenVAD detected %dms speech, below %dms threshold. Discarding.",
+                total_speech_ms,
+                self.config.min_speech_ms,
             )
             return False
 

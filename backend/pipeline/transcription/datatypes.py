@@ -82,6 +82,19 @@ class StitchAndTranscribeConfig:
     metrics_config: str
     significant_gap_ms: int
     stale_timeout_ms: int
+    max_transmission_duration_ms: int
+
+    def __post_init__(self) -> None:
+        if self.significant_gap_ms <= 0:
+            raise ValueError("significant_gap_ms must be > 0")
+        if self.stale_timeout_ms <= 0:
+            raise ValueError("stale_timeout_ms must be > 0")
+        if self.max_transmission_duration_ms <= 0:
+            raise ValueError("max_transmission_duration_ms must be > 0")
+        if self.significant_gap_ms >= self.max_transmission_duration_ms:
+            raise ValueError(
+                "significant_gap_ms must be strictly less than max_transmission_duration_ms"
+            )
 
 
 @dataclass(frozen=True)
