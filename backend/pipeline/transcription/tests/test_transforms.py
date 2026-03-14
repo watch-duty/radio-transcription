@@ -71,6 +71,7 @@ def get_test_config(**kwargs: Any) -> StitchAndTranscribeConfig:
         "metrics_config": "{}",
         "significant_gap_ms": 500,
         "stale_timeout_ms": 60000,
+        "max_transmission_duration_ms": 600000,
     }
     defaults.update(kwargs)
     return StitchAndTranscribeConfig(**defaults)  # type: ignore
@@ -289,6 +290,109 @@ class StitchAndTranscribeTest(unittest.TestCase):
                 assert {"uuid_silent", "uuid_starts_again"} in uuids_list
 
             assert_that(results.main, assert_transcripts, label="CheckMainTranscripts")
+
+    @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
+    def test_max_transmission_duration_flush(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Test that a continuous transmission exceeding max duration is flushed even without gaps."""
+        mock_processor_inst = mock_audio_processor.return_value
+        mock_processor_inst.check_vad.return_value = True
+        mock_processor_inst.preprocess_audio.side_effect = lambda x: x
+        mock_processor_inst.export_flac.return_value = b"flac_bytes"
+
+        sed_map = {
+            "100-uuid_starts_long.flac": [(0.0, 5.0)],
+            "105-uuid_continues_long.flac": [(0.0, 5.0)],
+            "110-uuid_exceeds_max.flac": [(0.0, 5.0)],
+        }
+
+        def mock_download(path: str) -> AudioChunkData:
+            filename = path.rsplit("/", maxsplit=1)[-1]
+            chunk_start = float(filename.split("-")[0]) if "-" in filename else 0.0
+            return AudioChunkData(
+                start_ms=int(chunk_start * 1000),
+                audio=AudioSegment.silent(duration=5000),
+                speech_segments=[
+                    TimeRange(int(s * 1000), int(e * 1000))
+                    for s, e in sed_map.get(filename, [])
+                ],
+            )
+
+        mock_processor_inst.download_audio_and_sed.side_effect = mock_download
+
+        options = PipelineOptions()
+        options.view_as(StandardOptions).streaming = True
+
+        # Set max duration to 10 seconds.
+        config = get_test_config(max_transmission_duration_ms=10000, significant_gap_ms=50000)
+
+        with BeamTestPipeline(options=options) as p:
+            test_stream = (
+                BeamTestStream(
+                    coder=beam.coders.TupleCoder(
+                        (beam.coders.StrUtf8Coder(), beam.coders.StrUtf8Coder())
+                    )
+                )
+                .advance_watermark_to(100)
+                .add_elements(
+                    [
+                        TimestampedValue(
+                            (
+                                "feed-max",
+                                "gs://fake-bucket/ab12/feed-max/2026-03-06/100-uuid_starts_long.flac",
+                            ),
+                            100,
+                        )
+                    ]
+                )
+                .advance_watermark_to(105)
+                .add_elements(
+                    [
+                        TimestampedValue(
+                            (
+                                "feed-max",
+                                "gs://fake-bucket/ab12/feed-max/2026-03-06/105-uuid_continues_long.flac",
+                            ),
+                            105,
+                        )
+                    ]
+                )
+                .advance_watermark_to(110)
+                .add_elements(
+                    [
+                        TimestampedValue(
+                            (
+                                "feed-max",
+                                "gs://fake-bucket/ab12/feed-max/2026-03-06/110-uuid_exceeds_max.flac",
+                            ),
+                            110,
+                        )
+                    ]
+                )
+                .advance_watermark_to_infinity()
+            )
+
+            results = (
+                p
+                | test_stream
+                | beam.ParDo(
+                    StitchAndTranscribeFn(
+                        config=config,
+                        transcriber_factory=get_mock_factory("Simulated long transcript."),
+                    )
+                ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
+            )
+
+            def assert_transcripts(elements: list[TranscriptionResult]) -> None:
+                assert len(elements) == 2, (
+                    f"Expected 2 transcripts, got {len(elements)}: {elements}"
+                )
+                uuids_list = [set(el.audio_ids) for el in elements]
+                assert {"uuid_starts_long", "uuid_continues_long"} in uuids_list
+                assert {"uuid_exceeds_max"} in uuids_list
+
+            assert_that(results.main, assert_transcripts, label="CheckMaxDurationTranscripts")
 
     @unittest.skip("DirectRunner timer advancing is buggy and unsupported natively.")
     @patch("backend.pipeline.transcription.stitcher.time")

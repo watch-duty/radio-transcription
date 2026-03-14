@@ -3,6 +3,7 @@ import argparse
 from apache_beam.options.pipeline_options import PipelineOptions
 
 from backend.pipeline.transcription.constants import (
+    DEFAULT_MAX_TRANSMISSION_DURATION_MS,
     DEFAULT_SIGNIFICANT_GAP_MS,
     DEFAULT_STALE_TIMEOUT_MS,
 )
@@ -83,4 +84,10 @@ class TranscriptionOptions(PipelineOptions):
             type=int,
             default=DEFAULT_STALE_TIMEOUT_MS,
             help="Milliseconds before an incomplete transmission is flushed.",
+        )
+        parser.add_argument(
+            "--max_transmission_duration_ms",
+            type=int,
+            default=DEFAULT_MAX_TRANSMISSION_DURATION_MS,
+            help="Absolute maximum duration of a single continuous transmission.",
         )

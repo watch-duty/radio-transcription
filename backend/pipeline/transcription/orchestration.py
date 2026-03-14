@@ -14,6 +14,7 @@ from apache_beam.options.pipeline_options import PipelineOptions, StandardOption
 
 from backend.pipeline.transcription.constants import (
     DEAD_LETTER_QUEUE_TAG,
+    DEFAULT_MAX_TRANSMISSION_DURATION_MS,
     DEFAULT_SIGNIFICANT_GAP_MS,
     DEFAULT_STALE_TIMEOUT_MS,
     MAIN_TAG,
@@ -65,6 +66,8 @@ def get_pipeline(
                 significant_gap_ms=options.significant_gap_ms
                 or DEFAULT_SIGNIFICANT_GAP_MS,
                 stale_timeout_ms=options.stale_timeout_ms or DEFAULT_STALE_TIMEOUT_MS,
+                max_transmission_duration_ms=options.max_transmission_duration_ms
+                or DEFAULT_MAX_TRANSMISSION_DURATION_MS,
             )
         )
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
