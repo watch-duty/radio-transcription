@@ -92,8 +92,9 @@ class AudioProcessorTest(unittest.TestCase):
     )
     @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
     @patch("backend.pipeline.transcription.audio_processor.read_sed_segments_from_blob")
+    @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
     def test_download_audio_and_sed(
-        self, mock_read_sed: MagicMock, mock_get_vad: MagicMock
+        self, mock_get_gcs: MagicMock, mock_read_sed: MagicMock, mock_get_vad: MagicMock
     ) -> None:
         """Test downloading and parsing an audio chunk from GCS."""
         # Arrange
@@ -135,7 +136,10 @@ class AudioProcessorTest(unittest.TestCase):
         mock_bucket.get_blob.assert_called_with("audio/feed1/12345.flac")
 
     @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
-    def test_download_audio_not_found(self, mock_get_vad: MagicMock) -> None:
+    @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
+    def test_download_audio_not_found(
+        self, mock_get_gcs: MagicMock, mock_get_vad: MagicMock
+    ) -> None:
         """Test that missing GCS blob raises FileNotFoundError."""
         # Arrange
         processor = AudioProcessor(vad_type=VadType.TEN_VAD)
