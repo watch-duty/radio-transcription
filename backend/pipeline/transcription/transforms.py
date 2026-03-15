@@ -107,7 +107,9 @@ class AddEventTimestamp(beam.DoFn):
             return
 
         # Convert google.protobuf.Timestamp to unix float timestamp for Beam Windowing
-        timestamp_sec = chunk_proto.start_timestamp.seconds + (chunk_proto.start_timestamp.nanos / 1e9)
+        timestamp_sec = chunk_proto.start_timestamp.seconds + (
+            chunk_proto.start_timestamp.nanos / 1e9
+        )
 
         yield window.TimestampedValue((feed_id, chunk_proto.gcs_uri), timestamp_sec)
 
