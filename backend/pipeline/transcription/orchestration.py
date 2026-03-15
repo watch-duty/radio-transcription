@@ -1,4 +1,5 @@
-"""Radio Transcription Pipeline Orchestration
+"""
+Radio Transcription Pipeline Orchestration
 
 This module contains the Apache Beam pipeline definition and DAG construction.
 It is separated from the CLI entry point to improve testability and modularity.
@@ -39,7 +40,8 @@ logger = logging.getLogger(__name__)
 def get_pipeline(
     pipeline_options: PipelineOptions,
 ) -> beam.Pipeline:
-    """Constructs the Apache Beam pipeline DAG and returns the pipeline object.
+    """
+    Constructs the Apache Beam pipeline DAG and returns the pipeline object.
     """
     # Require streaming mode since we handle unbounded logical streams from Pub/Sub
     pipeline_options.view_as(StandardOptions).streaming = True
@@ -79,7 +81,9 @@ def get_pipeline(
                 stale_timeout_ms=options.stale_timeout_ms or DEFAULT_STALE_TIMEOUT_MS,
                 max_transmission_duration_ms=options.max_transmission_duration_ms
                 or DEFAULT_MAX_TRANSMISSION_DURATION_MS,
-                route_to_dlq=options.route_to_dlq if options.route_to_dlq is not None else True,
+                route_to_dlq=options.route_to_dlq
+                if options.route_to_dlq is not None
+                else True,
             )
         )
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
@@ -94,7 +98,9 @@ def get_pipeline(
                 vad_config=options.vad_config,
                 metrics_exporter_type=options.metrics_exporter_type,
                 metrics_config=options.metrics_config,
-                route_to_dlq=options.route_to_dlq if options.route_to_dlq is not None else True,
+                route_to_dlq=options.route_to_dlq
+                if options.route_to_dlq is not None
+                else True,
             )
         )
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)

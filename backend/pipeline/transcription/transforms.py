@@ -5,16 +5,20 @@ from collections.abc import Generator
 from typing import Any, override
 
 import apache_beam as beam
-from apache_beam import window
 from apache_beam.io.gcp.pubsub import PubsubMessage
 from apache_beam.metrics import Metrics
+from apache_beam.transforms import window
 from apache_beam.transforms.timeutil import TimeDomain
 from apache_beam.transforms.userstate import (
+    BagRuntimeState,
     BagStateSpec,
+    ReadModifyWriteRuntimeState,
     ReadModifyWriteStateSpec,
+    RuntimeTimer,
     TimerSpec,
     on_timer,
 )
+from apache_beam.utils.timestamp import Timestamp
 from google.protobuf.message import DecodeError
 
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import (
@@ -36,7 +40,8 @@ logger = logging.getLogger(__name__)
 
 
 class ParseAndKeyFn(beam.DoFn):
-    """Extracts the feed_id and builds the GCS URI from Pub/Sub attributes.
+    """
+    Extracts the feed_id and builds the GCS URI from Pub/Sub attributes.
     Routes messages missing required attributes to the DLQ.
 
     Why this matters:
@@ -66,7 +71,8 @@ class ParseAndKeyFn(beam.DoFn):
 
 
 class AddEventTimestamp(beam.DoFn):
-    """Extracts the event timestamp directly from the `AudioChunk` protobuf
+    """
+    Extracts the event timestamp directly from the `AudioChunk` protobuf
     and assigns it as the Beam windowing `TimestampedValue`, yielding the GCS URI.
 
     Why this matters:
@@ -107,7 +113,8 @@ class AddEventTimestamp(beam.DoFn):
 
 
 class SerializeToPubSubMessageFn(beam.DoFn):
-    """Converts a `TranscriptionResult` dataclass into a serialized `TranscribedAudio` Protobuf payload
+    """
+    Converts a `TranscriptionResult` dataclass into a serialized `TranscribedAudio` Protobuf payload
     and wraps it in a `PubsubMessage` for downstream publishing.
     """
 
@@ -125,8 +132,12 @@ class SerializeToPubSubMessageFn(beam.DoFn):
             transmission_id=str(deterministic_uuid),
             transcript=element.transcript,
             missing_prior_context=element.missing_prior_context,
-            start_source_chunk_id=str(element.start_chunk_id) if element.start_chunk_id else "",
-            end_source_chunk_id=str(element.end_chunk_id) if element.end_chunk_id else "",
+            start_source_chunk_id=str(element.start_chunk_id)
+            if element.start_chunk_id
+            else "",
+            end_source_chunk_id=str(element.end_chunk_id)
+            if element.end_chunk_id
+            else "",
         )
         proto.start_timestamp.FromMicroseconds(
             element.time_range.start_ms * MICROSECONDS_PER_MS
@@ -141,7 +152,8 @@ class SerializeToPubSubMessageFn(beam.DoFn):
 
 
 class RestoreOrderFn(beam.DoFn):
-    """A stateful DoFn that buffers out-of-order chunks and emits them in strict chronological order.
+    """
+    A stateful DoFn that buffers out-of-order chunks and emits them in strict chronological order.
 
     Why this matters:
     Audio chunks may arrive at the pipeline out of order due to network latency or Pub/Sub delivery variance.
@@ -195,24 +207,25 @@ class RestoreOrderFn(beam.DoFn):
         )
 
     @override
-    def process(  # type: ignore[override] # noqa: PLR0913
+    def process(  # type: ignore[override]
         self,
         element: tuple[str, str],
-        timestamp: beam.utils.timestamp.Timestamp = beam.DoFn.TimestampParam,
-        expected_next_ts: beam.transforms.userstate.ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # noqa: B008
+        timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore[assignment]
+        expected_next_ts: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore[assignment] # noqa: B008
             EXPECTED_NEXT_TS_SPEC
         ),
-        out_of_order_buffer: beam.transforms.userstate.BagRuntimeState = beam.DoFn.StateParam(  # noqa: B008
+        out_of_order_buffer: BagRuntimeState = beam.DoFn.StateParam(  # type: ignore[assignment] # noqa: B008
             OUT_OF_ORDER_BUFFER_SPEC
         ),
-        timer_active: beam.transforms.userstate.ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # noqa: B008
+        timer_active: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore[assignment] # noqa: B008
             TIMER_ACTIVE_SPEC
         ),
-        out_of_order_timer: beam.transforms.userstate.RuntimeTimer = beam.DoFn.TimerParam(  # noqa: B008
+        out_of_order_timer: RuntimeTimer = beam.DoFn.TimerParam(  # type: ignore[assignment] # noqa: B008
             OUT_OF_ORDER_TIMER_SPEC
         ),
     ) -> Generator[tuple[str, str], None, None]:
-        """Process incoming audio chunks, buffering those that arrive ahead of their expected order.
+        """
+        Process incoming audio chunks, buffering those that arrive ahead of their expected order.
         If a chunk is heavily delayed, a real-time expiry timer ensures we don't block downstream
         processing indefinitely.
         """
@@ -262,13 +275,13 @@ class RestoreOrderFn(beam.DoFn):
                 deadline_s = time.time() + (
                     self.config.out_of_order_timeout_ms / 1000.0
                 )
-                out_of_order_timer.set(beam.utils.timestamp.Timestamp(deadline_s))
+                out_of_order_timer.set(Timestamp(deadline_s))
                 timer_active.write(True)  # noqa: FBT003
 
     def _advance_expected(
         self,
         current_ts_ms: int,
-        expected_next_ts: beam.transforms.userstate.ReadModifyWriteRuntimeState,
+        expected_next_ts: ReadModifyWriteRuntimeState,
     ) -> None:
         """Helper to advance the sequence tracker by exactly one 15-second chunk duration."""
         expected_next_ts.write(current_ts_ms + self.config.chunk_duration_ms)
@@ -276,12 +289,13 @@ class RestoreOrderFn(beam.DoFn):
     def _drain_ready_elements(
         self,
         feed_id: str,
-        expected_next_ts: beam.transforms.userstate.ReadModifyWriteRuntimeState,
-        out_of_order_buffer: beam.transforms.userstate.BagRuntimeState,
-        timer_active: beam.transforms.userstate.ReadModifyWriteRuntimeState,
-        out_of_order_timer: beam.transforms.userstate.RuntimeTimer | None = None,
+        expected_next_ts: ReadModifyWriteRuntimeState,
+        out_of_order_buffer: BagRuntimeState,
+        timer_active: ReadModifyWriteRuntimeState,
+        out_of_order_timer: RuntimeTimer | None = None,
     ) -> Generator[tuple[str, str], None, None]:
-        """Scans the out-of-order buffer to see if the missing chunks we were waiting for
+        """
+        Scans the out-of-order buffer to see if the missing chunks we were waiting for
         can now be emitted sequentially.
         """
         buffer_elements = out_of_order_buffer.read()
@@ -317,24 +331,26 @@ class RestoreOrderFn(beam.DoFn):
 
         # If the buffer is now completely empty, we can safely kill the timeout countdown.
         if not retained and timer_active.read():
-            out_of_order_timer.clear()
+            if out_of_order_timer is not None:
+                out_of_order_timer.clear()
             timer_active.clear()
 
     @on_timer(OUT_OF_ORDER_TIMER_SPEC)
     def handle_gap_timeout(
         self,
         feed_id: str = beam.DoFn.KeyParam,  # type: ignore[assignment]
-        expected_next_ts: beam.transforms.userstate.ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # noqa: B008
+        expected_next_ts: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore[assignment] # noqa: B008
             EXPECTED_NEXT_TS_SPEC
         ),
-        out_of_order_buffer: beam.transforms.userstate.BagRuntimeState = beam.DoFn.StateParam(  # noqa: B008
+        out_of_order_buffer: BagRuntimeState = beam.DoFn.StateParam(  # type: ignore[assignment] # noqa: B008
             OUT_OF_ORDER_BUFFER_SPEC
         ),
-        timer_active: beam.transforms.userstate.ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # noqa: B008
+        timer_active: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore[assignment] # noqa: B008
             TIMER_ACTIVE_SPEC
         ),
     ) -> Generator[tuple[str, str], None, None]:
-        """Fires when out-of-order chunks have sat in the buffer for too long.
+        """
+        Fires when out-of-order chunks have sat in the buffer for too long.
         This signals that a chunk has been permanently lost in the network.
         We 'accept the gap', skip ahead to the earliest chunk we *do* have, and flush.
         """

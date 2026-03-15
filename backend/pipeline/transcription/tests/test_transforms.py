@@ -1,4 +1,5 @@
-"""Tests for the StitchAudioFn, TranscribeAudioFn, and related transformations.
+"""
+Tests for the StitchAudioFn, TranscribeAudioFn, and related transformations.
 """
 
 import threading
@@ -21,12 +22,11 @@ from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.transcription.constants import DEAD_LETTER_QUEUE_TAG
 from backend.pipeline.transcription.datatypes import (
     AudioChunkData,
+    FlushRequest,
     OrderRestorerConfig,
     StitchAudioConfig,
-    TranscribeAudioConfig,
     TimeRange,
-    TranscriptionResult,
-    FlushRequest
+    TranscribeAudioConfig,
 )
 from backend.pipeline.transcription.enums import TranscriberType, VadType
 from backend.pipeline.transcription.stitcher import StitchAudioFn, TranscribeAudioFn
@@ -77,6 +77,7 @@ def get_test_stitch_config(**kwargs: Any) -> StitchAudioConfig:
     }
     defaults.update(kwargs)
     return StitchAudioConfig(**defaults)  # type: ignore
+
 
 def get_test_transcribe_config(**kwargs: Any) -> TranscribeAudioConfig:
     """Helper to return a TranscribeAudioConfig with defaults."""
@@ -374,11 +375,11 @@ class StitchAudioTest(unittest.TestCase):
                 return el
 
             results.main = results.main | beam.Map(debug_print)
-            
+
             def print_dlq(el):
-                print(f"DLQ MESSAGE: {el}")
+                print(f"DLQ MESSAGE: {el}")  # noqa: T201
                 return el
-                
+
             results[DEAD_LETTER_QUEUE_TAG] | "Print DLQ" >> beam.Map(print_dlq)
 
             def assert_flush_requests(elements: list[FlushRequest]) -> None:
@@ -409,7 +410,9 @@ class StitchAudioTest(unittest.TestCase):
                 } == set(str(u) for u in elements[2].processed_uuids)
                 assert elements[2].missing_prior_context is True
 
-            assert_that(results.main, assert_flush_requests, label="CheckMainFlushRequests")
+            assert_that(
+                results.main, assert_flush_requests, label="CheckMainFlushRequests"
+            )
 
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
     def test_max_transmission_duration_flush(
@@ -538,7 +541,9 @@ class StitchAudioTest(unittest.TestCase):
                 assert elements[1].missing_prior_context is False
 
             assert_that(
-                results.main, assert_flush_requests, label="CheckMaxDurationFlushRequests"
+                results.main,
+                assert_flush_requests,
+                label="CheckMaxDurationFlushRequests",
             )
 
     @unittest.skip("DirectRunner timer advancing is buggy and unsupported natively.")
@@ -549,7 +554,8 @@ class StitchAudioTest(unittest.TestCase):
         mock_audio_processor: MagicMock,
         mock_time: MagicMock,
     ) -> None:
-        """Test that stale audio chunks are flushed after a timeout.
+        """
+        Test that stale audio chunks are flushed after a timeout.
 
         Note: This test is skipped because the Apache Beam DirectRunner (used for local
         execution and unit testing) has known bugs and limitations regarding timer advancing
@@ -611,7 +617,9 @@ class StitchAudioTest(unittest.TestCase):
                 assert len(elements) == 1, f"Expected 1 element, got {len(elements)}"
                 res = elements[0]
                 assert res.feed_id == "feed-123"
-                assert "11111111-1111-1111-1111-111111111111" in set(str(u) for u in res.processed_uuids)
+                assert "11111111-1111-1111-1111-111111111111" in set(
+                    str(u) for u in res.processed_uuids
+                )
 
             assert_that(
                 results.main,
@@ -644,6 +652,7 @@ class StitchAudioTest(unittest.TestCase):
                     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
                 )
 
+
 class TranscribeAudioTest(unittest.TestCase):
     """Tests for TranscribeAudioFn."""
 
@@ -653,7 +662,6 @@ class TranscribeAudioTest(unittest.TestCase):
         self, mock_get_transcriber: MagicMock, mock_audio_processor: MagicMock
     ) -> None:
         """Test that failing transcription routes to DLQ."""
-        
         mock_processor_inst = mock_audio_processor.return_value
         mock_processor_inst.check_vad.return_value = True
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
@@ -667,21 +675,20 @@ class TranscribeAudioTest(unittest.TestCase):
                     FlushRequest(
                         feed_id="feed-123",
                         buffer=AudioSegment.silent(duration=500),
-                        processed_uuids={uuid.UUID("11111111-1111-1111-1111-111111111111")},
-                        time_range=TimeRange(start_ms=101000, end_ms=101500)
+                        processed_uuids={
+                            uuid.UUID("11111111-1111-1111-1111-111111111111")
+                        },
+                        time_range=TimeRange(start_ms=101000, end_ms=101500),
                     )
                 ]
             )
-            
-            results = (
-                elements
-                | beam.ParDo(
-                    TranscribeAudioFn(
-                        config=config,
-                        transcriber_factory=get_mock_factory(raise_exception=True),
-                    )
-                ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
-            )
+
+            results = elements | beam.ParDo(
+                TranscribeAudioFn(
+                    config=config,
+                    transcriber_factory=get_mock_factory(raise_exception=True),
+                )
+            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
 
             def assert_dlq(elements: list[dict[str, Any]]) -> None:
                 assert len(elements) == 1
@@ -701,9 +708,9 @@ class TranscribeAudioTest(unittest.TestCase):
             elements = p | beam.Create(
                 [("feed-123", "gs://fake-bucket/no_dashes_here.flac")]
             )
-            results = elements | beam.ParDo(
-                StitchAudioFn(config=config)
-            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
+            results = elements | beam.ParDo(StitchAudioFn(config=config)).with_outputs(
+                DEAD_LETTER_QUEUE_TAG, main="main"
+            )
 
             def assert_invalid(elements: list[dict[str, Any]]) -> None:
                 assert len(elements) == 1
@@ -719,7 +726,8 @@ class TranscribeAudioTest(unittest.TestCase):
     def test_concurrent_transcription_execution(
         self, mock_audio_processor: MagicMock
     ) -> None:
-        """Verify that _flush_buffer executes in a background thread pool.
+        """
+        Verify that _flush_buffer executes in a background thread pool.
 
         Note: This test is skipped because the Apache Beam DirectRunner isolating
         workers locally makes multithreading execution validation extremely flaky
@@ -778,15 +786,19 @@ class TranscribeAudioTest(unittest.TestCase):
                     FlushRequest(
                         feed_id="feed-123",
                         buffer=AudioSegment.silent(duration=500),
-                        processed_uuids={uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")},
-                        time_range=TimeRange(start_ms=0, end_ms=500)
+                        processed_uuids={
+                            uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+                        },
+                        time_range=TimeRange(start_ms=0, end_ms=500),
                     ),
                     FlushRequest(
                         feed_id="feed-123",
                         buffer=AudioSegment.silent(duration=500),
-                        processed_uuids={uuid.UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")},
-                        time_range=TimeRange(start_ms=5000, end_ms=5500)
-                    )
+                        processed_uuids={
+                            uuid.UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+                        },
+                        time_range=TimeRange(start_ms=5000, end_ms=5500),
+                    ),
                 ]
             )
 

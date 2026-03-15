@@ -1,4 +1,5 @@
-"""Utility functions for interacting with Google Cloud Storage in the radio transcription pipeline.
+"""
+Utility functions for interacting with Google Cloud Storage in the radio transcription pipeline.
 """
 
 import base64
@@ -26,7 +27,8 @@ def get_gcs_client() -> storage.Client:
 def read_sed_segments_from_blob(
     blob: storage.Blob,
 ) -> tuple[int, list[TimeRange]]:
-    """Parse SED metadata from a GCS blob.
+    """
+    Parse SED metadata from a GCS blob.
 
     Returns:
         tuple containing (start_ms, list of speech segment TimeRanges).

@@ -1,3 +1,4 @@
+from backend.pipeline.shared_constants import CHUNK_DURATION_SECONDS
 from backend.pipeline.transcription.datatypes import (
     AudioChunkData,
     DropAction,
@@ -13,7 +14,8 @@ from backend.pipeline.transcription.datatypes import (
 
 
 class AudioStitchingStateMachine:
-    """A pure Python state machine responsible for the core logic of stitching audio chunks together.
+    """
+    A pure Python state machine responsible for the core logic of stitching audio chunks together.
     It evaluates incoming audio segments, tracks continuous speech, and decides when to flush
     transmissions based on significant gaps or maximum duration limits.
 
@@ -27,16 +29,15 @@ class AudioStitchingStateMachine:
     def process_chunk(
         self, chunk_data: AudioChunkData, ctx: StitcherContext
     ) -> list[StateMachineAction]:
-        from backend.pipeline.shared_constants import CHUNK_DURATION_SECONDS
         chunk_duration_ms = int(CHUNK_DURATION_SECONDS * 1000)
         actions: list[StateMachineAction] = []
-        
+
         # 1. Detect if we skipped over a chunk (dropped audio)
         is_dropped_chunk = (
             ctx.expected_next_chunk_start_ms is not None
             and chunk_data.start_ms > ctx.expected_next_chunk_start_ms
         )
-        
+
         if is_dropped_chunk:
             # If we had an active transmission, we must flush it because the auditory context was violently severed.
             if ctx.current_buffer and ctx.transmission_start_time_ms is not None:
@@ -47,18 +48,18 @@ class AudioStitchingStateMachine:
                     )
                 )
                 self._reset_transmission_context(ctx)
-                
+
             # The next audio we process is jumping in after missing audio, so it lacks prior context.
             ctx.missing_prior_context = True
-            
+
         # 2. Proceed with normal evaluation
         if not chunk_data.speech_segments:
             new_actions = self._process_silent_chunk(chunk_data, ctx)
         else:
             new_actions = self._process_speech_segments(chunk_data, ctx)
-            
+
         actions.extend(new_actions)
-        
+
         # 3. Always update the expected contiguous start time for the NEXT chunk
         ctx.expected_next_chunk_start_ms = chunk_data.start_ms + chunk_duration_ms
         actions.append(UpdateStateAction())
@@ -68,13 +69,15 @@ class AudioStitchingStateMachine:
         self, reason: str, ctx: StitcherContext
     ) -> FlushAction:
         if not ctx.current_buffer:
-            raise ValueError("Cannot flush empty current buffer")
-        
+            msg = "Cannot flush empty current buffer"
+            raise ValueError(msg)
+
         # When flushing due to dropped chunks, we might not have a last_segment_end_time_ms yet
         # if the transmission was very short, so fallback to transmission_start_time_ms.
-        end_ms = ctx.last_segment_end_time_ms if ctx.last_segment_end_time_ms else ctx.transmission_start_time_ms
+        end_ms = ctx.last_segment_end_time_ms or ctx.transmission_start_time_ms
         if end_ms is None or ctx.transmission_start_time_ms is None:
-             raise ValueError("Missing boundary times for buffer flush.")
+            msg = "Missing boundary times for buffer flush."
+            raise ValueError(msg)
 
         return FlushAction(
             reason=reason,
@@ -158,8 +161,9 @@ class AudioStitchingStateMachine:
         ctx.processed_uuids.add(ctx.source_file_uuid)
         actions.append(UpdateStateAction())
         expected_stale_deadline_ms = (
-            ctx.last_segment_end_time_ms + self.config.stale_timeout_ms
-        )
+            ctx.last_segment_end_time_ms
+            or (chunk_data.start_ms + len(chunk_data.audio))
+        ) + self.config.stale_timeout_ms
         actions.append(ScheduleStaleTimerAction(deadline_ms=expected_stale_deadline_ms))
         return actions
 
@@ -180,7 +184,7 @@ class AudioStitchingStateMachine:
                 and ((file_start_ms + global_start_ms) - ctx.last_segment_end_time_ms)
                 >= self.config.significant_gap_ms
             )
-            
+
             # 2. Check if this segment would exceed the maximum allowed duration of a transmission.
             is_max_duration_exceeded = (
                 ctx.transmission_start_time_ms is not None
@@ -198,7 +202,7 @@ class AudioStitchingStateMachine:
                 # Flush the currently buffered transmission before starting this next segment
                 if ctx.current_buffer and ctx.transmission_start_time_ms is not None:
                     actions.append(self._flush_current_transmission(reason, ctx))
-                    
+
                     # We successfully ended the prior transmission, so the next one starts fresh.
                     ctx.missing_prior_context = False
 

@@ -24,7 +24,8 @@ logger = logging.getLogger(__name__)
 
 
 class AudioProcessor:
-    """An acoustic manipulation module.
+    """
+    An acoustic manipulation module.
     Responsible for downloading/parsing audio, applying VAD, and applying bandpass filters.
     While mostly stateless, it holds per-worker initialized state (`self.vad`) from `setup()`.
     All streaming orchestration and API integrations are handled upstream.

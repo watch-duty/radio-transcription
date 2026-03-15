@@ -66,8 +66,10 @@ STALE_TIMER_SPEC = TimerSpec("stale_timer", beam.TimeDomain.WATERMARK)
 # A Beam Watermark timer. If no new data advances the watermark past its deadline, it fires to flush whatever audio is stranded in the TRANSMISSION_BUFFER.
 STALE_TIMER_PARAM = beam.DoFn.TimerParam(STALE_TIMER_SPEC)
 
+
 class StitchAudioFn(beam.DoFn):
-    """A stateful Beam DoFn responsible for maintaining chronological continuous audio state per radio feed.
+    """
+    A stateful Beam DoFn responsible for maintaining chronological continuous audio state per radio feed.
     It delegates the core state transition logic to `AudioStitchingStateMachine` while mapping the resulting
     actions to Beam's state and timer APIs.
 
@@ -95,12 +97,8 @@ class StitchAudioFn(beam.DoFn):
         self.metrics_exporter: Any | None = None
 
         # Pipeline Telemetry (Beam Metrics)
-        self.stale_flush_count = Metrics.counter(
-            "StitchAudioFn", "stale_flush_count"
-        )
-        self.gap_flush_count = Metrics.counter(
-            "StitchAudioFn", "gap_flush_count"
-        )
+        self.stale_flush_count = Metrics.counter("StitchAudioFn", "stale_flush_count")
+        self.gap_flush_count = Metrics.counter("StitchAudioFn", "gap_flush_count")
         self.max_duration_flush_count = Metrics.counter(
             "StitchAudioFn", "max_duration_flush_count"
         )
@@ -132,8 +130,6 @@ class StitchAudioFn(beam.DoFn):
         )
         self.metrics_exporter.setup()
 
-
-
     def _extract_source_uuid(self, gcs_path: str) -> uuid.UUID:
         _, _, filename = gcs_path.rpartition("/")
         _, sep, tail = filename.partition("-")
@@ -143,8 +139,6 @@ class StitchAudioFn(beam.DoFn):
 
         uuid_str, _, _ = tail.partition(".")
         return uuid.UUID(uuid_str)
-
-
 
     def _load_current_buffer(
         self,
@@ -166,7 +160,8 @@ class StitchAudioFn(beam.DoFn):
         None,
         None,
     ]:
-        """Downloads audio bytes and SED metadata from GCS.
+        """
+        Downloads audio bytes and SED metadata from GCS.
         Yields `beam.pvalue.TaggedOutput` strings to the DLQ if an exception occurs.
         """
         if self.audio_processor is None:
@@ -207,7 +202,11 @@ class StitchAudioFn(beam.DoFn):
             )
 
     def _apply_flush_action(
-        self, action: FlushAction, transmission_context: ReadModifyWriteRuntimeState, transmission_buffer: ReadModifyWriteRuntimeState, stale_timer: RuntimeTimer
+        self,
+        action: FlushAction,
+        transmission_context: ReadModifyWriteRuntimeState,
+        transmission_buffer: ReadModifyWriteRuntimeState,
+        stale_timer: RuntimeTimer,
     ) -> Generator[FlushRequest, None, None]:
         if "Maximum transmission duration" in action.reason:
             self.max_duration_flush_count.inc()
@@ -220,7 +219,10 @@ class StitchAudioFn(beam.DoFn):
         stale_timer.clear()
 
     def _apply_update_state_action(
-        self, transmission_context: ReadModifyWriteRuntimeState, transmission_buffer: ReadModifyWriteRuntimeState, ctx: StitcherContext
+        self,
+        transmission_context: ReadModifyWriteRuntimeState,
+        transmission_buffer: ReadModifyWriteRuntimeState,
+        ctx: StitcherContext,
     ) -> None:
         new_context = TransmissionContext(
             last_end_time_ms=ctx.last_segment_end_time_ms,
@@ -249,7 +251,7 @@ class StitchAudioFn(beam.DoFn):
             else:
                 stale_timer.clear()
 
-    def _apply_state_actions(
+    def _apply_state_actions(  # noqa: PLR0913
         self,
         *,
         actions: list[StateMachineAction],
@@ -262,15 +264,19 @@ class StitchAudioFn(beam.DoFn):
         for action in actions:
             match action:
                 case FlushAction():
-                    yield from self._apply_flush_action(action, transmission_context, transmission_buffer, stale_timer)
+                    yield from self._apply_flush_action(
+                        action, transmission_context, transmission_buffer, stale_timer
+                    )
                 case UpdateStateAction():
-                    self._apply_update_state_action(transmission_context, transmission_buffer, ctx)
+                    self._apply_update_state_action(
+                        transmission_context, transmission_buffer, ctx
+                    )
                 case ScheduleStaleTimerAction():
                     self._apply_schedule_stale_timer_action(action, stale_timer)
                 case DropAction(reason=reason):
                     logger.info(f"{reason}: {gcs_path}")
 
-    def _process_audio_chunk(
+    def _process_audio_chunk(  # noqa: PLR0913
         self,
         *,
         feed_id: str,
@@ -283,7 +289,9 @@ class StitchAudioFn(beam.DoFn):
     ) -> Generator[FlushRequest | beam.pvalue.TaggedOutput, None, None]:
         file_start_ms = chunk_data.start_ms
 
-        curr_context: TransmissionContext = transmission_context.read() or TransmissionContext()
+        curr_context: TransmissionContext = (
+            transmission_context.read() or TransmissionContext()
+        )
         current_buffer = self._load_current_buffer(transmission_buffer)
 
         ctx = StitcherContext(
@@ -303,16 +311,16 @@ class StitchAudioFn(beam.DoFn):
         actions = pipeline.process_chunk(chunk_data, ctx)
 
         yield from self._apply_state_actions(
-            actions=actions, 
-            transmission_context=transmission_context, 
-            transmission_buffer=transmission_buffer, 
-            stale_timer=stale_timer, 
-            ctx=ctx, 
-            gcs_path=gcs_path
+            actions=actions,
+            transmission_context=transmission_context,
+            transmission_buffer=transmission_buffer,
+            stale_timer=stale_timer,
+            ctx=ctx,
+            gcs_path=gcs_path,
         )
 
     @override
-    def process(  # type: ignore[override] # noqa: PLR0913
+    def process(  # type: ignore[override]
         self,
         element: tuple[str, str],
         transmission_buffer: ReadModifyWriteRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
@@ -320,16 +328,16 @@ class StitchAudioFn(beam.DoFn):
         stale_timer: RuntimeTimer = STALE_TIMER_PARAM,  # type: ignore
     ) -> Generator[FlushRequest | beam.pvalue.TaggedOutput, None, None]:
         key, gcs_path = element
-        
-        curr_context: TransmissionContext = transmission_context.read() or TransmissionContext()
+
+        curr_context: TransmissionContext = (
+            transmission_context.read() or TransmissionContext()
+        )
 
         fetched_results = self._fetch_and_validate_audio(
             feed_id=key,
             gcs_path=gcs_path,
-            processed_uuids=curr_context.contributing_uuids,
+            processed_uuids={str(u) for u in curr_context.contributing_uuids},
         )
-
-        flush_queue = []
 
         for result in fetched_results:
             match result:
@@ -347,20 +355,23 @@ class StitchAudioFn(beam.DoFn):
                     )
 
     @on_timer(STALE_TIMER_SPEC)
-    def handle_stale_transmission(  # noqa: PLR0913
+    def handle_stale_transmission(
         self,
         key: str = beam.DoFn.KeyParam,  # type: ignore
         transmission_buffer: ReadModifyWriteRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         stale_timer: RuntimeTimer = STALE_TIMER_PARAM,  # type: ignore
     ) -> Generator[FlushRequest | beam.pvalue.TaggedOutput, None, None]:
-        """Invoked asynchronously by the Beam Runner when the event-time watermark
+        """
+        Invoked asynchronously by the Beam Runner when the event-time watermark
         passes the timestamp previously scheduled on the `stale_timer`. This provides a critical
         safety net: if a radio feed abruptly drops offline, this timer guarantees that any
         audio remaining in the buffer will eventually be flushed and transcribed, preventing
         data loss from stranded state.
         """
-        curr_context: TransmissionContext = transmission_context.read() or TransmissionContext()
+        curr_context: TransmissionContext = (
+            transmission_context.read() or TransmissionContext()
+        )
         start_time_ms = curr_context.stale_start_time_ms
         end_time_ms = curr_context.last_end_time_ms
         processed_uuids = curr_context.contributing_uuids
@@ -400,8 +411,10 @@ class StitchAudioFn(beam.DoFn):
         transmission_buffer.clear()
         stale_timer.clear()
 
+
 class TranscribeAudioFn(beam.DoFn):
-    """A stateless Beam DoFn responsible for executing purely stateless execution of VAD and 
+    """
+    A stateless Beam DoFn responsible for executing purely stateless execution of VAD and
     Cloud Speech-to-Text inference over continuous FlushRequests.
     """
 
@@ -542,7 +555,7 @@ class TranscribeAudioFn(beam.DoFn):
         *args: Any,
         **kwargs: Any,
     ) -> Generator[TranscriptionResult | beam.pvalue.TaggedOutput, None, None]:
-        
+
         try:
             # We defer execution to a thread pool so we don't block the DoFn event loop
             future = self.executor.submit(
@@ -550,22 +563,24 @@ class TranscribeAudioFn(beam.DoFn):
                 request=element,
             )
             transcribed = future.result()
-            
+
             if transcribed:
                 self.transcription_count.inc()
                 yield transcribed
-                
+
         except Exception as e:
             if not getattr(self.config, "route_to_dlq", True):
                 raise
             self.dlq_count.inc()
-            logger.exception("Error concurrently flushing buffer for feed %s", element.feed_id)
-            
+            logger.exception(
+                "Error concurrently flushing buffer for feed %s", element.feed_id
+            )
+
             # If the exception was raised inside the ThreadPool future, unwrap it
             msg = str(e)
             if hasattr(e, "__cause__") and e.__cause__:
                 msg = str(e.__cause__)
-            
+
             yield beam.pvalue.TaggedOutput(
                 DEAD_LETTER_QUEUE_TAG, {"error": msg, "feed_id": element.feed_id}
             )

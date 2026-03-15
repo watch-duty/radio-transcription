@@ -1,4 +1,5 @@
-"""Utility functions for the radio transcription pipeline.
+"""
+Utility functions for the radio transcription pipeline.
 """
 
 import logging

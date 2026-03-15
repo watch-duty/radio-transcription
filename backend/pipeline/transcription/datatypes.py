@@ -1,7 +1,6 @@
 import uuid
 from dataclasses import dataclass, field
 
-from apache_beam.transforms.userstate import ReadModifyWriteRuntimeState, RuntimeTimer
 from pydub import AudioSegment
 
 from backend.pipeline.shared_constants import CHUNK_DURATION_SECONDS
@@ -41,11 +40,12 @@ class TranscriptionResult:
     end_chunk_id: uuid.UUID | None = None
 
 
-
 @dataclass
 class TransmissionContext:
-    """A Picklable dataclass storing all metadata for the current audio transmission.
-    This consolidated struct massively reduces I/O roundtrips to Dataflow's state storage."""
+    """
+    A Picklable dataclass storing all metadata for the current audio transmission.
+    This consolidated struct massively reduces I/O roundtrips to Dataflow's state storage.
+    """
 
     last_end_time_ms: int | None = None
     stale_start_time_ms: int | None = None
@@ -65,9 +65,9 @@ class StitcherContext:
     current_buffer: AudioSegment | None
     # Set of unique source_file_uuids that have been accumulated into the current transmission buffer thus far.
     processed_uuids: set[uuid.UUID]
-    last_segment_end_time_ms: int
-    transmission_start_time_ms: int | None
     file_start_ms: int
+    last_segment_end_time_ms: int | None = None
+    transmission_start_time_ms: int | None = None
     missing_prior_context: bool = False
     expected_next_chunk_start_ms: int | None = None
     start_chunk_id: uuid.UUID | None = None
@@ -107,6 +107,7 @@ class StitchAudioConfig:
             msg = "significant_gap_ms must be strictly less than max_transmission_duration_ms"
             raise ValueError(msg)
 
+
 @dataclass(frozen=True)
 class TranscribeAudioConfig:
     """Groups pipeline-level configurations passed to the stateless DoFn."""
@@ -119,8 +120,6 @@ class TranscribeAudioConfig:
     metrics_exporter_type: str
     metrics_config: str
     route_to_dlq: bool = True
-
-
 
 
 @dataclass(frozen=True)
