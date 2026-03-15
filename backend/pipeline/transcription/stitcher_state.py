@@ -5,7 +5,7 @@ from backend.pipeline.transcription.datatypes import (
     FlushRequest,
     ScheduleStaleTimerAction,
     StateMachineAction,
-    StitchAndTranscribeConfig,
+    StitchAudioConfig,
     StitcherContext,
     TimeRange,
     UpdateStateAction,
@@ -21,15 +21,83 @@ class AudioStitchingStateMachine:
     flushes that should occur, completely decoupled from the Apache Beam pipeline runtime.
     """
 
-    def __init__(self, config: StitchAndTranscribeConfig) -> None:
+    def __init__(self, config: StitchAudioConfig) -> None:
         self.config = config
 
     def process_chunk(
         self, chunk_data: AudioChunkData, ctx: StitcherContext
     ) -> list[StateMachineAction]:
+        from backend.pipeline.shared_constants import CHUNK_DURATION_SECONDS
+        chunk_duration_ms = int(CHUNK_DURATION_SECONDS * 1000)
+        actions: list[StateMachineAction] = []
+        
+        # 1. Detect if we skipped over a chunk (dropped audio)
+        is_dropped_chunk = (
+            ctx.expected_next_chunk_start_ms is not None
+            and chunk_data.start_ms > ctx.expected_next_chunk_start_ms
+        )
+        
+        if is_dropped_chunk:
+            # If we had an active transmission, we must flush it because the auditory context was violently severed.
+            if ctx.current_buffer and ctx.transmission_start_time_ms is not None:
+                actions.append(
+                    self._flush_current_transmission(
+                        reason="Forced flush due to dropped audio chunk gap",
+                        ctx=ctx,
+                    )
+                )
+                self._reset_transmission_context(ctx)
+                
+            # The next audio we process is jumping in after missing audio, so it lacks prior context.
+            ctx.missing_prior_context = True
+            
+        # 2. Proceed with normal evaluation
         if not chunk_data.speech_segments:
-            return self._process_silent_chunk(chunk_data, ctx)
-        return self._process_speech_segments(chunk_data, ctx)
+            new_actions = self._process_silent_chunk(chunk_data, ctx)
+        else:
+            new_actions = self._process_speech_segments(chunk_data, ctx)
+            
+        actions.extend(new_actions)
+        
+        # 3. Always update the expected contiguous start time for the NEXT chunk
+        ctx.expected_next_chunk_start_ms = chunk_data.start_ms + chunk_duration_ms
+        actions.append(UpdateStateAction())
+        return actions
+
+    def _flush_current_transmission(
+        self, reason: str, ctx: StitcherContext
+    ) -> FlushAction:
+        if not ctx.current_buffer:
+            raise ValueError("Cannot flush empty current buffer")
+        
+        # When flushing due to dropped chunks, we might not have a last_segment_end_time_ms yet
+        # if the transmission was very short, so fallback to transmission_start_time_ms.
+        end_ms = ctx.last_segment_end_time_ms if ctx.last_segment_end_time_ms else ctx.transmission_start_time_ms
+        if end_ms is None or ctx.transmission_start_time_ms is None:
+             raise ValueError("Missing boundary times for buffer flush.")
+
+        return FlushAction(
+            reason=reason,
+            flush_request=FlushRequest(
+                buffer=ctx.current_buffer,
+                feed_id=ctx.feed_id,
+                processed_uuids=set(ctx.processed_uuids),
+                time_range=TimeRange(
+                    start_ms=ctx.transmission_start_time_ms,
+                    end_ms=end_ms,
+                ),
+                missing_prior_context=ctx.missing_prior_context,
+                start_chunk_id=ctx.start_chunk_id,
+                end_chunk_id=ctx.source_file_uuid,
+            ),
+        )
+
+    def _reset_transmission_context(self, ctx: StitcherContext) -> None:
+        ctx.current_buffer = None
+        ctx.processed_uuids = set()
+        ctx.transmission_start_time_ms = None
+        ctx.last_segment_end_time_ms = None
+        ctx.start_chunk_id = None
 
     def _process_silent_chunk(
         self, chunk_data: AudioChunkData, ctx: StitcherContext
@@ -62,37 +130,14 @@ class AudioStitchingStateMachine:
             else:
                 reason = "Maximum transmission duration exceeded by silent file"
 
-            # If we were tracking an active transmission before this chunk, we must
-            # flush it to the transcriber now that the transmission has logically ended.
             if ctx.current_buffer and ctx.transmission_start_time_ms is not None:
-                actions.append(
-                    FlushAction(
-                        reason=reason,
-                        flush_request=FlushRequest(
-                            buffer=ctx.current_buffer,
-                            feed_id=ctx.feed_id,
-                            processed_uuids=set(ctx.processed_uuids),
-                            time_range=TimeRange(
-                                start_ms=ctx.transmission_start_time_ms,
-                                end_ms=ctx.last_segment_end_time_ms,
-                            ),
-                            missing_prior_context=ctx.missing_prior_context,
-                        ),
-                    )
-                )
+                actions.append(self._flush_current_transmission(reason, ctx))
+
+                # Since we successfully flushed a clean transmission, reset the context flag for the next one.
+                ctx.missing_prior_context = False
 
             # Reset connection state for the next transmission
-            ctx.current_buffer = None
-            ctx.processed_uuids = set()
-            ctx.transmission_start_time_ms = None
-            ctx.last_segment_end_time_ms = None
-
-            # If we flushed because of a significant gap (e.g. from missing Out-Of-Order chunks),
-            # the *next* transmission implicitly starts without its preceding audio context.
-            if is_significant_gap:
-                ctx.missing_prior_context = True
-            else:
-                ctx.missing_prior_context = False
+            self._reset_transmission_context(ctx)
 
             ctx.processed_uuids.add(ctx.source_file_uuid)
             actions.append(UpdateStateAction())
@@ -128,19 +173,22 @@ class AudioStitchingStateMachine:
             global_start_ms = segment.start_ms
             global_end_ms = segment.end_ms
 
-            # We check for gaps/duration limits on *every individual speech segment*
-            # within the chunk, in case a single chunk contains multiple distinct transmissions.
+            # 1. Check if the gap between the last speech segment and this new one
+            # is significant enough to warrant splitting into a new transmission.
             is_significant_gap = (
                 ctx.last_segment_end_time_ms is not None
                 and ((file_start_ms + global_start_ms) - ctx.last_segment_end_time_ms)
                 >= self.config.significant_gap_ms
             )
+            
+            # 2. Check if this segment would exceed the maximum allowed duration of a transmission.
             is_max_duration_exceeded = (
                 ctx.transmission_start_time_ms is not None
                 and ((file_start_ms + global_start_ms) - ctx.transmission_start_time_ms)
                 >= self.config.max_transmission_duration_ms
             )
 
+            # 3. If there is a gap OR max duration is exceeded, flush whatever is in the buffer currently.
             if is_significant_gap or is_max_duration_exceeded:
                 if is_significant_gap:
                     reason = "Significant gap detected"
@@ -149,34 +197,15 @@ class AudioStitchingStateMachine:
 
                 # Flush the currently buffered transmission before starting this next segment
                 if ctx.current_buffer and ctx.transmission_start_time_ms is not None:
-                    actions.append(
-                        FlushAction(
-                            reason=reason,
-                            flush_request=FlushRequest(
-                                buffer=ctx.current_buffer,
-                                feed_id=ctx.feed_id,
-                                processed_uuids=set(ctx.processed_uuids),
-                                time_range=TimeRange(
-                                    start_ms=ctx.transmission_start_time_ms,
-                                    end_ms=ctx.last_segment_end_time_ms,
-                                ),
-                                missing_prior_context=ctx.missing_prior_context,
-                            ),
-                        )
-                    )
-
-                # Reset state to cleanly begin accumulating the next transmission
-                ctx.current_buffer = None
-                ctx.processed_uuids = set()
-                ctx.transmission_start_time_ms = None
-                ctx.last_segment_end_time_ms = None
-
-                # Inherit context flag if this split was caused by a gap
-                if is_significant_gap:
-                    ctx.missing_prior_context = True
-                else:
+                    actions.append(self._flush_current_transmission(reason, ctx))
+                    
+                    # We successfully ended the prior transmission, so the next one starts fresh.
                     ctx.missing_prior_context = False
 
+                # Reset state to cleanly begin accumulating the next transmission
+                self._reset_transmission_context(ctx)
+
+            # 4. Append this specific speech segment to the state
             # Slice the valid speech audio out of the chunk using the bounds found by VAD
             speech_audio = chunk_data.audio[global_start_ms:global_end_ms]
 
@@ -184,6 +213,7 @@ class AudioStitchingStateMachine:
                 # Initialize a new transmission buffer
                 ctx.current_buffer = speech_audio
                 ctx.transmission_start_time_ms = file_start_ms + global_start_ms
+                ctx.start_chunk_id = ctx.source_file_uuid
             else:
                 # Append to the ongoing transmission
                 ctx.current_buffer += speech_audio

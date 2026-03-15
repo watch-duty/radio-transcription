@@ -2,7 +2,7 @@ import logging
 import time
 import uuid
 from collections.abc import Generator
-from typing import Any
+from typing import Any, override
 
 import apache_beam as beam
 from apache_beam import window
@@ -46,6 +46,7 @@ class ParseAndKeyFn(beam.DoFn):
     for a specific radio feed are routed to the exact same worker node instance.
     """
 
+    @override
     def process(
         self, element: PubsubMessage, *args: Any, **kwargs: Any
     ) -> Generator[tuple[str, bytes] | beam.pvalue.TaggedOutput, None, None]:
@@ -76,6 +77,7 @@ class AddEventTimestamp(beam.DoFn):
     even if messages arrive out-of-order or are delayed by network partitions.
     """
 
+    @override
     def process(
         self, element: tuple[str, bytes], *args: Any, **kwargs: Any
     ) -> Generator[tuple[str, str] | beam.pvalue.TaggedOutput, None, None]:
@@ -109,6 +111,7 @@ class SerializeToPubSubMessageFn(beam.DoFn):
     and wraps it in a `PubsubMessage` for downstream publishing.
     """
 
+    @override
     def process(
         self, element: TranscriptionResult, *args: Any, **kwargs: Any
     ) -> Generator[PubsubMessage, None, None]:
@@ -122,6 +125,8 @@ class SerializeToPubSubMessageFn(beam.DoFn):
             transmission_id=str(deterministic_uuid),
             transcript=element.transcript,
             missing_prior_context=element.missing_prior_context,
+            start_source_chunk_id=str(element.start_chunk_id) if element.start_chunk_id else "",
+            end_source_chunk_id=str(element.end_chunk_id) if element.end_chunk_id else "",
         )
         proto.start_timestamp.FromMicroseconds(
             element.time_range.start_ms * MICROSECONDS_PER_MS
@@ -152,19 +157,26 @@ class RestoreOrderFn(beam.DoFn):
         "out_of_order_buffer",
         beam.coders.TupleCoder((beam.coders.VarIntCoder(), beam.coders.StrUtf8Coder())),
     )
+    # A bag state holding chunks that have arrived earlier than their expected chronological sequence.
+    # Stores tuples of `(timestamp_ms, gcs_path)`.
     OUT_OF_ORDER_BUFFER_STATE = beam.DoFn.StateParam(OUT_OF_ORDER_BUFFER_SPEC)
 
     EXPECTED_NEXT_TS_SPEC = ReadModifyWriteStateSpec(
         "expected_next_ts", beam.coders.VarIntCoder()
     )
+    # Tracks the exact chronological timestamp (ms) of the next chunk we must receive before emitting anything downstream.
+    # Advances strictly by `CHUNK_DURATION` upon the arrival of expected chunks, or skips ahead if a gap timeout occurs.
     EXPECTED_NEXT_TS_STATE = beam.DoFn.StateParam(EXPECTED_NEXT_TS_SPEC)
 
     TIMER_ACTIVE_SPEC = ReadModifyWriteStateSpec(
         "timer_active", beam.coders.BooleanCoder()
     )
+    # Boolean flag ensuring we only ever have a single active processing-time timer scheduled across the buffer.
     TIMER_ACTIVE_STATE = beam.DoFn.StateParam(TIMER_ACTIVE_SPEC)
 
     OUT_OF_ORDER_TIMER_SPEC = TimerSpec("out_of_order_timer", TimeDomain.REAL_TIME)
+    # A real-time (processing time) timer that acts as a maximum allowed wait period for missing chunks.
+    # If the timer fires, the system assumes the chunk was irreparably dropped and flushes the buffer to prevent Head-of-Line blocking.
     OUT_OF_ORDER_TIMER = beam.DoFn.TimerParam(OUT_OF_ORDER_TIMER_SPEC)
 
     def __init__(self, config: OrderRestorerConfig) -> None:
@@ -182,6 +194,7 @@ class RestoreOrderFn(beam.DoFn):
             self.__class__, "chunks_dropped_late"
         )
 
+    @override
     def process(  # type: ignore[override] # noqa: PLR0913
         self,
         element: tuple[str, str],
@@ -323,7 +336,7 @@ class RestoreOrderFn(beam.DoFn):
     ) -> Generator[tuple[str, str], None, None]:
         """Fires when out-of-order chunks have sat in the buffer for too long.
         This signals that a chunk has been permanently lost in the network.
-        We 'Accept the Gap', skip ahead to the earliest chunk we *do* have, and flush.
+        We 'accept the gap', skip ahead to the earliest chunk we *do* have, and flush.
         """
         self.gaps_encountered_counter.inc()
         timer_active.clear()
@@ -336,7 +349,7 @@ class RestoreOrderFn(beam.DoFn):
         sorted_elements = sorted(buffer_elements)
 
         # Skip our expected sequence over the gap and land squarely
-        # on the earliest chunk we currently have stored in our stash.
+        # on the earliest chunk we currently have stored in our buffer.
         new_expected = sorted_elements[0][0]
 
         logger.warning(
@@ -345,7 +358,7 @@ class RestoreOrderFn(beam.DoFn):
 
         expected_next_ts.write(new_expected)
 
-        # Since we've advanced the expectation line to align with the stash,
+        # Since we've advanced the expectation line to align with the buffer,
         # we can just use our standard drain logic to unpack the rest of the chunks.
         yield from self._drain_ready_elements(
             feed_id,

@@ -17,4 +17,8 @@ message TranscribedAudio {
   string transcript = 6;
     // Indicates this transmission was prematurely split from its predecessor due to missing audio chunks.
   bool missing_prior_context = 7;
+    // The unique ID of the audio segment where this transmission started.
+  string start_source_chunk_id = 8;
+    // The unique ID of the audio segment where this transmission ended.
+  string end_source_chunk_id = 9;
 }

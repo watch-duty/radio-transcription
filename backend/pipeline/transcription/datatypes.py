@@ -1,5 +1,5 @@
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from apache_beam.transforms.userstate import ReadModifyWriteRuntimeState, RuntimeTimer
 from pydub import AudioSegment
@@ -37,28 +37,22 @@ class TranscriptionResult:
     transcript: str
     time_range: TimeRange
     missing_prior_context: bool = False
+    start_chunk_id: uuid.UUID | None = None
+    end_chunk_id: uuid.UUID | None = None
 
 
-@dataclass(frozen=True)
-class TransmissionState:
-    """Groups Beam state and timer parameters for easier passing between helper methods."""
 
-    buffer: ReadModifyWriteRuntimeState
-    last_end_time: ReadModifyWriteRuntimeState
-    stale_start_time: ReadModifyWriteRuntimeState
-    contributing_uuids: ReadModifyWriteRuntimeState
-    missing_prior_context: ReadModifyWriteRuntimeState
-    stale_timer: RuntimeTimer | None = None
+@dataclass
+class TransmissionContext:
+    """A Picklable dataclass storing all metadata for the current audio transmission.
+    This consolidated struct massively reduces I/O roundtrips to Dataflow's state storage."""
 
-    def clear_all(self) -> None:
-        """Unconditionally clears all transmission states and timers."""
-        self.buffer.clear()
-        self.last_end_time.clear()
-        self.stale_start_time.clear()
-        self.contributing_uuids.clear()
-        self.missing_prior_context.clear()
-        if self.stale_timer:
-            self.stale_timer.clear()
+    last_end_time_ms: int | None = None
+    stale_start_time_ms: int | None = None
+    contributing_uuids: set[uuid.UUID] = field(default_factory=set)
+    missing_prior_context: bool = False
+    expected_next_chunk_start_ms: int | None = None
+    start_chunk_id: uuid.UUID | None = None
 
 
 @dataclass
@@ -75,6 +69,8 @@ class StitcherContext:
     transmission_start_time_ms: int | None
     file_start_ms: int
     missing_prior_context: bool = False
+    expected_next_chunk_start_ms: int | None = None
+    start_chunk_id: uuid.UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -84,12 +80,10 @@ class OrderRestorerConfig:
 
 
 @dataclass(frozen=True)
-class StitchAndTranscribeConfig:
+class StitchAudioConfig:
     """Groups pipeline-level configurations passed to the stateful DoFn."""
 
     project_id: str
-    transcriber_type: TranscriberType
-    transcriber_config: str
     vad_type: VadType
     vad_config: str
     metrics_exporter_type: str
@@ -97,6 +91,7 @@ class StitchAndTranscribeConfig:
     significant_gap_ms: int
     stale_timeout_ms: int
     max_transmission_duration_ms: int
+    route_to_dlq: bool = True
 
     def __post_init__(self) -> None:
         if self.significant_gap_ms <= 0:
@@ -112,6 +107,21 @@ class StitchAndTranscribeConfig:
             msg = "significant_gap_ms must be strictly less than max_transmission_duration_ms"
             raise ValueError(msg)
 
+@dataclass(frozen=True)
+class TranscribeAudioConfig:
+    """Groups pipeline-level configurations passed to the stateless DoFn."""
+
+    project_id: str
+    transcriber_type: TranscriberType
+    transcriber_config: str
+    vad_type: VadType
+    vad_config: str
+    metrics_exporter_type: str
+    metrics_config: str
+    route_to_dlq: bool = True
+
+
+
 
 @dataclass(frozen=True)
 class FlushRequest:
@@ -122,6 +132,8 @@ class FlushRequest:
     processed_uuids: set[uuid.UUID]
     time_range: TimeRange
     missing_prior_context: bool = False
+    start_chunk_id: uuid.UUID | None = None
+    end_chunk_id: uuid.UUID | None = None
 
 
 @dataclass(frozen=True)

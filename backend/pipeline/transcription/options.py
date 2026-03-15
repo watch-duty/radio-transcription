@@ -98,3 +98,9 @@ class TranscriptionOptions(PipelineOptions):
             default=DEFAULT_MAX_TRANSMISSION_DURATION_MS,
             help="Absolute maximum duration of a single continuous transmission.",
         )
+        parser.add_argument(
+            "--route_to_dlq",
+            action=argparse.BooleanOptionalAction,
+            default=True,
+            help="If false, exceptions will be raised immediately instead of routing to the Dead Letter Queue. Useful for tests.",
+        )

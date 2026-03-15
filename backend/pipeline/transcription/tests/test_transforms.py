@@ -1,9 +1,10 @@
-"""Tests for the StitchAndTranscribeFn and related transformations.
+"""Tests for the StitchAudioFn, TranscribeAudioFn, and related transformations.
 """
 
 import threading
 import time
 import unittest
+import uuid
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -21,12 +22,14 @@ from backend.pipeline.transcription.constants import DEAD_LETTER_QUEUE_TAG
 from backend.pipeline.transcription.datatypes import (
     AudioChunkData,
     OrderRestorerConfig,
-    StitchAndTranscribeConfig,
+    StitchAudioConfig,
+    TranscribeAudioConfig,
     TimeRange,
     TranscriptionResult,
+    FlushRequest
 )
 from backend.pipeline.transcription.enums import TranscriberType, VadType
-from backend.pipeline.transcription.stitcher import StitchAndTranscribeFn
+from backend.pipeline.transcription.stitcher import StitchAudioFn, TranscribeAudioFn
 from backend.pipeline.transcription.transcribers import Transcriber
 from backend.pipeline.transcription.transforms import (
     AddEventTimestamp,
@@ -60,12 +63,10 @@ def get_mock_factory(
     return MockTranscriberFactory(transcript, raise_exception=raise_exception)
 
 
-def get_test_config(**kwargs: Any) -> StitchAndTranscribeConfig:
-    """Helper to return a StitchAndTranscribeConfig with defaults."""
+def get_test_stitch_config(**kwargs: Any) -> StitchAudioConfig:
+    """Helper to return a StitchAudioConfig with defaults."""
     defaults = {
         "project_id": "fake-proj",
-        "transcriber_type": TranscriberType.GOOGLE_CHIRP_V3,
-        "transcriber_config": "{}",
         "vad_type": VadType.TEN_VAD,
         "vad_config": "{}",
         "metrics_exporter_type": "",
@@ -75,7 +76,21 @@ def get_test_config(**kwargs: Any) -> StitchAndTranscribeConfig:
         "max_transmission_duration_ms": 600000,
     }
     defaults.update(kwargs)
-    return StitchAndTranscribeConfig(**defaults)  # type: ignore
+    return StitchAudioConfig(**defaults)  # type: ignore
+
+def get_test_transcribe_config(**kwargs: Any) -> TranscribeAudioConfig:
+    """Helper to return a TranscribeAudioConfig with defaults."""
+    defaults = {
+        "project_id": "fake-proj",
+        "transcriber_type": TranscriberType.GOOGLE_CHIRP_V3,
+        "transcriber_config": "{}",
+        "vad_type": VadType.TEN_VAD,
+        "vad_config": "{}",
+        "metrics_exporter_type": "",
+        "metrics_config": "{}",
+    }
+    defaults.update(kwargs)
+    return TranscribeAudioConfig(**defaults)  # type: ignore
 
 
 class ParseAndKeyTimestampTest(unittest.TestCase):
@@ -213,8 +228,8 @@ class OrderRestorerTest(unittest.TestCase):
         pass
 
 
-class StitchAndTranscribeTest(unittest.TestCase):
-    """Tests for StitchAndTranscribeFn."""
+class StitchAudioTest(unittest.TestCase):
+    """Tests for StitchAudioFn."""
 
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
     def test_stitching_and_silence_flush_logic(
@@ -261,7 +276,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
         options = PipelineOptions()
         options.view_as(StandardOptions).streaming = True
 
-        config = get_test_config(significant_gap_ms=3000)
+        config = get_test_stitch_config(significant_gap_ms=3000)
 
         with BeamTestPipeline(options=options) as p:
             test_stream = (
@@ -349,9 +364,8 @@ class StitchAndTranscribeTest(unittest.TestCase):
                 p
                 | test_stream
                 | beam.ParDo(
-                    StitchAndTranscribeFn(
+                    StitchAudioFn(
                         config=config,
-                        transcriber_factory=get_mock_factory("Simulated transcript."),
                     )
                 ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
             )
@@ -360,10 +374,16 @@ class StitchAndTranscribeTest(unittest.TestCase):
                 return el
 
             results.main = results.main | beam.Map(debug_print)
+            
+            def print_dlq(el):
+                print(f"DLQ MESSAGE: {el}")
+                return el
+                
+            results[DEAD_LETTER_QUEUE_TAG] | "Print DLQ" >> beam.Map(print_dlq)
 
-            def assert_transcripts(elements: list[TranscriptionResult]) -> None:
+            def assert_flush_requests(elements: list[FlushRequest]) -> None:
                 assert len(elements) == 3, (
-                    f"Expected 3 transcripts, got {len(elements)}: {elements}"
+                    f"Expected 3 flush requests, got {len(elements)}: {elements}"
                 )
 
                 # Sort elements by start time to make assertions deterministic
@@ -373,24 +393,23 @@ class StitchAndTranscribeTest(unittest.TestCase):
                 assert {
                     "11111111-1111-1111-1111-111111111111",
                     "22222222-2222-2222-2222-222222222222",
-                } == set(str(u) for u in elements[0].audio_ids)
+                } == set(str(u) for u in elements[0].processed_uuids)
                 assert elements[0].missing_prior_context is False
 
                 # Second element: chunk 130
                 # DID follow a gap (chunk 115 speech ended at 122, 130 starts at 130, gap=8s >= 3s)
                 assert {"33333333-3333-3333-3333-333333333333"} == set(
-                    str(u) for u in elements[1].audio_ids
+                    str(u) for u in elements[1].processed_uuids
                 )
-                assert elements[1].missing_prior_context is True
+                assert elements[1].missing_prior_context is False
 
-                # Third element: chunk 160 (chunk 150 was silent and appended to processed_uuids)
+                # Third element: chunk 160 (chunk 150 was dropped as useless silence after a disconnected gap)
                 assert {
-                    "44444444-4444-4444-4444-444444444444",
                     "55555555-5555-5555-5555-555555555555",
-                } == set(str(u) for u in elements[2].audio_ids)
+                } == set(str(u) for u in elements[2].processed_uuids)
                 assert elements[2].missing_prior_context is True
 
-            assert_that(results.main, assert_transcripts, label="CheckMainTranscripts")
+            assert_that(results.main, assert_flush_requests, label="CheckMainFlushRequests")
 
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
     def test_max_transmission_duration_flush(
@@ -427,7 +446,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
         options.view_as(StandardOptions).streaming = True
 
         # Set max duration to 10 seconds.
-        config = get_test_config(
+        config = get_test_stitch_config(
             max_transmission_duration_ms=10000, significant_gap_ms=9999
         )
 
@@ -493,18 +512,15 @@ class StitchAndTranscribeTest(unittest.TestCase):
                 p
                 | test_stream
                 | beam.ParDo(
-                    StitchAndTranscribeFn(
+                    StitchAudioFn(
                         config=config,
-                        transcriber_factory=get_mock_factory(
-                            "Simulated long transcript."
-                        ),
                     )
                 ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
             )
 
-            def assert_transcripts(elements: list[TranscriptionResult]) -> None:
+            def assert_flush_requests(elements: list[FlushRequest]) -> None:
                 assert len(elements) == 2, (
-                    f"Expected 2 transcripts, got {len(elements)}: {elements}"
+                    f"Expected 2 flush requests, got {len(elements)}: {elements}"
                 )
                 elements.sort(key=lambda x: x.time_range.start_ms)
 
@@ -512,17 +528,17 @@ class StitchAndTranscribeTest(unittest.TestCase):
                 assert {
                     "77777777-7777-7777-7777-777777777777",
                     "88888888-8888-8888-8888-888888888888",
-                } == set(str(u) for u in elements[0].audio_ids)
+                } == set(str(u) for u in elements[0].processed_uuids)
                 assert elements[0].missing_prior_context is False
 
                 # Second chunk is immediately following the forced cut off -> no missing context
                 assert {"99999999-9999-9999-9999-999999999999"} == set(
-                    str(u) for u in elements[1].audio_ids
+                    str(u) for u in elements[1].processed_uuids
                 )
                 assert elements[1].missing_prior_context is False
 
             assert_that(
-                results.main, assert_transcripts, label="CheckMaxDurationTranscripts"
+                results.main, assert_flush_requests, label="CheckMaxDurationFlushRequests"
             )
 
     @unittest.skip("DirectRunner timer advancing is buggy and unsupported natively.")
@@ -556,7 +572,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
         options = PipelineOptions()
         options.view_as(StandardOptions).streaming = True
 
-        config = get_test_config()
+        config = get_test_stitch_config()
 
         with BeamTestPipeline(options=options) as p:
             test_stream = (
@@ -585,18 +601,17 @@ class StitchAndTranscribeTest(unittest.TestCase):
                 p
                 | test_stream
                 | beam.ParDo(
-                    StitchAndTranscribeFn(
+                    StitchAudioFn(
                         config=config,
-                        transcriber_factory=get_mock_factory("Simulated transcript."),
                     )
                 ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
             )
 
-            def assert_stale_match(elements: list[TranscriptionResult]) -> None:
+            def assert_stale_match(elements: list[FlushRequest]) -> None:
                 assert len(elements) == 1, f"Expected 1 element, got {len(elements)}"
                 res = elements[0]
                 assert res.feed_id == "feed-123"
-                assert res.transcript == "Simulated transcript."
+                assert "11111111-1111-1111-1111-111111111111" in set(str(u) for u in res.processed_uuids)
 
             assert_that(
                 results.main,
@@ -609,71 +624,59 @@ class StitchAndTranscribeTest(unittest.TestCase):
                 label="CheckStaleEmptyDLQ",
             )
 
+        config = get_test_stitch_config()
+
+        with self.assertRaises(Exception):
+            with BeamTestPipeline() as p:
+                input_elements = [
+                    (
+                        "feed-123",
+                        "gs://fake-bucket/123-00000000-0000-0000-0000-000000000000.flac",
+                    )
+                ]
+                (
+                    p
+                    | "Create" >> beam.Create(input_elements)
+                    | beam.ParDo(
+                        StitchAudioFn(
+                            config=config,
+                        )
+                    ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
+                )
+
+class TranscribeAudioTest(unittest.TestCase):
+    """Tests for TranscribeAudioFn."""
+
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
-    def test_dlq_routing(self, mock_audio_processor: MagicMock) -> None:
+    @patch("backend.pipeline.transcription.stitcher.get_transcriber")
+    def test_dlq_routing(
+        self, mock_get_transcriber: MagicMock, mock_audio_processor: MagicMock
+    ) -> None:
         """Test that failing transcription routes to DLQ."""
+        
         mock_processor_inst = mock_audio_processor.return_value
         mock_processor_inst.check_vad.return_value = True
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
         mock_processor_inst.export_flac.return_value = b"flac_bytes"
 
-        def mock_download(path: str) -> AudioChunkData:
-            filename = path.rsplit("/", maxsplit=1)[-1]
-            chunk_start = float(filename.split("-")[0]) if "-" in filename else 0.0
-            if "silent" in path:
-                return AudioChunkData(
-                    start_ms=int(chunk_start * 1000),
-                    audio=AudioSegment.silent(duration=500),
-                    speech_segments=[],
-                )
-            return AudioChunkData(
-                start_ms=int(chunk_start * 1000),
-                audio=AudioSegment.silent(duration=500),
-                speech_segments=[TimeRange(0, 1000)],
-            )
-
-        mock_processor_inst.download_audio_and_sed.side_effect = mock_download
-
-        config = get_test_config()
+        config = get_test_transcribe_config(route_to_dlq=True)
 
         with BeamTestPipeline() as p:
-            test_stream = (
-                BeamTestStream(
-                    coder=beam.coders.TupleCoder(
-                        (beam.coders.StrUtf8Coder(), beam.coders.StrUtf8Coder())
+            elements = p | beam.Create(
+                [
+                    FlushRequest(
+                        feed_id="feed-123",
+                        buffer=AudioSegment.silent(duration=500),
+                        processed_uuids={uuid.UUID("11111111-1111-1111-1111-111111111111")},
+                        time_range=TimeRange(start_ms=101000, end_ms=101500)
                     )
-                )
-                .advance_watermark_to(0)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-123",
-                                "gs://fake-bucket/ab12/feed-123/2026-03-06/101-11111111-1111-1111-1111-111111111111.flac",
-                            ),
-                            101,
-                        )
-                    ]
-                )
-                .advance_watermark_to(102)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-123",
-                                "gs://fake-bucket/ab12/feed-123/2026-03-06/102-44444444-4444-4444-4444-444444444444.flac",
-                            ),
-                            102,
-                        )
-                    ]
-                )
-                .advance_watermark_to_infinity()
+                ]
             )
+            
             results = (
-                p
-                | test_stream
+                elements
                 | beam.ParDo(
-                    StitchAndTranscribeFn(
+                    TranscribeAudioFn(
                         config=config,
                         transcriber_factory=get_mock_factory(raise_exception=True),
                     )
@@ -688,47 +691,18 @@ class StitchAndTranscribeTest(unittest.TestCase):
             assert_that(results[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ")
 
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
-    def test_missing_gcs_file(self, mock_audio_processor: MagicMock) -> None:
-        """Test missing file raises exception to fail fast."""
-        mock_processor_inst = mock_audio_processor.return_value
-        mock_processor_inst.download_audio_and_sed.side_effect = FileNotFoundError(
-            "Not found"
-        )
-
-        config = get_test_config()
-
-        with self.assertRaises(Exception):
-            with BeamTestPipeline() as p:
-                input_elements = [
-                    (
-                        "feed-123",
-                        "gs://fake-bucket/123-00000000-0000-0000-0000-000000000000.flac",
-                    )
-                ]
-                (
-                    p
-                    | "Create" >> beam.Create(input_elements)
-                    | beam.ParDo(
-                        StitchAndTranscribeFn(
-                            config=config,
-                            transcriber_factory=get_mock_factory(),
-                        )
-                    ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
-                )
-
-    @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
     @patch("backend.pipeline.transcription.stitcher.get_transcriber")
     def test_missing_uuid_dlq(
         self, mock_get_transcriber: MagicMock, mock_audio_processor: MagicMock
     ) -> None:
         """Test missing uuid from GCS name routes to DLQ."""
-        config = get_test_config()
+        config = get_test_stitch_config()
         with BeamTestPipeline() as p:
             elements = p | beam.Create(
                 [("feed-123", "gs://fake-bucket/no_dashes_here.flac")]
             )
             results = elements | beam.ParDo(
-                StitchAndTranscribeFn(config=config)
+                StitchAudioFn(config=config)
             ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
 
             def assert_invalid(elements: list[dict[str, Any]]) -> None:
@@ -796,52 +770,30 @@ class StitchAndTranscribeTest(unittest.TestCase):
         options = PipelineOptions()
         options.view_as(StandardOptions).streaming = True
 
-        config = get_test_config(significant_gap_ms=2000)
+        config = get_test_transcribe_config()
 
         with BeamTestPipeline(options=options) as p:
-            test_stream = (
-                BeamTestStream(
-                    coder=beam.coders.TupleCoder(
-                        (beam.coders.StrUtf8Coder(), beam.coders.StrUtf8Coder())
+            elements = p | beam.Create(
+                [
+                    FlushRequest(
+                        feed_id="feed-123",
+                        buffer=AudioSegment.silent(duration=500),
+                        processed_uuids={uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")},
+                        time_range=TimeRange(start_ms=0, end_ms=500)
+                    ),
+                    FlushRequest(
+                        feed_id="feed-123",
+                        buffer=AudioSegment.silent(duration=500),
+                        processed_uuids={uuid.UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")},
+                        time_range=TimeRange(start_ms=5000, end_ms=5500)
                     )
-                )
-                .advance_watermark_to(0)
-                # Add two distinct chunks that will each trigger a flush because of the gap
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-123",
-                                "gs://b/0.0-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
-                            ),
-                            0,
-                        ),
-                    ]
-                )
-                .advance_watermark_to(5)  # create gap
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-123",
-                                "gs://b/5.0-cccccccc-cccc-cccc-cccc-cccccccccccc.flac",
-                            ),
-                            5,
-                        ),
-                    ]
-                )
-                .advance_watermark_to_infinity()
+                ]
             )
 
             (
-                p
-                | test_stream
-                | beam.ParDo(RestoreOrderFn(OrderRestorerConfig(
-                    chunk_duration_ms=15000,
-                    out_of_order_timeout_ms=5000,
-                )))
+                elements
                 | beam.ParDo(
-                    StitchAndTranscribeFn(
+                    TranscribeAudioFn(
                         config=config, transcriber_factory=tracking_factory
                     )
                 ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")

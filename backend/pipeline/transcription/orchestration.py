@@ -21,10 +21,11 @@ from backend.pipeline.transcription.constants import (
 )
 from backend.pipeline.transcription.datatypes import (
     OrderRestorerConfig,
-    StitchAndTranscribeConfig,
+    StitchAudioConfig,
+    TranscribeAudioConfig,
 )
 from backend.pipeline.transcription.options import TranscriptionOptions
-from backend.pipeline.transcription.stitcher import StitchAndTranscribeFn
+from backend.pipeline.transcription.stitcher import StitchAudioFn, TranscribeAudioFn
 from backend.pipeline.transcription.transforms import (
     AddEventTimestamp,
     ParseAndKeyFn,
@@ -65,12 +66,10 @@ def get_pipeline(
     )
 
     # Core pipeline logic: State buffers audio across multiple chunks, flushing only on silence or timeout.
-    transcripts = restored | "StitchAndTranscribe" >> beam.ParDo(
-        StitchAndTranscribeFn(
-            config=StitchAndTranscribeConfig(
+    stitching_results = restored | "StitchAudio" >> beam.ParDo(
+        StitchAudioFn(
+            config=StitchAudioConfig(
                 project_id=options.project_id,
-                transcriber_type=options.transcriber_type,
-                transcriber_config=options.transcriber_config,
                 vad_type=options.vad_type,
                 vad_config=options.vad_config,
                 metrics_exporter_type=options.metrics_exporter_type,
@@ -80,6 +79,22 @@ def get_pipeline(
                 stale_timeout_ms=options.stale_timeout_ms or DEFAULT_STALE_TIMEOUT_MS,
                 max_transmission_duration_ms=options.max_transmission_duration_ms
                 or DEFAULT_MAX_TRANSMISSION_DURATION_MS,
+                route_to_dlq=options.route_to_dlq if options.route_to_dlq is not None else True,
+            )
+        )
+    ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+
+    transcripts = stitching_results.main | "TranscribeAudio" >> beam.ParDo(
+        TranscribeAudioFn(
+            config=TranscribeAudioConfig(
+                project_id=options.project_id,
+                transcriber_type=options.transcriber_type,
+                transcriber_config=options.transcriber_config,
+                vad_type=options.vad_type,
+                vad_config=options.vad_config,
+                metrics_exporter_type=options.metrics_exporter_type,
+                metrics_config=options.metrics_config,
+                route_to_dlq=options.route_to_dlq if options.route_to_dlq is not None else True,
             )
         )
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
@@ -96,6 +111,7 @@ def get_pipeline(
     # Route all DLQ (Dead Letter Queue) outputs from intermediate steps to a dedicated topic
     dlq_combined = (
         parsed[DEAD_LETTER_QUEUE_TAG],
+        stitching_results[DEAD_LETTER_QUEUE_TAG],
         transcripts[DEAD_LETTER_QUEUE_TAG],
     ) | "FlattenDlqs" >> beam.Flatten()
 
