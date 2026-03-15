@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from google.api_core.exceptions import GoogleAPIError
 from google.cloud import monitoring_v3
 
+from backend.pipeline.transcription.constants import (
+    GCP_DURATION_METRIC_NAME,
+    GCP_METRIC_PREFIX,
+)
 from backend.pipeline.transcription.enums import MetricsExporterType
 from backend.pipeline.transcription.utils import JsonConfigMixin
 
@@ -31,8 +35,8 @@ class MetricsExporter(abc.ABC):
 class GcpMonitoringConfig(JsonConfigMixin):
     """Strongly typed configuration for the GCP Monitoring Exporter."""
 
-    metric_prefix: str = "custom.googleapis.com/radio_transcription"
-    duration_metric_name: str = "transcription_time"
+    metric_prefix: str = GCP_METRIC_PREFIX
+    duration_metric_name: str = GCP_DURATION_METRIC_NAME
 
 
 class GcpMonitoringExporter(MetricsExporter):

@@ -111,7 +111,7 @@ class SerializeToPubSubMessageFn(beam.DoFn):
 
         proto = TranscribedAudio(
             feed_id=element.feed_id,
-            source_chunk_ids=element.audio_ids,
+            source_chunk_ids=[str(u) for u in element.audio_ids],
             transmission_id=str(deterministic_uuid),
             transcript=element.transcript,
         )

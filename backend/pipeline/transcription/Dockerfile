@@ -20,6 +20,7 @@ COPY backend/ ./backend/
 
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONPATH="/app"
 
 RUN uv sync --frozen --no-dev && uv pip install grpcio-tools
 

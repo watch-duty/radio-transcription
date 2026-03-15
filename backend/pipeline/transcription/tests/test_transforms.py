@@ -20,7 +20,7 @@ from pydub import AudioSegment
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.transcription.constants import DEAD_LETTER_QUEUE_TAG
 from backend.pipeline.transcription.datatypes import (
-    AudioChunkData,
+    AudioFileData,
     StitchAndTranscribeConfig,
     TimeRange,
     TranscriptionResult,
@@ -131,7 +131,7 @@ class AddEventTimestampTest(unittest.TestCase):
     def test_valid_timestamp_extraction(self) -> None:
         """Test successful timestamp extraction."""
         chunk = AudioChunk(
-            gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-uuid1.flac"
+            gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac"
         )
         chunk.start_timestamp.FromMicroseconds(1678886400000000)
         element = ("test-feed", chunk.SerializeToString())
@@ -142,14 +142,17 @@ class AddEventTimestampTest(unittest.TestCase):
         self.assertIsInstance(result[0], TimestampedValue)
         self.assertEqual(
             result[0].value,  # type: ignore
-            ("test-feed", "gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-uuid1.flac"),
+            (
+                "test-feed",
+                "gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
+            ),
         )
         self.assertEqual(result[0].timestamp, 1678886400)  # type: ignore
 
     def test_invalid_timestamp_raises_value_error(self) -> None:
         """Test invalid timestamp routes to DLQ."""
         chunk = AudioChunk(
-            gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/invalid-uuid1.flac"
+            gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/invalid-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac"
         )
         element = ("test-feed", chunk.SerializeToString())
         fn = AddEventTimestamp()
@@ -174,18 +177,18 @@ class StitchAndTranscribeTest(unittest.TestCase):
         mock_processor_inst.export_flac.return_value = b"flac_bytes"
 
         sed_map = {
-            "100-uuid_starts.flac": [(12.5, 15.0)],
-            "115-uuid_completes_contains.flac": [(0.0, 2.5), (5.0, 7.0)],
-            "130-uuid_starts_again.flac": [(0.0, 2.5)],
-            "150-uuid_silent.flac": [],
-            "160-uuid_trigger_final.flac": [(0.0, 2.0)],
-            "190-uuid_trigger_real_final.flac": [(0.0, 2.0)],
+            "100-11111111-1111-1111-1111-111111111111.flac": [(12.5, 15.0)],
+            "115-22222222-2222-2222-2222-222222222222.flac": [(0.0, 2.5), (5.0, 7.0)],
+            "130-33333333-3333-3333-3333-333333333333.flac": [(0.0, 2.5)],
+            "150-44444444-4444-4444-4444-444444444444.flac": [],
+            "160-55555555-5555-5555-5555-555555555555.flac": [(0.0, 2.0)],
+            "190-66666666-6666-6666-6666-666666666666.flac": [(0.0, 2.0)],
         }
 
-        def mock_download(path: str) -> AudioChunkData:
+        def mock_download(path: str) -> AudioFileData:
             filename = path.rsplit("/", maxsplit=1)[-1]
             chunk_start = float(filename.split("-")[0]) if "-" in filename else 0.0
-            return AudioChunkData(
+            return AudioFileData(
                 start_ms=int(chunk_start * 1000),
                 audio=AudioSegment.silent(duration=20000),
                 speech_segments=[
@@ -214,7 +217,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                "gs://fake-bucket/ab12/feed-123/2026-03-06/100-uuid_starts.flac",
+                                "gs://fake-bucket/ab12/feed-123/2026-03-06/100-11111111-1111-1111-1111-111111111111.flac",
                             ),
                             100,
                         )
@@ -226,7 +229,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                "gs://fake-bucket/ab12/feed-123/2026-03-06/115-uuid_completes_contains.flac",
+                                "gs://fake-bucket/ab12/feed-123/2026-03-06/115-22222222-2222-2222-2222-222222222222.flac",
                             ),
                             115,
                         )
@@ -238,7 +241,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                "gs://fake-bucket/ab12/feed-123/2026-03-06/130-uuid_starts_again.flac",
+                                "gs://fake-bucket/ab12/feed-123/2026-03-06/130-33333333-3333-3333-3333-333333333333.flac",
                             ),
                             130,
                         )
@@ -250,7 +253,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                "gs://fake-bucket/ab12/feed-123/2026-03-06/150-uuid_silent.flac",
+                                "gs://fake-bucket/ab12/feed-123/2026-03-06/150-44444444-4444-4444-4444-444444444444.flac",
                             ),
                             150,
                         )
@@ -262,7 +265,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                "gs://fake-bucket/ab12/feed-123/2026-03-06/160-uuid_trigger_final.flac",
+                                "gs://fake-bucket/ab12/feed-123/2026-03-06/160-55555555-5555-5555-5555-555555555555.flac",
                             ),
                             160,
                         )
@@ -274,7 +277,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                "gs://fake-bucket/ab12/feed-123/2026-03-06/190-uuid_trigger_real_final.flac",
+                                "gs://fake-bucket/ab12/feed-123/2026-03-06/190-66666666-6666-6666-6666-666666666666.flac",
                             ),
                             190,
                         )
@@ -298,10 +301,13 @@ class StitchAndTranscribeTest(unittest.TestCase):
                 assert len(elements) == 3, (
                     f"Expected 3 transcripts, got {len(elements)}: {elements}"
                 )
-                uuids_list = [set(el.audio_ids) for el in elements]
-                assert {"uuid_starts", "uuid_completes_contains"} in uuids_list
-                assert {"uuid_starts_again"} in uuids_list
-                assert {"uuid_trigger_final"} in uuids_list
+                uuids_list = [set(str(u) for u in el.audio_ids) for el in elements]
+                assert {
+                    "11111111-1111-1111-1111-111111111111",
+                    "22222222-2222-2222-2222-222222222222",
+                } in uuids_list
+                assert {"33333333-3333-3333-3333-333333333333"} in uuids_list
+                assert {"55555555-5555-5555-5555-555555555555"} in uuids_list
 
             assert_that(results.main, assert_transcripts, label="CheckMainTranscripts")
 
@@ -316,16 +322,16 @@ class StitchAndTranscribeTest(unittest.TestCase):
         mock_processor_inst.export_flac.return_value = b"flac_bytes"
 
         sed_map = {
-            "100-uuid_starts_long.flac": [(0.0, 5.0)],
-            "105-uuid_continues_long.flac": [(0.0, 5.0)],
-            "110-uuid_exceeds_max.flac": [(0.0, 5.0)],
-            "130-uuid_trigger.flac": [(0.0, 2.0)],
+            "100-77777777-7777-7777-7777-777777777777.flac": [(0.0, 5.0)],
+            "105-88888888-8888-8888-8888-888888888888.flac": [(0.0, 5.0)],
+            "110-99999999-9999-9999-9999-999999999999.flac": [(0.0, 5.0)],
+            "130-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac": [(0.0, 2.0)],
         }
 
-        def mock_download(path: str) -> AudioChunkData:
+        def mock_download(path: str) -> AudioFileData:
             filename = path.rsplit("/", maxsplit=1)[-1]
             chunk_start = float(filename.split("-")[0]) if "-" in filename else 0.0
-            return AudioChunkData(
+            return AudioFileData(
                 start_ms=int(chunk_start * 1000),
                 audio=AudioSegment.silent(duration=5000),
                 speech_segments=[
@@ -357,7 +363,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-max",
-                                "gs://fake-bucket/ab12/feed-max/2026-03-06/100-uuid_starts_long.flac",
+                                "gs://fake-bucket/ab12/feed-max/2026-03-06/100-77777777-7777-7777-7777-777777777777.flac",
                             ),
                             100,
                         )
@@ -369,7 +375,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-max",
-                                "gs://fake-bucket/ab12/feed-max/2026-03-06/105-uuid_continues_long.flac",
+                                "gs://fake-bucket/ab12/feed-max/2026-03-06/105-88888888-8888-8888-8888-888888888888.flac",
                             ),
                             105,
                         )
@@ -381,7 +387,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-max",
-                                "gs://fake-bucket/ab12/feed-max/2026-03-06/110-uuid_exceeds_max.flac",
+                                "gs://fake-bucket/ab12/feed-max/2026-03-06/110-99999999-9999-9999-9999-999999999999.flac",
                             ),
                             110,
                         )
@@ -393,7 +399,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-max",
-                                "gs://fake-bucket/ab12/feed-max/2026-03-06/130-uuid_trigger.flac",
+                                "gs://fake-bucket/ab12/feed-max/2026-03-06/130-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac",
                             ),
                             130,
                         )
@@ -419,9 +425,12 @@ class StitchAndTranscribeTest(unittest.TestCase):
                 assert len(elements) == 2, (
                     f"Expected 2 transcripts, got {len(elements)}: {elements}"
                 )
-                uuids_list = [set(el.audio_ids) for el in elements]
-                assert {"uuid_starts_long", "uuid_continues_long"} in uuids_list
-                assert {"uuid_exceeds_max"} in uuids_list
+                uuids_list = [set(str(u) for u in el.audio_ids) for el in elements]
+                assert {
+                    "77777777-7777-7777-7777-777777777777",
+                    "88888888-8888-8888-8888-888888888888",
+                } in uuids_list
+                assert {"99999999-9999-9999-9999-999999999999"} in uuids_list
 
             assert_that(
                 results.main, assert_transcripts, label="CheckMaxDurationTranscripts"
@@ -435,13 +444,22 @@ class StitchAndTranscribeTest(unittest.TestCase):
         mock_audio_processor: MagicMock,
         mock_time: MagicMock,
     ) -> None:
-        """Test that stale audio chunks are flushed after a timeout."""
+        """
+        Test that stale audio chunks are flushed after a timeout.
+
+        Note: This test is skipped because the Apache Beam DirectRunner (used for local
+        execution and unit testing) has known bugs and limitations regarding timer advancing
+        and watermark simulation in streaming pipelines. This test attempts to validate 
+        the 30-second stale transmission timeout, which cannot be reliably tested locally.
+        It is retained to document the intended behavior and can be run via an E2E test 
+        on the DataflowRunner.
+        """
         mock_time.time.return_value = 0
         mock_processor_inst = mock_audio_processor.return_value
         mock_processor_inst.check_vad.return_value = True
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
         mock_processor_inst.export_flac.return_value = b"flac_bytes"
-        mock_processor_inst.download_audio_and_sed.return_value = AudioChunkData(
+        mock_processor_inst.download_audio_and_sed.return_value = AudioFileData(
             start_ms=101000,
             audio=AudioSegment.silent(duration=20000),
             speech_segments=[TimeRange(12500, 15000)],
@@ -465,7 +483,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                "gs://fake-bucket/ab12/feed-123/2026-03-06/101-uuid_starts.flac",
+                                "gs://fake-bucket/ab12/feed-123/2026-03-06/101-11111111-1111-1111-1111-111111111111.flac",
                             ),
                             101,
                         )
@@ -511,16 +529,16 @@ class StitchAndTranscribeTest(unittest.TestCase):
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
         mock_processor_inst.export_flac.return_value = b"flac_bytes"
 
-        def mock_download(path: str) -> AudioChunkData:
+        def mock_download(path: str) -> AudioFileData:
             filename = path.rsplit("/", maxsplit=1)[-1]
             chunk_start = float(filename.split("-")[0]) if "-" in filename else 0.0
             if "silent" in path:
-                return AudioChunkData(
+                return AudioFileData(
                     start_ms=int(chunk_start * 1000),
                     audio=AudioSegment.silent(duration=500),
                     speech_segments=[],
                 )
-            return AudioChunkData(
+            return AudioFileData(
                 start_ms=int(chunk_start * 1000),
                 audio=AudioSegment.silent(duration=500),
                 speech_segments=[TimeRange(0, 1000)],
@@ -543,7 +561,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                "gs://fake-bucket/ab12/feed-123/2026-03-06/101-uuid_starts.flac",
+                                "gs://fake-bucket/ab12/feed-123/2026-03-06/101-11111111-1111-1111-1111-111111111111.flac",
                             ),
                             101,
                         )
@@ -555,7 +573,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                "gs://fake-bucket/ab12/feed-123/2026-03-06/102-uuid_silent.flac",
+                                "gs://fake-bucket/ab12/feed-123/2026-03-06/102-44444444-4444-4444-4444-444444444444.flac",
                             ),
                             102,
                         )
@@ -593,7 +611,12 @@ class StitchAndTranscribeTest(unittest.TestCase):
 
         with self.assertRaises(Exception):
             with BeamTestPipeline() as p:
-                input_elements = [("feed-123", "gs://fake-bucket/123-missing.flac")]
+                input_elements = [
+                    (
+                        "feed-123",
+                        "gs://fake-bucket/123-00000000-0000-0000-0000-000000000000.flac",
+                    )
+                ]
                 (
                     p
                     | "Create" >> beam.Create(input_elements)
@@ -634,7 +657,15 @@ class StitchAndTranscribeTest(unittest.TestCase):
     def test_concurrent_transcription_execution(
         self, mock_audio_processor: MagicMock
     ) -> None:
-        """Verify that _flush_buffer executes in a background thread pool."""
+        """
+        Verify that _flush_buffer executes in a background thread pool.
+
+        Note: This test is skipped because the Apache Beam DirectRunner isolating
+        workers locally makes multithreading execution validation extremely flaky
+        and unreliable. Testing that audio flushing happens concurrently in a 
+        separate ThreadPoolExecutor works in Dataflow but causes intermittent 
+        test failures locally. It is retained to document the threading model.
+        """
         execution_threads = set()
         lock = threading.Lock()
 
@@ -662,10 +693,10 @@ class StitchAndTranscribeTest(unittest.TestCase):
         mock_processor_inst.export_flac.return_value = b"flac_bytes"
 
         # Generate fake audio chunks
-        def mock_download(path: str) -> AudioChunkData:
+        def mock_download(path: str) -> AudioFileData:
             filename = path.rsplit("/", maxsplit=1)[-1]
             chunk_start = float(filename.split("-")[0]) if "-" in filename else 0.0
-            return AudioChunkData(
+            return AudioFileData(
                 start_ms=int(chunk_start * 100000),  # 100s apart to force flushes
                 audio=AudioSegment.silent(duration=1000),
                 speech_segments=[TimeRange(0, 1000)],
@@ -691,13 +722,25 @@ class StitchAndTranscribeTest(unittest.TestCase):
                 # Add two distinct chunks that will each trigger a flush because of the gap
                 .add_elements(
                     [
-                        TimestampedValue(("feed-123", "gs://b/0.0-uuid1.flac"), 0),
+                        TimestampedValue(
+                            (
+                                "feed-123",
+                                "gs://b/0.0-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
+                            ),
+                            0,
+                        ),
                     ]
                 )
                 .advance_watermark_to(5)  # create gap
                 .add_elements(
                     [
-                        TimestampedValue(("feed-123", "gs://b/5.0-uuid2.flac"), 5),
+                        TimestampedValue(
+                            (
+                                "feed-123",
+                                "gs://b/5.0-cccccccc-cccc-cccc-cccc-cccccccccccc.flac",
+                            ),
+                            5,
+                        ),
                     ]
                 )
                 .advance_watermark_to_infinity()

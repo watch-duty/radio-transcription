@@ -37,9 +37,9 @@ class TranscriptionOptions(PipelineOptions):
         )
         parser.add_argument(
             "--transcriber_type",
-            type=TranscriberType,
-            choices=list(TranscriberType),
-            default=TranscriberType.GOOGLE_CHIRP_V3,
+            type=str,
+            choices=[e.value for e in TranscriberType],
+            default=TranscriberType.GOOGLE_CHIRP_V3.value,
             help="Type of transcription model to use.",
         )
         parser.add_argument(
@@ -50,9 +50,9 @@ class TranscriptionOptions(PipelineOptions):
         )
         parser.add_argument(
             "--vad_type",
-            type=VadType,
-            choices=list(VadType),
-            default=VadType.TEN_VAD,
+            type=str,
+            choices=[e.value for e in VadType],
+            default=VadType.TEN_VAD.value,
             help="Type of VAD model to use.",
         )
         parser.add_argument(

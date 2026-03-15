@@ -1,3 +1,4 @@
+import uuid
 from dataclasses import dataclass
 
 from apache_beam.transforms.userstate import ReadModifyWriteRuntimeState, RuntimeTimer
@@ -19,7 +20,7 @@ class TimeRange:
 
 
 @dataclass(frozen=True)
-class AudioChunkData:
+class AudioFileData:
     start_ms: int
     audio: AudioSegment
     speech_segments: list[TimeRange]
@@ -30,7 +31,7 @@ class TranscriptionResult:
     """Picklable dataclass to hold intermediate transcription results before Protobuf serialization."""
 
     feed_id: str
-    audio_ids: list[str]
+    audio_ids: list[uuid.UUID]
     transcript: str
     start_ms: int
     end_ms: int
@@ -57,13 +58,15 @@ class TransmissionState:
 
 
 @dataclass
-class ChunkContext:
+class StitcherContext:
     """Groups context variables for processing a chunk to reduce function arguments."""
 
     feed_id: str
-    source_file_uuid: str
+    source_file_uuid: uuid.UUID
+    """The unique identifier of the raw audio file this chunk originated from."""
     current_buffer: AudioSegment | None
-    processed_uuids: set[str]
+    processed_uuids: set[uuid.UUID]
+    """Set of unique source_file_uuids that have been accumulated into the current transmission buffer thus far."""
     last_segment_end_time_ms: int
     transmission_start_time_ms: int | None
     chunk_start_ms: int
@@ -105,7 +108,7 @@ class FlushRequest:
 
     buffer: AudioSegment
     feed_id: str
-    processed_uuids: set[str]
+    processed_uuids: set[uuid.UUID]
     start_ms: int
     end_ms: int
 
