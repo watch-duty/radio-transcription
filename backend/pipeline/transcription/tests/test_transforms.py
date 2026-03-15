@@ -20,7 +20,7 @@ from pydub import AudioSegment
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.transcription.constants import DEAD_LETTER_QUEUE_TAG
 from backend.pipeline.transcription.datatypes import (
-    AudioFileData,
+    AudioChunkData,
     StitchAndTranscribeConfig,
     TimeRange,
     TranscriptionResult,
@@ -185,10 +185,10 @@ class StitchAndTranscribeTest(unittest.TestCase):
             "190-66666666-6666-6666-6666-666666666666.flac": [(0.0, 2.0)],
         }
 
-        def mock_download(path: str) -> AudioFileData:
+        def mock_download(path: str) -> AudioChunkData:
             filename = path.rsplit("/", maxsplit=1)[-1]
             chunk_start = float(filename.split("-")[0]) if "-" in filename else 0.0
-            return AudioFileData(
+            return AudioChunkData(
                 start_ms=int(chunk_start * 1000),
                 audio=AudioSegment.silent(duration=20000),
                 speech_segments=[
@@ -328,10 +328,10 @@ class StitchAndTranscribeTest(unittest.TestCase):
             "130-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac": [(0.0, 2.0)],
         }
 
-        def mock_download(path: str) -> AudioFileData:
+        def mock_download(path: str) -> AudioChunkData:
             filename = path.rsplit("/", maxsplit=1)[-1]
             chunk_start = float(filename.split("-")[0]) if "-" in filename else 0.0
-            return AudioFileData(
+            return AudioChunkData(
                 start_ms=int(chunk_start * 1000),
                 audio=AudioSegment.silent(duration=5000),
                 speech_segments=[
@@ -459,7 +459,7 @@ class StitchAndTranscribeTest(unittest.TestCase):
         mock_processor_inst.check_vad.return_value = True
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
         mock_processor_inst.export_flac.return_value = b"flac_bytes"
-        mock_processor_inst.download_audio_and_sed.return_value = AudioFileData(
+        mock_processor_inst.download_audio_and_sed.return_value = AudioChunkData(
             start_ms=101000,
             audio=AudioSegment.silent(duration=20000),
             speech_segments=[TimeRange(12500, 15000)],
@@ -529,16 +529,16 @@ class StitchAndTranscribeTest(unittest.TestCase):
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
         mock_processor_inst.export_flac.return_value = b"flac_bytes"
 
-        def mock_download(path: str) -> AudioFileData:
+        def mock_download(path: str) -> AudioChunkData:
             filename = path.rsplit("/", maxsplit=1)[-1]
             chunk_start = float(filename.split("-")[0]) if "-" in filename else 0.0
             if "silent" in path:
-                return AudioFileData(
+                return AudioChunkData(
                     start_ms=int(chunk_start * 1000),
                     audio=AudioSegment.silent(duration=500),
                     speech_segments=[],
                 )
-            return AudioFileData(
+            return AudioChunkData(
                 start_ms=int(chunk_start * 1000),
                 audio=AudioSegment.silent(duration=500),
                 speech_segments=[TimeRange(0, 1000)],
@@ -693,10 +693,10 @@ class StitchAndTranscribeTest(unittest.TestCase):
         mock_processor_inst.export_flac.return_value = b"flac_bytes"
 
         # Generate fake audio chunks
-        def mock_download(path: str) -> AudioFileData:
+        def mock_download(path: str) -> AudioChunkData:
             filename = path.rsplit("/", maxsplit=1)[-1]
             chunk_start = float(filename.split("-")[0]) if "-" in filename else 0.0
-            return AudioFileData(
+            return AudioChunkData(
                 start_ms=int(chunk_start * 100000),  # 100s apart to force flushes
                 audio=AudioSegment.silent(duration=1000),
                 speech_segments=[TimeRange(0, 1000)],

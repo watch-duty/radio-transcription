@@ -1,5 +1,5 @@
 from backend.pipeline.transcription.datatypes import (
-    AudioFileData,
+    AudioChunkData,
     DropAction,
     FlushAction,
     FlushRequest,
@@ -26,14 +26,14 @@ class AudioStitchingStateMachine:
         self.config = config
 
     def process_chunk(
-        self, chunk_data: AudioFileData, ctx: StitcherContext
+        self, chunk_data: AudioChunkData, ctx: StitcherContext
     ) -> list[StateMachineAction]:
         if not chunk_data.speech_segments:
             return self._process_silent_chunk(chunk_data, ctx)
         return self._process_speech_segments(chunk_data, ctx)
 
     def _process_silent_chunk(
-        self, chunk_data: AudioFileData, ctx: StitcherContext
+        self, chunk_data: AudioChunkData, ctx: StitcherContext
     ) -> list[StateMachineAction]:
         actions: list[StateMachineAction] = []
         file_start_ms = chunk_data.start_ms
@@ -97,7 +97,7 @@ class AudioStitchingStateMachine:
         return actions
 
     def _process_speech_segments(
-        self, chunk_data: AudioFileData, ctx: StitcherContext
+        self, chunk_data: AudioChunkData, ctx: StitcherContext
     ) -> list[StateMachineAction]:
         actions: list[StateMachineAction] = []
         file_start_ms = chunk_data.start_ms

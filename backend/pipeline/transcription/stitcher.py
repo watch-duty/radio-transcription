@@ -25,7 +25,7 @@ from backend.pipeline.transcription.constants import (
     MS_PER_SECOND,
 )
 from backend.pipeline.transcription.datatypes import (
-    AudioFileData,
+    AudioChunkData,
     DropAction,
     FlushAction,
     FlushRequest,
@@ -319,7 +319,7 @@ class StitchAndTranscribeFn(beam.DoFn):
     def _fetch_and_validate_audio(
         self, *, feed_id: str, gcs_path: str, processed_uuids: set[str]
     ) -> Generator[
-        tuple[str, AudioFileData] | beam.pvalue.TaggedOutput,
+        tuple[str, AudioChunkData] | beam.pvalue.TaggedOutput,
         None,
         None,
     ]:
@@ -423,7 +423,7 @@ class StitchAndTranscribeFn(beam.DoFn):
         feed_id: str,
         gcs_path: str,
         source_file_uuid: uuid.UUID,
-        chunk_data: AudioFileData,
+        chunk_data: AudioChunkData,
         state: TransmissionState,
     ) -> Generator[FlushRequest | beam.pvalue.TaggedOutput, None, None]:
         file_start_ms = chunk_data.start_ms

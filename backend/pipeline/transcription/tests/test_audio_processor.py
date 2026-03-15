@@ -9,7 +9,7 @@ from pydub import AudioSegment
 
 from backend.pipeline.transcription.audio_processor import AudioProcessor
 from backend.pipeline.transcription.constants import AUDIO_FORMAT, SAMPLE_RATE_HZ
-from backend.pipeline.transcription.datatypes import AudioFileData, TimeRange
+from backend.pipeline.transcription.datatypes import AudioChunkData, TimeRange
 from backend.pipeline.transcription.enums import VadType
 
 
@@ -113,7 +113,7 @@ class AudioProcessorTest(unittest.TestCase):
 
         mock_read_sed.assert_called_once_with(mock_blob)
 
-        self.assertIsInstance(result, AudioFileData)
+        self.assertIsInstance(result, AudioChunkData)
         self.assertEqual(result.start_ms, 500)
         self.assertIsInstance(result.audio, AudioSegment)
         self.assertAlmostEqual(result.audio.duration_seconds, 0.1, places=2)

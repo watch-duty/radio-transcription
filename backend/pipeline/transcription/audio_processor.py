@@ -12,7 +12,7 @@ from backend.pipeline.transcription.constants import (
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
 )
-from backend.pipeline.transcription.datatypes import AudioFileData
+from backend.pipeline.transcription.datatypes import AudioChunkData
 from backend.pipeline.transcription.enums import VadType
 from backend.pipeline.transcription.metadata import (
     get_gcs_client,
@@ -44,8 +44,8 @@ class AudioProcessor:
         self.vad = get_vad_plugin(self.vad_type, self.vad_config)
         self.gcs_client = get_gcs_client()
 
-    def download_audio_and_sed(self, gcs_path: str) -> AudioFileData:
-        """Downloads FLAC bytes and SED metadata from GCS, returning an AudioFileData."""
+    def download_audio_and_sed(self, gcs_path: str) -> AudioChunkData:
+        """Downloads FLAC bytes and SED metadata from GCS, returning an AudioChunkData."""
         if not self.gcs_client:
             msg = "GCS client not initialized. Call setup() first."
             raise RuntimeError(msg)
@@ -68,7 +68,7 @@ class AudioProcessor:
 
         file_start_ms, speech_segments = read_sed_segments_from_blob(blob)
 
-        return AudioFileData(
+        return AudioChunkData(
             start_ms=file_start_ms,
             audio=full_audio_segment,
             speech_segments=speech_segments,

@@ -20,7 +20,7 @@ class TimeRange:
 
 
 @dataclass(frozen=True)
-class AudioFileData:
+class AudioChunkData:
     start_ms: int
     audio: AudioSegment
     speech_segments: list[TimeRange]
