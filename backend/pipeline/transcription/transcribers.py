@@ -122,9 +122,7 @@ class GoogleChirpV3Transcriber(Transcriber):
             # Chirp v3 is prompted to emit [BACKGROUND] when no speech is detected.
             # We strip this string explicitly across all chunks.
             chunk_text = (
-                result.alternatives[0]
-                .transcript.replace("[BACKGROUND]", "")
-                .strip()
+                result.alternatives[0].transcript.replace("[BACKGROUND]", "").strip()
             )
             if chunk_text:
                 chunks.append(chunk_text)

@@ -6,10 +6,10 @@ from typing import Any
 from pydub import AudioSegment, effects
 
 from backend.pipeline.transcription.constants import (
-    NUM_AUDIO_CHANNELS,
     AUDIO_FORMAT,
     HIGHPASS_FILTER_FREQ,
     LOWPASS_FILTER_FREQ,
+    NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
 )
 from backend.pipeline.transcription.datatypes import AudioFileData

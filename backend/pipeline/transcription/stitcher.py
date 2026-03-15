@@ -25,7 +25,6 @@ from backend.pipeline.transcription.constants import (
     MS_PER_SECOND,
 )
 from backend.pipeline.transcription.datatypes import (
-    StitcherContext,
     AudioFileData,
     DropAction,
     FlushAction,
@@ -33,6 +32,7 @@ from backend.pipeline.transcription.datatypes import (
     ScheduleStaleTimerAction,
     StateMachineAction,
     StitchAndTranscribeConfig,
+    StitcherContext,
     TimeRange,
     TranscriptionResult,
     TransmissionState,
