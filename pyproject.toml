@@ -2,14 +2,14 @@
 name = "radio-transcription"
 version = "0.0.0"
 readme = "README.md"
-requires-python = "==3.11.5"
+requires-python = ">=3.12.13"
 dependencies = [
     "functions-framework",
     "requests",
     "cloudevents",
     "google-cloud-pubsub>=2.35.0",
     "google-cloud-logging",
-    "google-cloud-storage>=3.9.0",
+    "google-cloud-storage>=2.18.2,<3",
     "asyncpg>=0.29.0",
     "google-cloud-alloydb-connector[asyncpg]",
     "aiohttp>=3.13.3",
@@ -17,6 +17,8 @@ dependencies = [
     "google-genai>=1.3.0",
     "pydantic>=2.10.6",
     "protobuf>=4.25.3",
+    "transcription-pipeline",
+    "chardet<6",
 ]
 
 [tool.uv]
@@ -31,12 +33,15 @@ default = true
 dev = [
   "ruff>=0.14.14",
   "ty>=0.0.21",
-  "grpcio-tools>=1.65.5",
+  "grpcio-tools",
   "testcontainers[postgres]",
   "docker",
+  "pytest>=9.0.2",
+  "pytest-asyncio>=1.3.0",
 ]
 
 [tool.ruff]
+target-version = "py312"
 extend-exclude = ["model/colabs", "backend/pipeline/schema_types", "**/*_pb2.py", "**/*_pb2.pyi"]
 
 [tool.ruff.lint]
@@ -185,3 +190,23 @@ max-complexity = 10
 
 [tool.ty.src]
 exclude = ["model/"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+
+[tool.uv.workspace]
+members = [
+    "backend/pipeline/transcription",
+]
+
+[tool.uv.sources]
+transcription-pipeline = { workspace = true }
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    # httplib2 uses deprecated pyparsing methods under the hood which trickle up from GCP auth plugins
+    "ignore::DeprecationWarning:httplib2.*",
+    # pydub depends on the 'audioop' standard library module which is deprecated in Python 3.11/3.12 and slated for removal in Python 3.13 (PEP 594).
+    # We ignore it here to keep output clean on 3.12, but this will break if upgrading to Python 3.13 unless pydub updates.
+    "ignore::DeprecationWarning:pydub.*",
+]
