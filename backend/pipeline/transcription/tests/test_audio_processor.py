@@ -90,8 +90,9 @@ class AudioProcessorTest(unittest.TestCase):
     @unittest.skipIf(
         shutil.which("ffmpeg") is None, "ffmpeg is required for pydub I/O tests"
     )
+    @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
     @patch("backend.pipeline.transcription.audio_processor.read_sed_segments_from_blob")
-    def test_download_audio_and_sed(self, mock_read_sed: MagicMock) -> None:
+    def test_download_audio_and_sed(self, mock_read_sed: MagicMock, mock_get_vad: MagicMock) -> None:
         """Test downloading and parsing an audio chunk from GCS."""
         # Arrange
         processor = AudioProcessor(vad_type=VadType.TEN_VAD)
@@ -131,7 +132,8 @@ class AudioProcessorTest(unittest.TestCase):
         processor.gcs_client.bucket.assert_called_with("my-bucket")
         mock_bucket.get_blob.assert_called_with("audio/feed1/12345.flac")
 
-    def test_download_audio_not_found(self) -> None:
+    @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
+    def test_download_audio_not_found(self, mock_get_vad: MagicMock) -> None:
         """Test that missing GCS blob raises FileNotFoundError."""
         # Arrange
         processor = AudioProcessor(vad_type=VadType.TEN_VAD)
