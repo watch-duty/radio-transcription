@@ -41,7 +41,7 @@ class Transcriber(abc.ABC):
         self,
         *,
         audio_data: bytes,
-    ) -> str:
+    ) -> str | None:
         """
         Transcribes the raw audio bytes and returns the text transcript.
         """
@@ -86,7 +86,7 @@ class GoogleChirpV3Transcriber(Transcriber):
         self,
         *,
         audio_data: bytes,
-    ) -> str:
+    ) -> str | None:
 
         if not self.client or not self.config:
             msg = "Transcriber client used before setup() was called."
@@ -114,7 +114,7 @@ class GoogleChirpV3Transcriber(Transcriber):
         )
 
         response = self.client.recognize(request=request)
-        transcript = ""
+        chunks = []
         for result in response.results:
             if result.alternatives:
                 # Chirp v3 is prompted to emit [BACKGROUND] when no speech is detected.
@@ -125,14 +125,15 @@ class GoogleChirpV3Transcriber(Transcriber):
                     .strip()
                 )
                 if chunk_text:
-                    transcript += chunk_text + " "
+                    chunks.append(chunk_text)
 
-        transcript = transcript.rstrip()
+        transcript = " ".join(chunks).strip()
 
         if not transcript:
-            msg = "Transcription returned [BACKGROUND] only or was completely empty (no discernable speech)."
-            logger.warning(msg)
-            raise ValueError(msg)
+            logger.info(
+                "Transcription returned [BACKGROUND] only or was completely empty (no discernable speech)."
+            )
+            return None
 
         return transcript
 

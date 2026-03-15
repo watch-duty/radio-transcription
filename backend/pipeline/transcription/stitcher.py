@@ -1,6 +1,7 @@
 import io
 import logging
 import time
+import uuid
 from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -24,8 +25,8 @@ from backend.pipeline.transcription.constants import (
     MS_PER_SECOND,
 )
 from backend.pipeline.transcription.datatypes import (
-    AudioChunkData,
-    ChunkContext,
+    StitcherContext,
+    AudioFileData,
     DropAction,
     FlushAction,
     FlushRequest,
@@ -182,10 +183,10 @@ class StitchAndTranscribeFn(beam.DoFn):
 
         parsed_exporters = []
         if self.config.metrics_exporter_type:
-            types = [
-                t.strip().lower() for t in self.config.metrics_exporter_type.split(",")
-            ]
+            types = [t.strip() for t in self.config.metrics_exporter_type.split(",")]
             for t in types:
+                if not t:
+                    continue
                 try:
                     parsed_exporters.append(MetricsExporterType(t))
                 except ValueError:
@@ -209,7 +210,7 @@ class StitchAndTranscribeFn(beam.DoFn):
         *,
         audio_buffer: AudioSegment,
         feed_id: str,
-        source_uuids: set[str],
+        source_uuids: set[uuid.UUID],
         start_ms: int,
         end_ms: int,
     ) -> TranscriptionResult | None:
@@ -244,6 +245,9 @@ class StitchAndTranscribeFn(beam.DoFn):
         transcript = self.transcriber.transcribe(
             audio_data=flac_bytes,
         )
+        if transcript is None:
+            logger.info("Transcription yielded no text. Dropping transmission.")
+            return None
         duration_ms = int((time.time() - transcribe_start) * MS_PER_SECOND)
         self.transcription_time_ms.update(duration_ms)
         self.metrics_exporter.record_transcription_time(
@@ -258,20 +262,22 @@ class StitchAndTranscribeFn(beam.DoFn):
             end_ms=end_ms,
         )
 
-    def _extract_source_uuid(self, gcs_path: str) -> str:
+    def _extract_source_uuid(self, gcs_path: str) -> uuid.UUID:
         _, _, filename = gcs_path.rpartition("/")
         _, sep, tail = filename.partition("-")
         if not sep:
             msg = f"Could not extract UUID from filename: {filename}"
             raise ValueError(msg)
-        return tail.replace(f".{AUDIO_FORMAT}", "")
+
+        uuid_str, _, _ = tail.partition(".")
+        return uuid.UUID(uuid_str)
 
     def _flush_buffer(
         self,
         *,
         buffer: AudioSegment,
         feed_id: str,
-        processed_uuids: set[str],
+        processed_uuids: set[uuid.UUID],
         start_ms: int,
         end_ms: int,
     ) -> TranscriptionResult | None:
@@ -313,7 +319,7 @@ class StitchAndTranscribeFn(beam.DoFn):
     def _fetch_and_validate_audio(
         self, *, feed_id: str, gcs_path: str, processed_uuids: set[str]
     ) -> Generator[
-        tuple[str, AudioChunkData] | beam.pvalue.TaggedOutput,
+        tuple[str, AudioFileData] | beam.pvalue.TaggedOutput,
         None,
         None,
     ]:
@@ -368,9 +374,9 @@ class StitchAndTranscribeFn(beam.DoFn):
         state.clear_all()
 
     def _apply_update_state_action(
-        self, state: TransmissionState, ctx: ChunkContext
+        self, state: TransmissionState, ctx: StitcherContext
     ) -> None:
-        state.contributing_uuids.write(ctx.processed_uuids)
+        state.contributing_uuids.write([str(u) for u in ctx.processed_uuids])
         if ctx.transmission_start_time_ms is not None:
             state.stale_start_time.write(ctx.transmission_start_time_ms)
         if ctx.last_segment_end_time_ms:
@@ -398,7 +404,7 @@ class StitchAndTranscribeFn(beam.DoFn):
         *,
         actions: list[StateMachineAction],
         state: TransmissionState,
-        ctx: ChunkContext,
+        ctx: StitcherContext,
         gcs_path: str,
     ) -> Generator[FlushRequest, None, None]:
         for action in actions:
@@ -416,18 +422,18 @@ class StitchAndTranscribeFn(beam.DoFn):
         *,
         feed_id: str,
         gcs_path: str,
-        source_file_uuid: str,
-        chunk_data: AudioChunkData,
+        source_file_uuid: uuid.UUID,
+        chunk_data: AudioFileData,
         state: TransmissionState,
     ) -> Generator[FlushRequest | beam.pvalue.TaggedOutput, None, None]:
         chunk_start_ms = chunk_data.start_ms
 
-        processed_uuids = set(state.contributing_uuids.read() or [])
+        processed_uuids = {uuid.UUID(u) for u in state.contributing_uuids.read() or []}
         current_buffer = self._load_current_buffer(state.buffer)
         transmission_start_time_ms = state.stale_start_time.read()
         last_segment_end_time_ms = state.last_end_time.read()
 
-        ctx = ChunkContext(
+        ctx = StitcherContext(
             feed_id=feed_id,
             source_file_uuid=source_file_uuid,
             current_buffer=current_buffer,

@@ -10,6 +10,10 @@ DEFAULT_STALE_TIMEOUT_MS = 60000
 DEFAULT_MAX_TRANSMISSION_DURATION_MS = 600000
 MAIN_TAG = "main"
 
+# Telemetry Metrics
+GCP_METRIC_PREFIX = "custom.googleapis.com/radio_transcription"
+GCP_DURATION_METRIC_NAME = "transcription_time"
+
 # Time Conversions
 MS_PER_SECOND = 1000
 MICROSECONDS_PER_MS = 1000

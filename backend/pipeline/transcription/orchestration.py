@@ -87,7 +87,9 @@ def get_pipeline(
         transcripts[DEAD_LETTER_QUEUE_TAG],
     ) | "FlattenDlqs" >> beam.Flatten()
 
-    dlq_json = dlq_combined | "FormatDlqAsJson" >> beam.Map(json.dumps)
+    dlq_json = dlq_combined | "FormatDlqAsJson" >> beam.Map(
+        lambda x: json.dumps(x).encode("utf-8")
+    )
     dlq_json | "WriteDlqToPubSub" >> WriteToPubSub(topic=f"{options.output_topic}-dlq")
 
     return pipeline

@@ -69,12 +69,11 @@ class TestTranscribers(unittest.TestCase):
 
             dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
 
-            with self.assertRaises(ValueError) as context:
-                transcriber.transcribe(
-                    audio_data=dummy_audio,
-                )
+            transcript = transcriber.transcribe(
+                audio_data=dummy_audio,
+            )
 
-            self.assertIn("returned [BACKGROUND] only", str(context.exception))
+            self.assertIsNone(transcript)
 
     def test_google_chirp_transcriber_retry_on_google_api_error(self) -> None:
         """Test retry logic recovers from transient Google API errors."""

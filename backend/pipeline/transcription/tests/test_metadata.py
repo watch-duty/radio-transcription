@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 from backend.pipeline.schema_types.sed_metadata_pb2 import (
     SedMetadata,
 )
-from backend.pipeline.transcription.utils import (
+from backend.pipeline.transcription.metadata import (
     get_gcs_client,
     read_sed_segments_from_blob,
 )
@@ -16,7 +16,7 @@ from backend.pipeline.transcription.utils import (
 class TestUtils(unittest.TestCase):
     """Tests for utility functions."""
 
-    @patch("backend.pipeline.transcription.utils.storage.Client")
+    @patch("backend.pipeline.transcription.metadata.storage.Client")
     def test_get_gcs_client(self, mock_client: MagicMock) -> None:
         """Test that get_gcs_client returns a valid storage client."""
         client = get_gcs_client()

@@ -12,9 +12,9 @@ from backend.pipeline.transcription.constants import (
     LOWPASS_FILTER_FREQ,
     SAMPLE_RATE_HZ,
 )
-from backend.pipeline.transcription.datatypes import AudioChunkData
+from backend.pipeline.transcription.datatypes import AudioFileData
 from backend.pipeline.transcription.enums import VadType
-from backend.pipeline.transcription.utils import (
+from backend.pipeline.transcription.metadata import (
     get_gcs_client,
     read_sed_segments_from_blob,
 )
@@ -25,9 +25,10 @@ logger = logging.getLogger(__name__)
 
 class AudioProcessor:
     """
-    A purely stateless acoustic manipulation module.
+    An acoustic manipulation module.
     Responsible for downloading/parsing audio, applying VAD, and applying bandpass filters.
-    All streaming orchestration, state management, and API integrations are handled upstream.
+    While mostly stateless, it holds per-worker initialized state (`self.vad`) from `setup()`.
+    All streaming orchestration and API integrations are handled upstream.
     """
 
     def __init__(
@@ -43,8 +44,8 @@ class AudioProcessor:
         self.vad = get_vad_plugin(self.vad_type, self.vad_config)
         self.gcs_client = get_gcs_client()
 
-    def download_audio_and_sed(self, gcs_path: str) -> AudioChunkData:
-        """Downloads FLAC bytes and SED metadata from GCS, returning an AudioChunkData."""
+    def download_audio_and_sed(self, gcs_path: str) -> AudioFileData:
+        """Downloads FLAC bytes and SED metadata from GCS, returning an AudioFileData."""
         if not self.gcs_client:
             msg = "GCS client not initialized. Call setup() first."
             raise RuntimeError(msg)
@@ -67,7 +68,7 @@ class AudioProcessor:
 
         chunk_start_ms, speech_segments = read_sed_segments_from_blob(blob)
 
-        return AudioChunkData(
+        return AudioFileData(
             start_ms=chunk_start_ms,
             audio=full_audio_segment,
             speech_segments=speech_segments,
@@ -75,7 +76,7 @@ class AudioProcessor:
 
     def check_vad(self, audio_buffer: AudioSegment) -> bool:
         """Evaluates audio buffer with TenVAD and returns True if speech is detected."""
-        if not self.vad:
+        if self.vad is None:
             msg = "VAD plugin not initialized. Call setup() first."
             raise RuntimeError(msg)
 
