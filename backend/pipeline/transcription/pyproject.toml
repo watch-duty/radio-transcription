@@ -5,9 +5,7 @@ requires-python = ">=3.12"
 
 dependencies = [
     "apache-beam[gcp]>=2.56.0",
-    "google-cloud-pubsub>=2.35.0",
     "google-cloud-speech>=2.37.0",
-    "google-cloud-monitoring>=2.29.1",
     "protobuf>=4.25.3",
     "pydub>=0.25.0",
     "ten-vad>=1.0.6.8",
