@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from apache_beam.transforms.userstate import ReadModifyWriteRuntimeState, RuntimeTimer
 from pydub import AudioSegment
 
+from backend.pipeline.shared_constants import CHUNK_DURATION_SECONDS
+from backend.pipeline.transcription.constants import MS_PER_SECOND
 from backend.pipeline.transcription.enums import TranscriberType, VadType
 
 
@@ -34,6 +36,7 @@ class TranscriptionResult:
     audio_ids: list[uuid.UUID]
     transcript: str
     time_range: TimeRange
+    missing_prior_context: bool = False
 
 
 @dataclass(frozen=True)
@@ -44,6 +47,7 @@ class TransmissionState:
     last_end_time: ReadModifyWriteRuntimeState
     stale_start_time: ReadModifyWriteRuntimeState
     contributing_uuids: ReadModifyWriteRuntimeState
+    missing_prior_context: ReadModifyWriteRuntimeState
     stale_timer: RuntimeTimer | None = None
 
     def clear_all(self) -> None:
@@ -52,6 +56,7 @@ class TransmissionState:
         self.last_end_time.clear()
         self.stale_start_time.clear()
         self.contributing_uuids.clear()
+        self.missing_prior_context.clear()
         if self.stale_timer:
             self.stale_timer.clear()
 
@@ -69,6 +74,13 @@ class StitcherContext:
     last_segment_end_time_ms: int
     transmission_start_time_ms: int | None
     file_start_ms: int
+    missing_prior_context: bool = False
+
+
+@dataclass(frozen=True)
+class OrderRestorerConfig:
+    out_of_order_timeout_ms: int = 5000
+    chunk_duration_ms: int = CHUNK_DURATION_SECONDS * MS_PER_SECOND
 
 
 @dataclass(frozen=True)
@@ -109,6 +121,7 @@ class FlushRequest:
     feed_id: str
     processed_uuids: set[uuid.UUID]
     time_range: TimeRange
+    missing_prior_context: bool = False
 
 
 @dataclass(frozen=True)

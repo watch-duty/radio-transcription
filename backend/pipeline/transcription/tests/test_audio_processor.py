@@ -39,8 +39,11 @@ class AudioProcessorTest(unittest.TestCase):
 
     def test_download_audio_raises_if_not_setup(self) -> None:
         """Test that download_audio_and_sed raises RuntimeError if called before setup."""
+        # Create a new processor instance that hasn't been set up
+        processor = AudioProcessor(vad_type=VadType.TEN_VAD)
+        # Act & Assert
         with self.assertRaises(RuntimeError):
-            self.processor.download_audio_and_sed("gs://bucket/path/to/missing.flac")
+            processor.download_audio_and_sed("gs://test/file.flac")
 
     @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
     @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
@@ -90,7 +93,10 @@ class AudioProcessorTest(unittest.TestCase):
     @patch("backend.pipeline.transcription.audio_processor.read_sed_segments_from_blob")
     def test_download_audio_and_sed(self, mock_read_sed: MagicMock) -> None:
         """Test downloading and parsing an audio chunk from GCS."""
-        self.processor.gcs_client = MagicMock()
+        # Arrange
+        processor = AudioProcessor(vad_type=VadType.TEN_VAD)
+        processor.setup()
+        processor.gcs_client = MagicMock()
         mock_bucket = MagicMock()
         mock_blob = MagicMock()
 
@@ -105,28 +111,36 @@ class AudioProcessorTest(unittest.TestCase):
 
         mock_blob.download_to_file = download_to_file
         mock_bucket.get_blob.return_value = mock_blob
-        self.processor.gcs_client.bucket.return_value = mock_bucket
+        processor.gcs_client.bucket.return_value = mock_bucket
 
-        mock_read_sed.return_value = (500, [TimeRange(0, 100)])
+        mock_read_sed.return_value = (5000, [TimeRange(5000, 7000)])
 
-        result = self.processor.download_audio_and_sed("gs://bucket/path/to/file.flac")
+        # Act
+        result = processor.download_audio_and_sed(
+            "gs://my-bucket/audio/feed1/12345.flac"
+        )
 
+        # Assert
         mock_read_sed.assert_called_once_with(mock_blob)
 
         self.assertIsInstance(result, AudioChunkData)
-        self.assertEqual(result.start_ms, 500)
+        self.assertEqual(result.start_ms, 5000)
         self.assertIsInstance(result.audio, AudioSegment)
         self.assertAlmostEqual(result.audio.duration_seconds, 0.1, places=2)
-        self.assertEqual(result.speech_segments, [TimeRange(0, 100)])
-        self.processor.gcs_client.bucket.assert_called_with("bucket")
-        mock_bucket.get_blob.assert_called_with("path/to/file.flac")
+        self.assertEqual(result.speech_segments, [TimeRange(5000, 7000)])
+        processor.gcs_client.bucket.assert_called_with("my-bucket")
+        mock_bucket.get_blob.assert_called_with("audio/feed1/12345.flac")
 
     def test_download_audio_not_found(self) -> None:
         """Test that missing GCS blob raises FileNotFoundError."""
-        self.processor.gcs_client = MagicMock()
+        # Arrange
+        processor = AudioProcessor(vad_type=VadType.TEN_VAD)
+        processor.setup()
+        processor.gcs_client = MagicMock()
         mock_bucket = MagicMock()
         mock_bucket.get_blob.return_value = None
-        self.processor.gcs_client.bucket.return_value = mock_bucket
+        processor.gcs_client.bucket.return_value = mock_bucket
 
+        # Act & Assert
         with self.assertRaises(FileNotFoundError):
-            self.processor.download_audio_and_sed("gs://bucket/path/to/missing.flac")
+            processor.download_audio_and_sed("gs://my-bucket/missing.flac")

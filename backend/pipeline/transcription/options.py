@@ -4,6 +4,7 @@ from apache_beam.options.pipeline_options import PipelineOptions
 
 from backend.pipeline.transcription.constants import (
     DEFAULT_MAX_TRANSMISSION_DURATION_MS,
+    DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_SIGNIFICANT_GAP_MS,
     DEFAULT_STALE_TIMEOUT_MS,
 )
@@ -84,6 +85,12 @@ class TranscriptionOptions(PipelineOptions):
             type=int,
             default=DEFAULT_STALE_TIMEOUT_MS,
             help="Milliseconds before an incomplete transmission is flushed.",
+        )
+        parser.add_argument(
+            "--out_of_order_timeout_ms",
+            type=int,
+            default=DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
+            help="Milliseconds to wait for missing chunks before accepting a gap.",
         )
         parser.add_argument(
             "--max_transmission_duration_ms",

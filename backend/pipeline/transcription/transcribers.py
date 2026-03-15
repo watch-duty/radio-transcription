@@ -1,5 +1,4 @@
-"""
-Pluggable Transcription API Architecture.
+"""Pluggable Transcription API Architecture.
 
 This module defines the abstract interface for audio transcription services,
 allowing the Beam pipeline to dynamically swap between different engines
@@ -22,15 +21,13 @@ logger = logging.getLogger(__name__)
 
 
 class Transcriber(abc.ABC):
-    """
-    Abstract interface for handling audio transcription.
+    """Abstract interface for handling audio transcription.
     Allows hot-swapping different external transcription APIs or models.
     """
 
     @abc.abstractmethod
     def setup(self) -> None:
-        """
-        Called once per Beam worker upon initialization.
+        """Called once per Beam worker upon initialization.
         Use this to spin up clients, establish connections, or load models
         that cannot be pickled/serialized across processes.
         """
@@ -41,8 +38,7 @@ class Transcriber(abc.ABC):
         *,
         audio_data: bytes,
     ) -> str | None:
-        """
-        Transcribes the raw audio bytes and returns the text transcript.
+        """Transcribes the raw audio bytes and returns the text transcript.
         """
 
 
@@ -58,8 +54,7 @@ class ChirpConfig(ConfigBase):
 
 
 class GoogleChirpV3Transcriber(Transcriber):
-    """
-    Transcriber implementation using Google Cloud Speech-to-Text V2 API
+    """Transcriber implementation using Google Cloud Speech-to-Text V2 API
     with the 'chirp_3' model.
     """
 

@@ -1,5 +1,4 @@
-"""
-Radio Transcription Pipeline Orchestration
+"""Radio Transcription Pipeline Orchestration
 
 This module contains the Apache Beam pipeline definition and DAG construction.
 It is separated from the CLI entry point to improve testability and modularity.
@@ -15,16 +14,21 @@ from apache_beam.options.pipeline_options import PipelineOptions, StandardOption
 from backend.pipeline.transcription.constants import (
     DEAD_LETTER_QUEUE_TAG,
     DEFAULT_MAX_TRANSMISSION_DURATION_MS,
+    DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_SIGNIFICANT_GAP_MS,
     DEFAULT_STALE_TIMEOUT_MS,
     MAIN_TAG,
 )
-from backend.pipeline.transcription.datatypes import StitchAndTranscribeConfig
+from backend.pipeline.transcription.datatypes import (
+    OrderRestorerConfig,
+    StitchAndTranscribeConfig,
+)
 from backend.pipeline.transcription.options import TranscriptionOptions
 from backend.pipeline.transcription.stitcher import StitchAndTranscribeFn
 from backend.pipeline.transcription.transforms import (
     AddEventTimestamp,
     ParseAndKeyFn,
+    RestoreOrderFn,
     SerializeToPubSubMessageFn,
 )
 
@@ -34,8 +38,7 @@ logger = logging.getLogger(__name__)
 def get_pipeline(
     pipeline_options: PipelineOptions,
 ) -> beam.Pipeline:
-    """
-    Constructs the Apache Beam pipeline DAG and returns the pipeline object.
+    """Constructs the Apache Beam pipeline DAG and returns the pipeline object.
     """
     # Require streaming mode since we handle unbounded logical streams from Pub/Sub
     pipeline_options.view_as(StandardOptions).streaming = True
@@ -52,8 +55,17 @@ def get_pipeline(
 
     timestamped = parsed[MAIN_TAG] | "AddTimestamp" >> beam.ParDo(AddEventTimestamp())
 
+    restored = timestamped | "RestoreOrder" >> beam.ParDo(
+        RestoreOrderFn(
+            config=OrderRestorerConfig(
+                out_of_order_timeout_ms=options.out_of_order_timeout_ms
+                or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
+            )
+        )
+    )
+
     # Core pipeline logic: State buffers audio across multiple chunks, flushing only on silence or timeout.
-    transcripts = timestamped | "StitchAndTranscribe" >> beam.ParDo(
+    transcripts = restored | "StitchAndTranscribe" >> beam.ParDo(
         StitchAndTranscribeFn(
             config=StitchAndTranscribeConfig(
                 project_id=options.project_id,

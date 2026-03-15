@@ -1,5 +1,4 @@
-"""
-Constants shared across the pipeline and tests.
+"""Constants shared across the pipeline and tests.
 """
 
 DEAD_LETTER_QUEUE_TAG = "transcription_dlq"
@@ -8,6 +7,7 @@ DEAD_LETTER_QUEUE_TAG = "transcription_dlq"
 DEFAULT_SIGNIFICANT_GAP_MS = 500
 DEFAULT_STALE_TIMEOUT_MS = 60000
 DEFAULT_MAX_TRANSMISSION_DURATION_MS = 600000
+DEFAULT_OUT_OF_ORDER_TIMEOUT_MS = 5000
 MAIN_TAG = "main"
 
 # Telemetry Metrics

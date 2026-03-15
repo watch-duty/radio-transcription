@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from backend.pipeline.common.constants import AUDIO_SAMPLE_RATE, CHUNK_DURATION_SECONDS
 from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
 from backend.pipeline.ingestion.settings import NormalizerSettings
+from backend.pipeline.shared_constants import CHUNK_DURATION_SECONDS
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -25,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 # Audio processing constants
 SAMPLE_FORMAT = "s16"  # 16-bit signed integer
+SAMPLE_WIDTH = 2
+BYTES_PER_CHUNK = AUDIO_SAMPLE_RATE * CHUNK_DURATION_SECONDS * SAMPLE_WIDTH
 READ_TIMEOUT_SEC = 30
 POLL_INTERVAL_SEC = 0.25
 

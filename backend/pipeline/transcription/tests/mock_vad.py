@@ -6,8 +6,7 @@ from backend.pipeline.transcription.vads import VoiceActivityDetector
 
 
 class MockVadPlugin(VoiceActivityDetector):
-    """
-    A stateless, fake Voice Activity Detector for use in unit tests.
+    """A stateless, fake Voice Activity Detector for use in unit tests.
     Does not rely on C++ or ONNX dependencies.
     Configured via JSON to consistently return True (speech) or False (silence).
     """
@@ -16,8 +15,7 @@ class MockVadPlugin(VoiceActivityDetector):
         self._returns_speech = True
 
     def setup(self, config_json: str) -> None:
-        """
-        Parses test configuration.
+        """Parses test configuration.
         Example: '{"returns": false}' forces the mock to always return False.
         """
         config = json.loads(config_json) if config_json else {}

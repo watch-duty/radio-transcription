@@ -17,8 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class MetricsExporter(abc.ABC):
-    """
-    Abstract interface for pushing custom pipeline metrics to external dashboards.
+    """Abstract interface for pushing custom pipeline metrics to external dashboards.
     """
 
     @abc.abstractmethod
@@ -38,8 +37,7 @@ class GcpMonitoringConfig(ConfigBase):
 
 
 class GcpMonitoringExporter(MetricsExporter):
-    """
-    Exports metrics to Google Cloud Monitoring (Stackdriver).
+    """Exports metrics to Google Cloud Monitoring (Stackdriver).
     """
 
     def __init__(self, project_id: str, config_json: str) -> None:
@@ -78,8 +76,7 @@ class GcpMonitoringExporter(MetricsExporter):
 
 
 class MultiExporter(MetricsExporter):
-    """
-    Broadcasts metrics to multiple configured exporters.
+    """Broadcasts metrics to multiple configured exporters.
     """
 
     def __init__(self, exporters: Sequence[MetricsExporter]) -> None:

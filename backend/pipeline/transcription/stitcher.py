@@ -94,10 +94,14 @@ STALE_START_TIME_STATE = beam.DoFn.StateParam(STALE_START_TIME_SPEC)
 STALE_TIMER_SPEC = TimerSpec("stale_timer", beam.TimeDomain.WATERMARK)
 STALE_TIMER_PARAM = beam.DoFn.TimerParam(STALE_TIMER_SPEC)
 
+MISSING_PRIOR_CONTEXT_SPEC = ReadModifyWriteStateSpec(
+    "missing_prior_context", beam.coders.BooleanCoder()
+)
+MISSING_PRIOR_CONTEXT_STATE = beam.DoFn.StateParam(MISSING_PRIOR_CONTEXT_SPEC)
+
 
 class StitchAndTranscribeFn(beam.DoFn):
-    """
-    A stateful Beam DoFn responsible for maintaining chronological continuous audio state per radio feed.
+    """A stateful Beam DoFn responsible for maintaining chronological continuous audio state per radio feed.
     It delegates the core state transition logic to `AudioStitchingStateMachine` while mapping the resulting
     actions to Beam's state and timer APIs.
 
@@ -167,8 +171,7 @@ class StitchAndTranscribeFn(beam.DoFn):
         )
 
     def setup(self) -> None:
-        """
-        Initializes transcriber, VAD, and metrics exporter clients once per worker.
+        """Initializes transcriber, VAD, and metrics exporter clients once per worker.
         """
         self.audio_processor = AudioProcessor(
             self.config.vad_type, self.config.vad_config
@@ -206,7 +209,7 @@ class StitchAndTranscribeFn(beam.DoFn):
         """Cleans up the ThreadPoolExecutor on worker teardown."""
         self.executor.shutdown(wait=True)
 
-    def _export_and_transcribe(
+    def _export_and_transcribe(  # noqa: PLR0913
         self,
         *,
         audio_buffer: AudioSegment,
@@ -214,6 +217,7 @@ class StitchAndTranscribeFn(beam.DoFn):
         source_uuids: set[uuid.UUID],
         start_ms: int,
         end_ms: int,
+        missing_prior_context: bool,
     ) -> TranscriptionResult | None:
         if self.audio_processor is None:
             msg = "AudioProcessor not initialized. setup() must be called."
@@ -260,6 +264,7 @@ class StitchAndTranscribeFn(beam.DoFn):
             audio_ids=sorted(source_uuids),
             transcript=transcript,
             time_range=TimeRange(start_ms=start_ms, end_ms=end_ms),
+            missing_prior_context=missing_prior_context,
         )
 
     def _extract_source_uuid(self, gcs_path: str) -> uuid.UUID:
@@ -272,7 +277,7 @@ class StitchAndTranscribeFn(beam.DoFn):
         uuid_str, _, _ = tail.partition(".")
         return uuid.UUID(uuid_str)
 
-    def _flush_buffer(
+    def _flush_buffer(  # noqa: PLR0913
         self,
         *,
         buffer: AudioSegment,
@@ -280,6 +285,7 @@ class StitchAndTranscribeFn(beam.DoFn):
         processed_uuids: set[uuid.UUID],
         start_ms: int,
         end_ms: int,
+        missing_prior_context: bool,
     ) -> TranscriptionResult | None:
         if not buffer or len(buffer) == 0:
             return None
@@ -290,6 +296,7 @@ class StitchAndTranscribeFn(beam.DoFn):
             source_uuids=processed_uuids,
             start_ms=start_ms,
             end_ms=end_ms,
+            missing_prior_context=missing_prior_context,
         )
 
         if transcribed_bytes is None:
@@ -323,8 +330,7 @@ class StitchAndTranscribeFn(beam.DoFn):
         None,
         None,
     ]:
-        """
-        Downloads audio bytes and SED metadata from GCS.
+        """Downloads audio bytes and SED metadata from GCS.
         Yields `beam.pvalue.TaggedOutput` strings to the DLQ if an exception occurs.
         """
         if self.audio_processor is None:
@@ -377,6 +383,8 @@ class StitchAndTranscribeFn(beam.DoFn):
         self, state: TransmissionState, ctx: StitcherContext
     ) -> None:
         state.contributing_uuids.write([str(u) for u in ctx.processed_uuids])
+        state.missing_prior_context.write(ctx.missing_prior_context)
+
         if ctx.transmission_start_time_ms is not None:
             state.stale_start_time.write(ctx.transmission_start_time_ms)
         if ctx.last_segment_end_time_ms:
@@ -432,6 +440,7 @@ class StitchAndTranscribeFn(beam.DoFn):
         current_buffer = self._load_current_buffer(state.buffer)
         transmission_start_time_ms = state.stale_start_time.read()
         last_segment_end_time_ms = state.last_end_time.read()
+        missing_prior_context = state.missing_prior_context.read() or False
 
         ctx = StitcherContext(
             feed_id=feed_id,
@@ -439,12 +448,13 @@ class StitchAndTranscribeFn(beam.DoFn):
             current_buffer=current_buffer,
             processed_uuids=processed_uuids,
             last_segment_end_time_ms=int(last_segment_end_time_ms)
-            if last_segment_end_time_ms
-            else 0,
+            if last_segment_end_time_ms is not None
+            else None,
             transmission_start_time_ms=int(transmission_start_time_ms)
-            if transmission_start_time_ms
+            if transmission_start_time_ms is not None
             else None,
             file_start_ms=file_start_ms,
+            missing_prior_context=missing_prior_context,
         )
 
         pipeline = AudioStitchingStateMachine(self.config)
@@ -461,6 +471,7 @@ class StitchAndTranscribeFn(beam.DoFn):
         last_end_time: ReadModifyWriteRuntimeState = LAST_END_TIME_STATE,  # type: ignore
         stale_start_time: ReadModifyWriteRuntimeState = STALE_START_TIME_STATE,  # type: ignore
         contributing_uuids: ReadModifyWriteRuntimeState = CONTRIBUTING_UUIDS_STATE,  # type: ignore
+        missing_prior_context: ReadModifyWriteRuntimeState = MISSING_PRIOR_CONTEXT_STATE,  # type: ignore
         stale_timer: RuntimeTimer = STALE_TIMER_PARAM,  # type: ignore
     ) -> Generator[TranscriptionResult | beam.pvalue.TaggedOutput, None, None]:
         key, gcs_path = element
@@ -469,6 +480,7 @@ class StitchAndTranscribeFn(beam.DoFn):
             last_end_time=last_end_time,
             stale_start_time=stale_start_time,
             contributing_uuids=contributing_uuids,
+            missing_prior_context=missing_prior_context,
             stale_timer=stale_timer,
         )
 
@@ -508,6 +520,7 @@ class StitchAndTranscribeFn(beam.DoFn):
                     processed_uuids=req.processed_uuids,
                     start_ms=req.time_range.start_ms,
                     end_ms=req.time_range.end_ms,
+                    missing_prior_context=req.missing_prior_context,
                 )
                 for req in flush_queue
             ]
@@ -527,16 +540,16 @@ class StitchAndTranscribeFn(beam.DoFn):
                     )
 
     @on_timer(STALE_TIMER_SPEC)
-    def handle_stale_transmission(
+    def handle_stale_transmission(  # noqa: PLR0913
         self,
         key: str = beam.DoFn.KeyParam,  # type: ignore
         transmission_buffer: ReadModifyWriteRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         last_end_time: ReadModifyWriteRuntimeState = LAST_END_TIME_STATE,  # type: ignore
         stale_start_time: ReadModifyWriteRuntimeState = STALE_START_TIME_STATE,  # type: ignore
         contributing_uuids: ReadModifyWriteRuntimeState = CONTRIBUTING_UUIDS_STATE,  # type: ignore
+        missing_prior_context: ReadModifyWriteRuntimeState = MISSING_PRIOR_CONTEXT_STATE,  # type: ignore
     ) -> Generator[TranscriptionResult | beam.pvalue.TaggedOutput, None, None]:
-        """
-        Invoked asynchronously by the Beam Runner when the event-time watermark
+        """Invoked asynchronously by the Beam Runner when the event-time watermark
         passes the timestamp previously scheduled on the `stale_timer`. This provides a critical
         safety net: if a radio feed abruptly drops offline, this timer guarantees that any
         audio remaining in the buffer will eventually be flushed and transcribed, preventing
@@ -547,6 +560,7 @@ class StitchAndTranscribeFn(beam.DoFn):
             last_end_time=last_end_time,
             stale_start_time=stale_start_time,
             contributing_uuids=contributing_uuids,
+            missing_prior_context=missing_prior_context,
         )
 
         start_time_ms = state.stale_start_time.read()
@@ -567,6 +581,7 @@ class StitchAndTranscribeFn(beam.DoFn):
                     processed_uuids=processed_uuids,
                     start_ms=int(start_time_ms),
                     end_ms=int(end_time_ms),
+                    missing_prior_context=bool(state.missing_prior_context.read()),
                 )
                 if transcribed:
                     yield transcribed

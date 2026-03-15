@@ -1,5 +1,4 @@
-"""
-Voice Activity Detection (VAD) Plugin System.
+"""Voice Activity Detection (VAD) Plugin System.
 
 This module defines the abstract interface for VAD engines used by the pipeline to
 distinguish speech from silence/noise, preventing empty or purely static audio
@@ -24,23 +23,20 @@ logger = logging.getLogger(__name__)
 
 
 class VoiceActivityDetector(abc.ABC):
-    """
-    Abstract base class for Voice Activity Detection (VAD) plugins.
+    """Abstract base class for Voice Activity Detection (VAD) plugins.
     Allows swapping out different VAD models/services without changing the core
     Beam pipeline logic.
     """
 
     @abc.abstractmethod
     def setup(self, config_json: str) -> None:
-        """
-        Initializes the VAD model or client.
+        """Initializes the VAD model or client.
         Called once per worker during Beam's DoFn setup phase.
         """
 
     @abc.abstractmethod
     def evaluate(self, audio_data: bytes, sample_rate: int) -> bool:
-        """
-        Evaluates raw PCM audio data and returns True if speech is detected.
+        """Evaluates raw PCM audio data and returns True if speech is detected.
         """
 
 
@@ -54,8 +50,7 @@ class TenVadConfig(ConfigBase):
 
 
 class TenVadPlugin(VoiceActivityDetector):
-    """
-    VAD Plugin utilizing the local `ten_vad` library.
+    """VAD Plugin utilizing the local `ten_vad` library.
     """
 
     config: TenVadConfig
