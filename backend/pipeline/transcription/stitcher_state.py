@@ -7,6 +7,7 @@ from backend.pipeline.transcription.datatypes import (
     ScheduleStaleTimerAction,
     StateMachineAction,
     StitchAndTranscribeConfig,
+    TimeRange,
     UpdateStateAction,
 )
 
@@ -35,19 +36,19 @@ class AudioStitchingStateMachine:
         self, chunk_data: AudioFileData, ctx: StitcherContext
     ) -> list[StateMachineAction]:
         actions: list[StateMachineAction] = []
-        chunk_start_ms = chunk_data.start_ms
+        file_start_ms = chunk_data.start_ms
 
         is_significant_gap = (
             ctx.last_segment_end_time_ms
             and (
-                (chunk_start_ms + len(chunk_data.audio)) - ctx.last_segment_end_time_ms
+                (file_start_ms + len(chunk_data.audio)) - ctx.last_segment_end_time_ms
             )
             >= self.config.significant_gap_ms
         )
         is_max_duration_exceeded = (
             ctx.transmission_start_time_ms is not None
             and (
-                (chunk_start_ms + len(chunk_data.audio))
+                (file_start_ms + len(chunk_data.audio))
                 - ctx.transmission_start_time_ms
             )
             >= self.config.max_transmission_duration_ms
@@ -67,8 +68,10 @@ class AudioStitchingStateMachine:
                             buffer=ctx.current_buffer,
                             feed_id=ctx.feed_id,
                             processed_uuids=set(ctx.processed_uuids),
-                            start_ms=ctx.transmission_start_time_ms,
-                            end_ms=ctx.last_segment_end_time_ms,
+                            time_range=TimeRange(
+                                start_ms=ctx.transmission_start_time_ms,
+                                end_ms=ctx.last_segment_end_time_ms,
+                            ),
                         ),
                     )
                 )
@@ -100,7 +103,7 @@ class AudioStitchingStateMachine:
         self, chunk_data: AudioFileData, ctx: StitcherContext
     ) -> list[StateMachineAction]:
         actions: list[StateMachineAction] = []
-        chunk_start_ms = chunk_data.start_ms
+        file_start_ms = chunk_data.start_ms
 
         for segment in chunk_data.speech_segments:
             global_start_ms = segment.start_ms
@@ -108,13 +111,13 @@ class AudioStitchingStateMachine:
 
             is_significant_gap = (
                 ctx.last_segment_end_time_ms
-                and ((chunk_start_ms + global_start_ms) - ctx.last_segment_end_time_ms)
+                and ((file_start_ms + global_start_ms) - ctx.last_segment_end_time_ms)
                 >= self.config.significant_gap_ms
             )
             is_max_duration_exceeded = (
                 ctx.transmission_start_time_ms is not None
                 and (
-                    (chunk_start_ms + global_start_ms) - ctx.transmission_start_time_ms
+                    (file_start_ms + global_start_ms) - ctx.transmission_start_time_ms
                 )
                 >= self.config.max_transmission_duration_ms
             )
@@ -133,8 +136,10 @@ class AudioStitchingStateMachine:
                                 buffer=ctx.current_buffer,
                                 feed_id=ctx.feed_id,
                                 processed_uuids=set(ctx.processed_uuids),
-                                start_ms=ctx.transmission_start_time_ms,
-                                end_ms=ctx.last_segment_end_time_ms,
+                                time_range=TimeRange(
+                                    start_ms=ctx.transmission_start_time_ms,
+                                    end_ms=ctx.last_segment_end_time_ms,
+                                ),
                             ),
                         )
                     )
@@ -147,12 +152,12 @@ class AudioStitchingStateMachine:
 
             if not ctx.current_buffer:
                 ctx.current_buffer = speech_audio
-                ctx.transmission_start_time_ms = chunk_start_ms + global_start_ms
+                ctx.transmission_start_time_ms = file_start_ms + global_start_ms
             else:
                 ctx.current_buffer += speech_audio
 
             ctx.processed_uuids.add(ctx.source_file_uuid)
-            ctx.last_segment_end_time_ms = chunk_start_ms + global_end_ms
+            ctx.last_segment_end_time_ms = file_start_ms + global_end_ms
 
         actions.append(UpdateStateAction())
         expected_stale_deadline_ms = (

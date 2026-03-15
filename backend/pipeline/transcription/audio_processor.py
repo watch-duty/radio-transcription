@@ -6,7 +6,7 @@ from typing import Any
 from pydub import AudioSegment, effects
 
 from backend.pipeline.transcription.constants import (
-    AUDIO_CHANNELS,
+    NUM_AUDIO_CHANNELS,
     AUDIO_FORMAT,
     HIGHPASS_FILTER_FREQ,
     LOWPASS_FILTER_FREQ,
@@ -66,10 +66,10 @@ class AudioProcessor:
 
         full_audio_segment = AudioSegment.from_file(in_mem_file, format=AUDIO_FORMAT)
 
-        chunk_start_ms, speech_segments = read_sed_segments_from_blob(blob)
+        file_start_ms, speech_segments = read_sed_segments_from_blob(blob)
 
         return AudioFileData(
-            start_ms=chunk_start_ms,
+            start_ms=file_start_ms,
             audio=full_audio_segment,
             speech_segments=speech_segments,
         )
@@ -81,7 +81,7 @@ class AudioProcessor:
             raise RuntimeError(msg)
 
         audio_16k = audio_buffer.set_frame_rate(SAMPLE_RATE_HZ).set_channels(
-            AUDIO_CHANNELS
+            NUM_AUDIO_CHANNELS
         )
         pcm_bytes = audio_16k.raw_data
 

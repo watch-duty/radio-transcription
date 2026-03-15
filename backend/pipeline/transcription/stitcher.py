@@ -33,6 +33,7 @@ from backend.pipeline.transcription.datatypes import (
     ScheduleStaleTimerAction,
     StateMachineAction,
     StitchAndTranscribeConfig,
+    TimeRange,
     TranscriptionResult,
     TransmissionState,
     UpdateStateAction,
@@ -258,8 +259,7 @@ class StitchAndTranscribeFn(beam.DoFn):
             feed_id=feed_id,
             audio_ids=sorted(source_uuids),
             transcript=transcript,
-            start_ms=start_ms,
-            end_ms=end_ms,
+            time_range=TimeRange(start_ms=start_ms, end_ms=end_ms),
         )
 
     def _extract_source_uuid(self, gcs_path: str) -> uuid.UUID:
@@ -426,7 +426,7 @@ class StitchAndTranscribeFn(beam.DoFn):
         chunk_data: AudioFileData,
         state: TransmissionState,
     ) -> Generator[FlushRequest | beam.pvalue.TaggedOutput, None, None]:
-        chunk_start_ms = chunk_data.start_ms
+        file_start_ms = chunk_data.start_ms
 
         processed_uuids = {uuid.UUID(u) for u in state.contributing_uuids.read() or []}
         current_buffer = self._load_current_buffer(state.buffer)
@@ -444,7 +444,7 @@ class StitchAndTranscribeFn(beam.DoFn):
             transmission_start_time_ms=int(transmission_start_time_ms)
             if transmission_start_time_ms
             else None,
-            chunk_start_ms=chunk_start_ms,
+            file_start_ms=file_start_ms,
         )
 
         pipeline = AudioStitchingStateMachine(self.config)
@@ -506,8 +506,8 @@ class StitchAndTranscribeFn(beam.DoFn):
                     buffer=req.buffer,
                     feed_id=req.feed_id,
                     processed_uuids=req.processed_uuids,
-                    start_ms=req.start_ms,
-                    end_ms=req.end_ms,
+                    start_ms=req.time_range.start_ms,
+                    end_ms=req.time_range.end_ms,
                 )
                 for req in flush_queue
             ]
