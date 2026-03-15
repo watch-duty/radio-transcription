@@ -92,7 +92,9 @@ class AudioProcessorTest(unittest.TestCase):
     )
     @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
     @patch("backend.pipeline.transcription.audio_processor.read_sed_segments_from_blob")
-    def test_download_audio_and_sed(self, mock_read_sed: MagicMock, mock_get_vad: MagicMock) -> None:
+    def test_download_audio_and_sed(
+        self, mock_read_sed: MagicMock, mock_get_vad: MagicMock
+    ) -> None:
         """Test downloading and parsing an audio chunk from GCS."""
         # Arrange
         processor = AudioProcessor(vad_type=VadType.TEN_VAD)
