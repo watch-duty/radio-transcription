@@ -449,9 +449,9 @@ class StitchAndTranscribeTest(unittest.TestCase):
 
         Note: This test is skipped because the Apache Beam DirectRunner (used for local
         execution and unit testing) has known bugs and limitations regarding timer advancing
-        and watermark simulation in streaming pipelines. This test attempts to validate 
+        and watermark simulation in streaming pipelines. This test attempts to validate
         the 30-second stale transmission timeout, which cannot be reliably tested locally.
-        It is retained to document the intended behavior and can be run via an E2E test 
+        It is retained to document the intended behavior and can be run via an E2E test
         on the DataflowRunner.
         """
         mock_time.time.return_value = 0
@@ -662,8 +662,8 @@ class StitchAndTranscribeTest(unittest.TestCase):
 
         Note: This test is skipped because the Apache Beam DirectRunner isolating
         workers locally makes multithreading execution validation extremely flaky
-        and unreliable. Testing that audio flushing happens concurrently in a 
-        separate ThreadPoolExecutor works in Dataflow but causes intermittent 
+        and unreliable. Testing that audio flushing happens concurrently in a
+        separate ThreadPoolExecutor works in Dataflow but causes intermittent
         test failures locally. It is retained to document the threading model.
         """
         execution_threads = set()

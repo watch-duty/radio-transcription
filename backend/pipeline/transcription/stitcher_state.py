@@ -1,5 +1,4 @@
 from backend.pipeline.transcription.datatypes import (
-    StitcherContext,
     AudioFileData,
     DropAction,
     FlushAction,
@@ -7,6 +6,7 @@ from backend.pipeline.transcription.datatypes import (
     ScheduleStaleTimerAction,
     StateMachineAction,
     StitchAndTranscribeConfig,
+    StitcherContext,
     TimeRange,
     UpdateStateAction,
 )
@@ -40,16 +40,13 @@ class AudioStitchingStateMachine:
 
         is_significant_gap = (
             ctx.last_segment_end_time_ms
-            and (
-                (file_start_ms + len(chunk_data.audio)) - ctx.last_segment_end_time_ms
-            )
+            and ((file_start_ms + len(chunk_data.audio)) - ctx.last_segment_end_time_ms)
             >= self.config.significant_gap_ms
         )
         is_max_duration_exceeded = (
             ctx.transmission_start_time_ms is not None
             and (
-                (file_start_ms + len(chunk_data.audio))
-                - ctx.transmission_start_time_ms
+                (file_start_ms + len(chunk_data.audio)) - ctx.transmission_start_time_ms
             )
             >= self.config.max_transmission_duration_ms
         )
@@ -116,9 +113,7 @@ class AudioStitchingStateMachine:
             )
             is_max_duration_exceeded = (
                 ctx.transmission_start_time_ms is not None
-                and (
-                    (file_start_ms + global_start_ms) - ctx.transmission_start_time_ms
-                )
+                and ((file_start_ms + global_start_ms) - ctx.transmission_start_time_ms)
                 >= self.config.max_transmission_duration_ms
             )
 
