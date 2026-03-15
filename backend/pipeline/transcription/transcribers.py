@@ -8,7 +8,6 @@ allowing the Beam pipeline to dynamically swap between different engines
 
 import abc
 import logging
-from dataclasses import dataclass, field
 
 import tenacity
 from google.api_core.exceptions import GoogleAPIError, RetryError
@@ -17,7 +16,7 @@ from google.cloud.speech_v2 import SpeechClient
 
 from backend.pipeline.transcription.constants import BYTES_PER_SECOND_16KHZ_MONO
 from backend.pipeline.transcription.enums import TranscriberType
-from backend.pipeline.transcription.utils import JsonConfigMixin
+from backend.pipeline.transcription.utils import ConfigBase
 
 logger = logging.getLogger(__name__)
 
@@ -47,14 +46,13 @@ class Transcriber(abc.ABC):
         """
 
 
-@dataclass(frozen=True)
-class ChirpConfig(JsonConfigMixin):
+class ChirpConfig(ConfigBase):
     """Strongly typed configuration for the Google Chirp V3 Transcriber."""
 
     location: str = "us"
     recognizer: str = "_"
     model: str = "chirp_3"
-    language_codes: list[str] = field(default_factory=lambda: ["en-US"])
+    language_codes: list[str] = ["en-US"]
     enable_automatic_punctuation: bool = True
     enable_word_time_offsets: bool = False
 
@@ -100,7 +98,9 @@ class GoogleChirpV3Transcriber(Transcriber):
         )
 
         request = cloud_speech.RecognizeRequest(
-            recognizer=f"projects/{self.project_id}/locations/{self.config.location}/recognizers/{self.config.recognizer}",
+            recognizer=cloud_speech.SpeechClient.recognizer_path(
+                self.project_id, self.config.location, self.config.recognizer
+            ),
             config=cloud_speech.RecognitionConfig(
                 auto_decoding_config=cloud_speech.AutoDetectDecodingConfig(),
                 model=self.config.model,
@@ -116,16 +116,18 @@ class GoogleChirpV3Transcriber(Transcriber):
         response = self.client.recognize(request=request)
         chunks = []
         for result in response.results:
-            if result.alternatives:
-                # Chirp v3 is prompted to emit [BACKGROUND] when no speech is detected.
-                # We strip this string explicitly across all chunks.
-                chunk_text = (
-                    result.alternatives[0]
-                    .transcript.replace("[BACKGROUND]", "")
-                    .strip()
-                )
-                if chunk_text:
-                    chunks.append(chunk_text)
+            if not result.alternatives:
+                continue
+
+            # Chirp v3 is prompted to emit [BACKGROUND] when no speech is detected.
+            # We strip this string explicitly across all chunks.
+            chunk_text = (
+                result.alternatives[0]
+                .transcript.replace("[BACKGROUND]", "")
+                .strip()
+            )
+            if chunk_text:
+                chunks.append(chunk_text)
 
         transcript = " ".join(chunks).strip()
 

@@ -52,7 +52,7 @@ def read_sed_segments_from_blob(
         logger.error(err_msg)
         raise ValueError(err_msg)
 
-    chunk_start_ms = (
+    file_start_ms = (
         sed_metadata.start_timestamp.seconds * MS_PER_SECOND
         + sed_metadata.start_timestamp.nanos // NANOS_PER_MS
     )
@@ -79,4 +79,4 @@ def read_sed_segments_from_blob(
         )
         segments.append(TimeRange(start_ms=start_ms, end_ms=start_ms + duration_ms))
 
-    return chunk_start_ms, segments
+    return file_start_ms, segments

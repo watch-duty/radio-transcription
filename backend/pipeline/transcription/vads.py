@@ -8,7 +8,6 @@ from being sent to the expensive transcription APIs.
 
 import abc
 import logging
-from dataclasses import dataclass
 
 import numpy as np
 import ten_vad
@@ -19,7 +18,7 @@ from backend.pipeline.transcription.constants import (
     DEFAULT_TENVAD_THRESHOLD,
 )
 from backend.pipeline.transcription.enums import VadType
-from backend.pipeline.transcription.utils import JsonConfigMixin
+from backend.pipeline.transcription.utils import ConfigBase
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +44,7 @@ class VoiceActivityDetector(abc.ABC):
         """
 
 
-@dataclass(frozen=True)
-class TenVadConfig(JsonConfigMixin):
+class TenVadConfig(ConfigBase):
     """Strongly typed configuration for the TenVAD plugin."""
 
     # VAD tuning parameters

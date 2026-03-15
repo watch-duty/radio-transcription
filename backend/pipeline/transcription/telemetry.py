@@ -2,7 +2,6 @@ import abc
 import logging
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass
 
 from google.api_core.exceptions import GoogleAPIError
 from google.cloud import monitoring_v3
@@ -12,7 +11,7 @@ from backend.pipeline.transcription.constants import (
     GCP_METRIC_PREFIX,
 )
 from backend.pipeline.transcription.enums import MetricsExporterType
-from backend.pipeline.transcription.utils import JsonConfigMixin
+from backend.pipeline.transcription.utils import ConfigBase
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +30,7 @@ class MetricsExporter(abc.ABC):
         pass
 
 
-@dataclass(frozen=True)
-class GcpMonitoringConfig(JsonConfigMixin):
+class GcpMonitoringConfig(ConfigBase):
     """Strongly typed configuration for the GCP Monitoring Exporter."""
 
     metric_prefix: str = GCP_METRIC_PREFIX

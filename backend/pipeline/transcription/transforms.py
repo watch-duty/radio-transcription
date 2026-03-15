@@ -105,7 +105,7 @@ class SerializeToPubSubMessageFn(beam.DoFn):
     ) -> Generator[PubsubMessage, None, None]:
         # Create a deterministic UUID using uuid5 so that Beam retries produce the exact same ID
         deterministic_id_string = (
-            f"{element.feed_id}_{element.start_ms}_{element.end_ms}"
+            f"{element.feed_id}_{element.time_range.start_ms}_{element.time_range.end_ms}"
         )
         deterministic_uuid = uuid.uuid5(uuid.NAMESPACE_OID, deterministic_id_string)
 
@@ -115,8 +115,8 @@ class SerializeToPubSubMessageFn(beam.DoFn):
             transmission_id=str(deterministic_uuid),
             transcript=element.transcript,
         )
-        proto.start_timestamp.FromMicroseconds(element.start_ms * MICROSECONDS_PER_MS)
-        proto.end_timestamp.FromMicroseconds(element.end_ms * MICROSECONDS_PER_MS)
+        proto.start_timestamp.FromMicroseconds(element.time_range.start_ms * MICROSECONDS_PER_MS)
+        proto.end_timestamp.FromMicroseconds(element.time_range.end_ms * MICROSECONDS_PER_MS)
         yield PubsubMessage(
             data=proto.SerializeToString(),
             attributes={},

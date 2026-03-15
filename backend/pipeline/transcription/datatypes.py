@@ -33,8 +33,7 @@ class TranscriptionResult:
     feed_id: str
     audio_ids: list[uuid.UUID]
     transcript: str
-    start_ms: int
-    end_ms: int
+    time_range: TimeRange
 
 
 @dataclass(frozen=True)
@@ -63,13 +62,13 @@ class StitcherContext:
 
     feed_id: str
     source_file_uuid: uuid.UUID
-    """The unique identifier of the raw audio file this chunk originated from."""
+    # The unique identifier of the raw audio file this file originated from.
     current_buffer: AudioSegment | None
     processed_uuids: set[uuid.UUID]
-    """Set of unique source_file_uuids that have been accumulated into the current transmission buffer thus far."""
+    # Set of unique source_file_uuids that have been accumulated into the current transmission buffer thus far.
     last_segment_end_time_ms: int
     transmission_start_time_ms: int | None
-    chunk_start_ms: int
+    file_start_ms: int
 
 
 @dataclass(frozen=True)
@@ -109,8 +108,7 @@ class FlushRequest:
     buffer: AudioSegment
     feed_id: str
     processed_uuids: set[uuid.UUID]
-    start_ms: int
-    end_ms: int
+    time_range: TimeRange
 
 
 @dataclass(frozen=True)
