@@ -61,11 +61,11 @@ class StitcherContext:
     """Groups context variables for processing a chunk to reduce function arguments."""
 
     feed_id: str
-    source_file_uuid: uuid.UUID
     # The unique identifier of the raw audio file this file originated from.
+    source_file_uuid: uuid.UUID
     current_buffer: AudioSegment | None
-    processed_uuids: set[uuid.UUID]
     # Set of unique source_file_uuids that have been accumulated into the current transmission buffer thus far.
+    processed_uuids: set[uuid.UUID]
     last_segment_end_time_ms: int
     transmission_start_time_ms: int | None
     file_start_ms: int
