@@ -80,7 +80,7 @@ class TestLocalIcecastCollector(unittest.IsolatedAsyncioTestCase):
 
             # Ensure two chunk files were written and include expected bytes.
             written_files = sorted(
-                [path async for path in AsyncPath(tmp_dir).glob("chunk_*.wav")]
+                [path async for path in AsyncPath(tmp_dir).glob("chunk_*.flac")]
             )
             self.assertEqual(len(written_files), 2)
             self.assertEqual(await written_files[0].read_bytes(), b"first-bytes")
@@ -115,7 +115,7 @@ class TestLocalIcecastCollector(unittest.IsolatedAsyncioTestCase):
                 await local_icecast_collector.run_local_capture()
 
             written_files = [
-                path async for path in AsyncPath(tmp_dir).glob("chunk_*.wav")
+                path async for path in AsyncPath(tmp_dir).glob("chunk_*.flac")
             ]
             self.assertEqual(len(written_files), 1)
             self.assertEqual(await written_files[0].read_bytes(), b"cwd-bytes")
