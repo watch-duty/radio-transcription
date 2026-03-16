@@ -3,7 +3,7 @@ import unittest
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from google.protobuf.duration_pb2 import Duration
+from google.protobuf.duration_pb2 import Duration  # type: ignore
 
 from backend.pipeline.ingestion import gcs
 from backend.pipeline.schema_types.sed_metadata_pb2 import SedMetadata, SoundEvent

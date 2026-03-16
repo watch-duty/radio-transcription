@@ -57,13 +57,17 @@ async def upload_audio(
     )
     object_name = f"{feed['source_type']}/{feed['id']}/{timestamp}_{chunk_seq}.wav"
     if sed_metadata is not None:
-        # Serialize the SED metadata proto and encode it as a base64 string
+        # Serialize the SED metadata proto and encode it as a base64 string.
         sed_metadata_bytes = sed_metadata.SerializeToString()
         sed_metadata_b64 = base64.b64encode(sed_metadata_bytes).decode("ascii")
-        upload_kwargs = {"metadata": {"sed_metadata": sed_metadata_b64}}
+        await storage.upload(
+            bucket,
+            object_name,
+            audio_chunk,
+            metadata={"sed_metadata": sed_metadata_b64},
+        )
     else:
-        upload_kwargs = {}
-    await storage.upload(bucket, object_name, audio_chunk, **upload_kwargs)
+        await storage.upload(bucket, object_name, audio_chunk)
     return f"gs://{bucket}/{object_name}"
 
 
