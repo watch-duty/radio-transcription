@@ -1,6 +1,7 @@
 import unittest
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
+import base64
 
 from google.protobuf.duration_pb2 import Duration
 
@@ -79,7 +80,11 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             bucket,
             expected_object_name,
             audio_chunk,
-            metadata=sed_metadata.SerializeToString(),
+            metadata={
+                "sed_metadata": base64.b64encode(
+                    sed_metadata.SerializeToString()
+                ).decode("ascii"),
+            },
         )
         self.assertEqual(result, expected_path)
 
