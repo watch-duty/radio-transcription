@@ -244,6 +244,44 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, expected_path)
 
+    @patch("backend.pipeline.ingestion.gcs.Storage")
+    @patch("backend.pipeline.ingestion.gcs.aiohttp.ClientSession")
+    @patch("backend.pipeline.ingestion.gcs.datetime")
+    async def test_upload_audio_metadata_too_large_raises(
+        self,
+        mock_datetime: MagicMock,
+        mock_session_class: MagicMock,
+        mock_storage_class: MagicMock,
+    ) -> None:
+        """Test upload raises when serialized metadata exceeds GCS metadata size limit."""
+        # Arrange
+        mock_datetime.datetime.now.return_value.strftime.return_value = (
+            "20260305T120000Z"
+        )
+        mock_storage = AsyncMock()
+        mock_storage_class.return_value = mock_storage
+
+        audio_chunk = b"\x00\x01" * 100
+        feed = _make_feed("bcfy_feeds", 1234)
+        bucket = "test-bucket"
+        chunk_seq = 9
+        # A large proto payload that guarantees the base64 metadata exceeds 8 KiB.
+        sed_metadata = SedMetadata(source_chunk_id="x" * 10000)
+
+        # Act & Assert
+        with self.assertRaises(ValueError) as context:
+            await gcs.upload_audio(
+                audio_chunk,
+                feed,
+                bucket,
+                chunk_seq,
+                sed_metadata=sed_metadata,
+            )
+
+        self.assertIn("Metadata size", str(context.exception))
+        self.assertIn("exceeds GCS limit", str(context.exception))
+        mock_storage.upload.assert_not_called()
+
 
 class TestCloseClient(unittest.IsolatedAsyncioTestCase):
     """Test suite for the close_client function."""

@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 import aiohttp
 from gcloud.aio.storage import Storage
 
+_GCS_METADATA_SIZE_LIMIT = 8 * 1024  # 8 KiB in bytes
+
 if TYPE_CHECKING:
     from backend.pipeline.schema_types.sed_metadata_pb2 import SedMetadata
     from backend.pipeline.storage.feed_store import LeasedFeed
@@ -61,9 +63,19 @@ async def upload_audio(
         # Serialize the SED metadata proto and encode it as a base64 string.
         sed_metadata_bytes = sed_metadata.SerializeToString()
         # Decode to string because GCS metadata values must be strings
-        metadata = {
-            "sed_metadata": base64.b64encode(sed_metadata_bytes).decode("ascii")
-        }
+        encoded_metadata = base64.b64encode(sed_metadata_bytes).decode("ascii")
+        metadata = {"sed_metadata": encoded_metadata}
+
+        # Validate metadata size doesn't exceed GCS limit (8 KiB)
+        metadata_size = sum(
+            len(k.encode()) + len(v.encode()) for k, v in metadata.items()
+        )
+        if metadata_size > _GCS_METADATA_SIZE_LIMIT:
+            msg = (
+                f"Metadata size ({metadata_size} bytes) exceeds GCS limit "
+                f"({_GCS_METADATA_SIZE_LIMIT} bytes) for object '{object_name}'"
+            )
+            raise ValueError(msg)
 
     await storage.upload(
         bucket,
