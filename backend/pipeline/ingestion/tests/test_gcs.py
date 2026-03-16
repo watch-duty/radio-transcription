@@ -119,7 +119,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         expected_path = f"gs://{bucket}/{expected_object_name}"
 
         mock_storage.upload.assert_called_once_with(
-            bucket, expected_object_name, audio_chunk
+            bucket, expected_object_name, audio_chunk, metadata=None
         )
         self.assertEqual(result, expected_path)
 
@@ -154,7 +154,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         expected_path = f"gs://{bucket}/{expected_object_name}"
 
         mock_storage.upload.assert_called_once_with(
-            bucket, expected_object_name, audio_chunk
+            bucket, expected_object_name, audio_chunk, metadata=None
         )
         self.assertEqual(result, expected_path)
 
