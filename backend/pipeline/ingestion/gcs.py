@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 import logging
 from typing import TYPE_CHECKING
+import base64
 
 import aiohttp
 from gcloud.aio.storage import Storage
@@ -56,11 +57,13 @@ async def upload_audio(
         "%Y%m%dT%H%M%SZ",
     )
     object_name = f"{feed['source_type']}/{feed['id']}/{timestamp}_{chunk_seq}.wav"
-    upload_kwargs = (
-        {"metadata": sed_metadata.SerializeToString()}
-        if sed_metadata is not None
-        else {}
-    )
+    if sed_metadata is not None:
+        # Serialize the SED metadata proto and encode it as a base64 string
+        sed_metadata_bytes = sed_metadata.SerializeToString()
+        sed_metadata_b64 = base64.b64encode(sed_metadata_bytes).decode("ascii")
+        upload_kwargs = {"metadata": {"sed_metadata": sed_metadata_b64}}
+    else:
+        upload_kwargs = {}
     await storage.upload(bucket, object_name, audio_chunk, **upload_kwargs)
     return f"gs://{bucket}/{object_name}"
 
