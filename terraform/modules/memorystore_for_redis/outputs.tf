@@ -9,7 +9,7 @@ output "port" {
   value       = google_redis_instance.this.port
 }
 
-output "auth_string" {
+output "password" {
   description = "AUTH string required to authenticate when connecting to the instance."
   value       = google_redis_instance.this.auth_string
   sensitive   = true # Hidden from terraform logging
