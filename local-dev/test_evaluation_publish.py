@@ -2,12 +2,9 @@ import base64
 import json
 import os
 import requests
-from google.protobuf.json_format import ParseDict
+from google.protobuf import text_format
 
 from backend.pipeline.schema_types.transcribed_audio_pb2 import TranscribedAudio
-
-with open("local_env.json", "r") as f:
-    env_vars = json.load(f)
 
 # For testing payloads sent to the Pub/Sub between the Transcription and Rules Evaluation services.
 sample_transcription_message_with_event = TranscribedAudio(
@@ -27,24 +24,26 @@ sample_transcription_message_no_event = TranscribedAudio(
     end_timestamp={"seconds": 10, "nanos": 0},
 )
 
-# Update this to test out different messages
-message_string = sample_transcription_message_with_event.SerializeToString()
+# Update this sample to test out different messages
+test_message = sample_transcription_message_no_event
 
 payload = {
     "messages": [
         {
-            "data": base64.b64encode(message_string).decode('utf-8')
+            "data": base64.b64encode(test_message.SerializeToString()).decode('utf-8')
         }
     ]
 }
 
-PUBSUB_EMULATOR_HOST = env_vars["PUBSUB_EMULATOR_HOST"]
-PROJECT_ID = env_vars["PROJECT_ID"]
-INPUT_TOPIC = env_vars["TRANSCRIPTION_TOPIC"]
+PUBSUB_EMULATOR_HOST = os.environ["PUBSUB_EMULATOR_HOST"]
+PROJECT_ID = os.environ["GOOGLE_CLOUD_PROJECT"]
+INPUT_TOPIC = os.environ["TRANSCRIPTION_TOPIC"]
 
 url = f"http://{PUBSUB_EMULATOR_HOST}/v1/projects/{PROJECT_ID}/topics/{INPUT_TOPIC}:publish"
 
-print(f"Publishing to {url}:\n {message_string}")
+print("====== INPUT ======")
+print(f"Publishing to {url}:\n {text_format.MessageToString(test_message)}")
 response = requests.post(url, json=payload)
+print("====== OUTPUT ======")
 print(f"Status: {response.status_code}")
 print(f"Response: {response.text}")

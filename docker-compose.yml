@@ -12,27 +12,28 @@ services:
     image: python:3.11-slim
     depends_on:
       - pubsub-emulator
-      - evaluation
+      - rules-evaluation
       - notification
+    env_file:
+      - ./local-dev/LOCAL.env
     networks:
       - pipeline-network
     volumes:
-      - ./infra/local/pubsub_init.py:/app/pubsub_init.py
+      - ./local-dev/pubsub_init.py:/app/pubsub_init.py
     working_dir: /app
     command: sh -c "pip install requests && python pubsub_init.py"
 
-  evaluation:
+  rules-evaluation:
     build:
       context: .
       dockerfile: backend/pipeline/evaluation/Dockerfile
     ports:
       - "8080:8080"
-    environment:
-      - PORT=8080
-      - PUBSUB_EMULATOR_HOST=pubsub-emulator:8085
-      - GOOGLE_CLOUD_PROJECT=local-project
-      - OUTPUT_TOPIC=evaluation-output-topic
-      - LOCAL_DEV=true
+    env_file:
+      - ./local-dev/LOCAL.env
+    volumes:
+      - ./local-dev/test_evaluation_publish.py:/app/test_evaluation_publish.py
+    command: ["functions-framework", "--source=backend/pipeline/evaluation/evaluation_core.py", "--target=evaluate_transcribed_audio_segment", "--signature-type=cloudevent", "--port=8080"]
     networks:
       - pipeline-network
     depends_on:
@@ -44,11 +45,6 @@ services:
       dockerfile: backend/pipeline/notification/Dockerfile
     ports:
       - "8081:8081"
-    environment:
-      - PORT=8081
-      - NOTIFICATION_ENDPOINT=https://httpbin.org/post
-      - NOTIFICATION_ENDPOINT_API_KEY=mock
-      - LOCAL_DEV=true
     command: ["functions-framework", "--source=backend/pipeline/notification/send_notification.py", "--target=send_notification", "--signature-type=cloudevent", "--port=8081"]
     networks:
       - pipeline-network

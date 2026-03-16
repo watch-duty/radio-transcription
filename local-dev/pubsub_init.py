@@ -4,11 +4,8 @@ import os
 import sys
 import json
 
-with open("local_env.json", "r") as f:
-    env_vars = json.load(f)
-
-PUBSUB_EMULATOR_HOST = env_vars["PUBSUB_EMULATOR_HOST"]
-PROJECT_ID = env_vars["PROJECT_ID"]
+PUBSUB_EMULATOR_HOST = os.environ["PUBSUB_EMULATOR_HOST"]
+PROJECT_ID = os.environ["GOOGLE_CLOUD_PROJECT"]
 PUBSUB_ENDPOINT = f"http://{PUBSUB_EMULATOR_HOST}/v1/projects/{PROJECT_ID}"
 
 # Startup loop for emulator
@@ -56,22 +53,22 @@ if __name__ == "__main__":
     # WIP endpoints
 
     # Set up Pub/Sub between Capturer and Normalizer in Audio Ingestion Service
-    STAGING_TOPIC = env_vars['STAGING_TOPIC']
+    STAGING_TOPIC = os.environ['STAGING_TOPIC']
     create_topic(STAGING_TOPIC)
-    create_push_subscription("normalizer-sub", STAGING_TOPIC, f"http://{env_vars['NORMALIZER_SERVICE_HOST']}/")
+    create_push_subscription("normalizer-sub", STAGING_TOPIC, f"http://{os.environ['NORMALIZER_SERVICE_HOST']}/")
     
     # Pub/Sub between Audio Ingestion and Transcription Services
-    CANONICAL_TOPIC = env_vars['CANONICAL_TOPIC']
-    create_push_subscription("transcription-sub", CANONICAL_TOPIC, f"http://{env_vars['TRANSCRIPTION_SERVICE_HOST']}/")
+    CANONICAL_TOPIC = os.environ['CANONICAL_TOPIC']
+    create_push_subscription("transcription-sub", CANONICAL_TOPIC, f"http://{os.environ['TRANSCRIPTION_SERVICE_HOST']}/")
 
     # Pub/Sub between Transcription and Rules Evaluation Services
-    TRANSCRIPTION_TOPIC = env_vars['TRANSCRIPTION_TOPIC']
+    TRANSCRIPTION_TOPIC = os.environ['TRANSCRIPTION_TOPIC']
     create_topic(TRANSCRIPTION_TOPIC)
-    create_push_subscription("rules-evaluation-sub", TRANSCRIPTION_TOPIC, f"http://{env_vars['RULES_EVALUATION_SERVICE_HOST']}/")
+    create_push_subscription("rules-evaluation-sub", TRANSCRIPTION_TOPIC, f"http://{os.environ['RULES_EVALUATION_SERVICE_HOST']}/")
     
     # Pub/Sub between Rules Evaluation and Notification Services
-    RULES_EVALUATION_RESULTS_TOPIC = env_vars['RULES_EVALUATION_RESULTS_TOPIC']
+    RULES_EVALUATION_RESULTS_TOPIC = os.environ['RULES_EVALUATION_RESULTS_TOPIC']
     create_topic(RULES_EVALUATION_RESULTS_TOPIC)
-    create_push_subscription("notification-sub", RULES_EVALUATION_RESULTS_TOPIC, f"http://{env_vars['NOTIFICATION_SERVICE_HOST']}/")
+    create_push_subscription("notification-sub", RULES_EVALUATION_RESULTS_TOPIC, f"http://{os.environ['NOTIFICATION_SERVICE_HOST']}/")
     
     print("Pub/Sub initialization complete.")
