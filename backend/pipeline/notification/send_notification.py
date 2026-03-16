@@ -78,8 +78,7 @@ def send_notification(cloud_event: CloudEvent) -> None:
         request_data = MessageToJson(alert_notification, indent=None)
         logger.info(f"Sending payload: {request_data}")
 
-        # Storing the timestamp as the value. A value is required and a timestamp could help with debugging.
-        # nx=True means it will only set the value if it does not exist.
+        # Storing the current time as the value to assist in debugging.
         now = str(time.time())
         if redis_client.set(
             alert_notification.transmission_id, now, REDIS_TTL_IN_SECONDS
