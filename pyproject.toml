@@ -183,5 +183,8 @@ max-complexity = 10
   "S113",   # requests.* require timeout=
 ]
 
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
 [tool.ty.src]
 exclude = ["model/"]
