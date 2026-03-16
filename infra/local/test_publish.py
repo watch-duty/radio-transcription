@@ -8,10 +8,9 @@ from backend.pipeline.schema_types.transcribed_audio_pb2 import TranscribedAudio
 
 # Construct a simple TranscribedAudio payload
 transcribed_audio = TranscribedAudio(
-    audio_id="test-audio-123",
+    transmission_id="test-trans-123",
     transcript="evacuation needed immediately",
-    file_path="gs://test-bucket/test.wav",
-    source="icecast",
+    source_chunk_ids=["chunk1", "chunk2"],
     feed_id="test-feed",
     start_timestamp={"seconds": 0, "nanos": 0},
     end_timestamp={"seconds": 10, "nanos": 0},
