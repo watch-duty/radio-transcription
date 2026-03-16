@@ -21,12 +21,22 @@ with mock.patch("google.cloud.logging.Client") as mock_client:
 
 
 class TestSendNotification(TestCase):
+    @mock.patch(
+        "backend.pipeline.notification.send_notification.time.time", return_value=12345
+    )
+    @mock.patch("backend.pipeline.notification.send_notification.redis_client")
     @mock.patch("backend.pipeline.notification.send_notification.requests.post")
-    def test_send_notification(self, mock_post: mock.Mock) -> None:
+    def test_send_notification(
+        self, mock_post: mock.Mock, mock_redis_client: mock.Mock, mock_time: mock.Mock
+    ) -> None:
+        mock_redis_client.set.return_value = False
+
         mock_response = mock.MagicMock()
         mock_post.return_value = mock_response
 
-        evaluated_payload = EvaluatedTranscribedAudio(transcript="This is a test!")
+        evaluated_payload = EvaluatedTranscribedAudio(
+            transcript="This is a test!", transmission_id="1234"
+        )
         raw_data = base64.b64encode(evaluated_payload.SerializeToString())
         event_data = {"message": {"data": raw_data, "messageId": "1234"}}
 
@@ -39,17 +49,60 @@ class TestSendNotification(TestCase):
         result = send_notification(cloud_event)
         self.assertIsNone(result)
 
+        mock_redis_client.set.assert_called_with("1234", "12345", 3600)
+
         expected_url = "https://api.example.com/mock"
         expected_headers = {"Content-Type": "application/json", "X-Api-Key": "12345"}
         mock_post.assert_called_once_with(
             expected_url,
-            data='{"transcript": "This is a test!"}',
+            data='{"transmissionId": "1234", "transcript": "This is a test!"}',
             headers=expected_headers,
             timeout=5,
         )
 
+    @mock.patch(
+        "backend.pipeline.notification.send_notification.time.time", return_value=12345
+    )
+    @mock.patch("backend.pipeline.notification.send_notification.redis_client")
     @mock.patch("backend.pipeline.notification.send_notification.requests.post")
-    def test_post_error(self, mock_post: mock.Mock) -> None:
+    def test_duplicate_message(
+        self, mock_post: mock.Mock, mock_redis_client: mock.Mock, mock_time: mock.Mock
+    ) -> None:
+        # Setting this to True indicates a duplicate.
+        mock_redis_client.set.return_value = True
+
+        mock_response = mock.MagicMock()
+        mock_post.return_value = mock_response
+
+        evaluated_payload = EvaluatedTranscribedAudio(
+            transcript="This is a test!", transmission_id="1234"
+        )
+        raw_data = base64.b64encode(evaluated_payload.SerializeToString())
+        event_data = {"message": {"data": raw_data, "messageId": "1234"}}
+
+        attributes = {
+            "type": "google.cloud.pubsub.topic.v1.messagePublished",
+            "source": "//pubsub.googleapis.com/projects/my-project/topics/my-topic",
+        }
+
+        cloud_event = CloudEvent(attributes, event_data)
+        result = send_notification(cloud_event)
+        self.assertIsNone(result)
+
+        mock_redis_client.set.assert_called_with("1234", "12345", 3600)
+
+        mock_post.assert_not_called()
+
+    @mock.patch(
+        "backend.pipeline.notification.send_notification.time.time", return_value=12345
+    )
+    @mock.patch("backend.pipeline.notification.send_notification.redis_client")
+    @mock.patch("backend.pipeline.notification.send_notification.requests.post")
+    def test_post_error(
+        self, mock_post: mock.Mock, mock_redis_client: mock.Mock, mock_time: mock.Mock
+    ) -> None:
+        mock_redis_client.set.return_value = False
+
         mock_response = mock.MagicMock()
         mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
             "Error"
