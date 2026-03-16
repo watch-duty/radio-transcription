@@ -38,7 +38,7 @@ async def upload_audio(
     Upload an audio chunk to GCS and return the object path.
 
     The object path follows the convention:
-    ``{source_type}/{feed_id}/{timestamp}_{seq}.wav``
+    ``{source_type}/{feed_id}/{timestamp}_{seq}.flac``
 
     Args:
         audio_chunk: Raw audio bytes to upload.
@@ -55,8 +55,10 @@ async def upload_audio(
     timestamp = datetime.datetime.now(tz=datetime.UTC).strftime(
         "%Y%m%dT%H%M%SZ",
     )
-    object_name = f"{feed['source_type']}/{feed['id']}/{timestamp}_{chunk_seq}.wav"
-    if sed_metadata is not None:
+    object_name = f"{feed['source_type']}/{feed['id']}/{timestamp}_{chunk_seq}.flac"
+    if sed_metadata is None:
+        await storage.upload(bucket, object_name, audio_chunk)
+    else:
         # Serialize the SED metadata proto and encode it as a base64 string.
         sed_metadata_bytes = sed_metadata.SerializeToString()
         sed_metadata_b64 = base64.b64encode(sed_metadata_bytes).decode("ascii")
@@ -66,8 +68,6 @@ async def upload_audio(
             audio_chunk,
             metadata={"sed_metadata": sed_metadata_b64},
         )
-    else:
-        await storage.upload(bucket, object_name, audio_chunk)
     return f"gs://{bucket}/{object_name}"
 
 

@@ -73,7 +73,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         )
 
         # Assert
-        expected_object_name = f"bcfy_feeds/{feed_id}/20260305T120000Z_42.wav"
+        expected_object_name = f"bcfy_feeds/{feed_id}/20260305T120000Z_42.flac"
         expected_path = f"gs://{bucket}/{expected_object_name}"
 
         mock_storage.upload.assert_called_once_with(
@@ -115,7 +115,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         result = await gcs.upload_audio(audio_chunk, feed, bucket, chunk_seq)
 
         # Assert
-        expected_object_name = f"bcfy_feeds/{feed_id}/20260305T120000Z_5.wav"
+        expected_object_name = f"bcfy_feeds/{feed_id}/20260305T120000Z_5.flac"
         expected_path = f"gs://{bucket}/{expected_object_name}"
 
         mock_storage.upload.assert_called_once_with(
@@ -150,7 +150,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         result = await gcs.upload_audio(audio_chunk, feed, bucket, chunk_seq)
 
         # Assert
-        expected_object_name = f"echo_feeds/{feed_id}/20260305T120000Z_0.wav"
+        expected_object_name = f"echo_feeds/{feed_id}/20260305T120000Z_0.flac"
         expected_path = f"gs://{bucket}/{expected_object_name}"
 
         mock_storage.upload.assert_called_once_with(
@@ -239,7 +239,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         result = await gcs.upload_audio(audio_chunk, feed, bucket, chunk_seq)
 
         # Assert
-        expected_object_name = f"bcfy_feeds/{feed_id}/20260305T120000Z_999999999.wav"
+        expected_object_name = f"bcfy_feeds/{feed_id}/20260305T120000Z_999999999.flac"
         expected_path = f"gs://{bucket}/{expected_object_name}"
 
         self.assertEqual(result, expected_path)
