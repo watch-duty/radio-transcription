@@ -1,7 +1,7 @@
+import base64
 import unittest
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
-import base64
 
 from google.protobuf.duration_pb2 import Duration
 

@@ -1,16 +1,15 @@
 from __future__ import annotations
 
+import base64
 import datetime
 import logging
 from typing import TYPE_CHECKING
-import base64
 
 import aiohttp
 from gcloud.aio.storage import Storage
 
-from backend.pipeline.schema_types.sed_metadata_pb2 import SedMetadata
-
 if TYPE_CHECKING:
+    from backend.pipeline.schema_types.sed_metadata_pb2 import SedMetadata
     from backend.pipeline.storage.feed_store import LeasedFeed
 
 logger = logging.getLogger(__name__)
