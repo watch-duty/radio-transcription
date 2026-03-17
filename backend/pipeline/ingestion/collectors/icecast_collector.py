@@ -26,8 +26,7 @@ logger = logging.getLogger(__name__)
 
 # Audio processing constants
 SAMPLE_FORMAT = "s16"  # 16-bit signed integer
-SAMPLE_WIDTH = 2
-BYTES_PER_CHUNK = AUDIO_SAMPLE_RATE * CHUNK_DURATION_SECONDS * SAMPLE_WIDTH
+
 READ_TIMEOUT_SEC = 30
 POLL_INTERVAL_SEC = 0.25
 
