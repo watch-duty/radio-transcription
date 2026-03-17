@@ -45,7 +45,8 @@ def run(
         handler_class: The request handler class.
         port: The port number to listen on.
     """
-    server_address = ("localhost", port)
+    # This is safe to ignore because this server is only used for local dev.
+    server_address = ("0.0.0.0", port)  # ruff: noqa: S104
     httpd = server_class(server_address, handler_class)
     logger.info("Starting Mock Server on port %s...", port)
     try:
