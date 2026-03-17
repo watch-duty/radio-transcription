@@ -1154,6 +1154,7 @@ dependencies = [
     { name = "redis" },
     { name = "requests" },
     { name = "uvicorn" },
+    { name = "urllib3" },
 ]
 
 [package.dev-dependencies]
@@ -1186,6 +1187,7 @@ requires-dist = [
     { name = "redis", specifier = ">=7.3.0" },
     { name = "requests" },
     { name = "uvicorn", specifier = ">=0.27.0" },
+    { name = "urllib3", specifier = ">=2.6.3" },
 ]
 
 [package.metadata.requires-dev]
