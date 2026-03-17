@@ -14,7 +14,7 @@ class TestNotificationDeduplication(TestCase):
         self.assertFalse(notification_deduplication.process_notification("1234"))
         self.assertTrue(notification_deduplication.process_notification("1234"))
 
-    @mock.patch("time.time", return_value=54321)
+    @mock.patch("time.time", return_value=12345)
     def test_no_duplicate(self, mock_time: mock.Mock) -> None:
         cache_provider = MockCacheProvider()
         notification_deduplication = NotificationDeduplication(cache_provider)
