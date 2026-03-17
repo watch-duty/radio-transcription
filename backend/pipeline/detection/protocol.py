@@ -26,7 +26,7 @@ class SoundEventDetector(Protocol):
         factory registration key, the combiner tracking key, and the
         sidecar provenance field.
 
-    Methods
+    Methods:
     -------
     detect(samples)
         Analyze a complete audio window and return all speech regions
