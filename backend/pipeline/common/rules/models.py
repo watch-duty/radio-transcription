@@ -79,7 +79,6 @@ class RuleBase(BaseModel):
 
 class RuleCreate(RuleBase):
     """Model for creating a new rule."""
-    pass
 
 
 class RuleUpdate(BaseModel):
