@@ -32,7 +32,7 @@ else:
 
 # Keeping the notification deduplicate connection outside the main function. This is so the connection is
 # maintained while the function is warm instead of reconnecting each invocation.
-notification_deduplication = NotificationDeduplication(RedisService())
+deduplication = NotificationDeduplication(RedisService())
 
 request_handler = RequestHandler(logger)
 
@@ -77,13 +77,12 @@ def send_notification(cloud_event: CloudEvent) -> None:
 
     # Convert the EvaluatedTranscribedAudio into an AlertNotifcation
     alert_notification = convert_to_notification(evaluated_transcribed_audio)
-    notification_id = alert_notification.transmission_id
 
     # Evaluate if this message is a duplicate
-    if notification_deduplication.process_notification(notification_id):
-        logger.warning(
-            f"Duplicate transmission_id detected, skipping message with ID: {notification_id}"
-        )
+    notification_id = alert_notification.transmission_id
+    if deduplication.process_notification(notification_id):
+        message = f"Duplicate transmission_id detected, skipping notification with ID: {notification_id}"
+        logger.warning(message)
         return
 
     # Send a POST request to the endpoint

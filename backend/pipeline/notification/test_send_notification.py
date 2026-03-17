@@ -13,9 +13,7 @@ with mock.patch("google.cloud.logging.Client") as mock_client:
 
 
 class TestSendNotification(TestCase):
-    @mock.patch(
-        "backend.pipeline.notification.send_notification.notification_deduplication"
-    )
+    @mock.patch("backend.pipeline.notification.send_notification.deduplication")
     @mock.patch("backend.pipeline.notification.send_notification.request_handler")
     def test_send_notification(
         self, mock_request_handler: mock.Mock, mock_dedupe: mock.Mock
@@ -43,9 +41,7 @@ class TestSendNotification(TestCase):
             AlertNotification(transcript="This is a test!", transmission_id="1234")
         )
 
-    @mock.patch(
-        "backend.pipeline.notification.send_notification.notification_deduplication"
-    )
+    @mock.patch("backend.pipeline.notification.send_notification.deduplication")
     @mock.patch("backend.pipeline.notification.send_notification.request_handler")
     def test_duplicate_message(
         self, mock_request_handler: mock.Mock, mock_dedupe: mock.Mock
