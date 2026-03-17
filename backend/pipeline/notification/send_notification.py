@@ -13,7 +13,7 @@ from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
 
-# TODO: GOO-100 - Update to the shared logging util.
+# TODO(schew): GOO-100 - Update to the shared logging util.
 if not os.environ.get("LOCAL_DEV"):
     client = google.cloud.logging.Client()
     client.setup_logging()
