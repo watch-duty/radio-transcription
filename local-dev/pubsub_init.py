@@ -1,12 +1,10 @@
 """Initializes the Pub/Sub emulator with required topics and subscriptions."""
 
-import json
 import os
-import requests
 import sys
 import time
 
-
+import requests
 
 PUBSUB_EMULATOR_HOST = os.environ["PUBSUB_EMULATOR_HOST"]
 PROJECT_ID = os.environ["GOOGLE_CLOUD_PROJECT"]

@@ -2,12 +2,10 @@
 
 import base64
 import os
+
 import requests
-
-from google.protobuf import text_format
-
 from backend.pipeline.schema_types.transcribed_audio_pb2 import TranscribedAudio
-
+from google.protobuf import text_format
 
 # For testing payloads sent to the Pub/Sub between the Transcription and Rules
 # Evaluation services.

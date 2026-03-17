@@ -1,8 +1,7 @@
 """Mock server module for testing the notification pipeline locally."""
 
 import json
-from http.server import BaseHTTPRequestHandler
-from http.server import HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
 class RequestHandler(BaseHTTPRequestHandler):
