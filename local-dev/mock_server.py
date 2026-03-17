@@ -4,14 +4,13 @@ import json
 import logging
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 class RequestHandler(BaseHTTPRequestHandler):
     """Handles HTTP requests for the mock server."""
-    def do_POST(self):
+    def do_POST(self) -> None:
         """Processes incoming POST requests and echoes the JSON payload."""
         content_length = int(self.headers.get("Content-Length", 0))
         post_data = self.rfile.read(content_length) if content_length > 0 else b""
@@ -34,7 +33,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         logger.info("Mock Server received POST request with data:\n%s", parsed_data)
 
 
-def run(server_class=HTTPServer, handler_class=RequestHandler, port=8082):
+def run(server_class=HTTPServer, handler_class=RequestHandler, port=8082) -> None:
     """Starts the mock server on the specified port.
 
     Args:
@@ -42,7 +41,7 @@ def run(server_class=HTTPServer, handler_class=RequestHandler, port=8082):
         handler_class: The request handler class.
         port: The port number to listen on.
     """
-    server_address = ("0.0.0.0", port)
+    server_address = ("localhost", port)
     httpd = server_class(server_address, handler_class)
     logger.info("Starting Mock Server on port %s...", port)
     try:

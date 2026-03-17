@@ -16,12 +16,12 @@ PROJECT_ID = os.environ["GOOGLE_CLOUD_PROJECT"]
 PUBSUB_ENDPOINT = f"http://{PUBSUB_EMULATOR_HOST}/v1/projects/{PROJECT_ID}"
 
 
-def wait_for_emulator():
+def wait_for_emulator() -> None:
     """Waits for the Pub/Sub emulator to become ready."""
     logger.info("Waiting for Pub/Sub emulator...")
     for _ in range(30):
         try:
-            response = requests.get(f"http://{PUBSUB_EMULATOR_HOST}/")
+            response = requests.get(f"http://{PUBSUB_EMULATOR_HOST}/", timeout=10)
             if response.status_code == 200:
                 logger.info("Pub/Sub emulator is ready.")
                 return
@@ -32,7 +32,7 @@ def wait_for_emulator():
     sys.exit(1)
 
 
-def create_topic(topic_id):
+def create_topic(topic_id) -> None:
     """Creates a topic in the Pub/Sub emulator.
 
     Ignores pre-existing topics.
@@ -41,7 +41,7 @@ def create_topic(topic_id):
         topic_id: The ID of the topic to create.
     """
     url = f"{PUBSUB_ENDPOINT}/topics/{topic_id}"
-    response = requests.put(url, json={})
+    response = requests.put(url, json={}, timeout=10)
     # 200 Created, 409 Already exists
     if response.status_code in (200, 409):
         logger.info("Topic '%s' ready.", topic_id)
@@ -51,7 +51,7 @@ def create_topic(topic_id):
         )
 
 
-def create_push_subscription(subscription_id, topic_id, push_endpoint):
+def create_push_subscription(subscription_id, topic_id, push_endpoint) -> None:
     """Creates a push subscription in the Pub/Sub emulator.
 
     Ignores pre-existing subscriptions.
@@ -68,7 +68,7 @@ def create_push_subscription(subscription_id, topic_id, push_endpoint):
             "pushEndpoint": push_endpoint
         }
     }
-    response = requests.put(url, json=payload)
+    response = requests.put(url, json=payload, timeout=10)
     if response.status_code in (200, 409):
         logger.info(
             "Subscription '%s' ready, pushing to %s.",

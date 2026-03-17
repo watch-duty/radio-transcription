@@ -8,7 +8,6 @@ import requests
 from backend.pipeline.schema_types.transcribed_audio_pb2 import TranscribedAudio
 from google.protobuf import text_format
 
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -33,7 +32,7 @@ SAMPLE_TRANSCRIPTION_MESSAGE_NO_EVENT = TranscribedAudio(
 )
 
 
-def publish_test_message():
+def publish_test_message() -> None:
     """Publishes a test message to the transcription topic."""
     # Update this sample to test out different messages
     test_message = SAMPLE_TRANSCRIPTION_MESSAGE_WITH_EVENT
