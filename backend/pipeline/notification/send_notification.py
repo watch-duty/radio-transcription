@@ -13,7 +13,7 @@ from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
 
-# TODO(schew): GOO-100 - Update to the shared logging util.
+# TODO(schew): https://linear.app/watchduty/issue/GOO-100/create-shared-logging-util-for-consistent-setup-across-pipeline
 if not os.environ.get("LOCAL_DEV"):
     client = google.cloud.logging.Client()
     client.setup_logging()
