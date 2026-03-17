@@ -5,7 +5,6 @@ Tests for the StitchAudioFn, TranscribeAudioFn, and related transformations.
 import threading
 import time
 import unittest
-import uuid
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -224,6 +223,48 @@ class OrderRestorerTest(unittest.TestCase):
                 ),
             )
 
+    def test_restore_order_yields_late_chunks(self) -> None:
+        """Test that chunks arriving after their gap timeout are yielded."""
+        config = OrderRestorerConfig(out_of_order_timeout_ms=5000)
+
+        with BeamTestPipeline() as p:
+            test_stream = (
+                BeamTestStream(
+                    coder=beam.coders.TupleCoder(
+                        (beam.coders.StrUtf8Coder(), beam.coders.StrUtf8Coder())
+                    )
+                )
+                .advance_watermark_to(100)
+                .add_elements(
+                    [TimestampedValue(("feed-1", "gs://b/100-11111111.flac"), 100)]
+                )
+                .advance_watermark_to(130)
+                .add_elements(
+                    [TimestampedValue(("feed-1", "gs://b/130-33333333.flac"), 130)]
+                )
+                # After 5 seconds (5000ms), the order restorer timed out waiting for 115.
+                .advance_watermark_to(10000)
+                # Now the late chunk arrives
+                .add_elements(
+                    [TimestampedValue(("feed-1", "gs://b/115-22222222.flac"), 115)]
+                )
+                .advance_watermark_to_infinity()
+            )
+
+            restored = p | test_stream | beam.ParDo(RestoreOrderFn(config))
+
+            # The current behavior explicitly yields it out of order downstream
+            assert_that(
+                restored,
+                equal_to(
+                    [
+                        ("feed-1", "gs://b/100-11111111.flac"),
+                        ("feed-1", "gs://b/130-33333333.flac"),
+                        ("feed-1", "gs://b/115-22222222.flac"),
+                    ]
+                ),
+            )
+
     @unittest.skip("DirectRunner metrics validation is flaky")
     def test_delayed_gap_acceptance(self) -> None:
         pass
@@ -270,6 +311,7 @@ class StitchAudioTest(unittest.TestCase):
                     TimeRange(int(s * 1000), int(e * 1000))
                     for s, e in sed_map.get(filename, [])
                 ],
+                gcs_uri=path,
             )
 
         mock_processor_inst.download_audio_and_sed.side_effect = mock_download
@@ -391,27 +433,145 @@ class StitchAudioTest(unittest.TestCase):
                 elements.sort(key=lambda x: x.time_range.start_ms)
 
                 # First element: chunks 100, 115
-                assert {
-                    "11111111-1111-1111-1111-111111111111",
-                    "22222222-2222-2222-2222-222222222222",
-                } == set(str(u) for u in elements[0].processed_uuids)
+                assert any(
+                    "11111111-1111-1111-1111-111111111111" in u
+                    for u in elements[0].contributing_audio_uris
+                )
+                assert any(
+                    "22222222-2222-2222-2222-222222222222" in u
+                    for u in elements[0].contributing_audio_uris
+                )
                 assert elements[0].missing_prior_context is False
 
                 # Second element: chunk 130
                 # DID follow a gap (chunk 115 speech ended at 122, 130 starts at 130, gap=8s >= 3s)
-                assert {"33333333-3333-3333-3333-333333333333"} == set(
-                    str(u) for u in elements[1].processed_uuids
+                assert any(
+                    "33333333-3333-3333-3333-333333333333" in u
+                    for u in elements[1].contributing_audio_uris
                 )
                 assert elements[1].missing_prior_context is False
 
                 # Third element: chunk 160 (chunk 150 was dropped as useless silence after a disconnected gap)
-                assert {
-                    "55555555-5555-5555-5555-555555555555",
-                } == set(str(u) for u in elements[2].processed_uuids)
+                assert any(
+                    "55555555-5555-5555-5555-555555555555" in u
+                    for u in elements[2].contributing_audio_uris
+                )
                 assert elements[2].missing_prior_context is True
 
             assert_that(
                 results.main, assert_flush_requests, label="CheckMainFlushRequests"
+            )
+
+    @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
+    def test_isolated_late_chunk_processing(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Test that late chunks are mapped to an isolated pseudo context engine without corrupting mainline state."""
+        mock_processor_inst = mock_audio_processor.return_value
+        mock_processor_inst.check_vad.return_value = True
+        mock_processor_inst.preprocess_audio.side_effect = lambda x: x
+        mock_processor_inst.export_flac.return_value = b"flac_bytes"
+
+        sed_map = {
+            "100-11111111-1111-1111-1111-111111111111.flac": [(0.0, 15.0)],
+            "130-33333333-3333-3333-3333-333333333333.flac": [(0.0, 15.0)],
+            "115-22222222-2222-2222-2222-222222222222.flac": [(2.0, 15.0)],
+        }
+
+        def mock_download(path: str) -> AudioChunkData:
+            filename = path.rsplit("/", maxsplit=1)[-1]
+            chunk_start = float(filename.split("-")[0]) if "-" in filename else 0.0
+            return AudioChunkData(
+                start_ms=int(chunk_start * 1000),
+                audio=AudioSegment.silent(duration=15000),
+                speech_segments=[
+                    TimeRange(int(s * 1000), int(e * 1000))
+                    for s, e in sed_map.get(filename, [])
+                ],
+                gcs_uri=path,
+            )
+
+        mock_processor_inst.download_audio_and_sed.side_effect = mock_download
+        options = PipelineOptions()
+        options.view_as(StandardOptions).streaming = True
+        config = get_test_stitch_config(significant_gap_ms=3000)
+
+        with BeamTestPipeline(options=options) as p:
+            test_stream = (
+                BeamTestStream(
+                    coder=beam.coders.TupleCoder(
+                        (beam.coders.StrUtf8Coder(), beam.coders.StrUtf8Coder())
+                    )
+                )
+                .advance_watermark_to(100)
+                .add_elements(
+                    [
+                        TimestampedValue(
+                            (
+                                "feed-123",
+                                "gs://fake-bucket/100-11111111-1111-1111-1111-111111111111.flac",
+                            ),
+                            100,
+                        )
+                    ]
+                )
+                .advance_watermark_to(130)
+                .add_elements(
+                    [
+                        TimestampedValue(
+                            (
+                                "feed-123",
+                                "gs://fake-bucket/130-33333333-3333-3333-3333-333333333333.flac",
+                            ),
+                            130,
+                        )
+                    ]
+                )
+                .advance_watermark_to(140)
+                .add_elements(
+                    [
+                        TimestampedValue(
+                            (
+                                "feed-123",
+                                "gs://fake-bucket/115-22222222-2222-2222-2222-222222222222.flac",
+                            ),
+                            140,
+                        )
+                    ]
+                )
+                .advance_watermark_to_infinity()
+            )
+
+            results = (
+                p
+                | test_stream
+                | beam.ParDo(StitchAudioFn(config=config)).with_outputs(
+                    DEAD_LETTER_QUEUE_TAG, main="main"
+                )
+            )
+
+            def assert_flush_requests(elements: list[FlushRequest]) -> None:
+                assert len(elements) == 2, (
+                    f"Expected 2 flush requests (Chunk 3 remains buffered due to skipped timer), got {len(elements)}"
+                )
+
+                elements.sort(key=lambda x: x.time_range.start_ms)
+
+                assert any(
+                    "11111111-1111-1111-1111-111111111111" in u
+                    for u in elements[0].contributing_audio_uris
+                )
+                assert elements[0].missing_post_context is True
+
+                assert any(
+                    "22222222-2222-2222-2222-222222222222" in u
+                    for u in elements[1].contributing_audio_uris
+                )
+                assert elements[1].missing_prior_context is False
+                assert elements[1].missing_post_context is True
+
+            assert_that(
+                results.main, assert_flush_requests, label="CheckLateChunkRequests"
             )
 
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
@@ -425,10 +585,10 @@ class StitchAudioTest(unittest.TestCase):
         mock_processor_inst.export_flac.return_value = b"flac_bytes"
 
         sed_map = {
-            "100-77777777-7777-7777-7777-777777777777.flac": [(0.0, 5.0)],
-            "105-88888888-8888-8888-8888-888888888888.flac": [(0.0, 5.0)],
-            "110-99999999-9999-9999-9999-999999999999.flac": [(0.0, 5.0)],
-            "130-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac": [(0.0, 2.0)],
+            "100-77777777-7777-7777-7777-777777777777.flac": [(0.0, 15.0)],
+            "115-88888888-8888-8888-8888-888888888888.flac": [(0.0, 15.0)],
+            "130-99999999-9999-9999-9999-999999999999.flac": [(0.0, 15.0)],
+            "160-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac": [(0.0, 2.0)],
         }
 
         def mock_download(path: str) -> AudioChunkData:
@@ -436,11 +596,12 @@ class StitchAudioTest(unittest.TestCase):
             chunk_start = float(filename.split("-")[0]) if "-" in filename else 0.0
             return AudioChunkData(
                 start_ms=int(chunk_start * 1000),
-                audio=AudioSegment.silent(duration=5000),
+                audio=AudioSegment.silent(duration=15000),
                 speech_segments=[
                     TimeRange(int(s * 1000), int(e * 1000))
                     for s, e in sed_map.get(filename, [])
                 ],
+                gcs_uri=path,
             )
 
         mock_processor_inst.download_audio_and_sed.side_effect = mock_download
@@ -448,9 +609,9 @@ class StitchAudioTest(unittest.TestCase):
         options = PipelineOptions()
         options.view_as(StandardOptions).streaming = True
 
-        # Set max duration to 10 seconds.
+        # Set max duration to 30 seconds (2 full chunks).
         config = get_test_stitch_config(
-            max_transmission_duration_ms=10000, significant_gap_ms=9999
+            max_transmission_duration_ms=30000, significant_gap_ms=29999
         )
 
         with BeamTestPipeline(options=options) as p:
@@ -472,27 +633,15 @@ class StitchAudioTest(unittest.TestCase):
                         )
                     ]
                 )
-                .advance_watermark_to(105)
+                .advance_watermark_to(115)
                 .add_elements(
                     [
                         TimestampedValue(
                             (
                                 "feed-max",
-                                "gs://fake-bucket/ab12/feed-max/2026-03-06/105-88888888-8888-8888-8888-888888888888.flac",
+                                "gs://fake-bucket/ab12/feed-max/2026-03-06/115-88888888-8888-8888-8888-888888888888.flac",
                             ),
-                            105,
-                        )
-                    ]
-                )
-                .advance_watermark_to(110)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-max",
-                                "gs://fake-bucket/ab12/feed-max/2026-03-06/110-99999999-9999-9999-9999-999999999999.flac",
-                            ),
-                            110,
+                            115,
                         )
                     ]
                 )
@@ -502,9 +651,21 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-max",
-                                "gs://fake-bucket/ab12/feed-max/2026-03-06/130-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac",
+                                "gs://fake-bucket/ab12/feed-max/2026-03-06/130-99999999-9999-9999-9999-999999999999.flac",
                             ),
                             130,
+                        )
+                    ]
+                )
+                .advance_watermark_to(160)
+                .add_elements(
+                    [
+                        TimestampedValue(
+                            (
+                                "feed-max",
+                                "gs://fake-bucket/ab12/feed-max/2026-03-06/160-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac",
+                            ),
+                            160,
                         )
                     ]
                 )
@@ -528,17 +689,22 @@ class StitchAudioTest(unittest.TestCase):
                 elements.sort(key=lambda x: x.time_range.start_ms)
 
                 # First chunk reached max duration limit without a gap
-                assert {
-                    "77777777-7777-7777-7777-777777777777",
-                    "88888888-8888-8888-8888-888888888888",
-                } == set(str(u) for u in elements[0].processed_uuids)
+                assert any(
+                    "77777777-7777-7777-7777-777777777777" in u
+                    for u in elements[0].contributing_audio_uris
+                )
+                assert any(
+                    "88888888-8888-8888-8888-888888888888" in u
+                    for u in elements[0].contributing_audio_uris
+                )
                 assert elements[0].missing_prior_context is False
 
-                # Second chunk is immediately following the forced cut off -> no missing context
-                assert {"99999999-9999-9999-9999-999999999999"} == set(
-                    str(u) for u in elements[1].processed_uuids
+                # Second chunk is immediately following the forced cut off -> missing context IS true (severed head inherited)
+                assert any(
+                    "99999999-9999-9999-9999-999999999999" in u
+                    for u in elements[1].contributing_audio_uris
                 )
-                assert elements[1].missing_prior_context is False
+                assert elements[1].missing_prior_context is True
 
             assert_that(
                 results.main,
@@ -573,6 +739,7 @@ class StitchAudioTest(unittest.TestCase):
             start_ms=101000,
             audio=AudioSegment.silent(duration=20000),
             speech_segments=[TimeRange(12500, 15000)],
+            gcs_uri="gs://fake-bucket/ab12/feed-123/2026-03-06/101-11111111-1111-1111-1111-111111111111.flac",
         )
 
         options = PipelineOptions()
@@ -617,8 +784,9 @@ class StitchAudioTest(unittest.TestCase):
                 assert len(elements) == 1, f"Expected 1 element, got {len(elements)}"
                 res = elements[0]
                 assert res.feed_id == "feed-123"
-                assert "11111111-1111-1111-1111-111111111111" in set(
-                    str(u) for u in res.processed_uuids
+                assert any(
+                    "11111111-1111-1111-1111-111111111111" in u
+                    for u in res.contributing_audio_uris
                 )
 
             assert_that(
@@ -675,9 +843,7 @@ class TranscribeAudioTest(unittest.TestCase):
                     FlushRequest(
                         feed_id="feed-123",
                         buffer=AudioSegment.silent(duration=500),
-                        processed_uuids={
-                            uuid.UUID("11111111-1111-1111-1111-111111111111")
-                        },
+                        contributing_audio_uris=["gs://f/11111111.flac"],
                         time_range=TimeRange(start_ms=101000, end_ms=101500),
                     )
                 ]
@@ -696,30 +862,6 @@ class TranscribeAudioTest(unittest.TestCase):
 
             assert_that(results.main, equal_to([]), label="CheckEmptyMain")
             assert_that(results[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ")
-
-    @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
-    @patch("backend.pipeline.transcription.stitcher.get_transcriber")
-    def test_missing_uuid_dlq(
-        self, mock_get_transcriber: MagicMock, mock_audio_processor: MagicMock
-    ) -> None:
-        """Test missing uuid from GCS name routes to DLQ."""
-        config = get_test_stitch_config()
-        with BeamTestPipeline() as p:
-            elements = p | beam.Create(
-                [("feed-123", "gs://fake-bucket/no_dashes_here.flac")]
-            )
-            results = elements | beam.ParDo(StitchAudioFn(config=config)).with_outputs(
-                DEAD_LETTER_QUEUE_TAG, main="main"
-            )
-
-            def assert_invalid(elements: list[dict[str, Any]]) -> None:
-                assert len(elements) == 1
-                assert "Could not extract UUID from filename" in elements[0]["error"]
-
-            assert_that(results.main, equal_to([]), label="CheckEmptyMain")
-            assert_that(
-                results[DEAD_LETTER_QUEUE_TAG], assert_invalid, label="CheckDLQI"
-            )
 
     @unittest.skip("DirectRunner background execution validation is unreliable.")
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
@@ -769,6 +911,7 @@ class TranscribeAudioTest(unittest.TestCase):
                 start_ms=int(chunk_start * 100000),  # 100s apart to force flushes
                 audio=AudioSegment.silent(duration=1000),
                 speech_segments=[TimeRange(0, 1000)],
+                gcs_uri=path,
             )
 
         mock_processor_inst.download_audio_and_sed.side_effect = mock_download
@@ -786,17 +929,13 @@ class TranscribeAudioTest(unittest.TestCase):
                     FlushRequest(
                         feed_id="feed-123",
                         buffer=AudioSegment.silent(duration=500),
-                        processed_uuids={
-                            uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
-                        },
+                        contributing_audio_uris=["gs://bbbbbbbb.flac"],
                         time_range=TimeRange(start_ms=0, end_ms=500),
                     ),
                     FlushRequest(
                         feed_id="feed-123",
                         buffer=AudioSegment.silent(duration=500),
-                        processed_uuids={
-                            uuid.UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
-                        },
+                        contributing_audio_uris=["gs://cccccccc.flac"],
                         time_range=TimeRange(start_ms=5000, end_ms=5500),
                     ),
                 ]

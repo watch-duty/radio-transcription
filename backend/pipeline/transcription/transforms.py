@@ -19,6 +19,7 @@ from apache_beam.transforms.userstate import (
     on_timer,
 )
 from apache_beam.utils.timestamp import Timestamp
+from google.protobuf.duration_pb2 import Duration
 from google.protobuf.message import DecodeError
 
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import (
@@ -128,18 +129,29 @@ class SerializeToPubSubMessageFn(beam.DoFn):
         deterministic_id_string = f"{element.feed_id}_{element.time_range.start_ms}_{element.time_range.end_ms}"
         deterministic_uuid = uuid.uuid5(uuid.NAMESPACE_OID, deterministic_id_string)
 
+        start_offset = None
+        if element.start_audio_offset_ms is not None:
+            start_offset = Duration(
+                seconds=element.start_audio_offset_ms // MICROSECONDS_PER_MS,
+                nanos=(element.start_audio_offset_ms % MICROSECONDS_PER_MS) * 1000000,
+            )
+
+        end_offset = None
+        if element.end_audio_offset_ms is not None:
+            end_offset = Duration(
+                seconds=element.end_audio_offset_ms // MICROSECONDS_PER_MS,
+                nanos=(element.end_audio_offset_ms % MICROSECONDS_PER_MS) * 1000000,
+            )
+
         proto = TranscribedAudio(
             feed_id=element.feed_id,
-            source_chunk_ids=[str(u) for u in element.audio_ids],
+            source_audio_uris=element.contributing_audio_uris,
             transmission_id=str(deterministic_uuid),
             transcript=element.transcript,
             missing_prior_context=element.missing_prior_context,
-            start_source_chunk_id=str(element.start_chunk_id)
-            if element.start_chunk_id
-            else "",
-            end_source_chunk_id=str(element.end_chunk_id)
-            if element.end_chunk_id
-            else "",
+            missing_post_context=element.missing_post_context,
+            start_audio_offset=start_offset,
+            end_audio_offset=end_offset,
         )
         proto.start_timestamp.FromMicroseconds(
             element.time_range.start_ms * MICROSECONDS_PER_MS
@@ -259,12 +271,14 @@ class RestoreOrderFn(beam.DoFn):
                 out_of_order_timer,
             )
         elif current_ts_ms < expected:
-            # This chunk belongs to the past (likely a delayed duplicate or a wildly late arrival).
-            # The pipeline has already moved on from this point in time, so we drop it.
-            self.chunks_dropped_late.inc()
-            logger.warning(
-                f"[{feed_id}] Dropping obsolete chunk at {current_ts_ms} (expected {expected})."
+            # This chunk is arriving late, out-of-order, after we've already given up
+            # waiting for it. However, it still contains valuable audio that we should transcribe.
+            # We yield it downstream where the state machine will process it dynamically
+            # as an isolated fragment.
+            logger.info(
+                f"[{feed_id}] Yielding late chunk at {current_ts_ms} (expected {expected}) for isolated transcription."
             )
+            yield (feed_id, gcs_path)
         else:
             # This chunk belongs to the future (arrived early, out-of-order).
             # We must buffer it and wait for the missing chunk(s) before it to arrive.

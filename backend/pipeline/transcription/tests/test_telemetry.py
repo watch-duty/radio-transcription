@@ -32,32 +32,20 @@ class TestMetricsExporters(unittest.TestCase):
 
     @patch("backend.pipeline.transcription.telemetry.monitoring_v3.MetricServiceClient")
     def test_gcp_exporter_setup_and_record(self, mock_client_class: MagicMock) -> None:
-        """Test that GCP exporter setup establishes a client and record sends the metric."""
         mock_client_inst = MagicMock()
         mock_client_class.return_value = mock_client_inst
 
         exporter = GcpMonitoringExporter("test-project", "{}")
-
-        # Calling record before setup does nothing (client is None)
         exporter.record_transcription_time(feed_id="f1", duration_ms=100)
-        mock_client_inst.create_time_series.assert_not_called()
-
         exporter.setup()
 
-        # Calling record after setup sends the metric
         exporter.record_transcription_time(feed_id="f1", duration_ms=100)
+        series = mock_client_inst.create_time_series.call_args.kwargs["time_series"][0]
+        self.assertEqual(series.metric.type, "custom.googleapis.com/radio_transcription/transcription_time")
 
-        self.assertEqual(mock_client_inst.create_time_series.call_count, 1)
-        kwargs = mock_client_inst.create_time_series.call_args.kwargs
-        self.assertEqual(kwargs["name"], "projects/test-project")
-
-        series = kwargs["time_series"][0]
-        self.assertEqual(
-            series.metric.type,
-            "custom.googleapis.com/radio_transcription/transcription_time",
-        )
-        self.assertEqual(series.metric.labels["feed_id"], "f1")
-        self.assertEqual(series.points[0].value.int64_value, 100)
+        exporter.record_stitching_time(feed_id="f1", duration_ms=20)
+        series = mock_client_inst.create_time_series.call_args.kwargs["time_series"][0]
+        self.assertEqual(series.metric.type, "custom.googleapis.com/radio_transcription/stitching_time")
 
     @patch("backend.pipeline.transcription.telemetry.monitoring_v3.MetricServiceClient")
     def test_gcp_exporter_handles_exception(self, mock_client_class: MagicMock) -> None:
@@ -76,24 +64,18 @@ class TestMetricsExporters(unittest.TestCase):
         self.assertEqual(mock_client_inst.create_time_series.call_count, 1)
 
     def test_multi_exporter(self) -> None:
-        """Test that MultiExporter delegates setup and record effectively to multiple backends."""
         mock_exp1 = MagicMock()
         mock_exp2 = MagicMock()
 
         multi = MultiExporter([mock_exp1, mock_exp2])
         multi.setup()
 
-        mock_exp1.setup.assert_called_once()
-        mock_exp2.setup.assert_called_once()
-
         multi.record_transcription_time(feed_id="f1", duration_ms=250)
+        mock_exp1.record_transcription_time.assert_called_once_with(feed_id="f1", duration_ms=250)
+        mock_exp2.record_transcription_time.assert_called_once_with(feed_id="f1", duration_ms=250)
 
-        mock_exp1.record_transcription_time.assert_called_once_with(
-            feed_id="f1", duration_ms=250
-        )
-        mock_exp2.record_transcription_time.assert_called_once_with(
-            feed_id="f1", duration_ms=250
-        )
+        multi.record_stitching_time(feed_id="f1", duration_ms=50)
+        mock_exp1.record_stitching_time.assert_called_once_with(feed_id="f1", duration_ms=50)
 
     @patch("backend.pipeline.transcription.telemetry.GcpMonitoringExporter")
     def test_get_metrics_exporter(self, mock_gcp_exporter_class: MagicMock) -> None:

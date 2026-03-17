@@ -14,15 +14,16 @@ with mock.patch("google.cloud.logging.Client") as mock_client:
 
 class TestSendNotification(TestCase):
     @mock.patch("backend.pipeline.notification.send_notification.deduplication")
-    @mock.patch("backend.pipeline.notification.send_notification.request_handler")
+    @mock.patch("backend.pipeline.notification.send_notification.requests.post")
     def test_send_notification(
-        self, mock_request_handler: mock.Mock, mock_dedupe: mock.Mock
+        self, mock_post: mock.Mock, mock_dedupe: mock.Mock
     ) -> None:
         mock_dedupe.process_notification.return_value = True
 
         evaluated_payload = EvaluatedTranscribedAudio(
-            transcript="This is a test!", transmission_id="1234"
+            transcript="This is a test!", source_audio_uris=["gs://foo/bar.flac"]
         )
+        evaluated_payload.start_audio_offset.seconds = 10
         raw_data = base64.b64encode(evaluated_payload.SerializeToString())
         event_data = {"message": {"data": raw_data, "messageId": "1234"}}
 
@@ -37,14 +38,19 @@ class TestSendNotification(TestCase):
 
         mock_dedupe.process_notification.assert_called_with("1234")
 
-        mock_request_handler.send_notification.assert_called_once_with(
-            AlertNotification(transcript="This is a test!", transmission_id="1234")
+        expected_url = "https://api.example.com/mock"
+        expected_headers = {"Content-Type": "application/json", "X-Api-Key": "12345"}
+        mock_post.assert_called_once_with(
+            expected_url,
+            data='{"sourceAudioUris": ["gs://foo/bar.flac"], "transcript": "This is a test!", "startAudioOffset": "10s"}',
+            headers=expected_headers,
+            timeout=5,
         )
 
     @mock.patch("backend.pipeline.notification.send_notification.deduplication")
-    @mock.patch("backend.pipeline.notification.send_notification.request_handler")
+    @mock.patch("backend.pipeline.notification.send_notification.requests.post")
     def test_duplicate_message(
-        self, mock_request_handler: mock.Mock, mock_dedupe: mock.Mock
+        self, mock_post: mock.Mock, mock_dedupe: mock.Mock
     ) -> None:
         # Setting this to False indicates a duplicate.
         mock_dedupe.process_notification.return_value = False
@@ -66,7 +72,7 @@ class TestSendNotification(TestCase):
 
         mock_dedupe.process_notification.assert_called_with("1234")
 
-        mock_request_handler.send_notification.assert_not_called()
+        mock_post.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ MAIN_TAG = "main"
 # Telemetry Metrics
 GCP_METRIC_PREFIX = "custom.googleapis.com/radio_transcription"
 GCP_DURATION_METRIC_NAME = "transcription_time"
+GCP_STITCHING_METRIC_NAME = "stitching_time"
 
 # Time Conversions
 MS_PER_SECOND = 1000

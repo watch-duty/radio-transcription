@@ -9,6 +9,7 @@ from google.cloud import monitoring_v3
 from backend.pipeline.transcription.constants import (
     GCP_DURATION_METRIC_NAME,
     GCP_METRIC_PREFIX,
+    GCP_STITCHING_METRIC_NAME,
 )
 from backend.pipeline.transcription.enums import MetricsExporterType
 from backend.pipeline.transcription.utils import ConfigBase
@@ -29,12 +30,17 @@ class MetricsExporter(abc.ABC):
     def record_transcription_time(self, *, feed_id: str, duration_ms: int) -> None:
         pass
 
+    @abc.abstractmethod
+    def record_stitching_time(self, *, feed_id: str, duration_ms: int) -> None:
+        pass
+
 
 class GcpMonitoringConfig(ConfigBase):
     """Strongly typed configuration for the GCP Monitoring Exporter."""
 
     metric_prefix: str = GCP_METRIC_PREFIX
     duration_metric_name: str = GCP_DURATION_METRIC_NAME
+    stitching_metric_name: str = GCP_STITCHING_METRIC_NAME
 
 
 class GcpMonitoringExporter(MetricsExporter):
@@ -52,15 +58,13 @@ class GcpMonitoringExporter(MetricsExporter):
         self.client = monitoring_v3.MetricServiceClient()
         self.config = GcpMonitoringConfig.from_json(self.config_json)
 
-    def record_transcription_time(self, *, feed_id: str, duration_ms: int) -> None:
+    def _record_custom_metric(self, metric_name: str, feed_id: str, duration_ms: int) -> None:
         if not self.client or not self.config:
             return
 
         project_name = f"projects/{self.project_id}"
         series = monitoring_v3.TimeSeries()
-        series.metric.type = (
-            f"{self.config.metric_prefix}/{self.config.duration_metric_name}"
-        )
+        series.metric.type = f"{self.config.metric_prefix}/{metric_name}"
         series.metric.labels["feed_id"] = feed_id
 
         point = monitoring_v3.Point()
@@ -74,7 +78,15 @@ class GcpMonitoringExporter(MetricsExporter):
         try:
             self.client.create_time_series(name=project_name, time_series=[series])
         except GoogleAPIError as e:
-            logger.warning("Failed to export GCP metric: %s", e)
+            logger.warning(f"Failed to export GCP metric {metric_name}: {e}")
+
+    def record_transcription_time(self, *, feed_id: str, duration_ms: int) -> None:
+        if self.config:
+            self._record_custom_metric(self.config.duration_metric_name, feed_id, duration_ms)
+
+    def record_stitching_time(self, *, feed_id: str, duration_ms: int) -> None:
+        if self.config:
+            self._record_custom_metric(self.config.stitching_metric_name, feed_id, duration_ms)
 
 
 class MultiExporter(MetricsExporter):
@@ -92,6 +104,10 @@ class MultiExporter(MetricsExporter):
     def record_transcription_time(self, *, feed_id: str, duration_ms: int) -> None:
         for exporter in self.exporters:
             exporter.record_transcription_time(feed_id=feed_id, duration_ms=duration_ms)
+
+    def record_stitching_time(self, *, feed_id: str, duration_ms: int) -> None:
+        for exporter in self.exporters:
+            exporter.record_stitching_time(feed_id=feed_id, duration_ms=duration_ms)
 
 
 def get_metrics_exporter(

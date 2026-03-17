@@ -1,7 +1,6 @@
 import io
 import logging
 import time
-import uuid
 from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, override
@@ -104,6 +103,10 @@ class StitchAudioFn(beam.DoFn):
         )
         self.dlq_count = Metrics.counter("StitchAudioFn", "dlq_count")
 
+        self.stitching_time_ms = Metrics.distribution(
+            "StitchAudioFn", "stitching_time_ms"
+        )
+
     @override
     def setup(self) -> None:
         """Initializes internal clients once per worker."""
@@ -130,16 +133,7 @@ class StitchAudioFn(beam.DoFn):
         )
         self.metrics_exporter.setup()
 
-    def _extract_source_uuid(self, gcs_path: str) -> uuid.UUID:
-        _, _, filename = gcs_path.rpartition("/")
-        _, sep, tail = filename.partition("-")
-        if not sep:
-            msg = f"Could not extract UUID from filename: {filename}"
-            raise ValueError(msg)
-
-        uuid_str, _, _ = tail.partition(".")
-        return uuid.UUID(uuid_str)
-
+    # Method removed because UUIDs are natively embedded in URIs now.
     def _load_current_buffer(
         self,
         transmission_buffer: ReadModifyWriteRuntimeState,
@@ -154,7 +148,7 @@ class StitchAudioFn(beam.DoFn):
         )
 
     def _fetch_and_validate_audio(
-        self, *, feed_id: str, gcs_path: str, processed_uuids: set[str]
+        self, *, feed_id: str, gcs_path: str, processed_uris: set[str]
     ) -> Generator[
         tuple[str, AudioChunkData] | beam.pvalue.TaggedOutput,
         None,
@@ -169,22 +163,19 @@ class StitchAudioFn(beam.DoFn):
             raise RuntimeError(msg)
 
         try:
-            source_file_uuid = self._extract_source_uuid(gcs_path)
-
-            if source_file_uuid in processed_uuids:
-                logger.info("Dropping duplicate message for UUID: %s", source_file_uuid)
+            if gcs_path in processed_uris:
+                logger.info("Dropping duplicate message for URI: %s", gcs_path)
                 return
 
             logger.info(
-                "Processing file: %s (UUID: %s) for feed: %s",
+                "Processing file: %s for feed: %s",
                 gcs_path,
-                source_file_uuid,
                 feed_id,
             )
             chunk_data = self.audio_processor.download_audio_and_sed(gcs_path)
             # start_ms is guaranteed to be present by strict validation in utils.py
 
-            yield source_file_uuid, chunk_data
+            yield gcs_path, chunk_data
         except FileNotFoundError:
             logger.info(
                 "GCS object not found yet (eventual consistency?). Re-raising to NACK Pub/Sub message."
@@ -214,9 +205,10 @@ class StitchAudioFn(beam.DoFn):
             self.gap_flush_count.inc()
         logger.info(f"{action.reason}. Flushing preceding continuous audio.")
         yield action.flush_request
-        transmission_context.clear()
-        transmission_buffer.clear()
-        stale_timer.clear()
+        if action.clear_state:
+            transmission_context.clear()
+            transmission_buffer.clear()
+            stale_timer.clear()
 
     def _apply_update_state_action(
         self,
@@ -227,10 +219,11 @@ class StitchAudioFn(beam.DoFn):
         new_context = TransmissionContext(
             last_end_time_ms=ctx.last_segment_end_time_ms,
             stale_start_time_ms=ctx.transmission_start_time_ms,
-            contributing_uuids=ctx.processed_uuids,
+            contributing_audio_uris=ctx.contributing_audio_uris,
             missing_prior_context=ctx.missing_prior_context,
             expected_next_chunk_start_ms=ctx.expected_next_chunk_start_ms,
-            start_chunk_id=ctx.start_chunk_id,
+            start_audio_offset_ms=ctx.start_audio_offset_ms,
+            end_audio_offset_ms=ctx.end_audio_offset_ms,
         )
         transmission_context.write(new_context)
 
@@ -281,7 +274,6 @@ class StitchAudioFn(beam.DoFn):
         *,
         feed_id: str,
         gcs_path: str,
-        source_file_uuid: uuid.UUID,
         chunk_data: AudioChunkData,
         transmission_context: ReadModifyWriteRuntimeState,
         transmission_buffer: ReadModifyWriteRuntimeState,
@@ -296,19 +288,26 @@ class StitchAudioFn(beam.DoFn):
 
         ctx = StitcherContext(
             feed_id=feed_id,
-            source_file_uuid=source_file_uuid,
+            current_gcs_uri=gcs_path,
             current_buffer=current_buffer,
-            processed_uuids=curr_context.contributing_uuids,
+            contributing_audio_uris=curr_context.contributing_audio_uris.copy(),
             last_segment_end_time_ms=curr_context.last_end_time_ms,
             transmission_start_time_ms=curr_context.stale_start_time_ms,
             file_start_ms=file_start_ms,
             missing_prior_context=curr_context.missing_prior_context,
             expected_next_chunk_start_ms=curr_context.expected_next_chunk_start_ms,
-            start_chunk_id=curr_context.start_chunk_id,
+            start_audio_offset_ms=curr_context.start_audio_offset_ms,
+            end_audio_offset_ms=curr_context.end_audio_offset_ms,
         )
 
         pipeline = AudioStitchingStateMachine(self.config)
+
+        start_time = time.time()
         actions = pipeline.process_chunk(chunk_data, ctx)
+        stitching_duration = int((time.time() - start_time) * MS_PER_SECOND)
+        self.stitching_time_ms.update(stitching_duration)
+        if self.metrics_exporter:
+            self.metrics_exporter.record_stitching_time(feed_id=feed_id, duration_ms=stitching_duration)
 
         yield from self._apply_state_actions(
             actions=actions,
@@ -336,18 +335,17 @@ class StitchAudioFn(beam.DoFn):
         fetched_results = self._fetch_and_validate_audio(
             feed_id=key,
             gcs_path=gcs_path,
-            processed_uuids={str(u) for u in curr_context.contributing_uuids},
+            processed_uris=set(curr_context.contributing_audio_uris),
         )
 
         for result in fetched_results:
             match result:
                 case beam.pvalue.TaggedOutput():
                     yield result
-                case (source_file_uuid, chunk_data):
+                case (gcs_uri, chunk_data):
                     yield from self._process_audio_chunk(
                         feed_id=key,
-                        gcs_path=gcs_path,
-                        source_file_uuid=source_file_uuid,
+                        gcs_path=gcs_uri,
                         chunk_data=chunk_data,
                         transmission_context=transmission_context,
                         transmission_buffer=transmission_buffer,
@@ -374,27 +372,28 @@ class StitchAudioFn(beam.DoFn):
         )
         start_time_ms = curr_context.stale_start_time_ms
         end_time_ms = curr_context.last_end_time_ms
-        processed_uuids = curr_context.contributing_uuids
+        processed_uris = curr_context.contributing_audio_uris
         audio_buffer = self._load_current_buffer(transmission_buffer)
 
         if audio_buffer and start_time_ms and end_time_ms:
             try:
                 self.stale_flush_count.inc()
                 logger.info(
-                    f"STALE FLUSH: start={start_time_ms}, end={end_time_ms}, uuids={processed_uuids}, len(buffer)={len(audio_buffer)}"
+                    f"STALE FLUSH: start={start_time_ms}, end={end_time_ms}, len(uris)={len(processed_uris)}, len(buffer)={len(audio_buffer)}"
                 )
 
                 yield FlushRequest(
                     buffer=audio_buffer,
                     feed_id=key,
-                    processed_uuids=processed_uuids,
+                    contributing_audio_uris=processed_uris,
                     time_range=TimeRange(
                         start_ms=int(start_time_ms),
                         end_ms=int(end_time_ms),
                     ),
                     missing_prior_context=bool(curr_context.missing_prior_context),
-                    start_chunk_id=curr_context.start_chunk_id,
-                    end_chunk_id=None,
+                    missing_post_context=True,  # Flushed by timer cutoff, so we assume the tail is missing context.
+                    start_audio_offset_ms=curr_context.start_audio_offset_ms,
+                    end_audio_offset_ms=curr_context.end_audio_offset_ms,
                 )
             except Exception as e:
                 if not self.config.route_to_dlq:
@@ -540,12 +539,13 @@ class TranscribeAudioFn(beam.DoFn):
 
         return TranscriptionResult(
             feed_id=request.feed_id,
-            audio_ids=sorted(request.processed_uuids),
+            contributing_audio_uris=request.contributing_audio_uris,
             transcript=transcript,
             time_range=request.time_range,
             missing_prior_context=request.missing_prior_context,
-            start_chunk_id=request.start_chunk_id,
-            end_chunk_id=request.end_chunk_id,
+            missing_post_context=request.missing_post_context,
+            start_audio_offset_ms=request.start_audio_offset_ms,
+            end_audio_offset_ms=request.end_audio_offset_ms,
         )
 
     @override

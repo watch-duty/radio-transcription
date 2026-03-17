@@ -1,4 +1,3 @@
-import uuid
 from dataclasses import dataclass, field
 
 from pydub import AudioSegment
@@ -25,6 +24,7 @@ class AudioChunkData:
     start_ms: int
     audio: AudioSegment
     speech_segments: list[TimeRange]
+    gcs_uri: str
 
 
 @dataclass(frozen=True)
@@ -32,12 +32,13 @@ class TranscriptionResult:
     """Picklable dataclass to hold intermediate transcription results before Protobuf serialization."""
 
     feed_id: str
-    audio_ids: list[uuid.UUID]
+    contributing_audio_uris: list[str]
     transcript: str
     time_range: TimeRange
     missing_prior_context: bool = False
-    start_chunk_id: uuid.UUID | None = None
-    end_chunk_id: uuid.UUID | None = None
+    missing_post_context: bool = False
+    start_audio_offset_ms: int | None = None
+    end_audio_offset_ms: int | None = None
 
 
 @dataclass
@@ -49,10 +50,12 @@ class TransmissionContext:
 
     last_end_time_ms: int | None = None
     stale_start_time_ms: int | None = None
-    contributing_uuids: set[uuid.UUID] = field(default_factory=set)
+    contributing_audio_uris: list[str] = field(default_factory=list)
     missing_prior_context: bool = False
+    missing_post_context: bool = False
     expected_next_chunk_start_ms: int | None = None
-    start_chunk_id: uuid.UUID | None = None
+    start_audio_offset_ms: int | None = None
+    end_audio_offset_ms: int | None = None
 
 
 @dataclass
@@ -60,17 +63,18 @@ class StitcherContext:
     """Groups context variables for processing a chunk to reduce function arguments."""
 
     feed_id: str
-    # The unique identifier of the raw audio file this file originated from.
-    source_file_uuid: uuid.UUID
+    # The fully qualified GCS URI of the raw audio file currently being parsed.
+    current_gcs_uri: str
     current_buffer: AudioSegment | None
-    # Set of unique source_file_uuids that have been accumulated into the current transmission buffer thus far.
-    processed_uuids: set[uuid.UUID]
+    # Ordered list of URIs that have been accumulated into the current transmission buffer thus far.
+    contributing_audio_uris: list[str]
     file_start_ms: int
     last_segment_end_time_ms: int | None = None
     transmission_start_time_ms: int | None = None
     missing_prior_context: bool = False
     expected_next_chunk_start_ms: int | None = None
-    start_chunk_id: uuid.UUID | None = None
+    start_audio_offset_ms: int | None = None
+    end_audio_offset_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -128,11 +132,12 @@ class FlushRequest:
 
     buffer: AudioSegment
     feed_id: str
-    processed_uuids: set[uuid.UUID]
+    contributing_audio_uris: list[str]
     time_range: TimeRange
     missing_prior_context: bool = False
-    start_chunk_id: uuid.UUID | None = None
-    end_chunk_id: uuid.UUID | None = None
+    missing_post_context: bool = False
+    start_audio_offset_ms: int | None = None
+    end_audio_offset_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -149,6 +154,7 @@ class DropAction(StateMachineAction):
 class FlushAction(StateMachineAction):
     reason: str
     flush_request: FlushRequest
+    clear_state: bool = True
 
 
 @dataclass(frozen=True)
