@@ -143,7 +143,7 @@ unfixable = []
 max-complexity = 10
 
 [tool.ruff.lint.isort]
-known-first-party = ["local_dev"]
+known-first-party = ["backend", "local_dev"]
 
 [tool.ruff.lint.per-file-ignores]
 "**/**/test*.py" = [

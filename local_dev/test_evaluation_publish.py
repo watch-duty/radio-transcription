@@ -5,8 +5,9 @@ import logging
 import os
 
 import requests
-from backend.pipeline.schema_types.transcribed_audio_pb2 import TranscribedAudio
 from google.protobuf import text_format
+
+from backend.pipeline.schema_types.transcribed_audio_pb2 import TranscribedAudio
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
