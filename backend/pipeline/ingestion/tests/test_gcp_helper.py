@@ -26,15 +26,12 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
     """Test suite for the upload_audio function."""
 
     def setUp(self) -> None:
-        """Reset module-level globals before each test."""
-        gcp_helper._session = None
-        gcp_helper._storage = None
+        """Reset shared default clients before each test."""
+        gcp_helper._get_default_clients.cache_clear()
 
     def tearDown(self) -> None:
         """Cleanup after each test."""
-        # Reset module-level globals
-        gcp_helper._session = None
-        gcp_helper._storage = None
+        gcp_helper._get_default_clients.cache_clear()
 
     @patch("backend.pipeline.ingestion.gcp_helper.Storage")
     @patch("backend.pipeline.ingestion.gcp_helper.aiohttp.ClientSession")
@@ -289,12 +286,12 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
     """Test suite for the publish_audio_chunk function."""
 
     def setUp(self) -> None:
-        """Reset module-level publisher before each test."""
-        gcp_helper._publisher = None
+        """Reset shared default clients before each test."""
+        gcp_helper._get_default_clients.cache_clear()
 
     def tearDown(self) -> None:
         """Cleanup after each test."""
-        gcp_helper._publisher = None
+        gcp_helper._get_default_clients.cache_clear()
 
     @patch(
         "backend.pipeline.ingestion.gcp_helper.asyncio.to_thread",
@@ -375,27 +372,24 @@ class TestCloseClient(unittest.IsolatedAsyncioTestCase):
     """Test suite for the close_client function."""
 
     def setUp(self) -> None:
-        """Reset module-level globals before each test."""
-        gcp_helper._session = None
-        gcp_helper._storage = None
-        gcp_helper._publisher = None
+        """Reset shared default clients before each test."""
+        gcp_helper._get_default_clients.cache_clear()
 
     def tearDown(self) -> None:
         """Cleanup after each test."""
-        gcp_helper._session = None
-        gcp_helper._storage = None
-        gcp_helper._publisher = None
+        gcp_helper._get_default_clients.cache_clear()
 
     async def test_close_client_when_clients_exist(self) -> None:
         """Test closing clients when both storage and session exist."""
         # Arrange
+        default_clients = gcp_helper._get_default_clients()
         mock_session = AsyncMock()
         mock_storage = AsyncMock()
         mock_publisher = MagicMock()
 
-        gcp_helper._session = mock_session
-        gcp_helper._storage = mock_storage
-        gcp_helper._publisher = mock_publisher
+        default_clients._session = mock_session
+        default_clients._storage = mock_storage
+        default_clients._publisher = mock_publisher
 
         # Act
         await gcp_helper.close_client()
@@ -404,72 +398,77 @@ class TestCloseClient(unittest.IsolatedAsyncioTestCase):
         mock_publisher.stop.assert_called_once()
         mock_storage.close.assert_called_once()
         mock_session.close.assert_called_once()
-        self.assertIsNone(gcp_helper._publisher)
-        self.assertIsNone(gcp_helper._storage)
-        self.assertIsNone(gcp_helper._session)
+        self.assertIsNone(default_clients._publisher)
+        self.assertIsNone(default_clients._storage)
+        self.assertIsNone(default_clients._session)
 
     async def test_close_client_only_publisher_exists(self) -> None:
         """Test closing when only publisher exists."""
+        default_clients = gcp_helper._get_default_clients()
         mock_publisher = MagicMock()
-        gcp_helper._publisher = mock_publisher
+        default_clients._publisher = mock_publisher
 
         await gcp_helper.close_client()
 
         mock_publisher.stop.assert_called_once()
-        self.assertIsNone(gcp_helper._publisher)
+        self.assertIsNone(default_clients._publisher)
 
     async def test_close_client_when_clients_are_none(self) -> None:
         """Test closing clients when they are already None (edge case)."""
         # Arrange
-        gcp_helper._session = None
-        gcp_helper._storage = None
+        default_clients = gcp_helper._get_default_clients()
+        default_clients._session = None
+        default_clients._storage = None
 
         # Act
         await gcp_helper.close_client()
 
         # Assert - Should not raise any exceptions
-        self.assertIsNone(gcp_helper._storage)
-        self.assertIsNone(gcp_helper._session)
+        self.assertIsNone(default_clients._storage)
+        self.assertIsNone(default_clients._session)
 
     async def test_close_client_only_storage_exists(self) -> None:
         """Test closing when only storage exists (edge case)."""
         # Arrange
+        default_clients = gcp_helper._get_default_clients()
         mock_storage = AsyncMock()
-        gcp_helper._storage = mock_storage
-        gcp_helper._session = None
+        default_clients._storage = mock_storage
+        default_clients._session = None
 
         # Act
         await gcp_helper.close_client()
 
         # Assert
         mock_storage.close.assert_called_once()
-        self.assertIsNone(gcp_helper._storage)
-        self.assertIsNone(gcp_helper._session)
+        self.assertIsNone(default_clients._storage)
+        self.assertIsNone(default_clients._session)
 
     async def test_close_client_only_session_exists(self) -> None:
         """Test closing when only session exists (edge case)."""
         # Arrange
+        default_clients = gcp_helper._get_default_clients()
         mock_session = AsyncMock()
-        gcp_helper._session = mock_session
-        gcp_helper._storage = None
+        default_clients._session = mock_session
+        default_clients._storage = None
 
         # Act
         await gcp_helper.close_client()
 
         # Assert
         mock_session.close.assert_called_once()
-        self.assertIsNone(gcp_helper._storage)
-        self.assertIsNone(gcp_helper._session)
+        self.assertIsNone(default_clients._storage)
+        self.assertIsNone(default_clients._session)
 
     async def test_close_client_storage_close_exception(self) -> None:
         """Test handling of exception during storage close."""
         # Arrange
+        default_clients = gcp_helper._get_default_clients()
         mock_session = AsyncMock()
         mock_storage = AsyncMock()
         mock_storage.close.side_effect = Exception("Storage close failed")
 
-        gcp_helper._session = mock_session
-        gcp_helper._storage = mock_storage
+        default_clients._session = mock_session
+        default_clients._storage = mock_storage
 
         # Act & Assert
         with self.assertRaises(Exception) as context:
@@ -483,12 +482,13 @@ class TestCloseClient(unittest.IsolatedAsyncioTestCase):
     async def test_close_client_session_close_exception(self) -> None:
         """Test handling of exception during session close."""
         # Arrange
+        default_clients = gcp_helper._get_default_clients()
         mock_session = AsyncMock()
         mock_session.close.side_effect = Exception("Session close failed")
         mock_storage = AsyncMock()
 
-        gcp_helper._session = mock_session
-        gcp_helper._storage = mock_storage
+        default_clients._session = mock_session
+        default_clients._storage = mock_storage
 
         # Act & Assert
         with self.assertRaises(Exception) as context:
@@ -501,11 +501,12 @@ class TestCloseClient(unittest.IsolatedAsyncioTestCase):
     async def test_close_client_multiple_calls(self) -> None:
         """Test that calling close_client multiple times is safe."""
         # Arrange
+        default_clients = gcp_helper._get_default_clients()
         mock_session = AsyncMock()
         mock_storage = AsyncMock()
 
-        gcp_helper._session = mock_session
-        gcp_helper._storage = mock_storage
+        default_clients._session = mock_session
+        default_clients._storage = mock_storage
 
         # Act
         await gcp_helper.close_client()
@@ -514,8 +515,8 @@ class TestCloseClient(unittest.IsolatedAsyncioTestCase):
         # Assert
         mock_storage.close.assert_called_once()
         mock_session.close.assert_called_once()
-        self.assertIsNone(gcp_helper._storage)
-        self.assertIsNone(gcp_helper._session)
+        self.assertIsNone(default_clients._storage)
+        self.assertIsNone(default_clients._session)
 
 
 if __name__ == "__main__":
