@@ -1,10 +1,15 @@
 """Initializes the Pub/Sub emulator with required topics and subscriptions."""
 
+import logging
 import os
 import sys
 import time
 
 import requests
+
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 PUBSUB_EMULATOR_HOST = os.environ["PUBSUB_EMULATOR_HOST"]
 PROJECT_ID = os.environ["GOOGLE_CLOUD_PROJECT"]
@@ -13,17 +18,17 @@ PUBSUB_ENDPOINT = f"http://{PUBSUB_EMULATOR_HOST}/v1/projects/{PROJECT_ID}"
 
 def wait_for_emulator():
     """Waits for the Pub/Sub emulator to become ready."""
-    print("Waiting for Pub/Sub emulator...")
+    logger.info("Waiting for Pub/Sub emulator...")
     for _ in range(30):
         try:
             response = requests.get(f"http://{PUBSUB_EMULATOR_HOST}/")
             if response.status_code == 200:
-                print("Pub/Sub emulator is ready.")
+                logger.info("Pub/Sub emulator is ready.")
                 return
         except requests.exceptions.RequestException:
             pass
         time.sleep(1)
-    print("Timed out waiting for Pub/Sub emulator.")
+    logger.error("Timed out waiting for Pub/Sub emulator.")
     sys.exit(1)
 
 
@@ -39,9 +44,11 @@ def create_topic(topic_id):
     response = requests.put(url, json={})
     # 200 Created, 409 Already exists
     if response.status_code in (200, 409):
-        print(f"Topic '{topic_id}' ready.")
+        logger.info("Topic '%s' ready.", topic_id)
     else:
-        print(f"Failed to create topic '{topic_id}': {response.text}")
+        logger.error(
+            "Failed to create topic '%s': %s", topic_id, response.text
+        )
 
 
 def create_push_subscription(subscription_id, topic_id, push_endpoint):
@@ -63,14 +70,16 @@ def create_push_subscription(subscription_id, topic_id, push_endpoint):
     }
     response = requests.put(url, json=payload)
     if response.status_code in (200, 409):
-        print(
-            f"Subscription '{subscription_id}' ready, pushing to "
-            f"{push_endpoint}."
+        logger.info(
+            "Subscription '%s' ready, pushing to %s.",
+            subscription_id,
+            push_endpoint,
         )
     else:
-        print(
-            f"Failed to create subscription '{subscription_id}': "
-            f"{response.text}"
+        logger.error(
+            "Failed to create subscription '%s': %s",
+            subscription_id,
+            response.text,
         )
 
 
@@ -115,4 +124,4 @@ if __name__ == "__main__":
         f"http://{os.environ['NOTIFICATION_SERVICE_HOST']}/",
     )
 
-    print("Pub/Sub initialization complete.")
+    logger.info("Pub/Sub initialization complete.")

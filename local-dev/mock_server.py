@@ -1,7 +1,12 @@
 """Mock server module for testing the notification pipeline locally."""
 
 import json
+import logging
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class RequestHandler(BaseHTTPRequestHandler):
@@ -26,7 +31,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             "received_data": parsed_data
         }
         self.wfile.write(json.dumps(response).encode("utf-8"))
-        print(f"Mock Server received POST request with data:\n{parsed_data}")
+        logger.info("Mock Server received POST request with data:\n%s", parsed_data)
 
 
 def run(server_class=HTTPServer, handler_class=RequestHandler, port=8082):
@@ -39,7 +44,7 @@ def run(server_class=HTTPServer, handler_class=RequestHandler, port=8082):
     """
     server_address = ("0.0.0.0", port)
     httpd = server_class(server_address, handler_class)
-    print(f"Starting Mock Server on port {port}...")
+    logger.info("Starting Mock Server on port %s...", port)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

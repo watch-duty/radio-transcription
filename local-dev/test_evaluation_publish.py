@@ -1,11 +1,16 @@
 """Publishes test messages to the Transcription topic for Rules Evaluation."""
 
 import base64
+import logging
 import os
 
 import requests
 from backend.pipeline.schema_types.transcribed_audio_pb2 import TranscribedAudio
 from google.protobuf import text_format
+
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # For testing payloads sent to the Pub/Sub between the Transcription and Rules
 # Evaluation services.
@@ -52,12 +57,16 @@ def publish_test_message():
         f"{project_id}/topics/{input_topic}:publish"
     )
 
-    print("====== INPUT ======")
-    print(f"Publishing to {url}:\n {text_format.MessageToString(test_message)}")
+    logger.info("====== INPUT ======")
+    logger.info(
+        "Publishing to %s:\n %s",
+        url,
+        text_format.MessageToString(test_message),
+    )
     response = requests.post(url, json=payload)
-    print("====== OUTPUT ======")
-    print(f"Status: {response.status_code}")
-    print(f"Response: {response.text}")
+    logger.info("====== OUTPUT ======")
+    logger.info("Status: %s", response.status_code)
+    logger.info("Response: %s", response.text)
 
 
 if __name__ == "__main__":
