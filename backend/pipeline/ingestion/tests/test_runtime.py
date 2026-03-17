@@ -248,6 +248,30 @@ class TestProcessFeedNormalCompletion(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(rt._releasing_feeds, set())
 
+    async def test_publish_uses_feed_id_ordering_key(self) -> None:
+        """Pub/Sub publish must use feed ID for ordering key."""
+
+        async def _one_chunk(feed, shutdown):
+            yield b"audio"
+
+        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress.return_value = True
+        rt._releasing_feeds = set()
+
+        with (
+            _mock_upload_audio(),
+            _mock_pubsub_publish() as mock_publish,
+        ):
+            await rt._process_feed(_FEED)
+
+        mock_publish.assert_called_once()
+        _, kwargs = mock_publish.call_args
+        self.assertEqual(kwargs["feed_id"], str(_FEED_ID))
+        self.assertEqual(kwargs["ordering_key"], str(_FEED_ID))
+
 
 class TestProcessFeedTimestamps(unittest.IsolatedAsyncioTestCase):
     """Tests for _process_feed timestamp population."""
