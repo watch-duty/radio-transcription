@@ -142,6 +142,9 @@ unfixable = []
 # for reference: Flake8 is 15
 max-complexity = 10
 
+[tool.ruff.lint.isort]
+known-first-party = ["local_dev"]
+
 [tool.ruff.lint.per-file-ignores]
 "**/**/test*.py" = [
   "ANN001", # Missing type annotation for function argument
