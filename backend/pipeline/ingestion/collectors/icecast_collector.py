@@ -12,11 +12,14 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from backend.pipeline.common.constants import AUDIO_SAMPLE_RATE, CHUNK_DURATION_SECONDS
 from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
 from backend.pipeline.ingestion.settings import NormalizerSettings
-from backend.pipeline.shared_constants import CHUNK_DURATION_SECONDS
-
+from backend.pipeline.shared_constants import (
+    AUDIO_FORMAT,
+    CHUNK_DURATION_SECONDS,
+    NUM_AUDIO_CHANNELS,
+    SAMPLE_RATE_HZ,
+)
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
@@ -47,7 +50,7 @@ auth_header = f"Authorization: Basic {encoded_credentials}\r\n"
 
 
 def _segment_path(directory: Path, index: int) -> Path:
-    return directory / f"chunk_{index:06d}.flac"
+    return directory / f"chunk_{index:06d}.{AUDIO_FORMAT}"
 
 
 async def capture_icecast_stream(
@@ -57,9 +60,9 @@ async def capture_icecast_stream(
     """
     Capture audio chunks from an Icecast stream using ffmpeg segment muxing.
 
-    This implementation asks ffmpeg to write complete FLAC files for fixed
+    This implementation asks ffmpeg to write complete audio files for fixed
     CHUNK_DURATION_SECONDS windows. Each yielded chunk is therefore a standalone
-    decodable FLAC file rather than an arbitrary slice of a continuous bytestream.
+    decodable file rather than an arbitrary slice of a continuous bytestream.
 
     Args:
         feed: Leased feed containing stream_url and metadata
@@ -84,7 +87,7 @@ async def capture_icecast_stream(
 
     with tempfile.TemporaryDirectory(prefix="icecast_segments_") as tmp_dir:
         segment_dir = Path(tmp_dir)
-        segment_pattern = str(segment_dir / "chunk_%06d.flac")
+        segment_pattern = str(segment_dir / f"chunk_%06d.{AUDIO_FORMAT}")
 
         process = await _create_ffmpeg_process(url, segment_pattern)
         logger.info(
@@ -170,7 +173,7 @@ async def _create_ffmpeg_process(
     segment_pattern: str,
 ) -> asyncio.subprocess.Process:
     """
-    Create and launch ffmpeg subprocess configured for segmented FLAC output.
+    Create and launch ffmpeg subprocess configured for segmented audio output.
 
     Args:
         url: The stream URL to connect to
@@ -196,14 +199,14 @@ async def _create_ffmpeg_process(
         "-headers", auth_header,
         "-i", url,
         "-vn", "-sn", "-dn",
-        "-acodec", "flac",
-        "-ar", str(AUDIO_SAMPLE_RATE),
+        "-acodec", AUDIO_FORMAT,
+        "-ar", str(SAMPLE_RATE_HZ),
         "-sample_fmt", SAMPLE_FORMAT,
-        "-ac", "1",
+        "-ac", str(NUM_AUDIO_CHANNELS),
         "-compression_level", "0",
         "-f", "segment",
         "-segment_time", str(CHUNK_DURATION_SECONDS),
-        "-segment_format", "flac",
+        "-segment_format", AUDIO_FORMAT,
         "-reset_timestamps", "1",
         "-segment_start_number", "0",
         segment_pattern,

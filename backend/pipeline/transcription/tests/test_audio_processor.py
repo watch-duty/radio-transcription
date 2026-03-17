@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 from pydub import AudioSegment
 
 from backend.pipeline.transcription.audio_processor import AudioProcessor
-from backend.pipeline.transcription.constants import AUDIO_FORMAT, SAMPLE_RATE_HZ
+from backend.pipeline.shared_constants import AUDIO_FORMAT, SAMPLE_RATE_HZ
 from backend.pipeline.transcription.datatypes import AudioChunkData, TimeRange
 from backend.pipeline.transcription.enums import VadType
 

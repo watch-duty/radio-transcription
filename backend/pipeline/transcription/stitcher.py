@@ -19,7 +19,6 @@ from pydub import AudioSegment
 
 from backend.pipeline.transcription.audio_processor import AudioProcessor
 from backend.pipeline.transcription.constants import (
-    AUDIO_FORMAT,
     DEAD_LETTER_QUEUE_TAG,
     MS_PER_SECOND,
 )
@@ -45,6 +44,7 @@ from backend.pipeline.transcription.enums import (
 from backend.pipeline.transcription.stitcher_state import AudioStitchingStateMachine
 from backend.pipeline.transcription.telemetry import get_metrics_exporter
 from backend.pipeline.transcription.transcribers import Transcriber, get_transcriber
+from backend.pipeline.shared_constants import AUDIO_FORMAT
 
 logger = logging.getLogger(__name__)
 
