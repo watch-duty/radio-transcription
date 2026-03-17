@@ -68,6 +68,15 @@ wheels = [
 ]
 
 [[package]]
+name = "annotated-doc"
+version = "0.0.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/57/ba/046ceea27344560984e26a590f90bc7f4a75b06701f653222458922b558c/annotated_doc-0.0.4.tar.gz", hash = "sha256:fbcda96e87e9c92ad167c2e53839e57503ecfda18804ea28102353485033faa4", size = 7288, upload-time = "2025-11-10T22:07:42.062Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1e/d3/26bf1008eb3d2daa8ef4cacc7f3bfdc11818d111f7e2d0201bc6e3b49d45/annotated_doc-0.0.4-py3-none-any.whl", hash = "sha256:571ac1dc6991c450b25a9c2d84a3705e2ae7a53467b5d111c24fa8baabbed320", size = 5303, upload-time = "2025-11-10T22:07:40.673Z" },
+]
+
+[[package]]
 name = "annotated-types"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -313,16 +322,19 @@ wheels = [
 ]
 
 [[package]]
-name = "fakeredis"
-version = "2.34.1"
+name = "fastapi"
+version = "0.135.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "redis" },
-    { name = "sortedcontainers" },
+    { name = "annotated-doc" },
+    { name = "pydantic" },
+    { name = "starlette" },
+    { name = "typing-extensions" },
+    { name = "typing-inspection" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/11/40/fd09efa66205eb32253d2b2ebc63537281384d2040f0a88bcd2289e120e4/fakeredis-2.34.1.tar.gz", hash = "sha256:4ff55606982972eecce3ab410e03d746c11fe5deda6381d913641fbd8865ea9b", size = 177315, upload-time = "2026-02-25T13:17:51.315Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e7/7b/f8e0211e9380f7195ba3f3d40c292594fd81ba8ec4629e3854c353aaca45/fastapi-0.135.1.tar.gz", hash = "sha256:d04115b508d936d254cea545b7312ecaa58a7b3a0f84952535b4c9afae7668cd", size = 394962, upload-time = "2026-03-01T18:18:29.369Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/49/b5/82f89307d0d769cd9bf46a54fb9136be08e4e57c5570ae421db4c9a2ba62/fakeredis-2.34.1-py3-none-any.whl", hash = "sha256:0107ec99d48913e7eec2a5e3e2403d1bd5f8aa6489d1a634571b975289c48f12", size = 122160, upload-time = "2026-02-25T13:17:49.701Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/72/42e900510195b23a56bde950d26a51f8b723846bfcaa0286e90287f0422b/fastapi-0.135.1-py3-none-any.whl", hash = "sha256:46e2fc5745924b7c840f71ddd277382af29ce1cdb7d5eab5bf697e3fb9999c9e", size = 116999, upload-time = "2026-03-01T18:18:30.831Z" },
 ]
 
 [[package]]
@@ -1116,6 +1128,7 @@ dependencies = [
     { name = "aiohttp" },
     { name = "asyncpg" },
     { name = "cloudevents" },
+    { name = "fastapi" },
     { name = "functions-framework" },
     { name = "gcloud-aio-storage" },
     { name = "google-cloud-alloydb-connector", extra = ["asyncpg"] },
@@ -1127,6 +1140,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "redis" },
     { name = "requests" },
+    { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
@@ -1134,6 +1148,7 @@ dev = [
     { name = "docker" },
     { name = "fakeredis" },
     { name = "grpcio-tools" },
+    { name = "httpx" },
     { name = "numpy" },
     { name = "ruff" },
     { name = "testcontainers" },
@@ -1145,6 +1160,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.13.3" },
     { name = "asyncpg", specifier = ">=0.29.0" },
     { name = "cloudevents" },
+    { name = "fastapi", specifier = ">=0.110.0" },
     { name = "functions-framework" },
     { name = "gcloud-aio-storage", specifier = ">=9.6.4" },
     { name = "google-cloud-alloydb-connector", extras = ["asyncpg"] },
@@ -1156,6 +1172,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.10.6" },
     { name = "redis", specifier = ">=7.3.0" },
     { name = "requests" },
+    { name = "uvicorn", specifier = ">=0.27.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -1163,6 +1180,7 @@ dev = [
     { name = "docker" },
     { name = "fakeredis" },
     { name = "grpcio-tools", specifier = ">=1.65.5" },
+    { name = "httpx" },
     { name = "numpy", specifier = ">=1.24.0" },
     { name = "ruff", specifier = ">=0.14.14" },
     { name = "testcontainers", extras = ["postgres"] },

@@ -17,6 +17,8 @@ dependencies = [
     "google-genai>=1.3.0",
     "pydantic>=2.10.6",
     "protobuf>=4.25.3",
+    "fastapi>=0.110.0",
+    "uvicorn>=0.27.0",
     "redis>=7.3.0",
 ]
 
@@ -36,6 +38,7 @@ dev = [
   "testcontainers[postgres]",
   "docker",
   "numpy>=1.24.0",
+  "httpx",
   "fakeredis",
 ]
 
@@ -143,6 +146,9 @@ unfixable = []
 [tool.ruff.lint.mccabe]
 # for reference: Flake8 is 15
 max-complexity = 10
+
+[tool.ruff.lint.isort]
+known-first-party = ["backend", "local_dev"]
 
 [tool.ruff.lint.per-file-ignores]
 "**/**/test*.py" = [

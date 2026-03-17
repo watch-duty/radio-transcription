@@ -1,0 +1,68 @@
+version: '3.8'
+services:
+  pubsub-emulator:
+    image: gcr.io/google.com/cloudsdktool/cloud-sdk:emulators
+    command: gcloud beta emulators pubsub start --host-port=0.0.0.0:8085
+    ports:
+      - "8085:8085"
+    networks:
+      - pipeline-network
+
+  pubsub-init:
+    image: python:3.11-slim
+    depends_on:
+      - pubsub-emulator
+      - rules-evaluation
+      - notification
+    env_file:
+      - ./local_dev/LOCAL.env
+    networks:
+      - pipeline-network
+    volumes:
+      - ./local_dev/pubsub_init.py:/app/pubsub_init.py
+    working_dir: /app
+    command: sh -c "pip install requests && python pubsub_init.py"
+
+  rules-evaluation:
+    build:
+      context: .
+      dockerfile: backend/pipeline/evaluation/Dockerfile
+    ports:
+      - "8080:8080"
+    env_file:
+      - ./local_dev/LOCAL.env
+    volumes:
+      - ./local_dev/test_evaluation_publish.py:/app/test_evaluation_publish.py
+    command: ["functions-framework", "--source=backend/pipeline/evaluation/evaluation_core.py", "--target=evaluate_transcribed_audio_segment", "--signature-type=cloudevent", "--port=8080"]
+    networks:
+      - pipeline-network
+    depends_on:
+      - pubsub-emulator
+
+  notification:
+    build:
+      context: .
+      dockerfile: backend/pipeline/notification/Dockerfile
+    ports:
+      - "8081:8081"
+    env_file:
+      - ./local_dev/LOCAL.env
+    command: ["functions-framework", "--source=backend/pipeline/notification/send_notification.py", "--target=send_notification", "--signature-type=cloudevent", "--port=8081"]
+    networks:
+      - pipeline-network
+    depends_on:
+      - pubsub-emulator
+
+  mock-server:
+    image: python:3.11-slim
+    ports:
+      - "8082:8082"
+    volumes:
+      - ./local_dev/mock_server.py:/app/mock_server.py
+    working_dir: /app
+    command: python -u mock_server.py
+    networks:
+      - pipeline-network
+
+networks:
+  pipeline-network:
