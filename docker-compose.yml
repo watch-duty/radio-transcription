@@ -45,6 +45,8 @@ services:
       dockerfile: backend/pipeline/notification/Dockerfile
     ports:
       - "8081:8081"
+    env_file:
+      - ./local-dev/LOCAL.env
     command: ["functions-framework", "--source=backend/pipeline/notification/send_notification.py", "--target=send_notification", "--signature-type=cloudevent", "--port=8081"]
     networks:
       - pipeline-network

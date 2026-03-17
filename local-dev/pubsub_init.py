@@ -59,6 +59,7 @@ if __name__ == "__main__":
     
     # Pub/Sub between Audio Ingestion and Transcription Services
     CANONICAL_TOPIC = os.environ['CANONICAL_TOPIC']
+    create_topic(CANONICAL_TOPIC)
     create_push_subscription("transcription-sub", CANONICAL_TOPIC, f"http://{os.environ['TRANSCRIPTION_SERVICE_HOST']}/")
 
     # Pub/Sub between Transcription and Rules Evaluation Services

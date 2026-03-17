@@ -25,7 +25,7 @@ sample_transcription_message_no_event = TranscribedAudio(
 )
 
 # Update this sample to test out different messages
-test_message = sample_transcription_message_no_event
+test_message = sample_transcription_message_with_event
 
 payload = {
     "messages": [
