@@ -17,6 +17,30 @@
 * Type-checking: `ty check`
 * Unit testing: Python `unittest`
 
+### E2E Local Development
+On a high level, this local pipeline runs the following:
+1. Pub/Sub emulator (runs each of the different PubSub topics that are used as triggers for each service in the pipeline)
+2. Rules Evaluation service
+3. Notification service
+4. Mock server (basic HTTP server to receive messages from the notification service)
+
+Note that currently the following are missing from the E2E setup:
+* Audio ingestion pipeline and storage
+* Transcription pipeline and storage
+* Rules storage
+
+Locally run the full pipeline from E2E
+```
+docker-compose down -v && docker-compose up --build -d &&
+docker-compose logs -f rules-evaluation notification mock-server
+```
+
+Send a test payload to the Transcription PubSub (ingested by the Rules Evaluation service) to test the path from the Rules Evaluation service to the Notification service.
+```
+# More test messages can be found in backend/pipeline/evaluation/test_evaluation_publish.py
+docker exec radio-transcription-rules-evaluation-1 python /app/test_evaluation_publish.py
+```
+
 #### Audio Ingestion
 ##### Icecast Collector
 *Installation*
