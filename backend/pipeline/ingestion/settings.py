@@ -20,7 +20,7 @@ class NormalizerSettings:
     Configuration for the NormalizerRuntime, loaded from environment variables.
 
     All fields have sensible defaults except those marked as required
-    (``final_staging_bucket`` and AlloyDB connection parameters).
+    (``audio_staging_bucket`` and AlloyDB connection parameters).
 
     """
 
@@ -61,8 +61,8 @@ class NormalizerSettings:
     )
 
     # GCS
-    final_staging_bucket: str = field(
-        default_factory=lambda: _require_env("FINAL_STAGING_BUCKET"),
+    audio_staging_bucket: str = field(
+        default_factory=lambda: _require_env("AUDIO_STAGING_BUCKET"),
     )
 
     # Pub/Sub

@@ -319,7 +319,7 @@ class NormalizerRuntime:
                     upload_audio,
                     audio_chunk,
                     feed,
-                    settings.final_staging_bucket,
+                    settings.audio_staging_bucket,
                     chunk_seq,
                     lease_lost=self._lease_lost,
                     shutdown=self._shutdown,
