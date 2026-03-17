@@ -10,16 +10,16 @@ dependencies = [
     "google-cloud-pubsub>=2.35.0",
     "google-cloud-logging",
     "google-cloud-storage>=2.18.2,<3",
+    "google-cloud-monitoring>=2.29.1",
     "asyncpg>=0.29.0",
     "google-cloud-alloydb-connector[asyncpg]",
     "aiohttp>=3.13.3",
     "gcloud-aio-storage>=9.6.4",
-    "google-genai>=1.3.0",
+    "chardet<6",
     "pydantic>=2.10.6",
     "protobuf>=4.25.3",
     "apache-beam[gcp]>=2.56.0",
     "crcmod>=1.7",
-    "google-cloud-monitoring>=2.29.1",
     "google-cloud-speech>=2.37.0",
     "numpy>=1.24.0,<2",
     "pydub>=0.25.0",
@@ -31,6 +31,7 @@ dependencies = [
     "scipy>=1.11.0",
     "chardet<6",
     "urllib3>=2.6.3",
+    "transcription-pipeline",
 ]
 
 [tool.uv]
@@ -208,5 +209,23 @@ exclude = ["model/"]
 
 [tool.pyright]
 pythonVersion = "3.12"
+
+[tool.uv.workspace]
+members = [
+    "backend/pipeline/transcription",
+]
+
+[tool.uv.sources]
+transcription-pipeline = { workspace = true }
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    # httplib2 uses deprecated pyparsing methods under the hood which trickle up from GCP auth plugins
+    "ignore::DeprecationWarning:httplib2.*",
+    # pydub depends on the 'audioop' standard library module which is deprecated in Python 3.11/3.12 and slated for removal in Python 3.13 (PEP 594).
+    # We ignore it here to keep output clean on 3.12, but this will break if upgrading to Python 3.13 unless pydub updates.
+    "ignore::DeprecationWarning:pydub.*",
+]
+
 
 
