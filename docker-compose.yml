@@ -53,5 +53,16 @@ services:
     depends_on:
       - pubsub-emulator
 
+  mock-server:
+    image: python:3.11-slim
+    ports:
+      - "8082:8082"
+    volumes:
+      - ./local-dev/mock_server.py:/app/mock_server.py
+    working_dir: /app
+    command: python -u mock_server.py
+    networks:
+      - pipeline-network
+
 networks:
   pipeline-network:
