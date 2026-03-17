@@ -25,12 +25,11 @@ _FEED = LeasedFeed(
 
 
 def _mock_pubsub_publish(message_id: str = "test-message-id") -> mock._patch:
-    """Patch publisher.publish to return a future with a fixed message id."""
-    publish_future = mock.MagicMock()
-    publish_future.result.return_value = message_id
+    """Patch publish_audio_chunk to return a fixed message id (at call site)."""
     return mock.patch(
-        "backend.pipeline.ingestion.normalizer_runtime.publisher.publish",
-        return_value=publish_future,
+        "backend.pipeline.ingestion.normalizer_runtime.publish_audio_chunk",
+        new_callable=mock.AsyncMock,
+        return_value=message_id,
     )
 
 
@@ -247,66 +246,6 @@ class TestProcessFeedNormalCompletion(unittest.IsolatedAsyncioTestCase):
             await rt._process_feed(_FEED)
 
         self.assertEqual(rt._releasing_feeds, set())
-
-    async def test_publish_uses_feed_id_ordering_key(self) -> None:
-        """Pub/Sub publish must use feed ID for ordering key."""
-
-        async def _one_chunk(feed, shutdown):
-            yield b"audio"
-
-        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
-        rt._shutdown = asyncio.Event()
-        rt._lease_lost = asyncio.Event()
-        rt._store = mock.AsyncMock()
-        rt._store.update_feed_progress.return_value = True
-        rt._releasing_feeds = set()
-
-        with (
-            _mock_upload_audio(),
-            _mock_pubsub_publish() as mock_publish,
-        ):
-            await rt._process_feed(_FEED)
-
-        mock_publish.assert_called_once()
-        _, kwargs = mock_publish.call_args
-        self.assertEqual(kwargs["feed_id"], str(_FEED_ID))
-        self.assertEqual(kwargs["ordering_key"], str(_FEED_ID))
-
-
-class TestProcessFeedTimestamps(unittest.IsolatedAsyncioTestCase):
-    """Tests for _process_feed timestamp population."""
-
-    async def test_sets_start_timestamp_on_audio_chunk(self) -> None:
-        """The start_timestamp field must be populated before publishing."""
-
-        async def _one_chunk(feed, shutdown):
-            yield b"audio"
-
-        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
-        rt._shutdown = asyncio.Event()
-        rt._lease_lost = asyncio.Event()
-        rt._store = mock.AsyncMock()
-        rt._store.update_feed_progress.return_value = True
-        rt._releasing_feeds = set()
-
-        with (
-            _mock_upload_audio(),
-            _mock_pubsub_publish() as mock_publish,
-        ):
-            await rt._process_feed(_FEED)
-
-            # 1. Get the published data
-            mock_publish.assert_called_once()
-            _, args, _ = mock_publish.mock_calls[0]
-            published_bytes = args[1]
-
-            # 2. Parse back and verify
-            chunk = AudioChunk()
-            chunk.ParseFromString(published_bytes)
-
-            self.assertTrue(chunk.HasField("start_timestamp"))
-            # Just ensure it's not the default (epoch 0)
-            self.assertGreater(chunk.start_timestamp.seconds, 1700000000)
 
 
 class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):

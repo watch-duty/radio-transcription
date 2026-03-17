@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import datetime
 import logging
@@ -7,6 +8,9 @@ from typing import TYPE_CHECKING
 
 import aiohttp
 from gcloud.aio.storage import Storage
+from google.cloud import pubsub_v1
+
+from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 
 _GCS_METADATA_SIZE_LIMIT = 8 * 1024  # 8 KiB in bytes
 
@@ -18,6 +22,18 @@ logger = logging.getLogger(__name__)
 
 _session: aiohttp.ClientSession | None = None
 _storage: Storage | None = None
+_publisher: pubsub_v1.PublisherClient | None = None
+
+
+def _get_publisher() -> pubsub_v1.PublisherClient:
+    """Return a shared Pub/Sub publisher client, creating one lazily."""
+    global _publisher  # noqa: PLW0603
+    if _publisher is None:
+        publisher_options = pubsub_v1.types.PublisherOptions(
+            enable_message_ordering=True,
+        )
+        _publisher = pubsub_v1.PublisherClient(publisher_options=publisher_options)
+    return _publisher
 
 
 def _get_storage() -> Storage:
@@ -86,9 +102,33 @@ async def upload_audio(
     return f"gs://{bucket}/{object_name}"
 
 
+async def publish_audio_chunk(
+    topic_path: str,
+    feed_id: str,
+    gcs_uri: str,
+) -> str:
+    """Publish a GCS audio chunk URI to Pub/Sub and return message ID."""
+    publisher = _get_publisher()
+
+    audio_chunk_msg = AudioChunk(gcs_uri=gcs_uri)
+    now = datetime.datetime.now(tz=datetime.UTC)
+    audio_chunk_msg.start_timestamp.FromDatetime(now)
+
+    future = publisher.publish(
+        topic_path,
+        audio_chunk_msg.SerializeToString(),
+        feed_id=feed_id,
+        ordering_key=feed_id,
+    )
+    return await asyncio.to_thread(future.result)
+
+
 async def close_client() -> None:
-    """Close the shared GCS client and aiohttp session."""
-    global _session, _storage  # noqa: PLW0603
+    """Close shared GCS, Pub/Sub, and aiohttp clients."""
+    global _session, _storage, _publisher  # noqa: PLW0603
+    if _publisher is not None:
+        _publisher.stop()
+        _publisher = None
     if _storage is not None:
         await _storage.close()
         _storage = None
