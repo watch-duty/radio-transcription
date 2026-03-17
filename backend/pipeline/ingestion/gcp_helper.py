@@ -1,3 +1,46 @@
+"""GCP client helpers for the ingestion pipeline.
+
+This module provides a thin, shared-client layer over Google Cloud Storage
+(GCS) and Google Cloud Pub/Sub used by the ingestion pipeline.
+
+Overview
+--------
+All GCP clients are managed by a single :class:`GCPClients` instance that is
+created on first use and reused for the lifetime of the process.  The
+instance is obtained via :func:`_get_default_clients`, which is decorated
+with :func:`functools.cache` so it is created exactly once per process.
+
+Public API
+----------
+upload_audio(audio_chunk, feed, bucket, chunk_seq, sed_metadata=None)
+    Upload a raw audio chunk to GCS and return the ``gs://`` URI.
+
+publish_audio_chunk(topic_path, feed_id, gcs_uri)
+    Publish an ``AudioChunk`` protobuf message to a Pub/Sub topic with
+    message ordering enabled (``ordering_key=feed_id``).
+
+close_client()
+    Gracefully close all connections held by the default :class:`GCPClients`
+    instance and evict it from the cache so a fresh one is created on the
+    next call.
+
+Migration from ``gcs.py``
+-------------------------
+This module supersedes the old ``gcs.py`` module.  Key differences:
+
+* Renamed from ``gcs`` to ``gcp_helper`` to reflect that it now covers both
+  GCS *and* Pub/Sub (previously Pub/Sub logic lived in
+  ``normalizer_runtime``).
+* Module-level globals (``_session``, ``_storage``, ``_publisher``) have been
+  replaced by the :class:`GCPClients` class, which encapsulates all lazily
+  initialized clients and their teardown logic.
+* The process-wide singleton is held by :func:`_get_default_clients` via
+  ``@functools.cache`` instead of raw ``global`` statements.  Tests reset
+  state with ``_get_default_clients.cache_clear()`` instead of setting
+  globals to ``None``.
+* ``publisher.stop()`` is now awaited via :func:`asyncio.to_thread` so it
+  does not block the event loop.
+"""
 from __future__ import annotations
 
 import asyncio
