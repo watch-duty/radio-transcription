@@ -38,7 +38,7 @@ NOTIFICATION_ENDPOINT_API_KEY = os.environ.get("NOTIFICATION_ENDPOINT_API_KEY")
 
 # Keeping the notification deduplicate connection outside the main function. This is so the connection is
 # maintained while the function is warm instead of reconnecting each invocation.
-notification_deduplication = NotificationDeduplication(RedisService())
+deduplication = NotificationDeduplication(RedisService())
 
 
 def parse_cloud_event(cloud_event: CloudEvent) -> EvaluatedTranscribedAudio | None:
@@ -83,12 +83,10 @@ def send_notification(cloud_event: CloudEvent) -> None:
         request_data = MessageToJson(alert_notification, indent=None)
         logger.info(f"Sending payload: {request_data}")
 
-        if notification_deduplication.process_notification(
-            alert_notification.transmission_id
-        ):
-            logger.warning(
-                f"Duplicate transmission_id detected, skipping message with ID: {alert_notification.transmission_id}"
-            )
+        notification_id = alert_notification.transmission_id
+        if deduplication.process_notification(notification_id):
+            message = f"Duplicate transmission_id detected, skipping notification with ID: {notification_id}"
+            logger.warning(message)
             return
 
         # Send POST request to endpoint.

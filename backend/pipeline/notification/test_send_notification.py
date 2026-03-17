@@ -21,9 +21,7 @@ with mock.patch("google.cloud.logging.Client") as mock_client:
 
 
 class TestSendNotification(TestCase):
-    @mock.patch(
-        "backend.pipeline.notification.send_notification.notification_deduplication"
-    )
+    @mock.patch("backend.pipeline.notification.send_notification.deduplication")
     @mock.patch("backend.pipeline.notification.send_notification.requests.post")
     def test_send_notification(
         self, mock_post: mock.Mock, mock_dedupe: mock.Mock
@@ -59,9 +57,7 @@ class TestSendNotification(TestCase):
             timeout=5,
         )
 
-    @mock.patch(
-        "backend.pipeline.notification.send_notification.notification_deduplication"
-    )
+    @mock.patch("backend.pipeline.notification.send_notification.deduplication")
     @mock.patch("backend.pipeline.notification.send_notification.requests.post")
     def test_duplicate_message(
         self, mock_post: mock.Mock, mock_dedupe: mock.Mock
@@ -91,9 +87,7 @@ class TestSendNotification(TestCase):
 
         mock_post.assert_not_called()
 
-    @mock.patch(
-        "backend.pipeline.notification.send_notification.notification_deduplication"
-    )
+    @mock.patch("backend.pipeline.notification.send_notification.deduplication")
     @mock.patch("backend.pipeline.notification.send_notification.requests.post")
     def test_post_error(self, mock_post: mock.Mock, mock_dedupe: mock.Mock) -> None:
         mock_dedupe.process_notification.return_value = False
