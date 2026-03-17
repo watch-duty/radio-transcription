@@ -28,7 +28,7 @@ with (
 ):
     from backend.pipeline.ingestion.collectors import icecast_collector
 
-from backend.pipeline.ingestion import gcs  # noqa: E402
+from backend.pipeline.ingestion import gcp_helper  # noqa: E402
 
 _REPO_ROOT = Path(__file__).resolve().parents[5]
 _SQL_DIR = _REPO_ROOT / "terraform" / "modules" / "alloydb" / "sql" / "ingestion"
@@ -131,13 +131,13 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         # Storage.__init__ calls init_api_root(None) which checks
         # STORAGE_EMULATOR_HOST env var. When set, _api_is_dev=True
         # (disables SSL, _headers() returns {} skipping auth).
-        gcs._session = None
-        gcs._storage = None
+        gcp_helper._session = None
+        gcp_helper._storage = None
         os.environ["STORAGE_EMULATOR_HOST"] = self._gcs_url
 
     async def asyncTearDown(self) -> None:
         """Close GCS client, remove env var, close pool."""
-        await gcs.close_client()
+        await gcp_helper.close_client()
         os.environ.pop("STORAGE_EMULATOR_HOST", None)
         await self.pool.close()
 
@@ -243,7 +243,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         async for flac_chunk in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
-            gcs_path = await gcs.upload_audio(
+            gcs_path = await gcp_helper.upload_audio(
                 flac_chunk,
                 feed,
                 _TEST_BUCKET,
@@ -299,7 +299,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         async for flac_chunk in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
-            gcs_path = await gcs.upload_audio(flac_chunk, feed, _TEST_BUCKET, seq)
+            gcs_path = await gcp_helper.upload_audio(flac_chunk, feed, _TEST_BUCKET, seq)
             await self.store.update_feed_progress(
                 feed["id"],
                 self.worker_id,
@@ -351,7 +351,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         async for flac_chunk in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
-            gcs_path = await gcs.upload_audio(flac_chunk, feed, _TEST_BUCKET, seq)
+            gcs_path = await gcp_helper.upload_audio(flac_chunk, feed, _TEST_BUCKET, seq)
             await self.store.update_feed_progress(
                 feed["id"],
                 self.worker_id,
@@ -429,7 +429,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         async for flac_chunk in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
-            gcs_path = await gcs.upload_audio(flac_chunk, feed, _TEST_BUCKET, 0)
+            gcs_path = await gcp_helper.upload_audio(flac_chunk, feed, _TEST_BUCKET, 0)
             break  # Only need first chunk
 
         if gcs_path is None:
