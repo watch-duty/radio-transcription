@@ -46,7 +46,7 @@ def run(
         port: The port number to listen on.
     """
     # This is safe to ignore because this server is only used for local dev.
-    server_address = ("0.0.0.0", port)  # ruff: noqa: S104
+    server_address = ("0.0.0.0", port)  # noqa: S104
     httpd = server_class(server_address, handler_class)
     logger.info("Starting Mock Server on port %s...", port)
     try:
