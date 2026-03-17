@@ -32,6 +32,7 @@ else:
 
 # Keeping the notification deduplicate connection outside the main function. This is so the connection is
 # maintained while the function is warm instead of reconnecting each invocation.
+# TODO(schew): https://linear.app/watchduty/issue/GOO-173/update-local-dev-pipeline-with-redis
 deduplication = NotificationDeduplication(RedisService())
 
 request_handler = RequestHandler(logger)
