@@ -12,7 +12,7 @@ class TestRedisService(unittest.TestCase):
             "backend.common.database.redis_service.Redis", fakeredis.FakeRedis
         )
         self.patcher.start()
-        self.service = RedisService(host="localhost", port=6379, password=None)
+        self.service = RedisService()
 
     def tearDown(self) -> None:
         self.patcher.stop()
@@ -22,7 +22,7 @@ class TestRedisService(unittest.TestCase):
         value = "test-value"
         ttl = 60
 
-        result = self.service.set(key, value, ttl)
+        result = self.service.set_if_not_exists(key, value, ttl)
 
         self.assertTrue(result)
         self.assertEqual(self.service.client.get(key), value)
@@ -34,7 +34,7 @@ class TestRedisService(unittest.TestCase):
 
         self.service.client.set(key, value)
 
-        result = self.service.set(key, "new-value", ttl)
+        result = self.service.set_if_not_exists(key, "new-value", ttl)
 
         self.assertFalse(result)
         self.assertEqual(self.service.client.get(key), value)

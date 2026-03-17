@@ -1,7 +1,6 @@
 import base64
 import logging
 import os
-import time
 
 import functions_framework
 import google.cloud.logging
@@ -10,6 +9,9 @@ from cloudevents.http.event import CloudEvent
 from google.protobuf.json_format import MessageToJson
 
 from backend.common.database.redis_service import RedisService
+from backend.pipeline.notification.notification_deduplication import (
+    NotificationDeduplication,
+)
 from backend.pipeline.schema_types.alert_notification_pb2 import AlertNotification
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
@@ -24,16 +26,9 @@ POST_TIMEOUT_SECONDS = 5
 NOTIFICATION_ENDPOINT = os.environ.get("NOTIFICATION_ENDPOINT")
 NOTIFICATION_ENDPOINT_API_KEY = os.environ.get("NOTIFICATION_ENDPOINT_API_KEY")
 
-DEFAULT_REDIS_PORT = "6379"
-REDIS_HOST = os.environ.get("REDIS_HOST", "127.0.0.1")
-REDIS_PORT = int(os.environ.get("REDIS_PORT", DEFAULT_REDIS_PORT))
-REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD")
-
-REDIS_TTL_IN_SECONDS = 3600  # One hour
-
-# Keeping the Memorystore for Redis connection outside the main function. This is so the connection is
+# Keeping the notification deduplicate connection outside the main function. This is so the connection is
 # maintained while the function is warm instead of reconnecting each invocation.
-redis_client = RedisService(REDIS_HOST, REDIS_PORT, REDIS_PASSWORD)
+notification_deduplication = NotificationDeduplication(RedisService())
 
 
 def parse_cloud_event(cloud_event: CloudEvent) -> EvaluatedTranscribedAudio | None:
@@ -78,10 +73,8 @@ def send_notification(cloud_event: CloudEvent) -> None:
         request_data = MessageToJson(alert_notification, indent=None)
         logger.info(f"Sending payload: {request_data}")
 
-        # Storing the current time as the value to assist in debugging.
-        now = str(time.time())
-        if redis_client.set(
-            alert_notification.transmission_id, now, REDIS_TTL_IN_SECONDS
+        if notification_deduplication.process_notification(
+            alert_notification.transmission_id
         ):
             logger.warning(
                 f"Duplicate transmission_id detected, skipping message with ID: {alert_notification.transmission_id}"

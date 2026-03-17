@@ -22,14 +22,13 @@ with mock.patch("google.cloud.logging.Client") as mock_client:
 
 class TestSendNotification(TestCase):
     @mock.patch(
-        "backend.pipeline.notification.send_notification.time.time", return_value=12345
+        "backend.pipeline.notification.send_notification.notification_deduplication"
     )
-    @mock.patch("backend.pipeline.notification.send_notification.redis_client")
     @mock.patch("backend.pipeline.notification.send_notification.requests.post")
     def test_send_notification(
-        self, mock_post: mock.Mock, mock_redis_client: mock.Mock, mock_time: mock.Mock
+        self, mock_post: mock.Mock, mock_dedupe: mock.Mock
     ) -> None:
-        mock_redis_client.set.return_value = False
+        mock_dedupe.process_notification.return_value = False
 
         mock_response = mock.MagicMock()
         mock_post.return_value = mock_response
@@ -49,7 +48,7 @@ class TestSendNotification(TestCase):
         result = send_notification(cloud_event)
         self.assertIsNone(result)
 
-        mock_redis_client.set.assert_called_with("1234", "12345", 3600)
+        mock_dedupe.process_notification.assert_called_with("1234")
 
         expected_url = "https://api.example.com/mock"
         expected_headers = {"Content-Type": "application/json", "X-Api-Key": "12345"}
@@ -61,15 +60,14 @@ class TestSendNotification(TestCase):
         )
 
     @mock.patch(
-        "backend.pipeline.notification.send_notification.time.time", return_value=12345
+        "backend.pipeline.notification.send_notification.notification_deduplication"
     )
-    @mock.patch("backend.pipeline.notification.send_notification.redis_client")
     @mock.patch("backend.pipeline.notification.send_notification.requests.post")
     def test_duplicate_message(
-        self, mock_post: mock.Mock, mock_redis_client: mock.Mock, mock_time: mock.Mock
+        self, mock_post: mock.Mock, mock_dedupe: mock.Mock
     ) -> None:
         # Setting this to True indicates a duplicate.
-        mock_redis_client.set.return_value = True
+        mock_dedupe.process_notification.return_value = True
 
         mock_response = mock.MagicMock()
         mock_post.return_value = mock_response
@@ -89,19 +87,16 @@ class TestSendNotification(TestCase):
         result = send_notification(cloud_event)
         self.assertIsNone(result)
 
-        mock_redis_client.set.assert_called_with("1234", "12345", 3600)
+        mock_dedupe.process_notification.assert_called_with("1234")
 
         mock_post.assert_not_called()
 
     @mock.patch(
-        "backend.pipeline.notification.send_notification.time.time", return_value=12345
+        "backend.pipeline.notification.send_notification.notification_deduplication"
     )
-    @mock.patch("backend.pipeline.notification.send_notification.redis_client")
     @mock.patch("backend.pipeline.notification.send_notification.requests.post")
-    def test_post_error(
-        self, mock_post: mock.Mock, mock_redis_client: mock.Mock, mock_time: mock.Mock
-    ) -> None:
-        mock_redis_client.set.return_value = False
+    def test_post_error(self, mock_post: mock.Mock, mock_dedupe: mock.Mock) -> None:
+        mock_dedupe.process_notification.return_value = False
 
         mock_response = mock.MagicMock()
         mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
