@@ -18,7 +18,7 @@ COPY backend/__init__.py ./backend/__init__.py
 COPY backend/pipeline/__init__.py ./backend/pipeline/__init__.py
 COPY backend/pipeline/notification/ ./backend/pipeline/notification
 COPY backend/common/__init__.py ./backend/common/__init__.py
-COPY backend/common/database/ ./backend/common/database
+COPY backend/common/storage/ ./backend/common/storage
 COPY protos/ ./protos
 
 # 2. Create the directory for the generated files

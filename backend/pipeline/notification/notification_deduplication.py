@@ -1,6 +1,6 @@
 import time
 
-from backend.common.database.cache_provider import CacheProvider
+from backend.common.storage.cache_provider import CacheProvider
 
 TTL_IN_SECONDS = 3600  # One hour
 

@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import fakeredis
 
-from backend.common.database.redis_service import RedisService
+from backend.common.storage.redis_service import RedisService
 
 
 class TestRedisService(unittest.TestCase):
