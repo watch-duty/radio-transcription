@@ -9,7 +9,7 @@ from backend.common.storage.redis_service import RedisService
 class TestRedisService(unittest.TestCase):
     def setUp(self) -> None:
         self.patcher = patch(
-            "backend.common.database.redis_service.Redis", fakeredis.FakeRedis
+            "backend.common.storage.redis_service.Redis", fakeredis.FakeRedis
         )
         self.patcher.start()
         self.service = RedisService()
