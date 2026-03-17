@@ -45,9 +45,7 @@ def create_topic(topic_id: str) -> None:
     if response.status_code in (200, 409):
         logger.info("Topic '%s' ready.", topic_id)
     else:
-        logger.error(
-            "Failed to create topic '%s': %s", topic_id, response.text
-        )
+        logger.error("Failed to create topic '%s': %s", topic_id, response.text)
 
 
 def create_push_subscription(
@@ -65,9 +63,7 @@ def create_push_subscription(
     url = f"{PUBSUB_ENDPOINT}/subscriptions/{subscription_id}"
     payload = {
         "topic": f"projects/{PROJECT_ID}/topics/{topic_id}",
-        "pushConfig": {
-            "pushEndpoint": push_endpoint
-        }
+        "pushConfig": {"pushEndpoint": push_endpoint},
     }
     response = requests.put(url, json=payload, timeout=10)
     if response.status_code in (200, 409):
@@ -115,9 +111,7 @@ if __name__ == "__main__":
     )
 
     # Pub/Sub between Rules Evaluation and Notification Services
-    RULES_EVALUATION_RESULTS_TOPIC = os.environ[
-        "RULES_EVALUATION_RESULTS_TOPIC"
-    ]
+    RULES_EVALUATION_RESULTS_TOPIC = os.environ["RULES_EVALUATION_RESULTS_TOPIC"]
     create_topic(RULES_EVALUATION_RESULTS_TOPIC)
     create_push_subscription(
         "notification-sub",

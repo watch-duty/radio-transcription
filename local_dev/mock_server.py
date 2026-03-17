@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 class RequestHandler(BaseHTTPRequestHandler):
     """Handles HTTP requests for the mock server."""
+
     def do_POST(self) -> None:
         """Processes incoming POST requests and echoes the JSON payload."""
         content_length = int(self.headers.get("Content-Length", 0))
@@ -25,10 +26,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         except Exception:
             parsed_data = post_data.decode("utf-8")
 
-        response = {
-            "message": "Success",
-            "received_data": parsed_data
-        }
+        response = {"message": "Success", "received_data": parsed_data}
         self.wfile.write(json.dumps(response).encode("utf-8"))
         logger.info("Mock Server received POST request with data:\n%s", parsed_data)
 

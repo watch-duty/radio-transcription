@@ -40,11 +40,7 @@ def publish_test_message() -> None:
 
     payload = {
         "messages": [
-            {
-                "data": base64.b64encode(
-                    test_message.SerializeToString()
-                ).decode("utf-8")
-            }
+            {"data": base64.b64encode(test_message.SerializeToString()).decode("utf-8")}
         ]
     }
 

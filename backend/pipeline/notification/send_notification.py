@@ -22,7 +22,9 @@ else:
     logger.setLevel(logging.INFO)
     handler = logging.StreamHandler()
     logger.addHandler(handler)
-    logger.info("Running in LOCAL_DEV mode. Logs will print to console instead of configurable endpoint.")
+    logger.info(
+        "Running in LOCAL_DEV mode. Logs will print to console instead of configurable endpoint."
+    )
 
 POST_TIMEOUT_SECONDS = 5
 
