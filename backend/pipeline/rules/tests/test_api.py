@@ -6,7 +6,6 @@ from ..main import app
 
 
 class TestRulesAPI(unittest.TestCase):
-
     def setUp(self) -> None:
         """Set up a test client before each test."""
         self.client = TestClient(app)
@@ -19,14 +18,14 @@ class TestRulesAPI(unittest.TestCase):
             "is_active": True,
             "scope": {
                 "level": "FEED_SPECIFIC",
-                "target_feeds": ["feed_calfire_shasta"]
+                "target_feeds": ["feed_calfire_shasta"],
             },
             "conditions": {
                 "evaluation_type": "KEYWORD_MATCH",
                 "operator": "ANY",
                 "keywords": ["structure fire", "working fire"],
-                "case_sensitive": False
-            }
+                "case_sensitive": False,
+            },
         }
         response = self.client.post("/v1/rules", json=payload)
         self.assertEqual(response.status_code, 201)
@@ -41,14 +40,12 @@ class TestRulesAPI(unittest.TestCase):
             "rule_name": "Evacuation Order Mention",
             "description": "Catches any mention of evacuation zones or orders globally.",
             "is_active": True,
-            "scope": {
-                "level": "GLOBAL"
-            },
+            "scope": {"level": "GLOBAL"},
             "conditions": {
                 "evaluation_type": "REGEX_MATCH",
                 "expression": "evacuation (order|warning)",
-                "flags": "i"
-            }
+                "flags": "i",
+            },
         }
         response = self.client.post("/v1/rules", json=payload)
         self.assertEqual(response.status_code, 201)
@@ -59,7 +56,11 @@ class TestRulesAPI(unittest.TestCase):
     def test_get_rule(self) -> None:
         """Test retrieving a single, specific rule by its ID."""
         # First, create a rule to ensure one exists
-        payload = {"rule_name": "Test Rule for Get", "scope": {"level": "GLOBAL"}, "conditions": {"evaluation_type": "KEYWORD_MATCH", "keywords": ["test"]}}
+        payload = {
+            "rule_name": "Test Rule for Get",
+            "scope": {"level": "GLOBAL"},
+            "conditions": {"evaluation_type": "KEYWORD_MATCH", "keywords": ["test"]},
+        }
         create_response = self.client.post("/v1/rules", json=payload)
         rule_id = create_response.json()["rule_id"]
 
@@ -73,7 +74,14 @@ class TestRulesAPI(unittest.TestCase):
     def test_list_rules(self) -> None:
         """Test listing all rules, ensuring it returns a list."""
         # Create a rule to make sure the list isn't empty
-        self.client.post("/v1/rules", json={"rule_name": "List Test", "scope": {"level": "GLOBAL"}, "conditions": {"evaluation_type": "KEYWORD_MATCH", "keywords": ["a"]}})
+        self.client.post(
+            "/v1/rules",
+            json={
+                "rule_name": "List Test",
+                "scope": {"level": "GLOBAL"},
+                "conditions": {"evaluation_type": "KEYWORD_MATCH", "keywords": ["a"]},
+            },
+        )
 
         response = self.client.get("/v1/rules")
         self.assertEqual(response.status_code, 200)
@@ -83,11 +91,21 @@ class TestRulesAPI(unittest.TestCase):
     def test_update_rule(self) -> None:
         """Test updating an existing rule's name and description."""
         # Create a rule
-        payload = {"rule_name": "Original Name", "scope": {"level": "GLOBAL"}, "conditions": {"evaluation_type": "KEYWORD_MATCH", "keywords": ["original"]}}
+        payload = {
+            "rule_name": "Original Name",
+            "scope": {"level": "GLOBAL"},
+            "conditions": {
+                "evaluation_type": "KEYWORD_MATCH",
+                "keywords": ["original"],
+            },
+        }
         rule_id = self.client.post("/v1/rules", json=payload).json()["rule_id"]
 
         # Update it
-        update_payload = {"rule_name": "Updated Name", "description": "This rule has been updated."}
+        update_payload = {
+            "rule_name": "Updated Name",
+            "description": "This rule has been updated.",
+        }
         response = self.client.put(f"/v1/rules/{rule_id}", json=update_payload)
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -97,11 +115,17 @@ class TestRulesAPI(unittest.TestCase):
     def test_delete_rule(self) -> None:
         """Test deleting a rule and ensuring it's no longer retrievable."""
         # Create a rule
-        rule_id = self.client.post("/v1/rules", json={
-            "rule_name": "To Be Deleted", 
-            "scope": {"level": "GLOBAL"}, 
-            "conditions": {"evaluation_type": "KEYWORD_MATCH", "keywords": ["delete"]}
-        }).json()["rule_id"]
+        rule_id = self.client.post(
+            "/v1/rules",
+            json={
+                "rule_name": "To Be Deleted",
+                "scope": {"level": "GLOBAL"},
+                "conditions": {
+                    "evaluation_type": "KEYWORD_MATCH",
+                    "keywords": ["delete"],
+                },
+            },
+        ).json()["rule_id"]
 
         # Delete it
         delete_response = self.client.delete(f"/v1/rules/{rule_id}")
@@ -110,6 +134,7 @@ class TestRulesAPI(unittest.TestCase):
         # Verify it's gone
         get_response = self.client.get(f"/v1/rules/{rule_id}")
         self.assertEqual(get_response.status_code, 404)
+
 
 if __name__ == "__main__":
     unittest.main()

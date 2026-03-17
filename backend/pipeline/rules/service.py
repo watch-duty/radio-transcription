@@ -60,7 +60,7 @@ class MockRulesService(BaseRulesService):
         updated_rule_dict = existing_rule.model_dump()
         updated_rule_dict.update(update_data)
 
-        updated_rule = Rule(**updated_rule_dict)        
+        updated_rule = Rule(**updated_rule_dict)
         self._rules[rule_id] = updated_rule
         return updated_rule
 
