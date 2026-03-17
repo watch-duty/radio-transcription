@@ -2,6 +2,8 @@
 Constants shared across the pipeline and tests.
 """
 
+from backend.pipeline.shared_constants import NUM_AUDIO_CHANNELS, SAMPLE_RATE_HZ
+
 DEAD_LETTER_QUEUE_TAG = "transcription_dlq"
 
 # Pipeline Defaults
@@ -21,7 +23,6 @@ MS_PER_SECOND = 1000
 MICROSECONDS_PER_MS = 1000
 NANOS_PER_MS = 1_000_000
 
-from backend.pipeline.shared_constants import NUM_AUDIO_CHANNELS, SAMPLE_RATE_HZ
 
 # 16-bit PCM = 2 bytes per sample
 BYTES_PER_SECOND_16KHZ_MONO = SAMPLE_RATE_HZ * NUM_AUDIO_CHANNELS * 2
@@ -34,5 +35,3 @@ LOWPASS_FILTER_FREQ = 3000
 DEFAULT_TENVAD_THRESHOLD = 0.8
 DEFAULT_TENVAD_HOP_SIZE = 256
 DEFAULT_TENVAD_MIN_SPEECH_MS = 250
-
-

@@ -17,6 +17,7 @@ from apache_beam.transforms.userstate import (
 from apache_beam.utils.timestamp import Timestamp
 from pydub import AudioSegment
 
+from backend.pipeline.shared_constants import AUDIO_FORMAT
 from backend.pipeline.transcription.audio_processor import AudioProcessor
 from backend.pipeline.transcription.constants import (
     DEAD_LETTER_QUEUE_TAG,
@@ -44,7 +45,6 @@ from backend.pipeline.transcription.enums import (
 from backend.pipeline.transcription.stitcher_state import AudioStitchingStateMachine
 from backend.pipeline.transcription.telemetry import get_metrics_exporter
 from backend.pipeline.transcription.transcribers import Transcriber, get_transcriber
-from backend.pipeline.shared_constants import AUDIO_FORMAT
 
 logger = logging.getLogger(__name__)
 
@@ -307,7 +307,9 @@ class StitchAudioFn(beam.DoFn):
         stitching_duration = int((time.time() - start_time) * MS_PER_SECOND)
         self.stitching_time_ms.update(stitching_duration)
         if self.metrics_exporter:
-            self.metrics_exporter.record_stitching_time(feed_id=feed_id, duration_ms=stitching_duration)
+            self.metrics_exporter.record_stitching_time(
+                feed_id=feed_id, duration_ms=stitching_duration
+            )
 
         yield from self._apply_state_actions(
             actions=actions,

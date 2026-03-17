@@ -41,11 +41,17 @@ class TestMetricsExporters(unittest.TestCase):
 
         exporter.record_transcription_time(feed_id="f1", duration_ms=100)
         series = mock_client_inst.create_time_series.call_args.kwargs["time_series"][0]
-        self.assertEqual(series.metric.type, "custom.googleapis.com/radio_transcription/transcription_time")
+        self.assertEqual(
+            series.metric.type,
+            "custom.googleapis.com/radio_transcription/transcription_time",
+        )
 
         exporter.record_stitching_time(feed_id="f1", duration_ms=20)
         series = mock_client_inst.create_time_series.call_args.kwargs["time_series"][0]
-        self.assertEqual(series.metric.type, "custom.googleapis.com/radio_transcription/stitching_time")
+        self.assertEqual(
+            series.metric.type,
+            "custom.googleapis.com/radio_transcription/stitching_time",
+        )
 
     @patch("backend.pipeline.transcription.telemetry.monitoring_v3.MetricServiceClient")
     def test_gcp_exporter_handles_exception(self, mock_client_class: MagicMock) -> None:
@@ -71,11 +77,17 @@ class TestMetricsExporters(unittest.TestCase):
         multi.setup()
 
         multi.record_transcription_time(feed_id="f1", duration_ms=250)
-        mock_exp1.record_transcription_time.assert_called_once_with(feed_id="f1", duration_ms=250)
-        mock_exp2.record_transcription_time.assert_called_once_with(feed_id="f1", duration_ms=250)
+        mock_exp1.record_transcription_time.assert_called_once_with(
+            feed_id="f1", duration_ms=250
+        )
+        mock_exp2.record_transcription_time.assert_called_once_with(
+            feed_id="f1", duration_ms=250
+        )
 
         multi.record_stitching_time(feed_id="f1", duration_ms=50)
-        mock_exp1.record_stitching_time.assert_called_once_with(feed_id="f1", duration_ms=50)
+        mock_exp1.record_stitching_time.assert_called_once_with(
+            feed_id="f1", duration_ms=50
+        )
 
     @patch("backend.pipeline.transcription.telemetry.GcpMonitoringExporter")
     def test_get_metrics_exporter(self, mock_gcp_exporter_class: MagicMock) -> None:

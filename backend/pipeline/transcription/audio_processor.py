@@ -5,14 +5,14 @@ from typing import Any
 
 from pydub import AudioSegment, effects
 
-from backend.pipeline.transcription.constants import (
-    HIGHPASS_FILTER_FREQ,
-    LOWPASS_FILTER_FREQ,
-)
 from backend.pipeline.shared_constants import (
     AUDIO_FORMAT,
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
+)
+from backend.pipeline.transcription.constants import (
+    HIGHPASS_FILTER_FREQ,
+    LOWPASS_FILTER_FREQ,
 )
 from backend.pipeline.transcription.datatypes import AudioChunkData
 from backend.pipeline.transcription.enums import VadType

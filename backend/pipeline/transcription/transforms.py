@@ -19,7 +19,7 @@ from apache_beam.transforms.userstate import (
     on_timer,
 )
 from apache_beam.utils.timestamp import Timestamp
-from google.protobuf.duration_pb2 import Duration
+from google.protobuf.duration_pb2 import Duration  # type: ignore[attr-defined]
 from google.protobuf.message import DecodeError
 
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import (

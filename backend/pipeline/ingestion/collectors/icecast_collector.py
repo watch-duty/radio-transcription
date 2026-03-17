@@ -20,6 +20,7 @@ from backend.pipeline.shared_constants import (
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
 )
+
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 

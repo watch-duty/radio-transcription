@@ -58,7 +58,9 @@ class GcpMonitoringExporter(MetricsExporter):
         self.client = monitoring_v3.MetricServiceClient()
         self.config = GcpMonitoringConfig.from_json(self.config_json)
 
-    def _record_custom_metric(self, metric_name: str, feed_id: str, duration_ms: int) -> None:
+    def _record_custom_metric(
+        self, metric_name: str, feed_id: str, duration_ms: int
+    ) -> None:
         if not self.client or not self.config:
             return
 
@@ -82,11 +84,15 @@ class GcpMonitoringExporter(MetricsExporter):
 
     def record_transcription_time(self, *, feed_id: str, duration_ms: int) -> None:
         if self.config:
-            self._record_custom_metric(self.config.duration_metric_name, feed_id, duration_ms)
+            self._record_custom_metric(
+                self.config.duration_metric_name, feed_id, duration_ms
+            )
 
     def record_stitching_time(self, *, feed_id: str, duration_ms: int) -> None:
         if self.config:
-            self._record_custom_metric(self.config.stitching_metric_name, feed_id, duration_ms)
+            self._record_custom_metric(
+                self.config.stitching_metric_name, feed_id, duration_ms
+            )
 
 
 class MultiExporter(MetricsExporter):
