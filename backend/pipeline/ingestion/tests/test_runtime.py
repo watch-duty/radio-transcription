@@ -9,7 +9,6 @@ import aiohttp
 import asyncpg
 
 from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
-from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.storage.feed_store import HeartbeatResult, LeasedFeed
 
 _WORKER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")

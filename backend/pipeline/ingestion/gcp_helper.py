@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import datetime
+import functools
 import logging
 from typing import TYPE_CHECKING
 
@@ -20,29 +21,50 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_session: aiohttp.ClientSession | None = None
-_storage: Storage | None = None
-_publisher: pubsub_v1.PublisherClient | None = None
+
+class GCPClients:
+    """Lazily initialized GCS and Pub/Sub clients."""
+
+    def __init__(self) -> None:
+        self._session: aiohttp.ClientSession | None = None
+        self._storage: Storage | None = None
+        self._publisher: pubsub_v1.PublisherClient | None = None
+
+    def get_publisher(self) -> pubsub_v1.PublisherClient:
+        """Return a shared Pub/Sub publisher client, creating one lazily."""
+        if self._publisher is None:
+            publisher_options = pubsub_v1.types.PublisherOptions(
+                enable_message_ordering=True,
+            )
+            self._publisher = pubsub_v1.PublisherClient(
+                publisher_options=publisher_options,
+            )
+        return self._publisher
+
+    def get_storage(self) -> Storage:
+        """Return a shared ``Storage`` client, creating one lazily."""
+        if self._storage is None:
+            self._session = aiohttp.ClientSession()
+            self._storage = Storage(session=self._session)
+        return self._storage
+
+    async def close(self) -> None:
+        """Close shared GCS, Pub/Sub, and aiohttp clients."""
+        if self._publisher is not None:
+            self._publisher.stop()
+            self._publisher = None
+        if self._storage is not None:
+            await self._storage.close()
+            self._storage = None
+        if self._session is not None:
+            await self._session.close()
+            self._session = None
 
 
-def _get_publisher() -> pubsub_v1.PublisherClient:
-    """Return a shared Pub/Sub publisher client, creating one lazily."""
-    global _publisher  # noqa: PLW0603
-    if _publisher is None:
-        publisher_options = pubsub_v1.types.PublisherOptions(
-            enable_message_ordering=True,
-        )
-        _publisher = pubsub_v1.PublisherClient(publisher_options=publisher_options)
-    return _publisher
-
-
-def _get_storage() -> Storage:
-    """Return a shared ``Storage`` client, creating one lazily."""
-    global _session, _storage  # noqa: PLW0603
-    if _storage is None:
-        _session = aiohttp.ClientSession()
-        _storage = Storage(session=_session)
-    return _storage
+@functools.cache
+def _get_default_clients() -> GCPClients:
+    """Return the process-wide default GCP client manager."""
+    return GCPClients()
 
 
 async def upload_audio(
@@ -69,7 +91,7 @@ async def upload_audio(
         The full GCS path (``gs://bucket/object``).
 
     """
-    storage = _get_storage()
+    storage = _get_default_clients().get_storage()
     timestamp = datetime.datetime.now(tz=datetime.UTC).strftime(
         "%Y%m%dT%H%M%SZ",
     )
@@ -108,7 +130,7 @@ async def publish_audio_chunk(
     gcs_uri: str,
 ) -> str:
     """Publish a GCS audio chunk URI to Pub/Sub and return message ID."""
-    publisher = _get_publisher()
+    publisher = _get_default_clients().get_publisher()
 
     audio_chunk_msg = AudioChunk(gcs_uri=gcs_uri)
     now = datetime.datetime.now(tz=datetime.UTC)
@@ -124,14 +146,7 @@ async def publish_audio_chunk(
 
 
 async def close_client() -> None:
-    """Close shared GCS, Pub/Sub, and aiohttp clients."""
-    global _session, _storage, _publisher  # noqa: PLW0603
-    if _publisher is not None:
-        _publisher.stop()
-        _publisher = None
-    if _storage is not None:
-        await _storage.close()
-        _storage = None
-    if _session is not None:
-        await _session.close()
-        _session = None
+    """Close clients managed by the default shared manager."""
+    if _get_default_clients.cache_info().currsize > 0:
+        await _get_default_clients().close()
+        _get_default_clients.cache_clear()

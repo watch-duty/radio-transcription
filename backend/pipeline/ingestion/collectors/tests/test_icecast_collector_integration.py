@@ -126,13 +126,13 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.store = FeedStore(self.pool)
         self.worker_id = uuid.uuid4()
 
-        # GCS setup: reset singleton and point at fake server
-        # gcs._get_storage() creates Storage(session=s) without api_root.
+        # GCS setup: reset default client manager and point at fake server.
+        # _get_default_clients().get_storage() creates Storage(session=s)
+        # without api_root.
         # Storage.__init__ calls init_api_root(None) which checks
         # STORAGE_EMULATOR_HOST env var. When set, _api_is_dev=True
         # (disables SSL, _headers() returns {} skipping auth).
-        gcp_helper._session = None
-        gcp_helper._storage = None
+        gcp_helper._get_default_clients.cache_clear()
         os.environ["STORAGE_EMULATOR_HOST"] = self._gcs_url
 
     async def asyncTearDown(self) -> None:
@@ -299,7 +299,9 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         async for flac_chunk in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
-            gcs_path = await gcp_helper.upload_audio(flac_chunk, feed, _TEST_BUCKET, seq)
+            gcs_path = await gcp_helper.upload_audio(
+                flac_chunk, feed, _TEST_BUCKET, seq
+            )
             await self.store.update_feed_progress(
                 feed["id"],
                 self.worker_id,
@@ -351,7 +353,9 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         async for flac_chunk in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
-            gcs_path = await gcp_helper.upload_audio(flac_chunk, feed, _TEST_BUCKET, seq)
+            gcs_path = await gcp_helper.upload_audio(
+                flac_chunk, feed, _TEST_BUCKET, seq
+            )
             await self.store.update_feed_progress(
                 feed["id"],
                 self.worker_id,
