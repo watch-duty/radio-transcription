@@ -96,7 +96,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         mock_session_class: MagicMock,
         mock_storage_class: MagicMock,
     ) -> None:
-        """Test successful upload of audio chunk to gcp_helper."""
+        """Test successful upload of audio chunk to GCS."""
         # Arrange
         mock_datetime.datetime.now.return_value.strftime.return_value = (
             "20260305T120000Z"

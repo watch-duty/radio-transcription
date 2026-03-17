@@ -51,8 +51,9 @@ class GCPClients:
     async def close(self) -> None:
         """Close shared GCS, Pub/Sub, and aiohttp clients."""
         if self._publisher is not None:
-            self._publisher.stop()
+            publisher = self._publisher
             self._publisher = None
+            await asyncio.to_thread(publisher.stop)
         if self._storage is not None:
             await self._storage.close()
             self._storage = None
