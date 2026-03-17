@@ -25,7 +25,8 @@ CaptureFn = Callable[[LeasedFeed, asyncio.Event], AsyncIterator[bytes]]
 
 logger = logging.getLogger(__name__)
 
-publisher = pubsub_v1.PublisherClient()
+publisher_options = pubsub_v1.types.PublisherOptions(enable_message_ordering=True)
+publisher = pubsub_v1.PublisherClient(publisher_options=publisher_options)
 
 
 class NormalizerRuntime:
@@ -336,6 +337,7 @@ class NormalizerRuntime:
                     self._normalizer_settings.pubsub_topic_path,
                     audio_chunk_msg.SerializeToString(),
                     feed_id=str(feed["id"]),
+                    ordering_key=str(feed["id"]),
                 )
                 message_id = await asyncio.to_thread(future.result)
                 logger.info(
