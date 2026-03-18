@@ -35,7 +35,9 @@ else:
 # TODO(schew): https://linear.app/watchduty/issue/GOO-173/update-local-dev-pipeline-with-redis
 deduplication = NotificationDeduplication(RedisService())
 
+# The request handler which can make POST requests to an endpoint.
 request_handler = RequestHandler(logger)
+
 
 def parse_cloud_event(cloud_event: CloudEvent) -> EvaluatedTranscribedAudio | None:
     pubsub_message = cloud_event.data.get("message", {})
