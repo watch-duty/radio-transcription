@@ -13,6 +13,7 @@ services:
     depends_on:
       - pubsub-emulator
       - rules-evaluation
+      - rules-management
       - notification
     env_file:
       - ./local_dev/LOCAL.env
@@ -38,6 +39,26 @@ services:
       - pipeline-network
     depends_on:
       - pubsub-emulator
+      - rules-management
+
+  rules-management:
+    build:
+      context: .
+      dockerfile: backend/pipeline/rules/Dockerfile
+    ports:
+      - "8086:8086"
+    env_file:
+      - ./local_dev/LOCAL.env
+    command: ["uvicorn", "backend.pipeline.rules.main:app", "--host", "0.0.0.0", "--port", "8086"]
+    networks:
+      - pipeline-network
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - pipeline-network
 
   notification:
     build:
@@ -47,11 +68,14 @@ services:
       - "8081:8081"
     env_file:
       - ./local_dev/LOCAL.env
+    environment:
+      - REDIS_HOST=redis
     command: ["functions-framework", "--source=backend/pipeline/notification/send_notification.py", "--target=send_notification", "--signature-type=cloudevent", "--port=8081"]
     networks:
       - pipeline-network
     depends_on:
       - pubsub-emulator
+      - redis
 
   mock-server:
     image: python:3.11-slim
@@ -61,6 +85,27 @@ services:
       - ./local_dev/mock_server.py:/app/mock_server.py
     working_dir: /app
     command: python -u mock_server.py
+    networks:
+      - pipeline-network
+
+  integration-test:
+    image: python:3.11-slim
+    depends_on:
+      - pubsub-emulator
+      - rules-management
+      - rules-evaluation
+      - notification
+      - mock-server
+      - pubsub-init
+    env_file:
+      - ./local_dev/LOCAL.env
+    volumes:
+      - .:/app
+    working_dir: /app
+    environment:
+      - PYTHONPATH=/app
+    command: >
+      sh -c "pip install requests protobuf && python local_dev/test_evaluation_publish.py"
     networks:
       - pipeline-network
 

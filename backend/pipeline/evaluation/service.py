@@ -22,6 +22,7 @@ class EvaluationService:
         project_id: The GCP project ID.
         output_topic_id: ID of the topic to publish results to.
         output_topic_path: Full path to the output topic.
+        text_evaluator: The evaluator instance used to check transcripts.
     """
 
     def __init__(
@@ -29,6 +30,7 @@ class EvaluationService:
         publisher: pubsub_v1.PublisherClient,
         project_id: str | None,
         output_topic_id: str | None,
+        text_evaluator: evaluator.BaseTextEvaluator,
     ) -> None:
         """
         Initializes the EvaluationService.
@@ -37,10 +39,12 @@ class EvaluationService:
             publisher: Instance of pubsub_v1.PublisherClient.
             project_id: GCP Project ID for the output topic.
             output_topic_id: Topic ID to publish evaluation results.
+            text_evaluator: An instance of a text evaluator.
         """
         self.publisher = publisher
         self.project_id = project_id
         self.output_topic_id = output_topic_id
+        self.text_evaluator = text_evaluator
         if project_id and output_topic_id:
             self.output_topic_path = publisher.topic_path(project_id, output_topic_id)
         else:
@@ -72,9 +76,7 @@ class EvaluationService:
                 return
 
             # 2. Call the evaluator
-            evaluation_result = evaluator.StaticTextEvaluator.evaluate(
-                new_audio.transcript
-            )
+            evaluation_result = self.text_evaluator.evaluate(new_audio.transcript)
 
             logger.info(
                 "Decision for ID: %s is: %s",
