@@ -1,4 +1,4 @@
-from __future__ import annotations
+import os
 
 import asyncpg
 
@@ -73,3 +73,43 @@ async def create_pool(
 async def close_pool(pool: asyncpg.Pool) -> None:
     """Close an asyncpg connection pool."""
     await pool.close()
+
+
+async def create_pool_from_env() -> asyncpg.Pool:
+    """
+    Create an asyncpg connection pool using standard environment variables.
+
+    Reads configuration from:
+    - ALLOYDB_HOST (default: localhost)
+    - ALLOYDB_PORT (default: 6432)
+    - ALLOYDB_USER (default: postgres)
+    - ALLOYDB_DB (default: postgres)
+    - ALLOYDB_PASSWORD (default: "")
+    - DB_POOL_MIN_SIZE (default: 5)
+    - DB_POOL_MAX_SIZE (default: 5)
+    - DB_COMMAND_TIMEOUT_SEC (default: 30.0)
+    - DB_CONNECT_TIMEOUT_SEC (default: 10.0)
+    """
+    host = os.environ.get("ALLOYDB_HOST", "localhost")
+    port = int(os.environ.get("ALLOYDB_PORT", "6432"))
+    user = os.environ.get("ALLOYDB_USER", "postgres")
+    db_name = os.environ.get("ALLOYDB_DB", "postgres")
+    password = os.environ.get("ALLOYDB_PASSWORD", "")
+
+    min_size = int(os.environ.get("DB_POOL_MIN_SIZE", "5"))
+    max_size = int(os.environ.get("DB_POOL_MAX_SIZE", "5"))
+
+    command_timeout = float(os.environ.get("DB_COMMAND_TIMEOUT_SEC", "30.0"))
+    timeout = float(os.environ.get("DB_CONNECT_TIMEOUT_SEC", "10.0"))
+
+    return await create_pool(
+        host=host,
+        port=port,
+        user=user,
+        db_name=db_name,
+        password=password,
+        min_size=min_size,
+        max_size=max_size,
+        command_timeout=command_timeout,
+        timeout=timeout,
+    )

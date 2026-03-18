@@ -1,16 +1,38 @@
 from __future__ import annotations
 
-from fastapi import Depends, FastAPI, HTTPException, status
+import os
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException, status
 
 from backend.pipeline.common.auth import verify_oidc_token
 from backend.pipeline.common.rules.models import Rule, RuleCreate, RuleUpdate
+from backend.pipeline.storage.connection import close_pool, create_pool_from_env
+from backend.pipeline.storage.rules_store import RulesStore
 
-from .service import rules_service
+from .service import init_rules_service, rules_service
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage the lifecycle of the AlloyDB connection pool."""
+    use_mock = os.environ.get("USE_MOCK_RULES", "false").lower() == "true"
+    
+    if not use_mock:
+        pool = await create_pool_from_env()
+        store = RulesStore(pool)
+        init_rules_service(store)
+        yield
+        await close_pool(pool)
+    else:
+        yield
+
 
 app = FastAPI(
     title="Rules Management Service",
     description="API for creating, reading, updating, and deleting transcription rules.",
     version="1.0.0",
+    lifespan=lifespan,
     dependencies=[Depends(verify_oidc_token)],
 )
 
@@ -23,7 +45,7 @@ app = FastAPI(
 )
 async def create_rule(rule_in: RuleCreate) -> Rule:
     """Create a new transcription rule."""
-    return rules_service.create_rule(rule_in)
+    return await rules_service.create_rule(rule_in)
 
 
 @app.get(
@@ -33,7 +55,7 @@ async def create_rule(rule_in: RuleCreate) -> Rule:
 )
 async def list_rules() -> list[Rule]:
     """List all transcription rules."""
-    return rules_service.list_rules()
+    return await rules_service.list_rules()
 
 
 @app.get(
@@ -43,7 +65,7 @@ async def list_rules() -> list[Rule]:
 )
 async def get_rule(rule_id: str) -> Rule:
     """Fetch a specific transcription rule by ID."""
-    rule = rules_service.get_rule(rule_id)
+    rule = await rules_service.get_rule(rule_id)
     if not rule:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -59,7 +81,7 @@ async def get_rule(rule_id: str) -> Rule:
 )
 async def update_rule(rule_id: str, rule_in: RuleUpdate) -> Rule:
     """Fully update an existing transcription rule."""
-    rule = rules_service.update_rule(rule_id, rule_in)
+    rule = await rules_service.update_rule(rule_id, rule_in)
     if not rule:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -75,7 +97,7 @@ async def update_rule(rule_id: str, rule_in: RuleUpdate) -> Rule:
 )
 async def delete_rule(rule_id: str) -> None:
     """Delete a transcription rule."""
-    success = rules_service.delete_rule(rule_id)
+    success = await rules_service.delete_rule(rule_id)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

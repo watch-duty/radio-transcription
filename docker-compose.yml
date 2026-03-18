@@ -58,6 +58,9 @@ services:
     env_file:
       - ./local_dev/LOCAL.env
     command: ["uvicorn", "backend.pipeline.rules.main:app", "--host", "0.0.0.0", "--port", "8086"]
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - pipeline-network
 
@@ -89,14 +92,13 @@ services:
     networks:
       - pipeline-network
 
-  integration-tests:
-    image: python:3.13-slim
+  integration-test:
+    image: python:3.11-slim
     depends_on:
       - pubsub-emulator
       - rules-management
       - rules-evaluation
       - notification
-      - redis
       - mock-server
       - pubsub-init
     env_file:
@@ -110,6 +112,31 @@ services:
       sh -c "pip install uv && uv sync &&
       uv run python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto &&
       uv run pytest integration_tests/* -v"
+    networks:
+      - pipeline-network
+
+  temp-integration-test:
+    image: python:3.13-slim
+    depends_on:
+      - pubsub-emulator
+      - rules-management
+      - rules-evaluation
+      - notification
+      - mock-server
+      - pubsub-init
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     networks:
       - pipeline-network
 
