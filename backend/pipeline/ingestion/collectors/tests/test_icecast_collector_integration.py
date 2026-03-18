@@ -14,6 +14,7 @@ from testcontainers.core.container import DockerContainer
 from testcontainers.core.waiting_utils import wait_for_logs
 from testcontainers.postgres import PostgresContainer
 
+from backend.pipeline.common.clients.gcs_client import GcsClient
 from backend.pipeline.storage.feed_store import FeedStore
 
 # Must patch env vars BEFORE importing icecast_collector (module-level sys.exit guard)
@@ -111,7 +112,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         cls.db_container.stop()
 
     async def asyncSetUp(self) -> None:
-        """Create pool, truncate feeds, configure GCS singleton for fake server."""
+        """Create pool, truncate feeds, and configure a GCS client for fake server."""
         # DB setup
         self.pool = await asyncpg.create_pool(
             host=self._db_host,
@@ -126,18 +127,14 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.store = FeedStore(self.pool)
         self.worker_id = uuid.uuid4()
 
-        # GCS setup: reset default client manager and point at fake server.
-        # _get_default_clients().get_storage() creates Storage(session=s)
-        # without api_root.
-        # Storage.__init__ calls init_api_root(None) which checks
-        # STORAGE_EMULATOR_HOST env var. When set, _api_is_dev=True
-        # (disables SSL, _headers() returns {} skipping auth).
-        gcp_helper._get_default_clients.cache_clear()
+        # Point Storage at fake-gcs-server via emulator host and use an explicit
+        # client instance, since gcp_helper no longer exposes singleton helpers.
         os.environ["STORAGE_EMULATOR_HOST"] = self._gcs_url
+        self.gcs_client = GcsClient()
 
     async def asyncTearDown(self) -> None:
-        """Close GCS client, remove env var, close pool."""
-        await gcp_helper.close_client()
+        """Close GCS client, remove env var, and close pool."""
+        await self.gcs_client.close()
         os.environ.pop("STORAGE_EMULATOR_HOST", None)
         await self.pool.close()
 
@@ -244,6 +241,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             feed, shutdown
         ):
             gcs_path = await gcp_helper.upload_audio(
+                self.gcs_client,
                 flac_chunk,
                 feed,
                 _TEST_BUCKET,
@@ -300,7 +298,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             feed, shutdown
         ):
             gcs_path = await gcp_helper.upload_audio(
-                flac_chunk, feed, _TEST_BUCKET, seq
+                self.gcs_client, flac_chunk, feed, _TEST_BUCKET, seq
             )
             await self.store.update_feed_progress(
                 feed["id"],
@@ -354,7 +352,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             feed, shutdown
         ):
             gcs_path = await gcp_helper.upload_audio(
-                flac_chunk, feed, _TEST_BUCKET, seq
+                self.gcs_client, flac_chunk, feed, _TEST_BUCKET, seq
             )
             await self.store.update_feed_progress(
                 feed["id"],
@@ -433,7 +431,13 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         async for flac_chunk in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
-            gcs_path = await gcp_helper.upload_audio(flac_chunk, feed, _TEST_BUCKET, 0)
+            gcs_path = await gcp_helper.upload_audio(
+                self.gcs_client,
+                flac_chunk,
+                feed,
+                _TEST_BUCKET,
+                0,
+            )
             break  # Only need first chunk
 
         if gcs_path is None:
