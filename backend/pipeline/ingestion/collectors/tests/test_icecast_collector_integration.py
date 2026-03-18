@@ -14,6 +14,7 @@ from testcontainers.core.container import DockerContainer
 from testcontainers.core.waiting_utils import wait_for_logs
 from testcontainers.postgres import PostgresContainer
 
+from backend.pipeline.common.clients import gcs_client
 from backend.pipeline.storage.feed_store import FeedStore
 
 # Must patch env vars BEFORE importing icecast_collector (module-level sys.exit guard)
@@ -28,7 +29,7 @@ with (
 ):
     from backend.pipeline.ingestion.collectors import icecast_collector
 
-from backend.pipeline.ingestion import gcs  # noqa: E402
+from backend.pipeline.ingestion import gcp_helper  # noqa: E402
 
 _REPO_ROOT = Path(__file__).resolve().parents[5]
 _SQL_DIR = _REPO_ROOT / "terraform" / "modules" / "alloydb" / "sql" / "ingestion"
@@ -111,7 +112,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         cls.db_container.stop()
 
     async def asyncSetUp(self) -> None:
-        """Create pool, truncate feeds, configure GCS singleton for fake server."""
+        """Create pool, truncate feeds, and configure a GCS client for fake server."""
         # DB setup
         self.pool = await asyncpg.create_pool(
             host=self._db_host,
@@ -126,18 +127,14 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.store = FeedStore(self.pool)
         self.worker_id = uuid.uuid4()
 
-        # GCS setup: reset singleton and point at fake server
-        # gcs._get_storage() creates Storage(session=s) without api_root.
-        # Storage.__init__ calls init_api_root(None) which checks
-        # STORAGE_EMULATOR_HOST env var. When set, _api_is_dev=True
-        # (disables SSL, _headers() returns {} skipping auth).
-        gcs._session = None
-        gcs._storage = None
+        # Point Storage at fake-gcs-server via emulator host and use an explicit
+        # client instance, since gcp_helper no longer exposes singleton helpers.
         os.environ["STORAGE_EMULATOR_HOST"] = self._gcs_url
+        self.gcs_client = gcs_client.GcsClient()
 
     async def asyncTearDown(self) -> None:
-        """Close GCS client, remove env var, close pool."""
-        await gcs.close_client()
+        """Close GCS client, remove env var, and close pool."""
+        await self.gcs_client.close()
         os.environ.pop("STORAGE_EMULATOR_HOST", None)
         await self.pool.close()
 
@@ -243,7 +240,8 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         async for flac_chunk in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
-            gcs_path = await gcs.upload_audio(
+            gcs_path = await gcp_helper.upload_audio(
+                self.gcs_client,
                 flac_chunk,
                 feed,
                 _TEST_BUCKET,
@@ -299,7 +297,9 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         async for flac_chunk in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
-            gcs_path = await gcs.upload_audio(flac_chunk, feed, _TEST_BUCKET, seq)
+            gcs_path = await gcp_helper.upload_audio(
+                self.gcs_client, flac_chunk, feed, _TEST_BUCKET, seq
+            )
             await self.store.update_feed_progress(
                 feed["id"],
                 self.worker_id,
@@ -351,7 +351,9 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         async for flac_chunk in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
-            gcs_path = await gcs.upload_audio(flac_chunk, feed, _TEST_BUCKET, seq)
+            gcs_path = await gcp_helper.upload_audio(
+                self.gcs_client, flac_chunk, feed, _TEST_BUCKET, seq
+            )
             await self.store.update_feed_progress(
                 feed["id"],
                 self.worker_id,
@@ -429,7 +431,13 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         async for flac_chunk in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
-            gcs_path = await gcs.upload_audio(flac_chunk, feed, _TEST_BUCKET, 0)
+            gcs_path = await gcp_helper.upload_audio(
+                self.gcs_client,
+                flac_chunk,
+                feed,
+                _TEST_BUCKET,
+                0,
+            )
             break  # Only need first chunk
 
         if gcs_path is None:

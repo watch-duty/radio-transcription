@@ -1,35 +1,23 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import datetime
-import logging
 from typing import TYPE_CHECKING
 
-import aiohttp
-from gcloud.aio.storage import Storage
-
-_GCS_METADATA_SIZE_LIMIT = 8 * 1024  # 8 KiB in bytes
+from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 
 if TYPE_CHECKING:
+    from backend.pipeline.common.clients.gcs_client import GcsClient
+    from backend.pipeline.common.clients.pubsub_client import PubSubClient
     from backend.pipeline.schema_types.sed_metadata_pb2 import SedMetadata
     from backend.pipeline.storage.feed_store import LeasedFeed
 
-logger = logging.getLogger(__name__)
-
-_session: aiohttp.ClientSession | None = None
-_storage: Storage | None = None
+_GCS_METADATA_SIZE_LIMIT = 8 * 1024  # 8 KiB in bytes
 
 
-def _get_storage() -> Storage:
-    """Return a shared ``Storage`` client, creating one lazily."""
-    global _session, _storage  # noqa: PLW0603
-    if _storage is None:
-        _session = aiohttp.ClientSession()
-        _storage = Storage(session=_session)
-    return _storage
-
-
-async def upload_audio(
+async def upload_audio(  # noqa: PLR0913
+    gcs_client: GcsClient,
     audio_chunk: bytes,
     feed: LeasedFeed,
     bucket: str,
@@ -43,6 +31,7 @@ async def upload_audio(
     ``{source_type}/{feed_id}/{timestamp}_{seq}.flac``
 
     Args:
+        gcs_client: Shared GCS client manager used for upload.
         audio_chunk: Raw audio bytes to upload.
         feed: The leased feed this chunk belongs to.
         bucket: GCS bucket name.
@@ -52,28 +41,29 @@ async def upload_audio(
     Returns:
         The full GCS path (``gs://bucket/object``).
 
+    Raises:
+        ValueError: If encoded metadata size exceeds GCS metadata limits.
+
     """
-    storage = _get_storage()
+    storage = gcs_client.get_storage()
     timestamp = datetime.datetime.now(tz=datetime.UTC).strftime(
         "%Y%m%dT%H%M%SZ",
     )
     object_name = f"{feed['source_type']}/{feed['id']}/{timestamp}_{chunk_seq}.flac"
     metadata = None
     if sed_metadata:
-        # Serialize the SED metadata proto and encode it as a base64 string.
         sed_metadata_bytes = sed_metadata.SerializeToString()
-        # Decode to string because GCS metadata values must be strings
         encoded_metadata = base64.b64encode(sed_metadata_bytes).decode("ascii")
         metadata = {"sed_metadata": encoded_metadata}
 
-        # Validate metadata size doesn't exceed GCS limit (8 KiB)
         metadata_size = sum(
-            len(k.encode()) + len(v.encode()) for k, v in metadata.items()
+            len(key.encode()) + len(value.encode()) for key, value in metadata.items()
         )
         if metadata_size > _GCS_METADATA_SIZE_LIMIT:
             msg = (
                 f"Metadata size ({metadata_size} bytes) exceeds GCS limit "
-                f"({_GCS_METADATA_SIZE_LIMIT} bytes) for object '{object_name}'"
+                f"({_GCS_METADATA_SIZE_LIMIT} bytes) for object "
+                f"'{object_name}'"
             )
             raise ValueError(msg)
 
@@ -86,12 +76,23 @@ async def upload_audio(
     return f"gs://{bucket}/{object_name}"
 
 
-async def close_client() -> None:
-    """Close the shared GCS client and aiohttp session."""
-    global _session, _storage  # noqa: PLW0603
-    if _storage is not None:
-        await _storage.close()
-        _storage = None
-    if _session is not None:
-        await _session.close()
-        _session = None
+async def publish_audio_chunk(
+    pubsub_client: PubSubClient,
+    topic_path: str,
+    feed_id: str,
+    gcs_uri: str,
+) -> str:
+    """Publish a GCS audio chunk URI to Pub/Sub and return message ID."""
+    publisher = pubsub_client.get_publisher()
+
+    audio_chunk_msg = AudioChunk(gcs_uri=gcs_uri)
+    now = datetime.datetime.now(tz=datetime.UTC)
+    audio_chunk_msg.start_timestamp.FromDatetime(now)
+
+    future = publisher.publish(
+        topic_path,
+        audio_chunk_msg.SerializeToString(),
+        feed_id=feed_id,
+        ordering_key=feed_id,
+    )
+    return await asyncio.to_thread(future.result)
