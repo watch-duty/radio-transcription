@@ -6,8 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from google.protobuf.duration_pb2 import Duration  # type: ignore
 
-from backend.pipeline.common.clients.gcs_client import GcsClient
-from backend.pipeline.common.clients.pubsub_client import PubSubClient
+from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.ingestion import gcp_helper
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.schema_types.sed_metadata_pb2 import SedMetadata, SoundEvent
@@ -26,7 +25,7 @@ def _make_feed(source_type: str, feed_id: int) -> LeasedFeed:
 
 def _make_gcs_client() -> tuple[MagicMock, AsyncMock]:
     """Create a mock GcsClient and its underlying Storage."""
-    mock_gcs_client = MagicMock(spec=GcsClient)
+    mock_gcs_client = MagicMock(spec=gcs_client.GcsClient)
     mock_storage = AsyncMock()
     mock_gcs_client.get_storage.return_value = mock_storage
     return mock_gcs_client, mock_storage
@@ -34,7 +33,7 @@ def _make_gcs_client() -> tuple[MagicMock, AsyncMock]:
 
 def _make_pubsub_client() -> tuple[MagicMock, MagicMock]:
     """Create a mock PubSubClient and its underlying publisher."""
-    mock_pubsub_client = MagicMock(spec=PubSubClient)
+    mock_pubsub_client = MagicMock(spec=pubsub_client.PubSubClient)
     mock_publisher = MagicMock()
     mock_pubsub_client.get_publisher.return_value = mock_publisher
     return mock_pubsub_client, mock_publisher

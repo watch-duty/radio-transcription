@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-from backend.pipeline.common.clients.gcs_client import GcsClient
+from backend.pipeline.common.clients import gcs_client
 
 
 class TestGcsClient(unittest.IsolatedAsyncioTestCase):
@@ -17,7 +17,7 @@ class TestGcsClient(unittest.IsolatedAsyncioTestCase):
         mock_storage_cls: mock.MagicMock,
     ) -> None:
         """Storage and session are created once and reused."""
-        client = GcsClient()
+        client = gcs_client.GcsClient()
 
         mock_session = mock.MagicMock()
         mock_storage = mock.MagicMock()
@@ -40,7 +40,7 @@ class TestGcsClient(unittest.IsolatedAsyncioTestCase):
         mock_storage_cls: mock.MagicMock,
     ) -> None:
         """close() releases initialized resources and clears references."""
-        client = GcsClient()
+        client = gcs_client.GcsClient()
 
         mock_session = mock.AsyncMock()
         mock_storage = mock.AsyncMock()
@@ -57,7 +57,7 @@ class TestGcsClient(unittest.IsolatedAsyncioTestCase):
 
     async def test_close_is_noop_when_not_initialized(self) -> None:
         """close() does not fail when get_storage() was never called."""
-        client = GcsClient()
+        client = gcs_client.GcsClient()
 
         await client.close()
 

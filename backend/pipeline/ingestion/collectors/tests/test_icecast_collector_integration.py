@@ -14,7 +14,7 @@ from testcontainers.core.container import DockerContainer
 from testcontainers.core.waiting_utils import wait_for_logs
 from testcontainers.postgres import PostgresContainer
 
-from backend.pipeline.common.clients.gcs_client import GcsClient
+from backend.pipeline.common.clients import gcs_client
 from backend.pipeline.storage.feed_store import FeedStore
 
 # Must patch env vars BEFORE importing icecast_collector (module-level sys.exit guard)
@@ -130,7 +130,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         # Point Storage at fake-gcs-server via emulator host and use an explicit
         # client instance, since gcp_helper no longer exposes singleton helpers.
         os.environ["STORAGE_EMULATOR_HOST"] = self._gcs_url
-        self.gcs_client = GcsClient()
+        self.gcs_client = gcs_client.GcsClient()
 
     async def asyncTearDown(self) -> None:
         """Close GCS client, remove env var, and close pool."""

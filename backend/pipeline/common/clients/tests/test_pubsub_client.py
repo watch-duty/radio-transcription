@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-from backend.pipeline.common.clients.pubsub_client import PubSubClient
+from backend.pipeline.common.clients import pubsub_client
 
 
 class TestPubSubClient(unittest.IsolatedAsyncioTestCase):
@@ -15,7 +15,7 @@ class TestPubSubClient(unittest.IsolatedAsyncioTestCase):
         mock_pubsub_v1: mock.MagicMock,
     ) -> None:
         """Publisher options/client are created once and then reused."""
-        client = PubSubClient()
+        client = pubsub_client.PubSubClient()
 
         mock_options = mock.MagicMock()
         mock_publisher = mock.MagicMock()
@@ -42,7 +42,7 @@ class TestPubSubClient(unittest.IsolatedAsyncioTestCase):
         mock_to_thread: mock.AsyncMock,
     ) -> None:
         """close() calls stop in a worker thread and clears state."""
-        client = PubSubClient()
+        client = pubsub_client.PubSubClient()
 
         mock_options = mock.MagicMock()
         mock_publisher = mock.MagicMock()
@@ -61,7 +61,7 @@ class TestPubSubClient(unittest.IsolatedAsyncioTestCase):
         mock_to_thread: mock.AsyncMock,
     ) -> None:
         """close() does not call stop when publisher was never created."""
-        client = PubSubClient()
+        client = pubsub_client.PubSubClient()
 
         await client.close()
 
