@@ -20,6 +20,8 @@ dependencies = [
     "fastapi>=0.110.0",
     "uvicorn>=0.27.0",
     "redis>=7.3.0",
+    "soundfile>=0.12.1",
+    "numpy>=1.24.0",
 ]
 
 [tool.uv]
@@ -37,7 +39,6 @@ dev = [
   "grpcio-tools>=1.65.5",
   "testcontainers[postgres]",
   "docker",
-  "numpy>=1.24.0",
   "httpx",
   "fakeredis",
 ]

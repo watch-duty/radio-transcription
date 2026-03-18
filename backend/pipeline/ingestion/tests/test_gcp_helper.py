@@ -339,5 +339,149 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mock_publisher.publish.call_count, 2)
 
 
+class TestParseGcsUri(unittest.TestCase):
+    """Tests for the parse_gcs_uri function."""
+
+    def test_valid_uri(self) -> None:
+        bucket, obj = gcp_helper.parse_gcs_uri("gs://my-bucket/path/to/file.flac")
+        self.assertEqual(bucket, "my-bucket")
+        self.assertEqual(obj, "path/to/file.flac")
+
+    def test_bucket_only(self) -> None:
+        bucket, obj = gcp_helper.parse_gcs_uri("gs://my-bucket")
+        self.assertEqual(bucket, "my-bucket")
+        self.assertEqual(obj, "")
+
+    def test_rejects_non_gs_scheme(self) -> None:
+        with self.assertRaises(ValueError):
+            gcp_helper.parse_gcs_uri("https://bucket/obj")
+
+    def test_rejects_embedded_gs_prefix(self) -> None:
+        with self.assertRaises(ValueError):
+            gcp_helper.parse_gcs_uri("https://evil.com/gs://bucket/obj")
+
+
+class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
+    """Tests for the download_audio function."""
+
+    async def test_download_parses_uri_and_returns_bytes(self) -> None:
+        mock_gcs_client, mock_storage = _make_gcs_client()
+        mock_storage.download = AsyncMock(return_value=b"audio-data")
+
+        result = await gcp_helper.download_audio(
+            mock_gcs_client,
+            "gs://my-bucket/path/to/audio.flac",
+        )
+
+        mock_storage.download.assert_called_once_with("my-bucket", "path/to/audio.flac")
+        self.assertEqual(result, b"audio-data")
+
+    async def test_download_rejects_non_gs_uri(self) -> None:
+        mock_gcs_client, _ = _make_gcs_client()
+
+        with self.assertRaises(ValueError) as ctx:
+            await gcp_helper.download_audio(
+                mock_gcs_client,
+                "https://example.com/file.flac",
+            )
+
+        self.assertIn("Expected gs:// URI", str(ctx.exception))
+
+
+class TestUploadNormalizedAudio(unittest.IsolatedAsyncioTestCase):
+    """Tests for the upload_normalized_audio function."""
+
+    async def test_upload_with_correct_bucket_and_object_name(self) -> None:
+        mock_gcs_client, mock_storage = _make_gcs_client()
+
+        audio = b"flac-audio-bytes"
+        bucket = "canonical-bucket"
+        object_name = "bcfy_feeds/abc/20260305T120000Z_0.flac"
+
+        result = await gcp_helper.upload_normalized_audio(
+            mock_gcs_client,
+            audio,
+            bucket,
+            object_name,
+        )
+
+        mock_storage.upload.assert_called_once_with(
+            bucket,
+            object_name,
+            audio,
+            metadata=None,
+            content_type="audio/flac",
+        )
+        self.assertEqual(result, f"gs://{bucket}/{object_name}")
+
+    async def test_upload_with_sed_metadata(self) -> None:
+        mock_gcs_client, mock_storage = _make_gcs_client()
+
+        audio = b"flac-audio-bytes"
+        bucket = "canonical-bucket"
+        object_name = "feeds/abc/audio.flac"
+
+        sed_metadata = SedMetadata(
+            source_chunk_id="gs://canonical-bucket/feeds/abc/audio.flac",
+        )
+        event = SoundEvent(
+            start_time=Duration(seconds=1, nanos=500_000_000),
+            duration=Duration(seconds=2, nanos=0),
+        )
+        sed_metadata.sound_events.append(event)
+
+        result = await gcp_helper.upload_normalized_audio(
+            mock_gcs_client,
+            audio,
+            bucket,
+            object_name,
+            sed_metadata=sed_metadata,
+        )
+
+        mock_storage.upload.assert_called_once()
+        call_kwargs = mock_storage.upload.call_args
+        metadata = call_kwargs.kwargs.get("metadata") or call_kwargs[1].get("metadata")
+        self.assertIn("sed_metadata", metadata)
+
+        decoded = base64.b64decode(metadata["sed_metadata"])
+        parsed = SedMetadata()
+        parsed.ParseFromString(decoded)
+        self.assertEqual(len(parsed.sound_events), 1)
+        self.assertEqual(parsed.sound_events[0].start_time.seconds, 1)
+
+        self.assertEqual(result, f"gs://{bucket}/{object_name}")
+
+    async def test_upload_no_metadata_when_none(self) -> None:
+        mock_gcs_client, mock_storage = _make_gcs_client()
+
+        await gcp_helper.upload_normalized_audio(
+            mock_gcs_client,
+            b"audio",
+            "bucket",
+            "obj.flac",
+        )
+
+        call_kwargs = mock_storage.upload.call_args
+        metadata = call_kwargs.kwargs.get("metadata") or call_kwargs[1].get("metadata")
+        self.assertIsNone(metadata)
+
+    async def test_upload_raises_when_metadata_exceeds_limit(self) -> None:
+        mock_gcs_client, mock_storage = _make_gcs_client()
+
+        sed_metadata = SedMetadata(source_chunk_id="x" * 10000)
+
+        with self.assertRaises(ValueError) as ctx:
+            await gcp_helper.upload_normalized_audio(
+                mock_gcs_client,
+                b"audio",
+                "bucket",
+                "obj.flac",
+                sed_metadata=sed_metadata,
+            )
+
+        self.assertIn("exceeds GCS limit", str(ctx.exception))
+        mock_storage.upload.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
