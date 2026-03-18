@@ -37,7 +37,6 @@ deduplication = NotificationDeduplication(RedisService())
 
 request_handler = RequestHandler(logger)
 
-
 def parse_cloud_event(cloud_event: CloudEvent) -> EvaluatedTranscribedAudio | None:
     pubsub_message = cloud_event.data.get("message", {})
     evaluated_transcribed_audio = EvaluatedTranscribedAudio()
