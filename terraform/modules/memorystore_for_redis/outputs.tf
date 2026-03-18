@@ -15,8 +15,8 @@ output "password" {
   sensitive   = true # Hidden from terraform logging
 }
 
-output "certificates" {
+output "certificate" {
   description = "TLS certificates in PEM file format."
-  value       = google_redis_instance.this.server_ca_certs
+  value       = google_redis_instance.this.server_ca_certs[0].cert
   sensitive   = true
 }
