@@ -5,6 +5,7 @@ import base64
 import datetime
 from typing import TYPE_CHECKING
 
+from backend.pipeline.common.constants import GCS_METADATA_SIZE_LIMIT
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 
 if TYPE_CHECKING:
@@ -12,8 +13,6 @@ if TYPE_CHECKING:
     from backend.pipeline.common.clients.pubsub_client import PubSubClient
     from backend.pipeline.schema_types.sed_metadata_pb2 import SedMetadata
     from backend.pipeline.storage.feed_store import LeasedFeed
-
-_GCS_METADATA_SIZE_LIMIT = 8 * 1024  # 8 KiB in bytes
 
 
 async def upload_audio(  # noqa: PLR0913
@@ -59,10 +58,10 @@ async def upload_audio(  # noqa: PLR0913
         metadata_size = sum(
             len(key.encode()) + len(value.encode()) for key, value in metadata.items()
         )
-        if metadata_size > _GCS_METADATA_SIZE_LIMIT:
+        if metadata_size > GCS_METADATA_SIZE_LIMIT:
             msg = (
                 f"Metadata size ({metadata_size} bytes) exceeds GCS limit "
-                f"({_GCS_METADATA_SIZE_LIMIT} bytes) for object "
+                f"({GCS_METADATA_SIZE_LIMIT} bytes) for object "
                 f"'{object_name}'"
             )
             raise ValueError(msg)
@@ -178,10 +177,10 @@ async def upload_normalized_audio(
         metadata_size = sum(
             len(key.encode()) + len(value.encode()) for key, value in metadata.items()
         )
-        if metadata_size > _GCS_METADATA_SIZE_LIMIT:
+        if metadata_size > GCS_METADATA_SIZE_LIMIT:
             msg = (
                 f"Metadata size ({metadata_size} bytes) exceeds GCS limit "
-                f"({_GCS_METADATA_SIZE_LIMIT} bytes) for object "
+                f"({GCS_METADATA_SIZE_LIMIT} bytes) for object "
                 f"'{object_name}'"
             )
             raise ValueError(msg)

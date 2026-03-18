@@ -17,6 +17,7 @@ from cloudevents.http.event import (
 
 from backend.pipeline.common.clients.gcs_client import GcsClient
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
+from backend.pipeline.common.constants import AUDIO_SAMPLE_RATE
 from backend.pipeline.detection.detector_executor import DetectorExecutor
 from backend.pipeline.detection.detector_factory import DetectorFactory
 from backend.pipeline.detection.sidecar_builder import SidecarBuilder
@@ -30,8 +31,6 @@ from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 
 if TYPE_CHECKING:
     import numpy as np
-
-_EXPECTED_SAMPLE_RATE = 16_000
 
 logger = logging.getLogger(__name__)
 
@@ -124,11 +123,11 @@ async def normalize(cloud_event: CloudEvent) -> None:
         logger.exception("Failed to decode FLAC from %s (permanent)", gcs_uri)
         return
 
-    if sample_rate != _EXPECTED_SAMPLE_RATE:
+    if sample_rate != AUDIO_SAMPLE_RATE:
         logger.error(
             "Unexpected sample rate %d (expected %d) for %s (permanent)",
             sample_rate,
-            _EXPECTED_SAMPLE_RATE,
+            AUDIO_SAMPLE_RATE,
             gcs_uri,
         )
         return
