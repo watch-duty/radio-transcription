@@ -11,11 +11,9 @@ from collections.abc import AsyncIterator, Callable
 import aiohttp
 import asyncpg
 
-from backend.pipeline.ingestion.gcp_helper import (
-    close_client,
-    publish_audio_chunk,
-    upload_audio,
-)
+from backend.pipeline.common.clients.gcs_client import GcsClient
+from backend.pipeline.common.clients.pubsub_client import PubSubClient
+from backend.pipeline.ingestion.gcp_helper import publish_audio_chunk, upload_audio
 from backend.pipeline.ingestion.retry import LeaseExpiredError, retry_with_lease_check
 from backend.pipeline.ingestion.settings import NormalizerSettings
 from backend.pipeline.storage.connection import close_pool, create_pool
@@ -95,6 +93,8 @@ class NormalizerRuntime:
         self._heartbeat_thread: threading.Thread | None = None
         self._store: FeedStore = None  # type: ignore # set in _main()
         self._heartbeat_store: FeedStore = None  # type: ignore # set in _main()
+        self._gcs_client = GcsClient()
+        self._pubsub_client = PubSubClient()
 
     # -- Entry point ------------------------------------------------------
 
@@ -316,6 +316,7 @@ class NormalizerRuntime:
             ):
                 gcs_uri = await retry_with_lease_check(
                     upload_audio,
+                    self._gcs_client,
                     audio_chunk,
                     feed,
                     settings.audio_staging_bucket,
@@ -329,6 +330,7 @@ class NormalizerRuntime:
                     operation_name="GCS upload",
                 )
                 message_id = await publish_audio_chunk(
+                    self._pubsub_client,
                     self._normalizer_settings.pubsub_topic_path,
                     str(feed["id"]),
                     gcs_uri,
@@ -607,7 +609,8 @@ class NormalizerRuntime:
                 timeout=self._normalizer_settings.graceful_shutdown_timeout_sec,
             )
 
-        await close_client()
+        await self._pubsub_client.close()
+        await self._gcs_client.close()
 
         # Heartbeat pool close may raise if the heartbeat cycle was
         # mid-query when we stopped the thread — harmless during shutdown.

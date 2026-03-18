@@ -466,17 +466,17 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
         rt._store = mock.AsyncMock()
         rt._data_pool = mock.AsyncMock()
         rt._heartbeat_pool = mock.AsyncMock()
+        rt._pubsub_client = mock.AsyncMock()
+        rt._gcs_client = mock.AsyncMock()
 
         task = asyncio.create_task(asyncio.sleep(1000))
         rt._feed_tasks[_FEED_ID] = task
 
-        with mock.patch(
-            "backend.pipeline.ingestion.normalizer_runtime.close_client",
-            new_callable=mock.AsyncMock,
-        ):
-            await rt._shutdown_sequence()
+        await rt._shutdown_sequence()
 
         self.assertTrue(task.cancelled())
+        rt._pubsub_client.close.assert_awaited_once()
+        rt._gcs_client.close.assert_awaited_once()
 
     async def test_closes_pools(self) -> None:
         """Both pools are closed during shutdown."""
@@ -487,21 +487,19 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
         rt._store = mock.AsyncMock()
         rt._data_pool = mock.AsyncMock()
         rt._heartbeat_pool = mock.AsyncMock()
+        rt._pubsub_client = mock.AsyncMock()
+        rt._gcs_client = mock.AsyncMock()
 
-        with (
-            mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.close_client",
-                new_callable=mock.AsyncMock,
-            ),
-            mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.close_pool",
-                new_callable=mock.AsyncMock,
-            ) as mock_close_pool,
-        ):
+        with mock.patch(
+            "backend.pipeline.ingestion.normalizer_runtime.close_pool",
+            new_callable=mock.AsyncMock,
+        ) as mock_close_pool:
             await rt._shutdown_sequence()
 
         rt._heartbeat_pool.close.assert_awaited_once()
         mock_close_pool.assert_awaited_once_with(rt._data_pool)
+        rt._pubsub_client.close.assert_awaited_once()
+        rt._gcs_client.close.assert_awaited_once()
 
 
 class TestHeartbeatLoopSetsLeaseLost(unittest.IsolatedAsyncioTestCase):
