@@ -36,7 +36,7 @@ class RedisService(CacheProvider):
 
     def set_if_not_exists(self, key: str, value: str, ttl: int) -> bool:
         """
-        Set a key/value pair in the Redis instance. Returns True if the key already exists,
-        or None if it does not.
+        Set a key/value pair in the Redis instance. Returns True if the key does not exist,
+        or False if does.
         """
         return bool(self.client.set(key, value, nx=True, ex=ttl))

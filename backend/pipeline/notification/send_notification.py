@@ -85,7 +85,7 @@ def send_notification(cloud_event: CloudEvent) -> None:
         logger.info(f"Sending payload: {request_data}")
 
         notification_id = alert_notification.transmission_id
-        if deduplication.process_notification(notification_id):
+        if not deduplication.process_notification(notification_id):
             message = f"Duplicate transmission_id detected, skipping notification with ID: {notification_id}"
             logger.warning(message)
             return
