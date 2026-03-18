@@ -33,7 +33,7 @@ services:
       - ./local_dev/LOCAL.env
     volumes:
       - ./local_dev/test_evaluation_publish.py:/app/test_evaluation_publish.py
-    command: ["functions-framework", "--source=backend/pipeline/evaluation/evaluation_core.py", "--target=evaluate_transcribed_audio_segment", "--signature-type=cloudevent", "--port=8080"]
+    command: ["functions-framework", "--source=backend/pipeline/evaluation/main.py", "--target=evaluate_transcribed_audio_segment", "--signature-type=cloudevent", "--port=8080"]
     networks:
       - pipeline-network
     depends_on:
