@@ -26,7 +26,7 @@ _FEED = LeasedFeed(
 def _mock_pubsub_publish(message_id: str = "test-message-id") -> mock._patch:
     """Patch publish_audio_chunk to return a fixed message id (at call site)."""
     return mock.patch(
-        "backend.pipeline.ingestion.normalizer_runtime.publish_audio_chunk",
+        "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.publish_audio_chunk",
         new_callable=mock.AsyncMock,
         return_value=message_id,
     )
@@ -35,7 +35,7 @@ def _mock_pubsub_publish(message_id: str = "test-message-id") -> mock._patch:
 def _mock_upload_audio(gcs_path: str = "gs://b/p") -> mock._patch:
     """Patch upload_audio to return a deterministic GCS path."""
     return mock.patch(
-        "backend.pipeline.ingestion.normalizer_runtime.upload_audio",
+        "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.upload_audio",
         new_callable=mock.AsyncMock,
         return_value=gcs_path,
     )
@@ -585,7 +585,7 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
 
         with (
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.upload_audio",
+                "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.upload_audio",
                 upload_mock,
             ),
             _mock_pubsub_publish(),
@@ -610,7 +610,7 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
 
         with (
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.upload_audio",
+                "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.upload_audio",
                 mock.AsyncMock(return_value="gs://b/p"),
             ),
             _mock_pubsub_publish(),
@@ -643,7 +643,7 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
 
         with (
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.upload_audio",
+                "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.upload_audio",
                 mock.AsyncMock(return_value="gs://b/p"),
             ),
             _mock_pubsub_publish(),
