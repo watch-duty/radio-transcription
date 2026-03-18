@@ -26,7 +26,7 @@ class TestSendNotification(TestCase):
     def test_send_notification(
         self, mock_post: mock.Mock, mock_dedupe: mock.Mock
     ) -> None:
-        mock_dedupe.process_notification.return_value = False
+        mock_dedupe.process_notification.return_value = True
 
         mock_response = mock.MagicMock()
         mock_post.return_value = mock_response
@@ -62,8 +62,8 @@ class TestSendNotification(TestCase):
     def test_duplicate_message(
         self, mock_post: mock.Mock, mock_dedupe: mock.Mock
     ) -> None:
-        # Setting this to True indicates a duplicate.
-        mock_dedupe.process_notification.return_value = True
+        # Setting this to False indicates a duplicate.
+        mock_dedupe.process_notification.return_value = False
 
         mock_response = mock.MagicMock()
         mock_post.return_value = mock_response
@@ -90,7 +90,7 @@ class TestSendNotification(TestCase):
     @mock.patch("backend.pipeline.notification.send_notification.deduplication")
     @mock.patch("backend.pipeline.notification.send_notification.requests.post")
     def test_post_error(self, mock_post: mock.Mock, mock_dedupe: mock.Mock) -> None:
-        mock_dedupe.process_notification.return_value = False
+        mock_dedupe.process_notification.return_value = True
 
         mock_response = mock.MagicMock()
         mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError(

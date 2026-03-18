@@ -11,9 +11,9 @@ class MockCacheProvider(CacheProvider):
 
     def set_if_not_exists(self, key: str, value: str, ttl: int) -> bool:
         if key in self.cache:
-            return True
+            return False
         self.cache[key] = value
-        return False
+        return True
 
     def get_value(self, key: str) -> str | None:
         if key in self.cache:
