@@ -1,4 +1,4 @@
-from backend.common.storage.cache_provider import CacheProvider
+from backend.pipeline.common.storage.cache_provider import CacheProvider
 
 
 class MockCacheProvider(CacheProvider):

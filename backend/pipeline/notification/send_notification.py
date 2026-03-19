@@ -8,7 +8,7 @@ import requests
 from cloudevents.http.event import CloudEvent
 from google.protobuf.json_format import MessageToJson
 
-from backend.common.storage.redis_service import RedisService
+from backend.pipeline.common.storage.redis_service import RedisService
 from backend.pipeline.notification.notification_deduplication import (
     NotificationDeduplication,
 )
