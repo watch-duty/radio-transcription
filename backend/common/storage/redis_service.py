@@ -14,6 +14,7 @@ DEFAULT_REDIS_PORT = "6379"
 REDIS_HOST = os.environ.get("REDIS_HOST", "127.0.0.1")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", DEFAULT_REDIS_PORT))
 REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD")
+REDIS_CERTIFICATE_PATH = os.environ.get("REDIS_CERTIFICATE_PATH", "")
 
 
 class RedisService(CacheProvider):
@@ -24,10 +25,14 @@ class RedisService(CacheProvider):
 
     def __init__(self) -> None:
         retry = Retry(ExponentialBackoff(), NUM_CONNECTION_RETRIES)
+        ssl_enabled = not os.environ.get("LOCAL_DEV")
         self.client = Redis(
             host=REDIS_HOST,
             port=REDIS_PORT,
             password=REDIS_PASSWORD,
+            ssl=ssl_enabled,
+            ssl_cert_reqs="required" if ssl_enabled else "none",
+            ssl_ca_path=f"{REDIS_CERTIFICATE_PATH}/server_ca.pem" if ssl_enabled else None,
             db=0,
             decode_responses=True,
             retry=retry,
