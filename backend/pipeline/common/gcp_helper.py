@@ -54,7 +54,7 @@ def _build_sed_metadata(
 # -----------------------------------------------------------------------------
 
 
-async def upload_staged_audio(  # noqa: PLR0913
+async def upload_staged_audio(
     gcs_client: GcsClient,
     audio_chunk: bytes,
     feed: LeasedFeed,
