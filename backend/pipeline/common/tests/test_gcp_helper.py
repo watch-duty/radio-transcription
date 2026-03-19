@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from google.protobuf.duration_pb2 import Duration  # type: ignore
 
-from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.common import gcp_helper
+from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.schema_types.sed_metadata_pb2 import SedMetadata, SoundEvent
 from backend.pipeline.storage.feed_store import LeasedFeed

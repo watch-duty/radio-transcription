@@ -11,8 +11,8 @@ from collections.abc import AsyncIterator, Callable
 import aiohttp
 import asyncpg
 
-from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.common import gcp_helper
+from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.ingestion.retry import LeaseExpiredError, retry_with_lease_check
 from backend.pipeline.ingestion.settings import NormalizerSettings
 from backend.pipeline.storage.connection import close_pool, create_pool
