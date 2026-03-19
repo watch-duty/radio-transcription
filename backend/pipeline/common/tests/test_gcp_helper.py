@@ -42,7 +42,7 @@ def _make_pubsub_client() -> tuple[MagicMock, MagicMock]:
 class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
     """Test suite for the upload_audio function."""
 
-    @patch("backend.pipeline.ingestion.gcp_helper.datetime")
+    @patch("backend.pipeline.common.gcp_helper.datetime")
     async def test_upload_audio_with_sed_metadata(
         self,
         mock_datetime: MagicMock,
@@ -92,7 +92,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result, expected_path)
 
-    @patch("backend.pipeline.ingestion.gcp_helper.datetime")
+    @patch("backend.pipeline.common.gcp_helper.datetime")
     async def test_upload_audio_success(
         self,
         mock_datetime: MagicMock,
@@ -124,7 +124,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result, expected_path)
 
-    @patch("backend.pipeline.ingestion.gcp_helper.datetime")
+    @patch("backend.pipeline.common.gcp_helper.datetime")
     async def test_upload_audio_empty_chunk(
         self,
         mock_datetime: MagicMock,
@@ -156,7 +156,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result, expected_path)
 
-    @patch("backend.pipeline.ingestion.gcp_helper.datetime")
+    @patch("backend.pipeline.common.gcp_helper.datetime")
     async def test_upload_audio_storage_exception(
         self,
         mock_datetime: MagicMock,
@@ -200,7 +200,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         # Assert - Both uploads went through the storage returned by the client
         self.assertEqual(mock_storage.upload.call_count, 2)
 
-    @patch("backend.pipeline.ingestion.gcp_helper.datetime")
+    @patch("backend.pipeline.common.gcp_helper.datetime")
     async def test_upload_audio_high_sequence_number(
         self,
         mock_datetime: MagicMock,
@@ -229,7 +229,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, expected_path)
 
-    @patch("backend.pipeline.ingestion.gcp_helper.datetime")
+    @patch("backend.pipeline.common.gcp_helper.datetime")
     async def test_upload_audio_metadata_too_large_raises(
         self,
         mock_datetime: MagicMock,
@@ -268,10 +268,10 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
     """Test suite for the publish_audio_chunk function."""
 
     @patch(
-        "backend.pipeline.ingestion.gcp_helper.asyncio.to_thread",
+        "backend.pipeline.common.gcp_helper.asyncio.to_thread",
         new_callable=AsyncMock,
     )
-    @patch("backend.pipeline.ingestion.gcp_helper.datetime")
+    @patch("backend.pipeline.common.gcp_helper.datetime")
     async def test_publish_audio_chunk_sets_timestamp_and_ordering_key(
         self,
         mock_datetime: MagicMock,
@@ -309,7 +309,7 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
         mock_to_thread.assert_awaited_once_with(mock_future.result)
 
     @patch(
-        "backend.pipeline.ingestion.gcp_helper.asyncio.to_thread",
+        "backend.pipeline.common.gcp_helper.asyncio.to_thread",
         new_callable=AsyncMock,
     )
     async def test_publish_audio_chunk_returns_message_id(
