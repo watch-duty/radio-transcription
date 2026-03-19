@@ -22,6 +22,7 @@ dependencies = [
     "redis>=7.3.0",
     "soundfile>=0.12.1",
     "numpy>=1.24.0",
+    "scipy>=1.11.0",
 ]
 
 [tool.uv]
@@ -41,6 +42,7 @@ dev = [
   "docker",
   "httpx",
   "fakeredis",
+  "pytest>=9.0.2",
 ]
 
 [tool.ruff]
@@ -49,75 +51,23 @@ extend-exclude = ["model/colabs", "backend/pipeline/schema_types", "**/*_pb2.py"
 [tool.ruff.lint]
 select = ["ALL"]
 ignore = [
-  # Do not enable
-  "PT009",  # Use a regular `assert` instead of unittest-style `assertEqual`
-  "PT027",  # Use `pytest.raises` instead of unittest-style `assertRaises`
-  "SIM105", # Use `contextlib.suppress(ObjectDoesNotExist)` instead of `try`-`except`-`pass`
-
-  # Large task or needs detailed attention
-  "ANN401",  # Dynamically typed expressions (typing.Any) are disallowed in `instance`
-  "PGH003",  # Use specific rule codes when ignoring type issues
-  "PLR2004", # Magic value used in comparison, consider replacing `2` with a constant variable
-  "S301",    # `pickle` and modules that wrap it can be unsafe when used to deserialize untrusted data, possible security issue
-  "S303",    # Use of insecure MD2, MD4, MD5, or SHA1 hash function
-  "S308",    # Use of `mark_safe` may expose cross-site scripting vulnerabilities
-  "S314",    # Using `xml` to parse untrusted data is known to be vulnerable to XML attacks; use `defusedxml` equivalents
-  "S324",    # Probable use of insecure hash functions in `hashlib`: `md5`
-  "S603",    # `subprocess` call: check for execution of untrusted input
-
-  # Trivial
+  "ANN401",  # Dynamically typed expressions (typing.Any) are disallowed
   "ARG001",  # Unused function argument
   "ARG002",  # Unused method argument
-  "ARG003",  # Unused class method argument: `data`
-  "ARG004",  # Unused static method argument: `request`
-  "ARG005",  # Unused lambda argument: `x`
-  "B007",    # Loop control variable `__` not used within loop body
+  "ARG003",  # Unused class method argument
+  "ARG004",  # Unused static method argument
+  "ARG005",  # Unused lambda argument
+  "B007",    # Loop control variable not used within loop body
+  "B904",    # Within an `except` clause, raise exceptions with `raise ... from err`
+  "BLE001",  # Do not catch blind exception: `Exception`
   "C401",    # Unnecessary generator (rewrite as a set comprehension)
   "C402",    # Unnecessary generator (rewrite as a dict comprehension)
   "C408",    # Unnecessary `dict()` call (rewrite as a literal)
-  "G001",    # Logging statement uses `str.format`
-  "ICN001",  # `xml.etree.ElementTree` should be imported as `ET`
-  "N801",    # Class name `ExampleDataClass_v3` should use CapWords convention
-  "N806",    # Variable `INITIAL_TOLERANCE` in function should be lowercase
-  "N813",    # Camelcase `ElementTree` imported as lowercase `etree`
-  "N818",    # Exception name `TestException` should be named with an Error suffix
-  "PERF401", # Use a list comprehension to create a transformed list
-  "PLC0206", # Extracting value from dictionary without calling `.items()`
-  # "PLC0414", # [ENABLED-ZERO-ERRORS] Import alias does not rename original package
-  "PLR1714", # Consider merging multiple comparisons
-  "PLW1641", # Object does not implement `__hash__` method
-  "PTH118",  # `os.path.join()` should be replaced by `Path` with `/` operator
-  "PTH123",  # `open()` should be replaced by `Path.open()`
-  "RUF001",  # String contains ambiguous `‘` (LEFT SINGLE QUOTATION MARK). Did you mean ``` (GRAVE ACCENT)?
-  "RUF003",  # Comment contains ambiguous `’` (RIGHT SINGLE QUOTATION MARK). Did you mean ``` (GRAVE ACCENT)?
-  "RUF005",  # Consider iterable unpacking instead of concatenation
-  "RUF015",  # Prefer `next(...)` over single element slice
-  "S607",    # Starting a process with a partial executable path
-  "SIM101",  # Multiple `isinstance` calls for expression, merge into a single call
-  "SIM102",  # Use a single `if` statement instead of nested `if` statements
-  "SIM103",  # Return the negated condition directly
-  "SIM108",  # Use ternary operator `location_display = f"_({address})_" if address else f"_({lat:.6f}, {lng:.6f})_"` instead of `if`-`else`-block
-  "SIM117",  # Use a single `with` statement with multiple contexts instead of nested `with` statements
-  "SIM118",  # Use `key in dict` instead of `key in dict.keys()`
-  "TID252",  # Prefer absolute imports over relative imports from parent modules
-  "TRY401",  # Redundant exception object included in `logging.exception` call
-  "UP007",   # Use `X | Y` for type annotations
-  "UP008",   # Use `super()` instead of `super(__class__, self)`
-  "UP030",   # Use implicit references for positional format fields
-  "W291",    # Trailing whitespace
-
-  # Has known problems
-  "ERA001", # Found commented-out code
-  "RSE102", # Unnecessary parentheses on raised exception
-
-  # TODO: Review these for possible inclusion
-  "B904",    # Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling
-  "BLE001",  # Do not catch blind exception: `Exception`
-  "C901",    # `__` is too complex (NN > 10)
+  "C901",    # Function is too complex
   "COM812",  # missing-trailing-comma
   "D100",    # Missing docstring in public module
-  "D101",    # missing docstring in public class
-  "D102",    # missing docstring in public method
+  "D101",    # Missing docstring in public class
+  "D102",    # Missing docstring in public method
   "D103",    # Missing docstring in public function
   "D104",    # Missing docstring in public package
   "D105",    # Missing docstring in magic method
@@ -136,10 +86,53 @@ ignore = [
   "DTZ006",  # `datetime.datetime.fromtimestamp()` called without a `tz` argument
   "DTZ007",  # Naive datetime constructed using `datetime.datetime.strptime()` without %z
   "E501",    # Line too long
-  "FIX002",  # [WARNING-ONLY] Line contains TODO, consider resolving the issue
+  "ERA001",  # Found commented-out code
+  "FIX002",  # Line contains TODO
+  "G001",    # Logging statement uses `str.format`
   "G004",    # Logging statement uses f-string
-  "RUF012",  # mutable class attributes should be annotated with `typing.ClassVar`
+  "ICN001",  # `xml.etree.ElementTree` should be imported as `ET`
+  "N801",    # Class name should use CapWords convention
+  "N806",    # Variable in function should be lowercase
+  "N813",    # Camelcase imported as lowercase
+  "N818",    # Exception name should be named with an Error suffix
+  "PERF401", # Use a list comprehension to create a transformed list
+  "PGH003",  # Use specific rule codes when ignoring type issues
+  "PLC0206", # Extracting value from dictionary without calling `.items()`
+  "PLR0913", # Too many arguments in function definition
+  "PLR1714", # Consider merging multiple comparisons
+  "PLR2004", # Magic value used in comparison
+  "PLW1641", # Object does not implement `__hash__` method
+  "PT009",   # Use a regular `assert` instead of unittest-style `assertEqual`
+  "PT027",   # Use `pytest.raises` instead of unittest-style `assertRaises`
+  "PTH118",  # `os.path.join()` should be replaced by `Path` with `/` operator
+  "PTH123",  # `open()` should be replaced by `Path.open()`
+  "RSE102",  # Unnecessary parentheses on raised exception
+  "RUF001",  # String contains ambiguous character
+  "RUF003",  # Comment contains ambiguous character
+  "RUF005",  # Consider iterable unpacking instead of concatenation
+  "RUF012",  # Mutable class attributes should be annotated with `typing.ClassVar`
+  "RUF015",  # Prefer `next(...)` over single element slice
   "S106",    # Possible hardcoded password assigned to argument
+  "S301",    # `pickle` can be unsafe when used to deserialize untrusted data
+  "S303",    # Use of insecure MD2, MD4, MD5, or SHA1 hash function
+  "S308",    # Use of `mark_safe` may expose cross-site scripting vulnerabilities
+  "S314",    # Using `xml` to parse untrusted data is known to be vulnerable
+  "S324",    # Probable use of insecure hash functions in `hashlib`
+  "S603",    # `subprocess` call: check for execution of untrusted input
+  "S607",    # Starting a process with a partial executable path
+  "SIM101",  # Multiple `isinstance` calls, merge into a single call
+  "SIM102",  # Use a single `if` statement instead of nested `if` statements
+  "SIM103",  # Return the negated condition directly
+  "SIM105",  # Use `contextlib.suppress(...)` instead of `try`-`except`-`pass`
+  "SIM108",  # Use ternary operator instead of `if`-`else`-block
+  "SIM117",  # Use a single `with` statement with multiple contexts
+  "SIM118",  # Use `key in dict` instead of `key in dict.keys()`
+  "TID252",  # Prefer absolute imports over relative imports from parent modules
+  "TRY401",  # Redundant exception object included in `logging.exception` call
+  "UP007",   # Use `X | Y` for type annotations
+  "UP008",   # Use `super()` instead of `super(__class__, self)`
+  "UP030",   # Use implicit references for positional format fields
+  "W291",    # Trailing whitespace
 ]
 fixable = ["ALL"]
 unfixable = []
@@ -157,40 +150,39 @@ known-first-party = ["backend", "local_dev"]
   "ANN002", # Missing type annotation for *args
   "ANN003", # Missing type annotation for **kwargs
   "ANN202", # Missing return type annotation for public method
-  "ANN206", # "Missing return type annotation for classmethod `setUpTestData`"
+  "ANN206", # Missing return type annotation for classmethod
   "B017",   # Do not assert blind exception: `Exception`
   "C405",   # Unnecessary list literal (rewrite as a set literal)
   "DTZ002", # `datetime.datetime.today()` used
   "DTZ006", # `datetime.datetime.fromtimestamp()` called without a `tz` argument
-  "N802",   # "Function name `addSuccess` should be lowercase"
-  "N806",   # "Variable `__` in function should be lowercase"
-  "N815",   # Variable `feedId` in class scope should not be mixedCase
-  "PLR0913", # Too many arguments in function definition
+  "N802",   # Function name should be lowercase
+  "N806",   # Variable in function should be lowercase
+  "N815",   # Variable in class scope should not be mixedCase
   "PT018",  # Break assertions into separate statements
-  "PT019",  # Fixture `_` without value is injected as parameter, use `@pytest.mark.usefixtures` instead
-  "PT028",  # Test function parameter `delay_sec` has default argument
-  "RET503", # Missing explicit `return` at the end of function able to return non-`None` value
-  "S105",   # Possible hardcoded password assigned to: "new_password"
+  "PT019",  # Fixture without value is injected as parameter
+  "PT028",  # Test function parameter has default argument
+  "RET503", # Missing explicit `return` at the end of function
+  "S101",   # Use of assert detected
+  "S105",   # Possible hardcoded password assigned
   "S113",   # requests.* require timeout=
   "S608",   # Possible SQL injection via string-based query construction
   "SLF001", # Private member accessed
-  "S101",   # Use of assert detected
 ]
 "model/data/**.py" = [
-  "T201",   # allow print()
-  "ANN001", # type annotations
-  "ANN201", # return type annotations
-  "INP001", # implicit namespaces
-  "S110",   # allow swallowing exceptions
+  "ANN001", # Missing type annotation for function argument
+  "ANN201", # Missing return type annotation
   "B017",   # Do not assert blind exception: `Exception`
   "C405",   # Unnecessary list literal (rewrite as a set literal)
   "DTZ002", # `datetime.datetime.today()` used
   "DTZ006", # `datetime.datetime.fromtimestamp()` called without a `tz` argument
-  "N802",   # "Function name `addSuccess` should be lowercase"
-  "N806",   # "Variable `__` in function should be lowercase"
-  "RET503", # Missing explicit `return` at the end of function able to return non-`None` value
-  "S105",   # Possible hardcoded password assigned to: "new_password"
+  "INP001", # Implicit namespaces
+  "N802",   # Function name should be lowercase
+  "N806",   # Variable in function should be lowercase
+  "RET503", # Missing explicit `return` at the end of function
+  "S105",   # Possible hardcoded password assigned
+  "S110",   # Allow swallowing exceptions
   "S113",   # requests.* require timeout=
+  "T201",   # `print()` found
 ]
 
 [tool.ruff.lint.pydocstyle]
