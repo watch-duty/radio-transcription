@@ -24,7 +24,7 @@ class SpectralFlatnessDetector:
     SpeechRegion objects.
     """
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, **kwargs: float) -> None:
         threshold = float(kwargs.get("threshold", 0.4))
         hangover_frames = int(kwargs.get("hangover_frames", 3))
         low_freq_hz = float(kwargs.get("low_freq_hz", 300.0))
