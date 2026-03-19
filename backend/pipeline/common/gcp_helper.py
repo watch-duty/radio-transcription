@@ -41,7 +41,7 @@ def _build_sed_metadata(
     return metadata
 
 
-async def upload_audio(  # noqa: PLR0913
+async def upload_staging_audio(  # noqa: PLR0913
     gcs_client: GcsClient,
     audio_chunk: bytes,
     feed: LeasedFeed,
@@ -75,7 +75,7 @@ async def upload_audio(  # noqa: PLR0913
     )
     object_name = f"{feed['source_type']}/{feed['id']}/{timestamp}_{chunk_seq}.flac"
 
-    return await upload_normalized_audio(
+    return await upload_audio(
         gcs_client,
         audio_chunk,
         bucket,
@@ -84,7 +84,7 @@ async def upload_audio(  # noqa: PLR0913
     )
 
 
-async def upload_normalized_audio(
+async def upload_audio(
     gcs_client: GcsClient,
     audio_chunk: bytes,
     bucket: str,
@@ -92,12 +92,11 @@ async def upload_normalized_audio(
     sed_metadata: SedMetadata | None = None,
 ) -> str:
     """
-    Upload normalized audio to GCS with optional SED metadata.
+    Upload audio to GCS with optional SED metadata.
 
-    Unlike ``upload_audio``, this accepts an explicit *object_name*
-    instead of deriving one from a ``LeasedFeed``.  The SED metadata
-    protobuf is serialized, base64-encoded, and attached as GCS custom
-    metadata in the same write operation as the audio bytes.
+    Unlike ``upload_staging_audio``, this accepts an explicit *object_name*
+    instead of deriving one from a ``LeasedFeed``.  Also does not need a
+    chunk_seq to generate the object name, since it's provided directly.
 
     Args:
         gcs_client: Shared GCS client manager.

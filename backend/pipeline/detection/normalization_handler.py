@@ -22,7 +22,7 @@ from backend.pipeline.common.gcp_helper import (
     download_audio,
     parse_gcs_uri,
     publish_audio_chunk,
-    upload_normalized_audio,
+    upload_audio,
 )
 from backend.pipeline.detection.detector_executor import DetectorExecutor
 from backend.pipeline.detection.detector_factory import DetectorFactory
@@ -146,7 +146,7 @@ async def normalize(cloud_event: CloudEvent) -> None:
         sidecar.start_timestamp.CopyFrom(audio_chunk_msg.start_timestamp)
 
     # 6. Upload audio+sidecar via shared gcp_helper (raises on failure → 500 retry)
-    await upload_normalized_audio(
+    await upload_audio(
         _gcs_client,
         flac_bytes,
         canonical_bucket,

@@ -240,7 +240,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         async for flac_chunk in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
-            gcs_path = await gcp_helper.upload_audio(
+            gcs_path = await gcp_helper.upload_staging_audio(
                 self.gcs_client,
                 flac_chunk,
                 feed,
@@ -297,7 +297,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         async for flac_chunk in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
-            gcs_path = await gcp_helper.upload_audio(
+            gcs_path = await gcp_helper.upload_staging_audio(
                 self.gcs_client, flac_chunk, feed, _TEST_BUCKET, seq
             )
             await self.store.update_feed_progress(
@@ -351,7 +351,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         async for flac_chunk in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
-            gcs_path = await gcp_helper.upload_audio(
+            gcs_path = await gcp_helper.upload_staging_audio(
                 self.gcs_client, flac_chunk, feed, _TEST_BUCKET, seq
             )
             await self.store.update_feed_progress(
@@ -431,7 +431,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         async for flac_chunk in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
-            gcs_path = await gcp_helper.upload_audio(
+            gcs_path = await gcp_helper.upload_staging_audio(
                 self.gcs_client,
                 flac_chunk,
                 feed,
