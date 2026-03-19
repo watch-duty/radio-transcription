@@ -12,7 +12,7 @@ from backend.pipeline.detection.spectral_flatness_detector import (
 
 
 class TestConstructorDefaults(unittest.TestCase):
-    """Default construction succeeds with valid audioFlux objects."""
+    """Default construction succeeds."""
 
     def test_default_construction(self) -> None:
         detector = SpectralFlatnessDetector()
@@ -87,6 +87,11 @@ class TestConstructorValidation(unittest.TestCase):
             hop_size=512,
         )
         self.assertEqual(detector.detector_type, "spectral_flatness")
+
+    def test_unknown_param_raises(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            SpectralFlatnessDetector(threshhold=0.4)
+        self.assertIn("threshhold", str(ctx.exception))
 
 
 class TestProtocolConformance(unittest.TestCase):
