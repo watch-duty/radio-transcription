@@ -22,9 +22,9 @@ from testcontainers.core.container import DockerContainer
 from testcontainers.core.waiting_utils import wait_for_logs
 
 from backend.pipeline.common.clients.gcs_client import GcsClient
+from backend.pipeline.common.gcp_helper import upload_audio
 from backend.pipeline.detection.detector_executor import DetectorExecutor
 from backend.pipeline.detection.detector_factory import DetectorFactory
-from backend.pipeline.common.gcp_helper import upload_audio
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.schema_types.sed_metadata_pb2 import SedMetadata  # noqa: TC001
 
