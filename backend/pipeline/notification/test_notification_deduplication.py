@@ -1,6 +1,6 @@
 from unittest import TestCase, main, mock
 
-from backend.common.storage.mock_cache_provider import MockCacheProvider
+from backend.pipeline.common.storage.mock_cache_provider import MockCacheProvider
 from backend.pipeline.notification.notification_deduplication import (
     NotificationDeduplication,
 )

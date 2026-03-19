@@ -7,7 +7,7 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 from redis.retry import Retry
 
-from backend.common.storage.cache_provider import CacheProvider
+from backend.pipeline.common.storage.cache_provider import CacheProvider
 
 NUM_CONNECTION_RETRIES = 3
 DEFAULT_REDIS_PORT = "6379"

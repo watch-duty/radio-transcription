@@ -5,14 +5,15 @@ from unittest.mock import MagicMock, patch
 import fakeredis
 
 with patch.dict(os.environ, {"REDIS_CERTIFICATE_PATH": "/secrets/server_ca.pem"}):
-    from backend.common.storage.redis_service import RedisService
+    from backend.pipeline.common.storage.redis_service import RedisService
 
 
 class TestRedisService(unittest.TestCase):
     def setUp(self) -> None:
         self.mock_redis_factory = MagicMock(side_effect=fakeredis.FakeRedis)
         self.patcher = patch(
-            "backend.common.storage.redis_service.Redis", self.mock_redis_factory
+            "backend.pipeline.common.storage.redis_service.Redis",
+            self.mock_redis_factory,
         )
         self.patcher.start()
         self.service = RedisService()
