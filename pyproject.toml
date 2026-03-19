@@ -84,6 +84,7 @@ ignore = [
   "N813",    # Camelcase `ElementTree` imported as lowercase `etree`
   "N818",    # Exception name `TestException` should be named with an Error suffix
   "PERF401", # Use a list comprehension to create a transformed list
+  "PLR0913", # Too many arguments in function definition
   "PLC0206", # Extracting value from dictionary without calling `.items()`
   # "PLC0414", # [ENABLED-ZERO-ERRORS] Import alias does not rename original package
   "PLR1714", # Consider merging multiple comparisons
@@ -167,7 +168,6 @@ known-first-party = ["backend", "local_dev"]
   "N802",   # "Function name `addSuccess` should be lowercase"
   "N806",   # "Variable `__` in function should be lowercase"
   "N815",   # Variable `feedId` in class scope should not be mixedCase
-  "PLR0913", # Too many arguments in function definition
   "PT018",  # Break assertions into separate statements
   "PT019",  # Fixture `_` without value is injected as parameter, use `@pytest.mark.usefixtures` instead
   "PT028",  # Test function parameter `delay_sec` has default argument

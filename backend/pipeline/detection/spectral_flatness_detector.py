@@ -27,7 +27,7 @@ class SpectralFlatnessDetector:
     detector safe for concurrent use across threads.
     """
 
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
         *,
         threshold: float = 0.4,
