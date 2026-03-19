@@ -27,10 +27,16 @@ class SpectralFlatnessDetector:
     detector safe for concurrent use across threads.
     """
 
-    _KNOWN_PARAMS = frozenset({
-        "threshold", "hangover_frames", "low_freq_hz", "high_freq_hz",
-        "fft_size", "hop_size",
-    })
+    _KNOWN_PARAMS = frozenset(
+        {
+            "threshold",
+            "hangover_frames",
+            "low_freq_hz",
+            "high_freq_hz",
+            "fft_size",
+            "hop_size",
+        }
+    )
 
     def __init__(self, **kwargs: float) -> None:
         unknown = set(kwargs) - self._KNOWN_PARAMS
