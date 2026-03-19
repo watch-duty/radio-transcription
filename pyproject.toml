@@ -22,6 +22,7 @@ dependencies = [
     "redis>=7.3.0",
     "soundfile>=0.12.1",
     "numpy>=1.24.0",
+    "audioflux>=0.1.8",
 ]
 
 [tool.uv]
@@ -41,6 +42,7 @@ dev = [
   "docker",
   "httpx",
   "fakeredis",
+  "pytest>=9.0.2",
 ]
 
 [tool.ruff]
