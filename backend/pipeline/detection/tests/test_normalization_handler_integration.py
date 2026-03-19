@@ -24,7 +24,7 @@ from testcontainers.core.waiting_utils import wait_for_logs
 from backend.pipeline.common.clients.gcs_client import GcsClient
 from backend.pipeline.detection.detector_executor import DetectorExecutor
 from backend.pipeline.detection.detector_factory import DetectorFactory
-from backend.pipeline.ingestion.gcp_helper import upload_normalized_audio
+from backend.pipeline.common.gcp_helper import upload_audio
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.schema_types.sed_metadata_pb2 import SedMetadata  # noqa: TC001
 
@@ -56,7 +56,7 @@ with (
 
 normalize = _wrapped.__wrapped__  # type: ignore[union-attr]
 
-_UPLOAD = "backend.pipeline.detection.normalization_handler.upload_normalized_audio"
+_UPLOAD = "backend.pipeline.detection.normalization_handler.upload_audio"
 _PUBLISH = "backend.pipeline.detection.normalization_handler.publish_audio_chunk"
 
 _CE_ATTRS = {
@@ -197,7 +197,7 @@ class TestNormalizationHandlerIntegration(unittest.IsolatedAsyncioTestCase):
             sed = kwargs.get("sed_metadata")
             if sed is not None:
                 captured.append(sed)
-            return await upload_normalized_audio(*args, **kwargs)
+            return await upload_audio(*args, **kwargs)
 
         return mock.AsyncMock(side_effect=_spy), captured
 
