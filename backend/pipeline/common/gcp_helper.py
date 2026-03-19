@@ -70,21 +70,18 @@ async def upload_audio(  # noqa: PLR0913
         ValueError: If encoded metadata size exceeds GCS metadata limits.
 
     """
-    storage = gcs_client.get_storage()
     timestamp = datetime.datetime.now(tz=datetime.UTC).strftime(
         "%Y%m%dT%H%M%SZ",
     )
     object_name = f"{feed['source_type']}/{feed['id']}/{timestamp}_{chunk_seq}.flac"
-    metadata = _build_sed_metadata(object_name, sed_metadata)
 
-    await storage.upload(
+    return await upload_normalized_audio(
+        gcs_client,
+        audio_chunk,
         bucket,
         object_name,
-        audio_chunk,
-        metadata=metadata,
-        content_type="audio/flac",
+        sed_metadata,
     )
-    return f"gs://{bucket}/{object_name}"
 
 
 async def upload_normalized_audio(

@@ -89,6 +89,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
                     sed_metadata.SerializeToString()
                 ).decode("ascii"),
             },
+            content_type="audio/flac",
         )
         self.assertEqual(result, expected_path)
 
@@ -112,7 +113,11 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
 
         # Act
         result = await gcp_helper.upload_audio(
-            mock_gcs_client, audio_chunk, feed, bucket, chunk_seq
+            mock_gcs_client,
+            audio_chunk,
+            feed,
+            bucket,
+            chunk_seq,
         )
 
         # Assert
@@ -120,7 +125,11 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         expected_path = f"gs://{bucket}/{expected_object_name}"
 
         mock_storage.upload.assert_called_once_with(
-            bucket, expected_object_name, audio_chunk, metadata=None
+            bucket,
+            expected_object_name,
+            audio_chunk,
+            metadata=None,
+            content_type="audio/flac",
         )
         self.assertEqual(result, expected_path)
 
@@ -144,7 +153,11 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
 
         # Act
         result = await gcp_helper.upload_audio(
-            mock_gcs_client, audio_chunk, feed, bucket, chunk_seq
+            mock_gcs_client,
+            audio_chunk,
+            feed,
+            bucket,
+            chunk_seq,
         )
 
         # Assert
@@ -152,7 +165,11 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         expected_path = f"gs://{bucket}/{expected_object_name}"
 
         mock_storage.upload.assert_called_once_with(
-            bucket, expected_object_name, audio_chunk, metadata=None
+            bucket,
+            expected_object_name,
+            audio_chunk,
+            metadata=None,
+            content_type="audio/flac",
         )
         self.assertEqual(result, expected_path)
 
