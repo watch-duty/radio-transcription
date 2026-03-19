@@ -39,7 +39,7 @@ _CE_ATTRS = {
 }
 
 _DOWNLOAD = "backend.pipeline.detection.normalization_handler.download_audio"
-_UPLOAD = "backend.pipeline.detection.normalization_handler.upload_normalized_audio"
+_UPLOAD = "backend.pipeline.detection.normalization_handler.upload_audio"
 _PUBLISH = "backend.pipeline.detection.normalization_handler.publish_audio_chunk"
 
 
