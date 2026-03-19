@@ -63,5 +63,6 @@ class TestRedisService(unittest.TestCase):
         self.assertEqual(kwargs.get("ssl_cert_reqs"), "none")
         self.assertIsNone(kwargs.get("ssl_ca_path"), "should be None")
 
+
 if __name__ == "__main__":
     unittest.main()

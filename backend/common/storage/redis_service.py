@@ -26,13 +26,14 @@ class RedisService(CacheProvider):
     def __init__(self) -> None:
         retry = Retry(ExponentialBackoff(), NUM_CONNECTION_RETRIES)
         ssl_enabled = not os.environ.get("LOCAL_DEV")
+        ssl_ca_path = f"{REDIS_CERTIFICATE_PATH}/server_ca.pem" if ssl_enabled else None
         self.client = Redis(
             host=REDIS_HOST,
             port=REDIS_PORT,
             password=REDIS_PASSWORD,
             ssl=ssl_enabled,
             ssl_cert_reqs="required" if ssl_enabled else "none",
-            ssl_ca_path=f"{REDIS_CERTIFICATE_PATH}/server_ca.pem" if ssl_enabled else None,
+            ssl_ca_path=ssl_ca_path,
             db=0,
             decode_responses=True,
             retry=retry,
