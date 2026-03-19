@@ -107,7 +107,7 @@ async def upload_audio(
     """
     Upload audio to GCS with optional SED metadata.
 
-    Unlike ``upload_staging_audio``, this accepts an explicit *object_name*
+    Unlike ``upload_staged_audio``, this accepts an explicit *object_name*
     instead of deriving one from a ``LeasedFeed``.  Also does not need a
     chunk_seq to generate the object name, since it's provided directly.
 
