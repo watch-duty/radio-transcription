@@ -6,13 +6,13 @@ import numpy as np
 from scipy.signal import stft
 from scipy.stats import gmean
 
+from backend.pipeline.common.constants import AUDIO_SAMPLE_RATE
 from backend.pipeline.detection.detector_factory import DetectorFactory
 from backend.pipeline.detection.types import DetectionResult, SpeechRegion
 
 logger = logging.getLogger(__name__)
 
 _DETECTOR_TYPE = "spectral_flatness"
-_SAMPLE_RATE = 16_000
 
 
 class SpectralFlatnessDetector:
@@ -27,30 +27,16 @@ class SpectralFlatnessDetector:
     detector safe for concurrent use across threads.
     """
 
-    _KNOWN_PARAMS = frozenset(
-        {
-            "threshold",
-            "hangover_frames",
-            "low_freq_hz",
-            "high_freq_hz",
-            "fft_size",
-            "hop_size",
-        }
-    )
-
-    def __init__(self, **kwargs: float) -> None:
-        unknown = set(kwargs) - self._KNOWN_PARAMS
-        if unknown:
-            msg = f"Unknown parameter(s): {', '.join(sorted(unknown))}"
-            raise ValueError(msg)
-
-        threshold = float(kwargs.get("threshold", 0.4))
-        hangover_frames = int(kwargs.get("hangover_frames", 3))
-        low_freq_hz = float(kwargs.get("low_freq_hz", 300.0))
-        high_freq_hz = float(kwargs.get("high_freq_hz", 3400.0))
-        fft_size = int(kwargs.get("fft_size", 512))
-        hop_size = int(kwargs.get("hop_size", 320))
-
+    def __init__(  # noqa: PLR0913
+        self,
+        *,
+        threshold: float = 0.4,
+        hangover_frames: int = 3,
+        low_freq_hz: float = 300.0,
+        high_freq_hz: float = 3400.0,
+        fft_size: int = 512,
+        hop_size: int = 320,
+    ) -> None:
         if fft_size < 256:
             msg = f"fft_size must be >= 256, got {fft_size}"
             raise ValueError(msg)
@@ -69,7 +55,7 @@ class SpectralFlatnessDetector:
         if low_freq_hz <= 0:
             msg = f"low_freq_hz must be > 0, got {low_freq_hz}"
             raise ValueError(msg)
-        nyquist = _SAMPLE_RATE / 2
+        nyquist = AUDIO_SAMPLE_RATE / 2
         if high_freq_hz > nyquist:
             msg = f"high_freq_hz must be <= {nyquist}, got {high_freq_hz}"
             raise ValueError(msg)
@@ -83,7 +69,7 @@ class SpectralFlatnessDetector:
         self._hop_size = hop_size
 
         # Precompute read-only frequency bin mask for sub-band filtering
-        freqs = np.fft.rfftfreq(fft_size, d=1.0 / _SAMPLE_RATE)
+        freqs = np.fft.rfftfreq(fft_size, d=1.0 / AUDIO_SAMPLE_RATE)
         self._freq_mask = (freqs >= low_freq_hz) & (freqs <= high_freq_hz)
 
         if not np.any(self._freq_mask):
@@ -107,7 +93,7 @@ class SpectralFlatnessDetector:
         # STFT -> magnitude spectrogram (explicit hann window)
         _, _, zxx = stft(
             audio,
-            fs=_SAMPLE_RATE,
+            fs=AUDIO_SAMPLE_RATE,
             window="hann",
             nperseg=self._fft_size,
             noverlap=self._fft_size - self._hop_size,
@@ -150,8 +136,8 @@ class SpectralFlatnessDetector:
             elif not signal_present[i] and in_region:
                 regions.append(
                     SpeechRegion(
-                        start_sec=first_frame * self._hop_size / _SAMPLE_RATE,
-                        end_sec=i * self._hop_size / _SAMPLE_RATE,
+                        start_sec=first_frame * self._hop_size / AUDIO_SAMPLE_RATE,
+                        end_sec=i * self._hop_size / AUDIO_SAMPLE_RATE,
                         detector_type=_DETECTOR_TYPE,
                     )
                 )
@@ -160,8 +146,8 @@ class SpectralFlatnessDetector:
         if in_region:
             regions.append(
                 SpeechRegion(
-                    start_sec=first_frame * self._hop_size / _SAMPLE_RATE,
-                    end_sec=len(signal_present) * self._hop_size / _SAMPLE_RATE,
+                    start_sec=first_frame * self._hop_size / AUDIO_SAMPLE_RATE,
+                    end_sec=len(signal_present) * self._hop_size / AUDIO_SAMPLE_RATE,
                     detector_type=_DETECTOR_TYPE,
                 )
             )

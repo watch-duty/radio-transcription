@@ -89,9 +89,8 @@ class TestConstructorValidation(unittest.TestCase):
         self.assertEqual(detector.detector_type, "spectral_flatness")
 
     def test_unknown_param_raises(self) -> None:
-        with self.assertRaises(ValueError) as ctx:
-            SpectralFlatnessDetector(threshhold=0.4)
-        self.assertIn("threshhold", str(ctx.exception))
+        with self.assertRaises(TypeError):
+            SpectralFlatnessDetector(threshhold=0.4)  # type: ignore[call-arg]
 
 
 class TestProtocolConformance(unittest.TestCase):
