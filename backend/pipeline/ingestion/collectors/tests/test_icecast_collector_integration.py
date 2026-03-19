@@ -29,7 +29,7 @@ with (
 ):
     from backend.pipeline.ingestion.collectors import icecast_collector
 
-from backend.pipeline.ingestion import gcp_helper  # noqa: E402
+from backend.pipeline.common import gcp_helper  # noqa: E402
 
 _REPO_ROOT = Path(__file__).resolve().parents[5]
 _SQL_DIR = _REPO_ROOT / "terraform" / "modules" / "alloydb" / "sql" / "ingestion"
@@ -240,7 +240,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         async for flac_chunk in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
-            gcs_path = await gcp_helper.upload_audio(
+            gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client,
                 flac_chunk,
                 feed,
@@ -297,7 +297,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         async for flac_chunk in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
-            gcs_path = await gcp_helper.upload_audio(
+            gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client, flac_chunk, feed, _TEST_BUCKET, seq
             )
             await self.store.update_feed_progress(
@@ -351,7 +351,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         async for flac_chunk in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
-            gcs_path = await gcp_helper.upload_audio(
+            gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client, flac_chunk, feed, _TEST_BUCKET, seq
             )
             await self.store.update_feed_progress(
@@ -431,7 +431,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         async for flac_chunk in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
-            gcs_path = await gcp_helper.upload_audio(
+            gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client,
                 flac_chunk,
                 feed,

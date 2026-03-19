@@ -11,8 +11,8 @@ from collections.abc import AsyncIterator, Callable
 import aiohttp
 import asyncpg
 
+from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
-from backend.pipeline.ingestion import gcp_helper
 from backend.pipeline.ingestion.retry import LeaseExpiredError, retry_with_lease_check
 from backend.pipeline.ingestion.settings import NormalizerSettings
 from backend.pipeline.storage.connection import close_pool, create_pool
@@ -314,7 +314,7 @@ class NormalizerRuntime:
                 self._shutdown,
             ):
                 gcs_uri = await retry_with_lease_check(
-                    gcp_helper.upload_audio,
+                    gcp_helper.upload_staged_audio,
                     self._gcs_client,
                     audio_chunk,
                     feed,
