@@ -1203,6 +1203,9 @@ dependencies = [
 ]
 
 [package.dev-dependencies]
+build = [
+    { name = "grpcio-tools" },
+]
 dev = [
     { name = "docker" },
     { name = "fakeredis" },
@@ -1238,6 +1241,7 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
+build = [{ name = "grpcio-tools", specifier = ">=1.65.5" }]
 dev = [
     { name = "docker" },
     { name = "fakeredis" },
