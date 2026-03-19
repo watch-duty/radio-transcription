@@ -50,8 +50,9 @@ class SpectralFlatnessDetector:
         if low_freq_hz <= 0:
             msg = f"low_freq_hz must be > 0, got {low_freq_hz}"
             raise ValueError(msg)
-        if high_freq_hz > 8000.0:
-            msg = f"high_freq_hz must be <= 8000.0, got {high_freq_hz}"
+        nyquist = _SAMPLE_RATE / 2
+        if high_freq_hz > nyquist:
+            msg = f"high_freq_hz must be <= {nyquist}, got {high_freq_hz}"
             raise ValueError(msg)
         if low_freq_hz >= high_freq_hz:
             msg = f"low_freq_hz ({low_freq_hz}) must be < high_freq_hz ({high_freq_hz})"

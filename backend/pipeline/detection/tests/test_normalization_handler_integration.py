@@ -158,6 +158,9 @@ class TestNormalizationHandlerIntegration(unittest.IsolatedAsyncioTestCase):
         os.environ["STORAGE_EMULATOR_HOST"] = self._gcs_url
         os.environ["INGESTION_CANONICAL_BUCKET"] = _CANONICAL_BUCKET
         os.environ["TRANSCRIPTION_TOPIC_PATH"] = _TOPIC_PATH
+        # Save originals before overwriting
+        self._orig_gcs = normalization_handler._gcs_client
+        self._orig_executor = normalization_handler._executor
         self._gcs_client = GcsClient()
         normalization_handler._gcs_client = self._gcs_client
         # Ensure the real detector ensemble is used regardless of import order
@@ -167,6 +170,8 @@ class TestNormalizationHandlerIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         await self._gcs_client.close()
+        normalization_handler._gcs_client = self._orig_gcs
+        normalization_handler._executor = self._orig_executor
         os.environ.pop("STORAGE_EMULATOR_HOST", None)
         os.environ.pop("INGESTION_CANONICAL_BUCKET", None)
         os.environ.pop("TRANSCRIPTION_TOPIC_PATH", None)
@@ -189,7 +194,7 @@ class TestNormalizationHandlerIntegration(unittest.IsolatedAsyncioTestCase):
         captured: list[SedMetadata] = []
 
         async def _spy(*args, **kwargs):
-            sed = kwargs.get("sed_metadata") or (args[4] if len(args) > 4 else None)
+            sed = kwargs.get("sed_metadata")
             if sed is not None:
                 captured.append(sed)
             return await upload_normalized_audio(*args, **kwargs)
