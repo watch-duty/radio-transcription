@@ -39,11 +39,11 @@ def _make_pubsub_client() -> tuple[MagicMock, MagicMock]:
     return mock_pubsub_client, mock_publisher
 
 
-class TestUploadStagingAudio(unittest.IsolatedAsyncioTestCase):
-    """Test suite for the upload_staging_audio function."""
+class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
+    """Test suite for the upload_staged_audio function."""
 
     @patch("backend.pipeline.common.gcp_helper.datetime")
-    async def test_upload_staging_audio_with_sed_metadata(
+    async def test_upload_staged_audio_with_sed_metadata(
         self,
         mock_datetime: MagicMock,
     ) -> None:
@@ -67,7 +67,7 @@ class TestUploadStagingAudio(unittest.IsolatedAsyncioTestCase):
         sed_metadata.sound_events.append(sound_event)
 
         # Act
-        result = await gcp_helper.upload_staging_audio(
+        result = await gcp_helper.upload_staged_audio(
             mock_gcs_client,
             audio_chunk,
             feed,
@@ -94,7 +94,7 @@ class TestUploadStagingAudio(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, expected_path)
 
     @patch("backend.pipeline.common.gcp_helper.datetime")
-    async def test_upload_staging_audio_success(
+    async def test_upload_staged_audio_success(
         self,
         mock_datetime: MagicMock,
     ) -> None:
@@ -112,7 +112,7 @@ class TestUploadStagingAudio(unittest.IsolatedAsyncioTestCase):
         chunk_seq = 5
 
         # Act
-        result = await gcp_helper.upload_staging_audio(
+        result = await gcp_helper.upload_staged_audio(
             mock_gcs_client,
             audio_chunk,
             feed,
@@ -134,7 +134,7 @@ class TestUploadStagingAudio(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, expected_path)
 
     @patch("backend.pipeline.common.gcp_helper.datetime")
-    async def test_upload_staging_audio_empty_chunk(
+    async def test_upload_staged_audio_empty_chunk(
         self,
         mock_datetime: MagicMock,
     ) -> None:
@@ -152,7 +152,7 @@ class TestUploadStagingAudio(unittest.IsolatedAsyncioTestCase):
         chunk_seq = 0
 
         # Act
-        result = await gcp_helper.upload_staging_audio(
+        result = await gcp_helper.upload_staged_audio(
             mock_gcs_client,
             audio_chunk,
             feed,
@@ -174,7 +174,7 @@ class TestUploadStagingAudio(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, expected_path)
 
     @patch("backend.pipeline.common.gcp_helper.datetime")
-    async def test_upload_staging_audio_storage_exception(
+    async def test_upload_staged_audio_storage_exception(
         self,
         mock_datetime: MagicMock,
     ) -> None:
@@ -193,17 +193,17 @@ class TestUploadStagingAudio(unittest.IsolatedAsyncioTestCase):
 
         # Act & Assert
         with self.assertRaises(Exception) as context:
-            await gcp_helper.upload_staging_audio(
+            await gcp_helper.upload_staged_audio(
                 mock_gcs_client, audio_chunk, feed, bucket, chunk_seq
             )
 
         self.assertIn("GCS upload failed", str(context.exception))
         mock_storage.upload.assert_called_once()
 
-    async def test_upload_staging_audio_calls_get_storage_for_each_upload(
+    async def test_upload_staged_audio_calls_get_storage_for_each_upload(
         self,
     ) -> None:
-        """Test that upload_staging_audio calls get_storage on the provided client."""
+        """Test that upload_staged_audio calls get_storage on the provided client."""
         mock_gcs_client, mock_storage = _make_gcs_client()
 
         audio_chunk = b"\x00\x01" * 100
@@ -211,10 +211,10 @@ class TestUploadStagingAudio(unittest.IsolatedAsyncioTestCase):
         bucket = "test-bucket"
 
         # Act - Upload twice with the same client
-        await gcp_helper.upload_staging_audio(
+        await gcp_helper.upload_staged_audio(
             mock_gcs_client, audio_chunk, feed, bucket, 1
         )
-        await gcp_helper.upload_staging_audio(
+        await gcp_helper.upload_staged_audio(
             mock_gcs_client, audio_chunk, feed, bucket, 2
         )
 
@@ -222,7 +222,7 @@ class TestUploadStagingAudio(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mock_storage.upload.call_count, 2)
 
     @patch("backend.pipeline.common.gcp_helper.datetime")
-    async def test_upload_staging_audio_high_sequence_number(
+    async def test_upload_staged_audio_high_sequence_number(
         self,
         mock_datetime: MagicMock,
     ) -> None:
@@ -240,7 +240,7 @@ class TestUploadStagingAudio(unittest.IsolatedAsyncioTestCase):
         chunk_seq = 999999999
 
         # Act
-        result = await gcp_helper.upload_staging_audio(
+        result = await gcp_helper.upload_staged_audio(
             mock_gcs_client, audio_chunk, feed, bucket, chunk_seq
         )
 
@@ -251,7 +251,7 @@ class TestUploadStagingAudio(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, expected_path)
 
     @patch("backend.pipeline.common.gcp_helper.datetime")
-    async def test_upload_staging_audio_metadata_too_large_raises(
+    async def test_upload_staged_audio_metadata_too_large_raises(
         self,
         mock_datetime: MagicMock,
     ) -> None:
@@ -271,7 +271,7 @@ class TestUploadStagingAudio(unittest.IsolatedAsyncioTestCase):
 
         # Act & Assert
         with self.assertRaises(ValueError) as context:
-            await gcp_helper.upload_staging_audio(
+            await gcp_helper.upload_staged_audio(
                 mock_gcs_client,
                 audio_chunk,
                 feed,

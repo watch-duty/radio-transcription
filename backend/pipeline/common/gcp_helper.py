@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import datetime
+import logging
 from typing import TYPE_CHECKING
 
 from backend.pipeline.common.constants import GCS_METADATA_SIZE_LIMIT
@@ -13,6 +14,12 @@ if TYPE_CHECKING:
     from backend.pipeline.common.clients.pubsub_client import PubSubClient
     from backend.pipeline.schema_types.sed_metadata_pb2 import SedMetadata
     from backend.pipeline.storage.feed_store import LeasedFeed
+
+logger = logging.getLogger(__name__)
+
+# -----------------------------------------------------------------------------
+# Private helper functions
+# -----------------------------------------------------------------------------
 
 
 def _build_sed_metadata(
@@ -36,12 +43,18 @@ def _build_sed_metadata(
             f"({GCS_METADATA_SIZE_LIMIT} bytes) for object "
             f"'{object_name}'"
         )
+        logger.error(msg)
         raise ValueError(msg)
 
     return metadata
 
 
-async def upload_staging_audio(  # noqa: PLR0913
+# -----------------------------------------------------------------------------
+# Google Cloud Storage helpers
+# -----------------------------------------------------------------------------
+
+
+async def upload_staged_audio(  # noqa: PLR0913
     gcs_client: GcsClient,
     audio_chunk: bytes,
     feed: LeasedFeed,
@@ -50,7 +63,7 @@ async def upload_staging_audio(  # noqa: PLR0913
     sed_metadata: SedMetadata | None = None,
 ) -> str:
     """
-    Upload an audio chunk to GCS and return the object path.
+    Upload an unnormalized audio chunk to GCS and return the object path.
 
     The object path follows the convention:
     ``{source_type}/{feed_id}/{timestamp}_{seq}.flac``
@@ -152,6 +165,11 @@ async def download_audio(gcs_client: GcsClient, gcs_uri: str) -> bytes:
     storage = gcs_client.get_storage()
     bucket, object_name = parse_gcs_uri(gcs_uri)
     return await storage.download(bucket, object_name)
+
+
+# -----------------------------------------------------------------------------
+# Pub/Sub helpers
+# -----------------------------------------------------------------------------
 
 
 async def publish_audio_chunk(

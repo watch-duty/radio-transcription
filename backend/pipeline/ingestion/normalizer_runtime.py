@@ -314,7 +314,7 @@ class NormalizerRuntime:
                 self._shutdown,
             ):
                 gcs_uri = await retry_with_lease_check(
-                    gcp_helper.upload_staging_audio,
+                    gcp_helper.upload_staged_audio,
                     self._gcs_client,
                     audio_chunk,
                     feed,
