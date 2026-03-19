@@ -112,6 +112,7 @@ class SpectralFlatnessDetector:
         arith = np.mean(spec_subband, axis=0)
         flatness_arr = np.where(arith > 0, geo / arith, 1.0)
 
+        # Per-call local array; safe to mutate in-place (not shared state)
         signal_present = flatness_arr < self._threshold
 
         # Apply hangover smoothing
