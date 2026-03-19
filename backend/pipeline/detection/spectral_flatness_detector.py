@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import logging
 
-import audioflux as af
 import numpy as np
-from audioflux.type import SpectralDataType, SpectralFilterBankScaleType
+from scipy.signal import stft
+from scipy.stats import gmean
 
 from backend.pipeline.detection.detector_factory import DetectorFactory
 from backend.pipeline.detection.types import DetectionResult, SpeechRegion
@@ -18,10 +18,13 @@ _SAMPLE_RATE = 16_000
 class SpectralFlatnessDetector:
     """Spectral flatness detector with adaptive sub-band selection.
 
-    Uses audioFlux's BFT for spectrogram extraction and Spectral.flatness()
-    for per-frame flatness computation. Low flatness (tonal/speech) produces
-    signal_present=True; consecutive speech frames are grouped into
-    SpeechRegion objects.
+    Uses scipy STFT for spectrogram extraction and geometric/arithmetic
+    mean ratio for per-frame flatness computation. Low flatness
+    (tonal/speech) produces signal_present=True; consecutive speech
+    frames are grouped into SpeechRegion objects.
+
+    All internal state is read-only (numpy boolean mask), making this
+    detector safe for concurrent use across threads.
     """
 
     def __init__(self, **kwargs: float) -> None:
@@ -63,34 +66,17 @@ class SpectralFlatnessDetector:
         self._fft_size = fft_size
         self._hop_size = hop_size
 
-        self._bft = af.BFT(
-            num=fft_size // 2 + 1,
-            samplate=_SAMPLE_RATE,
-            radix2_exp=int(np.log2(fft_size)),
-            slide_length=hop_size,
-            data_type=SpectralDataType.MAG,
-            scale_type=SpectralFilterBankScaleType.LINEAR,
-        )
+        # Precompute read-only frequency bin mask for sub-band filtering
+        freqs = np.fft.rfftfreq(fft_size, d=1.0 / _SAMPLE_RATE)
+        self._freq_mask = (freqs >= low_freq_hz) & (freqs <= high_freq_hz)
 
-        fre_band_arr = self._bft.get_fre_band_arr()
-        start_bin = int(np.searchsorted(fre_band_arr, low_freq_hz))
-        end_bin = int(np.searchsorted(fre_band_arr, high_freq_hz))
-        end_bin = min(end_bin, self._bft.num - 1)
-
-        if start_bin >= end_bin:
+        if not np.any(self._freq_mask):
             msg = (
-                f"Frequency range [{low_freq_hz}, {high_freq_hz}] Hz maps to "
-                f"bins [{start_bin}, {end_bin}), which is empty at "
-                f"fft_size={fft_size}. Increase fft_size or widen the "
-                f"frequency range."
+                f"Frequency range [{low_freq_hz}, {high_freq_hz}] Hz "
+                f"contains no bins at fft_size={fft_size}. "
+                f"Increase fft_size or widen the frequency range."
             )
             raise ValueError(msg)
-
-        self._spectral = af.Spectral(
-            num=self._bft.num,
-            fre_band_arr=fre_band_arr,
-        )
-        self._spectral.set_edge(start_bin, end_bin)
 
     @property
     def detector_type(self) -> str:
@@ -102,13 +88,27 @@ class SpectralFlatnessDetector:
 
         audio = samples.astype(np.float32) / 32768.0
 
-        spec_arr = np.abs(self._bft.bft(audio))
-        n_time = spec_arr.shape[-1]
+        # STFT -> magnitude spectrogram (explicit hann window)
+        _, _, zxx = stft(
+            audio,
+            fs=_SAMPLE_RATE,
+            window="hann",
+            nperseg=self._fft_size,
+            noverlap=self._fft_size - self._hop_size,
+        )
+        spec_subband = np.abs(zxx[self._freq_mask, :])
+        n_time = spec_subband.shape[1]
+
         if n_time == 0:
             return DetectionResult(speech_regions=(), detector_type=_DETECTOR_TYPE)
 
-        self._spectral.set_time_length(n_time)
-        flatness_arr = self._spectral.flatness(spec_arr)
+        # Floor tiny values to avoid log(0) warnings from gmean
+        spec_subband = np.maximum(spec_subband, np.finfo(np.float32).tiny)
+
+        # Spectral flatness = geometric_mean / arithmetic_mean per frame
+        geo = gmean(spec_subband, axis=0)
+        arith = np.mean(spec_subband, axis=0)
+        flatness_arr = np.where(arith > 0, geo / arith, 1.0)
 
         signal_present = flatness_arr < self._threshold
 
