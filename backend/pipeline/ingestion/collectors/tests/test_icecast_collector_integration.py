@@ -29,7 +29,7 @@ with (
 ):
     from backend.pipeline.ingestion.collectors import icecast_collector
 
-from backend.pipeline.ingestion import gcp_helper  # noqa: E402
+from backend.pipeline.common import gcp_helper  # noqa: E402
 
 _REPO_ROOT = Path(__file__).resolve().parents[5]
 _SQL_DIR = _REPO_ROOT / "terraform" / "modules" / "alloydb" / "sql" / "ingestion"

@@ -21,7 +21,7 @@ from backend.pipeline.common.constants import AUDIO_SAMPLE_RATE
 from backend.pipeline.detection.detector_executor import DetectorExecutor
 from backend.pipeline.detection.detector_factory import DetectorFactory
 from backend.pipeline.detection.sidecar_builder import SidecarBuilder
-from backend.pipeline.ingestion.gcp_helper import (
+from backend.pipeline.common.gcp_helper import (
     download_audio,
     parse_gcs_uri,
     publish_audio_chunk,
