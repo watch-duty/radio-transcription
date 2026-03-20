@@ -91,9 +91,12 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         self.api_url = "http://localhost:8080"
         self.remote_evaluator = evaluator.RemoteTextEvaluator(self.api_url)
 
+    @patch("backend.pipeline.evaluation.rules_evaluation.evaluator.get_id_token")
     @patch("requests.Session.get")
-    def test_evaluate_success(self, mock_get) -> None:
+    def test_evaluate_success(self, mock_get, mock_get_id_token) -> None:
         """Test that RemoteTextEvaluator successfully fetches and evaluates rules."""
+        # Mock token
+        mock_get_id_token.return_value = "mock_token"
         # Mock rule from API
         mock_rule = {
             "rule_id": "test_rule_1",
@@ -117,9 +120,48 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         self.assertIn("test_rule_1", result["triggered_rules"])
         mock_get.assert_called_with(f"{self.api_url}/v1/rules", timeout=10)
 
+        # Verify Authorization header was set
+        self.assertEqual(
+            self.remote_evaluator.session.headers.get("Authorization"),
+            "Bearer mock_token",
+        )
+        mock_get_id_token.assert_called_with(self.api_url)
+
+    @patch("backend.pipeline.evaluation.rules_evaluation.evaluator.get_id_token")
     @patch("requests.Session.get")
-    def test_evaluate_inactive_rule(self, mock_get) -> None:
+    def test_evaluate_local_dev(self, mock_get, mock_get_id_token) -> None:
+        """Test that RemoteTextEvaluator skips authentication in LOCAL_DEV mode."""
+        with patch.dict("os.environ", {"LOCAL_DEV": "true"}):
+            # Mock rule from API
+            mock_rule = {
+                "rule_id": "test_rule_1",
+                "rule_name": "Test Rule 1",
+                "is_active": True,
+                "scope": {"level": "GLOBAL", "target_feeds": []},
+                "conditions": {
+                    "evaluation_type": "KEYWORD_MATCH",
+                    "operator": "ANY",
+                    "keywords": ["test"],
+                    "case_sensitive": False,
+                },
+            }
+            mock_get.return_value.json.return_value = [mock_rule]
+            mock_get.return_value.status_code = 200
+
+            text = "This is a test message."
+            result = self.remote_evaluator.evaluate(text)
+
+            self.assertTrue(result["is_flagged"])
+            mock_get_id_token.assert_not_called()
+            self.assertIsNone(
+                self.remote_evaluator.session.headers.get("Authorization")
+            )
+
+    @patch("backend.pipeline.evaluation.rules_evaluation.evaluator.get_id_token")
+    @patch("requests.Session.get")
+    def test_evaluate_inactive_rule(self, mock_get, mock_get_id_token) -> None:
         """Test that inactive rules are ignored."""
+        mock_get_id_token.return_value = "mock_token"
         mock_rule = {
             "rule_id": "inactive_rule",
             "rule_name": "Inactive Rule",

@@ -33,7 +33,7 @@ services:
     env_file:
       - ./local_dev/LOCAL.env
     volumes:
-      - ./local_dev/test_evaluation_publish.py:/app/test_evaluation_publish.py
+      - ./local_dev/run_evaluation_publish.py:/app/run_evaluation_publish.py
     command: ["functions-framework", "--source=backend/pipeline/evaluation/main.py", "--target=evaluate_transcribed_audio_segment", "--signature-type=cloudevent", "--port=8080"]
     networks:
       - pipeline-network
@@ -105,7 +105,7 @@ services:
     environment:
       - PYTHONPATH=/app
     command: >
-      sh -c "pip install requests protobuf && python local_dev/test_evaluation_publish.py"
+      sh -c "pip install requests protobuf && python integration_tests/test_rules_creation_evaluation_publish.py"
     networks:
       - pipeline-network
 

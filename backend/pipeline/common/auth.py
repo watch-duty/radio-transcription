@@ -22,9 +22,6 @@ def get_id_token(audience: str) -> str:
     When running on Google Cloud (Cloud Run, GCE, etc.), this uses the
     metadata server to get a token for the service account.
     """
-    if os.environ.get("SKIP_AUTH") == "true":
-        return "mock-token"
-
     try:
         auth_req = google.auth.transport.requests.Request()
         return google.oauth2.id_token.fetch_id_token(auth_req, audience)
@@ -43,7 +40,7 @@ async def verify_oidc_token(
 
     Returns the decoded token claims if valid.
     """
-    if os.environ.get("SKIP_AUTH") == "true":
+    if os.environ.get("LOCAL_DEV") == "true":
         return {"sub": "local-dev@example.com", "email": "local-dev@example.com"}
 
     if not auth:

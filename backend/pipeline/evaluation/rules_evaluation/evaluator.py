@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 from abc import ABC, abstractmethod
 from typing import TypedDict
@@ -68,6 +69,7 @@ class BaseTextEvaluator(ABC):
 class StaticTextEvaluator(BaseTextEvaluator):
     """
     Static implementation of text evaluation using the common Rule model.
+    Can be used as a fallback if the remote API is unavailable.
     """
 
     _RULES: list[models.Rule] = [
@@ -155,16 +157,10 @@ class RemoteTextEvaluator(BaseTextEvaluator):
         Returns:
             A list of Rule objects.
         """
-        try:
-            # When running on Cloud Run, use the metadata server to get an ID token
-            # Note: We fetch this every time (or you could cache for ~1hr)
+        # When running on Cloud Run, use the metadata server to get an ID token
+        if os.environ.get("LOCAL_DEV") != "true":
             token = get_id_token(self.api_url)
             self.session.headers.update({"Authorization": f"Bearer {token}"})
-        except Exception:
-            # If error (e.g. local dev), we'll try without auth
-            logger.debug(
-                "Failed to fetch ID token for rules API (normal for local dev)."
-            )
 
         response = self.session.get(
             f"{self.api_url}/v1/rules",

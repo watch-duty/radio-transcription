@@ -19,7 +19,7 @@
 
 ### E2E Local Development
 On a high level, this local pipeline runs the following:
-1. Pub/Sub emulator
+1. Pub/Sub emulator (manages all PubSub topics for each Pub/Sub instance in the pipeline)
 2. Rules Management service (to manage keywords and evaluation logic)
 3. Rules Evaluation service (to process transcription events)
 4. Notification service (to send alerts when rules match)
