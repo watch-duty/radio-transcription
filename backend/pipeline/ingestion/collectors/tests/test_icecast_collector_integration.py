@@ -251,6 +251,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 feed["id"],
                 self.worker_id,
                 gcs_path,
+                feed["fencing_token"],
             )
             self.assertTrue(ok)
             chunks_uploaded.append((flac_chunk, gcs_path))
@@ -304,6 +305,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 feed["id"],
                 self.worker_id,
                 gcs_path,
+                feed["fencing_token"],
             )
             gcs_paths.append(gcs_path)
             seq += 1
@@ -358,6 +360,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 feed["id"],
                 self.worker_id,
                 gcs_path,
+                feed["fencing_token"],
             )
             gcs_paths.append(gcs_path)
             seq += 1
@@ -400,7 +403,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ffmpeg exited with code 1", str(ctx.exception))
 
         # Simulate what NormalizerRuntime._process_feed does on exception
-        await self.store.report_feed_failure(feed["id"], self.worker_id)
+        await self.store.report_feed_failure(feed["id"], self.worker_id, feed["fencing_token"])
 
         # Assert: feed transitioned to 'failing'
         row = await self._get_feed_row(feed["id"])

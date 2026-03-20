@@ -306,6 +306,7 @@ class NormalizerRuntime:
         """
         chunk_seq = 0
         worker_id = self._normalizer_settings.worker_id
+        fencing_token = feed["fencing_token"]
         settings = self._normalizer_settings
 
         try:
@@ -320,6 +321,7 @@ class NormalizerRuntime:
                     feed,
                     settings.audio_staging_bucket,
                     chunk_seq,
+                    fencing_token,
                     lease_lost=self._lease_lost,
                     shutdown=self._shutdown,
                     max_retries=settings.gcs_upload_max_retries,
@@ -344,6 +346,7 @@ class NormalizerRuntime:
                     feed["id"],
                     worker_id,
                     gcs_uri,
+                    fencing_token,
                     lease_lost=self._lease_lost,
                     shutdown=self._shutdown,
                     max_retries=settings.bookmark_max_retries,
@@ -411,6 +414,7 @@ class NormalizerRuntime:
                 await self._store.report_feed_failure(
                     feed["id"],
                     worker_id,
+                    fencing_token,
                     self._normalizer_settings.feed_failure_threshold,
                 )
             except Exception:
@@ -430,7 +434,7 @@ class NormalizerRuntime:
         # SAFETY: same _releasing_feeds invariant as above.
         self._releasing_feeds.add(feed["id"])
         try:
-            await self._store.release_feed(feed["id"], worker_id)
+            await self._store.release_feed(feed["id"], worker_id, fencing_token)
         except Exception:
             # 60s abandonment window is the safety net.
             logger.exception("Failed to release feed %s", feed["name"])

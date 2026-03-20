@@ -4,7 +4,9 @@ import asyncio
 import base64
 import datetime
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+import aiohttp
 
 from backend.pipeline.common.constants import GCS_METADATA_SIZE_LIMIT
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
@@ -60,12 +62,17 @@ async def upload_staged_audio(
     feed: LeasedFeed,
     bucket: str,
     chunk_seq: int,
+    fencing_token: int | None = None,
     sed_metadata: SedMetadata | None = None,
 ) -> str:
     """
     Upload an unnormalized audio chunk to GCS and return the object path.
 
-    The object path follows the convention:
+    When *fencing_token* is provided, the object path includes a
+    token-qualified segment for split-brain prevention:
+    ``{source_type}/{feed_id}/token-{N}/{timestamp}_{seq}.flac``
+
+    Without a fencing token the legacy path is used:
     ``{source_type}/{feed_id}/{timestamp}_{seq}.flac``
 
     Args:
@@ -74,6 +81,9 @@ async def upload_staged_audio(
         feed: The leased feed this chunk belongs to.
         bucket: GCS bucket name.
         chunk_seq: Monotonically increasing sequence number for this feed.
+        fencing_token: Fencing token from lease acquisition. When set,
+            produces a token-qualified path and uses ``ifGenerationMatch=0``
+            to guarantee create-only semantics.
         sed_metadata: Optional SED metadata serialized into object metadata.
 
     Returns:
@@ -86,7 +96,15 @@ async def upload_staged_audio(
     timestamp = datetime.datetime.now(tz=datetime.UTC).strftime(
         "%Y%m%dT%H%M%SZ",
     )
-    object_name = f"{feed['source_type']}/{feed['id']}/{timestamp}_{chunk_seq}.flac"
+    if fencing_token is not None:
+        object_name = (
+            f"{feed['source_type']}/{feed['id']}/"
+            f"token-{fencing_token}/{timestamp}_{chunk_seq}.flac"
+        )
+    else:
+        object_name = (
+            f"{feed['source_type']}/{feed['id']}/{timestamp}_{chunk_seq}.flac"
+        )
 
     return await upload_audio(
         gcs_client,
@@ -94,6 +112,7 @@ async def upload_staged_audio(
         bucket,
         object_name,
         sed_metadata,
+        if_generation_match=0 if fencing_token is not None else None,
     )
 
 
@@ -103,6 +122,7 @@ async def upload_audio(
     bucket: str,
     object_name: str,
     sed_metadata: SedMetadata | None = None,
+    if_generation_match: int | None = None,
 ) -> str:
     """
     Upload audio to GCS with optional SED metadata.
@@ -117,6 +137,9 @@ async def upload_audio(
         bucket: Destination GCS bucket name.
         object_name: Object path within the bucket.
         sed_metadata: Optional SED metadata attached as custom metadata.
+        if_generation_match: GCS generation precondition. Set to ``0`` for
+            create-only semantics (fails with 412 if the object exists).
+            When set, a 412 is treated as success (idempotent retry).
 
     Returns:
         The full GCS path (``gs://bucket/object``).
@@ -125,13 +148,26 @@ async def upload_audio(
     storage = gcs_client.get_storage()
     metadata = _build_sed_metadata(object_name, sed_metadata)
 
-    await storage.upload(
-        bucket,
-        object_name,
-        audio_chunk,
-        metadata=metadata,
-        content_type="audio/flac",
-    )
+    upload_kwargs: dict[str, Any] = {
+        "metadata": metadata,
+        "content_type": "audio/flac",
+    }
+    if if_generation_match is not None:
+        upload_kwargs["parameters"] = {
+            "ifGenerationMatch": str(if_generation_match),
+        }
+
+    try:
+        await storage.upload(bucket, object_name, audio_chunk, **upload_kwargs)
+    except aiohttp.ClientResponseError as exc:
+        if if_generation_match is not None and exc.status == 412:
+            logger.info(
+                "GCS 412 (object exists): %s/%s -- treating as success",
+                bucket,
+                object_name,
+            )
+        else:
+            raise
     return f"gs://{bucket}/{object_name}"
 
 

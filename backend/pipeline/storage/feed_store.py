@@ -24,14 +24,15 @@ leased AS (
     UPDATE feeds
     SET worker_id = $1,
         status = 'active'::feed_status,
-        last_heartbeat = NOW()
+        last_heartbeat = NOW(),
+        fencing_token = fencing_token + 1
     FROM available_feed
     WHERE feeds.id = available_feed.id
     RETURNING feeds.id, feeds.name, feeds.source_type,
-              feeds.last_processed_filename
+              feeds.last_processed_filename, feeds.fencing_token
 )
 SELECT leased.id, leased.name, leased.source_type,
-       leased.last_processed_filename, fpi.stream_url
+       leased.last_processed_filename, leased.fencing_token, fpi.stream_url
 FROM leased
 LEFT JOIN feed_properties_icecast fpi ON fpi.feed_id = leased.id
 """
@@ -41,7 +42,7 @@ UPDATE feeds
 SET last_processed_filename = $1,
     last_heartbeat = NOW(),
     failure_count = 0
-WHERE id = $2 AND worker_id = $3
+WHERE id = $2 AND worker_id = $3 AND fencing_token = $4
 """
 
 _RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL = """\
@@ -70,7 +71,7 @@ UPDATE feeds
 SET worker_id = NULL,
     status = 'unclaimed'::feed_status,
     last_heartbeat = NOW()
-WHERE id = $1 AND worker_id = $2
+WHERE id = $1 AND worker_id = $2 AND fencing_token = $3
 """
 
 _ACQUIRE_FEEDS_BATCH_SQL = """\
@@ -89,14 +90,15 @@ leased AS (
     UPDATE feeds
     SET worker_id = $1,
         status = 'active'::feed_status,
-        last_heartbeat = NOW()
+        last_heartbeat = NOW(),
+        fencing_token = fencing_token + 1
     FROM available_feeds
     WHERE feeds.id = available_feeds.id
     RETURNING feeds.id, feeds.name, feeds.source_type,
-              feeds.last_processed_filename
+              feeds.last_processed_filename, feeds.fencing_token
 )
 SELECT leased.id, leased.name, leased.source_type,
-       leased.last_processed_filename, fpi.stream_url
+       leased.last_processed_filename, leased.fencing_token, fpi.stream_url
 FROM leased
 LEFT JOIN feed_properties_icecast fpi ON fpi.feed_id = leased.id
 """
@@ -109,7 +111,7 @@ SET status = CASE WHEN failure_count + 1 >= $3
     failure_count = failure_count + 1,
     worker_id = NULL,
     last_heartbeat = NOW()
-WHERE id = $1 AND worker_id = $2
+WHERE id = $1 AND worker_id = $2 AND fencing_token = $4
 """
 
 
@@ -120,6 +122,7 @@ class LeasedFeed(TypedDict):
     name: str
     source_type: str
     last_processed_filename: str | None
+    fencing_token: int
     stream_url: str | None
 
 
@@ -175,6 +178,7 @@ class FeedStore:
             name=row["name"],
             source_type=row["source_type"],
             last_processed_filename=row["last_processed_filename"],
+            fencing_token=row["fencing_token"],
             stream_url=row["stream_url"],
         )
 
@@ -183,18 +187,21 @@ class FeedStore:
         feed_id: uuid.UUID,
         worker_id: uuid.UUID,
         new_gcs_path: str,
+        fencing_token: int,
     ) -> bool:
         """
         Update the feed's bookmark and heartbeat after a successful write.
 
         This is a fenced operation — it only succeeds if the given worker still
-        holds the lease. A ``False`` return indicates the lease was lost and the
-        worker should stop processing this feed.
+        holds the lease AND the fencing token matches. A ``False`` return
+        indicates the lease was lost and the worker should stop processing
+        this feed.
 
         Args:
             feed_id: UUID of the feed to update.
             worker_id: UUID of the worker holding the lease.
             new_gcs_path: The GCS object path of the last successfully written file.
+            fencing_token: The fencing token received at lease acquisition.
 
         Returns:
             ``True`` if the update succeeded (lease still held), ``False`` if the
@@ -206,6 +213,7 @@ class FeedStore:
             new_gcs_path,
             feed_id,
             worker_id,
+            fencing_token,
         )
         return result == "UPDATE 1"
 
@@ -251,6 +259,7 @@ class FeedStore:
         self,
         feed_id: uuid.UUID,
         worker_id: uuid.UUID,
+        fencing_token: int,
         failure_threshold: int = 3,
     ) -> bool:
         """
@@ -260,11 +269,12 @@ class FeedStore:
         or ``'quarantined'`` (if the failure threshold is reached).
 
         This is a fenced operation — it only succeeds if the given worker still
-        holds the lease.
+        holds the lease AND the fencing token matches.
 
         Args:
             feed_id: UUID of the feed that failed.
             worker_id: UUID of the worker reporting the failure.
+            fencing_token: The fencing token received at lease acquisition.
             failure_threshold: Number of failures before quarantine (default 3).
 
         Returns:
@@ -277,6 +287,7 @@ class FeedStore:
             feed_id,
             worker_id,
             failure_threshold,
+            fencing_token,
         )
         return result == "UPDATE 1"
 
@@ -284,6 +295,7 @@ class FeedStore:
         self,
         feed_id: uuid.UUID,
         worker_id: uuid.UUID,
+        fencing_token: int,
     ) -> bool:
         """
         Release a feed lease, returning it to 'unclaimed' status.
@@ -293,11 +305,12 @@ class FeedStore:
         the feed if this call fails.
 
         This is a fenced operation — it only succeeds if the given worker
-        still holds the lease.
+        still holds the lease AND the fencing token matches.
 
         Args:
             feed_id: UUID of the feed to release.
             worker_id: UUID of the worker releasing the lease.
+            fencing_token: The fencing token received at lease acquisition.
 
         Returns:
             ``True`` if the lease was released, ``False`` if the lease was
@@ -308,6 +321,7 @@ class FeedStore:
             _RELEASE_FEED_SQL,
             feed_id,
             worker_id,
+            fencing_token,
         )
         return result == "UPDATE 1"
 
@@ -345,6 +359,7 @@ class FeedStore:
                 name=row["name"],
                 source_type=row["source_type"],
                 last_processed_filename=row["last_processed_filename"],
+                fencing_token=row["fencing_token"],
                 stream_url=row["stream_url"],
             )
             for row in rows
