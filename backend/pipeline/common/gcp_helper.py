@@ -96,6 +96,11 @@ async def upload_staged_audio(
     timestamp = datetime.datetime.now(tz=datetime.UTC).strftime(
         "%Y%m%dT%H%M%SZ",
     )
+    # Token-qualified paths give each lease holder a unique namespace.
+    # GCS ifGenerationMatch is per-object OCC — it cannot enforce "reject
+    # if token < max_seen."  Putting the token in the path sidesteps this:
+    # different lease holders write to different paths, so a zombie can
+    # never overwrite the current holder's objects.
     if fencing_token is not None:
         object_name = (
             f"{feed['source_type']}/{feed['id']}/"
@@ -146,6 +151,8 @@ async def upload_audio(
     storage = gcs_client.get_storage()
     metadata = _build_sed_metadata(object_name, sed_metadata)
 
+    # Build kwargs conditionally: passing parameters=None would break
+    # existing assert_called_once_with assertions that do exact matching.
     upload_kwargs: dict[str, Any] = {
         "metadata": metadata,
         "content_type": "audio/flac",
@@ -158,6 +165,10 @@ async def upload_audio(
     try:
         await storage.upload(bucket, object_name, audio_chunk, **upload_kwargs)
     except aiohttp.ClientResponseError as exc:
+        # Catch 412 here rather than in the caller because
+        # aiohttp.ClientResponseError is a subclass of ClientError, which
+        # retry_with_lease_check treats as retryable — without this catch,
+        # a 412 would be retried indefinitely instead of treated as success.
         if if_generation_match is not None and exc.status == 412:
             logger.info(
                 "GCS 412 (object exists): %s/%s -- treating as success",

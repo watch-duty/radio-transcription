@@ -45,6 +45,10 @@ SET last_processed_filename = $1,
 WHERE id = $2 AND worker_id = $3 AND fencing_token = $4
 """
 
+# Heartbeat renewal deliberately does NOT check fencing_token.  The token is
+# constant for the lifetime of a lease (only incremented on acquisition), so
+# worker_id alone is sufficient here.  Adding per-feed tokens would require
+# passing parallel arrays, adding complexity with no safety benefit.
 _RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL = """\
 WITH current_state AS (
     SELECT id, worker_id, status
@@ -103,6 +107,9 @@ FROM leased
 LEFT JOIN feed_properties_icecast fpi ON fpi.feed_id = leased.id
 """
 
+# NOTE: $3 = failure_threshold (SET clause), $4 = fencing_token (WHERE clause).
+# The method signature puts fencing_token before failure_threshold (required
+# param before defaulted param), but execute() reorders to match the SQL.
 _REPORT_FAILURE_PARAMETERIZED_SQL = """\
 UPDATE feeds
 SET status = CASE WHEN failure_count + 1 >= $3
