@@ -59,7 +59,7 @@ def publish_test_message() -> None:
         url,
         text_format.MessageToString(test_message),
     )
-    response = requests.post(url, json=payload)
+    response = requests.post(url, json=payload, timeout=10)
     logger.info("====== OUTPUT ======")
     logger.info("Status: %s", response.status_code)
     logger.info("Response: %s", response.text)

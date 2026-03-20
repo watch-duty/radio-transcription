@@ -1,6 +1,6 @@
 import base64
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from backend.pipeline.evaluation import service
 from backend.pipeline.schema_types import (
@@ -18,10 +18,12 @@ class TestEvaluationService(unittest.TestCase):
         self.project_id = "test-project"
         self.output_topic_id = "test-topic"
 
+        self.mock_evaluator = MagicMock()
         self.service = service.EvaluationService(
             publisher=self.mock_publisher,
             project_id=self.project_id,
             output_topic_id=self.output_topic_id,
+            text_evaluator=self.mock_evaluator,
         )
 
         self.transcribed_audio = transcribed_pb2.TranscribedAudio()
@@ -43,10 +45,9 @@ class TestEvaluationService(unittest.TestCase):
             "publish_time": "2023-01-01T12:00:00Z",
         }
 
-    @patch("backend.pipeline.evaluation.service.evaluator.StaticTextEvaluator.evaluate")
-    def test_successful_flow(self, mock_evaluate: MagicMock) -> None:
+    def test_successful_flow(self) -> None:
         """Tests a basic successful evaluation and publication flow."""
-        mock_evaluate.return_value = {
+        self.mock_evaluator.evaluate.return_value = {
             "is_flagged": True,
             "triggered_rules": ["basic_fire_terms"],
         }
@@ -57,7 +58,7 @@ class TestEvaluationService(unittest.TestCase):
 
         self.service.handle_event(self.mock_event)
 
-        mock_evaluate.assert_called_with("There is a fire")
+        self.mock_evaluator.evaluate.assert_called_with("There is a fire")
         self.assertTrue(self.mock_publisher.publish.called)
         args, _ = self.mock_publisher.publish.call_args
         sent_proto_bytes = args[1]
@@ -69,37 +70,36 @@ class TestEvaluationService(unittest.TestCase):
         self.assertEqual(result_proto.transcript, "There is a fire")
         self.assertEqual(result_proto.evaluation_decisions, ["basic_fire_terms"])
 
-    @patch("backend.pipeline.evaluation.service.evaluator.StaticTextEvaluator.evaluate")
-    def test_no_publish_if_not_flagged(self, mock_evaluate: MagicMock) -> None:
+    def test_no_publish_if_not_flagged(self) -> None:
         """Ensures no publication occurs if the text is not flagged."""
-        mock_evaluate.return_value = {
+        self.mock_evaluator.evaluate.return_value = {
             "is_flagged": False,
             "triggered_rules": [],
         }
 
         self.service.handle_event(self.mock_event)
 
-        mock_evaluate.assert_called()
+        self.mock_evaluator.evaluate.assert_called()
         self.mock_publisher.publish.assert_not_called()
 
-    @patch("backend.pipeline.evaluation.service.evaluator.StaticTextEvaluator.evaluate")
-    def test_no_publish_if_no_topic(self, mock_evaluate: MagicMock) -> None:
+    def test_no_publish_if_no_topic(self) -> None:
         """Ensures no publication occurs if no output topic is configured."""
         # Create service without topic
         service_no_topic = service.EvaluationService(
             publisher=self.mock_publisher,
             project_id=None,
             output_topic_id=None,
+            text_evaluator=self.mock_evaluator,
         )
 
-        mock_evaluate.return_value = {
+        self.mock_evaluator.evaluate.return_value = {
             "is_flagged": True,
             "triggered_rules": ["basic_fire_terms"],
         }
 
         service_no_topic.handle_event(self.mock_event)
 
-        mock_evaluate.assert_called()
+        self.mock_evaluator.evaluate.assert_called()
         self.mock_publisher.publish.assert_not_called()
 
 

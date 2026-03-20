@@ -2,13 +2,26 @@ import unittest
 
 from fastapi.testclient import TestClient
 
+from backend.pipeline.common.auth import verify_oidc_token
+
 from ..main import app
+
+
+async def skip_auth() -> dict[str, str]:
+    """Mock dependency to bypass authentication in tests."""
+    return {"sub": "test@example.com", "email": "test@example.com"}
 
 
 class TestRulesAPI(unittest.TestCase):
     def setUp(self) -> None:
         """Set up a test client before each test."""
+        # Override the auth dependency for tests
+        app.dependency_overrides[verify_oidc_token] = skip_auth
         self.client = TestClient(app)
+
+    def tearDown(self) -> None:
+        """Clean up after each test."""
+        app.dependency_overrides.clear()
 
     def test_create_keyword_rule(self) -> None:
         """Test creating a rule with keyword-based conditions."""
