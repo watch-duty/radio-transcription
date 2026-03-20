@@ -6,4 +6,7 @@ message AudioChunk {
 
   // The absolute wall-clock time when this chunk started recording.
   google.protobuf.Timestamp start_timestamp = 2;
+
+  // A unique identifier for the continuous capture session that produced this chunk
+  string session_id = 3;
 }

@@ -223,6 +223,7 @@ async def publish_audio_chunk(
     feed_id: str,
     gcs_uri: str,
     start_timestamp: datetime.datetime | None = None,
+    session_id: str | None = None,
 ) -> str:
     """
     Publish a GCS audio chunk URI to Pub/Sub and return message ID.
@@ -234,6 +235,7 @@ async def publish_audio_chunk(
         gcs_uri: GCS URI of the audio chunk.
         start_timestamp: Original capture timestamp to preserve.
             Defaults to ``datetime.now(UTC)`` if not provided.
+        session_id: The session ID for this connected stream ingestion.
 
     """
     publisher = pubsub_client.get_publisher()
@@ -241,6 +243,8 @@ async def publish_audio_chunk(
     audio_chunk_msg = AudioChunk(gcs_uri=gcs_uri)
     ts = start_timestamp or datetime.datetime.now(tz=datetime.UTC)
     audio_chunk_msg.start_timestamp.FromDatetime(ts)
+    if session_id is not None:
+        audio_chunk_msg.session_id = session_id
 
     future = publisher.publish(
         topic_path,

@@ -1,0 +1,12 @@
+pyproject.toml
+tests/test_audio_processor.py
+tests/test_metadata.py
+tests/test_telemetry.py
+tests/test_transcribers.py
+tests/test_transforms.py
+tests/test_vads.py
+transcription_pipeline.egg-info/PKG-INFO
+transcription_pipeline.egg-info/SOURCES.txt
+transcription_pipeline.egg-info/dependency_links.txt
+transcription_pipeline.egg-info/requires.txt
+transcription_pipeline.egg-info/top_level.txt

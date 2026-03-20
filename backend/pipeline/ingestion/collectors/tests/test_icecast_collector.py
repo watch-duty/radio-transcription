@@ -80,7 +80,7 @@ async def _collect_chunks(
         async with asyncio.timeout(total_timeout):
             while True:
                 try:
-                    chunk = await asyncio.wait_for(
+                    chunk, _ts = await asyncio.wait_for(
                         gen.__anext__(), timeout=per_chunk_timeout
                     )
                     chunks.append(chunk)
@@ -89,6 +89,30 @@ async def _collect_chunks(
     except TimeoutError:
         pass
     return chunks
+
+
+async def _collect_chunks_with_timestamps(
+    gen,
+    *,
+    total_timeout: float = 2.0,
+    per_chunk_timeout: float = 0.5,
+) -> list[tuple[bytes, 'datetime.datetime']]:
+    """Collect chunks and timestamps from an async generator until it finishes or times out."""
+    import datetime
+    results = []
+    try:
+        async with asyncio.timeout(total_timeout):
+            while True:
+                try:
+                    chunk, ts = await asyncio.wait_for(
+                        gen.__anext__(), timeout=per_chunk_timeout
+                    )
+                    results.append((chunk, ts))
+                except StopAsyncIteration:
+                    break
+    except TimeoutError:
+        pass
+    return results
 
 
 class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
@@ -317,6 +341,42 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             self.assertIsInstance(chunk, bytes)
             # Each chunk should be a FLAC segment without additional headers
             self.assertTrue(b"FLAC_SEGMENT" in chunk or b"FLAC" in chunk)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_timestamps_advance_by_chunk_duration(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Test timestamp math: Each chunk advances strictly by CHUNK_DURATION_SECONDS."""
+        from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
+        
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=3333,
+            segments=[
+                b"FLAC_SEGMENT_0",
+                b"FLAC_SEGMENT_1",
+                b"FLAC_SEGMENT_2",
+            ],
+            wait_delay=0.1,
+            wait_result=0,
+        )
+
+        feed = _make_feed("timestamp-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(feed, shutdown_event)
+        results = await _collect_chunks_with_timestamps(gen)
+
+        self.assertEqual(len(results), 3)
+        
+        ts0 = results[0][1]
+        ts1 = results[1][1]
+        ts2 = results[2][1]
+        
+        self.assertEqual((ts1 - ts0).total_seconds(), CHUNK_DURATION_SECONDS)
+        self.assertEqual((ts2 - ts1).total_seconds(), CHUNK_DURATION_SECONDS)
 
 
 if __name__ == "__main__":
