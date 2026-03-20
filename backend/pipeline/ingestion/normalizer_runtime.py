@@ -246,6 +246,23 @@ class NormalizerRuntime:
                         limit=capacity,
                     )
                     for lease in leases:
+                        existing = self._feed_tasks.get(lease["id"])
+                        if existing is not None and not existing.done():
+                            # A stale heartbeat allowed the DB to re-lease a
+                            # feed we already hold.  The old task still runs
+                            # with its original (now-outdated) fencing token.
+                            # If left alive it will eventually fail a fenced
+                            # write and call os._exit(1), killing the whole
+                            # worker — including the healthy new task.
+                            # Cancel first; the CancelledError handler in
+                            # _process_feed exits cleanly without DB writes.
+                            logger.warning(
+                                "Cancelling orphaned task for feed %s "
+                                "(re-leased with token %d)",
+                                lease["name"],
+                                lease["fencing_token"],
+                            )
+                            existing.cancel()
                         task = asyncio.create_task(
                             self._process_feed(lease),
                             name=f"feed-{lease['name']}",
