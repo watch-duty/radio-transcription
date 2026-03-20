@@ -27,7 +27,7 @@ class RequestHandler:
 
     def send_notification(self, notification: AlertNotification) -> None:
         """
-        Sends a notification an endpoint with a POST request.
+        Makes a POST request to an endpoint with the provided `notification`.
         """
         request_data = MessageToJson(notification, indent=None)
         self.logger.info(f"Sending payload: {request_data}")
