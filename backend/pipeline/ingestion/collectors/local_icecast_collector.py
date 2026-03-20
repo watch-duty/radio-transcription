@@ -42,6 +42,7 @@ async def run_local_capture() -> None:
         "name": "local-icecast-test",
         "source_type": "icecast",
         "last_processed_filename": None,
+        "fencing_token": 0,
         "stream_url": stream_url,
     }
     shutdown_event = asyncio.Event()

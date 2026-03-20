@@ -7,9 +7,18 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+STATE = {"last_received": None}
+
 
 class RequestHandler(BaseHTTPRequestHandler):
     """Handles HTTP requests for the mock server."""
+
+    def do_GET(self) -> None:
+        """Endpoint to query what the server has received."""
+        self.send_response(200)
+        self.send_header("Content-type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(STATE["last_received"]).encode("utf-8"))
 
     def do_POST(self) -> None:
         """Processes incoming POST requests and echoes the JSON payload."""
@@ -29,6 +38,8 @@ class RequestHandler(BaseHTTPRequestHandler):
         response = {"message": "Success", "received_data": parsed_data}
         self.wfile.write(json.dumps(response).encode("utf-8"))
         logger.info("Mock Server received POST request with data:\n%s", parsed_data)
+
+        STATE["last_received"] = parsed_data
 
 
 def run(
