@@ -32,7 +32,7 @@ class RedisService(CacheProvider):
             password=REDIS_PASSWORD,
             ssl=ssl_enabled,
             ssl_cert_reqs="required" if ssl_enabled else "none",
-            ssl_ca_path=REDIS_CERTIFICATE_PATH if ssl_enabled else None,
+            ssl_ca_certs=REDIS_CERTIFICATE_PATH if ssl_enabled else None,
             db=0,
             decode_responses=True,
             retry=retry,
