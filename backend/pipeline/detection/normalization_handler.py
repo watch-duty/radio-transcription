@@ -160,7 +160,9 @@ async def normalize(cloud_event: CloudEvent) -> None:
         if audio_chunk_msg.HasField("start_timestamp"):
             start_ts = audio_chunk_msg.start_timestamp.ToDatetime(tzinfo=datetime.UTC)
         else:
-            logger.warning("Missing start_timestamp in audio chunk, falling back to now")
+            logger.warning(
+                "Missing start_timestamp in audio chunk, falling back to now"
+            )
             start_ts = datetime.datetime.now(tz=datetime.UTC)
 
         topic_path = os.environ.get("TRANSCRIPTION_TOPIC_PATH", "")

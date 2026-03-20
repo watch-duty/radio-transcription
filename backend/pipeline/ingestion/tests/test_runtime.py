@@ -283,7 +283,6 @@ class TestProcessFeedNormalCompletion(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rt._releasing_feeds, set())
 
 
-
 class TestProcessFeedTimestamps(unittest.IsolatedAsyncioTestCase):
     """Tests for _process_feed timestamp population."""
 
@@ -319,6 +318,7 @@ class TestProcessFeedTimestamps(unittest.IsolatedAsyncioTestCase):
             self.assertIsInstance(kwargs["start_timestamp"], datetime.datetime)
             self.assertGreater(kwargs["start_timestamp"].timestamp(), 1700000000)
 
+
 class TestProcessFeedSessionId(unittest.IsolatedAsyncioTestCase):
     """Tests for _process_feed session ID population."""
 
@@ -351,7 +351,6 @@ class TestProcessFeedSessionId(unittest.IsolatedAsyncioTestCase):
             self.assertIn("session_id", kwargs2)
             self.assertTrue(len(kwargs1["session_id"]) > 0)
             self.assertEqual(kwargs1["session_id"], kwargs2["session_id"])
-
 
 
 class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):

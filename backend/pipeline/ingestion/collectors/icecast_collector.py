@@ -179,12 +179,12 @@ async def _create_ffmpeg_process(
 
     """
     # Low-latency live stream network optimizations used below:
-    # 1. -analyzeduration 0 / -probesize 32768: Bypasses the default 5-second/5MB 
+    # 1. -analyzeduration 0 / -probesize 32768: Bypasses the default 5-second/5MB
     #    initialization handicap, instantly locking the demuxer on the first 32KB of data.
     #    This reduces the time-to-first-byte from the start timestamp when ffmpeg starts recording.
-    # 2. -fflags nobuffer+flush_packets: Drops the demuxer/muxer packet buffering 
+    # 2. -fflags nobuffer+flush_packets: Drops the demuxer/muxer packet buffering
     #    for true real-time network flow.
-    # 3. discardcorrupt: Mitigates parsing crashes over TCP jitter, which is necessary 
+    # 3. discardcorrupt: Mitigates parsing crashes over TCP jitter, which is necessary
     #    since our micro probesize doesn't deeply validate stream integrity.
     return await asyncio.create_subprocess_exec(
         "ffmpeg", "-nostdin",
