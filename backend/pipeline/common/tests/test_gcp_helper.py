@@ -6,12 +6,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 from google.protobuf.duration_pb2 import Duration  # type: ignore
+from multidict import CIMultiDict, CIMultiDictProxy
+from yarl import URL
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.schema_types.sed_metadata_pb2 import SedMetadata, SoundEvent
 from backend.pipeline.storage.feed_store import LeasedFeed
+
+_DUMMY_REQUEST_INFO = aiohttp.RequestInfo(
+    url=URL("http://example.com"),
+    method="POST",
+    headers=CIMultiDictProxy(CIMultiDict()),
+    real_url=URL("http://example.com"),
+)
 
 
 def _make_feed(source_type: str, feed_id: int, fencing_token: int = 0) -> LeasedFeed:
@@ -442,12 +451,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         """412 Precondition Failed is treated as success when precondition set."""
         mock_gcs_client, mock_storage = _make_gcs_client()
         mock_storage.upload.side_effect = aiohttp.ClientResponseError(
-            request_info=aiohttp.RequestInfo(
-                url="http://example.com",
-                method="POST",
-                headers={},
-                real_url="http://example.com",
-            ),
+            request_info=_DUMMY_REQUEST_INFO,
             history=(),
             status=412,
             message="Precondition Failed",
@@ -467,12 +471,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         """412 propagates when if_generation_match is not set."""
         mock_gcs_client, mock_storage = _make_gcs_client()
         mock_storage.upload.side_effect = aiohttp.ClientResponseError(
-            request_info=aiohttp.RequestInfo(
-                url="http://example.com",
-                method="POST",
-                headers={},
-                real_url="http://example.com",
-            ),
+            request_info=_DUMMY_REQUEST_INFO,
             history=(),
             status=412,
             message="Precondition Failed",
@@ -490,12 +489,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         """Non-412 errors propagate even when if_generation_match is set."""
         mock_gcs_client, mock_storage = _make_gcs_client()
         mock_storage.upload.side_effect = aiohttp.ClientResponseError(
-            request_info=aiohttp.RequestInfo(
-                url="http://example.com",
-                method="POST",
-                headers={},
-                real_url="http://example.com",
-            ),
+            request_info=_DUMMY_REQUEST_INFO,
             history=(),
             status=500,
             message="Internal Server Error",
