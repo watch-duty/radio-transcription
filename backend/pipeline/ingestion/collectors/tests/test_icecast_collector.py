@@ -96,9 +96,8 @@ async def _collect_chunks_with_timestamps(
     *,
     total_timeout: float = 2.0,
     per_chunk_timeout: float = 0.5,
-) -> list[tuple[bytes, 'datetime.datetime']]:
+) -> list[tuple[bytes, "datetime.datetime"]]:
     """Collect chunks and timestamps from an async generator until it finishes or times out."""
-    import datetime
     results = []
     try:
         async with asyncio.timeout(total_timeout):
@@ -351,7 +350,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Test timestamp math: Each chunk advances strictly by CHUNK_DURATION_SECONDS."""
         from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
-        
+
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=3333,
             segments=[
@@ -370,11 +369,11 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         results = await _collect_chunks_with_timestamps(gen)
 
         self.assertEqual(len(results), 3)
-        
+
         ts0 = results[0][1]
         ts1 = results[1][1]
         ts2 = results[2][1]
-        
+
         self.assertEqual((ts1 - ts0).total_seconds(), CHUNK_DURATION_SECONDS)
         self.assertEqual((ts2 - ts1).total_seconds(), CHUNK_DURATION_SECONDS)
 

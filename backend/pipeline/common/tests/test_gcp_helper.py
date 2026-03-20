@@ -535,6 +535,8 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
             topic_path="projects/test/topics/audio",
             feed_id="feed-42",
             gcs_uri="gs://bucket/audio.flac",
+            session_id="test-session-1",
+            start_timestamp=mock_now,
         )
 
         self.assertEqual(result, "message-123")
@@ -569,12 +571,16 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
             topic_path="projects/test/topics/audio",
             feed_id="feed-1",
             gcs_uri="gs://bucket/one.flac",
+            session_id="test-session-1",
+            start_timestamp=datetime.datetime(2026, 3, 5, 12, 0, tzinfo=datetime.UTC),
         )
         second_result = await gcp_helper.publish_audio_chunk(
             mock_pubsub_client,
             topic_path="projects/test/topics/audio",
             feed_id="feed-2",
             gcs_uri="gs://bucket/two.flac",
+            session_id="test-session-2",
+            start_timestamp=datetime.datetime(2026, 3, 5, 12, 0, tzinfo=datetime.UTC),
         )
 
         self.assertEqual(first_result, "message-1")

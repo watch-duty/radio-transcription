@@ -3,12 +3,12 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import datetime
 import logging
 import os
 import sys
 import tempfile
 import time
-import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -95,7 +95,7 @@ async def capture_icecast_stream(
         next_index = 0
         last_activity_time = time.monotonic()
         wait_task = asyncio.create_task(process.wait())
-        
+
         # Anchor the stream timeline to the exact moment ffmpeg starts
         stream_anchor_time = datetime.datetime.now(tz=datetime.UTC)
 
@@ -125,7 +125,7 @@ async def capture_icecast_stream(
                             seconds=next_index * CHUNK_DURATION_SECONDS
                         )
                         yield segment_bytes, chunk_start_time
-                        
+
                         last_activity_time = time.monotonic()
                     await asyncio.to_thread(current_segment.unlink, missing_ok=True)
                     next_index += 1
