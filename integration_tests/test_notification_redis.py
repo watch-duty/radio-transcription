@@ -1,4 +1,4 @@
-"""Integration test for notification deduplication logic against local Redis."""
+"""Integration test for notification deduping logic against Redis."""
 
 import base64
 import os
@@ -37,10 +37,7 @@ def test_deduplication_via_pubsub(
     Tests the deduplication logic by publishing a message to the
     local Pub/Sub emulator and verifying it sets the key in Redis.
     """
-    # Use a unique notification ID (transmission_id) for the test run
     test_notification_id = f"test-integration-notification-{uuid.uuid4()}"
-
-    # Pub/Sub message for the rule evaluation results topic
     test_message = EvaluatedTranscribedAudio(
         transmission_id=test_notification_id,
         transcript="liar liar pants on fire",
@@ -52,16 +49,18 @@ def test_deduplication_via_pubsub(
     ).decode("utf-8")
     payload = {"messages": [{"data": encoded_data}]}
 
-    pubsub_base_url = f"http://{os.environ.get('PUBSUB_EMULATOR_HOST', 'localhost:8085')}"
+    emulator_host = os.environ.get("PUBSUB_EMULATOR_HOST", "localhost:8085")
     pubsub_url = (
-        f"{pubsub_base_url}/v1/projects/local-project/"
+        f"http://{emulator_host}/v1/projects/local-project/"
         "topics/rules-evaluation-results-topic:publish"
     )
 
     try:
         # Publish the message to the topic
         response = requests.post(pubsub_url, json=payload, timeout=10)
-        assert response.status_code == 200, f"Failed to publish: {response.text}"
+        assert response.status_code == 200, (
+            f"Failed to publish: {response.text}"
+        )
 
         # Wait for the notification service to process the message and
         # write to Redis. Expect the notification service to process the
@@ -76,7 +75,8 @@ def test_deduplication_via_pubsub(
         )
 
         # Check that the mock server received the first notification
-        mock_requests_url = f"http://{os.environ.get('MOCK_SERVER_HOST', 'localhost:8082')}/"
+        mock_host = os.environ.get("MOCK_SERVER_HOST", "localhost:8082")
+        mock_requests_url = f"http://{mock_host}/"
 
         def mock_server_received() -> bool:
             try:
@@ -102,7 +102,9 @@ def test_deduplication_via_pubsub(
 
         # Send duplicate message
         dupe_resp = requests.post(pubsub_url, json=payload, timeout=10)
-        assert dupe_resp.status_code == 200, "Failed to publish duplicate message"
+        assert dupe_resp.status_code == 200, (
+            "Failed to publish duplicate message"
+        )
 
         # Give the notification service time to process duplicate message.
         time.sleep(5)
