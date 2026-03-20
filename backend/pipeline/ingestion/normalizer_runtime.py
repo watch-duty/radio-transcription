@@ -1,5 +1,6 @@
 import asyncio
 import concurrent.futures
+import datetime
 import logging
 import os
 import signal
@@ -19,8 +20,9 @@ from backend.pipeline.storage.connection import close_pool, create_pool
 from backend.pipeline.storage.feed_store import FeedStore, HeartbeatResult, LeasedFeed
 
 FeedID = uuid.UUID
-CaptureFn = Callable[[LeasedFeed, asyncio.Event], AsyncIterator[bytes]]
-
+CaptureFn = Callable[
+    [LeasedFeed, asyncio.Event], AsyncIterator[tuple[bytes, datetime.datetime]]
+]
 logger = logging.getLogger(__name__)
 
 
