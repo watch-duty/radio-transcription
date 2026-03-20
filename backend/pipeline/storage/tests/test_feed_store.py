@@ -356,9 +356,7 @@ class TestReportFeedFailureWithThreshold(unittest.IsolatedAsyncioTestCase):
         pool = _make_pool(execute_result="UPDATE 1")
         store = FeedStore(pool)
 
-        await store.report_feed_failure(
-            _FEED_ID, _WORKER_ID, 1, failure_threshold=5
-        )
+        await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1, failure_threshold=5)
 
         args = pool.execute.call_args[0]
         self.assertEqual(args[1:], (_FEED_ID, _WORKER_ID, 5, 1))

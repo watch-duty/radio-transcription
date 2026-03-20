@@ -486,7 +486,6 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
                 "obj.flac",
             )
 
-
     async def test_upload_non_412_error_raises_with_precondition(self) -> None:
         """Non-412 errors propagate even when if_generation_match is set."""
         mock_gcs_client, mock_storage = _make_gcs_client()

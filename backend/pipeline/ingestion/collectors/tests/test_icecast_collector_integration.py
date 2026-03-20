@@ -403,7 +403,9 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ffmpeg exited with code 1", str(ctx.exception))
 
         # Simulate what NormalizerRuntime._process_feed does on exception
-        await self.store.report_feed_failure(feed["id"], self.worker_id, feed["fencing_token"])
+        await self.store.report_feed_failure(
+            feed["id"], self.worker_id, feed["fencing_token"]
+        )
 
         # Assert: feed transitioned to 'failing'
         row = await self._get_feed_row(feed["id"])

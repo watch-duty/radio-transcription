@@ -102,9 +102,7 @@ async def upload_staged_audio(
             f"token-{fencing_token}/{timestamp}_{chunk_seq}.flac"
         )
     else:
-        object_name = (
-            f"{feed['source_type']}/{feed['id']}/{timestamp}_{chunk_seq}.flac"
-        )
+        object_name = f"{feed['source_type']}/{feed['id']}/{timestamp}_{chunk_seq}.flac"
 
     return await upload_audio(
         gcs_client,

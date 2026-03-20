@@ -175,9 +175,7 @@ class TestLeasingLoopOrphanedTask(unittest.IsolatedAsyncioTestCase):
         rt._store.acquire_feeds_batch.return_value = [_FEED]
 
         # Patch _process_feed to avoid running the real pipeline
-        with mock.patch.object(
-            rt, "_process_feed", new_callable=mock.AsyncMock
-        ):
+        with mock.patch.object(rt, "_process_feed", new_callable=mock.AsyncMock):
             # Run one iteration: reap, acquire, sleep → shutdown
             rt._store.acquire_feeds_batch.side_effect = [
                 [_FEED],  # first call returns re-leased feed
