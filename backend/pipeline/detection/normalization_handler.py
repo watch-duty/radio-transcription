@@ -157,13 +157,19 @@ async def normalize(cloud_event: CloudEvent) -> None:
 
     # 7. Publish to transcription topic if speech detected
     if combined_result.speech_regions:
-        if audio_chunk_msg.HasField("start_timestamp"):
-            start_ts = audio_chunk_msg.start_timestamp.ToDatetime(tzinfo=datetime.UTC)
-        else:
-            logger.warning(
-                "Missing start_timestamp in audio chunk, falling back to now"
+        if not audio_chunk_msg.HasField("start_timestamp"):
+            logger.error(
+                "Missing start_timestamp in audio chunk for %s (permanent)", gcs_uri
             )
-            start_ts = datetime.datetime.now(tz=datetime.UTC)
+            return
+
+        if not audio_chunk_msg.session_id:
+            logger.error(
+                "Missing session_id in audio chunk for %s (permanent)", gcs_uri
+            )
+            return
+
+        start_ts = audio_chunk_msg.start_timestamp.ToDatetime(tzinfo=datetime.UTC)
 
         topic_path = os.environ.get("TRANSCRIPTION_TOPIC_PATH", "")
         if topic_path:
