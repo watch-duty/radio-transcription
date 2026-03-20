@@ -4,9 +4,10 @@ import "google/protobuf/timestamp.proto";
 message AudioChunk {
   string gcs_uri = 1;
 
-  // The wall-clock time when this chunk started recording.
+  // The (often virtual/estimated) wall-clock time when this chunk started recording.
   google.protobuf.Timestamp start_timestamp = 2;
 
-  // A unique identifier for the continuous capture session that produced this chunk
+  // A unique identifier for the continuous capture session that produced this chunk.
+  // This acts as a fencing token to prevent split-brain duplicates across worker leases.
   string session_id = 3;
 }
