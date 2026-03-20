@@ -23,6 +23,14 @@ services:
     working_dir: /app
     command: sh -c "pip install requests && python pubsub_init.py"
 
+  # Redis for deduping in Notification service
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - pipeline-network
+
   rules-evaluation:
     build:
       context: .
@@ -52,7 +60,7 @@ services:
       - pipeline-network
     depends_on:
       - pubsub-emulator
-
+      - redis
   mock-server:
     image: python:3.11-slim
     ports:
@@ -61,6 +69,28 @@ services:
       - ./local_dev/mock_server.py:/app/mock_server.py
     working_dir: /app
     command: python -u mock_server.py
+    networks:
+      - pipeline-network
+
+  integration-tests:
+    image: python:3.11-slim
+    depends_on:
+      - pubsub-emulator
+      - rules-evaluation
+      - notification
+      - redis
+      - mock-server
+    env_file:
+      - ./local_dev/LOCAL.env
+    environment:
+      - UV_PROJECT_ENVIRONMENT=/tmp/.venv
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: >
+      sh -c "pip install uv && uv sync &&
+      uv run python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto &&
+      uv run pytest integration_tests/test_notification_redis.py -v"
     networks:
       - pipeline-network
 

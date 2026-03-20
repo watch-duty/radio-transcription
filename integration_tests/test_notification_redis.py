@@ -1,0 +1,118 @@
+"""Integration test for notification deduplication logic against local Redis."""
+
+import base64
+import os
+import time
+import uuid
+
+import pytest
+import requests
+
+from backend.pipeline.common.storage.redis_service import RedisService
+from backend.pipeline.notification.notification_deduplication import (
+    NotificationDeduplication,
+)
+from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
+    EvaluatedTranscribedAudio,
+)
+from integration_tests.test_utils import assert_eventually
+
+
+@pytest.fixture
+def redis_service() -> RedisService:
+    """Fixture to instantiate the Redis service."""
+    return RedisService()
+
+
+@pytest.fixture
+def dedup(redis_service: RedisService) -> NotificationDeduplication:
+    """Fixture to instantiate the NotificationDeduplication class."""
+    return NotificationDeduplication(cache=redis_service)
+
+
+def test_deduplication_via_pubsub(
+    redis_service: RedisService, dedup: NotificationDeduplication
+) -> None:
+    """
+    Tests the deduplication logic by publishing a message to the
+    local Pub/Sub emulator and verifying it sets the key in Redis.
+    """
+    # Use a unique notification ID (transmission_id) for the test run
+    test_notification_id = f"test-integration-notification-{uuid.uuid4()}"
+
+    # Pub/Sub message for the rule evaluation results topic
+    test_message = EvaluatedTranscribedAudio(
+        transmission_id=test_notification_id,
+        transcript="liar liar pants on fire",
+        feed_id="test-feed",
+        evaluation_decisions=["rule1", "rule2"],
+    )
+    encoded_data = base64.b64encode(
+        test_message.SerializeToString()
+    ).decode("utf-8")
+    payload = {"messages": [{"data": encoded_data}]}
+
+    pubsub_base_url = f"http://{os.environ.get('PUBSUB_EMULATOR_HOST', 'localhost:8085')}"
+    pubsub_url = (
+        f"{pubsub_base_url}/v1/projects/local-project/"
+        "topics/rules-evaluation-results-topic:publish"
+    )
+
+    try:
+        # Publish the message to the topic
+        response = requests.post(pubsub_url, json=payload, timeout=10)
+        assert response.status_code == 200, f"Failed to publish: {response.text}"
+
+        # Wait for the notification service to process the message and
+        # write to Redis. Expect the notification service to process the
+        # message and persist for duplicates in Redis.
+        assert_eventually(
+            lambda: redis_service.client.get(test_notification_id) is not None,
+            timeout_sec=5.0,
+            error_msg=(
+                "Notification service failed to process the message "
+                "(or failed to set Redis cache)"
+            ),
+        )
+
+        # Check that the mock server received the first notification
+        mock_requests_url = f"http://{os.environ.get('MOCK_SERVER_HOST', 'localhost:8082')}/"
+
+        def mock_server_received() -> bool:
+            try:
+                mock_resp = requests.get(mock_requests_url, timeout=5)
+            except requests.exceptions.RequestException:
+                return False
+            else:
+                if mock_resp.status_code == 200:
+                    requests_data = mock_resp.json()
+                    # transmissionId will be the key in the JSON object.
+                    count = sum(
+                        1 for r in requests_data
+                        if r.get("transmissionId") == test_notification_id
+                    )
+                    return count == 1
+                return False
+
+        assert_eventually(
+            mock_server_received,
+            timeout_sec=10.0,
+            error_msg="Mock server did not receive the first notification",
+        )
+
+        # Send duplicate message
+        dupe_resp = requests.post(pubsub_url, json=payload, timeout=10)
+        assert dupe_resp.status_code == 200, "Failed to publish duplicate message"
+
+        # Give the notification service time to process duplicate message.
+        time.sleep(5)
+
+        assert mock_server_received(), (
+            "Expected message to be deduplicated, "
+            "but it was sent multiple times."
+        )
+
+    finally:
+        # Clean up the key after the test completes
+        redis_service.client.delete(test_notification_id)
+

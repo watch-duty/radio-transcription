@@ -93,6 +93,14 @@ docker run -v ~/.config/gcloud:/.config/gcloud \
            -it icecast
 ```
 
+### Integration Tests
+There is a basic set of integration tests that are currently run against the local pipeline.
+These can be found under /integration_tests. Make sure to build and run the pipeline locally
+before running.
+```
+docker-compose run --rm integration-tests
+```
+
 ### Frontend tools
 
 * Language: Typescript
