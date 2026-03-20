@@ -44,9 +44,7 @@ def test_deduplication_via_pubsub(
         feed_id="test-feed",
         evaluation_decisions=["rule1", "rule2"],
     )
-    encoded_data = base64.b64encode(
-        test_message.SerializeToString()
-    ).decode("utf-8")
+    encoded_data = base64.b64encode(test_message.SerializeToString()).decode("utf-8")
     payload = {"messages": [{"data": encoded_data}]}
     pubsub_host = os.environ.get("PUBSUB_EMULATOR_HOST", "localhost:8085")
     pubsub_url = (
@@ -57,9 +55,7 @@ def test_deduplication_via_pubsub(
     try:
         # Publish the message to the topic
         response = requests.post(pubsub_url, json=payload, timeout=10)
-        assert response.status_code == 200, (
-            f"Failed to publish: {response.text}"
-        )
+        assert response.status_code == 200, f"Failed to publish: {response.text}"
 
         # Wait for the notification service to process the message and
         # write to Redis. Expect the notification service to process the
@@ -102,19 +98,15 @@ def test_deduplication_via_pubsub(
 
         # Send duplicate message
         dupe_resp = requests.post(pubsub_url, json=payload, timeout=10)
-        assert dupe_resp.status_code == 200, (
-            "Failed to publish duplicate message"
-        )
+        assert dupe_resp.status_code == 200, "Failed to publish duplicate message"
 
         # Give the notification service time to process duplicate message.
         time.sleep(5)
 
         assert mock_server_received(), (
-            "Expected message to be deduplicated, "
-            "but it was sent multiple times."
+            "Expected message to be deduplicated, but it was sent multiple times."
         )
 
     finally:
         # Clean up the key after the test completes
         redis_service.client.delete(test_notification_id)
-

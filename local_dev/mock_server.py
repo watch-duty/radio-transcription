@@ -33,9 +33,7 @@ class RequestHandler(BaseHTTPRequestHandler):
 
         response = {"message": "Success", "received_data": parsed_data}
         self.wfile.write(json.dumps(response).encode("utf-8"))
-        logger.info(
-            "Mock Server received POST request with data:\n%s", parsed_data
-        )
+        logger.info("Mock Server received POST request with data:\n%s", parsed_data)
 
     def do_GET(self) -> None:
         """Returns the list of received requests."""
