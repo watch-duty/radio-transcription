@@ -48,10 +48,9 @@ def test_deduplication_via_pubsub(
         test_message.SerializeToString()
     ).decode("utf-8")
     payload = {"messages": [{"data": encoded_data}]}
-
-    emulator_host = os.environ.get("PUBSUB_EMULATOR_HOST", "localhost:8085")
+    pubsub_host = os.environ.get("PUBSUB_EMULATOR_HOST", "localhost:8085")
     pubsub_url = (
-        f"http://{emulator_host}/v1/projects/local-project/"
+        f"http://{pubsub_host}/v1/projects/local-project/"
         "topics/rules-evaluation-results-topic:publish"
     )
 
