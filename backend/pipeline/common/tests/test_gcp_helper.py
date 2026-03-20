@@ -487,6 +487,33 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             )
 
 
+    async def test_upload_non_412_error_raises_with_precondition(self) -> None:
+        """Non-412 errors propagate even when if_generation_match is set."""
+        mock_gcs_client, mock_storage = _make_gcs_client()
+        mock_storage.upload.side_effect = aiohttp.ClientResponseError(
+            request_info=aiohttp.RequestInfo(
+                url="http://example.com",
+                method="POST",
+                headers={},
+                real_url="http://example.com",
+            ),
+            history=(),
+            status=500,
+            message="Internal Server Error",
+        )
+
+        with self.assertRaises(aiohttp.ClientResponseError) as ctx:
+            await gcp_helper.upload_audio(
+                mock_gcs_client,
+                b"audio",
+                "bucket",
+                "obj.flac",
+                if_generation_match=0,
+            )
+
+        self.assertEqual(ctx.exception.status, 500)
+
+
 class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
     """Test suite for the publish_audio_chunk function."""
 
