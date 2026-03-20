@@ -20,10 +20,6 @@ class TestSendNotification(TestCase):
     ) -> None:
         mock_dedupe.process_notification.return_value = True
 
-        mock_response = mock.MagicMock()
-        mock_post.return_value = mock_response
-        mock_dedupe.process_notification.return_value = False
-
         evaluated_payload = EvaluatedTranscribedAudio(
             transcript="This is a test!", transmission_id="1234"
         )
@@ -52,11 +48,6 @@ class TestSendNotification(TestCase):
     ) -> None:
         # Setting this to False indicates a duplicate.
         mock_dedupe.process_notification.return_value = False
-
-        mock_response = mock.MagicMock()
-        mock_post.return_value = mock_response
-        # Setting this to True indicates a duplicate.
-        mock_dedupe.process_notification.return_value = True
 
         evaluated_payload = EvaluatedTranscribedAudio(
             transcript="This is a test!", transmission_id="1234"
