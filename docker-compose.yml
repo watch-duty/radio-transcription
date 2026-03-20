@@ -13,6 +13,7 @@ services:
     depends_on:
       - pubsub-emulator
       - rules-evaluation
+      - rules-management
       - notification
     env_file:
       - ./local_dev/LOCAL.env
@@ -40,12 +41,25 @@ services:
     env_file:
       - ./local_dev/LOCAL.env
     volumes:
-      - ./local_dev/test_evaluation_publish.py:/app/test_evaluation_publish.py
+      - ./local_dev/run_evaluation_publish.py:/app/run_evaluation_publish.py
     command: ["functions-framework", "--source=backend/pipeline/evaluation/main.py", "--target=evaluate_transcribed_audio_segment", "--signature-type=cloudevent", "--port=8080"]
     networks:
       - pipeline-network
     depends_on:
       - pubsub-emulator
+      - rules-management
+
+  rules-management:
+    build:
+      context: .
+      dockerfile: backend/pipeline/rules/Dockerfile
+    ports:
+      - "8086:8086"
+    env_file:
+      - ./local_dev/LOCAL.env
+    command: ["uvicorn", "backend.pipeline.rules.main:app", "--host", "0.0.0.0", "--port", "8086"]
+    networks:
+      - pipeline-network
 
   notification:
     build:
@@ -55,12 +69,15 @@ services:
       - "8081:8081"
     env_file:
       - ./local_dev/LOCAL.env
+    environment:
+      - REDIS_HOST=redis
     command: ["functions-framework", "--source=backend/pipeline/notification/send_notification.py", "--target=send_notification", "--signature-type=cloudevent", "--port=8081"]
     networks:
       - pipeline-network
     depends_on:
       - pubsub-emulator
       - redis
+
   mock-server:
     image: python:3.11-slim
     ports:
@@ -76,10 +93,12 @@ services:
     image: python:3.11-slim
     depends_on:
       - pubsub-emulator
+      - rules-management
       - rules-evaluation
       - notification
       - redis
       - mock-server
+      - pubsub-init
     env_file:
       - ./local_dev/LOCAL.env
     environment:
@@ -90,7 +109,7 @@ services:
     command: >
       sh -c "pip install uv && uv sync &&
       uv run python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto &&
-      uv run pytest integration_tests/test_notification_redis.py -v"
+      uv run pytest integration_tests/* -v"
     networks:
       - pipeline-network
 

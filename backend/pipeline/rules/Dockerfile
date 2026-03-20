@@ -22,12 +22,9 @@ ENV PATH="/app/.venv/bin:$PATH"
 RUN uv sync --frozen --no-dev
 
 # 4. Copy necessary application source code
-# We need the __init__.py files to make sure imports work correctly
 COPY backend/__init__.py ./backend/__init__.py
 COPY backend/pipeline/__init__.py ./backend/pipeline/__init__.py
-
-# Copy the shared models and the service code
-COPY backend/pipeline/common/rules/ ./backend/pipeline/common/rules/
+COPY backend/pipeline/common/ ./backend/pipeline/common/
 COPY backend/pipeline/rules/ ./backend/pipeline/rules/
 
 # 5. Start the application

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, status
 
+from backend.pipeline.common.auth import verify_oidc_token
 from backend.pipeline.common.rules.models import Rule, RuleCreate, RuleUpdate
 
 from .service import rules_service
@@ -10,6 +11,7 @@ app = FastAPI(
     title="Rules Management Service",
     description="API for creating, reading, updating, and deleting transcription rules.",
     version="1.0.0",
+    dependencies=[Depends(verify_oidc_token)],
 )
 
 

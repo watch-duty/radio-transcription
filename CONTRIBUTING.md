@@ -19,10 +19,12 @@
 
 ### E2E Local Development
 On a high level, this local pipeline runs the following:
-1. Pub/Sub emulator (runs each of the different PubSub topics that are used as triggers for each service in the pipeline)
-2. Rules Evaluation service
-3. Notification service
-4. Mock server (basic HTTP server to receive messages from the notification service)
+1. Pub/Sub emulator (manages all PubSub topics for each Pub/Sub instance in the pipeline)
+2. Rules Management service (to manage keywords and evaluation logic)
+3. Rules Evaluation service (to process transcription events)
+4. Notification service (to send alerts when rules match)
+5. Mock server (to receive and display mock notifications)
+6. Integration tests (runs an automated E2E test on startup)
 
 Note that currently the following are missing from the E2E setup:
 * Audio ingestion pipeline and storage
@@ -30,15 +32,16 @@ Note that currently the following are missing from the E2E setup:
 * Rules storage
 
 Locally run the full pipeline from E2E
-```
+```bash
 docker-compose down -v && docker-compose up --build -d &&
-docker-compose logs -f rules-evaluation notification mock-server
+docker-compose logs -f rules-evaluation notification mock-server integration-test
 ```
 
 Send a test payload to the Transcription PubSub (ingested by the Rules Evaluation service) to test the path from the Rules Evaluation service to the Notification service.
-```
-# More test messages can be found in backend/pipeline/evaluation/test_evaluation_publish.py
-docker exec radio-transcription-rules-evaluation-1 python /app/test_evaluation_publish.py
+```bash
+# Note: This script is run automatically by the integration-test service on startup.
+# To run it again manually, use the following command:
+docker-compose exec rules-evaluation python /app/test_evaluation_publish.py
 ```
 
 #### Audio Ingestion
