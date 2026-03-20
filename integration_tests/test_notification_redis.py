@@ -85,7 +85,6 @@ def test_deduplication_via_pubsub(
             else:
                 if mock_resp.status_code == 200:
                     requests_data = mock_resp.json()
-                    # transmissionId will be the key in the JSON object.
                     count = sum(
                         1 for r in requests_data
                         if r.get("transmissionId") == test_notification_id
