@@ -1,6 +1,5 @@
 import asyncio
 import concurrent.futures
-import datetime
 import logging
 import os
 import signal
@@ -11,12 +10,11 @@ from collections.abc import AsyncIterator, Callable
 
 import aiohttp
 import asyncpg
-from google.cloud import pubsub_v1
 
-from backend.pipeline.ingestion.gcs import close_client, upload_audio
+from backend.pipeline.common import gcp_helper
+from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.ingestion.retry import LeaseExpiredError, retry_with_lease_check
 from backend.pipeline.ingestion.settings import NormalizerSettings
-from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.storage.connection import close_pool, create_pool
 from backend.pipeline.storage.feed_store import FeedStore, HeartbeatResult, LeasedFeed
 
@@ -24,8 +22,6 @@ FeedID = uuid.UUID
 CaptureFn = Callable[[LeasedFeed, asyncio.Event], AsyncIterator[bytes]]
 
 logger = logging.getLogger(__name__)
-
-publisher = pubsub_v1.PublisherClient()
 
 
 class NormalizerRuntime:
@@ -96,6 +92,8 @@ class NormalizerRuntime:
         self._heartbeat_thread: threading.Thread | None = None
         self._store: FeedStore = None  # type: ignore # set in _main()
         self._heartbeat_store: FeedStore = None  # type: ignore # set in _main()
+        self._gcs_client = gcs_client.GcsClient()
+        self._pubsub_client = pubsub_client.PubSubClient()
 
     # -- Entry point ------------------------------------------------------
 
@@ -248,6 +246,23 @@ class NormalizerRuntime:
                         limit=capacity,
                     )
                     for lease in leases:
+                        existing = self._feed_tasks.get(lease["id"])
+                        if existing is not None and not existing.done():
+                            # A stale heartbeat allowed the DB to re-lease a
+                            # feed we already hold.  The old task still runs
+                            # with its original (now-outdated) fencing token.
+                            # If left alive it will eventually fail a fenced
+                            # write and call os._exit(1), killing the whole
+                            # worker — including the healthy new task.
+                            # Cancel first; the CancelledError handler in
+                            # _process_feed exits cleanly without DB writes.
+                            logger.warning(
+                                "Cancelling orphaned task for feed %s "
+                                "(re-leased with token %d)",
+                                lease["name"],
+                                lease["fencing_token"],
+                            )
+                            existing.cancel()
                         task = asyncio.create_task(
                             self._process_feed(lease),
                             name=f"feed-{lease['name']}",
@@ -308,6 +323,7 @@ class NormalizerRuntime:
         """
         chunk_seq = 0
         worker_id = self._normalizer_settings.worker_id
+        fencing_token = feed["fencing_token"]
         settings = self._normalizer_settings
 
         try:
@@ -316,11 +332,13 @@ class NormalizerRuntime:
                 self._shutdown,
             ):
                 gcs_uri = await retry_with_lease_check(
-                    upload_audio,
+                    gcp_helper.upload_staged_audio,
+                    self._gcs_client,
                     audio_chunk,
                     feed,
                     settings.audio_staging_bucket,
                     chunk_seq,
+                    fencing_token,
                     lease_lost=self._lease_lost,
                     shutdown=self._shutdown,
                     max_retries=settings.gcs_upload_max_retries,
@@ -329,15 +347,12 @@ class NormalizerRuntime:
                     retryable=(aiohttp.ClientError, asyncio.TimeoutError, OSError),
                     operation_name="GCS upload",
                 )
-                audio_chunk_msg = AudioChunk(gcs_uri=gcs_uri)
-                now = datetime.datetime.now(tz=datetime.UTC)
-                audio_chunk_msg.start_timestamp.FromDatetime(now)
-                future = publisher.publish(
+                message_id = await gcp_helper.publish_audio_chunk(
+                    self._pubsub_client,
                     self._normalizer_settings.pubsub_topic_path,
-                    audio_chunk_msg.SerializeToString(),
-                    feed_id=str(feed["id"]),
+                    str(feed["id"]),
+                    gcs_uri,
                 )
-                message_id = await asyncio.to_thread(future.result)
                 logger.info(
                     "Published message %s for feed %s", message_id, feed["name"]
                 )
@@ -348,6 +363,7 @@ class NormalizerRuntime:
                     feed["id"],
                     worker_id,
                     gcs_uri,
+                    fencing_token,
                     lease_lost=self._lease_lost,
                     shutdown=self._shutdown,
                     max_retries=settings.bookmark_max_retries,
@@ -415,6 +431,7 @@ class NormalizerRuntime:
                 await self._store.report_feed_failure(
                     feed["id"],
                     worker_id,
+                    fencing_token,
                     self._normalizer_settings.feed_failure_threshold,
                 )
             except Exception:
@@ -434,7 +451,7 @@ class NormalizerRuntime:
         # SAFETY: same _releasing_feeds invariant as above.
         self._releasing_feeds.add(feed["id"])
         try:
-            await self._store.release_feed(feed["id"], worker_id)
+            await self._store.release_feed(feed["id"], worker_id, fencing_token)
         except Exception:
             # 60s abandonment window is the safety net.
             logger.exception("Failed to release feed %s", feed["name"])
@@ -612,7 +629,8 @@ class NormalizerRuntime:
                 timeout=self._normalizer_settings.graceful_shutdown_timeout_sec,
             )
 
-        await close_client()
+        await self._pubsub_client.close()
+        await self._gcs_client.close()
 
         # Heartbeat pool close may raise if the heartbeat cycle was
         # mid-query when we stopped the thread — harmless during shutdown.

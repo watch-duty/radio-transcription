@@ -17,7 +17,7 @@ class LeaseExpiredError(Exception):
     """Raised when a retry loop detects heartbeat loss."""
 
 
-async def retry_with_lease_check(  # noqa: PLR0913
+async def retry_with_lease_check(
     fn: Callable[..., Awaitable[T]],
     *args: object,
     lease_lost: asyncio.Event,

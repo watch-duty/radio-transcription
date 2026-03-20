@@ -9,7 +9,6 @@ import aiohttp
 import asyncpg
 
 from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
-from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.storage.feed_store import HeartbeatResult, LeasedFeed
 
 _WORKER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
@@ -20,24 +19,24 @@ _FEED = LeasedFeed(
     name="Test Feed",
     source_type="bcfy_feeds",
     last_processed_filename=None,
+    fencing_token=1,
     stream_url="http://stream.example.com/feed",
 )
 
 
 def _mock_pubsub_publish(message_id: str = "test-message-id") -> mock._patch:
-    """Patch publisher.publish to return a future with a fixed message id."""
-    publish_future = mock.MagicMock()
-    publish_future.result.return_value = message_id
+    """Patch publish_audio_chunk to return a fixed message id (at call site)."""
     return mock.patch(
-        "backend.pipeline.ingestion.normalizer_runtime.publisher.publish",
-        return_value=publish_future,
+        "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.publish_audio_chunk",
+        new_callable=mock.AsyncMock,
+        return_value=message_id,
     )
 
 
 def _mock_upload_audio(gcs_path: str = "gs://b/p") -> mock._patch:
     """Patch upload_audio to return a deterministic GCS path."""
     return mock.patch(
-        "backend.pipeline.ingestion.normalizer_runtime.upload_audio",
+        "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.upload_audio",
         new_callable=mock.AsyncMock,
         return_value=gcs_path,
     )
@@ -158,6 +157,40 @@ class TestReapCompletedTasks(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(_FEED_ID, rt._feed_tasks)
 
 
+class TestLeasingLoopOrphanedTask(unittest.IsolatedAsyncioTestCase):
+    """Tests for orphaned task cancellation during re-lease."""
+
+    async def test_released_feed_cancels_orphaned_task(self) -> None:
+        """Re-leasing a feed cancels the still-running old task."""
+        rt = _make_runtime()
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+
+        # Simulate an existing running task for the same feed
+        old_task = asyncio.create_task(asyncio.sleep(1000))
+        rt._feed_tasks[_FEED_ID] = old_task
+
+        # Simulate acquire_feeds_batch returning the same feed (re-leased)
+        rt._store.acquire_feeds_batch.return_value = [_FEED]
+
+        # Patch _process_feed to avoid running the real pipeline
+        with mock.patch.object(rt, "_process_feed", new_callable=mock.AsyncMock):
+            # Run one iteration: reap, acquire, sleep → shutdown
+            rt._store.acquire_feeds_batch.side_effect = [
+                [_FEED],  # first call returns re-leased feed
+                asyncio.CancelledError,  # stop the loop
+            ]
+            rt._shutdown.set()  # stop after first iteration
+            await rt._leasing_loop()
+
+        # Old task must have been cancelled
+        self.assertTrue(old_task.cancelled())
+        # New task must be in _feed_tasks (not the old one)
+        self.assertIn(_FEED_ID, rt._feed_tasks)
+        self.assertIsNot(rt._feed_tasks[_FEED_ID], old_task)
+
+
 class TestProcessFeedFenceViolation(unittest.IsolatedAsyncioTestCase):
     """Tests for _process_feed fence violation."""
 
@@ -247,42 +280,6 @@ class TestProcessFeedNormalCompletion(unittest.IsolatedAsyncioTestCase):
             await rt._process_feed(_FEED)
 
         self.assertEqual(rt._releasing_feeds, set())
-
-
-class TestProcessFeedTimestamps(unittest.IsolatedAsyncioTestCase):
-    """Tests for _process_feed timestamp population."""
-
-    async def test_sets_start_timestamp_on_audio_chunk(self) -> None:
-        """The start_timestamp field must be populated before publishing."""
-
-        async def _one_chunk(feed, shutdown):
-            yield b"audio"
-
-        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
-        rt._shutdown = asyncio.Event()
-        rt._lease_lost = asyncio.Event()
-        rt._store = mock.AsyncMock()
-        rt._store.update_feed_progress.return_value = True
-        rt._releasing_feeds = set()
-
-        with (
-            _mock_upload_audio(),
-            _mock_pubsub_publish() as mock_publish,
-        ):
-            await rt._process_feed(_FEED)
-
-            # 1. Get the published data
-            mock_publish.assert_called_once()
-            _, args, _ = mock_publish.mock_calls[0]
-            published_bytes = args[1]
-
-            # 2. Parse back and verify
-            chunk = AudioChunk()
-            chunk.ParseFromString(published_bytes)
-
-            self.assertTrue(chunk.HasField("start_timestamp"))
-            # Just ensure it's not the default (epoch 0)
-            self.assertGreater(chunk.start_timestamp.seconds, 1700000000)
 
 
 class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
@@ -504,17 +501,17 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
         rt._store = mock.AsyncMock()
         rt._data_pool = mock.AsyncMock()
         rt._heartbeat_pool = mock.AsyncMock()
+        rt._pubsub_client = mock.AsyncMock()
+        rt._gcs_client = mock.AsyncMock()
 
         task = asyncio.create_task(asyncio.sleep(1000))
         rt._feed_tasks[_FEED_ID] = task
 
-        with mock.patch(
-            "backend.pipeline.ingestion.normalizer_runtime.close_client",
-            new_callable=mock.AsyncMock,
-        ):
-            await rt._shutdown_sequence()
+        await rt._shutdown_sequence()
 
         self.assertTrue(task.cancelled())
+        rt._pubsub_client.close.assert_awaited_once()
+        rt._gcs_client.close.assert_awaited_once()
 
     async def test_closes_pools(self) -> None:
         """Both pools are closed during shutdown."""
@@ -525,21 +522,19 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
         rt._store = mock.AsyncMock()
         rt._data_pool = mock.AsyncMock()
         rt._heartbeat_pool = mock.AsyncMock()
+        rt._pubsub_client = mock.AsyncMock()
+        rt._gcs_client = mock.AsyncMock()
 
-        with (
-            mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.close_client",
-                new_callable=mock.AsyncMock,
-            ),
-            mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.close_pool",
-                new_callable=mock.AsyncMock,
-            ) as mock_close_pool,
-        ):
+        with mock.patch(
+            "backend.pipeline.ingestion.normalizer_runtime.close_pool",
+            new_callable=mock.AsyncMock,
+        ) as mock_close_pool:
             await rt._shutdown_sequence()
 
         rt._heartbeat_pool.close.assert_awaited_once()
         mock_close_pool.assert_awaited_once_with(rt._data_pool)
+        rt._pubsub_client.close.assert_awaited_once()
+        rt._gcs_client.close.assert_awaited_once()
 
 
 class TestHeartbeatLoopSetsLeaseLost(unittest.IsolatedAsyncioTestCase):
@@ -625,7 +620,7 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
 
         with (
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.upload_audio",
+                "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.upload_audio",
                 upload_mock,
             ),
             _mock_pubsub_publish(),
@@ -650,7 +645,7 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
 
         with (
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.upload_audio",
+                "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.upload_audio",
                 mock.AsyncMock(return_value="gs://b/p"),
             ),
             _mock_pubsub_publish(),
@@ -683,7 +678,7 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
 
         with (
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.upload_audio",
+                "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.upload_audio",
                 mock.AsyncMock(return_value="gs://b/p"),
             ),
             _mock_pubsub_publish(),

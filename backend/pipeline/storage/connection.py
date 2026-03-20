@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncpg
 
 
-async def create_pool(  # noqa: PLR0913
+async def create_pool(
     host: str,
     user: str,
     db_name: str,

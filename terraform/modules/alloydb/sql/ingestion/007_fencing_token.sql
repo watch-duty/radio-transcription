@@ -1,0 +1,11 @@
+-- Fencing tokens for split-brain prevention.
+--
+-- A worker_id check alone cannot prevent a zombie worker (paused by GC,
+-- CPU contention, or network delay) from resuming after its lease expires
+-- and overwriting data produced by the new lease holder — the pause can
+-- occur between the check and the write.  A monotonically increasing token,
+-- incremented atomically on every lease acquisition, closes this gap: even
+-- if the same worker_id were reused, the stale token won't match.
+--
+-- Idempotent: ADD COLUMN IF NOT EXISTS allows safe re-application during Terraform runs.
+ALTER TABLE feeds ADD COLUMN IF NOT EXISTS fencing_token BIGINT NOT NULL DEFAULT 0;

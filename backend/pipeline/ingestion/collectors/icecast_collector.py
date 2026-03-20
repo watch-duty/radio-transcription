@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from backend.pipeline.common.constants import AUDIO_SAMPLE_RATE, CHUNK_DURATION_SECONDS
 from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
 from backend.pipeline.ingestion.settings import NormalizerSettings
 
@@ -22,8 +23,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Audio processing constants
-CHUNK_DURATION_SECONDS = 15
-SAMPLE_RATE = 16000  # 16 kHz
 SAMPLE_FORMAT = "s16"  # 16-bit signed integer
 READ_TIMEOUT_SEC = 30
 POLL_INTERVAL_SEC = 0.25
@@ -174,7 +173,7 @@ async def _create_ffmpeg_process(
         "-i", url,
         "-vn", "-sn", "-dn",
         "-acodec", "flac",
-        "-ar", str(SAMPLE_RATE),
+        "-ar", str(AUDIO_SAMPLE_RATE),
         "-sample_fmt", SAMPLE_FORMAT,
         "-ac", "1",
         "-compression_level", "0",

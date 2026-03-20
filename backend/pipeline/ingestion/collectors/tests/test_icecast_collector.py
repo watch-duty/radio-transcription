@@ -29,6 +29,7 @@ def _make_feed(name: str, stream_url: str | None) -> LeasedFeed:
         name=name,
         source_type="icecast",
         last_processed_filename=None,
+        fencing_token=1,
         stream_url=stream_url,
     )
 

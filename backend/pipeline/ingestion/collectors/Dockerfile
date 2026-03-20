@@ -23,6 +23,7 @@ RUN uv sync --frozen --no-dev && uv pip install grpcio-tools
 # Copy the full package structure to preserve Python import paths
 COPY backend/__init__.py ./backend/__init__.py
 COPY backend/pipeline/__init__.py ./backend/pipeline/__init__.py
+COPY backend/pipeline/common/ ./backend/pipeline/common/
 COPY backend/pipeline/ingestion/ ./backend/pipeline/ingestion/
 COPY backend/pipeline/storage/ ./backend/pipeline/storage/
 COPY protos/ ./protos

@@ -16,6 +16,7 @@ _LEASE_ROW = {
     "name": "My Feed",
     "source_type": "bcfy_feeds",
     "last_processed_filename": None,
+    "fencing_token": 1,
     "stream_url": "http://stream.example.com/feed",
 }
 
@@ -49,6 +50,7 @@ class TestLeaseFeed(unittest.IsolatedAsyncioTestCase):
             "name": "My Feed",
             "source_type": "bcfy_feeds",
             "last_processed_filename": None,
+            "fencing_token": 1,
             "stream_url": "http://stream.example.com/feed",
         }
         self.assertEqual(result, expected)
@@ -85,6 +87,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
             _FEED_ID,
             _WORKER_ID,
             "gs://bucket/path/file.ogg",
+            1,
         )
 
         self.assertTrue(result)
@@ -98,6 +101,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
             _FEED_ID,
             _WORKER_ID,
             "gs://bucket/path/file.ogg",
+            1,
         )
 
         self.assertFalse(result)
@@ -108,10 +112,10 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
         gcs_path = "gs://bucket/path/file.ogg"
 
-        await store.update_feed_progress(_FEED_ID, _WORKER_ID, gcs_path)
+        await store.update_feed_progress(_FEED_ID, _WORKER_ID, gcs_path, 1)
 
         args = pool.execute.call_args[0]
-        self.assertEqual(args[1:], (gcs_path, _FEED_ID, _WORKER_ID))
+        self.assertEqual(args[1:], (gcs_path, _FEED_ID, _WORKER_ID, 1))
 
 
 class TestRenewHeartbeatsBatchDiagnostic(unittest.IsolatedAsyncioTestCase):
@@ -234,7 +238,7 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         pool = _make_pool(execute_result="UPDATE 1")
         store = FeedStore(pool)
 
-        result = await store.report_feed_failure(_FEED_ID, _WORKER_ID)
+        result = await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
 
         self.assertTrue(result)
 
@@ -243,7 +247,7 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         pool = _make_pool(execute_result="UPDATE 0")
         store = FeedStore(pool)
 
-        result = await store.report_feed_failure(_FEED_ID, _WORKER_ID)
+        result = await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
 
         self.assertFalse(result)
 
@@ -252,10 +256,10 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         pool = _make_pool(execute_result="UPDATE 1")
         store = FeedStore(pool)
 
-        await store.report_feed_failure(_FEED_ID, _WORKER_ID)
+        await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
 
         args = pool.execute.call_args[0]
-        self.assertEqual(args[1:], (_FEED_ID, _WORKER_ID, 3))
+        self.assertEqual(args[1:], (_FEED_ID, _WORKER_ID, 3, 1))
 
 
 class TestReleaseFeed(unittest.IsolatedAsyncioTestCase):
@@ -266,7 +270,7 @@ class TestReleaseFeed(unittest.IsolatedAsyncioTestCase):
         pool = _make_pool(execute_result="UPDATE 1")
         store = FeedStore(pool)
 
-        result = await store.release_feed(_FEED_ID, _WORKER_ID)
+        result = await store.release_feed(_FEED_ID, _WORKER_ID, 1)
 
         self.assertTrue(result)
 
@@ -275,7 +279,7 @@ class TestReleaseFeed(unittest.IsolatedAsyncioTestCase):
         pool = _make_pool(execute_result="UPDATE 0")
         store = FeedStore(pool)
 
-        result = await store.release_feed(_FEED_ID, _WORKER_ID)
+        result = await store.release_feed(_FEED_ID, _WORKER_ID, 1)
 
         self.assertFalse(result)
 
@@ -284,10 +288,10 @@ class TestReleaseFeed(unittest.IsolatedAsyncioTestCase):
         pool = _make_pool(execute_result="UPDATE 1")
         store = FeedStore(pool)
 
-        await store.release_feed(_FEED_ID, _WORKER_ID)
+        await store.release_feed(_FEED_ID, _WORKER_ID, 1)
 
         args = pool.execute.call_args[0]
-        self.assertEqual(args[1:], (_FEED_ID, _WORKER_ID))
+        self.assertEqual(args[1:], (_FEED_ID, _WORKER_ID, 1))
 
 
 class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
@@ -301,6 +305,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
                 "name": "Feed A",
                 "source_type": "bcfy_feeds",
                 "last_processed_filename": None,
+                "fencing_token": 1,
                 "stream_url": "http://stream.example.com/a",
             },
             {
@@ -308,6 +313,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
                 "name": "Feed B",
                 "source_type": "bcfy_feeds",
                 "last_processed_filename": "gs://bucket/path",
+                "fencing_token": 1,
                 "stream_url": None,
             },
         ]
@@ -350,20 +356,20 @@ class TestReportFeedFailureWithThreshold(unittest.IsolatedAsyncioTestCase):
         pool = _make_pool(execute_result="UPDATE 1")
         store = FeedStore(pool)
 
-        await store.report_feed_failure(_FEED_ID, _WORKER_ID, failure_threshold=5)
+        await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1, failure_threshold=5)
 
         args = pool.execute.call_args[0]
-        self.assertEqual(args[3], 5)
+        self.assertEqual(args[1:], (_FEED_ID, _WORKER_ID, 5, 1))
 
     async def test_default_threshold_is_3(self) -> None:
         """Default threshold is 3 for backward compatibility."""
         pool = _make_pool(execute_result="UPDATE 1")
         store = FeedStore(pool)
 
-        await store.report_feed_failure(_FEED_ID, _WORKER_ID)
+        await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
 
         args = pool.execute.call_args[0]
-        self.assertEqual(args[3], 3)
+        self.assertEqual(args[1:], (_FEED_ID, _WORKER_ID, 3, 1))
 
 
 if __name__ == "__main__":

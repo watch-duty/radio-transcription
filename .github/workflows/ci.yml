@@ -60,6 +60,27 @@ jobs:
         run: uv run ruff check
       - name: Ruff format check
         run: uv run ruff format --check
+      - name: Verify ruff ignore lists are sorted
+        run: |
+          python -c "
+          import tomllib, sys
+          with open('pyproject.toml', 'rb') as f:
+              cfg = tomllib.load(f)
+          errors = []
+          # Check global ignore list
+          codes = [c for c in cfg['tool']['ruff']['lint']['ignore'] if not c.startswith('#')]
+          if codes != sorted(codes):
+              errors.append('tool.ruff.lint.ignore is not sorted')
+          # Check per-file ignore lists
+          for pattern, codes in cfg['tool']['ruff']['lint'].get('per-file-ignores', {}).items():
+              filtered = [c for c in codes if not c.startswith('#')]
+              if filtered != sorted(filtered):
+                  errors.append(f'per-file-ignores[{pattern!r}] is not sorted')
+          if errors:
+              print('\n'.join(errors), file=sys.stderr)
+              sys.exit(1)
+          print('All ruff ignore lists are sorted')
+          "
       - name: Type check
         run: uv run ty check
 
@@ -107,8 +128,7 @@ jobs:
   #      the deployment Terraform — the settings instantiation step fails if any
   #      required var is missing from the explicit -e list below.
   # NOTE: evaluation/notification/transcription are excluded because their
-  # Dockerfiles don't generate protobuf files yet. Add them here once their
-  # Dockerfiles include protobuf generation.
+  # Dockerfiles don't yet verify env-var wiring via settings instantiation.
   docker-smoke-test:
     needs: [setup]
     if: needs.setup.outputs.should_run == 'true'
@@ -141,3 +161,15 @@ jobs:
             -e ALLOYDB_DB=postgres \
             ingestion-smoke-test \
             python -c "from backend.pipeline.ingestion.settings import NormalizerSettings; NormalizerSettings()"
+      - name: Build detection Docker image
+        run: docker build -t detection-smoke-test -f backend/pipeline/detection/Dockerfile .
+      # DETECTOR_CONFIG with spectral_flatness exercises scipy spectral
+      # analysis init. Without it, the default empty config skips detector init.
+      - name: Verify detection imports and detector initialization
+        run: |
+          docker run --rm \
+            -e LOCAL_DEV=1 \
+            -e PUBSUB_EMULATOR_HOST=localhost:8085 \
+            -e 'DETECTOR_CONFIG={"detectors": [{"type": "spectral_flatness"}]}' \
+            detection-smoke-test \
+            python -c "from backend.pipeline.detection import normalization_handler"

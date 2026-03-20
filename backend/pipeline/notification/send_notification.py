@@ -6,7 +6,7 @@ import functions_framework
 import google.cloud.logging
 from cloudevents.http.event import CloudEvent
 
-from backend.common.storage.redis_service import RedisService
+from backend.pipeline.common.storage.redis_service import RedisService
 from backend.pipeline.notification.notification_deduplication import (
     NotificationDeduplication,
 )
@@ -79,10 +79,8 @@ def send_notification(cloud_event: CloudEvent) -> None:
 
     # Convert the EvaluatedTranscribedAudio into an AlertNotifcation
     alert_notification = convert_to_notification(evaluated_transcribed_audio)
-
-    # Evaluate if this message is a duplicate
     notification_id = alert_notification.transmission_id
-    if deduplication.process_notification(notification_id):
+    if not deduplication.process_notification(notification_id):
         message = f"Duplicate transmission_id detected, skipping notification with ID: {notification_id}"
         logger.warning(message)
         return

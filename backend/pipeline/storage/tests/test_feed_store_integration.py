@@ -127,7 +127,7 @@ class TestFeedStoreIntegration(unittest.IsolatedAsyncioTestCase):
     async def _get_feed_status(self, feed_id: uuid.UUID) -> dict:
         """Read a feed row back from the database."""
         row = await self.pool.fetchrow(
-            "SELECT status, failure_count, worker_id FROM feeds WHERE id = $1::uuid",
+            "SELECT status, failure_count, worker_id, fencing_token FROM feeds WHERE id = $1::uuid",
             str(feed_id),
         )
         if row is None:
@@ -156,6 +156,7 @@ class TestFeedStoreIntegration(unittest.IsolatedAsyncioTestCase):
             result["stream_url"],
             "http://stream.example.com/live",
         )
+        self.assertEqual(result["fencing_token"], 1)
 
     async def test_lease_returns_feed_without_icecast_properties(self) -> None:
         """Non-icecast feed has stream_url=None."""
@@ -169,6 +170,7 @@ class TestFeedStoreIntegration(unittest.IsolatedAsyncioTestCase):
             raise AssertionError(msg)
         self.assertEqual(result["name"], "API Feed")
         self.assertIsNone(result["stream_url"])
+        self.assertEqual(result["fencing_token"], 1)
 
     async def test_lease_returns_none_when_no_feeds(self) -> None:
         """Empty database returns None."""
@@ -259,6 +261,7 @@ class TestFeedStoreIntegration(unittest.IsolatedAsyncioTestCase):
             feed_id,
             worker,
             "gs://bucket/path/file.ogg",
+            0,
         )
 
         self.assertTrue(result)
@@ -279,6 +282,7 @@ class TestFeedStoreIntegration(unittest.IsolatedAsyncioTestCase):
             feed_id,
             uuid.uuid4(),
             "gs://bucket/path/file.ogg",
+            0,
         )
 
         self.assertFalse(result)
@@ -295,7 +299,7 @@ class TestFeedStoreIntegration(unittest.IsolatedAsyncioTestCase):
             last_heartbeat_age_seconds=10,
         )
 
-        await self.store.report_feed_failure(feed_id, worker)
+        await self.store.report_feed_failure(feed_id, worker, 0)
 
         row = await self._get_feed_status(feed_id)
         self.assertEqual(row["status"], "failing")
@@ -313,7 +317,7 @@ class TestFeedStoreIntegration(unittest.IsolatedAsyncioTestCase):
             failure_count=2,
         )
 
-        await self.store.report_feed_failure(feed_id, worker)
+        await self.store.report_feed_failure(feed_id, worker, 0)
 
         row = await self._get_feed_status(feed_id)
         self.assertEqual(row["status"], "quarantined")
@@ -417,7 +421,7 @@ class TestFeedStoreIntegration(unittest.IsolatedAsyncioTestCase):
             last_heartbeat_age_seconds=10,
         )
 
-        result = await self.store.release_feed(feed_id, worker)
+        result = await self.store.release_feed(feed_id, worker, 0)
 
         self.assertTrue(result)
         row = await self._get_feed_status(feed_id)
@@ -434,9 +438,77 @@ class TestFeedStoreIntegration(unittest.IsolatedAsyncioTestCase):
             last_heartbeat_age_seconds=10,
         )
 
-        result = await self.store.release_feed(feed_id, uuid.uuid4())
+        result = await self.store.release_feed(feed_id, uuid.uuid4(), 0)
 
         self.assertFalse(result)
+
+    # -- Tests: fencing_token ------------------------------------------------
+
+    async def test_fencing_token_increments_on_each_lease(self) -> None:
+        """Re-leasing a feed increments the fencing token."""
+        worker = uuid.uuid4()
+        await self._insert_feed("My Feed")
+
+        result1 = await self.store.lease_feed(worker)
+        assert result1 is not None
+        self.assertEqual(result1["fencing_token"], 1)
+
+        await self.store.release_feed(result1["id"], worker, 1)
+
+        result2 = await self.store.lease_feed(worker)
+        assert result2 is not None
+        self.assertEqual(result2["fencing_token"], 2)
+
+    async def test_progress_update_fails_with_wrong_fencing_token(self) -> None:
+        """Correct worker_id but wrong fencing_token returns False."""
+        worker = uuid.uuid4()
+        feed_id = await self._insert_feed(
+            "My Feed",
+            status="active",
+            worker_id=worker,
+            last_heartbeat_age_seconds=10,
+        )
+
+        result = await self.store.update_feed_progress(
+            feed_id,
+            worker,
+            "gs://bucket/path/file.ogg",
+            999,  # wrong fencing_token
+        )
+
+        self.assertFalse(result)
+
+    async def test_release_feed_fails_with_wrong_fencing_token(self) -> None:
+        """Correct worker_id but wrong fencing_token returns False."""
+        worker = uuid.uuid4()
+        feed_id = await self._insert_feed(
+            "My Feed",
+            status="active",
+            worker_id=worker,
+            last_heartbeat_age_seconds=10,
+        )
+
+        result = await self.store.release_feed(feed_id, worker, 999)
+
+        self.assertFalse(result)
+
+    async def test_report_feed_failure_fails_with_wrong_fencing_token(self) -> None:
+        """Correct worker_id but wrong fencing_token returns False."""
+        worker = uuid.uuid4()
+        feed_id = await self._insert_feed(
+            "My Feed",
+            status="active",
+            worker_id=worker,
+            last_heartbeat_age_seconds=10,
+        )
+
+        result = await self.store.report_feed_failure(feed_id, worker, 999)
+
+        self.assertFalse(result)
+        # Verify feed state unchanged (failure was rejected)
+        row = await self._get_feed_status(feed_id)
+        self.assertEqual(row["status"], "active")
+        self.assertEqual(row["failure_count"], 0)
 
 
 if __name__ == "__main__":
