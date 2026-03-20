@@ -162,7 +162,7 @@ async def normalize(cloud_event: CloudEvent) -> None:
         else:
             logger.warning("Missing start_timestamp in audio chunk, falling back to now")
             start_ts = datetime.datetime.now(tz=datetime.UTC)
-            
+
         topic_path = os.environ.get("TRANSCRIPTION_TOPIC_PATH", "")
         if topic_path:
             try:

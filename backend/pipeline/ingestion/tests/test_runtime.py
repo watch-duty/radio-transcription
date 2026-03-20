@@ -307,7 +307,7 @@ class TestProcessFeedTimestamps(unittest.IsolatedAsyncioTestCase):
             await rt._process_feed(_FEED)
 
             mock_publish.assert_called_once()
-            _, args, kwargs = mock_publish.mock_calls[0]
+            _, _args, kwargs = mock_publish.mock_calls[0]
 
             self.assertIn("start_timestamp", kwargs)
             self.assertIsNotNone(kwargs["start_timestamp"])

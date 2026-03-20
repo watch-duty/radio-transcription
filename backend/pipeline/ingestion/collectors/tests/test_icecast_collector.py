@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import os
 import unittest
 import uuid
@@ -6,6 +7,7 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
 from backend.pipeline.storage.feed_store import LeasedFeed
 
 MOCK_ENV_VARS = {
@@ -96,7 +98,7 @@ async def _collect_chunks_with_timestamps(
     *,
     total_timeout: float = 2.0,
     per_chunk_timeout: float = 0.5,
-) -> list[tuple[bytes, "datetime.datetime"]]:
+) -> list[tuple[bytes, datetime.datetime]]:
     """Collect chunks and timestamps from an async generator until it finishes or times out."""
     results = []
     try:
@@ -349,8 +351,6 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self, mock_create_ffmpeg: AsyncMock
     ) -> None:
         """Test timestamp math: Each chunk advances strictly by CHUNK_DURATION_SECONDS."""
-        from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
-
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=3333,
             segments=[
