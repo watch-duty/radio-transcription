@@ -621,7 +621,7 @@ class TestHeartbeatLoopSetsLeaseLost(unittest.IsolatedAsyncioTestCase):
         rt._thread_stop.wait.return_value = False
 
         with (
-            mock.patch.object(rt, "_heartbeat_cycle", return_value=None),
+            mock.patch.object(rt, "_heartbeat_cycle") as mock_cycle,
             mock.patch(
                 "asyncio.run_coroutine_threadsafe",
             ) as mock_run,
@@ -630,6 +630,10 @@ class TestHeartbeatLoopSetsLeaseLost(unittest.IsolatedAsyncioTestCase):
             future.result.side_effect = RuntimeError("DB gone")
             mock_run.return_value = future
             rt._heartbeat_loop()
+            
+            # Prevent "coroutine was never awaited" warning
+            coro = mock_run.call_args[0][0]
+            coro.close()
 
         # _lease_lost should have been set via call_soon_threadsafe.
         # Since we're already on the event loop, we can check directly.
