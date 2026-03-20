@@ -19,6 +19,7 @@ _FEED = LeasedFeed(
     name="Test Feed",
     source_type="bcfy_feeds",
     last_processed_filename=None,
+    fencing_token=1,
     stream_url="http://stream.example.com/feed",
 )
 
@@ -154,6 +155,40 @@ class TestReapCompletedTasks(unittest.IsolatedAsyncioTestCase):
 
         mock_logger.error.assert_called()
         self.assertNotIn(_FEED_ID, rt._feed_tasks)
+
+
+class TestLeasingLoopOrphanedTask(unittest.IsolatedAsyncioTestCase):
+    """Tests for orphaned task cancellation during re-lease."""
+
+    async def test_released_feed_cancels_orphaned_task(self) -> None:
+        """Re-leasing a feed cancels the still-running old task."""
+        rt = _make_runtime()
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+
+        # Simulate an existing running task for the same feed
+        old_task = asyncio.create_task(asyncio.sleep(1000))
+        rt._feed_tasks[_FEED_ID] = old_task
+
+        # Simulate acquire_feeds_batch returning the same feed (re-leased)
+        rt._store.acquire_feeds_batch.return_value = [_FEED]
+
+        # Patch _process_feed to avoid running the real pipeline
+        with mock.patch.object(rt, "_process_feed", new_callable=mock.AsyncMock):
+            # Run one iteration: reap, acquire, sleep → shutdown
+            rt._store.acquire_feeds_batch.side_effect = [
+                [_FEED],  # first call returns re-leased feed
+                asyncio.CancelledError,  # stop the loop
+            ]
+            rt._shutdown.set()  # stop after first iteration
+            await rt._leasing_loop()
+
+        # Old task must have been cancelled
+        self.assertTrue(old_task.cancelled())
+        # New task must be in _feed_tasks (not the old one)
+        self.assertIn(_FEED_ID, rt._feed_tasks)
+        self.assertIsNot(rt._feed_tasks[_FEED_ID], old_task)
 
 
 class TestProcessFeedFenceViolation(unittest.IsolatedAsyncioTestCase):

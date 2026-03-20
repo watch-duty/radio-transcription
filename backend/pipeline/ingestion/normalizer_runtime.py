@@ -246,6 +246,23 @@ class NormalizerRuntime:
                         limit=capacity,
                     )
                     for lease in leases:
+                        existing = self._feed_tasks.get(lease["id"])
+                        if existing is not None and not existing.done():
+                            # A stale heartbeat allowed the DB to re-lease a
+                            # feed we already hold.  The old task still runs
+                            # with its original (now-outdated) fencing token.
+                            # If left alive it will eventually fail a fenced
+                            # write and call os._exit(1), killing the whole
+                            # worker — including the healthy new task.
+                            # Cancel first; the CancelledError handler in
+                            # _process_feed exits cleanly without DB writes.
+                            logger.warning(
+                                "Cancelling orphaned task for feed %s "
+                                "(re-leased with token %d)",
+                                lease["name"],
+                                lease["fencing_token"],
+                            )
+                            existing.cancel()
                         task = asyncio.create_task(
                             self._process_feed(lease),
                             name=f"feed-{lease['name']}",
@@ -306,6 +323,7 @@ class NormalizerRuntime:
         """
         chunk_seq = 0
         worker_id = self._normalizer_settings.worker_id
+        fencing_token = feed["fencing_token"]
         settings = self._normalizer_settings
 
         try:
@@ -320,6 +338,7 @@ class NormalizerRuntime:
                     feed,
                     settings.audio_staging_bucket,
                     chunk_seq,
+                    fencing_token,
                     lease_lost=self._lease_lost,
                     shutdown=self._shutdown,
                     max_retries=settings.gcs_upload_max_retries,
@@ -344,6 +363,7 @@ class NormalizerRuntime:
                     feed["id"],
                     worker_id,
                     gcs_uri,
+                    fencing_token,
                     lease_lost=self._lease_lost,
                     shutdown=self._shutdown,
                     max_retries=settings.bookmark_max_retries,
@@ -411,6 +431,7 @@ class NormalizerRuntime:
                 await self._store.report_feed_failure(
                     feed["id"],
                     worker_id,
+                    fencing_token,
                     self._normalizer_settings.feed_failure_threshold,
                 )
             except Exception:
@@ -430,7 +451,7 @@ class NormalizerRuntime:
         # SAFETY: same _releasing_feeds invariant as above.
         self._releasing_feeds.add(feed["id"])
         try:
-            await self._store.release_feed(feed["id"], worker_id)
+            await self._store.release_feed(feed["id"], worker_id, fencing_token)
         except Exception:
             # 60s abandonment window is the safety net.
             logger.exception("Failed to release feed %s", feed["name"])
