@@ -1,4 +1,4 @@
-FROM apache/beam_python3.13_sdk:2.71.0
+FROM apache/beam_python3.13_sdk:2.70.0
 
 # Install OS dependencies: ffmpeg and libomp5
 USER root
