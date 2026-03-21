@@ -55,7 +55,7 @@ class ParseAndKeyFn(beam.DoFn):
     @override
     def process(
         self, element: PubsubMessage, *args: Any, **kwargs: Any
-    ) -> Generator[tuple[str, bytes] | beam.pvalue.TaggedOutput, None, None]:
+    ) -> Generator[tuple[str, bytes] | beam.pvalue.TaggedOutput, None, None]:  # noqa: UP043
         try:
             feed_id = element.attributes["feed_id"]
             yield (feed_id, element.data)
@@ -87,7 +87,7 @@ class AddEventTimestamp(beam.DoFn):
     @override
     def process(
         self, element: tuple[str, bytes], *args: Any, **kwargs: Any
-    ) -> Generator[tuple[str, str] | beam.pvalue.TaggedOutput, None, None]:
+    ) -> Generator[tuple[str, str] | beam.pvalue.TaggedOutput, None, None]:  # noqa: UP043
         feed_id, chunk_data = element
 
         chunk_proto = AudioChunk()
@@ -124,7 +124,7 @@ class SerializeToPubSubMessageFn(beam.DoFn):
     @override
     def process(
         self, element: TranscriptionResult, *args: Any, **kwargs: Any
-    ) -> Generator[PubsubMessage, None, None]:
+    ) -> Generator[PubsubMessage, None, None]:  # noqa: UP043
         # Create a deterministic UUID using uuid5 so that Beam retries produce the exact same ID
         deterministic_id_string = f"{element.feed_id}_{element.time_range.start_ms}_{element.time_range.end_ms}"
         deterministic_uuid = uuid.uuid5(uuid.NAMESPACE_OID, deterministic_id_string)
@@ -237,7 +237,7 @@ class RestoreOrderFn(beam.DoFn):
         out_of_order_timer: RuntimeTimer = beam.DoFn.TimerParam(  # type: ignore[assignment] # noqa: B008
             OUT_OF_ORDER_TIMER_SPEC
         ),
-    ) -> Generator[tuple[str, str], None, None]:
+    ) -> Generator[tuple[str, str], None, None]:  # noqa: UP043
         """
         Process incoming audio chunks, buffering those that arrive ahead of their expected order.
         If a chunk is heavily delayed, a real-time expiry timer ensures we don't block downstream
@@ -309,7 +309,7 @@ class RestoreOrderFn(beam.DoFn):
         out_of_order_buffer: BagRuntimeState,
         timer_active: ReadModifyWriteRuntimeState,
         out_of_order_timer: RuntimeTimer | None = None,
-    ) -> Generator[tuple[str, str], None, None]:
+    ) -> Generator[tuple[str, str], None, None]:  # noqa: UP043
         """
         Scans the out-of-order buffer to see if the missing chunks we were waiting for
         can now be emitted sequentially.
@@ -364,7 +364,7 @@ class RestoreOrderFn(beam.DoFn):
         timer_active: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore[assignment] # noqa: B008
             TIMER_ACTIVE_SPEC
         ),
-    ) -> Generator[tuple[str, str], None, None]:
+    ) -> Generator[tuple[str, str], None, None]:  # noqa: UP043
         """
         Fires when out-of-order chunks have sat in the buffer for too long.
         This signals that a chunk has been permanently lost in the network.

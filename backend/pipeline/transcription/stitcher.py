@@ -149,7 +149,7 @@ class StitchAudioFn(beam.DoFn):
 
     def _fetch_and_validate_audio(
         self, *, feed_id: str, gcs_path: str, processed_uris: set[str]
-    ) -> Generator[
+    ) -> Generator[  # noqa: UP043
         tuple[str, AudioChunkData] | beam.pvalue.TaggedOutput,
         None,
         None,
@@ -198,7 +198,7 @@ class StitchAudioFn(beam.DoFn):
         transmission_context: ReadModifyWriteRuntimeState,
         transmission_buffer: ReadModifyWriteRuntimeState,
         stale_timer: RuntimeTimer,
-    ) -> Generator[FlushRequest, None, None]:
+    ) -> Generator[FlushRequest, None, None]:  # noqa: UP043
         if "Maximum transmission duration" in action.reason:
             self.max_duration_flush_count.inc()
         elif "Significant gap" in action.reason:
@@ -253,7 +253,7 @@ class StitchAudioFn(beam.DoFn):
         stale_timer: RuntimeTimer,
         ctx: StitcherContext,
         gcs_path: str,
-    ) -> Generator[FlushRequest, None, None]:
+    ) -> Generator[FlushRequest, None, None]:  # noqa: UP043
         for action in actions:
             match action:
                 case FlushAction():
@@ -278,7 +278,7 @@ class StitchAudioFn(beam.DoFn):
         transmission_context: ReadModifyWriteRuntimeState,
         transmission_buffer: ReadModifyWriteRuntimeState,
         stale_timer: RuntimeTimer,
-    ) -> Generator[FlushRequest | beam.pvalue.TaggedOutput, None, None]:
+    ) -> Generator[FlushRequest | beam.pvalue.TaggedOutput, None, None]:  # noqa: UP043
         file_start_ms = chunk_data.start_ms
 
         curr_context: TransmissionContext = (
@@ -327,7 +327,7 @@ class StitchAudioFn(beam.DoFn):
         transmission_buffer: ReadModifyWriteRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         stale_timer: RuntimeTimer = STALE_TIMER_PARAM,  # type: ignore
-    ) -> Generator[FlushRequest | beam.pvalue.TaggedOutput, None, None]:
+    ) -> Generator[FlushRequest | beam.pvalue.TaggedOutput, None, None]:  # noqa: UP043
         key, gcs_path = element
 
         curr_context: TransmissionContext = (
@@ -361,7 +361,7 @@ class StitchAudioFn(beam.DoFn):
         transmission_buffer: ReadModifyWriteRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         stale_timer: RuntimeTimer = STALE_TIMER_PARAM,  # type: ignore
-    ) -> Generator[FlushRequest | beam.pvalue.TaggedOutput, None, None]:
+    ) -> Generator[FlushRequest | beam.pvalue.TaggedOutput, None, None]:  # noqa: UP043
         """
         Invoked asynchronously by the Beam Runner when the event-time watermark
         passes the timestamp previously scheduled on the `stale_timer`. This provides a critical
@@ -556,7 +556,7 @@ class TranscribeAudioFn(beam.DoFn):
         element: FlushRequest,
         *args: Any,
         **kwargs: Any,
-    ) -> Generator[TranscriptionResult | beam.pvalue.TaggedOutput, None, None]:
+    ) -> Generator[TranscriptionResult | beam.pvalue.TaggedOutput, None, None]:  # noqa: UP043
 
         try:
             # We defer execution to a thread pool so we don't block the DoFn event loop
