@@ -7,6 +7,9 @@ COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
 COPY pyproject.toml uv.lock ./
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
+
+# Copy transcription pyproject.toml to satisfy uv workspace requirement
+COPY backend/pipeline/transcription/pyproject.toml ./backend/pipeline/transcription/
 RUN uv sync --frozen --no-dev --group build
 
 COPY protos/ ./protos
@@ -32,6 +35,9 @@ COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
 COPY pyproject.toml uv.lock ./
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
+
+# Copy transcription pyproject.toml to satisfy uv workspace requirement
+COPY backend/pipeline/transcription/pyproject.toml ./backend/pipeline/transcription/
 RUN uv sync --frozen --no-dev
 
 # 3. Copy source files

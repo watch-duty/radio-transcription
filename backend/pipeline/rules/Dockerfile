@@ -19,6 +19,9 @@ COPY pyproject.toml uv.lock ./
 # We no longer need grpcio-tools
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
+
+# Copy transcription pyproject.toml to satisfy uv workspace requirement
+COPY backend/pipeline/transcription/pyproject.toml ./backend/pipeline/transcription/
 RUN uv sync --frozen --no-dev
 
 # 4. Copy necessary application source code
