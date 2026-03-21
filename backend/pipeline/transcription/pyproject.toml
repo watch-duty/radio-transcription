@@ -1,7 +1,7 @@
 [project]
 name = "transcription-pipeline"
 version = "0.1.0"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 
 dependencies = [
     "apache-beam[gcp]>=2.56.0",
@@ -10,6 +10,7 @@ dependencies = [
     "pydub>=0.25.0",
     "crcmod>=1.7",
     "ten-vad>=1.0.6.8",
+    "audioop-lts>=0.2.1",
 ]
 
 [tool.setuptools]
