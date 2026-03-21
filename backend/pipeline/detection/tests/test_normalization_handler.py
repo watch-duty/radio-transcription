@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import base64
 import datetime
+import io
 import os
+import subprocess
 import unittest
 from unittest import mock
 
 import numpy as np
+import soundfile as sf
 from cloudevents.http import CloudEvent
 
 from backend.pipeline.detection.types import (
@@ -260,6 +263,80 @@ class TestNormalize(unittest.IsolatedAsyncioTestCase):
             result = await normalize(_make_cloud_event())
 
         self.assertIsNone(result)
+
+
+class TestDecodeFlac(unittest.IsolatedAsyncioTestCase):
+    """Test _decode_flac handles various FLAC formats including streaming."""
+
+    @classmethod
+    def _make_streaming_flac(cls, samples: np.ndarray, sample_rate: int) -> bytes:
+        """Create a streaming FLAC (total_samples=0) using ffmpeg.
+
+        Mimics what the icecast collector produces: pipe raw PCM through
+        ffmpeg FLAC encoder via pipe, producing a FLAC with total_samples=0
+        in STREAMINFO (ffmpeg cannot seek back to update the header).
+        """
+        raw_pcm = samples.tobytes()
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-f",
+                "s16le",
+                "-ar",
+                str(sample_rate),
+                "-ac",
+                "1",
+                "-i",
+                "pipe:0",
+                "-c:a",
+                "flac",
+                "-compression_level",
+                "0",
+                "-f",
+                "flac",
+                "pipe:1",
+            ],
+            input=raw_pcm,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            msg = f"Failed to create test FLAC: {result.stderr.decode()}"
+            raise RuntimeError(msg)
+        return result.stdout
+
+    async def test_decode_streaming_flac(self) -> None:
+        """Verify _decode_flac handles FLAC with total_samples=0.
+
+        This test would have caught the original libsndfile bug during CI.
+        """
+        original = np.sin(np.arange(16000, dtype=np.float32) / 16000 * 2 * np.pi * 440)
+        original_int16 = (original * 32767).astype(np.int16)
+        flac_bytes = self._make_streaming_flac(original_int16, 16000)
+        samples, sr = await normalization_handler._decode_flac(flac_bytes)
+        self.assertEqual(sr, 16000)
+        self.assertEqual(len(samples), len(original_int16))
+        np.testing.assert_array_equal(samples, original_int16)
+
+    async def test_decode_valid_flac(self) -> None:
+        """Verify _decode_flac works with standard FLAC (soundfile-produced)."""
+        original = (
+            np.sin(np.arange(16000, dtype=np.float32) / 16000 * 2 * np.pi * 440) * 32767
+        ).astype(np.int16)
+        buf = io.BytesIO()
+        sf.write(buf, original, 16000, format="FLAC", subtype="PCM_16")
+        samples, sr = await normalization_handler._decode_flac(buf.getvalue())
+        self.assertEqual(sr, 16000)
+        self.assertEqual(len(samples), len(original))
+        np.testing.assert_array_equal(samples, original)
+
+    async def test_decode_invalid_data_raises(self) -> None:
+        """Verify _decode_flac raises RuntimeError with ffmpeg stderr on garbage input."""
+        with self.assertRaises(RuntimeError) as ctx:
+            await normalization_handler._decode_flac(b"not a flac file")
+        self.assertIn("ffmpeg FLAC decode failed", str(ctx.exception))
+        self.assertIn("exit", str(ctx.exception))
 
 
 if __name__ == "__main__":

@@ -27,8 +27,8 @@ WORKDIR /app
 
 ENV PYTHONPATH=/app
 
-# 1. Install system deps (soundfile requires libsndfile at runtime)
-RUN apt-get update && apt-get install -y --no-install-recommends libsndfile1 && rm -rf /var/lib/apt/lists/*
+# 1. Install system deps (ffmpeg for FLAC decoding at runtime)
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 
 # 2. Install production-only Python dependencies (no grpcio-tools)
 COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
