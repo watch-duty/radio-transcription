@@ -237,7 +237,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         # Act: capture -> upload -> bookmark
         shutdown = asyncio.Event()
         chunks_uploaded = []
-        async for flac_chunk in icecast_collector.capture_icecast_stream(
+        async for flac_chunk, _ts in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
@@ -295,7 +295,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         gcs_paths = []
         seq = 0
-        async for flac_chunk in icecast_collector.capture_icecast_stream(
+        async for flac_chunk, _ts in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
@@ -350,7 +350,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         gcs_paths = []
         seq = 0
-        async for flac_chunk in icecast_collector.capture_icecast_stream(
+        async for flac_chunk, _ts in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
@@ -433,7 +433,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
         shutdown = asyncio.Event()
         gcs_path = None
-        async for flac_chunk in icecast_collector.capture_icecast_stream(
+        async for flac_chunk, _ts in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
             gcs_path = await gcp_helper.upload_staged_audio(

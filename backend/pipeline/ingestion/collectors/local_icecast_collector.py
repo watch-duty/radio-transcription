@@ -48,7 +48,7 @@ async def run_local_capture() -> None:
     shutdown_event = asyncio.Event()
 
     chunk_count = 0
-    async for audio_data in capture_icecast_stream(feed, shutdown_event):
+    async for audio_data, _ts in capture_icecast_stream(feed, shutdown_event):
         chunk_count += 1
         timestamp = datetime.now(UTC).isoformat(timespec="milliseconds")
         file_timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S_%fZ")

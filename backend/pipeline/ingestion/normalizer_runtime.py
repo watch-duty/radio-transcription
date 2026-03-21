@@ -1,5 +1,6 @@
 import asyncio
 import concurrent.futures
+import datetime
 import logging
 import os
 import signal
@@ -19,8 +20,9 @@ from backend.pipeline.storage.connection import close_pool, create_pool
 from backend.pipeline.storage.feed_store import FeedStore, HeartbeatResult, LeasedFeed
 
 FeedID = uuid.UUID
-CaptureFn = Callable[[LeasedFeed, asyncio.Event], AsyncIterator[bytes]]
-
+CaptureFn = Callable[
+    [LeasedFeed, asyncio.Event], AsyncIterator[tuple[bytes, datetime.datetime]]
+]
 logger = logging.getLogger(__name__)
 
 
@@ -325,9 +327,10 @@ class NormalizerRuntime:
         worker_id = self._normalizer_settings.worker_id
         fencing_token = feed["fencing_token"]
         settings = self._normalizer_settings
+        session_id = str(uuid.uuid4())
 
         try:
-            async for audio_chunk in self._capture_fn(
+            async for audio_chunk, chunk_start_time in self._capture_fn(
                 feed,
                 self._shutdown,
             ):
@@ -352,6 +355,8 @@ class NormalizerRuntime:
                     self._normalizer_settings.pubsub_topic_path,
                     str(feed["id"]),
                     gcs_uri,
+                    start_timestamp=chunk_start_time,
+                    session_id=session_id,
                 )
                 logger.info(
                     "Published message %s for feed %s", message_id, feed["name"]
