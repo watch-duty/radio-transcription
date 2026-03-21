@@ -21,7 +21,9 @@ class TestSendNotification(TestCase):
         mock_dedupe.process_notification.return_value = True
 
         evaluated_payload = EvaluatedTranscribedAudio(
-            transcript="This is a test!", source_audio_uris=["gs://foo/bar.flac"]
+            transcript="This is a test!",
+            source_audio_uris=["gs://foo/bar.flac"],
+            transmission_id="1234",
         )
         evaluated_payload.start_audio_offset.seconds = 10
         raw_data = base64.b64encode(evaluated_payload.SerializeToString())
@@ -42,7 +44,7 @@ class TestSendNotification(TestCase):
         expected_headers = {"Content-Type": "application/json", "X-Api-Key": "12345"}
         mock_post.assert_called_once_with(
             expected_url,
-            data='{"sourceAudioUris": ["gs://foo/bar.flac"], "transcript": "This is a test!", "startAudioOffset": "10s"}',
+            data='{"transmissionId": "1234", "sourceAudioUris": ["gs://foo/bar.flac"], "transcript": "This is a test!", "startAudioOffset": "10s"}',
             headers=expected_headers,
             timeout=5,
         )

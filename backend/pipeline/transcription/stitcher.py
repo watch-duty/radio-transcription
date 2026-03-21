@@ -244,7 +244,7 @@ class StitchAudioFn(beam.DoFn):
             else:
                 stale_timer.clear()
 
-    def _apply_state_actions(  # noqa: PLR0913
+    def _apply_state_actions(
         self,
         *,
         actions: list[StateMachineAction],
@@ -269,7 +269,7 @@ class StitchAudioFn(beam.DoFn):
                 case DropAction(reason=reason):
                     logger.info(f"{reason}: {gcs_path}")
 
-    def _process_audio_chunk(  # noqa: PLR0913
+    def _process_audio_chunk(
         self,
         *,
         feed_id: str,

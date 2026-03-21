@@ -96,12 +96,14 @@ class EvaluationService:
             evaluated_payload = evaluated_pb2.EvaluatedTranscribedAudio(
                 feed_id=new_audio.feed_id,
                 transmission_id=new_audio.transmission_id,
-                source_chunk_ids=new_audio.source_chunk_ids,
+                source_audio_uris=new_audio.source_audio_uris,
                 transcript=new_audio.transcript,
                 evaluation_decisions=evaluation_result.get("triggered_rules", []),
             )
             evaluated_payload.start_timestamp.CopyFrom(new_audio.start_timestamp)
             evaluated_payload.end_timestamp.CopyFrom(new_audio.end_timestamp)
+            evaluated_payload.start_audio_offset.CopyFrom(new_audio.start_audio_offset)
+            evaluated_payload.end_audio_offset.CopyFrom(new_audio.end_audio_offset)
 
             # 5. Publish to Downstream Topic
             self._publish_evaluation_result(evaluated_payload)
