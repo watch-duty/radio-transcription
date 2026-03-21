@@ -15,7 +15,7 @@ from backend.pipeline.notification.notification_deduplication import (
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
-from integration_tests.test_utils import assert_eventually
+from integration_tests.utils import assert_eventually
 
 
 @pytest.fixture

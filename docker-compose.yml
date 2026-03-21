@@ -113,26 +113,5 @@ services:
     networks:
       - pipeline-network
 
-  temp-integration-test:
-    image: python:3.11-slim
-    depends_on:
-      - pubsub-emulator
-      - rules-management
-      - rules-evaluation
-      - notification
-      - mock-server
-      - pubsub-init
-    env_file:
-      - ./local_dev/LOCAL.env
-    volumes:
-      - .:/app
-    working_dir: /app
-    environment:
-      - PYTHONPATH=/app
-    command: >
-      sh -c "pip install requests protobuf && python integration_tests/test_rules_creation_evaluation_publish.py"
-    networks:
-      - pipeline-network
-
 networks:
   pipeline-network:

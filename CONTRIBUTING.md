@@ -104,12 +104,6 @@ before running.
 docker-compose run --rm integration-tests
 ```
 
-<!-- TODO: Remove this when we consolidate the integration tests. -->
-To run the integration test for the evaluation pipeline:
-```
-docker compose up temp-integration-test
-```
-
 ### Frontend tools
 
 * Language: Typescript

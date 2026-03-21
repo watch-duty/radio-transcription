@@ -1,71 +1,24 @@
 """Publishes test messages and verifies the end-to-end Rules Evaluation flow."""
 
 import base64
-import logging
 import os
-import sys
 import time
 import uuid
 
 import requests
 
 from backend.pipeline.schema_types.transcribed_audio_pb2 import TranscribedAudio
-
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
+from integration_tests.utils import assert_eventually
 
 # Constants from environment with sensible defaults for local development
 PUBSUB_EMULATOR_HOST = os.environ.get("PUBSUB_EMULATOR_HOST", "localhost:8085")
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "local-project")
-RULES_API_URL = os.environ.get("RULES_API_URL", "http://localhost:8086")
+RULES_API_HOST = os.environ.get("RULES_API_HOST", "localhost:8086")
 TRANSCRIPTION_TOPIC = os.environ.get("TRANSCRIPTION_TOPIC", "transcription-text-topic")
-MOCK_SERVER_URL = os.environ.get(
-    "NOTIFICATION_ENDPOINT", "http://localhost:8082/post"
-).replace("/post", "")
+MOCK_SERVER_HOST = os.environ.get("MOCK_SERVER_HOST", "localhost:8082")
 
 
-def wait_for_services() -> None:
-    """Wait for all required services to be up."""
-    services = [
-        ("Pub/Sub Emulator", f"http://{PUBSUB_EMULATOR_HOST}/"),
-        ("Rules Management", f"{RULES_API_URL}/v1/rules"),
-        ("Mock Server", MOCK_SERVER_URL),
-    ]
-    for name, url in services:
-        logger.info(f"Waiting for {name} at {url}...")
-        for i in range(30):
-            try:
-                response = requests.get(url, timeout=2)
-                if response.status_code < 500:
-                    logger.info(f"{name} is ready.")
-                    break
-            except requests.exceptions.RequestException:
-                pass
-            time.sleep(1)
-        else:
-            logger.error(f"Timed out waiting for {name}.")
-            sys.exit(1)
-
-    topic_url = f"http://{PUBSUB_EMULATOR_HOST}/v1/projects/{PROJECT_ID}/topics/{TRANSCRIPTION_TOPIC}"
-
-    logger.info(f"Waiting for topic {TRANSCRIPTION_TOPIC} at {topic_url}...")
-    for i in range(30):
-        try:
-            response = requests.get(topic_url, timeout=2)
-            if response.status_code == 200:
-                logger.info(f"Topic {TRANSCRIPTION_TOPIC} is ready.")
-                break
-        except requests.exceptions.RequestException:
-            pass
-        time.sleep(1)
-    else:
-        logger.error(f"Timed out waiting for topic {TRANSCRIPTION_TOPIC}.")
-        sys.exit(1)
-
-
-def create_test_rule(test_keyword: str) -> str | None:
+def create_test_rule(test_keyword: str) -> None:
     """Creates a temporary rule for testing with a specific keyword."""
     rule_payload = {
         "rule_name": f"Integration Test Rule - {test_keyword}",
@@ -79,17 +32,13 @@ def create_test_rule(test_keyword: str) -> str | None:
             "case_sensitive": False,
         },
     }
-    logger.info("Step 1: Creating a test rule with keyword: %s", test_keyword)
-    try:
-        response = requests.post(f"{RULES_API_URL}/v1/rules", json=rule_payload)
-        response.raise_for_status()
-    except Exception as e:
-        logger.exception("Failed to create rule: %s", e)
-        return None
-    else:
-        rule_id = response.json().get("rule_id", "unknown")
-        logger.info(f"Rule created successfully (ID: {rule_id})")
-        return rule_id
+
+    url = f"http://{RULES_API_HOST}/v1/rules"
+    response = requests.post(url, json=rule_payload, timeout=10)
+    response.raise_for_status()
+
+    rule_id = response.json().get("rule_id", "")
+    assert rule_id != "", "Rule ID not returned by API"
 
 
 def publish_test_message(transmission_id: str, transcript: str) -> None:
@@ -114,71 +63,36 @@ def publish_test_message(transmission_id: str, transcript: str) -> None:
         f"{PROJECT_ID}/topics/{TRANSCRIPTION_TOPIC}:publish"
     )
 
-    logger.info("Step 2: Publishing message to Pub/Sub...")
-    logger.info("Transmission ID: %s", transmission_id)
-    logger.info("Transcript: %s", transcript)
-
-    response = requests.post(url, json=payload)
-    if response.status_code == 200:
-        logger.info("Message published successfully.")
-    else:
-        logger.error(
-            "Failed to publish message. Status: %s, Response: %s",
-            response.status_code,
-            response.text,
-        )
-        sys.exit(1)
+    response = requests.post(url, json=payload, timeout=10)
+    response.raise_for_status()
 
 
-def verify_notification(expected_transmission_id: str) -> bool:
-    """Polls the mock server for a notification matching the transmission ID."""
-    logger.info("Step 3: Verifying notification on mock server...")
-    max_retries = 15
-    for i in range(max_retries):
-        logger.info(f"Checking mock server (attempt {i + 1}/{max_retries})...")
-        try:
-            response = requests.get(MOCK_SERVER_URL)
-            data = response.json()
-
-            if data:
-                for item in data:
-                    if expected_transmission_id in str(item):
-                        logger.info("SUCCESS: Notification received and verified!")
-                        return True
-                logger.info("Received notification, but it doesn't match our test ID.")
-        except Exception as e:
-            logger.debug(f"Error polling mock server: {e}")
-
-        time.sleep(2)
-
-    logger.error(
-        "FAILED: Did not receive expected notification matching %s.",
-        expected_transmission_id,
-    )
-    return False
-
-
-if __name__ == "__main__":
-    logger.info("Starting Rules Evaluation Integration Test")
-
-    # Generate unique values for each run to ensure test isolation
+def test_rules_creation_evaluation_publish() -> None:
     test_uuid = str(uuid.uuid4())[:8]
     unique_keyword = f"evacuation-{test_uuid}"
     unique_trans_id = f"trans-{test_uuid}"
     unique_transcript = f"Attention: {unique_keyword} is required for Sector 7."
 
-    # 0. Wait for environment
-    wait_for_services()
-
-    # 1. Setup - Create rule
     create_test_rule(unique_keyword)
-
-    # 2. Trigger - Publish message
     publish_test_message(unique_trans_id, unique_transcript)
 
-    # 3. Verify - Check results
-    if verify_notification(unique_trans_id):
-        logger.info("Integration test PASSED.")
-    else:
-        logger.error("Integration test FAILED.")
-        sys.exit(1)
+    def notification_received() -> bool:
+        try:
+            url = f"http://{MOCK_SERVER_HOST}"
+            response = requests.get(url, timeout=5)
+            response.raise_for_status()
+            data = response.json()
+
+            if data:
+                for item in data:
+                    if unique_trans_id in str(item):
+                        return True
+        except requests.RequestException:
+            pass
+        return False
+
+    assert_eventually(
+        notification_received,
+        timeout_sec=30.0,
+        error_msg=f"Did not receive expected notification matching {unique_trans_id}.",
+    )
