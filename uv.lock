@@ -3093,12 +3093,12 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "apache-beam", extras = ["gcp"], specifier = ">=2.56.0" },
+    { name = "apache-beam", extras = ["gcp"], specifier = ">=2.70.0" },
     { name = "audioop-lts", specifier = ">=0.2.1" },
     { name = "crcmod", specifier = ">=1.7" },
     { name = "google-cloud-speech", specifier = ">=2.37.0" },
-    { name = "protobuf", specifier = ">=4.25.3" },
-    { name = "pydub", specifier = ">=0.25.0" },
+    { name = "protobuf", specifier = ">=5.29.6" },
+    { name = "pydub", specifier = ">=0.25.1" },
     { name = "ten-vad", specifier = ">=1.0.6.8" },
 ]
 

@@ -4,10 +4,10 @@ version = "0.1.0"
 requires-python = ">=3.13"
 
 dependencies = [
-    "apache-beam[gcp]>=2.56.0",
+    "apache-beam[gcp]>=2.70.0",
     "google-cloud-speech>=2.37.0",
-    "protobuf>=4.25.3",
-    "pydub>=0.25.0",
+    "protobuf>=5.29.6",
+    "pydub>=0.25.1",
     "crcmod>=1.7",
     "ten-vad>=1.0.6.8",
     "audioop-lts>=0.2.1",
