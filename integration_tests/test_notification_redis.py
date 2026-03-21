@@ -2,7 +2,6 @@
 
 import base64
 import os
-import time
 import uuid
 
 import pytest
@@ -30,12 +29,17 @@ def dedup(redis_service: RedisService) -> NotificationDeduplication:
     return NotificationDeduplication(cache=redis_service)
 
 
-def test_deduplication_via_pubsub(
+def test_notification_sent(
     redis_service: RedisService, dedup: NotificationDeduplication
 ) -> None:
     """
-    Tests the deduplication logic by publishing a message to the
-    local Pub/Sub emulator and verifying it sets the key in Redis.
+    Tests when a message is sent to the notification service, which
+    will persist in Redis and pass the message to the mock server.
+
+    We only test this path once, since it will be difficult to test
+    that duplicates are filtered out. The test will become brittle
+    if we add in an arbitrary timeout to ensure that event doesn't
+    happen. We will rely on unit tests to cover this path.
     """
     test_notification_id = f"test-integration-notification-{uuid.uuid4()}"
     test_message = EvaluatedTranscribedAudio(
@@ -69,7 +73,7 @@ def test_deduplication_via_pubsub(
             ),
         )
 
-        # Check that the mock server received the first notification
+        # Check that the mock server received the notification
         mock_host = os.environ.get("MOCK_SERVER_HOST", "localhost:8082")
         mock_requests_url = f"http://{mock_host}/"
 
@@ -94,17 +98,6 @@ def test_deduplication_via_pubsub(
             mock_server_received,
             timeout_sec=10.0,
             error_msg="Mock server did not receive the first notification",
-        )
-
-        # Send duplicate message
-        dupe_resp = requests.post(pubsub_url, json=payload, timeout=10)
-        assert dupe_resp.status_code == 200, "Failed to publish duplicate message"
-
-        # Give the notification service time to process duplicate message.
-        time.sleep(5)
-
-        assert mock_server_received(), (
-            "Expected message to be deduplicated, but it was sent multiple times."
         )
 
     finally:
