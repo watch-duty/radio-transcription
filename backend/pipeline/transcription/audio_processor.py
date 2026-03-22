@@ -1,3 +1,4 @@
+"""Stateless acoustic manipulation and Voice Activity Detection (VAD) utilities."""
 import io
 import logging
 import urllib.parse
@@ -5,7 +6,7 @@ from typing import Any
 
 from pydub import AudioSegment, effects
 
-from backend.pipeline.shared_constants import (
+from backend.pipeline.common.constants import (
     AUDIO_FORMAT,
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
@@ -24,12 +25,10 @@ from backend.pipeline.transcription.vads import VoiceActivityDetector, get_vad_p
 
 logger = logging.getLogger(__name__)
 
-
 class AudioProcessor:
-    """
-    An acoustic manipulation module.
+    """An acoustic manipulation module.
+
     Responsible for downloading/parsing audio, applying VAD, and applying bandpass filters.
-    While mostly stateless, it holds per-worker initialized state (`self.vad`) from `setup()`.
     All streaming orchestration and API integrations are handled upstream.
     """
 

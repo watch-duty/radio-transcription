@@ -12,14 +12,14 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
-from backend.pipeline.ingestion.settings import NormalizerSettings
-from backend.pipeline.shared_constants import (
+from backend.pipeline.common.constants import (
     AUDIO_FORMAT,
     CHUNK_DURATION_SECONDS,
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
 )
+from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
+from backend.pipeline.ingestion.settings import NormalizerSettings
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

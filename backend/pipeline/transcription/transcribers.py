@@ -1,5 +1,4 @@
-"""
-Pluggable Transcription API Architecture.
+"""Pluggable Transcription API Architecture.
 
 This module defines the abstract interface for audio transcription services,
 allowing the Beam pipeline to dynamically swap between different engines
@@ -14,23 +13,26 @@ from google.api_core.exceptions import GoogleAPIError, RetryError
 from google.cloud import speech_v2 as cloud_speech
 from google.cloud.speech_v2 import SpeechClient
 
-from backend.pipeline.transcription.constants import BYTES_PER_SECOND_16KHZ_MONO
+from backend.pipeline.common.constants import BYTES_PER_SECOND_16KHZ_MONO
+from backend.pipeline.transcription.constants import (
+    DEFAULT_MAX_RETRIES,
+    DEFAULT_RETRY_MAX_SECONDS,
+)
 from backend.pipeline.transcription.enums import TranscriberType
 from backend.pipeline.transcription.utils import ConfigBase
 
 logger = logging.getLogger(__name__)
 
-
 class Transcriber(abc.ABC):
-    """
-    Abstract interface for handling audio transcription.
+    """Abstract interface for handling audio transcription.
+
     Allows hot-swapping different external transcription APIs or models.
     """
 
     @abc.abstractmethod
     def setup(self) -> None:
-        """
-        Called once per Beam worker upon initialization.
+        """Called once per Beam worker upon initialization.
+
         Use this to spin up clients, establish connections, or load models
         that cannot be pickled/serialized across processes.
         """
@@ -41,10 +43,7 @@ class Transcriber(abc.ABC):
         *,
         audio_data: bytes,
     ) -> str | None:
-        """
-        Transcribes the raw audio bytes and returns the text transcript.
-        """
-
+        """Transcribes the raw audio bytes and returns the text transcript."""
 
 class ChirpConfig(ConfigBase):
     """Strongly typed configuration for the Google Chirp V3 Transcriber."""
@@ -56,14 +55,14 @@ class ChirpConfig(ConfigBase):
     enable_automatic_punctuation: bool = True
     enable_word_time_offsets: bool = False
 
-
 class GoogleChirpV3Transcriber(Transcriber):
-    """
-    Transcriber implementation using Google Cloud Speech-to-Text V2 API
+    """Transcriber implementation using Google Cloud Speech-to-Text V2 API.
+
     with the 'chirp_3' model.
     """
 
     def __init__(self, project_id: str, config_json: str) -> None:
+        """Binds the GCP Project ID and dynamic Chirp configuration JSON."""
         self.project_id = project_id
         self.config_json = config_json
 
@@ -71,12 +70,13 @@ class GoogleChirpV3Transcriber(Transcriber):
         self.config: ChirpConfig | None = None
 
     def setup(self) -> None:
+        """Instantiates the Speech-to-Text API gRPC client lazily on the executing worker."""
         self.client = SpeechClient()
         self.config = ChirpConfig.from_json(self.config_json)
 
     @tenacity.retry(
-        wait=tenacity.wait_exponential(multiplier=1, max=10),
-        stop=tenacity.stop_after_attempt(5),
+        wait=tenacity.wait_exponential(multiplier=1, max=DEFAULT_RETRY_MAX_SECONDS),
+        stop=tenacity.stop_after_attempt(DEFAULT_MAX_RETRIES),
         retry=tenacity.retry_if_exception_type((GoogleAPIError, RetryError)),
         reraise=True,
     )
@@ -85,7 +85,7 @@ class GoogleChirpV3Transcriber(Transcriber):
         *,
         audio_data: bytes,
     ) -> str | None:
-
+        """Transcribes the given audio payload."""
         if not self.client or not self.config:
             msg = "Transcriber client used before setup() was called."
             raise RuntimeError(msg)
@@ -137,11 +137,12 @@ class GoogleChirpV3Transcriber(Transcriber):
 
         return transcript
 
-
 def get_transcriber(
     transcriber_type: TranscriberType, project_id: str, config_json: str
 ) -> Transcriber:
+    """A factory method instantiating the requested Transcriber implementation based on the enum type."""
     if transcriber_type == TranscriberType.GOOGLE_CHIRP_V3:
         return GoogleChirpV3Transcriber(project_id, config_json)
     msg = f"Unknown transcriber type: {transcriber_type}"
     raise ValueError(msg)
+

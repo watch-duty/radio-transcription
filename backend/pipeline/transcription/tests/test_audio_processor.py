@@ -7,16 +7,16 @@ from unittest.mock import MagicMock, patch
 
 from pydub import AudioSegment
 
-from backend.pipeline.shared_constants import AUDIO_FORMAT, SAMPLE_RATE_HZ
+from backend.pipeline.common.constants import AUDIO_FORMAT, SAMPLE_RATE_HZ
 from backend.pipeline.transcription.audio_processor import AudioProcessor
 from backend.pipeline.transcription.datatypes import AudioChunkData, TimeRange
 from backend.pipeline.transcription.enums import VadType
 
 
 class AudioProcessorTest(unittest.TestCase):
-    """Tests for the AudioProcessor setup and evaluation methods."""
 
     def setUp(self) -> None:
+
         self.processor = AudioProcessor(vad_type=VadType.TEN_VAD)
 
     @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
@@ -24,7 +24,7 @@ class AudioProcessorTest(unittest.TestCase):
     def test_setup_initializes_vad_and_gcs(
         self, mock_get_vad: MagicMock, mock_get_gcs: MagicMock
     ) -> None:
-        """Test that setup initializes the VAD plugin and GCS client correctly."""
+        """Verifies that calling setup() correctly instantiates the lazy-loaded VAD plugin and GCS client."""
         self.processor.setup()
         mock_get_vad.assert_called_once_with(VadType.TEN_VAD, "{}")
         mock_get_gcs.assert_called_once()
@@ -32,13 +32,13 @@ class AudioProcessorTest(unittest.TestCase):
         self.assertEqual(self.processor.gcs_client, mock_get_gcs.return_value)
 
     def test_check_vad_raises_if_not_setup(self) -> None:
-        """Test that check_vad raises RuntimeError if called before setup."""
+        """Ensures that attempting to evaluate VAD before setup() raises a clear runtime error."""
         audio = AudioSegment.silent(duration=1000)
         with self.assertRaises(RuntimeError):
             self.processor.check_vad(audio)
 
     def test_download_audio_raises_if_not_setup(self) -> None:
-        """Test that download_audio_and_sed raises RuntimeError if called before setup."""
+        """Ensures that downloading audio before calling setup() correctly raises a runtime error to prevent missing GCS client exceptions."""
         # Create a new processor instance that hasn't been set up
         processor = AudioProcessor(vad_type=VadType.TEN_VAD)
         # Act & Assert
@@ -50,7 +50,7 @@ class AudioProcessorTest(unittest.TestCase):
     def test_check_vad_evaluates_speech(
         self, mock_get_vad: MagicMock, mock_get_gcs: MagicMock
     ) -> None:
-        """Test check_vad correctly evaluating audio data."""
+        """Tests that the processor correctly forwards raw audio bytes to the configured VAD plugin and returns its result."""
         mock_vad_instance = MagicMock()
         mock_vad_instance.evaluate.return_value = True
         mock_get_vad.return_value = mock_vad_instance
@@ -67,7 +67,7 @@ class AudioProcessorTest(unittest.TestCase):
         self.assertEqual(kwargs["sample_rate"], SAMPLE_RATE_HZ)
 
     def test_preprocess_audio_applies_bandpass(self) -> None:
-        """Test that preprocess_audio successfully filters the audio."""
+        """Verifies that the audio preprocessing filters do not corrupt or truncate the AudioSegment structure."""
         # A 1-second audio segment with noise at different frequencies
         audio = AudioSegment.silent(duration=1000)
 
@@ -81,7 +81,7 @@ class AudioProcessorTest(unittest.TestCase):
         shutil.which("ffmpeg") is None, "ffmpeg is required for pydub I/O tests"
     )
     def test_export_flac(self) -> None:
-        """Test FLAC format conversion."""
+        """Tests that exporting to FLAC produces a valid byte array containing the expected `fLaC` header signature."""
         audio = AudioSegment.silent(duration=500)
         flac_bytes = self.processor.export_flac(audio)
         self.assertIsInstance(flac_bytes, bytes)
@@ -96,8 +96,7 @@ class AudioProcessorTest(unittest.TestCase):
     def test_download_audio_and_sed(
         self, mock_get_gcs: MagicMock, mock_read_sed: MagicMock, mock_get_vad: MagicMock
     ) -> None:
-        """Test downloading and parsing an audio chunk from GCS."""
-        # Arrange
+        """Simulates downloading a GCS FLAC file, mocking its associated Sound Event Detection (SED) metadata, and parsing it into AudioChunkData."""
         processor = AudioProcessor(vad_type=VadType.TEN_VAD)
         processor.setup()
         processor.gcs_client = MagicMock()
@@ -111,6 +110,7 @@ class AudioProcessorTest(unittest.TestCase):
         flac_bytes = buf.getvalue()
 
         def download_to_file(f: io.BytesIO, **kwargs: object) -> None:
+
             f.write(flac_bytes)
 
         mock_blob.download_to_file = download_to_file
@@ -140,7 +140,7 @@ class AudioProcessorTest(unittest.TestCase):
     def test_download_audio_not_found(
         self, mock_get_gcs: MagicMock, mock_get_vad: MagicMock
     ) -> None:
-        """Test that missing GCS blob raises FileNotFoundError."""
+        """Ensures a FileNotFoundError is explicitly raised if the requested GCS audio blob does not exist in the bucket."""
         # Arrange
         processor = AudioProcessor(vad_type=VadType.TEN_VAD)
         processor.setup()

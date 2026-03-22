@@ -1,5 +1,4 @@
-"""
-Radio Transcription Pipeline Entry Point
+"""Radio Transcription Pipeline Entry Point.
 
 This is the CLI entry point for the transcription pipeline.
 It handles argument parsing and environment configuration before launching the Beam orchestration.
@@ -15,11 +14,8 @@ from backend.pipeline.transcription.orchestration import get_pipeline
 
 logger = logging.getLogger(__name__)
 
-
 def main() -> None:
-    """
-    Parses CLI arguments and launches the pipeline orchestration.
-    """
+    """Parses CLI arguments and launches the pipeline orchestration."""
     # Parse all arguments via Beam's PipelineOptions to capture custom configs
     pipeline_options = PipelineOptions(sys.argv[1:])
     options = pipeline_options.view_as(TranscriptionOptions)
@@ -41,7 +37,6 @@ def main() -> None:
     except Exception:
         logger.exception("Failed to run pipeline")
         sys.exit(1)
-
 
 if __name__ == "__main__":
     logging.basicConfig(

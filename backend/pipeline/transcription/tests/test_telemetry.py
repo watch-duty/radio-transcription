@@ -15,10 +15,9 @@ from backend.pipeline.transcription.telemetry import (
 
 
 class TestMetricsExporters(unittest.TestCase):
-    """Tests for the metrics exporters."""
 
     def test_gcp_monitoring_config_parsing(self) -> None:
-        """Test that the GCP monitoring config parses valid JSON and rejects invalid JSON."""
+        """Verifies that GcpMonitoringConfig can robustly parse completely empty strings and handles invalid JSON input by actively throwing a ValueError."""
         config = GcpMonitoringConfig.from_json('{"some_unknown_key": "val"}')
         self.assertIsInstance(config, GcpMonitoringConfig)
 
@@ -32,6 +31,7 @@ class TestMetricsExporters(unittest.TestCase):
 
     @patch("backend.pipeline.transcription.telemetry.monitoring_v3.MetricServiceClient")
     def test_gcp_exporter_setup_and_record(self, mock_client_class: MagicMock) -> None:
+        """Verifies the GcpMonitoringExporter correctly generates metric payloads formatted with the custom API path specifically for transcription and stitching."""
         mock_client_inst = MagicMock()
         mock_client_class.return_value = mock_client_inst
 
@@ -55,7 +55,7 @@ class TestMetricsExporters(unittest.TestCase):
 
     @patch("backend.pipeline.transcription.telemetry.monitoring_v3.MetricServiceClient")
     def test_gcp_exporter_handles_exception(self, mock_client_class: MagicMock) -> None:
-        """Test that GCP exporter ignores and logs exceptions instead of crashing."""
+        """Verifies that network exceptions from MetricServiceClient (like GoogleAPIError) are silently caught without interrupting the data pipeline flow."""
         mock_client_inst = MagicMock()
         mock_client_inst.create_time_series.side_effect = GoogleAPIError(
             "Network failure"
@@ -70,6 +70,7 @@ class TestMetricsExporters(unittest.TestCase):
         self.assertEqual(mock_client_inst.create_time_series.call_count, 1)
 
     def test_multi_exporter(self) -> None:
+        """Verifies that MultiExporter successfully and uniformly delegates method execution across all configured internal component metrics exporters."""
         mock_exp1 = MagicMock()
         mock_exp2 = MagicMock()
 
@@ -91,7 +92,7 @@ class TestMetricsExporters(unittest.TestCase):
 
     @patch("backend.pipeline.transcription.telemetry.GcpMonitoringExporter")
     def test_get_metrics_exporter(self, mock_gcp_exporter_class: MagicMock) -> None:
-        """Test the exporter factory handles GCP and empty list configurations."""
+        """Verifies that get_metrics_exporter outputs an empty composite exporter when inactive, but includes GcpMonitoringExporter if specifically toggled."""
         # Test NONE or empty
         exporter_none = get_metrics_exporter([MetricsExporterType.NONE], "proj", "{}")
         self.assertIsInstance(exporter_none, MultiExporter)

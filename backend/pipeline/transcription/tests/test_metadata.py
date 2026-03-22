@@ -14,17 +14,16 @@ from backend.pipeline.transcription.metadata import (
 
 
 class TestUtils(unittest.TestCase):
-    """Tests for utility functions."""
 
     @patch("backend.pipeline.transcription.metadata.storage.Client")
     def test_get_gcs_client(self, mock_client: MagicMock) -> None:
-        """Test that get_gcs_client returns a valid storage client."""
+        """Verifies that the Google Cloud Storage client is correctly instantiated."""
         client = get_gcs_client()
         self.assertIsNotNone(client)
         mock_client.assert_called_once()
 
     def test_read_sed_segments_from_blob_success(self) -> None:
-        """Test successfully parsing SED protobuf metadata from a GCS blob."""
+        """Verifies that sound event detection bounds (SED) can be successfully parsed from a GCS blob's custom base64 metadata."""
         mock_blob = MagicMock()
         mock_blob.name = "gs://test-bucket/test-blob.flac"
 
@@ -50,7 +49,7 @@ class TestUtils(unittest.TestCase):
         mock_blob.reload.assert_called_once()
 
     def test_read_sed_segments_from_blob_not_found(self) -> None:
-        """Test that missing SED metadata raises FileNotFoundError."""
+        """Ensures that attempting to read SED metadata from a blob missing the 'sed_metadata' property explicitly raises a FileNotFoundError."""
         mock_blob = MagicMock()
         mock_blob.metadata = {"other_data": "value"}
         mock_blob.name = "test.wav"
@@ -59,7 +58,6 @@ class TestUtils(unittest.TestCase):
             read_sed_segments_from_blob(mock_blob)
 
         mock_blob.reload.assert_called_once()
-
 
 if __name__ == "__main__":
     unittest.main()

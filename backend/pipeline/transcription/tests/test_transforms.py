@@ -1,6 +1,4 @@
-"""
-Tests for the StitchAudioFn, TranscribeAudioFn, and related transformations.
-"""
+"""Tests for the StitchAudioFn, TranscribeAudioFn, and related transformations."""
 
 import threading
 import time
@@ -38,15 +36,16 @@ from backend.pipeline.transcription.transforms import (
 
 
 class MockTranscriberFactory:
-    """Mock factory returning a MagicMock Transcriber."""
 
     def __init__(self, transcript: str, *, raise_exception: bool = False) -> None:
+
         self.transcript = transcript
         self.raise_exception = raise_exception
 
     def __call__(
         self, transcriber_type: TranscriberType, project_id: str, config_json: str
     ) -> Transcriber:
+
         mock = MagicMock()
         if self.raise_exception:
             mock.transcribe.side_effect = Exception("Transcription API outage!")
@@ -54,16 +53,14 @@ class MockTranscriberFactory:
             mock.transcribe.return_value = self.transcript
         return mock
 
-
 def get_mock_factory(
     transcript: str = "Simulated transcript.", *, raise_exception: bool = False
 ) -> MockTranscriberFactory:
-    """Return a MockTranscriberFactory with predefined transcript behavior."""
+
     return MockTranscriberFactory(transcript, raise_exception=raise_exception)
 
-
 def get_test_stitch_config(**kwargs: Any) -> StitchAudioConfig:
-    """Helper to return a StitchAudioConfig with defaults."""
+
     defaults = {
         "project_id": "fake-proj",
         "vad_type": VadType.TEN_VAD,
@@ -77,9 +74,8 @@ def get_test_stitch_config(**kwargs: Any) -> StitchAudioConfig:
     defaults.update(kwargs)
     return StitchAudioConfig(**defaults)  # type: ignore
 
-
 def get_test_transcribe_config(**kwargs: Any) -> TranscribeAudioConfig:
-    """Helper to return a TranscribeAudioConfig with defaults."""
+
     defaults = {
         "project_id": "fake-proj",
         "transcriber_type": TranscriberType.GOOGLE_CHIRP_V3,
@@ -92,12 +88,10 @@ def get_test_transcribe_config(**kwargs: Any) -> TranscribeAudioConfig:
     defaults.update(kwargs)
     return TranscribeAudioConfig(**defaults)  # type: ignore
 
-
 class ParseAndKeyTimestampTest(unittest.TestCase):
-    """Tests for ParseAndKeyFn."""
 
     def test_parse_and_key_success(self) -> None:
-        """Test successful parsing and keying of AudioChunk."""
+        """Verifies that well-formed Pub/Sub messages containing a serialized AudioChunk and feed_id are correctly unmarshalled and keyed by feed."""
         chunk = AudioChunk(gcs_uri="gs://test-bucket/path/to/test.flac")
         chunk.start_timestamp.FromMicroseconds(123456789000)
         mock_msg = PubsubMessage(
@@ -121,7 +115,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             )
 
     def test_parse_and_key_dlq(self) -> None:
-        """Test that missing feed_id routes to DLQ."""
+        """Verifies that incoming data missing a critical routing attribute like 'feed_id' is gracefully intercepted and routed to the Dead Letter Queue."""
         chunk = AudioChunk(gcs_uri="gs://test-bucket/path/to/test.flac")
         mock_msg = PubsubMessage(
             chunk.SerializeToString(),
@@ -134,20 +128,20 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             )
 
             def assert_dlq(elements: list[dict[str, Any]]) -> None:
+
                 assert len(elements) == 1
                 assert "Missing required payload attribute" in elements[0]["error"]
 
             assert_that(parsed.main, equal_to([]), label="CheckEmptyMain")
             assert_that(parsed[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ")
 
-
 class AddEventTimestampTest(unittest.TestCase):
-    """Tests for AddEventTimestamp."""
 
     def test_valid_timestamp_extraction(self) -> None:
-        """Test successful timestamp extraction."""
+        """Verifies that AddEventTimestamp accurately regex-extracts and assigns the logical windowing timestamp natively from the chunk's standardized filename."""
         chunk = AudioChunk(
-            gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac"
+            gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
+            session_id="mock-session-id"
         )
         chunk.start_timestamp.FromMicroseconds(1678886400000000)
         element = ("test-feed", chunk.SerializeToString())
@@ -160,13 +154,13 @@ class AddEventTimestampTest(unittest.TestCase):
             result[0].value,  # type: ignore
             (
                 "test-feed",
-                "gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
+                ("gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac", "mock-session-id"),
             ),
         )
         self.assertEqual(result[0].timestamp, 1678886400)  # type: ignore
 
     def test_invalid_timestamp_raises_value_error(self) -> None:
-        """Test invalid timestamp routes to DLQ."""
+        """Verifies that chunks possessing malformed or unidentifiable file names result in safely tagging the element for DLQ observation instead of crashing."""
         chunk = AudioChunk(
             gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/invalid-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac"
         )
@@ -178,12 +172,10 @@ class AddEventTimestampTest(unittest.TestCase):
         self.assertIsInstance(result[0], beam.pvalue.TaggedOutput)
         self.assertEqual(result[0].tag, DEAD_LETTER_QUEUE_TAG)  # type: ignore
 
-
 class OrderRestorerTest(unittest.TestCase):
-    """Tests for RestoreOrderFn."""
 
     def test_restore_order_buffers_and_releases(self) -> None:
-        """Test that out-of-order chunks are buffered and released in order."""
+        """Verifies that structurally disordered data streams correctly buffer elements in-memory to artificially re-align and emit chronologically."""
         config = OrderRestorerConfig(out_of_order_timeout_ms=5000)
 
         with BeamTestPipeline() as p:
@@ -192,20 +184,20 @@ class OrderRestorerTest(unittest.TestCase):
             test_stream = (
                 BeamTestStream(
                     coder=beam.coders.TupleCoder(
-                        (beam.coders.StrUtf8Coder(), beam.coders.StrUtf8Coder())
+                        (beam.coders.StrUtf8Coder(), beam.coders.TupleCoder((beam.coders.StrUtf8Coder(), beam.coders.StrUtf8Coder())))
                     )
                 )
                 .advance_watermark_to(100)
                 .add_elements(
-                    [TimestampedValue(("feed-1", "gs://b/100-uuid1.flac"), 100)]
+                    [TimestampedValue(("feed-1", ("gs://b/100-uuid1.flac", "session-A")), 100)]
                 )
                 .advance_watermark_to(130)
                 .add_elements(
-                    [TimestampedValue(("feed-1", "gs://b/130-uuid3.flac"), 130)]
+                    [TimestampedValue(("feed-1", ("gs://b/130-uuid3.flac", "session-A")), 130)]
                 )
                 .advance_watermark_to(140)
                 .add_elements(
-                    [TimestampedValue(("feed-1", "gs://b/115-uuid2.flac"), 115)]
+                    [TimestampedValue(("feed-1", ("gs://b/115-uuid2.flac", "session-A")), 115)]
                 )
                 .advance_watermark_to_infinity()
             )
@@ -224,29 +216,29 @@ class OrderRestorerTest(unittest.TestCase):
             )
 
     def test_restore_order_yields_late_chunks(self) -> None:
-        """Test that chunks arriving after their gap timeout are yielded."""
+        """Verifies that profoundly late stream elements exceeding the operational buffering timeout are explicitly yielded independently without corrupting stream progression."""
         config = OrderRestorerConfig(out_of_order_timeout_ms=5000)
 
         with BeamTestPipeline() as p:
             test_stream = (
                 BeamTestStream(
                     coder=beam.coders.TupleCoder(
-                        (beam.coders.StrUtf8Coder(), beam.coders.StrUtf8Coder())
+                        (beam.coders.StrUtf8Coder(), beam.coders.TupleCoder((beam.coders.StrUtf8Coder(), beam.coders.StrUtf8Coder())))
                     )
                 )
                 .advance_watermark_to(100)
                 .add_elements(
-                    [TimestampedValue(("feed-1", "gs://b/100-11111111.flac"), 100)]
+                    [TimestampedValue(("feed-1", ("gs://b/100-11111111.flac", "session-A")), 100)]
                 )
                 .advance_watermark_to(130)
                 .add_elements(
-                    [TimestampedValue(("feed-1", "gs://b/130-33333333.flac"), 130)]
+                    [TimestampedValue(("feed-1", ("gs://b/130-33333333.flac", "session-A")), 130)]
                 )
                 # After 5 seconds (5000ms), the order restorer timed out waiting for 115.
                 .advance_watermark_to(10000)
                 # Now the late chunk arrives
                 .add_elements(
-                    [TimestampedValue(("feed-1", "gs://b/115-22222222.flac"), 115)]
+                    [TimestampedValue(("feed-1", ("gs://b/115-22222222.flac", "session-A")), 115)]
                 )
                 .advance_watermark_to_infinity()
             )
@@ -269,15 +261,13 @@ class OrderRestorerTest(unittest.TestCase):
     def test_delayed_gap_acceptance(self) -> None:
         pass
 
-
 class StitchAudioTest(unittest.TestCase):
-    """Tests for StitchAudioFn."""
 
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
     def test_stitching_and_silence_flush_logic(
         self, mock_audio_processor: MagicMock
     ) -> None:
-        """Test complex stitching logic with silence and gaps."""
+        """Verifies that AudioProcessor integrates multiple adjacent voice activity ranges correctly while accurately bounding isolated segments against configured gap timeouts."""
         mock_processor_inst = mock_audio_processor.return_value
         mock_processor_inst.check_vad.return_value = True
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
@@ -293,6 +283,7 @@ class StitchAudioTest(unittest.TestCase):
         }
 
         def mock_download(path: str) -> AudioChunkData:
+
             filename = path.rsplit("/", maxsplit=1)[-1]
             chunk_start = float(filename.split("-")[0]) if "-" in filename else 0.0
 
@@ -325,7 +316,7 @@ class StitchAudioTest(unittest.TestCase):
             test_stream = (
                 BeamTestStream(
                     coder=beam.coders.TupleCoder(
-                        (beam.coders.StrUtf8Coder(), beam.coders.StrUtf8Coder())
+                        (beam.coders.StrUtf8Coder(), beam.coders.TupleCoder((beam.coders.StrUtf8Coder(), beam.coders.PickleCoder())))
                     )
                 )
                 .advance_watermark_to(100)
@@ -334,7 +325,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                "gs://fake-bucket/ab12/feed-123/2026-03-06/100-11111111-1111-1111-1111-111111111111.flac",
+                                ("gs://fake-bucket/ab12/feed-123/2026-03-06/100-11111111-1111-1111-1111-111111111111.flac", mock_download("gs://fake-bucket/ab12/feed-123/2026-03-06/100-11111111-1111-1111-1111-111111111111.flac")),
                             ),
                             100,
                         )
@@ -346,7 +337,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                "gs://fake-bucket/ab12/feed-123/2026-03-06/115-22222222-2222-2222-2222-222222222222.flac",
+                                ("gs://fake-bucket/ab12/feed-123/2026-03-06/115-22222222-2222-2222-2222-222222222222.flac", mock_download("gs://fake-bucket/ab12/feed-123/2026-03-06/115-22222222-2222-2222-2222-222222222222.flac")),
                             ),
                             115,
                         )
@@ -358,7 +349,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                "gs://fake-bucket/ab12/feed-123/2026-03-06/130-33333333-3333-3333-3333-333333333333.flac",
+                                ("gs://fake-bucket/ab12/feed-123/2026-03-06/130-33333333-3333-3333-3333-333333333333.flac", mock_download("gs://fake-bucket/ab12/feed-123/2026-03-06/130-33333333-3333-3333-3333-333333333333.flac")),
                             ),
                             130,
                         )
@@ -370,7 +361,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                "gs://fake-bucket/ab12/feed-123/2026-03-06/150-44444444-4444-4444-4444-444444444444.flac",
+                                ("gs://fake-bucket/ab12/feed-123/2026-03-06/150-44444444-4444-4444-4444-444444444444.flac", mock_download("gs://fake-bucket/ab12/feed-123/2026-03-06/150-44444444-4444-4444-4444-444444444444.flac")),
                             ),
                             150,
                         )
@@ -382,7 +373,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                "gs://fake-bucket/ab12/feed-123/2026-03-06/160-55555555-5555-5555-5555-555555555555.flac",
+                                ("gs://fake-bucket/ab12/feed-123/2026-03-06/160-55555555-5555-5555-5555-555555555555.flac", mock_download("gs://fake-bucket/ab12/feed-123/2026-03-06/160-55555555-5555-5555-5555-555555555555.flac")),
                             ),
                             160,
                         )
@@ -394,7 +385,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                "gs://fake-bucket/ab12/feed-123/2026-03-06/190-66666666-6666-6666-6666-666666666666.flac",
+                                ("gs://fake-bucket/ab12/feed-123/2026-03-06/190-66666666-6666-6666-6666-666666666666.flac", mock_download("gs://fake-bucket/ab12/feed-123/2026-03-06/190-66666666-6666-6666-6666-666666666666.flac")),
                             ),
                             190,
                         )
@@ -414,17 +405,20 @@ class StitchAudioTest(unittest.TestCase):
             )
 
             def debug_print(el):
+
                 return el
 
             results.main = results.main | beam.Map(debug_print)
 
             def print_dlq(el):
+
                 print(f"DLQ MESSAGE: {el}")  # noqa: T201
                 return el
 
             results[DEAD_LETTER_QUEUE_TAG] | "Print DLQ" >> beam.Map(print_dlq)
 
             def assert_flush_requests(elements: list[FlushRequest]) -> None:
+
                 assert len(elements) == 3, (
                     f"Expected 3 flush requests, got {len(elements)}: {elements}"
                 )
@@ -466,7 +460,7 @@ class StitchAudioTest(unittest.TestCase):
     def test_isolated_late_chunk_processing(
         self, mock_audio_processor: MagicMock
     ) -> None:
-        """Test that late chunks are mapped to an isolated pseudo context engine without corrupting mainline state."""
+        """Verifies that an explicitly labeled late chunk bypassed by system ordering constraints uniquely triggers an isolated contextual processing branch natively."""
         mock_processor_inst = mock_audio_processor.return_value
         mock_processor_inst.check_vad.return_value = True
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
@@ -479,6 +473,7 @@ class StitchAudioTest(unittest.TestCase):
         }
 
         def mock_download(path: str) -> AudioChunkData:
+
             filename = path.rsplit("/", maxsplit=1)[-1]
             chunk_start = float(filename.split("-")[0]) if "-" in filename else 0.0
             return AudioChunkData(
@@ -500,7 +495,7 @@ class StitchAudioTest(unittest.TestCase):
             test_stream = (
                 BeamTestStream(
                     coder=beam.coders.TupleCoder(
-                        (beam.coders.StrUtf8Coder(), beam.coders.StrUtf8Coder())
+                        (beam.coders.StrUtf8Coder(), beam.coders.TupleCoder((beam.coders.StrUtf8Coder(), beam.coders.PickleCoder())))
                     )
                 )
                 .advance_watermark_to(100)
@@ -509,7 +504,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                "gs://fake-bucket/100-11111111-1111-1111-1111-111111111111.flac",
+                                ("gs://fake-bucket/100-11111111-1111-1111-1111-111111111111.flac", mock_download("gs://fake-bucket/100-11111111-1111-1111-1111-111111111111.flac")),
                             ),
                             100,
                         )
@@ -521,7 +516,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                "gs://fake-bucket/130-33333333-3333-3333-3333-333333333333.flac",
+                                ("gs://fake-bucket/130-33333333-3333-3333-3333-333333333333.flac", mock_download("gs://fake-bucket/130-33333333-3333-3333-3333-333333333333.flac")),
                             ),
                             130,
                         )
@@ -533,7 +528,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                "gs://fake-bucket/115-22222222-2222-2222-2222-222222222222.flac",
+                                ("gs://fake-bucket/115-22222222-2222-2222-2222-222222222222.flac", mock_download("gs://fake-bucket/115-22222222-2222-2222-2222-222222222222.flac")),
                             ),
                             140,
                         )
@@ -551,6 +546,7 @@ class StitchAudioTest(unittest.TestCase):
             )
 
             def assert_flush_requests(elements: list[FlushRequest]) -> None:
+
                 assert len(elements) == 2, (
                     f"Expected 2 flush requests (Chunk 3 remains buffered due to skipped timer), got {len(elements)}"
                 )
@@ -578,7 +574,7 @@ class StitchAudioTest(unittest.TestCase):
     def test_max_transmission_duration_flush(
         self, mock_audio_processor: MagicMock
     ) -> None:
-        """Test that a continuous transmission exceeding max duration is flushed even without gaps."""
+        """Verifies that seamlessly contiguous, infinite-duration voice segments forcibly truncate gracefully when hitting the globally configured memory limits."""
         mock_processor_inst = mock_audio_processor.return_value
         mock_processor_inst.check_vad.return_value = True
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
@@ -592,6 +588,7 @@ class StitchAudioTest(unittest.TestCase):
         }
 
         def mock_download(path: str) -> AudioChunkData:
+
             filename = path.rsplit("/", maxsplit=1)[-1]
             chunk_start = float(filename.split("-")[0]) if "-" in filename else 0.0
             return AudioChunkData(
@@ -618,7 +615,7 @@ class StitchAudioTest(unittest.TestCase):
             test_stream = (
                 BeamTestStream(
                     coder=beam.coders.TupleCoder(
-                        (beam.coders.StrUtf8Coder(), beam.coders.StrUtf8Coder())
+                        (beam.coders.StrUtf8Coder(), beam.coders.TupleCoder((beam.coders.StrUtf8Coder(), beam.coders.PickleCoder())))
                     )
                 )
                 .advance_watermark_to(100)
@@ -627,7 +624,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-max",
-                                "gs://fake-bucket/ab12/feed-max/2026-03-06/100-77777777-7777-7777-7777-777777777777.flac",
+                                ("gs://fake-bucket/ab12/feed-max/2026-03-06/100-77777777-7777-7777-7777-777777777777.flac", mock_download("gs://fake-bucket/ab12/feed-max/2026-03-06/100-77777777-7777-7777-7777-777777777777.flac")),
                             ),
                             100,
                         )
@@ -639,7 +636,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-max",
-                                "gs://fake-bucket/ab12/feed-max/2026-03-06/115-88888888-8888-8888-8888-888888888888.flac",
+                                ("gs://fake-bucket/ab12/feed-max/2026-03-06/115-88888888-8888-8888-8888-888888888888.flac", mock_download("gs://fake-bucket/ab12/feed-max/2026-03-06/115-88888888-8888-8888-8888-888888888888.flac")),
                             ),
                             115,
                         )
@@ -651,7 +648,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-max",
-                                "gs://fake-bucket/ab12/feed-max/2026-03-06/130-99999999-9999-9999-9999-999999999999.flac",
+                                ("gs://fake-bucket/ab12/feed-max/2026-03-06/130-99999999-9999-9999-9999-999999999999.flac", mock_download("gs://fake-bucket/ab12/feed-max/2026-03-06/130-99999999-9999-9999-9999-999999999999.flac")),
                             ),
                             130,
                         )
@@ -663,7 +660,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-max",
-                                "gs://fake-bucket/ab12/feed-max/2026-03-06/160-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac",
+                                ("gs://fake-bucket/ab12/feed-max/2026-03-06/160-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac", mock_download("gs://fake-bucket/ab12/feed-max/2026-03-06/160-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac")),
                             ),
                             160,
                         )
@@ -683,6 +680,7 @@ class StitchAudioTest(unittest.TestCase):
             )
 
             def assert_flush_requests(elements: list[FlushRequest]) -> None:
+
                 assert len(elements) == 2, (
                     f"Expected 2 flush requests, got {len(elements)}: {elements}"
                 )
@@ -720,16 +718,7 @@ class StitchAudioTest(unittest.TestCase):
         mock_audio_processor: MagicMock,
         mock_time: MagicMock,
     ) -> None:
-        """
-        Test that stale audio chunks are flushed after a timeout.
-
-        Note: This test is skipped because the Apache Beam DirectRunner (used for local
-        execution and unit testing) has known bugs and limitations regarding timer advancing
-        and watermark simulation in streaming pipelines. This test attempts to validate
-        the 30-second stale transmission timeout, which cannot be reliably tested locally.
-        It is retained to document the intended behavior and can be run via an E2E test
-        on the DataflowRunner.
-        """
+        """Verifies that incomplete segments remaining open abruptly dispatch once an explicit processing loop exceeds the permissible timeout."""
         mock_time.time.return_value = 0
         mock_processor_inst = mock_audio_processor.return_value
         mock_processor_inst.check_vad.return_value = True
@@ -751,7 +740,7 @@ class StitchAudioTest(unittest.TestCase):
             test_stream = (
                 BeamTestStream(
                     coder=beam.coders.TupleCoder(
-                        (beam.coders.StrUtf8Coder(), beam.coders.StrUtf8Coder())
+                        (beam.coders.StrUtf8Coder(), beam.coders.TupleCoder((beam.coders.StrUtf8Coder(), beam.coders.PickleCoder())))
                     )
                 )
                 .advance_watermark_to(0)
@@ -760,7 +749,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                "gs://fake-bucket/ab12/feed-123/2026-03-06/101-11111111-1111-1111-1111-111111111111.flac",
+                                ("gs://fake-bucket/ab12/feed-123/2026-03-06/101-11111111-1111-1111-1111-111111111111.flac", mock_processor_inst.download_audio_and_sed.return_value),
                             ),
                             101,
                         )
@@ -781,6 +770,7 @@ class StitchAudioTest(unittest.TestCase):
             )
 
             def assert_stale_match(elements: list[FlushRequest]) -> None:
+
                 assert len(elements) == 1, f"Expected 1 element, got {len(elements)}"
                 res = elements[0]
                 assert res.feed_id == "feed-123"
@@ -820,16 +810,14 @@ class StitchAudioTest(unittest.TestCase):
                     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
                 )
 
-
 class TranscribeAudioTest(unittest.TestCase):
-    """Tests for TranscribeAudioFn."""
 
-    @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
     @patch("backend.pipeline.transcription.stitcher.get_transcriber")
+    @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
     def test_dlq_routing(
-        self, mock_get_transcriber: MagicMock, mock_audio_processor: MagicMock
+        self, mock_audio_processor: MagicMock, mock_get_transcriber: MagicMock
     ) -> None:
-        """Test that failing transcription routes to DLQ."""
+        """Verifies that explicit Python exceptions raised randomly within transformations dynamically populate a standardized and resilient Dataflow Dead Letter Queue error."""
         mock_processor_inst = mock_audio_processor.return_value
         mock_processor_inst.check_vad.return_value = True
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
@@ -857,6 +845,7 @@ class TranscribeAudioTest(unittest.TestCase):
             ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
 
             def assert_dlq(elements: list[dict[str, Any]]) -> None:
+
                 assert len(elements) == 1
                 assert "Transcription API outage!" in elements[0]["error"]
 
@@ -865,28 +854,21 @@ class TranscribeAudioTest(unittest.TestCase):
 
     @unittest.skip("DirectRunner background execution validation is unreliable.")
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
+    @patch("backend.pipeline.transcription.stitcher.get_transcriber")
     def test_concurrent_transcription_execution(
-        self, mock_audio_processor: MagicMock
+        self, mock_transcriber_factory: MagicMock, mock_audio_processor: MagicMock
     ) -> None:
-        """
-        Verify that _flush_buffer executes in a background thread pool.
-
-        Note: This test is skipped because the Apache Beam DirectRunner isolating
-        workers locally makes multithreading execution validation extremely flaky
-        and unreliable. Testing that audio flushing happens concurrently in a
-        separate ThreadPoolExecutor works in Dataflow but causes intermittent
-        test failures locally. It is retained to document the threading model.
-        """
+        """Verifies that the concurrent orchestrator splits individual grouped task lists into multi-threaded parallel transcription operations smoothly."""
         execution_threads = set()
         lock = threading.Lock()
 
         class MockTrackingTranscriber(Transcriber):
-            """Mock Transcriber that tracks thread execution."""
 
             def setup(self) -> None:
                 pass
 
             def transcribe(self, audio_data: bytes) -> str:
+
                 with lock:
                     execution_threads.add(threading.current_thread().name)
                 # Small sleep to encourage concurrency when multiple items arrive
@@ -896,6 +878,7 @@ class TranscribeAudioTest(unittest.TestCase):
         def tracking_factory(
             t_type: TranscriberType, p_id: str, cfg: str
         ) -> Transcriber:
+
             return MockTrackingTranscriber()
 
         mock_processor_inst = mock_audio_processor.return_value
@@ -905,6 +888,7 @@ class TranscribeAudioTest(unittest.TestCase):
 
         # Generate fake audio chunks
         def mock_download(path: str) -> AudioChunkData:
+
             filename = path.rsplit("/", maxsplit=1)[-1]
             chunk_start = float(filename.split("-")[0]) if "-" in filename else 0.0
             return AudioChunkData(

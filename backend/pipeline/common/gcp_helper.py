@@ -249,5 +249,6 @@ async def publish_audio_chunk(
         audio_chunk_msg.SerializeToString(),
         feed_id=feed_id,
         ordering_key=feed_id,
+        chunk_uri=gcs_uri,
     )
     return await asyncio.to_thread(future.result)

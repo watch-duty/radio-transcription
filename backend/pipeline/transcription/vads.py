@@ -1,9 +1,9 @@
-"""
-Voice Activity Detection (VAD) Plugin System.
+"""Voice Activity Detection (VAD) Plugin System.
 
 This module defines the abstract interface for VAD engines used by the pipeline to
 distinguish speech from silence/noise, preventing empty or purely static audio
 from being sent to the expensive transcription APIs.
+
 """
 
 import abc
@@ -12,6 +12,7 @@ import logging
 import numpy as np
 import ten_vad
 
+from backend.pipeline.common.constants import MS_PER_SECOND
 from backend.pipeline.transcription.constants import (
     DEFAULT_TENVAD_HOP_SIZE,
     DEFAULT_TENVAD_MIN_SPEECH_MS,
@@ -22,27 +23,23 @@ from backend.pipeline.transcription.utils import ConfigBase
 
 logger = logging.getLogger(__name__)
 
-
 class VoiceActivityDetector(abc.ABC):
-    """
-    Abstract base class for Voice Activity Detection (VAD) plugins.
+    """Abstract base class for Voice Activity Detection (VAD) plugins.
+
     Allows swapping out different VAD models/services without changing the core
     Beam pipeline logic.
     """
 
     @abc.abstractmethod
     def setup(self, config_json: str) -> None:
-        """
-        Initializes the VAD model or client.
+        """Initializes the VAD model or client.
+
         Called once per worker during Beam's DoFn setup phase.
         """
 
     @abc.abstractmethod
     def evaluate(self, audio_data: bytes, sample_rate: int) -> bool:
-        """
-        Evaluates raw PCM audio data and returns True if speech is detected.
-        """
-
+        """Evaluates raw PCM audio data and returns True if speech is detected."""
 
 class TenVadConfig(ConfigBase):
     """Strongly typed configuration for the TenVAD plugin."""
@@ -52,17 +49,14 @@ class TenVadConfig(ConfigBase):
     hop_size: int = DEFAULT_TENVAD_HOP_SIZE
     min_speech_ms: int = DEFAULT_TENVAD_MIN_SPEECH_MS
 
-
 class TenVadPlugin(VoiceActivityDetector):
-    """
-    VAD Plugin utilizing the local `ten_vad` library.
-    """
+    """A highly-optimized local VAD implementation leveraging the `ten_vad` C++ extension for low-latency speech detection."""
 
     config: TenVadConfig
     vad: ten_vad.TenVad
 
     def setup(self, config_json: str) -> None:
-
+        """Initializes the `ten_vad` processing engine lazily on the executing worker."""
         self.config = TenVadConfig.from_json(config_json)
         self.vad = ten_vad.TenVad(
             threshold=self.config.threshold, hop_size=self.config.hop_size
@@ -74,7 +68,7 @@ class TenVadPlugin(VoiceActivityDetector):
         )
 
     def evaluate(self, audio_data: bytes, sample_rate: int) -> bool:
-        # Convert raw PCM bytes to int16 numpy array
+        """Converts PCM audio into numpy chunks to quantify total speech duration against configured thresholds."""
         audio_array = np.frombuffer(audio_data, dtype=np.int16)
 
         speech_frames = 0
@@ -93,7 +87,7 @@ class TenVadPlugin(VoiceActivityDetector):
             if prob >= self.config.threshold:
                 speech_frames += 1
 
-        total_speech_ms = int((speech_frames * hop_size * 1000) / sample_rate)
+        total_speech_ms = int((speech_frames * hop_size * MS_PER_SECOND) / sample_rate)
 
         if total_speech_ms < self.config.min_speech_ms:
             logger.info(
@@ -105,7 +99,6 @@ class TenVadPlugin(VoiceActivityDetector):
 
         return True
 
-
 def get_vad_plugin(vad_type: VadType, vad_config: str) -> VoiceActivityDetector:
     """Factory function to instantiate the requested VAD plugin."""
     if vad_type == VadType.TEN_VAD:
@@ -114,3 +107,4 @@ def get_vad_plugin(vad_type: VadType, vad_config: str) -> VoiceActivityDetector:
         return plugin
     msg = f"Unknown vad_type: {vad_type}"
     raise ValueError(msg)
+

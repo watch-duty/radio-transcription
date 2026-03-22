@@ -1,3 +1,4 @@
+"""Custom Apache Beam PipelineOptions mapping for environment and run configurations."""
 import argparse
 
 from apache_beam.options.pipeline_options import PipelineOptions
@@ -16,8 +17,11 @@ from backend.pipeline.transcription.enums import (
 
 
 class TranscriptionOptions(PipelineOptions):
+    """CLI pipeline configuration options mapping to Beam's PipelineOptions."""
+
     @classmethod
     def _add_argparse_args(cls, parser: argparse.ArgumentParser) -> None:
+        """Registers pipeline CLI parameters to enable interactive flag passing via Dataflow."""
         parser.add_argument(
             "--input_topic",
             type=str,

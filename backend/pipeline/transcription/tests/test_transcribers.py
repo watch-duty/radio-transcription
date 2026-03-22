@@ -5,16 +5,15 @@ from unittest.mock import MagicMock, patch
 
 from google.api_core.exceptions import GoogleAPIError
 
-from backend.pipeline.transcription.constants import BYTES_PER_SECOND_16KHZ_MONO
+from backend.pipeline.common.constants import BYTES_PER_SECOND_16KHZ_MONO
 from backend.pipeline.transcription.enums import TranscriberType
 from backend.pipeline.transcription.transcribers import get_transcriber
 
 
 class TestTranscribers(unittest.TestCase):
-    """Tests for Transcriber plugins."""
 
     def test_google_chirp_transcriber_success(self) -> None:
-        """Test successful Google Chirp v3 transcription."""
+        """Verifies that the GoogleChirpTranscriber interacts via the SpeechClient accurately rendering raw byte audio variants into basic text transcripts."""
         with patch(
             "backend.pipeline.transcription.transcribers.SpeechClient"
         ) as mock_speech_client_cls:
@@ -48,7 +47,7 @@ class TestTranscribers(unittest.TestCase):
             mock_client_instance.recognize.assert_called_once()
 
     def test_google_chirp_transcriber_background(self) -> None:
-        """Test Google Chirp raising error on [BACKGROUND] silence."""
+        """Verifies that the system safely filters and intercepts implicit [BACKGROUND] generic filler outputs, converting them cleanly into None."""
         with patch(
             "backend.pipeline.transcription.transcribers.SpeechClient"
         ) as mock_speech_client_cls:
@@ -76,7 +75,7 @@ class TestTranscribers(unittest.TestCase):
             self.assertIsNone(transcript)
 
     def test_google_chirp_transcriber_retry_on_google_api_error(self) -> None:
-        """Test retry logic recovers from transient Google API errors."""
+        """Verifies that transient external dependencies generating 503 GoogleAPIErrors trigger a retry mechanism that subsequently fulfills the initial recognize request."""
         with patch(
             "backend.pipeline.transcription.transcribers.SpeechClient"
         ) as mock_speech_client_cls:
@@ -110,6 +109,6 @@ class TestTranscribers(unittest.TestCase):
             self.assertEqual(transcript, "Success after retry")
             self.assertEqual(mock_client_instance.recognize.call_count, 2)
 
-
 if __name__ == "__main__":
     unittest.main()
+
