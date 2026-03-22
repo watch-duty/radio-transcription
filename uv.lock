@@ -2222,7 +2222,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.13.3" },
     { name = "apache-beam", extras = ["gcp"], specifier = ">=2.56.0" },
     { name = "asyncpg", specifier = ">=0.29.0" },
-    { name = "chardet", specifier = "<6" },
+    { name = "chardet", specifier = ">=5.2.0,<6" },
     { name = "cloudevents", specifier = ">=1.12.0" },
     { name = "crcmod", specifier = ">=1.7" },
     { name = "fastapi", specifier = ">=0.110.0" },
