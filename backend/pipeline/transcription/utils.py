@@ -7,6 +7,7 @@ import pydantic
 
 logger = logging.getLogger(__name__)
 
+
 class ConfigBase(pydantic.BaseModel):
     """Base Pydantic model for JSON configuration classes."""
 

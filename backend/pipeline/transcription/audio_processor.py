@@ -1,4 +1,5 @@
 """Stateless acoustic manipulation and Voice Activity Detection (VAD) utilities."""
+
 import io
 import logging
 import urllib.parse
@@ -24,6 +25,7 @@ from backend.pipeline.transcription.metadata import (
 from backend.pipeline.transcription.vads import VoiceActivityDetector, get_vad_plugin
 
 logger = logging.getLogger(__name__)
+
 
 class AudioProcessor:
     """An acoustic manipulation module.

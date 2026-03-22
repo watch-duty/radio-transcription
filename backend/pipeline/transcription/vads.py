@@ -23,6 +23,7 @@ from backend.pipeline.transcription.utils import ConfigBase
 
 logger = logging.getLogger(__name__)
 
+
 class VoiceActivityDetector(abc.ABC):
     """Abstract base class for Voice Activity Detection (VAD) plugins.
 
@@ -41,6 +42,7 @@ class VoiceActivityDetector(abc.ABC):
     def evaluate(self, audio_data: bytes, sample_rate: int) -> bool:
         """Evaluates raw PCM audio data and returns True if speech is detected."""
 
+
 class TenVadConfig(ConfigBase):
     """Strongly typed configuration for the TenVAD plugin."""
 
@@ -48,6 +50,7 @@ class TenVadConfig(ConfigBase):
     threshold: float = DEFAULT_TENVAD_THRESHOLD
     hop_size: int = DEFAULT_TENVAD_HOP_SIZE
     min_speech_ms: int = DEFAULT_TENVAD_MIN_SPEECH_MS
+
 
 class TenVadPlugin(VoiceActivityDetector):
     """A highly-optimized local VAD implementation leveraging the `ten_vad` C++ extension for low-latency speech detection."""
@@ -99,6 +102,7 @@ class TenVadPlugin(VoiceActivityDetector):
 
         return True
 
+
 def get_vad_plugin(vad_type: VadType, vad_config: str) -> VoiceActivityDetector:
     """Factory function to instantiate the requested VAD plugin."""
     if vad_type == VadType.TEN_VAD:
@@ -107,4 +111,3 @@ def get_vad_plugin(vad_type: VadType, vad_config: str) -> VoiceActivityDetector:
         return plugin
     msg = f"Unknown vad_type: {vad_type}"
     raise ValueError(msg)
-

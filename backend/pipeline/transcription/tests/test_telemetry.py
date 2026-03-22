@@ -15,7 +15,6 @@ from backend.pipeline.transcription.telemetry import (
 
 
 class TestMetricsExporters(unittest.TestCase):
-
     def test_gcp_monitoring_config_parsing(self) -> None:
         """Verifies that GcpMonitoringConfig can robustly parse completely empty strings and handles invalid JSON input by actively throwing a ValueError."""
         config = GcpMonitoringConfig.from_json('{"some_unknown_key": "val"}')

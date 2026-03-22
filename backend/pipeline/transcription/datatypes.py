@@ -1,4 +1,5 @@
 """Domain objects and strongly-typed dataclasses for the transcription pipeline."""
+
 from dataclasses import dataclass, field
 
 from pydub import AudioSegment
@@ -22,19 +23,24 @@ class TimeRange:
         """Calculates the duration of the time range in milliseconds."""
         return self.end_ms - self.start_ms
 
+
 @dataclass(frozen=True, order=True)
 class BufferedChunk:
     """Represents a chronologically sorted audio payload held in the jitter buffer."""
+
     timestamp_ms: int
     gcs_uri: str
+
 
 @dataclass(frozen=True)
 class AudioChunkData:
     """A domain model representing a single decoded audio chunk and its VAD metadata."""
+
     start_ms: int
     audio: AudioSegment
     speech_segments: list[TimeRange]
     gcs_uri: str
+
 
 @dataclass(frozen=True)
 class TranscriptionResult:
@@ -48,6 +54,7 @@ class TranscriptionResult:
     missing_post_context: bool = False
     start_audio_offset_ms: int | None = None
     end_audio_offset_ms: int | None = None
+
 
 @dataclass(frozen=True)
 class TransmissionContext:
@@ -64,6 +71,7 @@ class TransmissionContext:
     expected_next_chunk_start_ms: int | None = None
     start_audio_offset_ms: int | None = None
     end_audio_offset_ms: int | None = None
+
 
 @dataclass
 class StitcherContext:
@@ -82,11 +90,14 @@ class StitcherContext:
     start_audio_offset_ms: int | None = None
     end_audio_offset_ms: int | None = None
 
+
 @dataclass(frozen=True)
 class OrderRestorerConfig:
     """Configuration parameters for the sequence Jitter Buffer."""
+
     out_of_order_timeout_ms: int = DEFAULT_OUT_OF_ORDER_TIMEOUT_MS
     chunk_duration_ms: int = CHUNK_DURATION_SECONDS * MS_PER_SECOND
+
 
 @dataclass(frozen=True)
 class StitchAudioConfig:
@@ -117,6 +128,7 @@ class StitchAudioConfig:
             msg = "significant_gap_ms must be strictly less than max_transmission_duration_ms"
             raise ValueError(msg)
 
+
 @dataclass(frozen=True)
 class TranscribeAudioConfig:
     """Groups pipeline-level configurations passed to the stateless DoFn."""
@@ -129,6 +141,7 @@ class TranscribeAudioConfig:
     metrics_exporter_type: str
     metrics_config: str
     route_to_dlq: bool = True
+
 
 @dataclass(frozen=True)
 class FlushRequest:
@@ -143,23 +156,30 @@ class FlushRequest:
     start_audio_offset_ms: int | None = None
     end_audio_offset_ms: int | None = None
 
+
 @dataclass(frozen=True)
 class StateMachineAction:
     """Base class for all actions emitted by the AudioStitchingStateMachine."""
 
+
 @dataclass(frozen=True)
 class DropAction(StateMachineAction):
     """Action emitted when a chunk violates chronological state and is permanently discarded."""
+
     reason: str
+
 
 @dataclass(frozen=True)
 class AppendBufferAction(StateMachineAction):
     """Signals that the provided audio segment should be appended to the active transmission buffer."""
+
     audio_buffer: AudioSegment
+
 
 @dataclass(frozen=True)
 class FlushAction(StateMachineAction):
     """Action emitted when a semantic transmission boundary is reached and the buffer must be processed."""
+
     reason: str
     feed_id: str
     time_range: TimeRange
@@ -171,12 +191,14 @@ class FlushAction(StateMachineAction):
     clear_state: bool = True
     isolated_audio_buffer: list[AudioSegment] | None = None
 
+
 @dataclass(frozen=True)
 class UpdateStateAction(StateMachineAction):
     """Action emitted to explicitly persist localized Python state mutations up to Apache Beam."""
 
+
 @dataclass(frozen=True)
 class ScheduleStaleTimerAction(StateMachineAction):
     """Action emitted to adjust Beam Watermark timers for dead-transmission recovery."""
-    deadline_ms: int
 
+    deadline_ms: int

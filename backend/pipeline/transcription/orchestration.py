@@ -36,6 +36,7 @@ from backend.pipeline.transcription.transforms import (
 
 logger = logging.getLogger(__name__)
 
+
 def format_dlq_message(element: dict) -> PubsubMessage:
     """Formats the dlq message."""
     feed_id = element.get("feed_id", "unknown")
@@ -44,6 +45,7 @@ def format_dlq_message(element: dict) -> PubsubMessage:
         data=payload,
         attributes={"feed_id": feed_id, "error_type": "pipeline_failure"},
     )
+
 
 def get_pipeline(
     pipeline_options: PipelineOptions,

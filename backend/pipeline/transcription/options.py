@@ -1,4 +1,5 @@
 """Custom Apache Beam PipelineOptions mapping for environment and run configurations."""
+
 import argparse
 
 from apache_beam.options.pipeline_options import PipelineOptions

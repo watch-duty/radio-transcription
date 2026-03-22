@@ -14,7 +14,6 @@ from backend.pipeline.transcription.metadata import (
 
 
 class TestUtils(unittest.TestCase):
-
     @patch("backend.pipeline.transcription.metadata.storage.Client")
     def test_get_gcs_client(self, mock_client: MagicMock) -> None:
         """Verifies that the Google Cloud Storage client is correctly instantiated."""
@@ -58,6 +57,7 @@ class TestUtils(unittest.TestCase):
             read_sed_segments_from_blob(mock_blob)
 
         mock_blob.reload.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

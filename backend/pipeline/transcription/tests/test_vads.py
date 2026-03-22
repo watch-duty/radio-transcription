@@ -10,7 +10,6 @@ from backend.pipeline.transcription.vads import TenVadPlugin, get_vad_plugin
 
 
 class TestVadPlugins(unittest.TestCase):
-
     def test_get_vad_plugin_ten_vad(self) -> None:
         """Verifies that the factory method accurately instantiates the correct TenVadPlugin class when requested utilizing accurate JSON configuration structures."""
         with patch(

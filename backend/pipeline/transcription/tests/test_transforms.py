@@ -36,7 +36,6 @@ from backend.pipeline.transcription.transforms import (
 
 
 class MockTranscriberFactory:
-
     def __init__(self, transcript: str, *, raise_exception: bool = False) -> None:
 
         self.transcript = transcript
@@ -53,11 +52,13 @@ class MockTranscriberFactory:
             mock.transcribe.return_value = self.transcript
         return mock
 
+
 def get_mock_factory(
     transcript: str = "Simulated transcript.", *, raise_exception: bool = False
 ) -> MockTranscriberFactory:
 
     return MockTranscriberFactory(transcript, raise_exception=raise_exception)
+
 
 def get_test_stitch_config(**kwargs: Any) -> StitchAudioConfig:
 
@@ -74,6 +75,7 @@ def get_test_stitch_config(**kwargs: Any) -> StitchAudioConfig:
     defaults.update(kwargs)
     return StitchAudioConfig(**defaults)  # type: ignore
 
+
 def get_test_transcribe_config(**kwargs: Any) -> TranscribeAudioConfig:
 
     defaults = {
@@ -88,8 +90,8 @@ def get_test_transcribe_config(**kwargs: Any) -> TranscribeAudioConfig:
     defaults.update(kwargs)
     return TranscribeAudioConfig(**defaults)  # type: ignore
 
-class ParseAndKeyTimestampTest(unittest.TestCase):
 
+class ParseAndKeyTimestampTest(unittest.TestCase):
     def test_parse_and_key_success(self) -> None:
         """Verifies that well-formed Pub/Sub messages containing a serialized AudioChunk and feed_id are correctly unmarshalled and keyed by feed."""
         chunk = AudioChunk(gcs_uri="gs://test-bucket/path/to/test.flac")
@@ -135,13 +137,13 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             assert_that(parsed.main, equal_to([]), label="CheckEmptyMain")
             assert_that(parsed[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ")
 
-class AddEventTimestampTest(unittest.TestCase):
 
+class AddEventTimestampTest(unittest.TestCase):
     def test_valid_timestamp_extraction(self) -> None:
         """Verifies that AddEventTimestamp accurately regex-extracts and assigns the logical windowing timestamp natively from the chunk's standardized filename."""
         chunk = AudioChunk(
             gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
-            session_id="mock-session-id"
+            session_id="mock-session-id",
         )
         chunk.start_timestamp.FromMicroseconds(1678886400000000)
         element = ("test-feed", chunk.SerializeToString())
@@ -154,7 +156,10 @@ class AddEventTimestampTest(unittest.TestCase):
             result[0].value,  # type: ignore
             (
                 "test-feed",
-                ("gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac", "mock-session-id"),
+                (
+                    "gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
+                    "mock-session-id",
+                ),
             ),
         )
         self.assertEqual(result[0].timestamp, 1678886400)  # type: ignore
@@ -172,8 +177,8 @@ class AddEventTimestampTest(unittest.TestCase):
         self.assertIsInstance(result[0], beam.pvalue.TaggedOutput)
         self.assertEqual(result[0].tag, DEAD_LETTER_QUEUE_TAG)  # type: ignore
 
-class OrderRestorerTest(unittest.TestCase):
 
+class OrderRestorerTest(unittest.TestCase):
     def test_restore_order_buffers_and_releases(self) -> None:
         """Verifies that structurally disordered data streams correctly buffer elements in-memory to artificially re-align and emit chronologically."""
         config = OrderRestorerConfig(out_of_order_timeout_ms=5000)
@@ -184,20 +189,37 @@ class OrderRestorerTest(unittest.TestCase):
             test_stream = (
                 BeamTestStream(
                     coder=beam.coders.TupleCoder(
-                        (beam.coders.StrUtf8Coder(), beam.coders.TupleCoder((beam.coders.StrUtf8Coder(), beam.coders.StrUtf8Coder())))
+                        (
+                            beam.coders.StrUtf8Coder(),
+                            beam.coders.TupleCoder(
+                                (beam.coders.StrUtf8Coder(), beam.coders.StrUtf8Coder())
+                            ),
+                        )
                     )
                 )
                 .advance_watermark_to(100)
                 .add_elements(
-                    [TimestampedValue(("feed-1", ("gs://b/100-uuid1.flac", "session-A")), 100)]
+                    [
+                        TimestampedValue(
+                            ("feed-1", ("gs://b/100-uuid1.flac", "session-A")), 100
+                        )
+                    ]
                 )
                 .advance_watermark_to(130)
                 .add_elements(
-                    [TimestampedValue(("feed-1", ("gs://b/130-uuid3.flac", "session-A")), 130)]
+                    [
+                        TimestampedValue(
+                            ("feed-1", ("gs://b/130-uuid3.flac", "session-A")), 130
+                        )
+                    ]
                 )
                 .advance_watermark_to(140)
                 .add_elements(
-                    [TimestampedValue(("feed-1", ("gs://b/115-uuid2.flac", "session-A")), 115)]
+                    [
+                        TimestampedValue(
+                            ("feed-1", ("gs://b/115-uuid2.flac", "session-A")), 115
+                        )
+                    ]
                 )
                 .advance_watermark_to_infinity()
             )
@@ -223,22 +245,39 @@ class OrderRestorerTest(unittest.TestCase):
             test_stream = (
                 BeamTestStream(
                     coder=beam.coders.TupleCoder(
-                        (beam.coders.StrUtf8Coder(), beam.coders.TupleCoder((beam.coders.StrUtf8Coder(), beam.coders.StrUtf8Coder())))
+                        (
+                            beam.coders.StrUtf8Coder(),
+                            beam.coders.TupleCoder(
+                                (beam.coders.StrUtf8Coder(), beam.coders.StrUtf8Coder())
+                            ),
+                        )
                     )
                 )
                 .advance_watermark_to(100)
                 .add_elements(
-                    [TimestampedValue(("feed-1", ("gs://b/100-11111111.flac", "session-A")), 100)]
+                    [
+                        TimestampedValue(
+                            ("feed-1", ("gs://b/100-11111111.flac", "session-A")), 100
+                        )
+                    ]
                 )
                 .advance_watermark_to(130)
                 .add_elements(
-                    [TimestampedValue(("feed-1", ("gs://b/130-33333333.flac", "session-A")), 130)]
+                    [
+                        TimestampedValue(
+                            ("feed-1", ("gs://b/130-33333333.flac", "session-A")), 130
+                        )
+                    ]
                 )
                 # After 5 seconds (5000ms), the order restorer timed out waiting for 115.
                 .advance_watermark_to(10000)
                 # Now the late chunk arrives
                 .add_elements(
-                    [TimestampedValue(("feed-1", ("gs://b/115-22222222.flac", "session-A")), 115)]
+                    [
+                        TimestampedValue(
+                            ("feed-1", ("gs://b/115-22222222.flac", "session-A")), 115
+                        )
+                    ]
                 )
                 .advance_watermark_to_infinity()
             )
@@ -261,8 +300,8 @@ class OrderRestorerTest(unittest.TestCase):
     def test_delayed_gap_acceptance(self) -> None:
         pass
 
-class StitchAudioTest(unittest.TestCase):
 
+class StitchAudioTest(unittest.TestCase):
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
     def test_stitching_and_silence_flush_logic(
         self, mock_audio_processor: MagicMock
@@ -316,7 +355,12 @@ class StitchAudioTest(unittest.TestCase):
             test_stream = (
                 BeamTestStream(
                     coder=beam.coders.TupleCoder(
-                        (beam.coders.StrUtf8Coder(), beam.coders.TupleCoder((beam.coders.StrUtf8Coder(), beam.coders.PickleCoder())))
+                        (
+                            beam.coders.StrUtf8Coder(),
+                            beam.coders.TupleCoder(
+                                (beam.coders.StrUtf8Coder(), beam.coders.PickleCoder())
+                            ),
+                        )
                     )
                 )
                 .advance_watermark_to(100)
@@ -325,7 +369,12 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                ("gs://fake-bucket/ab12/feed-123/2026-03-06/100-11111111-1111-1111-1111-111111111111.flac", mock_download("gs://fake-bucket/ab12/feed-123/2026-03-06/100-11111111-1111-1111-1111-111111111111.flac")),
+                                (
+                                    "gs://fake-bucket/ab12/feed-123/2026-03-06/100-11111111-1111-1111-1111-111111111111.flac",
+                                    mock_download(
+                                        "gs://fake-bucket/ab12/feed-123/2026-03-06/100-11111111-1111-1111-1111-111111111111.flac"
+                                    ),
+                                ),
                             ),
                             100,
                         )
@@ -337,7 +386,12 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                ("gs://fake-bucket/ab12/feed-123/2026-03-06/115-22222222-2222-2222-2222-222222222222.flac", mock_download("gs://fake-bucket/ab12/feed-123/2026-03-06/115-22222222-2222-2222-2222-222222222222.flac")),
+                                (
+                                    "gs://fake-bucket/ab12/feed-123/2026-03-06/115-22222222-2222-2222-2222-222222222222.flac",
+                                    mock_download(
+                                        "gs://fake-bucket/ab12/feed-123/2026-03-06/115-22222222-2222-2222-2222-222222222222.flac"
+                                    ),
+                                ),
                             ),
                             115,
                         )
@@ -349,7 +403,12 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                ("gs://fake-bucket/ab12/feed-123/2026-03-06/130-33333333-3333-3333-3333-333333333333.flac", mock_download("gs://fake-bucket/ab12/feed-123/2026-03-06/130-33333333-3333-3333-3333-333333333333.flac")),
+                                (
+                                    "gs://fake-bucket/ab12/feed-123/2026-03-06/130-33333333-3333-3333-3333-333333333333.flac",
+                                    mock_download(
+                                        "gs://fake-bucket/ab12/feed-123/2026-03-06/130-33333333-3333-3333-3333-333333333333.flac"
+                                    ),
+                                ),
                             ),
                             130,
                         )
@@ -361,7 +420,12 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                ("gs://fake-bucket/ab12/feed-123/2026-03-06/150-44444444-4444-4444-4444-444444444444.flac", mock_download("gs://fake-bucket/ab12/feed-123/2026-03-06/150-44444444-4444-4444-4444-444444444444.flac")),
+                                (
+                                    "gs://fake-bucket/ab12/feed-123/2026-03-06/150-44444444-4444-4444-4444-444444444444.flac",
+                                    mock_download(
+                                        "gs://fake-bucket/ab12/feed-123/2026-03-06/150-44444444-4444-4444-4444-444444444444.flac"
+                                    ),
+                                ),
                             ),
                             150,
                         )
@@ -373,7 +437,12 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                ("gs://fake-bucket/ab12/feed-123/2026-03-06/160-55555555-5555-5555-5555-555555555555.flac", mock_download("gs://fake-bucket/ab12/feed-123/2026-03-06/160-55555555-5555-5555-5555-555555555555.flac")),
+                                (
+                                    "gs://fake-bucket/ab12/feed-123/2026-03-06/160-55555555-5555-5555-5555-555555555555.flac",
+                                    mock_download(
+                                        "gs://fake-bucket/ab12/feed-123/2026-03-06/160-55555555-5555-5555-5555-555555555555.flac"
+                                    ),
+                                ),
                             ),
                             160,
                         )
@@ -385,7 +454,12 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                ("gs://fake-bucket/ab12/feed-123/2026-03-06/190-66666666-6666-6666-6666-666666666666.flac", mock_download("gs://fake-bucket/ab12/feed-123/2026-03-06/190-66666666-6666-6666-6666-666666666666.flac")),
+                                (
+                                    "gs://fake-bucket/ab12/feed-123/2026-03-06/190-66666666-6666-6666-6666-666666666666.flac",
+                                    mock_download(
+                                        "gs://fake-bucket/ab12/feed-123/2026-03-06/190-66666666-6666-6666-6666-666666666666.flac"
+                                    ),
+                                ),
                             ),
                             190,
                         )
@@ -495,7 +569,12 @@ class StitchAudioTest(unittest.TestCase):
             test_stream = (
                 BeamTestStream(
                     coder=beam.coders.TupleCoder(
-                        (beam.coders.StrUtf8Coder(), beam.coders.TupleCoder((beam.coders.StrUtf8Coder(), beam.coders.PickleCoder())))
+                        (
+                            beam.coders.StrUtf8Coder(),
+                            beam.coders.TupleCoder(
+                                (beam.coders.StrUtf8Coder(), beam.coders.PickleCoder())
+                            ),
+                        )
                     )
                 )
                 .advance_watermark_to(100)
@@ -504,7 +583,12 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                ("gs://fake-bucket/100-11111111-1111-1111-1111-111111111111.flac", mock_download("gs://fake-bucket/100-11111111-1111-1111-1111-111111111111.flac")),
+                                (
+                                    "gs://fake-bucket/100-11111111-1111-1111-1111-111111111111.flac",
+                                    mock_download(
+                                        "gs://fake-bucket/100-11111111-1111-1111-1111-111111111111.flac"
+                                    ),
+                                ),
                             ),
                             100,
                         )
@@ -516,7 +600,12 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                ("gs://fake-bucket/130-33333333-3333-3333-3333-333333333333.flac", mock_download("gs://fake-bucket/130-33333333-3333-3333-3333-333333333333.flac")),
+                                (
+                                    "gs://fake-bucket/130-33333333-3333-3333-3333-333333333333.flac",
+                                    mock_download(
+                                        "gs://fake-bucket/130-33333333-3333-3333-3333-333333333333.flac"
+                                    ),
+                                ),
                             ),
                             130,
                         )
@@ -528,7 +617,12 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                ("gs://fake-bucket/115-22222222-2222-2222-2222-222222222222.flac", mock_download("gs://fake-bucket/115-22222222-2222-2222-2222-222222222222.flac")),
+                                (
+                                    "gs://fake-bucket/115-22222222-2222-2222-2222-222222222222.flac",
+                                    mock_download(
+                                        "gs://fake-bucket/115-22222222-2222-2222-2222-222222222222.flac"
+                                    ),
+                                ),
                             ),
                             140,
                         )
@@ -615,7 +709,12 @@ class StitchAudioTest(unittest.TestCase):
             test_stream = (
                 BeamTestStream(
                     coder=beam.coders.TupleCoder(
-                        (beam.coders.StrUtf8Coder(), beam.coders.TupleCoder((beam.coders.StrUtf8Coder(), beam.coders.PickleCoder())))
+                        (
+                            beam.coders.StrUtf8Coder(),
+                            beam.coders.TupleCoder(
+                                (beam.coders.StrUtf8Coder(), beam.coders.PickleCoder())
+                            ),
+                        )
                     )
                 )
                 .advance_watermark_to(100)
@@ -624,7 +723,12 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-max",
-                                ("gs://fake-bucket/ab12/feed-max/2026-03-06/100-77777777-7777-7777-7777-777777777777.flac", mock_download("gs://fake-bucket/ab12/feed-max/2026-03-06/100-77777777-7777-7777-7777-777777777777.flac")),
+                                (
+                                    "gs://fake-bucket/ab12/feed-max/2026-03-06/100-77777777-7777-7777-7777-777777777777.flac",
+                                    mock_download(
+                                        "gs://fake-bucket/ab12/feed-max/2026-03-06/100-77777777-7777-7777-7777-777777777777.flac"
+                                    ),
+                                ),
                             ),
                             100,
                         )
@@ -636,7 +740,12 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-max",
-                                ("gs://fake-bucket/ab12/feed-max/2026-03-06/115-88888888-8888-8888-8888-888888888888.flac", mock_download("gs://fake-bucket/ab12/feed-max/2026-03-06/115-88888888-8888-8888-8888-888888888888.flac")),
+                                (
+                                    "gs://fake-bucket/ab12/feed-max/2026-03-06/115-88888888-8888-8888-8888-888888888888.flac",
+                                    mock_download(
+                                        "gs://fake-bucket/ab12/feed-max/2026-03-06/115-88888888-8888-8888-8888-888888888888.flac"
+                                    ),
+                                ),
                             ),
                             115,
                         )
@@ -648,7 +757,12 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-max",
-                                ("gs://fake-bucket/ab12/feed-max/2026-03-06/130-99999999-9999-9999-9999-999999999999.flac", mock_download("gs://fake-bucket/ab12/feed-max/2026-03-06/130-99999999-9999-9999-9999-999999999999.flac")),
+                                (
+                                    "gs://fake-bucket/ab12/feed-max/2026-03-06/130-99999999-9999-9999-9999-999999999999.flac",
+                                    mock_download(
+                                        "gs://fake-bucket/ab12/feed-max/2026-03-06/130-99999999-9999-9999-9999-999999999999.flac"
+                                    ),
+                                ),
                             ),
                             130,
                         )
@@ -660,7 +774,12 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-max",
-                                ("gs://fake-bucket/ab12/feed-max/2026-03-06/160-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac", mock_download("gs://fake-bucket/ab12/feed-max/2026-03-06/160-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac")),
+                                (
+                                    "gs://fake-bucket/ab12/feed-max/2026-03-06/160-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac",
+                                    mock_download(
+                                        "gs://fake-bucket/ab12/feed-max/2026-03-06/160-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac"
+                                    ),
+                                ),
                             ),
                             160,
                         )
@@ -740,7 +859,12 @@ class StitchAudioTest(unittest.TestCase):
             test_stream = (
                 BeamTestStream(
                     coder=beam.coders.TupleCoder(
-                        (beam.coders.StrUtf8Coder(), beam.coders.TupleCoder((beam.coders.StrUtf8Coder(), beam.coders.PickleCoder())))
+                        (
+                            beam.coders.StrUtf8Coder(),
+                            beam.coders.TupleCoder(
+                                (beam.coders.StrUtf8Coder(), beam.coders.PickleCoder())
+                            ),
+                        )
                     )
                 )
                 .advance_watermark_to(0)
@@ -749,7 +873,10 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                ("gs://fake-bucket/ab12/feed-123/2026-03-06/101-11111111-1111-1111-1111-111111111111.flac", mock_processor_inst.download_audio_and_sed.return_value),
+                                (
+                                    "gs://fake-bucket/ab12/feed-123/2026-03-06/101-11111111-1111-1111-1111-111111111111.flac",
+                                    mock_processor_inst.download_audio_and_sed.return_value,
+                                ),
                             ),
                             101,
                         )
@@ -810,8 +937,8 @@ class StitchAudioTest(unittest.TestCase):
                     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
                 )
 
-class TranscribeAudioTest(unittest.TestCase):
 
+class TranscribeAudioTest(unittest.TestCase):
     @patch("backend.pipeline.transcription.stitcher.get_transcriber")
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
     def test_dlq_routing(
@@ -863,7 +990,6 @@ class TranscribeAudioTest(unittest.TestCase):
         lock = threading.Lock()
 
         class MockTrackingTranscriber(Transcriber):
-
             def setup(self) -> None:
                 pass
 

@@ -1,4 +1,5 @@
 """Application-level metrics exporters (e.g. DataDog) for pipeline observability."""
+
 import abc
 import logging
 import time
@@ -18,6 +19,7 @@ from backend.pipeline.transcription.utils import ConfigBase
 
 logger = logging.getLogger(__name__)
 
+
 class MetricsExporter(abc.ABC):
     """Abstract interface for pushing custom pipeline metrics to external dashboards."""
 
@@ -33,12 +35,14 @@ class MetricsExporter(abc.ABC):
     def record_stitching_time(self, *, feed_id: str, duration_ms: int) -> None:
         """Records the stitching time telemetry."""
 
+
 class GcpMonitoringConfig(ConfigBase):
     """Strongly typed configuration for the GCP Monitoring Exporter."""
 
     metric_prefix: str = GCP_METRIC_PREFIX
     duration_metric_name: str = GCP_DURATION_METRIC_NAME
     stitching_metric_name: str = GCP_STITCHING_METRIC_NAME
+
 
 class GcpMonitoringExporter(MetricsExporter):
     """Exports metrics to Google Cloud Monitoring (Stackdriver)."""
@@ -71,7 +75,10 @@ class GcpMonitoringExporter(MetricsExporter):
         point.value.int64_value = duration_ms
         now = time.time()
         point.interval = monitoring_v3.TimeInterval(
-            end_time={"seconds": int(now), "nanos": int((now - int(now)) * NANOS_PER_SECOND)}
+            end_time={
+                "seconds": int(now),
+                "nanos": int((now - int(now)) * NANOS_PER_SECOND),
+            }
         )
 
         series.points = [point]
@@ -94,6 +101,7 @@ class GcpMonitoringExporter(MetricsExporter):
                 self.config.stitching_metric_name, feed_id, duration_ms
             )
 
+
 class MultiExporter(MetricsExporter):
     """Broadcasts metrics to multiple configured exporters."""
 
@@ -115,6 +123,7 @@ class MultiExporter(MetricsExporter):
         """Records the stitching time telemetry."""
         for exporter in self.exporters:
             exporter.record_stitching_time(feed_id=feed_id, duration_ms=duration_ms)
+
 
 def get_metrics_exporter(
     exporter_types: list[MetricsExporterType], project_id: str, config_json: str

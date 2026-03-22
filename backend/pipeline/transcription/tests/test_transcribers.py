@@ -11,7 +11,6 @@ from backend.pipeline.transcription.transcribers import get_transcriber
 
 
 class TestTranscribers(unittest.TestCase):
-
     def test_google_chirp_transcriber_success(self) -> None:
         """Verifies that the GoogleChirpTranscriber interacts via the SpeechClient accurately rendering raw byte audio variants into basic text transcripts."""
         with patch(
@@ -109,6 +108,6 @@ class TestTranscribers(unittest.TestCase):
             self.assertEqual(transcript, "Success after retry")
             self.assertEqual(mock_client_instance.recognize.call_count, 2)
 
+
 if __name__ == "__main__":
     unittest.main()
-

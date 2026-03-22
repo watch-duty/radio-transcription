@@ -14,6 +14,7 @@ from backend.pipeline.transcription.orchestration import get_pipeline
 
 logger = logging.getLogger(__name__)
 
+
 def main() -> None:
     """Parses CLI arguments and launches the pipeline orchestration."""
     # Parse all arguments via Beam's PipelineOptions to capture custom configs
@@ -37,6 +38,7 @@ def main() -> None:
     except Exception:
         logger.exception("Failed to run pipeline")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     logging.basicConfig(

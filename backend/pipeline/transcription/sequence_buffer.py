@@ -1,10 +1,12 @@
 """A framework-agnostic chronological jitter buffer abstracting gap logic away from Beam state."""
+
 import logging
 
 from backend.pipeline.transcription.constants import DEFAULT_FLOAT_TOLERANCE_MS
 from backend.pipeline.transcription.datatypes import BufferedChunk, OrderRestorerConfig
 
 logger = logging.getLogger(__name__)
+
 
 class SequenceBuffer:
     """A framework-agnostic domain class for managing chronological audio chunks.
@@ -46,7 +48,7 @@ class SequenceBuffer:
         if abs(difference) <= epsilon_ms:
             # HAPP PATH: The chunk matches our mathematical expectation exactly.
             to_emit.append(gcs_uri)
-            # Advance the expected timestamp strictly by perfect arithmetic (e.g. +15,000ms) 
+            # Advance the expected timestamp strictly by perfect arithmetic (e.g. +15,000ms)
             # rather than measuring the audio duration exactly, to prevent drift.
             expected_next_ts = current_ts_ms + self.config.chunk_duration_ms
 

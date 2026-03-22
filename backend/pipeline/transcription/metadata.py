@@ -13,9 +13,11 @@ from backend.pipeline.transcription.datatypes import TimeRange
 
 logger = logging.getLogger(__name__)
 
+
 def get_gcs_client() -> storage.Client:
     """Initialize and return a GCS Client."""
     return storage.Client()
+
 
 def read_sed_segments_from_blob(
     blob: storage.Blob,
@@ -72,4 +74,3 @@ def read_sed_segments_from_blob(
         segments.append(TimeRange(start_ms=start_ms, end_ms=start_ms + duration_ms))
 
     return file_start_ms, segments
-

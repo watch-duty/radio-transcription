@@ -23,6 +23,7 @@ from backend.pipeline.transcription.utils import ConfigBase
 
 logger = logging.getLogger(__name__)
 
+
 class Transcriber(abc.ABC):
     """Abstract interface for handling audio transcription.
 
@@ -45,6 +46,7 @@ class Transcriber(abc.ABC):
     ) -> str | None:
         """Transcribes the raw audio bytes and returns the text transcript."""
 
+
 class ChirpConfig(ConfigBase):
     """Strongly typed configuration for the Google Chirp V3 Transcriber."""
 
@@ -54,6 +56,7 @@ class ChirpConfig(ConfigBase):
     language_codes: list[str] = ["en-US"]
     enable_automatic_punctuation: bool = True
     enable_word_time_offsets: bool = False
+
 
 class GoogleChirpV3Transcriber(Transcriber):
     """Transcriber implementation using Google Cloud Speech-to-Text V2 API.
@@ -137,6 +140,7 @@ class GoogleChirpV3Transcriber(Transcriber):
 
         return transcript
 
+
 def get_transcriber(
     transcriber_type: TranscriberType, project_id: str, config_json: str
 ) -> Transcriber:
@@ -145,4 +149,3 @@ def get_transcriber(
         return GoogleChirpV3Transcriber(project_id, config_json)
     msg = f"Unknown transcriber type: {transcriber_type}"
     raise ValueError(msg)
-

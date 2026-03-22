@@ -1,6 +1,5 @@
 """Constants shared across the pipeline and tests."""
 
-
 DEAD_LETTER_QUEUE_TAG = "transcription_dlq"
 
 # Pipeline Defaults

@@ -100,9 +100,13 @@ class TestSequenceBuffer(unittest.TestCase):
             buffer_elements=initial_buffer,
         )
 
-        self.assertEqual(expected_next_ts, 13000)  # Passed 4k -> 7k -> 10k -> outputs 13k
+        self.assertEqual(
+            expected_next_ts, 13000
+        )  # Passed 4k -> 7k -> 10k -> outputs 13k
         self.assertEqual(len(buffered), 1)
-        self.assertEqual(buffered[0].gcs_uri, "gs://chunk6")  # Chunk 6 is still stranded awaiting Chunk 5
+        self.assertEqual(
+            buffered[0].gcs_uri, "gs://chunk6"
+        )  # Chunk 6 is still stranded awaiting Chunk 5
         self.assertEqual(to_emit, ["gs://chunk2", "gs://chunk3", "gs://chunk4"])
         self.assertFalse(was_late)
         self.assertFalse(was_buffered)

@@ -1,4 +1,5 @@
 """A framework-agnostic state machine isolating sequential audio transmission boundary logic."""
+
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS, MS_PER_SECOND
 from backend.pipeline.transcription.datatypes import (
     AppendBufferAction,
@@ -329,4 +330,3 @@ class AudioStitchingStateMachine:
         # Register the stale timer to ensure Dataflow doesn't hold this buffer forever
         actions.append(ScheduleStaleTimerAction(deadline_ms=expected_stale_deadline_ms))
         return actions
-

@@ -1,4 +1,5 @@
 """Apache Beam DoFns for mapping incoming stream messages and downloading audio chunks."""
+
 import logging
 import time
 import uuid
@@ -49,6 +50,7 @@ from backend.pipeline.transcription.sequence_buffer import SequenceBuffer
 
 logger = logging.getLogger(__name__)
 
+
 class ParseAndKeyFn(beam.DoFn):
     """Extracts the feed_id and builds the GCS URI from Pub/Sub attributes.
 
@@ -75,6 +77,7 @@ class ParseAndKeyFn(beam.DoFn):
                     "attributes": dict(element.attributes),
                 },
             )
+
 
 class AddEventTimestamp(beam.DoFn):
     """Extracts the event timestamp directly from the `AudioChunk` protobuf.
@@ -131,6 +134,7 @@ class AddEventTimestamp(beam.DoFn):
             (feed_id, (chunk_proto.gcs_uri, chunk_proto.session_id)), timestamp_sec
         )
 
+
 class SerializeToPubSubMessageFn(beam.DoFn):
     """Converts a `TranscriptionResult` dataclass into a serialized `TranscribedAudio` Protobuf payload.
 
@@ -182,6 +186,7 @@ class SerializeToPubSubMessageFn(beam.DoFn):
             data=proto.SerializeToString(),
             attributes={},
         )
+
 
 class RestoreOrderFn(beam.DoFn):
     """A stateful DoFn that buffers out-of-order chunks and emits them in strict chronological order.
@@ -357,6 +362,7 @@ class RestoreOrderFn(beam.DoFn):
         for gcs_uri in elements_to_emit:
             yield (feed_id, gcs_uri)
 
+
 class DownloadAudioFn(beam.DoFn):
     """A stateless DoFn that downloads audio chunks from GCS based on the provided GCS URI."""
 
@@ -401,4 +407,3 @@ class DownloadAudioFn(beam.DoFn):
                 )
             else:
                 raise
-

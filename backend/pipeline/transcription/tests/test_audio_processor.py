@@ -14,7 +14,6 @@ from backend.pipeline.transcription.enums import VadType
 
 
 class AudioProcessorTest(unittest.TestCase):
-
     def setUp(self) -> None:
 
         self.processor = AudioProcessor(vad_type=VadType.TEN_VAD)
