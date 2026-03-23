@@ -7,6 +7,7 @@ SpectralFlatnessDetector for audio analysis. Pub/Sub is mocked.
 from __future__ import annotations
 
 import base64
+import datetime
 import io
 import json
 import os
@@ -106,7 +107,10 @@ def _make_cloud_event(
     feed_id: str = "test-feed",
 ) -> CloudEvent:
     """Build a CloudEvent wrapping a serialized AudioChunk."""
-    chunk = AudioChunk(gcs_uri=gcs_uri)
+    chunk = AudioChunk(gcs_uri=gcs_uri, session_id="test-session")
+    chunk.start_timestamp.FromDatetime(
+        datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
+    )
     encoded = base64.b64encode(chunk.SerializeToString()).decode()
     data = {
         "message": {

@@ -47,11 +47,13 @@ def _make_cloud_event(
     gcs_uri: str = "gs://staging/feeds/abc/audio.flac",
     feed_id: str = "feed-42",
     start_timestamp: datetime.datetime | None = None,
+    session_id: str = "test-session",
 ) -> CloudEvent:
     """Build a CloudEvent with a serialized AudioChunk."""
-    chunk = AudioChunk(gcs_uri=gcs_uri)
-    if start_timestamp is not None:
-        chunk.start_timestamp.FromDatetime(start_timestamp)
+    if start_timestamp is None:
+        start_timestamp = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
+    chunk = AudioChunk(gcs_uri=gcs_uri, session_id=session_id)
+    chunk.start_timestamp.FromDatetime(start_timestamp)
     encoded = base64.b64encode(chunk.SerializeToString()).decode()
     data = {
         "message": {

@@ -23,6 +23,7 @@ dependencies = [
     "soundfile>=0.12.1",
     "numpy>=1.24.0",
     "scipy>=1.11.0",
+    "chardet<6",
     "urllib3>=2.6.3",
 ]
 
@@ -47,6 +48,8 @@ dev = [
   "httpx",
   "fakeredis",
   "pytest>=9.0.2",
+  "pre-commit",
+  "boto3",
 ]
 
 [tool.ruff]
