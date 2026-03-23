@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
+import datetime
 import logging
 import os
-import struct
 import sys
+import tempfile
+import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+from backend.pipeline.common.constants import AUDIO_SAMPLE_RATE, CHUNK_DURATION_SECONDS
 from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
 from backend.pipeline.ingestion.settings import NormalizerSettings
 
@@ -19,12 +24,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Audio processing constants
-NUM_CHANNELS = 1
-CHUNK_DURATION_SECONDS = 15
-SAMPLE_RATE = 16000
-SAMPLE_WIDTH = 2
-BYTES_PER_CHUNK = SAMPLE_RATE * CHUNK_DURATION_SECONDS * SAMPLE_WIDTH
+SAMPLE_FORMAT = "s16"  # 16-bit signed integer
 READ_TIMEOUT_SEC = 30
+POLL_INTERVAL_SEC = 0.25
 
 # Authentication for Icecast/Broadcastify streams
 USER = os.getenv("BROADCASTIFY_USERNAME")
@@ -38,47 +40,37 @@ if not USER or not PASS:
 
 # Create the Basic Auth header value for ffmpeg
 credentials = f"{USER}:{PASS}"
-encoded_bytes = base64.b64encode(credentials.encode("utf-8"))
-encoded_string = encoded_bytes.decode("utf-8")
-auth_header = f"Authorization: Basic {encoded_string}\r\n"
+encoded_credentials = base64.b64encode(credentials.encode()).decode()
+auth_header = f"Authorization: Basic {encoded_credentials}\r\n"
+
+
+def _segment_path(directory: Path, index: int) -> Path:
+    return directory / f"chunk_{index:06d}.flac"
 
 
 async def capture_icecast_stream(
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
-) -> AsyncIterator[bytes]:
+) -> AsyncIterator[tuple[bytes, datetime.datetime]]:
     """
-    Capture audio chunks from an Icecast stream using ffmpeg.
+    Capture audio chunks from an Icecast stream using ffmpeg segment muxing.
 
-    This is the core capture function used by NormalizerRuntime. It:
-    1. Spawns ffmpeg to connect to the stream URL with Basic Auth
-    2. Reads raw PCM audio from ffmpeg's stdout
-    3. Converts chunks to WAV format
-    4. Yields WAV bytes for the runtime to upload to GCS
-
-    Integration Contract:
-    Should check shutdown.is_set() between I/O operations for prompt
-    SIGTERM response. During graceful shutdown, the runtime gives tasks
-    a 5-second grace period to notice shutdown.is_set() and exit
-    cleanly before forcibly cancelling stragglers. Checking the event
-    lets the generator close network connections gracefully via the
-    normal cleanup path rather than being interrupted mid-stream.
-
-    IMPORTANT: Implement read timeouts on all network I/O (e.g. timeout
-    for process.stdout.read). The runtime enforces a max silence timeout
-    as defense-in-depth, but normalizers should detect dead connections
-    quickly via their own read timeouts and not block the event loop.
+    This implementation asks ffmpeg to write complete FLAC files for fixed
+    CHUNK_DURATION_SECONDS windows. Each yielded chunk is therefore a standalone
+    decodable FLAC file rather than an arbitrary slice of a continuous bytestream.
 
     Args:
         feed: Leased feed containing stream_url and metadata
         shutdown_event: Signals graceful shutdown request
 
     Yields:
-        WAV-formatted audio chunks of CHUNK_DURATION_SECONDS each
+        A tuple containing:
+        - (bytes) Complete audio file bytes for the segment
+        - (datetime.datetime) The exact audio start time of the segment window
 
     Raises:
         ValueError: If stream_url is missing from feed properties
-        RuntimeError: If ffmpeg subprocess fails to start or exits prematurely
+        RuntimeError: If ffmpeg exits unexpectedly or stalls
 
     """
     url = feed.get("stream_url")
@@ -88,141 +80,164 @@ async def capture_icecast_stream(
         msg = f"Feed {feed_id} ({feed_name}) missing stream_url in feed_properties_icecast"
         raise ValueError(msg)
 
-    # Launch ffmpeg subprocess
-    process = await _create_ffmpeg_process(url)
-    logger.info(f"Feed {feed_id} ({feed_name}): Started ffmpeg (PID: {process.pid})")
+    with tempfile.TemporaryDirectory(prefix="icecast_segments_") as tmp_dir:
+        segment_dir = Path(tmp_dir)
+        segment_pattern = str(segment_dir / "chunk_%06d.flac")
 
-    buffer = bytearray()
+        process = await _create_ffmpeg_process(url, segment_pattern)
+        logger.info(
+            "Feed %s (%s): Started ffmpeg segmenter (PID: %s)",
+            feed_id,
+            feed_name,
+            process.pid,
+        )
 
-    try:
-        while True:
-            # Check for shutdown signal
-            if shutdown_event.is_set():
-                logger.info(
-                    f"Feed {feed_id} ({feed_name}): Shutdown requested, stopping capture"
-                )
-                return
+        next_index = 0
+        last_activity_time = time.monotonic()
+        wait_task = asyncio.create_task(process.wait())
 
-            # Read from ffmpeg stdout
-            if process.stdout:
-                chunk_raw = await asyncio.wait_for(
-                    process.stdout.read(4096),
-                    timeout=READ_TIMEOUT_SEC,
-                )
-                if not chunk_raw:
-                    # ffmpeg exited
-                    exit_code = await process.wait()
-                    if exit_code != 0:
-                        msg = f"Feed {feed_id} ({feed_name}): ffmpeg exited with code {exit_code}"
-                        raise RuntimeError(msg)
-                    logger.info(f"Feed {feed_id} ({feed_name}): ffmpeg exited normally")
+        # Anchor the stream timeline to the exact moment ffmpeg starts
+        stream_anchor_time = datetime.datetime.now(tz=datetime.UTC)
+
+        try:
+            while True:
+                if shutdown_event.is_set():
+                    logger.info(
+                        "Feed %s (%s): Shutdown requested, stopping capture",
+                        feed_id,
+                        feed_name,
+                    )
                     return
-            else:
-                msg = f"Feed {feed_id} ({feed_name}): ffmpeg stdout is None"
-                raise RuntimeError(msg)
 
-            buffer.extend(chunk_raw)
+                current_segment = _segment_path(segment_dir, next_index)
+                next_segment = _segment_path(segment_dir, next_index + 1)
+                process_done = wait_task.done()
 
-            # Process complete chunks
-            while len(buffer) >= BYTES_PER_CHUNK:
-                current_chunk = buffer[:BYTES_PER_CHUNK]
-                del buffer[:BYTES_PER_CHUNK]
+                # Read a segment only once we know ffmpeg finished writing it.
+                # A segment is considered finalized when either:
+                # - the next segment exists, or
+                # - ffmpeg has exited.
+                if current_segment.exists() and (next_segment.exists() or process_done):
+                    segment_bytes = await asyncio.to_thread(current_segment.read_bytes)
+                    if segment_bytes:
+                        # Calculate the start time of this specific chunk's window
+                        chunk_start_time = stream_anchor_time + datetime.timedelta(
+                            seconds=next_index * CHUNK_DURATION_SECONDS
+                        )
+                        yield segment_bytes, chunk_start_time
 
-                # Prepend WAV header to raw PCM data
-                wav_header = _get_wav_header(
-                    len(current_chunk), SAMPLE_RATE, NUM_CHANNELS, SAMPLE_WIDTH
-                )
-                wav_data = wav_header + current_chunk
-                yield wav_data
+                        last_activity_time = time.monotonic()
+                    await asyncio.to_thread(current_segment.unlink, missing_ok=True)
+                    next_index += 1
+                    continue
 
-    finally:
-        # Cleanup: terminate ffmpeg if still running
-        if process.returncode is None:
-            try:
-                process.terminate()
-                await asyncio.wait_for(process.wait(), timeout=5)
-            except TimeoutError:
-                process.kill()
-                logger.warning(
-                    f"Feed {feed_id} ({feed_name}): Force-killed ffmpeg process"
-                )
-                await process.wait()
-            except Exception as e:
-                logger.exception(
-                    f"Feed {feed_id} ({feed_name}): Error terminating ffmpeg: {e}"
-                )
+                # If ffmpeg is done and there is no pending finalized segment,
+                # we are finished.
+                if process_done and not current_segment.exists():
+                    exit_code = wait_task.result()
+                    if exit_code != 0:
+                        msg = (
+                            f"Feed {feed_id} ({feed_name}): "
+                            f"ffmpeg exited with code {exit_code}"
+                        )
+                        raise RuntimeError(msg)
+                    logger.info(
+                        "Feed %s (%s): ffmpeg exited normally", feed_id, feed_name
+                    )
+                    return
+
+                if time.monotonic() - last_activity_time > READ_TIMEOUT_SEC:
+                    msg = (
+                        f"Feed {feed_id} ({feed_name}): no finalized segment within "
+                        f"{READ_TIMEOUT_SEC}s"
+                    )
+                    raise RuntimeError(msg)
+
+                await asyncio.sleep(POLL_INTERVAL_SEC)
+
+        finally:
+            if not wait_task.done():
+                wait_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await wait_task
+            await _cleanup_ffmpeg_process(process, str(feed_id), str(feed_name))
 
 
-async def _create_ffmpeg_process(url: str) -> asyncio.subprocess.Process:
+async def _create_ffmpeg_process(
+    url: str,
+    segment_pattern: str,
+) -> asyncio.subprocess.Process:
     """
-    Create and launch ffmpeg subprocess.
+    Create and launch ffmpeg subprocess configured for segmented FLAC output.
 
     Args:
         url: The stream URL to connect to
+        segment_pattern: Segment filename pattern for ffmpeg
 
     Returns:
         The subprocess process object
 
     """
+    # Low-latency live stream network optimizations used below:
+    # 1. -analyzeduration 0 / -probesize 32768: Bypasses the default 5-second/5MB
+    #    initialization handicap, instantly locking the demuxer on the first 32KB of data.
+    #    This reduces the time-to-first-byte from the start timestamp when ffmpeg starts recording.
+    # 2. -fflags nobuffer+flush_packets: Drops the demuxer/muxer packet buffering
+    #    for true real-time network flow.
+    # 3. discardcorrupt: Mitigates parsing crashes over TCP jitter, which is necessary
+    #    since our micro probesize doesn't deeply validate stream integrity.
     return await asyncio.create_subprocess_exec(
-            "ffmpeg", "-nostdin", "-re",
-            "-headers", auth_header,
-            "-i", url,
-            "-f", "s16le",
-            "-acodec", "pcm_s16le",
-            "-ac", "1",
-            "-ar", str(SAMPLE_RATE),
-            "-",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )  # fmt: skip
+        "ffmpeg", "-nostdin",
+        "-analyzeduration", "0",
+        "-probesize", "32768",
+        "-fflags", "nobuffer+flush_packets+discardcorrupt",
+        "-headers", auth_header,
+        "-i", url,
+        "-vn", "-sn", "-dn",
+        "-acodec", "flac",
+        "-ar", str(AUDIO_SAMPLE_RATE),
+        "-sample_fmt", SAMPLE_FORMAT,
+        "-ac", "1",
+        "-compression_level", "0",
+        "-f", "segment",
+        "-segment_time", str(CHUNK_DURATION_SECONDS),
+        "-segment_format", "flac",
+        "-reset_timestamps", "1",
+        "-segment_start_number", "0",
+        segment_pattern,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )  # fmt: skip
 
 
-def _get_wav_header(
-    pcm_length: int, sample_rate: int, num_channels: int, sample_width: int
-) -> bytes:
+async def _cleanup_ffmpeg_process(
+    process: asyncio.subprocess.Process,
+    feed_id: str,
+    feed_name: str,
+) -> None:
     """
-    Generates a canonical 44-byte WAV (RIFF) header for PCM data.
+    Clean up and terminate ffmpeg process.
 
     Args:
-        pcm_length: Total bytes of raw PCM data (data chunk size).
-        sample_rate: e.g., 16000, 44100.
-        num_channels: 1 for mono, 2 for stereo.
-        sample_width: Bytes per sample (e.g., 2 for 16-bit).
-
-    Returns:
-        A bytes object containing the WAV header to be prepended to PCM data.
+        process: The ffmpeg subprocess process object
+        feed_id: The feed ID for logging
+        feed_name: The feed name for logging
 
     """
-    header = bytearray(44)
-
-    # --- RIFF Chunk Descriptor ---
-    header[0:4] = b"RIFF"
-    # File size - 8 bytes (the 'RIFF' and 'size' fields themselves aren't counted)
-    struct.pack_into("<I", header, 4, 36 + pcm_length)
-    header[8:12] = b"WAVE"
-
-    # --- The "fmt " (format) Sub-chunk ---
-    header[12:16] = b"fmt "
-    struct.pack_into(
-        "<IHHIIHH",
-        header,  # Buffer to write into
-        16,  # Offset to start writing
-        16,  # Subchunk1Size (16 for PCM)
-        1,  # AudioFormat (1 = PCM / Linear Quantization)
-        num_channels,
-        sample_rate,
-        sample_rate * num_channels * sample_width,  # ByteRate
-        num_channels * sample_width,  # BlockAlign
-        sample_width * 8,  # BitsPerSample (e.g., 16)
-    )
-
-    # --- The "data" Sub-chunk ---
-    header[36:40] = b"data"
-    # Size of the actual raw PCM data following this header
-    struct.pack_into("<I", header, 40, pcm_length)
-
-    return bytes(header)
+    if process.returncode is None:
+        try:
+            process.terminate()
+            await asyncio.wait_for(process.wait(), timeout=5)
+        except TimeoutError:
+            process.kill()
+            logger.warning(
+                "Feed %s (%s): Force-killed ffmpeg process", feed_id, feed_name
+            )
+            await process.wait()
+        except Exception as e:
+            logger.exception(
+                "Feed %s (%s): Error terminating ffmpeg: %s", feed_id, feed_name, e
+            )
 
 
 def main() -> None:
@@ -238,7 +253,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        pass
+    main()

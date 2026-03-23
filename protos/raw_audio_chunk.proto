@@ -4,6 +4,13 @@ import "google/protobuf/timestamp.proto";
 message AudioChunk {
   string gcs_uri = 1;
 
-  // The absolute wall-clock time when this chunk started recording.
+  // The approximate wall-clock time when this chunk started recording. When the session
+  // starts, this is set to the time the first chunk was initiated. For subsequent chunks,
+  // this is set to the relative timestamp based on the chunk duration.
   google.protobuf.Timestamp start_timestamp = 2;
+
+  // A unique identifier for the continuous capture session that produced this chunk.
+  // This indicates a contiguous sequence of chunks; a new session_id signals a break
+  // or a newly initialized stream.
+  string session_id = 3;
 }

@@ -17,6 +17,8 @@ RUN uv sync --frozen --no-dev && uv pip install grpcio-tools
 COPY backend/__init__.py ./backend/__init__.py
 COPY backend/pipeline/__init__.py ./backend/pipeline/__init__.py
 COPY backend/pipeline/notification/ ./backend/pipeline/notification
+COPY backend/pipeline/common/__init__.py ./backend/pipeline/common/__init__.py
+COPY backend/pipeline/common/storage/ ./backend/pipeline/common/storage
 COPY protos/ ./protos
 
 # 2. Create the directory for the generated files

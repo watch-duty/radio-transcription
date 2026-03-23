@@ -208,6 +208,8 @@ resource "google_cloud_run_v2_job" "schema_migration" {
           name  = "DB_HOST"
           value = google_alloydb_instance.primary.ip_address
         }
+        # Direct port (5432), not the managed pooler (6432). DDL statements
+        # must bypass PgBouncer transaction-mode pooling.
         env {
           name  = "DB_PORT"
           value = "5432"

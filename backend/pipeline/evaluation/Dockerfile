@@ -17,6 +17,7 @@ RUN uv sync --frozen --no-dev && uv pip install grpcio-tools
 COPY backend/__init__.py ./backend/__init__.py
 COPY backend/pipeline/__init__.py ./backend/pipeline/__init__.py
 COPY backend/pipeline/evaluation/ ./backend/pipeline/evaluation
+COPY backend/pipeline/common/ ./backend/pipeline/common
 COPY protos/ ./protos
 
 # 2. Create the directory for the generated files
@@ -25,6 +26,6 @@ RUN touch ./backend/pipeline/schema_types/__init__.py
 RUN python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto
 
 CMD ["functions-framework", \
-     "--source=backend/pipeline/evaluation/evaluation_core.py", \
+     "--source=backend/pipeline/evaluation/main.py", \
      "--target=evaluate_transcribed_audio_segment", \
      "--signature-type=cloudevent"]

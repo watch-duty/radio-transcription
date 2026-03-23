@@ -5,7 +5,7 @@ import unittest
 import uuid
 from unittest import mock
 
-from backend.pipeline.storage.feed_store import FeedStore, LeasedFeed
+from backend.pipeline.storage.feed_store import FeedStore, HeartbeatResult, LeasedFeed
 
 _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 _FEED_ID_B = uuid.UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
@@ -16,6 +16,7 @@ _LEASE_ROW = {
     "name": "My Feed",
     "source_type": "bcfy_feeds",
     "last_processed_filename": None,
+    "fencing_token": 1,
     "stream_url": "http://stream.example.com/feed",
 }
 
@@ -49,6 +50,7 @@ class TestLeaseFeed(unittest.IsolatedAsyncioTestCase):
             "name": "My Feed",
             "source_type": "bcfy_feeds",
             "last_processed_filename": None,
+            "fencing_token": 1,
             "stream_url": "http://stream.example.com/feed",
         }
         self.assertEqual(result, expected)
@@ -85,6 +87,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
             _FEED_ID,
             _WORKER_ID,
             "gs://bucket/path/file.ogg",
+            1,
         )
 
         self.assertTrue(result)
@@ -98,6 +101,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
             _FEED_ID,
             _WORKER_ID,
             "gs://bucket/path/file.ogg",
+            1,
         )
 
         self.assertFalse(result)
@@ -108,90 +112,122 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
         gcs_path = "gs://bucket/path/file.ogg"
 
-        await store.update_feed_progress(_FEED_ID, _WORKER_ID, gcs_path)
+        await store.update_feed_progress(_FEED_ID, _WORKER_ID, gcs_path, 1)
 
         args = pool.execute.call_args[0]
-        self.assertEqual(args[1:], (gcs_path, _FEED_ID, _WORKER_ID))
+        self.assertEqual(args[1:], (gcs_path, _FEED_ID, _WORKER_ID, 1))
 
 
-class TestRenewHeartbeat(unittest.IsolatedAsyncioTestCase):
-    """Tests for FeedStore.renew_heartbeat."""
+class TestRenewHeartbeatsBatchDiagnostic(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.renew_heartbeats_batch_diagnostic."""
 
-    async def test_returns_true_when_lease_held(self) -> None:
-        """True is returned when the heartbeat was renewed."""
-        pool = _make_pool(execute_result="UPDATE 1")
-        store = FeedStore(pool)
-
-        result = await store.renew_heartbeat(_FEED_ID, _WORKER_ID)
-
-        self.assertTrue(result)
-
-    async def test_returns_false_when_lease_lost(self) -> None:
-        """False is returned when the lease was lost (fence violation)."""
-        pool = _make_pool(execute_result="UPDATE 0")
-        store = FeedStore(pool)
-
-        result = await store.renew_heartbeat(_FEED_ID, _WORKER_ID)
-
-        self.assertFalse(result)
-
-    async def test_passes_correct_parameters(self) -> None:
-        """Parameters are passed in the correct order."""
-        pool = _make_pool(execute_result="UPDATE 1")
-        store = FeedStore(pool)
-
-        await store.renew_heartbeat(_FEED_ID, _WORKER_ID)
-
-        args = pool.execute.call_args[0]
-        self.assertEqual(args[1:], (_FEED_ID, _WORKER_ID))
-
-
-class TestRenewHeartbeatsBatch(unittest.IsolatedAsyncioTestCase):
-    """Tests for FeedStore.renew_heartbeats_batch."""
-
-    async def test_returns_renewed_ids(self) -> None:
-        """Returned set contains the IDs from RETURNING rows."""
+    async def test_returns_diagnostic_results(self) -> None:
+        """Returned list contains HeartbeatResult dicts with diagnostic info."""
+        other_worker = uuid.UUID("22222222-3333-4444-5555-666666666666")
         pool = _make_pool(
-            fetch_result=[{"id": _FEED_ID}, {"id": _FEED_ID_B}],
+            fetch_result=[
+                {
+                    "id": _FEED_ID,
+                    "current_worker": _WORKER_ID,
+                    "current_status": "active",
+                    "renewed": True,
+                },
+                {
+                    "id": _FEED_ID_B,
+                    "current_worker": other_worker,
+                    "current_status": "active",
+                    "renewed": False,
+                },
+            ],
         )
         store = FeedStore(pool)
 
-        result = await store.renew_heartbeats_batch(
+        result = await store.renew_heartbeats_batch_diagnostic(
             [_FEED_ID, _FEED_ID_B],
             _WORKER_ID,
         )
 
-        self.assertEqual(result, {_FEED_ID, _FEED_ID_B})
-
-    async def test_returns_empty_set_for_no_matches(self) -> None:
-        """Empty set is returned when no rows match (all leases lost)."""
-        pool = _make_pool(fetch_result=[])
-        store = FeedStore(pool)
-
-        result = await store.renew_heartbeats_batch([_FEED_ID], _WORKER_ID)
-
-        self.assertEqual(result, set())
+        self.assertEqual(len(result), 2)
+        self.assertEqual(
+            result[0],
+            HeartbeatResult(
+                id=_FEED_ID,
+                current_worker=_WORKER_ID,
+                current_status="active",
+                renewed=True,
+            ),
+        )
+        self.assertEqual(
+            result[1],
+            HeartbeatResult(
+                id=_FEED_ID_B,
+                current_worker=other_worker,
+                current_status="active",
+                renewed=False,
+            ),
+        )
 
     async def test_short_circuits_on_empty_input(self) -> None:
-        """Empty feed_ids list returns empty set without executing a query."""
+        """Empty feed_ids list returns empty list without executing a query."""
         pool = mock.AsyncMock()
         store = FeedStore(pool)
 
-        result = await store.renew_heartbeats_batch([], _WORKER_ID)
+        result = await store.renew_heartbeats_batch_diagnostic([], _WORKER_ID)
 
-        self.assertEqual(result, set())
+        self.assertEqual(result, [])
         pool.fetch.assert_not_called()
 
     async def test_passes_correct_parameters(self) -> None:
         """Parameters are passed as (feed_ids_list, worker_id)."""
-        pool = _make_pool(fetch_result=[{"id": _FEED_ID}])
+        pool = _make_pool(
+            fetch_result=[
+                {
+                    "id": _FEED_ID,
+                    "current_worker": _WORKER_ID,
+                    "current_status": "active",
+                    "renewed": True,
+                },
+            ],
+        )
         store = FeedStore(pool)
         feed_ids = [_FEED_ID, _FEED_ID_B]
 
-        await store.renew_heartbeats_batch(feed_ids, _WORKER_ID)
+        await store.renew_heartbeats_batch_diagnostic(feed_ids, _WORKER_ID)
 
         args = pool.fetch.call_args[0]
         self.assertEqual(args[1:], (feed_ids, _WORKER_ID))
+
+    async def test_mixed_renewed_and_unrenewed(self) -> None:
+        """Results correctly distinguish renewed vs unrenewed feeds."""
+        pool = _make_pool(
+            fetch_result=[
+                {
+                    "id": _FEED_ID,
+                    "current_worker": _WORKER_ID,
+                    "current_status": "active",
+                    "renewed": True,
+                },
+                {
+                    "id": _FEED_ID_B,
+                    "current_worker": None,
+                    "current_status": "unclaimed",
+                    "renewed": False,
+                },
+            ],
+        )
+        store = FeedStore(pool)
+
+        result = await store.renew_heartbeats_batch_diagnostic(
+            [_FEED_ID, _FEED_ID_B],
+            _WORKER_ID,
+        )
+
+        renewed = [r for r in result if r["renewed"]]
+        not_renewed = [r for r in result if not r["renewed"]]
+        self.assertEqual(len(renewed), 1)
+        self.assertEqual(renewed[0]["id"], _FEED_ID)
+        self.assertEqual(len(not_renewed), 1)
+        self.assertEqual(not_renewed[0]["current_status"], "unclaimed")
 
 
 class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
@@ -202,7 +238,7 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         pool = _make_pool(execute_result="UPDATE 1")
         store = FeedStore(pool)
 
-        result = await store.report_feed_failure(_FEED_ID, _WORKER_ID)
+        result = await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
 
         self.assertTrue(result)
 
@@ -211,7 +247,7 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         pool = _make_pool(execute_result="UPDATE 0")
         store = FeedStore(pool)
 
-        result = await store.report_feed_failure(_FEED_ID, _WORKER_ID)
+        result = await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
 
         self.assertFalse(result)
 
@@ -220,10 +256,10 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         pool = _make_pool(execute_result="UPDATE 1")
         store = FeedStore(pool)
 
-        await store.report_feed_failure(_FEED_ID, _WORKER_ID)
+        await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
 
         args = pool.execute.call_args[0]
-        self.assertEqual(args[1:], (_FEED_ID, _WORKER_ID, 3))
+        self.assertEqual(args[1:], (_FEED_ID, _WORKER_ID, 3, 1))
 
 
 class TestReleaseFeed(unittest.IsolatedAsyncioTestCase):
@@ -234,7 +270,7 @@ class TestReleaseFeed(unittest.IsolatedAsyncioTestCase):
         pool = _make_pool(execute_result="UPDATE 1")
         store = FeedStore(pool)
 
-        result = await store.release_feed(_FEED_ID, _WORKER_ID)
+        result = await store.release_feed(_FEED_ID, _WORKER_ID, 1)
 
         self.assertTrue(result)
 
@@ -243,7 +279,7 @@ class TestReleaseFeed(unittest.IsolatedAsyncioTestCase):
         pool = _make_pool(execute_result="UPDATE 0")
         store = FeedStore(pool)
 
-        result = await store.release_feed(_FEED_ID, _WORKER_ID)
+        result = await store.release_feed(_FEED_ID, _WORKER_ID, 1)
 
         self.assertFalse(result)
 
@@ -252,10 +288,10 @@ class TestReleaseFeed(unittest.IsolatedAsyncioTestCase):
         pool = _make_pool(execute_result="UPDATE 1")
         store = FeedStore(pool)
 
-        await store.release_feed(_FEED_ID, _WORKER_ID)
+        await store.release_feed(_FEED_ID, _WORKER_ID, 1)
 
         args = pool.execute.call_args[0]
-        self.assertEqual(args[1:], (_FEED_ID, _WORKER_ID))
+        self.assertEqual(args[1:], (_FEED_ID, _WORKER_ID, 1))
 
 
 class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
@@ -269,6 +305,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
                 "name": "Feed A",
                 "source_type": "bcfy_feeds",
                 "last_processed_filename": None,
+                "fencing_token": 1,
                 "stream_url": "http://stream.example.com/a",
             },
             {
@@ -276,6 +313,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
                 "name": "Feed B",
                 "source_type": "bcfy_feeds",
                 "last_processed_filename": "gs://bucket/path",
+                "fencing_token": 1,
                 "stream_url": None,
             },
         ]
@@ -318,20 +356,20 @@ class TestReportFeedFailureWithThreshold(unittest.IsolatedAsyncioTestCase):
         pool = _make_pool(execute_result="UPDATE 1")
         store = FeedStore(pool)
 
-        await store.report_feed_failure(_FEED_ID, _WORKER_ID, failure_threshold=5)
+        await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1, failure_threshold=5)
 
         args = pool.execute.call_args[0]
-        self.assertEqual(args[3], 5)
+        self.assertEqual(args[1:], (_FEED_ID, _WORKER_ID, 5, 1))
 
     async def test_default_threshold_is_3(self) -> None:
         """Default threshold is 3 for backward compatibility."""
         pool = _make_pool(execute_result="UPDATE 1")
         store = FeedStore(pool)
 
-        await store.report_feed_failure(_FEED_ID, _WORKER_ID)
+        await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
 
         args = pool.execute.call_args[0]
-        self.assertEqual(args[3], 3)
+        self.assertEqual(args[1:], (_FEED_ID, _WORKER_ID, 3, 1))
 
 
 if __name__ == "__main__":

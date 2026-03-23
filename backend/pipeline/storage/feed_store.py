@@ -7,6 +7,7 @@ if TYPE_CHECKING:
 
     import asyncpg
 
+
 _LEASE_FEED_SQL = """\
 WITH available_feed AS (
     SELECT id
@@ -23,14 +24,15 @@ leased AS (
     UPDATE feeds
     SET worker_id = $1,
         status = 'active'::feed_status,
-        last_heartbeat = NOW()
+        last_heartbeat = NOW(),
+        fencing_token = fencing_token + 1
     FROM available_feed
     WHERE feeds.id = available_feed.id
     RETURNING feeds.id, feeds.name, feeds.source_type,
-              feeds.last_processed_filename
+              feeds.last_processed_filename, feeds.fencing_token
 )
 SELECT leased.id, leased.name, leased.source_type,
-       leased.last_processed_filename, fpi.stream_url
+       leased.last_processed_filename, leased.fencing_token, fpi.stream_url
 FROM leased
 LEFT JOIN feed_properties_icecast fpi ON fpi.feed_id = leased.id
 """
@@ -40,20 +42,32 @@ UPDATE feeds
 SET last_processed_filename = $1,
     last_heartbeat = NOW(),
     failure_count = 0
-WHERE id = $2 AND worker_id = $3
+WHERE id = $2 AND worker_id = $3 AND fencing_token = $4
 """
 
-_RENEW_HEARTBEAT_SQL = """\
-UPDATE feeds
-SET last_heartbeat = NOW()
-WHERE id = $1 AND worker_id = $2
-"""
-
-_RENEW_HEARTBEATS_BATCH_SQL = """\
-UPDATE feeds
-SET last_heartbeat = NOW()
-WHERE id = ANY($1::uuid[]) AND worker_id = $2
-RETURNING id
+# Heartbeat renewal deliberately does NOT check fencing_token.  The token is
+# constant for the lifetime of a lease (only incremented on acquisition), so
+# worker_id alone is sufficient here.  Adding per-feed tokens would require
+# passing parallel arrays, adding complexity with no safety benefit.
+_RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL = """\
+WITH current_state AS (
+    SELECT id, worker_id, status
+    FROM feeds WHERE id = ANY($1::uuid[])
+    FOR UPDATE
+),
+do_update AS (
+    UPDATE feeds SET last_heartbeat = NOW()
+    FROM current_state
+    WHERE feeds.id = current_state.id AND current_state.worker_id = $2
+    RETURNING feeds.id
+)
+SELECT
+    current_state.id,
+    current_state.worker_id AS current_worker,
+    current_state.status::text AS current_status,
+    (do_update.id IS NOT NULL) AS renewed
+FROM current_state
+LEFT JOIN do_update ON current_state.id = do_update.id;
 """
 
 _RELEASE_FEED_SQL = """\
@@ -61,7 +75,7 @@ UPDATE feeds
 SET worker_id = NULL,
     status = 'unclaimed'::feed_status,
     last_heartbeat = NOW()
-WHERE id = $1 AND worker_id = $2
+WHERE id = $1 AND worker_id = $2 AND fencing_token = $3
 """
 
 _ACQUIRE_FEEDS_BATCH_SQL = """\
@@ -80,18 +94,22 @@ leased AS (
     UPDATE feeds
     SET worker_id = $1,
         status = 'active'::feed_status,
-        last_heartbeat = NOW()
+        last_heartbeat = NOW(),
+        fencing_token = fencing_token + 1
     FROM available_feeds
     WHERE feeds.id = available_feeds.id
     RETURNING feeds.id, feeds.name, feeds.source_type,
-              feeds.last_processed_filename
+              feeds.last_processed_filename, feeds.fencing_token
 )
 SELECT leased.id, leased.name, leased.source_type,
-       leased.last_processed_filename, fpi.stream_url
+       leased.last_processed_filename, leased.fencing_token, fpi.stream_url
 FROM leased
 LEFT JOIN feed_properties_icecast fpi ON fpi.feed_id = leased.id
 """
 
+# NOTE: $3 = failure_threshold (SET clause), $4 = fencing_token (WHERE clause).
+# The method signature puts fencing_token before failure_threshold (required
+# param before defaulted param), but execute() reorders to match the SQL.
 _REPORT_FAILURE_PARAMETERIZED_SQL = """\
 UPDATE feeds
 SET status = CASE WHEN failure_count + 1 >= $3
@@ -100,7 +118,7 @@ SET status = CASE WHEN failure_count + 1 >= $3
     failure_count = failure_count + 1,
     worker_id = NULL,
     last_heartbeat = NOW()
-WHERE id = $1 AND worker_id = $2
+WHERE id = $1 AND worker_id = $2 AND fencing_token = $4
 """
 
 
@@ -111,7 +129,17 @@ class LeasedFeed(TypedDict):
     name: str
     source_type: str
     last_processed_filename: str | None
+    fencing_token: int
     stream_url: str | None
+
+
+class HeartbeatResult(TypedDict):
+    """Per-feed diagnostic info returned by diagnostic heartbeat renewal."""
+
+    id: uuid.UUID
+    current_worker: uuid.UUID | None
+    current_status: str
+    renewed: bool
 
 
 class FeedStore:
@@ -157,6 +185,7 @@ class FeedStore:
             name=row["name"],
             source_type=row["source_type"],
             last_processed_filename=row["last_processed_filename"],
+            fencing_token=row["fencing_token"],
             stream_url=row["stream_url"],
         )
 
@@ -165,18 +194,21 @@ class FeedStore:
         feed_id: uuid.UUID,
         worker_id: uuid.UUID,
         new_gcs_path: str,
+        fencing_token: int,
     ) -> bool:
         """
         Update the feed's bookmark and heartbeat after a successful write.
 
         This is a fenced operation — it only succeeds if the given worker still
-        holds the lease. A ``False`` return indicates the lease was lost and the
-        worker should stop processing this feed.
+        holds the lease AND the fencing token matches. A ``False`` return
+        indicates the lease was lost and the worker should stop processing
+        this feed.
 
         Args:
             feed_id: UUID of the feed to update.
             worker_id: UUID of the worker holding the lease.
             new_gcs_path: The GCS object path of the last successfully written file.
+            fencing_token: The fencing token received at lease acquisition.
 
         Returns:
             ``True`` if the update succeeded (lease still held), ``False`` if the
@@ -188,73 +220,53 @@ class FeedStore:
             new_gcs_path,
             feed_id,
             worker_id,
+            fencing_token,
         )
         return result == "UPDATE 1"
 
-    async def renew_heartbeat(
-        self,
-        feed_id: uuid.UUID,
-        worker_id: uuid.UUID,
-    ) -> bool:
-        """
-        Renew the heartbeat timestamp for a leased feed.
-
-        This is a fenced operation — it only succeeds if the given worker still
-        holds the lease. A ``False`` return indicates a fence violation: another
-        worker has stolen the lease and this worker must stop processing.
-
-        Args:
-            feed_id: UUID of the feed to renew.
-            worker_id: UUID of the worker holding the lease.
-
-        Returns:
-            ``True`` if the heartbeat was renewed (lease still held), ``False``
-            if the lease was lost.
-
-        """
-        result = await self._pool.execute(
-            _RENEW_HEARTBEAT_SQL,
-            feed_id,
-            worker_id,
-        )
-        return result == "UPDATE 1"
-
-    async def renew_heartbeats_batch(
+    async def renew_heartbeats_batch_diagnostic(
         self,
         feed_ids: list[uuid.UUID],
         worker_id: uuid.UUID,
-    ) -> set[uuid.UUID]:
+    ) -> list[HeartbeatResult]:
         """
-        Batch-renew heartbeats for multiple feeds in a single query.
+        Batch-renew heartbeats with per-feed diagnostic info.
 
-        Returns the set of feed_ids that were successfully renewed.
-        Any feed_id in the input that is missing from the returned set
-        indicates a fence violation — another worker has stolen the lease.
-
-        This reduces heartbeat DB load from O(N) queries to O(1) per cycle,
-        which is critical at 250 feeds per worker.
+        Uses an atomic CTE that locks rows, conditionally updates, and
+        always returns per-feed state in a single round-trip. This enables
+        the caller to log *why* a feed wasn't renewed (stolen by another
+        worker, quarantined, etc.) before taking action.
 
         Args:
             feed_ids: List of feed UUIDs to renew.
             worker_id: UUID of the worker holding the leases.
 
         Returns:
-            Set of feed_ids whose heartbeats were renewed.
+            List of ``HeartbeatResult`` dicts, one per input feed_id.
 
         """
         if not feed_ids:
-            return set()
+            return []
         rows = await self._pool.fetch(
-            _RENEW_HEARTBEATS_BATCH_SQL,
+            _RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
             feed_ids,
             worker_id,
         )
-        return {row["id"] for row in rows}
+        return [
+            HeartbeatResult(
+                id=row["id"],
+                current_worker=row["current_worker"],
+                current_status=row["current_status"],
+                renewed=row["renewed"],
+            )
+            for row in rows
+        ]
 
     async def report_feed_failure(
         self,
         feed_id: uuid.UUID,
         worker_id: uuid.UUID,
+        fencing_token: int,
         failure_threshold: int = 3,
     ) -> bool:
         """
@@ -264,11 +276,12 @@ class FeedStore:
         or ``'quarantined'`` (if the failure threshold is reached).
 
         This is a fenced operation — it only succeeds if the given worker still
-        holds the lease.
+        holds the lease AND the fencing token matches.
 
         Args:
             feed_id: UUID of the feed that failed.
             worker_id: UUID of the worker reporting the failure.
+            fencing_token: The fencing token received at lease acquisition.
             failure_threshold: Number of failures before quarantine (default 3).
 
         Returns:
@@ -281,6 +294,7 @@ class FeedStore:
             feed_id,
             worker_id,
             failure_threshold,
+            fencing_token,
         )
         return result == "UPDATE 1"
 
@@ -288,6 +302,7 @@ class FeedStore:
         self,
         feed_id: uuid.UUID,
         worker_id: uuid.UUID,
+        fencing_token: int,
     ) -> bool:
         """
         Release a feed lease, returning it to 'unclaimed' status.
@@ -297,11 +312,12 @@ class FeedStore:
         the feed if this call fails.
 
         This is a fenced operation — it only succeeds if the given worker
-        still holds the lease.
+        still holds the lease AND the fencing token matches.
 
         Args:
             feed_id: UUID of the feed to release.
             worker_id: UUID of the worker releasing the lease.
+            fencing_token: The fencing token received at lease acquisition.
 
         Returns:
             ``True`` if the lease was released, ``False`` if the lease was
@@ -312,6 +328,7 @@ class FeedStore:
             _RELEASE_FEED_SQL,
             feed_id,
             worker_id,
+            fencing_token,
         )
         return result == "UPDATE 1"
 
@@ -349,6 +366,7 @@ class FeedStore:
                 name=row["name"],
                 source_type=row["source_type"],
                 last_processed_filename=row["last_processed_filename"],
+                fencing_token=row["fencing_token"],
                 stream_url=row["stream_url"],
             )
             for row in rows

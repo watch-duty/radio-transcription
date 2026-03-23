@@ -4,23 +4,39 @@ import os
 
 import functions_framework
 import google.cloud.logging
-import requests
 from cloudevents.http.event import CloudEvent
-from google.protobuf.json_format import MessageToJson
 
+from backend.pipeline.common.storage.redis_service import RedisService
+from backend.pipeline.notification.notification_deduplication import (
+    NotificationDeduplication,
+)
+from backend.pipeline.notification.request_handler import RequestHandler
 from backend.pipeline.schema_types.alert_notification_pb2 import AlertNotification
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
 
-client = google.cloud.logging.Client()
-client.setup_logging()
-logger = logging.getLogger(__name__)
+# TODO(schew): https://linear.app/watchduty/issue/GOO-100/create-shared-logging-util-for-consistent-setup-across-pipeline
+if not os.environ.get("LOCAL_DEV"):
+    client = google.cloud.logging.Client()
+    client.setup_logging()
+    logger = logging.getLogger(__name__)
+else:
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
+    handler = logging.StreamHandler()
+    logger.addHandler(handler)
+    logger.info(
+        "Running in LOCAL_DEV mode. Logs will print to console instead of configurable endpoint."
+    )
 
-POST_TIMEOUT_SECONDS = 5
+# Keeping the notification deduplicate connection outside the main function. This is so the connection is
+# maintained while the function is warm instead of reconnecting each invocation.
+# TODO(schew): https://linear.app/watchduty/issue/GOO-173/update-local-dev-pipeline-with-redis
+deduplication = NotificationDeduplication(RedisService())
 
-NOTIFICATION_ENDPOINT = os.environ.get("NOTIFICATION_ENDPOINT")
-NOTIFICATION_ENDPOINT_API_KEY = os.environ.get("NOTIFICATION_ENDPOINT_API_KEY")
+# The request handler which can make POST requests to an endpoint.
+request_handler = RequestHandler(logger)
 
 
 def parse_cloud_event(cloud_event: CloudEvent) -> EvaluatedTranscribedAudio | None:
@@ -31,7 +47,6 @@ def parse_cloud_event(cloud_event: CloudEvent) -> EvaluatedTranscribedAudio | No
         decoded_data = base64.b64decode(raw_data)
         evaluated_transcribed_audio.ParseFromString(decoded_data)
         return evaluated_transcribed_audio
-    logger.warning("No data provided in CloudEvent")
     return None
 
 
@@ -56,31 +71,19 @@ def convert_to_notification(
 
 @functions_framework.cloud_event
 def send_notification(cloud_event: CloudEvent) -> None:
-    try:
-        evaluated_transcribed_audio = parse_cloud_event(cloud_event)
-        if not evaluated_transcribed_audio:
-            return
+    # Process the incoming CloudEvent message
+    evaluated_transcribed_audio = parse_cloud_event(cloud_event)
+    if not evaluated_transcribed_audio:
+        logger.warning("Unable to parse incoming message")
+        return
 
-        alert_notification = convert_to_notification(evaluated_transcribed_audio)
-        request_data = MessageToJson(alert_notification, indent=None)
-        logger.info(f"Sending payload: {request_data}")
+    # Convert the EvaluatedTranscribedAudio into an AlertNotifcation
+    alert_notification = convert_to_notification(evaluated_transcribed_audio)
+    notification_id = alert_notification.transmission_id
+    if not deduplication.process_notification(notification_id):
+        message = f"Duplicate transmission_id detected, skipping notification with ID: {notification_id}"
+        logger.warning(message)
+        return
 
-        # Send POST request to endpoint.
-        response = requests.post(
-            NOTIFICATION_ENDPOINT,
-            data=request_data,
-            headers={
-                "Content-Type": "application/json",
-                "X-Api-Key": NOTIFICATION_ENDPOINT_API_KEY,
-            },
-            timeout=POST_TIMEOUT_SECONDS,
-        )
-
-        # Raise an exception for bad status codes
-        response.raise_for_status()
-
-        logger.info(f"Message sent successfully! Status code: {response.status_code}")
-
-    except requests.exceptions.RequestException as e:
-        logger.exception(f"POST request failed: {e}")
-        raise
+    # Send a POST request to the endpoint
+    request_handler.send_notification(alert_notification)

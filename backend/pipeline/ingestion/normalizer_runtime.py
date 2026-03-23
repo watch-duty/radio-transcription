@@ -9,21 +9,21 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Callable
 
+import aiohttp
 import asyncpg
-from google.cloud import pubsub_v1
 
-from backend.pipeline.ingestion.gcs import close_client, upload_audio
+from backend.pipeline.common import gcp_helper
+from backend.pipeline.common.clients import gcs_client, pubsub_client
+from backend.pipeline.ingestion.retry import LeaseExpiredError, retry_with_lease_check
 from backend.pipeline.ingestion.settings import NormalizerSettings
-from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.storage.connection import close_pool, create_pool
-from backend.pipeline.storage.feed_store import FeedStore, LeasedFeed
+from backend.pipeline.storage.feed_store import FeedStore, HeartbeatResult, LeasedFeed
 
 FeedID = uuid.UUID
-CaptureFn = Callable[[LeasedFeed, asyncio.Event], AsyncIterator[bytes]]
-
+CaptureFn = Callable[
+    [LeasedFeed, asyncio.Event], AsyncIterator[tuple[bytes, datetime.datetime]]
+]
 logger = logging.getLogger(__name__)
-
-publisher = pubsub_v1.PublisherClient()
 
 
 class NormalizerRuntime:
@@ -65,7 +65,7 @@ class NormalizerRuntime:
 
             settings = NormalizerSettings()
         self._capture_fn = capture_fn
-        self._settings = settings
+        self._normalizer_settings = settings
         # threading.Event (not asyncio.Event) — the heartbeat OS thread
         # can't use asyncio primitives; it needs a thread-safe signal.
         self._thread_stop = threading.Event()
@@ -74,6 +74,11 @@ class NormalizerRuntime:
         # every usage site.  Accessing before _main() is a programming error.
         # asyncio.Event must be created inside a running event loop.
         self._shutdown: asyncio.Event = None  # type: ignore # set in _main()
+        # Monotonic (set-only, never cleared) signal: once the lease is flagged
+        # as uncertain it stays flagged.  Prevents a race where a successful
+        # heartbeat clears a set() from a failed heartbeat, allowing retry
+        # loops to continue when they should be aborting.
+        self._lease_lost: asyncio.Event = None  # type: ignore # set in _main()
         self._data_pool: asyncpg.Pool = None  # type: ignore # set in _main()
         # Dedicated 1-connection pool for heartbeat (control-plane / data-plane
         # separation). Prevents 250 bookmark/upload ops on the main pool from
@@ -89,6 +94,8 @@ class NormalizerRuntime:
         self._heartbeat_thread: threading.Thread | None = None
         self._store: FeedStore = None  # type: ignore # set in _main()
         self._heartbeat_store: FeedStore = None  # type: ignore # set in _main()
+        self._gcs_client = gcs_client.GcsClient()
+        self._pubsub_client = pubsub_client.PubSubClient()
 
     # -- Entry point ------------------------------------------------------
 
@@ -104,8 +111,8 @@ class NormalizerRuntime:
         )
         logger.info(
             "Starting NormalizerRuntime worker_id=%s max_feeds=%d",
-            self._settings.worker_id,
-            self._settings.max_feeds_per_worker,
+            self._normalizer_settings.worker_id,
+            self._normalizer_settings.max_feeds_per_worker,
         )
         asyncio.run(self._main())
 
@@ -115,6 +122,7 @@ class NormalizerRuntime:
         """Top-level async entry: setup, run leasing loop, then shutdown."""
         self._loop = asyncio.get_running_loop()
         self._shutdown = asyncio.Event()
+        self._lease_lost = asyncio.Event()
 
         def _on_signal(sig: signal.Signals) -> None:
             if not self._shutdown.is_set():
@@ -131,38 +139,37 @@ class NormalizerRuntime:
         for sig in (signal.SIGTERM, signal.SIGINT):
             self._loop.add_signal_handler(sig, _on_signal, sig)
 
-        s = self._settings
+        settings = self._normalizer_settings
         # command_timeout: bounds query execution on established connections.
         # timeout (connect): bounds TCP handshake — without it, a VPC subnet
         # silently dropping packets hangs connect() for 2+ min (Linux TCP
         # SYN-ACK timeout), starving the pool of connections.
         self._data_pool = await create_pool(
-            host=s.db_host,
-            user=s.db_user,
-            db_name=s.db_name,
-            password=s.db_password,
-            port=s.db_port,
-            min_size=s.db_pool_min_size,
-            max_size=s.db_pool_max_size,
-            command_timeout=s.db_command_timeout_sec,
-            timeout=s.db_connect_timeout_sec,
+            host=settings.db_host,
+            user=settings.db_user,
+            db_name=settings.db_name,
+            password=settings.db_password,
+            port=settings.db_port,
+            min_size=settings.db_pool_min_size,
+            max_size=settings.db_pool_max_size,
+            command_timeout=settings.db_command_timeout_sec,
+            timeout=settings.db_connect_timeout_sec,
         )
         self._store = FeedStore(self._data_pool)
 
         # Dedicated 1-connection pool ensures heartbeat queries never queue
         # behind 250 bookmark/upload operations on the main pool. Without
         # this, pool contention causes false stall-timeout kills.
-        self._heartbeat_pool = await asyncpg.create_pool(
-            host=s.db_host,
-            port=s.db_port,
-            user=s.db_user,
-            password=s.db_password,
-            database=s.db_name,
+        self._heartbeat_pool = await create_pool(
+            host=settings.db_host,
+            user=settings.db_user,
+            db_name=settings.db_name,
+            password=settings.db_password,
+            port=settings.db_port,
             min_size=1,
             max_size=1,
-            command_timeout=s.db_command_timeout_sec,
-            timeout=s.db_connect_timeout_sec,
-            statement_cache_size=0,
+            command_timeout=settings.db_command_timeout_sec,
+            timeout=settings.db_connect_timeout_sec,
         )
         self._heartbeat_store = FeedStore(self._heartbeat_pool)
 
@@ -225,20 +232,39 @@ class NormalizerRuntime:
             # a thundering herd cold-start on recovery. Since the DB is down,
             # no other worker can steal leases either.
             try:
-                capacity = self._settings.max_feeds_per_worker - len(self._feed_tasks)
+                capacity = self._normalizer_settings.max_feeds_per_worker - len(
+                    self._feed_tasks
+                )
                 if capacity > 0:
                     logger.info(
                         "Attempting to acquire up to %d feeds (%d/%d active)",
                         capacity,
                         len(self._feed_tasks),
-                        self._settings.max_feeds_per_worker,
+                        self._normalizer_settings.max_feeds_per_worker,
                     )
                     leases = await self._store.acquire_feeds_batch(
-                        self._settings.worker_id,
-                        self._settings.abandonment_window_sec,
+                        self._normalizer_settings.worker_id,
+                        self._normalizer_settings.abandonment_window_sec,
                         limit=capacity,
                     )
                     for lease in leases:
+                        existing = self._feed_tasks.get(lease["id"])
+                        if existing is not None and not existing.done():
+                            # A stale heartbeat allowed the DB to re-lease a
+                            # feed we already hold.  The old task still runs
+                            # with its original (now-outdated) fencing token.
+                            # If left alive it will eventually fail a fenced
+                            # write and call os._exit(1), killing the whole
+                            # worker — including the healthy new task.
+                            # Cancel first; the CancelledError handler in
+                            # _process_feed exits cleanly without DB writes.
+                            logger.warning(
+                                "Cancelling orphaned task for feed %s "
+                                "(re-leased with token %d)",
+                                lease["name"],
+                                lease["fencing_token"],
+                            )
+                            existing.cancel()
                         task = asyncio.create_task(
                             self._process_feed(lease),
                             name=f"feed-{lease['name']}",
@@ -249,16 +275,16 @@ class NormalizerRuntime:
                             "Acquired %d feeds (%d/%d active)",
                             len(leases),
                             len(self._feed_tasks),
-                            self._settings.max_feeds_per_worker,
+                            self._normalizer_settings.max_feeds_per_worker,
                         )
             except Exception:
                 logger.exception(
                     "Lease acquisition failed -- will retry in %.1fs",
-                    self._settings.lease_poll_interval_sec,
+                    self._normalizer_settings.lease_poll_interval_sec,
                 )
 
             if await self._sleep_or_shutdown(
-                self._settings.lease_poll_interval_sec,
+                self._normalizer_settings.lease_poll_interval_sec,
             ):
                 return
 
@@ -298,37 +324,62 @@ class NormalizerRuntime:
         bookmarks progress with fence violation detection.
         """
         chunk_seq = 0
-        worker_id = self._settings.worker_id
+        worker_id = self._normalizer_settings.worker_id
+        fencing_token = feed["fencing_token"]
+        settings = self._normalizer_settings
+        session_id = str(uuid.uuid4())
 
         try:
-            async for audio_chunk in self._capture_fn(
+            async for audio_chunk, chunk_start_time in self._capture_fn(
                 feed,
                 self._shutdown,
             ):
-                gcs_uri = await upload_audio(
+                gcs_uri = await retry_with_lease_check(
+                    gcp_helper.upload_staged_audio,
+                    self._gcs_client,
                     audio_chunk,
                     feed,
-                    self._settings.final_staging_bucket,
+                    settings.audio_staging_bucket,
                     chunk_seq,
+                    fencing_token,
+                    lease_lost=self._lease_lost,
+                    shutdown=self._shutdown,
+                    max_retries=settings.gcs_upload_max_retries,
+                    base_delay_sec=settings.gcs_upload_retry_base_delay_sec,
+                    max_delay_sec=settings.gcs_upload_retry_max_delay_sec,
+                    retryable=(aiohttp.ClientError, asyncio.TimeoutError, OSError),
+                    operation_name="GCS upload",
                 )
-                audio_chunk_msg = AudioChunk(gcs_uri=gcs_uri)
-                now = datetime.datetime.now(tz=datetime.UTC)
-                audio_chunk_msg.start_timestamp.FromDatetime(now)
-                future = publisher.publish(
-                    self._settings.pubsub_topic_path,
-                    audio_chunk_msg.SerializeToString(),
-                    feed_id=str(feed["id"]),
+                message_id = await gcp_helper.publish_audio_chunk(
+                    self._pubsub_client,
+                    self._normalizer_settings.pubsub_topic_path,
+                    str(feed["id"]),
+                    gcs_uri,
+                    start_timestamp=chunk_start_time,
+                    session_id=session_id,
                 )
-                message_id = future.result()
                 logger.info(
                     "Published message %s for feed %s", message_id, feed["name"]
                 )
                 chunk_seq += 1
 
-                ok = await self._store.update_feed_progress(
+                ok = await retry_with_lease_check(
+                    self._store.update_feed_progress,
                     feed["id"],
                     worker_id,
                     gcs_uri,
+                    fencing_token,
+                    lease_lost=self._lease_lost,
+                    shutdown=self._shutdown,
+                    max_retries=settings.bookmark_max_retries,
+                    base_delay_sec=settings.bookmark_retry_base_delay_sec,
+                    max_delay_sec=settings.bookmark_retry_max_delay_sec,
+                    retryable=(
+                        asyncpg.PostgresConnectionError,
+                        asyncpg.InterfaceError,
+                        OSError,
+                    ),
+                    operation_name="bookmark write",
                 )
                 if not ok:
                     # If the batched heartbeat is healthy (renewing every 15s),
@@ -364,6 +415,18 @@ class NormalizerRuntime:
             logger.info("Feed %s task cancelled", feed["name"])
             return
 
+        except LeaseExpiredError:
+            # Lease validity is uncertain (heartbeat DB error or fence
+            # violation).  Do NOT attempt report_feed_failure — the DB
+            # connection that feeds it may be unreachable, causing this
+            # coroutine to hang.  The 60s abandonment window is the
+            # safety net; another worker will re-lease the feed.
+            logger.warning(
+                "Lease lost for feed %s -- aborting without DB write",
+                feed["name"],
+            )
+            return
+
         except Exception:
             logger.exception("Error processing feed %s", feed["name"])
             # SAFETY: _releasing_feeds invariant — add BEFORE the first await
@@ -373,7 +436,8 @@ class NormalizerRuntime:
                 await self._store.report_feed_failure(
                     feed["id"],
                     worker_id,
-                    self._settings.feed_failure_threshold,
+                    fencing_token,
+                    self._normalizer_settings.feed_failure_threshold,
                 )
             except Exception:
                 # 60s abandonment window is the safety net if this fails.
@@ -392,7 +456,7 @@ class NormalizerRuntime:
         # SAFETY: same _releasing_feeds invariant as above.
         self._releasing_feeds.add(feed["id"])
         try:
-            await self._store.release_feed(feed["id"], worker_id)
+            await self._store.release_feed(feed["id"], worker_id, fencing_token)
         except Exception:
             # 60s abandonment window is the safety net.
             logger.exception("Failed to release feed %s", feed["name"])
@@ -417,7 +481,7 @@ class NormalizerRuntime:
         consecutive slow cycles could exceed the 60s abandonment window,
         triggering unnecessary ``os._exit(1)``.
         """
-        interval = self._settings.heartbeat_interval_sec
+        interval = self._normalizer_settings.heartbeat_interval_sec
         next_tick = time.monotonic() + interval
 
         while not self._thread_stop.is_set():
@@ -431,7 +495,7 @@ class NormalizerRuntime:
                     self._loop,
                 )
                 future.result(
-                    timeout=self._settings.heartbeat_stall_timeout_sec,
+                    timeout=self._normalizer_settings.heartbeat_stall_timeout_sec,
                 )
             except concurrent.futures.TimeoutError:
                 # CRITICAL: must be concurrent.futures.TimeoutError, NOT the
@@ -442,7 +506,7 @@ class NormalizerRuntime:
                 logger.critical(
                     "Event loop stall -- heartbeat did not complete "
                     "in %ds, terminating",
-                    self._settings.heartbeat_stall_timeout_sec,
+                    self._normalizer_settings.heartbeat_stall_timeout_sec,
                 )
                 logging.shutdown()  # flush before os._exit bypasses handlers
                 os._exit(1)
@@ -451,6 +515,10 @@ class NormalizerRuntime:
                 # os._exit(1) across the MIG during a DB outage would cause
                 # a thundering herd cold-start on recovery.
                 logger.exception("Heartbeat renewal error")
+                # Signal retry loops that lease validity is uncertain.
+                # Must use call_soon_threadsafe from the OS thread since
+                # asyncio.Event.set() is not thread-safe.
+                self._loop.call_soon_threadsafe(self._lease_lost.set)
 
             # Advance ticker. If cycle took longer than one interval, the next
             # sleep_time clamps to 0 — fires immediately to catch up.
@@ -472,10 +540,14 @@ class NormalizerRuntime:
         if not active:
             return
 
-        renewed_ids = await self._heartbeat_store.renew_heartbeats_batch(
+        results: list[
+            HeartbeatResult
+        ] = await self._heartbeat_store.renew_heartbeats_batch_diagnostic(
             list(active.keys()),
-            self._settings.worker_id,
+            self._normalizer_settings.worker_id,
         )
+
+        renewed_ids = {r["id"] for r in results if r["renewed"]}
 
         # A feed missing from renewed_ids is NOT a violation if:
         #   - active[fid].done(): task finished between snapshot and DB response
@@ -501,11 +573,32 @@ class NormalizerRuntime:
             )
             return
 
+        # Log diagnostic details for each lost feed before terminating.
+        diag_by_id = {r["id"]: r for r in results}
+        for fid in lost_ids:
+            diag = diag_by_id.get(fid)
+            if diag:
+                logger.critical(
+                    "Feed %s lost: current_worker=%s current_status=%s renewed=%s",
+                    fid,
+                    diag["current_worker"],
+                    diag["current_status"],
+                    diag["renewed"],
+                )
+            else:
+                logger.critical(
+                    "Feed %s lost: no DB row returned (deleted from database?)",
+                    fid,
+                )
+
         logger.critical(
             "Heartbeat fence violation -- %d feed(s) lost: %s. Terminating.",
             len(lost_ids),
             ", ".join(str(fid) for fid in lost_ids),
         )
+        # Belt-and-suspenders: signal retry loops in the narrow window
+        # before process death.
+        self._lease_lost.set()
         logging.shutdown()  # flush before os._exit bypasses handlers
         os._exit(1)
 
@@ -538,10 +631,11 @@ class NormalizerRuntime:
         if self._feed_tasks:
             await asyncio.wait(
                 self._feed_tasks.values(),
-                timeout=self._settings.graceful_shutdown_timeout_sec,
+                timeout=self._normalizer_settings.graceful_shutdown_timeout_sec,
             )
 
-        await close_client()
+        await self._pubsub_client.close()
+        await self._gcs_client.close()
 
         # Heartbeat pool close may raise if the heartbeat cycle was
         # mid-query when we stopped the thread — harmless during shutdown.

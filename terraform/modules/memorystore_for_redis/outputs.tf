@@ -8,3 +8,15 @@ output "port" {
   description = "The port of the instance."
   value       = google_redis_instance.this.port
 }
+
+output "password" {
+  description = "AUTH string required to authenticate when connecting to the instance."
+  value       = google_redis_instance.this.auth_string
+  sensitive   = true # Hidden from terraform logging
+}
+
+output "certificate" {
+  description = "TLS certificates in PEM file format."
+  value       = google_redis_instance.this.server_ca_certs[0].cert
+  sensitive   = true
+}
