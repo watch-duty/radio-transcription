@@ -21,7 +21,9 @@ class TestLogging(TestCase):
                 # First call should fall back to basicConfig
                 setup_logging()
                 mock_basic_config.assert_called_once()
-                self.assertEqual(mock_basic_config.call_args[1]["level"], logging.INFO)
+                self.assertEqual(
+                    mock_basic_config.call_args[1]["level"], logging.INFO
+                )
 
                 # Second call should do nothing (idempotency)
                 setup_logging()

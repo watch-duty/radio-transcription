@@ -271,7 +271,7 @@ async def test_failure_sets_status_to_failing(
 async def test_failure_escalation_to_quarantine(
     db_pool: asyncpg.Pool, store: FeedStore
 ) -> None:
-    """Third failure transitions to 'quarantined'."""
+    """Fifth failure transitions to 'quarantined'."""
     worker = uuid.uuid4()
     feed_id = await _insert_feed(
         db_pool,
@@ -279,14 +279,117 @@ async def test_failure_escalation_to_quarantine(
         status="active",
         worker_id=worker,
         last_heartbeat_age_seconds=10,
-        failure_count=2,
+        failure_count=4,
     )
 
     await store.report_feed_failure(feed_id, worker, 0)
 
     row = await _get_feed_status(db_pool, feed_id)
     assert row["status"] == "quarantined"
-    assert row["failure_count"] == 3
+    assert row["failure_count"] == 5
+
+
+async def test_failing_feed_not_leased_before_retry_after(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """Feed with retry_after in the future is not returned by acquire."""
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool,
+        "Backoff Feed",
+        status="active",
+        worker_id=worker,
+        last_heartbeat_age_seconds=10,
+    )
+    await store.report_feed_failure(feed_id, worker, 0)
+    result = await store.lease_feed(uuid.uuid4())
+    assert result is None
+
+
+async def test_failing_feed_leased_after_retry_after_expires(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """Feed is returned by acquire after retry_after passes."""
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool,
+        "Backoff Feed",
+        status="active",
+        worker_id=worker,
+        last_heartbeat_age_seconds=10,
+    )
+    await store.report_feed_failure(feed_id, worker, 0)
+    await db_pool.execute(
+        "UPDATE feeds SET retry_after = NOW() - INTERVAL '1 second'"
+        " WHERE id = $1",
+        feed_id,
+    )
+    result = await store.lease_feed(uuid.uuid4())
+    assert result is not None
+    assert result["id"] == feed_id
+
+
+async def test_lease_preserves_failure_count(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """Leasing clears retry_after but does NOT reset failure_count."""
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool,
+        "Preserve Feed",
+        status="active",
+        worker_id=worker,
+        last_heartbeat_age_seconds=10,
+    )
+    await store.report_feed_failure(feed_id, worker, 0)
+    await db_pool.execute(
+        "UPDATE feeds SET retry_after = NOW() - INTERVAL '1 second'"
+        " WHERE id = $1",
+        feed_id,
+    )
+    new_worker = uuid.uuid4()
+    result = await store.lease_feed(new_worker)
+    assert result is not None
+    row = await db_pool.fetchrow(
+        "SELECT failure_count, retry_after FROM feeds WHERE id = $1",
+        feed_id,
+    )
+    assert row["failure_count"] == 1
+    assert row["retry_after"] is None
+
+
+async def test_successful_processing_resets_failure_count(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """update_feed_progress resets failure_count to 0."""
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool,
+        "Progress Feed",
+        status="active",
+        worker_id=worker,
+        last_heartbeat_age_seconds=10,
+    )
+    await store.report_feed_failure(feed_id, worker, 0)
+    await db_pool.execute(
+        "UPDATE feeds SET retry_after = NOW() - INTERVAL '1 second'"
+        " WHERE id = $1",
+        feed_id,
+    )
+    new_worker = uuid.uuid4()
+    result = await store.lease_feed(new_worker)
+    assert result is not None
+    await store.update_feed_progress(
+        result["id"],
+        new_worker,
+        "chunk_001.flac",
+        result["fencing_token"],
+    )
+    row = await db_pool.fetchrow(
+        "SELECT failure_count FROM feeds WHERE id = $1",
+        feed_id,
+    )
+    assert row["failure_count"] == 0
 
 
 # -- Tests: renew_heartbeats_batch_diagnostic --------------------------

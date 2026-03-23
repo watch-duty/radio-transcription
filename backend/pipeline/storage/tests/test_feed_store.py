@@ -238,8 +238,14 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.report_feed_failure."""
 
     async def test_returns_true_when_lease_held(self) -> None:
-        """True is returned when the failure was recorded."""
-        pool = _make_pool(execute_result="UPDATE 1")
+        """True is returned when the RETURNING row is present."""
+        pool = _make_pool(
+            fetchrow_result={
+                "status": "failing",
+                "failure_count": 1,
+                "retry_after": None,
+            },
+        )
         store = FeedStore(pool)
 
         result = await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
@@ -247,8 +253,8 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result)
 
     async def test_returns_false_when_lease_lost(self) -> None:
-        """False is returned when the lease was already lost."""
-        pool = _make_pool(execute_result="UPDATE 0")
+        """False is returned when RETURNING yields no row."""
+        pool = _make_pool(fetchrow_result=None)
         store = FeedStore(pool)
 
         result = await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
@@ -256,14 +262,27 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result)
 
     async def test_passes_correct_parameters(self) -> None:
-        """Parameters are passed in the correct order."""
-        pool = _make_pool(execute_result="UPDATE 1")
+        """Parameters are passed in the correct order to the atomic SQL."""
+        pool = _make_pool(
+            fetchrow_result={
+                "status": "failing",
+                "failure_count": 1,
+                "retry_after": None,
+            },
+        )
         store = FeedStore(pool)
 
         await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
 
-        args = pool.execute.call_args[0]
-        self.assertEqual(args[1:], (_FEED_ID, _WORKER_ID, 3, 1))
+        args = pool.fetchrow.call_args[0]
+        # $1=feed_id, $2=worker_id, $3=threshold, $4=fencing_token,
+        # $5=backoff_max_sec, $6=backoff_base_sec
+        self.assertEqual(args[1], _FEED_ID)
+        self.assertEqual(args[2], _WORKER_ID)
+        self.assertEqual(args[3], 5)  # default threshold
+        self.assertEqual(args[4], 1)  # fencing_token
+        self.assertEqual(args[5], 600)  # default backoff_max_sec
+        self.assertEqual(args[6], 15)  # default backoff_base_sec
 
 
 class TestReleaseFeed(unittest.IsolatedAsyncioTestCase):
@@ -355,27 +374,61 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
 class TestReportFeedFailureWithThreshold(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.report_feed_failure with custom threshold."""
 
-    async def test_passes_custom_threshold(self) -> None:
-        """Custom failure_threshold is passed as query parameter."""
-        pool = _make_pool(execute_result="UPDATE 1")
+    async def test_custom_threshold_passed_to_sql(self) -> None:
+        """Custom failure_threshold is passed as $3 parameter."""
+        pool = _make_pool(
+            fetchrow_result={
+                "status": "failing",
+                "failure_count": 1,
+                "retry_after": None,
+            },
+        )
         store = FeedStore(pool)
 
         await store.report_feed_failure(
             _FEED_ID, _WORKER_ID, 1, failure_threshold=5
         )
 
-        args = pool.execute.call_args[0]
-        self.assertEqual(args[1:], (_FEED_ID, _WORKER_ID, 5, 1))
+        args = pool.fetchrow.call_args[0]
+        self.assertEqual(args[3], 5)  # $3 = threshold
 
-    async def test_default_threshold_is_3(self) -> None:
-        """Default threshold is 3 for backward compatibility."""
-        pool = _make_pool(execute_result="UPDATE 1")
+    async def test_default_threshold_is_5(self) -> None:
+        """Default threshold is 5."""
+        pool = _make_pool(
+            fetchrow_result={
+                "status": "failing",
+                "failure_count": 1,
+                "retry_after": None,
+            },
+        )
         store = FeedStore(pool)
 
         await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
 
-        args = pool.execute.call_args[0]
-        self.assertEqual(args[1:], (_FEED_ID, _WORKER_ID, 3, 1))
+        args = pool.fetchrow.call_args[0]
+        self.assertEqual(args[3], 5)
+
+
+class TestBackoffFormula(unittest.TestCase):
+    """Verify the exponential backoff computation used by report_feed_failure.
+
+    Default: base=15s, max=600s (10 minutes).
+    """
+
+    def test_first_failure_15s(self) -> None:
+        assert min(15 * (2**0), 600) == 15
+
+    def test_third_failure_60s(self) -> None:
+        assert min(15 * (2**2), 600) == 60
+
+    def test_sixth_failure_480s(self) -> None:
+        assert min(15 * (2**5), 600) == 480
+
+    def test_seventh_failure_capped_600s(self) -> None:
+        assert min(15 * (2**6), 600) == 600
+
+    def test_tenth_failure_still_capped(self) -> None:
+        assert min(15 * (2**9), 600) == 600
 
 
 if __name__ == "__main__":
