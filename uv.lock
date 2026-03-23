@@ -1350,6 +1350,7 @@ dependencies = [
     { name = "scipy" },
     { name = "soundfile" },
     { name = "uvicorn" },
+    { name = "urllib3" },
 ]
 
 [package.dev-dependencies]
@@ -1391,6 +1392,7 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.11.0" },
     { name = "soundfile", specifier = ">=0.12.1" },
     { name = "uvicorn", specifier = ">=0.27.0" },
+    { name = "urllib3", specifier = ">=2.6.3" },
 ]
 
 [package.metadata.requires-dev]
