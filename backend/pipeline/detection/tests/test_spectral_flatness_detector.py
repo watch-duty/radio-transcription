@@ -134,7 +134,9 @@ class TestDetectCoreBehavior(unittest.TestCase):
     """detect() correctly distinguishes tonal (speech-like) from noise."""
 
     def setUp(self) -> None:
-        self.detector = SpectralFlatnessDetector(threshold=0.4, hangover_frames=0)
+        self.detector = SpectralFlatnessDetector(
+            threshold=0.4, hangover_frames=0
+        )
         self.sr = 16_000
 
     def _make_sine(self, freq_hz: float, duration_sec: float) -> np.ndarray:
@@ -145,7 +147,8 @@ class TestDetectCoreBehavior(unittest.TestCase):
     def _make_noise(self, duration_sec: float, *, seed: int = 42) -> np.ndarray:
         rng = np.random.default_rng(seed)
         audio = (
-            rng.standard_normal(int(self.sr * duration_sec)).astype(np.float32) * 0.1
+            rng.standard_normal(int(self.sr * duration_sec)).astype(np.float32)
+            * 0.1
         )
         return (audio * 32767).astype(np.int16)
 
@@ -153,13 +156,17 @@ class TestDetectCoreBehavior(unittest.TestCase):
         samples = self._make_sine(1000.0, 2.0)
         result = self.detector.detect(samples)
         self.assertGreater(len(result.speech_regions), 0)
-        total_speech = sum(r.end_sec - r.start_sec for r in result.speech_regions)
+        total_speech = sum(
+            r.end_sec - r.start_sec for r in result.speech_regions
+        )
         self.assertGreater(total_speech, 1.5)
 
     def test_white_noise_not_detected_as_speech(self) -> None:
         samples = self._make_noise(2.0)
         result = self.detector.detect(samples)
-        total_speech = sum(r.end_sec - r.start_sec for r in result.speech_regions)
+        total_speech = sum(
+            r.end_sec - r.start_sec for r in result.speech_regions
+        )
         self.assertLess(total_speech, 0.5)
 
     def test_tone_then_noise_produces_region_in_tone_part(self) -> None:
@@ -198,7 +205,8 @@ class TestHangoverSmoothing(unittest.TestCase):
     def _make_noise(self, duration_sec: float, *, seed: int = 42) -> np.ndarray:
         rng = np.random.default_rng(seed)
         audio = (
-            rng.standard_normal(int(self.sr * duration_sec)).astype(np.float32) * 0.1
+            rng.standard_normal(int(self.sr * duration_sec)).astype(np.float32)
+            * 0.1
         )
         return (audio * 32767).astype(np.int16)
 
@@ -216,10 +224,12 @@ class TestHangoverSmoothing(unittest.TestCase):
         det_yes = SpectralFlatnessDetector(hangover_frames=10)
         samples = self._make_sine(1000.0, 2.0)
         total_no = sum(
-            r.end_sec - r.start_sec for r in det_no.detect(samples).speech_regions
+            r.end_sec - r.start_sec
+            for r in det_no.detect(samples).speech_regions
         )
         total_yes = sum(
-            r.end_sec - r.start_sec for r in det_yes.detect(samples).speech_regions
+            r.end_sec - r.start_sec
+            for r in det_yes.detect(samples).speech_regions
         )
         self.assertGreaterEqual(total_yes, total_no)
 
@@ -247,7 +257,9 @@ class TestFactoryRegistration(unittest.TestCase):
         )
 
     def test_create_ensemble_instantiates(self) -> None:
-        config = {"detectors": [{"type": "spectral_flatness", "threshold": 0.5}]}
+        config = {
+            "detectors": [{"type": "spectral_flatness", "threshold": 0.5}]
+        }
         detectors, _ = DetectorFactory.create_ensemble(config)
         self.assertEqual(len(detectors), 1)
         self.assertIsInstance(detectors[0], SpectralFlatnessDetector)

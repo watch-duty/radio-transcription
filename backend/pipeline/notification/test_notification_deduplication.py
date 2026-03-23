@@ -1,6 +1,8 @@
 from unittest import TestCase, main, mock
 
-from backend.pipeline.common.storage.mock_cache_provider import MockCacheProvider
+from backend.pipeline.common.storage.mock_cache_provider import (
+    MockCacheProvider,
+)
 from backend.pipeline.notification.notification_deduplication import (
     NotificationDeduplication,
 )
@@ -12,7 +14,9 @@ class TestNotificationDeduplication(TestCase):
         cache_provider = MockCacheProvider()
         notification_deduplication = NotificationDeduplication(cache_provider)
         self.assertTrue(notification_deduplication.process_notification("1234"))
-        self.assertFalse(notification_deduplication.process_notification("1234"))
+        self.assertFalse(
+            notification_deduplication.process_notification("1234")
+        )
 
     @mock.patch("time.time", return_value=12345)
     def test_no_duplicate(self, mock_time: mock.Mock) -> None:

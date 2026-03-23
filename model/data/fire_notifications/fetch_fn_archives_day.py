@@ -64,7 +64,8 @@ def list_archive_urls_for_stream(path: str, date_dir: str) -> list[FNFile]:
     stream_dir_results = list_fn_dir(path)
     if not any(d.endswith(ARCHIVE_DIR_NAME) for d in stream_dir_results.dirs):
         print(
-            f"WARNING: no {ARCHIVE_DIR_NAME}/ dir in {path}. skipping.", file=sys.stderr
+            f"WARNING: no {ARCHIVE_DIR_NAME}/ dir in {path}. skipping.",
+            file=sys.stderr,
         )
 
     date_dir_results = list_fn_dir(f"{path}/{ARCHIVE_DIR_NAME}/{date_dir}")
@@ -107,7 +108,9 @@ def main() -> None:
 
             result = future.result()
             found += len(result)
-            all_files.extend([f for f in result if f.size_bytes > args.min_size])
+            all_files.extend(
+                [f for f in result if f.size_bytes > args.min_size]
+            )
 
     print(
         f"Scan complete: {found} files, {len(all_files)} matching criteria",

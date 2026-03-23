@@ -198,10 +198,6 @@ known-first-party = ["backend", "local_dev"]
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
-[tool.ty]
-target-version = "py313"
-check-untyped-defs = true
-
 [tool.ty.src]
 exclude = ["model/"]
 

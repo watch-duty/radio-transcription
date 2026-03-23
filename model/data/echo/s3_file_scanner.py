@@ -90,7 +90,9 @@ def generate_s3_paths(entries, start_date, end_date):
                 hour_str = f"{hour:02d}"
                 filename = f"{filename_prefix}_{date_str}_{hour_str}.mp3"
                 s3_key = f"{device_name}/{date_str}/{filename}"
-                full_path = f"https://{BUCKET_NAME}.s3.us-east-1.amazonaws.com/{s3_key}"
+                full_path = (
+                    f"https://{BUCKET_NAME}.s3.us-east-1.amazonaws.com/{s3_key}"
+                )
                 paths.append((full_path, s3_key))
 
         current_date += timedelta(days=1)
@@ -164,7 +166,9 @@ def main() -> None:
             except Exception as e:
                 print(f"Error checking {s3_key}: {e}", file=sys.stderr)
 
-    print(f"Scan complete: {found} files found matching criteria", file=sys.stderr)
+    print(
+        f"Scan complete: {found} files found matching criteria", file=sys.stderr
+    )
 
     # Sort results by path for consistent output
     results.sort(key=lambda x: x[0])

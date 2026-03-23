@@ -19,4 +19,6 @@ class NotificationDeduplication:
         Sets the value to current time. Value is optional, but using the time can help with debugging.
         """
         now = str(time.time())
-        return self.cache.set_if_not_exists(notification_id, now, TTL_IN_SECONDS)
+        return self.cache.set_if_not_exists(
+            notification_id, now, TTL_IN_SECONDS
+        )

@@ -84,7 +84,9 @@ class TestCreateEnsemble(unittest.TestCase):
         self.assertIsInstance(combiner, SoundEventSignalCombiner)
 
     def test_kwargs_forwarded(self) -> None:
-        config = {"detectors": [{"type": "fake", "threshold": 0.4, "mode": "fast"}]}
+        config = {
+            "detectors": [{"type": "fake", "threshold": 0.4, "mode": "fast"}]
+        }
         detectors, _ = DetectorFactory.create_ensemble(config)
         detector = detectors[0]
         assert isinstance(detector, _FakeDetector)

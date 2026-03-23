@@ -64,7 +64,9 @@ class TestRulesAPI(unittest.TestCase):
         self.assertEqual(response.status_code, 201)
         data = response.json()
         self.assertEqual(data["rule_name"], "Evacuation Order Mention")
-        self.assertEqual(data["conditions"]["expression"], "evacuation (order|warning)")
+        self.assertEqual(
+            data["conditions"]["expression"], "evacuation (order|warning)"
+        )
 
     def test_get_rule(self) -> None:
         """Test retrieving a single, specific rule by its ID."""
@@ -72,7 +74,10 @@ class TestRulesAPI(unittest.TestCase):
         payload = {
             "rule_name": "Test Rule for Get",
             "scope": {"level": "GLOBAL"},
-            "conditions": {"evaluation_type": "KEYWORD_MATCH", "keywords": ["test"]},
+            "conditions": {
+                "evaluation_type": "KEYWORD_MATCH",
+                "keywords": ["test"],
+            },
         }
         create_response = self.client.post("/v1/rules", json=payload)
         rule_id = create_response.json()["rule_id"]
@@ -92,7 +97,10 @@ class TestRulesAPI(unittest.TestCase):
             json={
                 "rule_name": "List Test",
                 "scope": {"level": "GLOBAL"},
-                "conditions": {"evaluation_type": "KEYWORD_MATCH", "keywords": ["a"]},
+                "conditions": {
+                    "evaluation_type": "KEYWORD_MATCH",
+                    "keywords": ["a"],
+                },
             },
         )
 

@@ -8,7 +8,10 @@ from unittest.mock import MagicMock, patch
 
 import apache_beam as beam
 from apache_beam.io.gcp.pubsub import PubsubMessage
-from apache_beam.options.pipeline_options import PipelineOptions, StandardOptions
+from apache_beam.options.pipeline_options import (
+    PipelineOptions,
+    StandardOptions,
+)
 from apache_beam.testing.test_pipeline import TestPipeline as BeamTestPipeline
 from apache_beam.testing.test_stream import TestStream as BeamTestStream
 from apache_beam.testing.util import assert_that, equal_to
@@ -26,7 +29,10 @@ from backend.pipeline.transcription.datatypes import (
     TranscribeAudioConfig,
 )
 from backend.pipeline.transcription.enums import TranscriberType, VadType
-from backend.pipeline.transcription.stitcher import StitchAudioFn, TranscribeAudioFn
+from backend.pipeline.transcription.stitcher import (
+    StitchAudioFn,
+    TranscribeAudioFn,
+)
 from backend.pipeline.transcription.transcribers import Transcriber
 from backend.pipeline.transcription.transforms import (
     AddEventTimestamp,
@@ -36,13 +42,18 @@ from backend.pipeline.transcription.transforms import (
 
 
 class MockTranscriberFactory:
-    def __init__(self, transcript: str, *, raise_exception: bool = False) -> None:
+    def __init__(
+        self, transcript: str, *, raise_exception: bool = False
+    ) -> None:
 
         self.transcript = transcript
         self.raise_exception = raise_exception
 
     def __call__(
-        self, transcriber_type: TranscriberType, project_id: str, config_json: str
+        self,
+        transcriber_type: TranscriberType,
+        project_id: str,
+        config_json: str,
     ) -> Transcriber:
 
         mock = MagicMock()
@@ -132,10 +143,14 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             def assert_dlq(elements: list[dict[str, Any]]) -> None:
 
                 assert len(elements) == 1
-                assert "Missing required payload attribute" in elements[0]["error"]
+                assert (
+                    "Missing required payload attribute" in elements[0]["error"]
+                )
 
             assert_that(parsed.main, equal_to([]), label="CheckEmptyMain")
-            assert_that(parsed[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ")
+            assert_that(
+                parsed[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ"
+            )
 
 
 class AddEventTimestampTest(unittest.TestCase):
@@ -192,7 +207,10 @@ class OrderRestorerTest(unittest.TestCase):
                         (
                             beam.coders.StrUtf8Coder(),
                             beam.coders.TupleCoder(
-                                (beam.coders.StrUtf8Coder(), beam.coders.StrUtf8Coder())
+                                (
+                                    beam.coders.StrUtf8Coder(),
+                                    beam.coders.StrUtf8Coder(),
+                                )
                             ),
                         )
                     )
@@ -201,7 +219,8 @@ class OrderRestorerTest(unittest.TestCase):
                 .add_elements(
                     [
                         TimestampedValue(
-                            ("feed-1", ("gs://b/100-uuid1.flac", "session-A")), 100
+                            ("feed-1", ("gs://b/100-uuid1.flac", "session-A")),
+                            100,
                         )
                     ]
                 )
@@ -209,7 +228,8 @@ class OrderRestorerTest(unittest.TestCase):
                 .add_elements(
                     [
                         TimestampedValue(
-                            ("feed-1", ("gs://b/130-uuid3.flac", "session-A")), 130
+                            ("feed-1", ("gs://b/130-uuid3.flac", "session-A")),
+                            130,
                         )
                     ]
                 )
@@ -217,7 +237,8 @@ class OrderRestorerTest(unittest.TestCase):
                 .add_elements(
                     [
                         TimestampedValue(
-                            ("feed-1", ("gs://b/115-uuid2.flac", "session-A")), 115
+                            ("feed-1", ("gs://b/115-uuid2.flac", "session-A")),
+                            115,
                         )
                     ]
                 )
@@ -248,7 +269,10 @@ class OrderRestorerTest(unittest.TestCase):
                         (
                             beam.coders.StrUtf8Coder(),
                             beam.coders.TupleCoder(
-                                (beam.coders.StrUtf8Coder(), beam.coders.StrUtf8Coder())
+                                (
+                                    beam.coders.StrUtf8Coder(),
+                                    beam.coders.StrUtf8Coder(),
+                                )
                             ),
                         )
                     )
@@ -257,7 +281,11 @@ class OrderRestorerTest(unittest.TestCase):
                 .add_elements(
                     [
                         TimestampedValue(
-                            ("feed-1", ("gs://b/100-11111111.flac", "session-A")), 100
+                            (
+                                "feed-1",
+                                ("gs://b/100-11111111.flac", "session-A"),
+                            ),
+                            100,
                         )
                     ]
                 )
@@ -265,7 +293,11 @@ class OrderRestorerTest(unittest.TestCase):
                 .add_elements(
                     [
                         TimestampedValue(
-                            ("feed-1", ("gs://b/130-33333333.flac", "session-A")), 130
+                            (
+                                "feed-1",
+                                ("gs://b/130-33333333.flac", "session-A"),
+                            ),
+                            130,
                         )
                     ]
                 )
@@ -275,7 +307,11 @@ class OrderRestorerTest(unittest.TestCase):
                 .add_elements(
                     [
                         TimestampedValue(
-                            ("feed-1", ("gs://b/115-22222222.flac", "session-A")), 115
+                            (
+                                "feed-1",
+                                ("gs://b/115-22222222.flac", "session-A"),
+                            ),
+                            115,
                         )
                     ]
                 )
@@ -314,7 +350,10 @@ class StitchAudioTest(unittest.TestCase):
 
         sed_map = {
             "100-11111111-1111-1111-1111-111111111111.flac": [(12.5, 15.0)],
-            "115-22222222-2222-2222-2222-222222222222.flac": [(0.0, 2.5), (5.0, 7.0)],
+            "115-22222222-2222-2222-2222-222222222222.flac": [
+                (0.0, 2.5),
+                (5.0, 7.0),
+            ],
             "130-33333333-3333-3333-3333-333333333333.flac": [(0.0, 2.5)],
             "150-44444444-4444-4444-4444-444444444444.flac": [],
             "160-55555555-5555-5555-5555-555555555555.flac": [(0.0, 2.0)],
@@ -324,7 +363,9 @@ class StitchAudioTest(unittest.TestCase):
         def mock_download(path: str) -> AudioChunkData:
 
             filename = path.rsplit("/", maxsplit=1)[-1]
-            chunk_start = float(filename.split("-")[0]) if "-" in filename else 0.0
+            chunk_start = (
+                float(filename.split("-")[0]) if "-" in filename else 0.0
+            )
 
             duration_s = 20.0
             if filename.startswith(("100-", "115-")):
@@ -358,7 +399,10 @@ class StitchAudioTest(unittest.TestCase):
                         (
                             beam.coders.StrUtf8Coder(),
                             beam.coders.TupleCoder(
-                                (beam.coders.StrUtf8Coder(), beam.coders.PickleCoder())
+                                (
+                                    beam.coders.StrUtf8Coder(),
+                                    beam.coders.PickleCoder(),
+                                )
                             ),
                         )
                     )
@@ -491,7 +535,9 @@ class StitchAudioTest(unittest.TestCase):
 
             results[DEAD_LETTER_QUEUE_TAG] | "Print DLQ" >> beam.Map(print_dlq)
 
-            def assert_flush_requests(elements: list[tuple[str, FlushRequest]]) -> None:
+            def assert_flush_requests(
+                elements: list[tuple[str, FlushRequest]],
+            ) -> None:
 
                 assert len(elements) == 3, (
                     f"Expected 3 flush requests, got {len(elements)}: {elements}"
@@ -527,7 +573,9 @@ class StitchAudioTest(unittest.TestCase):
                 assert elements[2][1].missing_prior_context is True
 
             assert_that(
-                results.main, assert_flush_requests, label="CheckMainFlushRequests"
+                results.main,
+                assert_flush_requests,
+                label="CheckMainFlushRequests",
             )
 
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
@@ -549,7 +597,9 @@ class StitchAudioTest(unittest.TestCase):
         def mock_download(path: str) -> AudioChunkData:
 
             filename = path.rsplit("/", maxsplit=1)[-1]
-            chunk_start = float(filename.split("-")[0]) if "-" in filename else 0.0
+            chunk_start = (
+                float(filename.split("-")[0]) if "-" in filename else 0.0
+            )
             return AudioChunkData(
                 start_ms=int(chunk_start * 1000),
                 audio=AudioSegment.silent(duration=15000),
@@ -572,7 +622,10 @@ class StitchAudioTest(unittest.TestCase):
                         (
                             beam.coders.StrUtf8Coder(),
                             beam.coders.TupleCoder(
-                                (beam.coders.StrUtf8Coder(), beam.coders.PickleCoder())
+                                (
+                                    beam.coders.StrUtf8Coder(),
+                                    beam.coders.PickleCoder(),
+                                )
                             ),
                         )
                     )
@@ -639,7 +692,9 @@ class StitchAudioTest(unittest.TestCase):
                 )
             )
 
-            def assert_flush_requests(elements: list[tuple[str, FlushRequest]]) -> None:
+            def assert_flush_requests(
+                elements: list[tuple[str, FlushRequest]],
+            ) -> None:
 
                 assert len(elements) == 2, (
                     f"Expected 2 flush requests (Chunk 3 remains buffered due to skipped timer), got {len(elements)}"
@@ -661,7 +716,9 @@ class StitchAudioTest(unittest.TestCase):
                 assert elements[1][1].missing_post_context is True
 
             assert_that(
-                results.main, assert_flush_requests, label="CheckLateChunkRequests"
+                results.main,
+                assert_flush_requests,
+                label="CheckLateChunkRequests",
             )
 
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
@@ -684,7 +741,9 @@ class StitchAudioTest(unittest.TestCase):
         def mock_download(path: str) -> AudioChunkData:
 
             filename = path.rsplit("/", maxsplit=1)[-1]
-            chunk_start = float(filename.split("-")[0]) if "-" in filename else 0.0
+            chunk_start = (
+                float(filename.split("-")[0]) if "-" in filename else 0.0
+            )
             return AudioChunkData(
                 start_ms=int(chunk_start * 1000),
                 audio=AudioSegment.silent(duration=15000),
@@ -712,7 +771,10 @@ class StitchAudioTest(unittest.TestCase):
                         (
                             beam.coders.StrUtf8Coder(),
                             beam.coders.TupleCoder(
-                                (beam.coders.StrUtf8Coder(), beam.coders.PickleCoder())
+                                (
+                                    beam.coders.StrUtf8Coder(),
+                                    beam.coders.PickleCoder(),
+                                )
                             ),
                         )
                     )
@@ -798,7 +860,9 @@ class StitchAudioTest(unittest.TestCase):
                 ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
             )
 
-            def assert_flush_requests(elements: list[tuple[str, FlushRequest]]) -> None:
+            def assert_flush_requests(
+                elements: list[tuple[str, FlushRequest]],
+            ) -> None:
 
                 assert len(elements) == 2, (
                     f"Expected 2 flush requests, got {len(elements)}: {elements}"
@@ -829,7 +893,9 @@ class StitchAudioTest(unittest.TestCase):
                 label="CheckMaxDurationFlushRequests",
             )
 
-    @unittest.skip("DirectRunner timer advancing is buggy and unsupported natively.")
+    @unittest.skip(
+        "DirectRunner timer advancing is buggy and unsupported natively."
+    )
     @patch("backend.pipeline.transcription.stitcher.time")
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
     def test_stale_transmission_timer(
@@ -862,7 +928,10 @@ class StitchAudioTest(unittest.TestCase):
                         (
                             beam.coders.StrUtf8Coder(),
                             beam.coders.TupleCoder(
-                                (beam.coders.StrUtf8Coder(), beam.coders.PickleCoder())
+                                (
+                                    beam.coders.StrUtf8Coder(),
+                                    beam.coders.PickleCoder(),
+                                )
                             ),
                         )
                     )
@@ -896,9 +965,13 @@ class StitchAudioTest(unittest.TestCase):
                 ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
             )
 
-            def assert_stale_match(elements: list[tuple[str, FlushRequest]]) -> None:
+            def assert_stale_match(
+                elements: list[tuple[str, FlushRequest]],
+            ) -> None:
 
-                assert len(elements) == 1, f"Expected 1 element, got {len(elements)}"
+                assert len(elements) == 1, (
+                    f"Expected 1 element, got {len(elements)}"
+                )
                 _, res = elements[0]
                 assert res.feed_id == "feed-123"
                 assert any(
@@ -961,7 +1034,9 @@ class TranscribeAudioTest(unittest.TestCase):
                             feed_id="feed-123",
                             buffer=AudioSegment.silent(duration=500),
                             contributing_audio_uris=["gs://f/11111111.flac"],
-                            time_range=TimeRange(start_ms=101000, end_ms=101500),
+                            time_range=TimeRange(
+                                start_ms=101000, end_ms=101500
+                            ),
                         ),
                     )
                 ]
@@ -980,13 +1055,19 @@ class TranscribeAudioTest(unittest.TestCase):
                 assert "Transcription API outage!" in elements[0]["error"]
 
             assert_that(results.main, equal_to([]), label="CheckEmptyMain")
-            assert_that(results[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ")
+            assert_that(
+                results[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ"
+            )
 
-    @unittest.skip("DirectRunner background execution validation is unreliable.")
+    @unittest.skip(
+        "DirectRunner background execution validation is unreliable."
+    )
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
     @patch("backend.pipeline.transcription.stitcher.get_transcriber")
     def test_concurrent_transcription_execution(
-        self, mock_transcriber_factory: MagicMock, mock_audio_processor: MagicMock
+        self,
+        mock_transcriber_factory: MagicMock,
+        mock_audio_processor: MagicMock,
     ) -> None:
         """Verifies that the concurrent orchestrator splits individual grouped task lists into multi-threaded parallel transcription operations smoothly."""
         execution_threads = set()
@@ -1019,9 +1100,13 @@ class TranscribeAudioTest(unittest.TestCase):
         def mock_download(path: str) -> AudioChunkData:
 
             filename = path.rsplit("/", maxsplit=1)[-1]
-            chunk_start = float(filename.split("-")[0]) if "-" in filename else 0.0
+            chunk_start = (
+                float(filename.split("-")[0]) if "-" in filename else 0.0
+            )
             return AudioChunkData(
-                start_ms=int(chunk_start * 100000),  # 100s apart to force flushes
+                start_ms=int(
+                    chunk_start * 100000
+                ),  # 100s apart to force flushes
                 audio=AudioSegment.silent(duration=1000),
                 speech_segments=[TimeRange(0, 1000)],
                 gcs_uri=path,

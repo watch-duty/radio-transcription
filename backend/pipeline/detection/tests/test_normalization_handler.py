@@ -30,7 +30,9 @@ with (
     mock.patch.dict(os.environ, {"LOCAL_DEV": "1"}),
 ):
     from backend.pipeline.detection import normalization_handler
-    from backend.pipeline.detection.normalization_handler import normalize as _wrapped
+    from backend.pipeline.detection.normalization_handler import (
+        normalize as _wrapped,
+    )
 
 # The aio.cloud_event decorator wraps the async function; unwrap it
 # so tests can await the original coroutine directly.
@@ -43,7 +45,9 @@ _CE_ATTRS = {
 
 _DOWNLOAD = "backend.pipeline.detection.normalization_handler.download_audio"
 _UPLOAD = "backend.pipeline.detection.normalization_handler.upload_audio"
-_PUBLISH = "backend.pipeline.detection.normalization_handler.publish_audio_chunk"
+_PUBLISH = (
+    "backend.pipeline.detection.normalization_handler.publish_audio_chunk"
+)
 
 
 def _make_cloud_event(
@@ -113,7 +117,9 @@ class TestNormalize(unittest.IsolatedAsyncioTestCase):
             await normalize(_make_cloud_event())
 
     @mock.patch(_DOWNLOAD, new_callable=mock.AsyncMock)
-    async def test_flac_decode_failure_returns_normally(self, mock_download) -> None:
+    async def test_flac_decode_failure_returns_normally(
+        self, mock_download
+    ) -> None:
         mock_download.return_value = b"flac-bytes"
 
         with mock.patch.object(
@@ -126,7 +132,9 @@ class TestNormalize(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result)
 
     @mock.patch(_DOWNLOAD, new_callable=mock.AsyncMock)
-    async def test_wrong_sample_rate_returns_normally(self, mock_download) -> None:
+    async def test_wrong_sample_rate_returns_normally(
+        self, mock_download
+    ) -> None:
         mock_download.return_value = b"flac-bytes"
 
         with mock.patch.object(
@@ -150,7 +158,9 @@ class TestNormalize(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         mock_download.return_value = b"flac-bytes"
 
-        with mock.patch.dict(os.environ, {"INGESTION_CANONICAL_BUCKET": "canonical"}):
+        with mock.patch.dict(
+            os.environ, {"INGESTION_CANONICAL_BUCKET": "canonical"}
+        ):
             result = await normalize(_make_cloud_event())
 
         self.assertIsNone(result)
@@ -173,7 +183,9 @@ class TestNormalize(unittest.IsolatedAsyncioTestCase):
         mock_download.return_value = b"flac-bytes"
 
         with (
-            mock.patch.dict(os.environ, {"INGESTION_CANONICAL_BUCKET": "canonical"}),
+            mock.patch.dict(
+                os.environ, {"INGESTION_CANONICAL_BUCKET": "canonical"}
+            ),
             self.assertRaises(Exception, msg="Upload failed"),
         ):
             await normalize(_make_cloud_event())
@@ -188,7 +200,12 @@ class TestNormalize(unittest.IsolatedAsyncioTestCase):
     )
     @mock.patch(_DOWNLOAD, new_callable=mock.AsyncMock)
     async def test_speech_detected_publishes_to_transcription(
-        self, mock_download, mock_decode, mock_executor, mock_upload, mock_publish
+        self,
+        mock_download,
+        mock_decode,
+        mock_executor,
+        mock_upload,
+        mock_publish,
     ) -> None:
         mock_download.return_value = b"flac-bytes"
         mock_executor.run.return_value = _speech_combined()
@@ -214,7 +231,12 @@ class TestNormalize(unittest.IsolatedAsyncioTestCase):
     )
     @mock.patch(_DOWNLOAD, new_callable=mock.AsyncMock)
     async def test_publish_forwards_original_capture_timestamp(
-        self, mock_download, mock_decode, mock_executor, mock_upload, mock_publish
+        self,
+        mock_download,
+        mock_decode,
+        mock_executor,
+        mock_upload,
+        mock_publish,
     ) -> None:
         mock_download.return_value = b"flac-bytes"
         mock_executor.run.return_value = _speech_combined()
@@ -232,7 +254,9 @@ class TestNormalize(unittest.IsolatedAsyncioTestCase):
 
         mock_publish.assert_called_once()
         call_kwargs = mock_publish.call_args
-        self.assertEqual(call_kwargs.kwargs.get("start_timestamp"), capture_time)
+        self.assertEqual(
+            call_kwargs.kwargs.get("start_timestamp"), capture_time
+        )
 
     @mock.patch(
         _PUBLISH,
@@ -248,7 +272,12 @@ class TestNormalize(unittest.IsolatedAsyncioTestCase):
     )
     @mock.patch(_DOWNLOAD, new_callable=mock.AsyncMock)
     async def test_publish_failure_still_returns_normally(
-        self, mock_download, mock_decode, mock_executor, mock_upload, mock_publish
+        self,
+        mock_download,
+        mock_decode,
+        mock_executor,
+        mock_upload,
+        mock_publish,
     ) -> None:
         mock_download.return_value = b"flac-bytes"
         mock_executor.run.return_value = _speech_combined()
@@ -269,7 +298,9 @@ class TestDecodeFlac(unittest.IsolatedAsyncioTestCase):
     """Test _decode_flac handles various FLAC formats including streaming."""
 
     @classmethod
-    def _make_streaming_flac(cls, samples: np.ndarray, sample_rate: int) -> bytes:
+    def _make_streaming_flac(
+        cls, samples: np.ndarray, sample_rate: int
+    ) -> bytes:
         """Create a streaming FLAC (total_samples=0) using ffmpeg.
 
         Mimics what the icecast collector produces: pipe raw PCM through
@@ -311,7 +342,9 @@ class TestDecodeFlac(unittest.IsolatedAsyncioTestCase):
 
         This test would have caught the original libsndfile bug during CI.
         """
-        original = np.sin(np.arange(16000, dtype=np.float32) / 16000 * 2 * np.pi * 440)
+        original = np.sin(
+            np.arange(16000, dtype=np.float32) / 16000 * 2 * np.pi * 440
+        )
         original_int16 = (original * 32767).astype(np.int16)
         flac_bytes = self._make_streaming_flac(original_int16, 16000)
         samples, sr = await normalization_handler._decode_flac(flac_bytes)
@@ -322,7 +355,8 @@ class TestDecodeFlac(unittest.IsolatedAsyncioTestCase):
     async def test_decode_valid_flac(self) -> None:
         """Verify _decode_flac works with standard FLAC (soundfile-produced)."""
         original = (
-            np.sin(np.arange(16000, dtype=np.float32) / 16000 * 2 * np.pi * 440) * 32767
+            np.sin(np.arange(16000, dtype=np.float32) / 16000 * 2 * np.pi * 440)
+            * 32767
         ).astype(np.int16)
         buf = io.BytesIO()
         sf.write(buf, original, 16000, format="FLAC", subtype="PCM_16")

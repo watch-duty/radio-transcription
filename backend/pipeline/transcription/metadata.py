@@ -40,9 +40,7 @@ def read_sed_segments_from_blob(
     sed_metadata.ParseFromString(metadata_bytes)
 
     if not sed_metadata.HasField("start_timestamp"):
-        err_msg = (
-            f"SED metadata missing required 'start_timestamp' on blob: {blob.name}"
-        )
+        err_msg = f"SED metadata missing required 'start_timestamp' on blob: {blob.name}"
         logger.error(err_msg)
         raise ValueError(err_msg)
 
@@ -58,9 +56,7 @@ def read_sed_segments_from_blob(
             logger.error(err_msg)
             raise ValueError(err_msg)
         if not seg.HasField("duration"):
-            err_msg = (
-                f"SED metadata sound event {i} missing 'duration' on blob: {blob.name}"
-            )
+            err_msg = f"SED metadata sound event {i} missing 'duration' on blob: {blob.name}"
             logger.error(err_msg)
             raise ValueError(err_msg)
 
@@ -69,8 +65,11 @@ def read_sed_segments_from_blob(
             + seg.start_time.nanos // NANOS_PER_MS
         )
         duration_ms = (
-            seg.duration.seconds * MS_PER_SECOND + seg.duration.nanos // NANOS_PER_MS
+            seg.duration.seconds * MS_PER_SECOND
+            + seg.duration.nanos // NANOS_PER_MS
         )
-        segments.append(TimeRange(start_ms=start_ms, end_ms=start_ms + duration_ms))
+        segments.append(
+            TimeRange(start_ms=start_ms, end_ms=start_ms + duration_ms)
+        )
 
     return file_start_ms, segments

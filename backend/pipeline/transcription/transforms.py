@@ -119,7 +119,9 @@ class AddEventTimestamp(beam.DoFn):
             return
 
         if not chunk_proto.session_id:
-            msg = f"AudioChunk missing required session_id: {chunk_proto.gcs_uri}"
+            msg = (
+                f"AudioChunk missing required session_id: {chunk_proto.gcs_uri}"
+            )
             yield beam.pvalue.TaggedOutput(
                 DEAD_LETTER_QUEUE_TAG, {"error": msg, "feed_id": feed_id}
             )
@@ -131,7 +133,8 @@ class AddEventTimestamp(beam.DoFn):
         )
 
         yield window.TimestampedValue(
-            (feed_id, (chunk_proto.gcs_uri, chunk_proto.session_id)), timestamp_sec
+            (feed_id, (chunk_proto.gcs_uri, chunk_proto.session_id)),
+            timestamp_sec,
         )
 
 
@@ -148,7 +151,9 @@ class SerializeToPubSubMessageFn(beam.DoFn):
         """Serializes the final domain result into a wire-ready JSON payload."""
         # Create a deterministic UUID using uuid5 so that Beam retries produce the exact same ID
         deterministic_id_string = f"{element.feed_id}_{element.time_range.start_ms}_{element.time_range.end_ms}"
-        deterministic_uuid = uuid.uuid5(uuid.NAMESPACE_OID, deterministic_id_string)
+        deterministic_uuid = uuid.uuid5(
+            uuid.NAMESPACE_OID, deterministic_id_string
+        )
 
         start_offset = None
         if element.start_audio_offset_ms is not None:
@@ -195,7 +200,9 @@ class RestoreOrderFn(beam.DoFn):
     It acts as a thin wrapper around the SequenceBuffer framework-agnostic domain class.
     """
 
-    SESSION_ID_SPEC = ReadModifyWriteStateSpec("session_id", beam.coders.StrUtf8Coder())
+    SESSION_ID_SPEC = ReadModifyWriteStateSpec(
+        "session_id", beam.coders.StrUtf8Coder()
+    )
     SESSION_ID_STATE = beam.DoFn.StateParam(SESSION_ID_SPEC)
 
     OUT_OF_ORDER_BUFFER_SPEC = BagStateSpec(
@@ -217,7 +224,9 @@ class RestoreOrderFn(beam.DoFn):
     # Boolean flag ensuring we only ever have a single active processing-time timer scheduled across the buffer.
     TIMER_ACTIVE_STATE = beam.DoFn.StateParam(TIMER_ACTIVE_SPEC)
 
-    OUT_OF_ORDER_TIMER_SPEC = TimerSpec("out_of_order_timer", TimeDomain.REAL_TIME)
+    OUT_OF_ORDER_TIMER_SPEC = TimerSpec(
+        "out_of_order_timer", TimeDomain.REAL_TIME
+    )
     # A real-time (processing time) timer that acts as a maximum allowed wait period for missing chunks.
     OUT_OF_ORDER_TIMER = beam.DoFn.TimerParam(OUT_OF_ORDER_TIMER_SPEC)
 
@@ -230,7 +239,9 @@ class RestoreOrderFn(beam.DoFn):
         self.gaps_encountered_counter = Metrics.counter(
             self.__class__, "gaps_encountered"
         )
-        self.session_resets_counter = Metrics.counter(self.__class__, "session_resets")
+        self.session_resets_counter = Metrics.counter(
+            self.__class__, "session_resets"
+        )
         self.chunks_dropped_late = Metrics.counter(
             self.__class__, "chunks_dropped_late"
         )
@@ -385,7 +396,7 @@ class DownloadAudioFn(beam.DoFn):
     @override
     def process(
         self, element: tuple[str, str], *args: Any, **kwargs: Any
-    ) -> Generator[tuple[str, tuple[str, Any]] | beam.pvalue.TaggedOutput, None, None]:  # noqa: UP043
+    ) -> Generator[tuple[str, tuple[str, Any]] | beam.pvalue.TaggedOutput]:
         """Downloads the raw audio bytes from GCS and passes them to the acoustic processor."""
         feed_id, gcs_path = element
         if not self.audio_processor:
@@ -396,12 +407,16 @@ class DownloadAudioFn(beam.DoFn):
             chunk_data = self.audio_processor.download_audio_and_sed(gcs_path)
             yield (feed_id, (gcs_path, chunk_data))
         except FileNotFoundError:
-            logger.info("GCS object not found yet. Re-raising to NACK Pub/Sub message.")
+            logger.info(
+                "GCS object not found yet. Re-raising to NACK Pub/Sub message."
+            )
             raise
         except Exception as e:
             if self.config.route_to_dlq:
                 self.dlq_count.inc()
-                logger.exception("Error downloading %s for feed %s", gcs_path, feed_id)
+                logger.exception(
+                    "Error downloading %s for feed %s", gcs_path, feed_id
+                )
                 msg = str(e)
                 yield beam.pvalue.TaggedOutput(
                     DEAD_LETTER_QUEUE_TAG, {"error": msg, "feed_id": feed_id}

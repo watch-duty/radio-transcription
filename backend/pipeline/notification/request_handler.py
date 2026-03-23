@@ -5,10 +5,14 @@ from google.protobuf.json_format import MessageToJson
 from urllib3 import PoolManager, Retry
 from urllib3.exceptions import MaxRetryError
 
-from backend.pipeline.schema_types.alert_notification_pb2 import AlertNotification
+from backend.pipeline.schema_types.alert_notification_pb2 import (
+    AlertNotification,
+)
 
 NOTIFICATION_ENDPOINT = os.environ.get("NOTIFICATION_ENDPOINT", "")
-NOTIFICATION_ENDPOINT_API_KEY = os.environ.get("NOTIFICATION_ENDPOINT_API_KEY", "")
+NOTIFICATION_ENDPOINT_API_KEY = os.environ.get(
+    "NOTIFICATION_ENDPOINT_API_KEY", ""
+)
 
 
 class RequestHandler:

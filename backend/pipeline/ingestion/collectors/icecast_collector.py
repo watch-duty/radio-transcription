@@ -123,17 +123,26 @@ async def capture_icecast_stream(
                 # A segment is considered finalized when either:
                 # - the next segment exists, or
                 # - ffmpeg has exited.
-                if current_segment.exists() and (next_segment.exists() or process_done):
-                    segment_bytes = await asyncio.to_thread(current_segment.read_bytes)
+                if current_segment.exists() and (
+                    next_segment.exists() or process_done
+                ):
+                    segment_bytes = await asyncio.to_thread(
+                        current_segment.read_bytes
+                    )
                     if segment_bytes:
                         # Calculate the start time of this specific chunk's window
-                        chunk_start_time = stream_anchor_time + datetime.timedelta(
-                            seconds=next_index * CHUNK_DURATION_SECONDS
+                        chunk_start_time = (
+                            stream_anchor_time
+                            + datetime.timedelta(
+                                seconds=next_index * CHUNK_DURATION_SECONDS
+                            )
                         )
                         yield segment_bytes, chunk_start_time
 
                         last_activity_time = time.monotonic()
-                    await asyncio.to_thread(current_segment.unlink, missing_ok=True)
+                    await asyncio.to_thread(
+                        current_segment.unlink, missing_ok=True
+                    )
                     next_index += 1
                     continue
 
@@ -148,7 +157,9 @@ async def capture_icecast_stream(
                         )
                         raise RuntimeError(msg)
                     logger.info(
-                        "Feed %s (%s): ffmpeg exited normally", feed_id, feed_name
+                        "Feed %s (%s): ffmpeg exited normally",
+                        feed_id,
+                        feed_name,
                     )
                     return
 
@@ -242,7 +253,10 @@ async def _cleanup_ffmpeg_process(
             await process.wait()
         except Exception as e:
             logger.exception(
-                "Feed %s (%s): Error terminating ffmpeg: %s", feed_id, feed_name, e
+                "Feed %s (%s): Error terminating ffmpeg: %s",
+                feed_id,
+                feed_name,
+                e,
             )
 
 

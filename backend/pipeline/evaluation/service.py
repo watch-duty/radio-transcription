@@ -8,7 +8,9 @@ from backend.pipeline.evaluation.rules_evaluation import evaluator
 from backend.pipeline.schema_types import (
     evaluated_transcribed_audio_pb2 as evaluated_pb2,
 )
-from backend.pipeline.schema_types import transcribed_audio_pb2 as transcribed_pb2
+from backend.pipeline.schema_types import (
+    transcribed_audio_pb2 as transcribed_pb2,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +48,9 @@ class EvaluationService:
         self.output_topic_id = output_topic_id
         self.text_evaluator = text_evaluator
         if project_id and output_topic_id:
-            self.output_topic_path = publisher.topic_path(project_id, output_topic_id)
+            self.output_topic_path = publisher.topic_path(
+                project_id, output_topic_id
+            )
         else:
             logger.warning("OUTPUT_TOPIC or PROJECT_ID env var not set.")
             self.output_topic_path = None
@@ -62,7 +66,9 @@ class EvaluationService:
             # 1. Decode the Incoming Message
             new_audio = self._parse_cloud_event(cloud_event)
             if new_audio is None:
-                logger.warning("Transcribed audio could not be parsed. Skipping.")
+                logger.warning(
+                    "Transcribed audio could not be parsed. Skipping."
+                )
                 return
 
             transmission_id = new_audio.transmission_id
@@ -76,7 +82,9 @@ class EvaluationService:
                 return
 
             # 2. Call the evaluator
-            evaluation_result = self.text_evaluator.evaluate(new_audio.transcript)
+            evaluation_result = self.text_evaluator.evaluate(
+                new_audio.transcript
+            )
 
             logger.info(
                 "Decision for ID: %s is: %s",
@@ -98,12 +106,20 @@ class EvaluationService:
                 transmission_id=new_audio.transmission_id,
                 source_audio_uris=new_audio.source_audio_uris,
                 transcript=new_audio.transcript,
-                evaluation_decisions=evaluation_result.get("triggered_rules", []),
+                evaluation_decisions=evaluation_result.get(
+                    "triggered_rules", []
+                ),
             )
-            evaluated_payload.start_timestamp.CopyFrom(new_audio.start_timestamp)
+            evaluated_payload.start_timestamp.CopyFrom(
+                new_audio.start_timestamp
+            )
             evaluated_payload.end_timestamp.CopyFrom(new_audio.end_timestamp)
-            evaluated_payload.start_audio_offset.CopyFrom(new_audio.start_audio_offset)
-            evaluated_payload.end_audio_offset.CopyFrom(new_audio.end_audio_offset)
+            evaluated_payload.start_audio_offset.CopyFrom(
+                new_audio.start_audio_offset
+            )
+            evaluated_payload.end_audio_offset.CopyFrom(
+                new_audio.end_audio_offset
+            )
 
             # 5. Publish to Downstream Topic
             self._publish_evaluation_result(evaluated_payload)

@@ -10,7 +10,9 @@ class TestGcsClient(unittest.IsolatedAsyncioTestCase):
     """Tests for lazy init and cleanup behavior of GcsClient."""
 
     @mock.patch("backend.pipeline.common.clients.gcs_client.Storage")
-    @mock.patch("backend.pipeline.common.clients.gcs_client.aiohttp.ClientSession")
+    @mock.patch(
+        "backend.pipeline.common.clients.gcs_client.aiohttp.ClientSession"
+    )
     async def test_get_storage_is_lazy_and_reused(
         self,
         mock_client_session: mock.MagicMock,
@@ -33,7 +35,9 @@ class TestGcsClient(unittest.IsolatedAsyncioTestCase):
         mock_storage_cls.assert_called_once_with(session=mock_session)
 
     @mock.patch("backend.pipeline.common.clients.gcs_client.Storage")
-    @mock.patch("backend.pipeline.common.clients.gcs_client.aiohttp.ClientSession")
+    @mock.patch(
+        "backend.pipeline.common.clients.gcs_client.aiohttp.ClientSession"
+    )
     async def test_close_closes_storage_and_session(
         self,
         mock_client_session: mock.MagicMock,

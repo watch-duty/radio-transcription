@@ -67,7 +67,9 @@ class TestSidecarBuilder(unittest.TestCase):
     def test_build_fractional_seconds_precision(self) -> None:
         combined = CombinedResult(
             speech_regions=(
-                SpeechRegion(start_sec=0.123, end_sec=0.456, detector_type="test"),
+                SpeechRegion(
+                    start_sec=0.123, end_sec=0.456, detector_type="test"
+                ),
             ),
         )
         sidecar = SidecarBuilder.build(combined)
@@ -78,7 +80,9 @@ class TestSidecarBuilder(unittest.TestCase):
 
         expected_duration_nanos = 333_000_000
         self.assertEqual(event.duration.seconds, 0)
-        self.assertAlmostEqual(event.duration.nanos, expected_duration_nanos, delta=1)
+        self.assertAlmostEqual(
+            event.duration.nanos, expected_duration_nanos, delta=1
+        )
 
     def test_build_zero_length_region(self) -> None:
         combined = CombinedResult(

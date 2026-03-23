@@ -18,7 +18,8 @@ FN_AUTH_PASSWORD = os.environ.get("FN_AUTH_PASSWORD")
 def get_auth_headers() -> dict[str, str]:
     if not FN_AUTH_PASSWORD:
         print(
-            "ERROR: FN_AUTH_PASSWORD environment variable is not set.", file=sys.stderr
+            "ERROR: FN_AUTH_PASSWORD environment variable is not set.",
+            file=sys.stderr,
         )
         sys.exit(1)
     unencoded_str = f"{FN_AUTH_USERNAME}:{FN_AUTH_PASSWORD}"

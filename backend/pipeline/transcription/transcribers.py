@@ -78,7 +78,9 @@ class GoogleChirpV3Transcriber(Transcriber):
         self.config = ChirpConfig.from_json(self.config_json)
 
     @tenacity.retry(
-        wait=tenacity.wait_exponential(multiplier=1, max=DEFAULT_RETRY_MAX_SECONDS),
+        wait=tenacity.wait_exponential(
+            multiplier=1, max=DEFAULT_RETRY_MAX_SECONDS
+        ),
         stop=tenacity.stop_after_attempt(DEFAULT_MAX_RETRIES),
         retry=tenacity.retry_if_exception_type((GoogleAPIError, RetryError)),
         reraise=True,
@@ -125,7 +127,9 @@ class GoogleChirpV3Transcriber(Transcriber):
             # Chirp v3 is prompted to emit [BACKGROUND] when no speech is detected.
             # We strip this string explicitly across all chunks.
             chunk_text = (
-                result.alternatives[0].transcript.replace("[BACKGROUND]", "").strip()
+                result.alternatives[0]
+                .transcript.replace("[BACKGROUND]", "")
+                .strip()
             )
             if chunk_text:
                 chunks.append(chunk_text)

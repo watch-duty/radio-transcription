@@ -34,7 +34,9 @@ class TestPubSubClient(unittest.IsolatedAsyncioTestCase):
             publisher_options=mock_options,
         )
 
-    @mock.patch("backend.pipeline.common.clients.pubsub_client.asyncio.to_thread")
+    @mock.patch(
+        "backend.pipeline.common.clients.pubsub_client.asyncio.to_thread"
+    )
     @mock.patch("backend.pipeline.common.clients.pubsub_client.pubsub_v1")
     async def test_close_stops_initialized_publisher(
         self,
@@ -55,7 +57,9 @@ class TestPubSubClient(unittest.IsolatedAsyncioTestCase):
         mock_to_thread.assert_awaited_once_with(mock_publisher.stop)
         self.assertIsNone(client._publisher)
 
-    @mock.patch("backend.pipeline.common.clients.pubsub_client.asyncio.to_thread")
+    @mock.patch(
+        "backend.pipeline.common.clients.pubsub_client.asyncio.to_thread"
+    )
     async def test_close_is_noop_when_not_initialized(
         self,
         mock_to_thread: mock.AsyncMock,

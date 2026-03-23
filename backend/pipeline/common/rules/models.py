@@ -50,7 +50,9 @@ class KeywordConditions(BaseModel):
 class RegexConditions(BaseModel):
     """Defines the conditions for a regex-based rule."""
 
-    evaluation_type: Literal[EvaluationType.REGEX_MATCH] = EvaluationType.REGEX_MATCH
+    evaluation_type: Literal[EvaluationType.REGEX_MATCH] = (
+        EvaluationType.REGEX_MATCH
+    )
     expression: str
     flags: str = "i"
 
@@ -58,7 +60,9 @@ class RegexConditions(BaseModel):
 class GroupConditions(BaseModel):
     """Defines the conditions for a rule group."""
 
-    evaluation_type: Literal[EvaluationType.RULE_GROUP] = EvaluationType.RULE_GROUP
+    evaluation_type: Literal[EvaluationType.RULE_GROUP] = (
+        EvaluationType.RULE_GROUP
+    )
     operator: LogicalOperator = LogicalOperator.ANY
     child_rule_ids: list[str]
 

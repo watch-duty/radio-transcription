@@ -36,7 +36,11 @@ class RedisService(CacheProvider):
             db=0,
             decode_responses=True,
             retry=retry,
-            retry_on_error=[BusyLoadingError, RedisConnectionError, RedisTimeoutError],
+            retry_on_error=[
+                BusyLoadingError,
+                RedisConnectionError,
+                RedisTimeoutError,
+            ],
         )
 
     def set_if_not_exists(self, key: str, value: str, ttl: int) -> bool:

@@ -80,7 +80,10 @@ class CombinedResult:
 
     def __post_init__(self) -> None:
         for i in range(len(self.speech_regions) - 1):
-            if self.speech_regions[i + 1].start_sec < self.speech_regions[i].start_sec:
+            if (
+                self.speech_regions[i + 1].start_sec
+                < self.speech_regions[i].start_sec
+            ):
                 msg = (
                     f"speech_regions must be sorted by start_sec: "
                     f"region[{i}].start_sec={self.speech_regions[i].start_sec} > "

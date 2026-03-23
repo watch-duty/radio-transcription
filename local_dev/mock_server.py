@@ -17,7 +17,9 @@ class RequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         """Processes incoming POST requests and echoes the JSON payload."""
         content_length = int(self.headers.get("Content-Length", 0))
-        post_data = self.rfile.read(content_length) if content_length > 0 else b""
+        post_data = (
+            self.rfile.read(content_length) if content_length > 0 else b""
+        )
 
         self.send_response(200)
         self.send_header("Content-type", "application/json")
@@ -33,7 +35,9 @@ class RequestHandler(BaseHTTPRequestHandler):
 
         response = {"message": "Success", "received_data": parsed_data}
         self.wfile.write(json.dumps(response).encode("utf-8"))
-        logger.info("Mock Server received POST request with data:\n%s", parsed_data)
+        logger.info(
+            "Mock Server received POST request with data:\n%s", parsed_data
+        )
 
     def do_GET(self) -> None:
         """Returns the list of received requests."""

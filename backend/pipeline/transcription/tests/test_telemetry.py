@@ -28,8 +28,12 @@ class TestMetricsExporters(unittest.TestCase):
         config_empty = GcpMonitoringConfig.from_json("")
         self.assertIsInstance(config_empty, GcpMonitoringConfig)
 
-    @patch("backend.pipeline.transcription.telemetry.monitoring_v3.MetricServiceClient")
-    def test_gcp_exporter_setup_and_record(self, mock_client_class: MagicMock) -> None:
+    @patch(
+        "backend.pipeline.transcription.telemetry.monitoring_v3.MetricServiceClient"
+    )
+    def test_gcp_exporter_setup_and_record(
+        self, mock_client_class: MagicMock
+    ) -> None:
         """Verifies the GcpMonitoringExporter correctly generates metric payloads formatted with the custom API path specifically for transcription and stitching."""
         mock_client_inst = MagicMock()
         mock_client_class.return_value = mock_client_inst
@@ -39,21 +43,29 @@ class TestMetricsExporters(unittest.TestCase):
         exporter.setup()
 
         exporter.record_transcription_time(feed_id="f1", duration_ms=100)
-        series = mock_client_inst.create_time_series.call_args.kwargs["time_series"][0]
+        series = mock_client_inst.create_time_series.call_args.kwargs[
+            "time_series"
+        ][0]
         self.assertEqual(
             series.metric.type,
             "custom.googleapis.com/radio_transcription/transcription_time",
         )
 
         exporter.record_stitching_time(feed_id="f1", duration_ms=20)
-        series = mock_client_inst.create_time_series.call_args.kwargs["time_series"][0]
+        series = mock_client_inst.create_time_series.call_args.kwargs[
+            "time_series"
+        ][0]
         self.assertEqual(
             series.metric.type,
             "custom.googleapis.com/radio_transcription/stitching_time",
         )
 
-    @patch("backend.pipeline.transcription.telemetry.monitoring_v3.MetricServiceClient")
-    def test_gcp_exporter_handles_exception(self, mock_client_class: MagicMock) -> None:
+    @patch(
+        "backend.pipeline.transcription.telemetry.monitoring_v3.MetricServiceClient"
+    )
+    def test_gcp_exporter_handles_exception(
+        self, mock_client_class: MagicMock
+    ) -> None:
         """Verifies that network exceptions from MetricServiceClient (like GoogleAPIError) are silently caught without interrupting the data pipeline flow."""
         mock_client_inst = MagicMock()
         mock_client_inst.create_time_series.side_effect = GoogleAPIError(
@@ -90,10 +102,14 @@ class TestMetricsExporters(unittest.TestCase):
         )
 
     @patch("backend.pipeline.transcription.telemetry.GcpMonitoringExporter")
-    def test_get_metrics_exporter(self, mock_gcp_exporter_class: MagicMock) -> None:
+    def test_get_metrics_exporter(
+        self, mock_gcp_exporter_class: MagicMock
+    ) -> None:
         """Verifies that get_metrics_exporter outputs an empty composite exporter when inactive, but includes GcpMonitoringExporter if specifically toggled."""
         # Test NONE or empty
-        exporter_none = get_metrics_exporter([MetricsExporterType.NONE], "proj", "{}")
+        exporter_none = get_metrics_exporter(
+            [MetricsExporterType.NONE], "proj", "{}"
+        )
         self.assertIsInstance(exporter_none, MultiExporter)
         self.assertEqual(len(exporter_none.exporters), 0)  # type: ignore
 
@@ -105,7 +121,9 @@ class TestMetricsExporters(unittest.TestCase):
         mock_gcp_inst = MagicMock()
         mock_gcp_exporter_class.return_value = mock_gcp_inst
 
-        exporter_gcp = get_metrics_exporter([MetricsExporterType.GCP], "proj", "{}")
+        exporter_gcp = get_metrics_exporter(
+            [MetricsExporterType.GCP], "proj", "{}"
+        )
         self.assertIsInstance(exporter_gcp, MultiExporter)
         self.assertEqual(len(exporter_gcp.exporters), 1)  # type: ignore
         self.assertEqual(exporter_gcp.exporters[0], mock_gcp_inst)  # type: ignore

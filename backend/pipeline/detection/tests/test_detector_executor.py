@@ -52,7 +52,9 @@ class TestDetectorExecutor(unittest.TestCase):
         )
         executor = DetectorExecutor([failing, good], SoundEventSignalCombiner())
 
-        result = executor.run(np.zeros(16000, dtype=np.int16), context="test.flac")
+        result = executor.run(
+            np.zeros(16000, dtype=np.int16), context="test.flac"
+        )
 
         self.assertEqual(len(result.speech_regions), 1)
         self.assertEqual(result.speech_regions[0].detector_type, "good")

@@ -12,7 +12,10 @@ from yarl import URL
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
-from backend.pipeline.schema_types.sed_metadata_pb2 import SedMetadata, SoundEvent
+from backend.pipeline.schema_types.sed_metadata_pb2 import (
+    SedMetadata,
+    SoundEvent,
+)
 from backend.pipeline.storage.feed_store import LeasedFeed
 
 _DUMMY_REQUEST_INFO = aiohttp.RequestInfo(
@@ -23,7 +26,9 @@ _DUMMY_REQUEST_INFO = aiohttp.RequestInfo(
 )
 
 
-def _make_feed(source_type: str, feed_id: int, fencing_token: int = 0) -> LeasedFeed:
+def _make_feed(
+    source_type: str, feed_id: int, fencing_token: int = 0
+) -> LeasedFeed:
     return LeasedFeed(
         id=uuid.UUID(int=feed_id),
         name=f"test-{source_type}-{feed_id}",
@@ -258,7 +263,9 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
         )
 
         # Assert
-        expected_object_name = f"bcfy_feeds/{feed_id}/20260305T120000Z_999999999.flac"
+        expected_object_name = (
+            f"bcfy_feeds/{feed_id}/20260305T120000Z_999999999.flac"
+        )
         expected_path = f"gs://{bucket}/{expected_object_name}"
 
         self.assertEqual(result, expected_path)
@@ -319,7 +326,9 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             fencing_token=7,
         )
 
-        expected_object_name = f"bcfy_feeds/{feed_id}/token-7/20260305T120000Z_42.flac"
+        expected_object_name = (
+            f"bcfy_feeds/{feed_id}/token-7/20260305T120000Z_42.flac"
+        )
         expected_path = f"gs://test-bucket/{expected_object_name}"
 
         mock_storage.upload.assert_called_once_with(
@@ -385,7 +394,9 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
 
         mock_storage.upload.assert_called_once()
         call_kwargs = mock_storage.upload.call_args
-        metadata = call_kwargs.kwargs.get("metadata") or call_kwargs[1].get("metadata")
+        metadata = call_kwargs.kwargs.get("metadata") or call_kwargs[1].get(
+            "metadata"
+        )
         self.assertIn("metadata", metadata)
         self.assertIn("sed_metadata", metadata["metadata"])
 
@@ -408,7 +419,9 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         )
 
         call_kwargs = mock_storage.upload.call_args
-        metadata = call_kwargs.kwargs.get("metadata") or call_kwargs[1].get("metadata")
+        metadata = call_kwargs.kwargs.get("metadata") or call_kwargs[1].get(
+            "metadata"
+        )
         self.assertIsNone(metadata)
 
     async def test_upload_raises_when_metadata_exceeds_limit(self) -> None:
@@ -553,7 +566,9 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
         chunk.ParseFromString(publish_args[1])
         self.assertEqual(chunk.gcs_uri, "gs://bucket/audio.flac")
         self.assertTrue(chunk.HasField("start_timestamp"))
-        self.assertEqual(chunk.start_timestamp.seconds, int(mock_now.timestamp()))
+        self.assertEqual(
+            chunk.start_timestamp.seconds, int(mock_now.timestamp())
+        )
         mock_to_thread.assert_awaited_once_with(mock_future.result)
 
     @patch(
@@ -575,7 +590,9 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
             feed_id="feed-1",
             gcs_uri="gs://bucket/one.flac",
             session_id="test-session-1",
-            start_timestamp=datetime.datetime(2026, 3, 5, 12, 0, tzinfo=datetime.UTC),
+            start_timestamp=datetime.datetime(
+                2026, 3, 5, 12, 0, tzinfo=datetime.UTC
+            ),
         )
         second_result = await gcp_helper.publish_audio_chunk(
             mock_pubsub_client,
@@ -583,7 +600,9 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
             feed_id="feed-2",
             gcs_uri="gs://bucket/two.flac",
             session_id="test-session-2",
-            start_timestamp=datetime.datetime(2026, 3, 5, 12, 0, tzinfo=datetime.UTC),
+            start_timestamp=datetime.datetime(
+                2026, 3, 5, 12, 0, tzinfo=datetime.UTC
+            ),
         )
 
         self.assertEqual(first_result, "message-1")
@@ -595,7 +614,9 @@ class TestParseGcsUri(unittest.TestCase):
     """Tests for the parse_gcs_uri function."""
 
     def test_valid_uri(self) -> None:
-        bucket, obj = gcp_helper.parse_gcs_uri("gs://my-bucket/path/to/file.flac")
+        bucket, obj = gcp_helper.parse_gcs_uri(
+            "gs://my-bucket/path/to/file.flac"
+        )
         self.assertEqual(bucket, "my-bucket")
         self.assertEqual(obj, "path/to/file.flac")
 
@@ -625,7 +646,9 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
             "gs://my-bucket/path/to/audio.flac",
         )
 
-        mock_storage.download.assert_called_once_with("my-bucket", "path/to/audio.flac")
+        mock_storage.download.assert_called_once_with(
+            "my-bucket", "path/to/audio.flac"
+        )
         self.assertEqual(result, b"audio-data")
 
     async def test_download_rejects_non_gs_uri(self) -> None:

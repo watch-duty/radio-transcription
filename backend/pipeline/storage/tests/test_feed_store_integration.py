@@ -13,7 +13,9 @@ from backend.pipeline.storage.connection import create_pool
 from backend.pipeline.storage.feed_store import FeedStore
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
-_SQL_DIR = _REPO_ROOT / "terraform" / "modules" / "alloydb" / "sql" / "ingestion"
+_SQL_DIR = (
+    _REPO_ROOT / "terraform" / "modules" / "alloydb" / "sql" / "ingestion"
+)
 
 
 def _docker_available() -> bool:
@@ -100,7 +102,9 @@ class TestFeedStoreIntegration(unittest.IsolatedAsyncioTestCase):
         """Insert a feed row and optionally an icecast properties row."""
         heartbeat_expr = "NULL"
         if last_heartbeat_age_seconds is not None:
-            heartbeat_expr = f"NOW() - INTERVAL '{last_heartbeat_age_seconds} seconds'"
+            heartbeat_expr = (
+                f"NOW() - INTERVAL '{last_heartbeat_age_seconds} seconds'"
+            )
 
         feed_id = await self.pool.fetchval(
             f"INSERT INTO feeds (name, source_type, status, failure_count,"
@@ -492,7 +496,9 @@ class TestFeedStoreIntegration(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(result)
 
-    async def test_report_feed_failure_fails_with_wrong_fencing_token(self) -> None:
+    async def test_report_feed_failure_fails_with_wrong_fencing_token(
+        self,
+    ) -> None:
         """Correct worker_id but wrong fencing_token returns False."""
         worker = uuid.uuid4()
         feed_id = await self._insert_feed(

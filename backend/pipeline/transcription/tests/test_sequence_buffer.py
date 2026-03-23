@@ -1,7 +1,10 @@
 import unittest
 
 from backend.pipeline.transcription.datatypes import OrderRestorerConfig
-from backend.pipeline.transcription.sequence_buffer import BufferedChunk, SequenceBuffer
+from backend.pipeline.transcription.sequence_buffer import (
+    BufferedChunk,
+    SequenceBuffer,
+)
 
 
 class TestSequenceBuffer(unittest.TestCase):
@@ -128,7 +131,9 @@ class TestSequenceBuffer(unittest.TestCase):
 
         self.assertEqual(expected_next_ts, 10000)  # Unchanged
         self.assertEqual(buffered, [])
-        self.assertEqual(to_emit, ["gs://chunk-late"])  # Emitted for isolated rendering
+        self.assertEqual(
+            to_emit, ["gs://chunk-late"]
+        )  # Emitted for isolated rendering
         self.assertTrue(was_late)
         self.assertFalse(was_buffered)
 

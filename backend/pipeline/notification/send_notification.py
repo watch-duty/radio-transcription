@@ -11,7 +11,9 @@ from backend.pipeline.notification.notification_deduplication import (
     NotificationDeduplication,
 )
 from backend.pipeline.notification.request_handler import RequestHandler
-from backend.pipeline.schema_types.alert_notification_pb2 import AlertNotification
+from backend.pipeline.schema_types.alert_notification_pb2 import (
+    AlertNotification,
+)
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
@@ -39,7 +41,9 @@ deduplication = NotificationDeduplication(RedisService())
 request_handler = RequestHandler(logger)
 
 
-def parse_cloud_event(cloud_event: CloudEvent) -> EvaluatedTranscribedAudio | None:
+def parse_cloud_event(
+    cloud_event: CloudEvent,
+) -> EvaluatedTranscribedAudio | None:
     pubsub_message = cloud_event.data.get("message", {})
     evaluated_transcribed_audio = EvaluatedTranscribedAudio()
     raw_data = pubsub_message.get("data", "")
@@ -65,7 +69,9 @@ def convert_to_notification(
             evaluated_transcribed_audio.start_timestamp
         )
     if evaluated_transcribed_audio.end_timestamp.seconds:
-        notification.end_timestamp.CopyFrom(evaluated_transcribed_audio.end_timestamp)
+        notification.end_timestamp.CopyFrom(
+            evaluated_transcribed_audio.end_timestamp
+        )
     if (
         evaluated_transcribed_audio.start_audio_offset.seconds
         or evaluated_transcribed_audio.start_audio_offset.nanos

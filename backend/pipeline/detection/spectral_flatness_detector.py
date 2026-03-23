@@ -86,7 +86,9 @@ class SpectralFlatnessDetector:
 
     def detect(self, samples: np.ndarray) -> DetectionResult:
         if samples.size == 0 or samples.size < self._fft_size:
-            return DetectionResult(speech_regions=(), detector_type=_DETECTOR_TYPE)
+            return DetectionResult(
+                speech_regions=(), detector_type=_DETECTOR_TYPE
+            )
 
         audio = samples.astype(np.float32) / 32768.0
 
@@ -102,7 +104,9 @@ class SpectralFlatnessDetector:
         n_time = spec_subband.shape[1]
 
         if n_time == 0:
-            return DetectionResult(speech_regions=(), detector_type=_DETECTOR_TYPE)
+            return DetectionResult(
+                speech_regions=(), detector_type=_DETECTOR_TYPE
+            )
 
         # Floor tiny values to avoid log(0) warnings from gmean
         spec_subband = np.maximum(spec_subband, np.finfo(np.float32).tiny)
@@ -137,7 +141,9 @@ class SpectralFlatnessDetector:
             elif not signal_present[i] and in_region:
                 regions.append(
                     SpeechRegion(
-                        start_sec=first_frame * self._hop_size / AUDIO_SAMPLE_RATE,
+                        start_sec=first_frame
+                        * self._hop_size
+                        / AUDIO_SAMPLE_RATE,
                         end_sec=i * self._hop_size / AUDIO_SAMPLE_RATE,
                         detector_type=_DETECTOR_TYPE,
                     )
@@ -148,7 +154,9 @@ class SpectralFlatnessDetector:
             regions.append(
                 SpeechRegion(
                     start_sec=first_frame * self._hop_size / AUDIO_SAMPLE_RATE,
-                    end_sec=len(signal_present) * self._hop_size / AUDIO_SAMPLE_RATE,
+                    end_sec=len(signal_present)
+                    * self._hop_size
+                    / AUDIO_SAMPLE_RATE,
                     detector_type=_DETECTOR_TYPE,
                 )
             )

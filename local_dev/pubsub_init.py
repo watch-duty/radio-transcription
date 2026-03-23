@@ -20,7 +20,9 @@ def wait_for_emulator() -> None:
     logger.info("Waiting for Pub/Sub emulator...")
     for _ in range(30):
         try:
-            response = requests.get(f"http://{PUBSUB_EMULATOR_HOST}/", timeout=10)
+            response = requests.get(
+                f"http://{PUBSUB_EMULATOR_HOST}/", timeout=10
+            )
             if response.status_code == 200:
                 logger.info("Pub/Sub emulator is ready.")
                 return
@@ -111,7 +113,9 @@ if __name__ == "__main__":
     )
 
     # Pub/Sub between Rules Evaluation and Notification Services
-    RULES_EVALUATION_RESULTS_TOPIC = os.environ["RULES_EVALUATION_RESULTS_TOPIC"]
+    RULES_EVALUATION_RESULTS_TOPIC = os.environ[
+        "RULES_EVALUATION_RESULTS_TOPIC"
+    ]
     create_topic(RULES_EVALUATION_RESULTS_TOPIC)
     create_push_subscription(
         "notification-sub",

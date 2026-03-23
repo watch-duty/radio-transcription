@@ -85,7 +85,9 @@ class TestDetectionResult(unittest.TestCase):
         self.assertIn("detector_type", str(ctx.exception))
 
     def test_mismatched_region_detector_type_raises(self) -> None:
-        region = SpeechRegion(start_sec=0.0, end_sec=1.0, detector_type="energy")
+        region = SpeechRegion(
+            start_sec=0.0, end_sec=1.0, detector_type="energy"
+        )
         with self.assertRaises(ValueError) as ctx:
             DetectionResult(speech_regions=(region,), detector_type="vad")
         self.assertIn("does not match", str(ctx.exception))

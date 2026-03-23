@@ -6,7 +6,9 @@ from backend.pipeline.evaluation import service
 from backend.pipeline.schema_types import (
     evaluated_transcribed_audio_pb2 as evaluated_pb2,
 )
-from backend.pipeline.schema_types import transcribed_audio_pb2 as transcribed_pb2
+from backend.pipeline.schema_types import (
+    transcribed_audio_pb2 as transcribed_pb2,
+)
 
 
 class TestEvaluationService(unittest.TestCase):
@@ -37,7 +39,9 @@ class TestEvaluationService(unittest.TestCase):
         self.transcribed_audio.end_timestamp.nanos = 0
 
         self.data_bytes = self.transcribed_audio.SerializeToString()
-        self.b64_encoded_data = base64.b64encode(self.data_bytes).decode("utf-8")
+        self.b64_encoded_data = base64.b64encode(self.data_bytes).decode(
+            "utf-8"
+        )
 
         self.mock_event = MagicMock()
         self.mock_event.data = {
@@ -68,7 +72,9 @@ class TestEvaluationService(unittest.TestCase):
 
         self.assertEqual(result_proto.transmission_id, "12345")
         self.assertEqual(result_proto.transcript, "There is a fire")
-        self.assertEqual(result_proto.evaluation_decisions, ["basic_fire_terms"])
+        self.assertEqual(
+            result_proto.evaluation_decisions, ["basic_fire_terms"]
+        )
 
     def test_no_publish_if_not_flagged(self) -> None:
         """Ensures no publication occurs if the text is not flagged."""

@@ -41,7 +41,9 @@ else:
     logger.addHandler(_handler)
     logger.info("Running in LOCAL_DEV mode. Logs will print here.")
 
-_detector_config = json.loads(os.environ.get("DETECTOR_CONFIG", '{"detectors": []}'))
+_detector_config = json.loads(
+    os.environ.get("DETECTOR_CONFIG", '{"detectors": []}')
+)
 _detectors, _combiner = DetectorFactory.create_ensemble(_detector_config)
 _executor = DetectorExecutor(_detectors, _combiner)
 
@@ -57,7 +59,9 @@ logger.info(
 # --- Helpers ------------------------------------------------------------------
 
 
-def _parse_cloud_event(cloud_event: CloudEvent) -> tuple[AudioChunk, str] | None:
+def _parse_cloud_event(
+    cloud_event: CloudEvent,
+) -> tuple[AudioChunk, str] | None:
     """Parse CloudEvent, returning (AudioChunk, feed_id) or None."""
     message = cloud_event.data.get("message", {})
     pubsub_data = message.get("data")
@@ -121,7 +125,9 @@ async def _decode_flac(flac_bytes: bytes) -> tuple[np.ndarray, int]:
         raise RuntimeError(msg)
     samples = np.frombuffer(stdout, dtype=np.int16)
     if len(samples) == 0:
-        msg = f"ffmpeg produced no audio samples (input={len(flac_bytes)} bytes)"
+        msg = (
+            f"ffmpeg produced no audio samples (input={len(flac_bytes)} bytes)"
+        )
         raise RuntimeError(msg)
     logger.info(
         "Decoded FLAC: %d bytes -> %d samples (%.3fs)",
@@ -179,7 +185,9 @@ async def normalize(cloud_event: CloudEvent) -> None:
     output_gcs_uri = f"gs://{canonical_bucket}/{object_name}"
 
     # 5. Build sidecar
-    sidecar = SidecarBuilder.build(combined_result, source_chunk_id=output_gcs_uri)
+    sidecar = SidecarBuilder.build(
+        combined_result, source_chunk_id=output_gcs_uri
+    )
     if audio_chunk_msg.HasField("start_timestamp"):
         sidecar.start_timestamp.CopyFrom(audio_chunk_msg.start_timestamp)
 
@@ -197,7 +205,8 @@ async def normalize(cloud_event: CloudEvent) -> None:
     if combined_result.speech_regions:
         if not audio_chunk_msg.HasField("start_timestamp"):
             logger.error(
-                "Missing start_timestamp in audio chunk for %s (permanent)", gcs_uri
+                "Missing start_timestamp in audio chunk for %s (permanent)",
+                gcs_uri,
             )
             return
 
@@ -207,7 +216,9 @@ async def normalize(cloud_event: CloudEvent) -> None:
             )
             return
 
-        start_ts = audio_chunk_msg.start_timestamp.ToDatetime(tzinfo=datetime.UTC)
+        start_ts = audio_chunk_msg.start_timestamp.ToDatetime(
+            tzinfo=datetime.UTC
+        )
 
         topic_path = os.environ.get("TRANSCRIPTION_TOPIC_PATH", "")
         if topic_path:

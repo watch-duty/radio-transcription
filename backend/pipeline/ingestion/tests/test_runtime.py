@@ -178,7 +178,9 @@ class TestLeasingLoopOrphanedTask(unittest.IsolatedAsyncioTestCase):
         rt._store.acquire_feeds_batch.return_value = [_FEED]
 
         # Patch _process_feed to avoid running the real pipeline
-        with mock.patch.object(rt, "_process_feed", new_callable=mock.AsyncMock):
+        with mock.patch.object(
+            rt, "_process_feed", new_callable=mock.AsyncMock
+        ):
             # Run one iteration: reap, acquire, sleep → shutdown
             rt._store.acquire_feeds_batch.side_effect = [
                 [_FEED],  # first call returns re-leased feed
@@ -321,20 +323,26 @@ class TestProcessFeedTimestamps(unittest.IsolatedAsyncioTestCase):
             self.assertIn("start_timestamp", kwargs)
             self.assertIsNotNone(kwargs["start_timestamp"])
             self.assertIsInstance(kwargs["start_timestamp"], datetime.datetime)
-            self.assertGreater(kwargs["start_timestamp"].timestamp(), 1700000000)
+            self.assertGreater(
+                kwargs["start_timestamp"].timestamp(), 1700000000
+            )
 
 
 class TestProcessFeedSessionId(unittest.IsolatedAsyncioTestCase):
     """Tests for _process_feed session ID population."""
 
-    async def test_session_id_populated_and_identical_across_chunks(self) -> None:
+    async def test_session_id_populated_and_identical_across_chunks(
+        self,
+    ) -> None:
         """The session_id field must be populated and identical for all chunks in a session."""
 
         async def _two_chunks(feed, shutdown):
             yield b"audio1", datetime.datetime.now(datetime.UTC)
             yield b"audio2", datetime.datetime.now(datetime.UTC)
 
-        rt = NormalizerRuntime(capture_fn=_two_chunks, settings=_make_settings())
+        rt = NormalizerRuntime(
+            capture_fn=_two_chunks, settings=_make_settings()
+        )
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
         rt._store = mock.AsyncMock()
@@ -491,7 +499,9 @@ class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
 
         # Should have logged per-feed diagnostic info
         critical_calls = [
-            c for c in mock_logger.critical.call_args_list if "current_worker" in str(c)
+            c
+            for c in mock_logger.critical.call_args_list
+            if "current_worker" in str(c)
         ]
         self.assertEqual(len(critical_calls), 1)
         self.assertIn(str(other_worker), str(critical_calls[0]))
@@ -554,7 +564,9 @@ class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
 
         with (
             mock.patch.object(rt, "_leasing_loop", new_callable=mock.AsyncMock),
-            mock.patch.object(rt, "_shutdown_sequence", new_callable=mock.AsyncMock),
+            mock.patch.object(
+                rt, "_shutdown_sequence", new_callable=mock.AsyncMock
+            ),
             mock.patch("threading.Thread"),
         ):
             await rt._main()
@@ -710,7 +722,9 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(upload_mock.await_count, 2)
         rt._store.release_feed.assert_awaited_once()
 
-    async def test_lease_lost_during_upload_aborts_without_db_write(self) -> None:
+    async def test_lease_lost_during_upload_aborts_without_db_write(
+        self,
+    ) -> None:
         """LeaseExpiredError aborts cleanly — no report_feed_failure call."""
 
         async def _one_chunk(feed, shutdown):

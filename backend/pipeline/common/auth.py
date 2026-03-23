@@ -32,7 +32,8 @@ def get_id_token(audience: str) -> str:
 
 async def verify_oidc_token(
     auth: Annotated[
-        HTTPAuthorizationCredentials | None, Depends(HTTPBearer(auto_error=False))
+        HTTPAuthorizationCredentials | None,
+        Depends(HTTPBearer(auto_error=False)),
     ] = None,
 ) -> dict[str, Any]:
     """
@@ -41,7 +42,10 @@ async def verify_oidc_token(
     Returns the decoded token claims if valid.
     """
     if os.environ.get("LOCAL_DEV") == "true":
-        return {"sub": "local-dev@example.com", "email": "local-dev@example.com"}
+        return {
+            "sub": "local-dev@example.com",
+            "email": "local-dev@example.com",
+        }
 
     if not auth:
         raise HTTPException(
@@ -56,7 +60,9 @@ async def verify_oidc_token(
         # This check provides defense-in-depth and facilitates local testing
         # if a valid token is provided.
         request = google.auth.transport.requests.Request()
-        return google.oauth2.id_token.verify_oauth2_token(auth.credentials, request)
+        return google.oauth2.id_token.verify_oauth2_token(
+            auth.credentials, request
+        )
     except Exception as e:
         logger.warning(f"OIDC token verification failed: {e}")
         raise HTTPException(
