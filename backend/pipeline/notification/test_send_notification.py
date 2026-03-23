@@ -1,9 +1,9 @@
 import base64
+import json
 from unittest import TestCase, main, mock
 
 from cloudevents.http import CloudEvent
 
-from backend.pipeline.schema_types.alert_notification_pb2 import AlertNotification
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
@@ -13,6 +13,8 @@ with mock.patch("google.cloud.logging.Client") as mock_client:
 
 
 class TestSendNotification(TestCase):
+    @mock.patch("backend.pipeline.notification.send_notification.NOTIFICATION_ENDPOINT_API_KEY", "12345")
+    @mock.patch("backend.pipeline.notification.send_notification.NOTIFICATION_ENDPOINT", "https://api.example.com/mock")
     @mock.patch("backend.pipeline.notification.send_notification.deduplication")
     @mock.patch("backend.pipeline.notification.send_notification.requests.post")
     def test_send_notification(
@@ -42,13 +44,15 @@ class TestSendNotification(TestCase):
 
         expected_url = "https://api.example.com/mock"
         expected_headers = {"Content-Type": "application/json", "X-Api-Key": "12345"}
-        mock_post.assert_called_once_with(
-            expected_url,
-            data='{"transmissionId": "1234", "sourceAudioUris": ["gs://foo/bar.flac"], "transcript": "This is a test!", "startAudioOffset": "10s"}',
-            headers=expected_headers,
-            timeout=5,
-        )
+        mock_post.assert_called_once()
+        args, kwargs = mock_post.call_args
+        self.assertEqual(args[0], expected_url)
+        self.assertEqual(kwargs["headers"], expected_headers)
+        self.assertEqual(kwargs["timeout"], 5)
+        self.assertEqual(json.loads(kwargs["data"]), {"transmissionId": "1234", "sourceAudioUris": ["gs://foo/bar.flac"], "transcript": "This is a test!", "startAudioOffset": "10s"})
 
+    @mock.patch("backend.pipeline.notification.send_notification.NOTIFICATION_ENDPOINT_API_KEY", "12345")
+    @mock.patch("backend.pipeline.notification.send_notification.NOTIFICATION_ENDPOINT", "https://api.example.com/mock")
     @mock.patch("backend.pipeline.notification.send_notification.deduplication")
     @mock.patch("backend.pipeline.notification.send_notification.requests.post")
     def test_duplicate_message(

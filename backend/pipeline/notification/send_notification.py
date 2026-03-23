@@ -4,13 +4,14 @@ import os
 
 import functions_framework
 import google.cloud.logging
+import requests
 from cloudevents.http.event import CloudEvent
+from google.protobuf.json_format import MessageToJson
 
 from backend.pipeline.common.storage.redis_service import RedisService
 from backend.pipeline.notification.notification_deduplication import (
     NotificationDeduplication,
 )
-from backend.pipeline.notification.request_handler import RequestHandler
 from backend.pipeline.schema_types.alert_notification_pb2 import AlertNotification
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
@@ -35,8 +36,9 @@ else:
 # TODO(schew): https://linear.app/watchduty/issue/GOO-173/update-local-dev-pipeline-with-redis
 deduplication = NotificationDeduplication(RedisService())
 
-# The request handler which can make POST requests to an endpoint.
-request_handler = RequestHandler(logger)
+POST_TIMEOUT_SECONDS = int(os.environ.get("POST_TIMEOUT_SECONDS", "5"))
+NOTIFICATION_ENDPOINT = os.environ.get("NOTIFICATION_ENDPOINT")
+NOTIFICATION_ENDPOINT_API_KEY = os.environ.get("NOTIFICATION_ENDPOINT_API_KEY")
 
 
 def parse_cloud_event(cloud_event: CloudEvent) -> EvaluatedTranscribedAudio | None:
@@ -99,5 +101,24 @@ def send_notification(cloud_event: CloudEvent) -> None:
         logger.warning(message)
         return
 
+    if not NOTIFICATION_ENDPOINT:
+        logger.warning("NOTIFICATION_ENDPOINT is not set, skipping notification")
+        return
+
     # Send a POST request to the endpoint
-    request_handler.send_notification(alert_notification)
+    headers = {"Content-Type": "application/json"}
+    if NOTIFICATION_ENDPOINT_API_KEY:
+        headers["X-Api-Key"] = NOTIFICATION_ENDPOINT_API_KEY
+    request_data = MessageToJson(alert_notification)
+
+    try:
+        response = requests.post(
+            NOTIFICATION_ENDPOINT,
+            data=request_data,
+            headers=headers,
+            timeout=POST_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        logger.info(f"Successfully sent notification: {response.status_code}")
+    except requests.exceptions.RequestException:
+        logger.exception("Failed to send notification")
