@@ -46,7 +46,7 @@ def publish_test_message(transmission_id: str, transcript: str) -> None:
     message = TranscribedAudio(
         transmission_id=transmission_id,
         transcript=transcript,
-        source_chunk_ids=["chunk1", "chunk2"],
+        source_audio_uris=["chunk1", "chunk2"],
         feed_id="test-feed",
         start_timestamp={"seconds": int(time.time()), "nanos": 0},
         end_timestamp={"seconds": int(time.time()) + 10, "nanos": 0},

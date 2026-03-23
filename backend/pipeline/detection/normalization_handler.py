@@ -1,16 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import datetime
-import io
 import json
 import logging
 import os
-from typing import TYPE_CHECKING
 
 import functions_framework.aio
 import google.cloud.logging
-import soundfile as sf
+import numpy as np
 from cloudevents.http.event import (
     CloudEvent,  # noqa: TC002 (runtime: functions_framework)
 )
@@ -28,9 +27,6 @@ from backend.pipeline.detection.detector_executor import DetectorExecutor
 from backend.pipeline.detection.detector_factory import DetectorFactory
 from backend.pipeline.detection.sidecar_builder import SidecarBuilder
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
-
-if TYPE_CHECKING:
-    import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -86,12 +82,54 @@ def _parse_cloud_event(cloud_event: CloudEvent) -> tuple[AudioChunk, str] | None
     return audio_chunk_msg, feed_id
 
 
-def _decode_flac(flac_bytes: bytes) -> tuple[np.ndarray, int]:
-    """Decode FLAC bytes to int16 numpy array and sample rate."""
-    samples, sample_rate = sf.read(io.BytesIO(flac_bytes), dtype="int16")
-    if samples.ndim > 1:
-        samples = samples[:, 0]
-    return samples, sample_rate
+async def _decode_flac(flac_bytes: bytes) -> tuple[np.ndarray, int]:
+    """Decode FLAC bytes to int16 numpy array and sample rate.
+
+    Uses async ffmpeg subprocess instead of soundfile because libsndfile
+    cannot decode streaming FLAC (total_samples=0 in STREAMINFO) produced
+    by ffmpeg's segment muxer. ffmpeg's own FLAC decoder handles this
+    correctly. Async avoids blocking the event loop under concurrency.
+    """
+    process = await asyncio.create_subprocess_exec(
+        "ffmpeg",
+        "-i", "pipe:0",
+        "-f", "s16le",
+        "-acodec", "pcm_s16le",
+        "-ar", str(AUDIO_SAMPLE_RATE),
+        "-ac", "1",
+        "pipe:1",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )  # fmt: skip
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(input=flac_bytes), timeout=30
+        )
+    except TimeoutError:
+        msg = f"ffmpeg FLAC decode timed out after 30s (input={len(flac_bytes)} bytes)"
+        raise RuntimeError(msg)
+    finally:
+        if process.returncode is None:
+            process.kill()
+            await process.wait()
+    if process.returncode != 0:
+        msg = (
+            f"ffmpeg FLAC decode failed (exit {process.returncode}, "
+            f"input={len(flac_bytes)} bytes): {stderr.decode(errors='replace')}"
+        )
+        raise RuntimeError(msg)
+    samples = np.frombuffer(stdout, dtype=np.int16)
+    if len(samples) == 0:
+        msg = f"ffmpeg produced no audio samples (input={len(flac_bytes)} bytes)"
+        raise RuntimeError(msg)
+    logger.info(
+        "Decoded FLAC: %d bytes -> %d samples (%.3fs)",
+        len(flac_bytes),
+        len(samples),
+        len(samples) / AUDIO_SAMPLE_RATE,
+    )
+    return samples, AUDIO_SAMPLE_RATE
 
 
 # --- Entry point --------------------------------------------------------------
@@ -118,7 +156,7 @@ async def normalize(cloud_event: CloudEvent) -> None:
 
     # 2. Decode FLAC → int16 numpy array
     try:
-        samples, sample_rate = _decode_flac(flac_bytes)
+        samples, sample_rate = await _decode_flac(flac_bytes)
     except Exception:
         logger.exception("Failed to decode FLAC from %s (permanent)", gcs_uri)
         return
@@ -157,11 +195,20 @@ async def normalize(cloud_event: CloudEvent) -> None:
 
     # 7. Publish to transcription topic if speech detected
     if combined_result.speech_regions:
-        start_ts = (
-            audio_chunk_msg.start_timestamp.ToDatetime(tzinfo=datetime.UTC)
-            if audio_chunk_msg.HasField("start_timestamp")
-            else None
-        )
+        if not audio_chunk_msg.HasField("start_timestamp"):
+            logger.error(
+                "Missing start_timestamp in audio chunk for %s (permanent)", gcs_uri
+            )
+            return
+
+        if not audio_chunk_msg.session_id:
+            logger.error(
+                "Missing session_id in audio chunk for %s (permanent)", gcs_uri
+            )
+            return
+
+        start_ts = audio_chunk_msg.start_timestamp.ToDatetime(tzinfo=datetime.UTC)
+
         topic_path = os.environ.get("TRANSCRIPTION_TOPIC_PATH", "")
         if topic_path:
             try:
@@ -170,6 +217,7 @@ async def normalize(cloud_event: CloudEvent) -> None:
                     topic_path,
                     feed_id,
                     output_gcs_uri,
+                    session_id=audio_chunk_msg.session_id,
                     start_timestamp=start_ts,
                 )
                 logger.info(

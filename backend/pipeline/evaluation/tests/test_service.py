@@ -30,7 +30,7 @@ class TestEvaluationService(unittest.TestCase):
         self.transcribed_audio.transmission_id = "12345"
         self.transcribed_audio.transcript = "There is a fire"
         self.transcribed_audio.feed_id = "1234"
-        self.transcribed_audio.source_chunk_ids.append("chunk_1")
+        self.transcribed_audio.source_audio_uris.append("chunk_1")
         self.transcribed_audio.start_timestamp.seconds = 1234567890
         self.transcribed_audio.start_timestamp.nanos = 0
         self.transcribed_audio.end_timestamp.seconds = 1234567999

@@ -11,7 +11,7 @@ variable "description" {
 
 variable "runtime" {
   type    = string
-  default = "python311"
+  default = "python312"
 }
 
 variable "environment_variables" {

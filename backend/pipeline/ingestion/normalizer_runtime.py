@@ -1,5 +1,6 @@
 import asyncio
 import concurrent.futures
+import datetime
 import logging
 import os
 import signal
@@ -19,8 +20,9 @@ from backend.pipeline.storage.connection import close_pool, create_pool
 from backend.pipeline.storage.feed_store import FeedStore, HeartbeatResult, LeasedFeed
 
 FeedID = uuid.UUID
-CaptureFn = Callable[[LeasedFeed, asyncio.Event], AsyncIterator[bytes]]
-
+CaptureFn = Callable[
+    [LeasedFeed, asyncio.Event], AsyncIterator[tuple[bytes, datetime.datetime]]
+]
 logger = logging.getLogger(__name__)
 
 
@@ -246,6 +248,23 @@ class NormalizerRuntime:
                         limit=capacity,
                     )
                     for lease in leases:
+                        existing = self._feed_tasks.get(lease["id"])
+                        if existing is not None and not existing.done():
+                            # A stale heartbeat allowed the DB to re-lease a
+                            # feed we already hold.  The old task still runs
+                            # with its original (now-outdated) fencing token.
+                            # If left alive it will eventually fail a fenced
+                            # write and call os._exit(1), killing the whole
+                            # worker — including the healthy new task.
+                            # Cancel first; the CancelledError handler in
+                            # _process_feed exits cleanly without DB writes.
+                            logger.warning(
+                                "Cancelling orphaned task for feed %s "
+                                "(re-leased with token %d)",
+                                lease["name"],
+                                lease["fencing_token"],
+                            )
+                            existing.cancel()
                         task = asyncio.create_task(
                             self._process_feed(lease),
                             name=f"feed-{lease['name']}",
@@ -306,10 +325,12 @@ class NormalizerRuntime:
         """
         chunk_seq = 0
         worker_id = self._normalizer_settings.worker_id
+        fencing_token = feed["fencing_token"]
         settings = self._normalizer_settings
+        session_id = str(uuid.uuid4())
 
         try:
-            async for audio_chunk in self._capture_fn(
+            async for audio_chunk, chunk_start_time in self._capture_fn(
                 feed,
                 self._shutdown,
             ):
@@ -320,6 +341,7 @@ class NormalizerRuntime:
                     feed,
                     settings.audio_staging_bucket,
                     chunk_seq,
+                    fencing_token,
                     lease_lost=self._lease_lost,
                     shutdown=self._shutdown,
                     max_retries=settings.gcs_upload_max_retries,
@@ -333,6 +355,8 @@ class NormalizerRuntime:
                     self._normalizer_settings.pubsub_topic_path,
                     str(feed["id"]),
                     gcs_uri,
+                    start_timestamp=chunk_start_time,
+                    session_id=session_id,
                 )
                 logger.info(
                     "Published message %s for feed %s", message_id, feed["name"]
@@ -344,6 +368,7 @@ class NormalizerRuntime:
                     feed["id"],
                     worker_id,
                     gcs_uri,
+                    fencing_token,
                     lease_lost=self._lease_lost,
                     shutdown=self._shutdown,
                     max_retries=settings.bookmark_max_retries,
@@ -411,6 +436,7 @@ class NormalizerRuntime:
                 await self._store.report_feed_failure(
                     feed["id"],
                     worker_id,
+                    fencing_token,
                     self._normalizer_settings.feed_failure_threshold,
                 )
             except Exception:
@@ -430,7 +456,7 @@ class NormalizerRuntime:
         # SAFETY: same _releasing_feeds invariant as above.
         self._releasing_feeds.add(feed["id"])
         try:
-            await self._store.release_feed(feed["id"], worker_id)
+            await self._store.release_feed(feed["id"], worker_id, fencing_token)
         except Exception:
             # 60s abandonment window is the safety net.
             logger.exception("Failed to release feed %s", feed["name"])

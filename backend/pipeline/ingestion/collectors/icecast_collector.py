@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import datetime
 import logging
 import os
 import sys
@@ -11,7 +12,12 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from backend.pipeline.common.constants import AUDIO_SAMPLE_RATE, CHUNK_DURATION_SECONDS
+from backend.pipeline.common.constants import (
+    AUDIO_FORMAT,
+    CHUNK_DURATION_SECONDS,
+    NUM_AUDIO_CHANNELS,
+    SAMPLE_RATE_HZ,
+)
 from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
 from backend.pipeline.ingestion.settings import NormalizerSettings
 
@@ -24,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 # Audio processing constants
 SAMPLE_FORMAT = "s16"  # 16-bit signed integer
+
 READ_TIMEOUT_SEC = 30
 POLL_INTERVAL_SEC = 0.25
 
@@ -44,26 +51,28 @@ auth_header = f"Authorization: Basic {encoded_credentials}\r\n"
 
 
 def _segment_path(directory: Path, index: int) -> Path:
-    return directory / f"chunk_{index:06d}.flac"
+    return directory / f"chunk_{index:06d}.{AUDIO_FORMAT}"
 
 
 async def capture_icecast_stream(
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
-) -> AsyncIterator[bytes]:
+) -> AsyncIterator[tuple[bytes, datetime.datetime]]:
     """
     Capture audio chunks from an Icecast stream using ffmpeg segment muxing.
 
-    This implementation asks ffmpeg to write complete FLAC files for fixed
+    This implementation asks ffmpeg to write complete audio files for fixed
     CHUNK_DURATION_SECONDS windows. Each yielded chunk is therefore a standalone
-    decodable FLAC file rather than an arbitrary slice of a continuous bytestream.
+    decodable file rather than an arbitrary slice of a continuous bytestream.
 
     Args:
         feed: Leased feed containing stream_url and metadata
         shutdown_event: Signals graceful shutdown request
 
     Yields:
-        Complete FLAC file bytes for each segment
+        A tuple containing:
+        - (bytes) Complete audio file bytes for the segment
+        - (datetime.datetime) The exact audio start time of the segment window
 
     Raises:
         ValueError: If stream_url is missing from feed properties
@@ -79,7 +88,7 @@ async def capture_icecast_stream(
 
     with tempfile.TemporaryDirectory(prefix="icecast_segments_") as tmp_dir:
         segment_dir = Path(tmp_dir)
-        segment_pattern = str(segment_dir / "chunk_%06d.flac")
+        segment_pattern = str(segment_dir / f"chunk_%06d.{AUDIO_FORMAT}")
 
         process = await _create_ffmpeg_process(url, segment_pattern)
         logger.info(
@@ -92,6 +101,9 @@ async def capture_icecast_stream(
         next_index = 0
         last_activity_time = time.monotonic()
         wait_task = asyncio.create_task(process.wait())
+
+        # Anchor the stream timeline to the exact moment ffmpeg starts
+        stream_anchor_time = datetime.datetime.now(tz=datetime.UTC)
 
         try:
             while True:
@@ -114,7 +126,12 @@ async def capture_icecast_stream(
                 if current_segment.exists() and (next_segment.exists() or process_done):
                     segment_bytes = await asyncio.to_thread(current_segment.read_bytes)
                     if segment_bytes:
-                        yield segment_bytes
+                        # Calculate the start time of this specific chunk's window
+                        chunk_start_time = stream_anchor_time + datetime.timedelta(
+                            seconds=next_index * CHUNK_DURATION_SECONDS
+                        )
+                        yield segment_bytes, chunk_start_time
+
                         last_activity_time = time.monotonic()
                     await asyncio.to_thread(current_segment.unlink, missing_ok=True)
                     next_index += 1
@@ -157,7 +174,7 @@ async def _create_ffmpeg_process(
     segment_pattern: str,
 ) -> asyncio.subprocess.Process:
     """
-    Create and launch ffmpeg subprocess configured for segmented FLAC output.
+    Create and launch ffmpeg subprocess configured for segmented audio output.
 
     Args:
         url: The stream URL to connect to
@@ -167,19 +184,30 @@ async def _create_ffmpeg_process(
         The subprocess process object
 
     """
+    # Low-latency live stream network optimizations used below:
+    # 1. -analyzeduration 0 / -probesize 32768: Bypasses the default 5-second/5MB
+    #    initialization handicap, instantly locking the demuxer on the first 32KB of data.
+    #    This reduces the time-to-first-byte from the start timestamp when ffmpeg starts recording.
+    # 2. -fflags nobuffer+flush_packets: Drops the demuxer/muxer packet buffering
+    #    for true real-time network flow.
+    # 3. discardcorrupt: Mitigates parsing crashes over TCP jitter, which is necessary
+    #    since our micro probesize doesn't deeply validate stream integrity.
     return await asyncio.create_subprocess_exec(
-        "ffmpeg", "-nostdin", "-re",
+        "ffmpeg", "-nostdin",
+        "-analyzeduration", "0",
+        "-probesize", "32768",
+        "-fflags", "nobuffer+flush_packets+discardcorrupt",
         "-headers", auth_header,
         "-i", url,
         "-vn", "-sn", "-dn",
-        "-acodec", "flac",
-        "-ar", str(AUDIO_SAMPLE_RATE),
+        "-acodec", AUDIO_FORMAT,
+        "-ar", str(SAMPLE_RATE_HZ),
         "-sample_fmt", SAMPLE_FORMAT,
-        "-ac", "1",
+        "-ac", str(NUM_AUDIO_CHANNELS),
         "-compression_level", "0",
         "-f", "segment",
         "-segment_time", str(CHUNK_DURATION_SECONDS),
-        "-segment_format", "flac",
+        "-segment_format", AUDIO_FORMAT,
         "-reset_timestamps", "1",
         "-segment_start_number", "0",
         segment_pattern,

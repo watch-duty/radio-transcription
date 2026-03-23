@@ -3,21 +3,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar("T")
-
 
 class LeaseExpiredError(Exception):
     """Raised when a retry loop detects heartbeat loss."""
 
 
-async def retry_with_lease_check(
+async def retry_with_lease_check[T](
     fn: Callable[..., Awaitable[T]],
     *args: object,
     lease_lost: asyncio.Event,

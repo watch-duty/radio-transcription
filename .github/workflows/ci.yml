@@ -5,6 +5,7 @@ on: [push, workflow_call]
 permissions:
   contents: read
   actions: read
+  packages: read
 
 jobs:
   setup:
@@ -110,9 +111,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 100
+      - name: Install system dependencies (ffmpeg for pydub, libomp5 for TenVAD)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libomp5 libc++1 libc++abi1
       - name: Install mise, install tools
         # mise installs uv and other project-specific tools. see: .tool-versions
         uses: jdx/mise-action@v3
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - name: Install dependencies
         run: uv sync
       - name: Generate Protobuf Python files
@@ -127,8 +134,9 @@ jobs:
   #   2. New required env vars added via _require_env() but not yet wired into
   #      the deployment Terraform — the settings instantiation step fails if any
   #      required var is missing from the explicit -e list below.
-  # NOTE: evaluation/notification/transcription are excluded because their
-  # Dockerfiles don't yet verify env-var wiring via settings instantiation.
+  # NOTE: evaluation/notification are excluded because their
+  # Dockerfiles don't generate protobuf files yet. Add them here once their
+  # Dockerfiles include protobuf generation.
   docker-smoke-test:
     needs: [setup]
     if: needs.setup.outputs.should_run == 'true'
@@ -137,6 +145,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build ingestion Docker image
         run: docker build -t ingestion-smoke-test -f backend/pipeline/ingestion/collectors/Dockerfile .
+      - name: Build transcription Docker image
+        run: docker build -t transcription-smoke-test -f backend/pipeline/transcription/Dockerfile .
       # PUBSUB_EMULATOR_HOST bypasses GCP credential resolution in the
       # module-level PublisherClient() instantiation in normalizer_runtime.py.
       # Without it, the Pub/Sub SDK attempts ADC which fails inside Docker.
@@ -173,3 +183,64 @@ jobs:
             -e 'DETECTOR_CONFIG={"detectors": [{"type": "spectral_flatness"}]}' \
             detection-smoke-test \
             python -c "from backend.pipeline.detection import normalization_handler"
+      - name: Smoke-test detection handler accepts CloudEvents
+        run: |
+          # Start functions-framework in the background
+          docker run -d --name detection-smoke \
+            -p 8080:8080 \
+            -e LOCAL_DEV=1 \
+            -e PUBSUB_EMULATOR_HOST=localhost:8085 \
+            -e 'DETECTOR_CONFIG={"detectors": [{"type": "spectral_flatness"}]}' \
+            detection-smoke-test
+
+          # Wait for the server to be ready (max 30s)
+          for i in $(seq 1 30); do
+            if curl -s -o /dev/null -w "" http://localhost:8080/ 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+
+          if ! curl -s -o /dev/null -w "" http://localhost:8080/ 2>/dev/null; then
+            echo "FAIL: detection-smoke container never became ready (30s timeout)"
+            docker logs detection-smoke
+            docker stop detection-smoke && docker rm detection-smoke
+            exit 1
+          fi
+
+          # Test 1: CloudEvents POST should return 200
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost:8080/ \
+            -H "Content-Type: application/json" \
+            -H "ce-id: smoke-test-1" \
+            -H "ce-type: google.cloud.pubsub.topic.v1.messagePublished" \
+            -H "ce-source: //pubsub.googleapis.com/projects/test/topics/test" \
+            -H "ce-specversion: 1.0" \
+            -d '{"message": {"data": "", "messageId": "smoke-test"}}')
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            docker stop detection-smoke && docker rm detection-smoke
+            echo "FAIL: CloudEvents POST expected HTTP 200 but got $HTTP_CODE"
+            echo "This means functions-framework cannot parse CloudEvents requests."
+            exit 1
+          fi
+          echo "PASS: CloudEvents POST accepted (HTTP $HTTP_CODE)"
+
+          # Test 2: Raw Pub/Sub JSON (no ce-* headers) should return 400
+          # This is the exact format a Pub/Sub push subscription sends.
+          # The async functions-framework does NOT convert this to CloudEvents.
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost:8080/ \
+            -H "Content-Type: application/json" \
+            -d '{"message": {"data": "", "messageId": "smoke-test"}, "subscription": "projects/test/subscriptions/test"}')
+
+          # Clean up
+          docker stop detection-smoke && docker rm detection-smoke
+
+          if [ "$HTTP_CODE" != "400" ]; then
+            echo "FAIL: Raw Pub/Sub POST expected HTTP 400 but got $HTTP_CODE"
+            echo "If this returns 200, the handler may accept raw Pub/Sub format now"
+            echo "(e.g. switched to sync @cloud_event). Update this test accordingly."
+            exit 1
+          fi
+          echo "PASS: Raw Pub/Sub POST correctly rejected (HTTP $HTTP_CODE)"

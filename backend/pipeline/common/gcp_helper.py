@@ -4,7 +4,9 @@ import asyncio
 import base64
 import datetime
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+import aiohttp
 
 from backend.pipeline.common.constants import GCS_METADATA_SIZE_LIMIT
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
@@ -25,17 +27,18 @@ logger = logging.getLogger(__name__)
 def _build_sed_metadata(
     object_name: str,
     sed_metadata: SedMetadata | None,
-) -> dict[str, str] | None:
+) -> dict[str, dict[str, str]] | None:
     """Encode and validate optional SED metadata for GCS object metadata."""
     if not sed_metadata:
         return None
 
     sed_metadata_bytes = sed_metadata.SerializeToString()
     encoded_metadata = base64.b64encode(sed_metadata_bytes).decode("ascii")
-    metadata = {"sed_metadata": encoded_metadata}
+    metadata = {"metadata": {"sed_metadata": encoded_metadata}}
 
+    inner = metadata["metadata"]
     metadata_size = sum(
-        len(key.encode()) + len(value.encode()) for key, value in metadata.items()
+        len(key.encode()) + len(value.encode()) for key, value in inner.items()
     )
     if metadata_size > GCS_METADATA_SIZE_LIMIT:
         msg = (
@@ -60,12 +63,17 @@ async def upload_staged_audio(
     feed: LeasedFeed,
     bucket: str,
     chunk_seq: int,
+    fencing_token: int | None = None,
     sed_metadata: SedMetadata | None = None,
 ) -> str:
     """
     Upload an unnormalized audio chunk to GCS and return the object path.
 
-    The object path follows the convention:
+    When *fencing_token* is provided, the object path includes a
+    token-qualified segment for split-brain prevention:
+    ``{source_type}/{feed_id}/token-{N}/{timestamp}_{seq}.flac``
+
+    Without a fencing token the legacy path is used:
     ``{source_type}/{feed_id}/{timestamp}_{seq}.flac``
 
     Args:
@@ -74,6 +82,9 @@ async def upload_staged_audio(
         feed: The leased feed this chunk belongs to.
         bucket: GCS bucket name.
         chunk_seq: Monotonically increasing sequence number for this feed.
+        fencing_token: Fencing token from lease acquisition. When set,
+            produces a token-qualified path and uses ``ifGenerationMatch=0``
+            to guarantee create-only semantics.
         sed_metadata: Optional SED metadata serialized into object metadata.
 
     Returns:
@@ -86,7 +97,18 @@ async def upload_staged_audio(
     timestamp = datetime.datetime.now(tz=datetime.UTC).strftime(
         "%Y%m%dT%H%M%SZ",
     )
-    object_name = f"{feed['source_type']}/{feed['id']}/{timestamp}_{chunk_seq}.flac"
+    # Token-qualified paths give each lease holder a unique namespace.
+    # GCS ifGenerationMatch is per-object OCC — it cannot enforce "reject
+    # if token < max_seen."  Putting the token in the path sidesteps this:
+    # different lease holders write to different paths, so a zombie can
+    # never overwrite the current holder's objects.
+    if fencing_token is not None:
+        object_name = (
+            f"{feed['source_type']}/{feed['id']}/"
+            f"token-{fencing_token}/{timestamp}_{chunk_seq}.flac"
+        )
+    else:
+        object_name = f"{feed['source_type']}/{feed['id']}/{timestamp}_{chunk_seq}.flac"
 
     return await upload_audio(
         gcs_client,
@@ -94,6 +116,7 @@ async def upload_staged_audio(
         bucket,
         object_name,
         sed_metadata,
+        if_generation_match=0 if fencing_token is not None else None,
     )
 
 
@@ -103,6 +126,7 @@ async def upload_audio(
     bucket: str,
     object_name: str,
     sed_metadata: SedMetadata | None = None,
+    if_generation_match: int | None = None,
 ) -> str:
     """
     Upload audio to GCS with optional SED metadata.
@@ -117,6 +141,9 @@ async def upload_audio(
         bucket: Destination GCS bucket name.
         object_name: Object path within the bucket.
         sed_metadata: Optional SED metadata attached as custom metadata.
+        if_generation_match: GCS generation precondition. Set to ``0`` for
+            create-only semantics (fails with 412 if the object exists).
+            When set, a 412 is treated as success (idempotent retry).
 
     Returns:
         The full GCS path (``gs://bucket/object``).
@@ -125,13 +152,41 @@ async def upload_audio(
     storage = gcs_client.get_storage()
     metadata = _build_sed_metadata(object_name, sed_metadata)
 
-    await storage.upload(
-        bucket,
-        object_name,
-        audio_chunk,
-        metadata=metadata,
-        content_type="audio/flac",
+    # Build kwargs conditionally: passing parameters=None would break
+    # existing assert_called_once_with assertions that do exact matching.
+    upload_kwargs: dict[str, Any] = {
+        "metadata": metadata,
+        "content_type": "audio/flac",
+    }
+    if if_generation_match is not None:
+        upload_kwargs["parameters"] = {
+            "ifGenerationMatch": str(if_generation_match),
+        }
+
+    logger.debug(
+        "GCS upload",
+        extra={
+            "bucket": bucket,
+            "object": object_name,
+            "has_metadata": metadata is not None,
+        },
     )
+
+    try:
+        await storage.upload(bucket, object_name, audio_chunk, **upload_kwargs)
+    except aiohttp.ClientResponseError as exc:
+        # Catch 412 here rather than in the caller because
+        # aiohttp.ClientResponseError is a subclass of ClientError, which
+        # retry_with_lease_check treats as retryable — without this catch,
+        # a 412 would be retried indefinitely instead of treated as success.
+        if if_generation_match is not None and exc.status == 412:
+            logger.info(
+                "GCS 412 (object exists): %s/%s -- treating as success",
+                bucket,
+                object_name,
+            )
+        else:
+            raise
     return f"gs://{bucket}/{object_name}"
 
 
@@ -177,7 +232,8 @@ async def publish_audio_chunk(
     topic_path: str,
     feed_id: str,
     gcs_uri: str,
-    start_timestamp: datetime.datetime | None = None,
+    session_id: str,
+    start_timestamp: datetime.datetime,
 ) -> str:
     """
     Publish a GCS audio chunk URI to Pub/Sub and return message ID.
@@ -189,18 +245,20 @@ async def publish_audio_chunk(
         gcs_uri: GCS URI of the audio chunk.
         start_timestamp: Original capture timestamp to preserve.
             Defaults to ``datetime.now(UTC)`` if not provided.
+        session_id: The session ID for this connected stream ingestion.
 
     """
     publisher = pubsub_client.get_publisher()
 
     audio_chunk_msg = AudioChunk(gcs_uri=gcs_uri)
-    ts = start_timestamp or datetime.datetime.now(tz=datetime.UTC)
-    audio_chunk_msg.start_timestamp.FromDatetime(ts)
+    audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
+    audio_chunk_msg.session_id = session_id
 
     future = publisher.publish(
         topic_path,
         audio_chunk_msg.SerializeToString(),
         feed_id=feed_id,
         ordering_key=feed_id,
+        chunk_uri=gcs_uri,
     )
     return await asyncio.to_thread(future.result)

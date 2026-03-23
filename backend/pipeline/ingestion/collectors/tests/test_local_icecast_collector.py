@@ -1,3 +1,4 @@
+import datetime
 import os
 import tempfile
 import unittest
@@ -41,8 +42,8 @@ class TestLocalIcecastCollector(unittest.IsolatedAsyncioTestCase):
         """Writes captured bytes to disk and calls capture_icecast_stream once."""
 
         async def _fake_capture(_feed: dict[str, Any], _shutdown_event: Any):
-            yield b"first-bytes"
-            yield b"second-bytes"
+            yield b"first-bytes", datetime.datetime.now()
+            yield b"second-bytes", datetime.datetime.now()
 
         fixed_feed_id = uuid.UUID("12345678-1234-5678-1234-567812345678")
         capture_mock = MagicMock(side_effect=_fake_capture)
@@ -90,7 +91,7 @@ class TestLocalIcecastCollector(unittest.IsolatedAsyncioTestCase):
         """Falls back to current working directory when output dir env var is unset."""
 
         async def _fake_capture(_feed: dict[str, Any], _shutdown_event: Any):
-            yield b"cwd-bytes"
+            yield b"cwd-bytes", datetime.datetime.now()
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = local_icecast_collector.Path(tmp_dir)

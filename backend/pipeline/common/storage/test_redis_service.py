@@ -50,7 +50,7 @@ class TestRedisService(unittest.TestCase):
 
         self.assertTrue(kwargs.get("ssl"), "SSL should be enabled")
         self.assertEqual(kwargs.get("ssl_cert_reqs"), "required")
-        self.assertIn("/secrets/server_ca.pem", kwargs.get("ssl_ca_path", ""))
+        self.assertIn("/secrets/server_ca.pem", kwargs.get("ssl_ca_certs", ""))
 
     @patch.dict(os.environ, {"LOCAL_DEV": "True"})
     def test_ssl_configuration_not_passed_in_local_dev(self) -> None:
@@ -62,7 +62,7 @@ class TestRedisService(unittest.TestCase):
 
         self.assertFalse(kwargs.get("ssl"), "SSL should not be enabled")
         self.assertEqual(kwargs.get("ssl_cert_reqs"), "none")
-        self.assertIsNone(kwargs.get("ssl_ca_path"), "should be None")
+        self.assertIsNone(kwargs.get("ssl_ca_certs"), "should be None")
 
 
 if __name__ == "__main__":
