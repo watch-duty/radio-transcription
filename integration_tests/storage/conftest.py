@@ -14,7 +14,7 @@ from testcontainers.postgres import PostgresContainer
 
 from backend.pipeline.storage.connection import create_pool
 
-_REPO_ROOT = Path(__file__).resolve().parents[4]
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 _SQL_DIR = _REPO_ROOT / "terraform" / "modules" / "alloydb" / "sql" / "ingestion"
 
 
