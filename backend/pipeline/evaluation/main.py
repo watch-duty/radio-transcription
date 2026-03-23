@@ -21,7 +21,8 @@ else:
     logger.info("Running in LOCAL_DEV mode. Logs will print here.")
 
 # 2. Global Initialization (for performance on warm starts)
-publisher = pubsub_v1.PublisherClient()
+publisher_options = pubsub_v1.types.PublisherOptions(enable_message_ordering=True)
+publisher = pubsub_v1.PublisherClient(publisher_options=publisher_options)
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT")
 OUTPUT_TOPIC_ID = os.environ.get("RULES_EVALUATION_RESULTS_TOPIC")
 

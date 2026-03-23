@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from backend.pipeline.common.constants import AUDIO_FORMAT
 from backend.pipeline.ingestion.collectors.icecast_collector import (
     capture_icecast_stream,
 )
@@ -42,16 +43,17 @@ async def run_local_capture() -> None:
         "name": "local-icecast-test",
         "source_type": "icecast",
         "last_processed_filename": None,
+        "fencing_token": 0,
         "stream_url": stream_url,
     }
     shutdown_event = asyncio.Event()
 
     chunk_count = 0
-    async for audio_data in capture_icecast_stream(feed, shutdown_event):
+    async for audio_data, _ts in capture_icecast_stream(feed, shutdown_event):
         chunk_count += 1
         timestamp = datetime.now(UTC).isoformat(timespec="milliseconds")
         file_timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S_%fZ")
-        file_name = f"chunk_{chunk_count:06d}_{file_timestamp}.flac"
+        file_name = f"chunk_{chunk_count:06d}_{file_timestamp}.{AUDIO_FORMAT}"
         file_path = output_dir / file_name
         await asyncio.to_thread(file_path.write_bytes, audio_data)
         logger.info(

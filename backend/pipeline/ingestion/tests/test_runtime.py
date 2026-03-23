@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import unittest
 import uuid
 from unittest import mock
@@ -19,6 +20,7 @@ _FEED = LeasedFeed(
     name="Test Feed",
     source_type="bcfy_feeds",
     last_processed_filename=None,
+    fencing_token=1,
     stream_url="http://stream.example.com/feed",
 )
 
@@ -73,14 +75,16 @@ def _make_settings(**overrides) -> mock.MagicMock:
         "bookmark_retry_max_delay_sec": 4.0,
     }
     defaults.update(overrides)
-    return mock.MagicMock(**defaults)
+    m = mock.MagicMock()
+    m.configure_mock(**defaults)
+    return m
 
 
 def _make_runtime(**settings_overrides) -> NormalizerRuntime:
     """Build a runtime with a mock capture_fn and settings."""
 
     async def _dummy_capture(feed, shutdown):
-        yield b"chunk"
+        yield b"chunk", datetime.datetime.now(datetime.UTC)
 
     settings = _make_settings(**settings_overrides)
     rt = NormalizerRuntime(capture_fn=_dummy_capture, settings=settings)
@@ -156,6 +160,43 @@ class TestReapCompletedTasks(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(_FEED_ID, rt._feed_tasks)
 
 
+class TestLeasingLoopOrphanedTask(unittest.IsolatedAsyncioTestCase):
+    """Tests for orphaned task cancellation during re-lease."""
+
+    async def test_released_feed_cancels_orphaned_task(self) -> None:
+        """Re-leasing a feed cancels the still-running old task."""
+        rt = _make_runtime()
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+
+        # Simulate an existing running task for the same feed
+        old_task = asyncio.create_task(asyncio.sleep(1000))
+        rt._feed_tasks[_FEED_ID] = old_task
+
+        # Simulate acquire_feeds_batch returning the same feed (re-leased)
+        rt._store.acquire_feeds_batch.return_value = [_FEED]
+
+        # Patch _process_feed to avoid running the real pipeline
+        with mock.patch.object(rt, "_process_feed", new_callable=mock.AsyncMock):
+            # Run one iteration: reap, acquire, sleep → shutdown
+            rt._store.acquire_feeds_batch.side_effect = [
+                [_FEED],  # first call returns re-leased feed
+                asyncio.CancelledError,  # stop the loop
+            ]
+            rt._shutdown.set()  # stop after first iteration
+            await rt._leasing_loop()
+
+        # Yield to let the event loop process the cancellation
+        # (Python 3.12+ makes task cancellation strictly cooperative)
+        await asyncio.sleep(0)
+        # Old task must have been cancelled
+        self.assertTrue(old_task.cancelled())
+        # New task must be in _feed_tasks (not the old one)
+        self.assertIn(_FEED_ID, rt._feed_tasks)
+        self.assertIsNot(rt._feed_tasks[_FEED_ID], old_task)
+
+
 class TestProcessFeedFenceViolation(unittest.IsolatedAsyncioTestCase):
     """Tests for _process_feed fence violation."""
 
@@ -163,7 +204,7 @@ class TestProcessFeedFenceViolation(unittest.IsolatedAsyncioTestCase):
         """When bookmark fence fails, os._exit is called."""
 
         async def _one_chunk(feed, shutdown):
-            yield b"audio"
+            yield b"audio", datetime.datetime.now(datetime.UTC)
 
         rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
@@ -191,7 +232,7 @@ class TestProcessFeedShutdown(unittest.IsolatedAsyncioTestCase):
         """When shutdown is set, task returns without calling release_feed."""
 
         async def _one_chunk(feed, shutdown):
-            yield b"audio"
+            yield b"audio", datetime.datetime.now(datetime.UTC)
 
         rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
@@ -214,7 +255,7 @@ class TestProcessFeedNormalCompletion(unittest.IsolatedAsyncioTestCase):
         """When generator exhausts, release_feed is called."""
 
         async def _one_chunk(feed, shutdown):
-            yield b"audio"
+            yield b"audio", datetime.datetime.now(datetime.UTC)
 
         rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
@@ -232,7 +273,7 @@ class TestProcessFeedNormalCompletion(unittest.IsolatedAsyncioTestCase):
         """_releasing_feeds is empty after release completes."""
 
         async def _one_chunk(feed, shutdown):
-            yield b"audio"
+            yield b"audio", datetime.datetime.now(datetime.UTC)
 
         rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
@@ -245,6 +286,76 @@ class TestProcessFeedNormalCompletion(unittest.IsolatedAsyncioTestCase):
             await rt._process_feed(_FEED)
 
         self.assertEqual(rt._releasing_feeds, set())
+
+
+class TestProcessFeedTimestamps(unittest.IsolatedAsyncioTestCase):
+    """Tests for _process_feed timestamp population."""
+
+    async def test_sets_start_timestamp_on_audio_chunk(self) -> None:
+        """The start_timestamp field must be populated before publishing."""
+
+        async def _one_chunk(feed, shutdown):
+            yield b"audio", datetime.datetime.now(datetime.UTC)
+
+        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress.return_value = True
+        rt._releasing_feeds = set()
+
+        with (
+            _mock_upload_audio(),
+            _mock_pubsub_publish() as mock_publish,
+        ):
+            await rt._process_feed(_FEED)
+
+            mock_publish.assert_called_once()
+            _, args, kwargs = mock_publish.mock_calls[0]
+
+            self.assertEqual(len(args), 4)
+            self.assertEqual(args[1], rt._normalizer_settings.pubsub_topic_path)
+            self.assertEqual(args[2], str(_FEED["id"]))
+            self.assertTrue(args[3].startswith("gs://"))
+
+            self.assertIn("start_timestamp", kwargs)
+            self.assertIsNotNone(kwargs["start_timestamp"])
+            self.assertIsInstance(kwargs["start_timestamp"], datetime.datetime)
+            self.assertGreater(kwargs["start_timestamp"].timestamp(), 1700000000)
+
+
+class TestProcessFeedSessionId(unittest.IsolatedAsyncioTestCase):
+    """Tests for _process_feed session ID population."""
+
+    async def test_session_id_populated_and_identical_across_chunks(self) -> None:
+        """The session_id field must be populated and identical for all chunks in a session."""
+
+        async def _two_chunks(feed, shutdown):
+            yield b"audio1", datetime.datetime.now(datetime.UTC)
+            yield b"audio2", datetime.datetime.now(datetime.UTC)
+
+        rt = NormalizerRuntime(capture_fn=_two_chunks, settings=_make_settings())
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress.return_value = True
+        rt._releasing_feeds = set()
+
+        with (
+            _mock_upload_audio(),
+            _mock_pubsub_publish() as mock_publish,
+        ):
+            await rt._process_feed(_FEED)
+
+            self.assertEqual(mock_publish.call_count, 2)
+
+            _, _, kwargs1 = mock_publish.mock_calls[0]
+            _, _, kwargs2 = mock_publish.mock_calls[1]
+
+            self.assertIn("session_id", kwargs1)
+            self.assertIn("session_id", kwargs2)
+            self.assertTrue(len(kwargs1["session_id"]) > 0)
+            self.assertEqual(kwargs1["session_id"], kwargs2["session_id"])
 
 
 class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
@@ -515,7 +626,7 @@ class TestHeartbeatLoopSetsLeaseLost(unittest.IsolatedAsyncioTestCase):
         rt._thread_stop.wait.return_value = False
 
         with (
-            mock.patch.object(rt, "_heartbeat_cycle", return_value=None),
+            mock.patch.object(rt, "_heartbeat_cycle"),
             mock.patch(
                 "asyncio.run_coroutine_threadsafe",
             ) as mock_run,
@@ -524,6 +635,10 @@ class TestHeartbeatLoopSetsLeaseLost(unittest.IsolatedAsyncioTestCase):
             future.result.side_effect = RuntimeError("DB gone")
             mock_run.return_value = future
             rt._heartbeat_loop()
+
+            # Prevent "coroutine was never awaited" warning
+            coro = mock_run.call_args[0][0]
+            coro.close()
 
         # _lease_lost should have been set via call_soon_threadsafe.
         # Since we're already on the event loop, we can check directly.
@@ -570,7 +685,7 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         """GCS upload fails once then succeeds — pipeline continues."""
 
         async def _one_chunk(feed, shutdown):
-            yield b"audio"
+            yield b"audio", datetime.datetime.now(datetime.UTC)
 
         rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
@@ -599,7 +714,7 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         """LeaseExpiredError aborts cleanly — no report_feed_failure call."""
 
         async def _one_chunk(feed, shutdown):
-            yield b"audio"
+            yield b"audio", datetime.datetime.now(datetime.UTC)
 
         rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
@@ -625,7 +740,7 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         """Lease loss during bookmark retry aborts without DB write."""
 
         async def _one_chunk(feed, shutdown):
-            yield b"audio"
+            yield b"audio", datetime.datetime.now(datetime.UTC)
 
         rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()

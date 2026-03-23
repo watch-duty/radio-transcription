@@ -9,7 +9,7 @@ services:
       - pipeline-network
 
   pubsub-init:
-    image: python:3.11-slim
+    image: python:3.13-slim
     depends_on:
       - pubsub-emulator
       - rules-evaluation
@@ -79,7 +79,7 @@ services:
       - redis
 
   mock-server:
-    image: python:3.11-slim
+    image: python:3.13-slim
     ports:
       - "8082:8082"
     volumes:
@@ -90,7 +90,7 @@ services:
       - pipeline-network
 
   integration-tests:
-    image: python:3.11-slim
+    image: python:3.13-slim
     depends_on:
       - pubsub-emulator
       - rules-management
@@ -114,7 +114,7 @@ services:
       - pipeline-network
 
   temp-integration-test:
-    image: python:3.11-slim
+    image: python:3.13-slim
     depends_on:
       - pubsub-emulator
       - rules-management

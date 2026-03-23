@@ -123,5 +123,19 @@ docker compose up temp-integration-test
 * run `mise format`
 * run `mise lint`
 
+
+### Pre-commit Hooks
+This repository uses `pre-commit` to ensure code quality before pushing.
+To install the pre-commit hook in your local Git repository:
+```bash
+uv run pre-commit install
+```
+After installation, `pre-commit` will automatically run on the changed files during `git commit`.
+
+You can also run the pre-commit hooks manually on all files at any time:
+```bash
+uv run pre-commit run --all-files
+```
+
 ### Deployments and Local Testing
 * Docker
