@@ -439,6 +439,13 @@ class NormalizerRuntime:
                     fencing_token,
                     self._normalizer_settings.feed_failure_threshold,
                 )
+                logger.warning(
+                    "Feed failure reported",
+                    extra={
+                        "feed_name": feed["name"],
+                        "feed_id": str(feed["id"]),
+                    },
+                )
             except Exception:
                 # 60s abandonment window is the safety net if this fails.
                 logger.exception(

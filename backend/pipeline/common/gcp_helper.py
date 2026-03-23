@@ -27,17 +27,18 @@ logger = logging.getLogger(__name__)
 def _build_sed_metadata(
     object_name: str,
     sed_metadata: SedMetadata | None,
-) -> dict[str, str] | None:
+) -> dict[str, dict[str, str]] | None:
     """Encode and validate optional SED metadata for GCS object metadata."""
     if not sed_metadata:
         return None
 
     sed_metadata_bytes = sed_metadata.SerializeToString()
     encoded_metadata = base64.b64encode(sed_metadata_bytes).decode("ascii")
-    metadata = {"sed_metadata": encoded_metadata}
+    metadata = {"metadata": {"sed_metadata": encoded_metadata}}
 
+    inner = metadata["metadata"]
     metadata_size = sum(
-        len(key.encode()) + len(value.encode()) for key, value in metadata.items()
+        len(key.encode()) + len(value.encode()) for key, value in inner.items()
     )
     if metadata_size > GCS_METADATA_SIZE_LIMIT:
         msg = (
@@ -161,6 +162,15 @@ async def upload_audio(
         upload_kwargs["parameters"] = {
             "ifGenerationMatch": str(if_generation_match),
         }
+
+    logger.debug(
+        "GCS upload",
+        extra={
+            "bucket": bucket,
+            "object": object_name,
+            "has_metadata": metadata is not None,
+        },
+    )
 
     try:
         await storage.upload(bucket, object_name, audio_chunk, **upload_kwargs)

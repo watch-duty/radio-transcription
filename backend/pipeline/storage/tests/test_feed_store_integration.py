@@ -323,6 +323,97 @@ class TestFeedStoreIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["status"], "quarantined")
         self.assertEqual(row["failure_count"], 3)
 
+    async def test_failing_feed_not_leased_before_retry_after(self) -> None:
+        """Feed with retry_after in the future is not returned by acquire."""
+        worker = uuid.uuid4()
+        feed_id = await self._insert_feed(
+            "Backoff Feed",
+            status="active",
+            worker_id=worker,
+            last_heartbeat_age_seconds=10,
+        )
+        await self.store.report_feed_failure(feed_id, worker, 0)
+        # retry_after is 30s in the future — feed should NOT be returned
+        result = await self.store.lease_feed(uuid.uuid4())
+        self.assertIsNone(result)
+
+    async def test_failing_feed_leased_after_retry_after_expires(self) -> None:
+        """Feed is returned by acquire after retry_after passes."""
+        worker = uuid.uuid4()
+        feed_id = await self._insert_feed(
+            "Backoff Feed",
+            status="active",
+            worker_id=worker,
+            last_heartbeat_age_seconds=10,
+        )
+        await self.store.report_feed_failure(feed_id, worker, 0)
+        # Manually expire the backoff
+        await self.pool.execute(
+            "UPDATE feeds SET retry_after = NOW() - INTERVAL '1 second' WHERE id = $1",
+            feed_id,
+        )
+        result = await self.store.lease_feed(uuid.uuid4())
+        self.assertIsNotNone(result)
+        self.assertEqual(result["id"], feed_id)
+
+    async def test_lease_preserves_failure_count(self) -> None:
+        """Leasing clears retry_after but does NOT reset failure_count."""
+        worker = uuid.uuid4()
+        feed_id = await self._insert_feed(
+            "Reset Feed",
+            status="active",
+            worker_id=worker,
+            last_heartbeat_age_seconds=10,
+        )
+        await self.store.report_feed_failure(feed_id, worker, 0)
+        # Expire backoff so feed can be re-leased
+        await self.pool.execute(
+            "UPDATE feeds SET retry_after = NOW() - INTERVAL '1 second' WHERE id = $1",
+            feed_id,
+        )
+        new_worker = uuid.uuid4()
+        result = await self.store.lease_feed(new_worker)
+        self.assertIsNotNone(result)
+        row = await self.pool.fetchrow(
+            "SELECT failure_count, retry_after FROM feeds WHERE id = $1",
+            feed_id,
+        )
+        # failure_count preserved (only reset by successful processing)
+        self.assertEqual(row["failure_count"], 1)
+        # retry_after cleared on lease
+        self.assertIsNone(row["retry_after"])
+
+    async def test_successful_processing_resets_failure_count(self) -> None:
+        """update_feed_progress resets failure_count to 0."""
+        worker = uuid.uuid4()
+        feed_id = await self._insert_feed(
+            "Progress Feed",
+            status="active",
+            worker_id=worker,
+            last_heartbeat_age_seconds=10,
+        )
+        await self.store.report_feed_failure(feed_id, worker, 0)
+        # Expire backoff and re-lease
+        await self.pool.execute(
+            "UPDATE feeds SET retry_after = NOW() - INTERVAL '1 second' WHERE id = $1",
+            feed_id,
+        )
+        new_worker = uuid.uuid4()
+        result = await self.store.lease_feed(new_worker)
+        self.assertIsNotNone(result)
+        # Simulate successful processing
+        await self.store.update_feed_progress(
+            result["id"],
+            new_worker,
+            "chunk_001.flac",
+            result["fencing_token"],
+        )
+        row = await self.pool.fetchrow(
+            "SELECT failure_count FROM feeds WHERE id = $1",
+            feed_id,
+        )
+        self.assertEqual(row["failure_count"], 0)
+
     # -- Tests: renew_heartbeats_batch_diagnostic --------------------------
 
     async def test_diagnostic_renew_returns_all_owned_feeds(self) -> None:

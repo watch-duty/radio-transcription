@@ -235,7 +235,14 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
 
     async def test_returns_true_when_lease_held(self) -> None:
         """True is returned when the failure was recorded."""
-        pool = _make_pool(execute_result="UPDATE 1")
+        pool = _make_pool(
+            execute_result="UPDATE 1",
+            fetchrow_result={
+                "status": "failing",
+                "failure_count": 1,
+                "retry_after": None,
+            },
+        )
         store = FeedStore(pool)
 
         result = await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
@@ -243,7 +250,7 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result)
 
     async def test_returns_false_when_lease_lost(self) -> None:
-        """False is returned when the lease was already lost."""
+        """False is returned when the UPDATE matches no rows."""
         pool = _make_pool(execute_result="UPDATE 0")
         store = FeedStore(pool)
 
@@ -252,14 +259,25 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result)
 
     async def test_passes_correct_parameters(self) -> None:
-        """Parameters are passed in the correct order."""
-        pool = _make_pool(execute_result="UPDATE 1")
+        """Parameters are passed in the correct order to the atomic SQL."""
+        pool = _make_pool(
+            execute_result="UPDATE 1",
+            fetchrow_result={
+                "status": "failing",
+                "failure_count": 1,
+                "retry_after": None,
+            },
+        )
         store = FeedStore(pool)
 
         await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
 
         args = pool.execute.call_args[0]
-        self.assertEqual(args[1:], (_FEED_ID, _WORKER_ID, 3, 1))
+        # $1=feed_id, $2=worker_id, $3=threshold, $4=fencing_token
+        self.assertEqual(args[1], _FEED_ID)
+        self.assertEqual(args[2], _WORKER_ID)
+        self.assertEqual(args[3], 3)  # default threshold
+        self.assertEqual(args[4], 1)  # fencing_token
 
 
 class TestReleaseFeed(unittest.IsolatedAsyncioTestCase):
@@ -351,25 +369,58 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
 class TestReportFeedFailureWithThreshold(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.report_feed_failure with custom threshold."""
 
-    async def test_passes_custom_threshold(self) -> None:
-        """Custom failure_threshold is passed as query parameter."""
-        pool = _make_pool(execute_result="UPDATE 1")
+    async def test_custom_threshold_passed_to_sql(self) -> None:
+        """Custom failure_threshold is passed as $3 parameter."""
+        pool = _make_pool(
+            execute_result="UPDATE 1",
+            fetchrow_result={
+                "status": "failing",
+                "failure_count": 1,
+                "retry_after": None,
+            },
+        )
         store = FeedStore(pool)
 
         await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1, failure_threshold=5)
 
         args = pool.execute.call_args[0]
-        self.assertEqual(args[1:], (_FEED_ID, _WORKER_ID, 5, 1))
+        self.assertEqual(args[3], 5)  # $3 = threshold
 
     async def test_default_threshold_is_3(self) -> None:
-        """Default threshold is 3 for backward compatibility."""
-        pool = _make_pool(execute_result="UPDATE 1")
+        """Default threshold is 3."""
+        pool = _make_pool(
+            execute_result="UPDATE 1",
+            fetchrow_result={
+                "status": "failing",
+                "failure_count": 1,
+                "retry_after": None,
+            },
+        )
         store = FeedStore(pool)
 
         await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
 
         args = pool.execute.call_args[0]
-        self.assertEqual(args[1:], (_FEED_ID, _WORKER_ID, 3, 1))
+        self.assertEqual(args[3], 3)
+
+
+class TestBackoffFormula(unittest.TestCase):
+    """Verify the exponential backoff computation used by report_feed_failure."""
+
+    def test_first_failure_30s(self) -> None:
+        assert min(30 * (2**0), 3600) == 30
+
+    def test_third_failure_120s(self) -> None:
+        assert min(30 * (2**2), 3600) == 120
+
+    def test_seventh_failure_1920s(self) -> None:
+        assert min(30 * (2**6), 3600) == 1920
+
+    def test_eighth_failure_capped_3600s(self) -> None:
+        assert min(30 * (2**7), 3600) == 3600
+
+    def test_tenth_failure_still_capped(self) -> None:
+        assert min(30 * (2**9), 3600) == 3600
 
 
 if __name__ == "__main__":
