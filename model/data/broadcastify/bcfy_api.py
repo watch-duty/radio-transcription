@@ -24,6 +24,13 @@ BROADCASTIFY_API_TOKEN = os.getenv("BROADCASTIFY_API_TOKEN", None)
 logger = logging.getLogger(__name__)
 
 
+class MissingTokenError(ValueError):
+    """Raised when the Broadcastify API token is missing."""
+
+    def __init__(self) -> None:
+        super().__init__("BROADCASTIFY_API_TOKEN must be set")
+
+
 def _base64url_encode(data: bytes) -> str:
     padding = b"="
     return base64.urlsafe_b64encode(data).rstrip(padding).decode("utf-8")
@@ -39,6 +46,8 @@ def _create_payload() -> dict:
 
 
 def _create_signature(encoded_header: str, encoded_payload: str) -> str:
+    if BROADCASTIFY_API_TOKEN is None:
+        raise MissingTokenError
     message = f"{encoded_header}.{encoded_payload}".encode()
     signature = hmac.new(
         BROADCASTIFY_API_TOKEN.encode("utf-8"),
