@@ -185,6 +185,7 @@ class SerializeToPubSubMessageFn(beam.DoFn):
         yield PubsubMessage(
             data=proto.SerializeToString(),
             attributes={},
+            ordering_key=element.feed_id,
         )
 
 

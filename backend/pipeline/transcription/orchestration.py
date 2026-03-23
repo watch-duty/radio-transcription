@@ -44,6 +44,7 @@ def format_dlq_message(element: dict) -> PubsubMessage:
     return PubsubMessage(
         data=payload,
         attributes={"feed_id": feed_id, "error_type": "pipeline_failure"},
+        ordering_key=feed_id,
     )
 
 
