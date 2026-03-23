@@ -1,6 +1,11 @@
 repos:
   - repo: local
     hooks:
+      - id: generate-protos
+        name: generate protobufs
+        entry: mise run generate:protos
+        language: system
+        pass_filenames: false
       - id: ruff-check
         name: ruff check
         entry: uv run ruff check --force-exclude --fix
@@ -19,4 +24,4 @@ repos:
         language: system
         types_or: [python, pyi]
         require_serial: true
-        pass_filenames: true
+        pass_filenames: false
