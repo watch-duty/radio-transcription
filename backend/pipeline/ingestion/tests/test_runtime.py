@@ -187,6 +187,10 @@ class TestLeasingLoopOrphanedTask(unittest.IsolatedAsyncioTestCase):
             rt._shutdown.set()  # stop after first iteration
             await rt._leasing_loop()
 
+        # Yield to let the event loop process the cancellation
+        # (Python 3.12+ makes task cancellation strictly cooperative)
+        await asyncio.sleep(0)
+
         # Old task must have been cancelled
         self.assertTrue(old_task.cancelled())
         # New task must be in _feed_tasks (not the old one)
