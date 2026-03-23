@@ -288,12 +288,12 @@ class TestNormalizationHandlerIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result)
         mock_publish.assert_not_called()
 
-    @mock.patch(_PUBLISH, new_callable=mock.AsyncMock)
-    async def test_wrong_sample_rate_returns_normally(
+    @mock.patch(_PUBLISH, new_callable=mock.AsyncMock, return_value="msg-sr")
+    async def test_wrong_sample_rate_resampled_and_processed(
         self,
         mock_publish,
     ) -> None:
-        """8kHz FLAC → rejected due to wrong sample rate."""
+        """8kHz FLAC → ffmpeg resamples to 16kHz → processed normally."""
         object_name = "feeds/wrong-sr-feed/chunk_001.flac"
         tone_8k = _make_tone(440.0, 1.0, sr=8000)
         flac_bytes = _make_flac(tone_8k, sample_rate=8000)
@@ -303,7 +303,9 @@ class TestNormalizationHandlerIntegration(unittest.IsolatedAsyncioTestCase):
         result = await normalize(event)
 
         self.assertIsNone(result)
-        mock_publish.assert_not_called()
+        # ffmpeg resamples 8kHz → 16kHz via -ar flag, so the handler
+        # processes it normally and publishes if speech is detected.
+        mock_publish.assert_called_once()
 
     @mock.patch(_PUBLISH, new_callable=mock.AsyncMock, return_value="msg-002")
     async def test_audio_bytes_roundtrip_exact_match(
