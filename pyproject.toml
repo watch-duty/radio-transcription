@@ -48,6 +48,7 @@ dev = [
   "fakeredis",
   "pytest>=9.0.2",
   "pre-commit",
+  "boto3",
 ]
 
 [tool.ruff]
