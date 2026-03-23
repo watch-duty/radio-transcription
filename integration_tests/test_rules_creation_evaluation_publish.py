@@ -141,10 +141,10 @@ def verify_notification(expected_transmission_id: str) -> bool:
             data = response.json()
 
             if data:
-                data_str = str(data)
-                if expected_transmission_id in data_str:
-                    logger.info("SUCCESS: Notification received and verified!")
-                    return True
+                for item in data:
+                    if expected_transmission_id in str(item):
+                        logger.info("SUCCESS: Notification received and verified!")
+                        return True
                 logger.info("Received notification, but it doesn't match our test ID.")
         except Exception as e:
             logger.debug(f"Error polling mock server: {e}")

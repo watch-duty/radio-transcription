@@ -9,7 +9,7 @@ services:
       - pipeline-network
 
   pubsub-init:
-    image: python:3.11-slim
+    image: python:3.13-slim
     depends_on:
       - pubsub-emulator
       - rules-evaluation
@@ -23,6 +23,14 @@ services:
       - ./local_dev/pubsub_init.py:/app/pubsub_init.py
     working_dir: /app
     command: sh -c "pip install requests && python pubsub_init.py"
+
+  # Redis for deduping in Notification service
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - pipeline-network
 
   rules-evaluation:
     build:
@@ -53,13 +61,6 @@ services:
     networks:
       - pipeline-network
 
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    networks:
-      - pipeline-network
-
   notification:
     build:
       context: .
@@ -78,7 +79,7 @@ services:
       - redis
 
   mock-server:
-    image: python:3.11-slim
+    image: python:3.13-slim
     ports:
       - "8082:8082"
     volumes:
@@ -88,8 +89,32 @@ services:
     networks:
       - pipeline-network
 
-  integration-test:
-    image: python:3.11-slim
+  integration-tests:
+    image: python:3.13-slim
+    depends_on:
+      - pubsub-emulator
+      - rules-management
+      - rules-evaluation
+      - notification
+      - redis
+      - mock-server
+      - pubsub-init
+    env_file:
+      - ./local_dev/LOCAL.env
+    environment:
+      - UV_PROJECT_ENVIRONMENT=/tmp/.venv
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: >
+      sh -c "pip install uv && uv sync &&
+      uv run python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto &&
+      uv run pytest integration_tests/* -v"
+    networks:
+      - pipeline-network
+
+  temp-integration-test:
+    image: python:3.13-slim
     depends_on:
       - pubsub-emulator
       - rules-management

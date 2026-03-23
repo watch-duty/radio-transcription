@@ -3,23 +3,16 @@
 import json
 import logging
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-STATE: dict[str, Any] = {"last_received": None}
+# Tracking requests for integration tests
+_received_requests = []
 
 
 class RequestHandler(BaseHTTPRequestHandler):
     """Handles HTTP requests for the mock server."""
-
-    def do_GET(self) -> None:
-        """Endpoint to query what the server has received."""
-        self.send_response(200)
-        self.send_header("Content-type", "application/json")
-        self.end_headers()
-        self.wfile.write(json.dumps(STATE["last_received"]).encode("utf-8"))
 
     def do_POST(self) -> None:
         """Processes incoming POST requests and echoes the JSON payload."""
@@ -33,14 +26,27 @@ class RequestHandler(BaseHTTPRequestHandler):
         # Parse the incoming JSON, default to string if not JSON
         try:
             parsed_data = json.loads(post_data.decode("utf-8"))
-        except Exception:
+        except json.JSONDecodeError:
             parsed_data = post_data.decode("utf-8")
+
+        _received_requests.append(parsed_data)
 
         response = {"message": "Success", "received_data": parsed_data}
         self.wfile.write(json.dumps(response).encode("utf-8"))
         logger.info("Mock Server received POST request with data:\n%s", parsed_data)
 
-        STATE["last_received"] = parsed_data
+    def do_GET(self) -> None:
+        """Returns the list of received requests."""
+        self.send_response(200)
+        self.send_header("Content-type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(_received_requests).encode("utf-8"))
+
+    def do_DELETE(self) -> None:
+        """Clears the list of received requests."""
+        _received_requests.clear()
+        self.send_response(200)
+        self.end_headers()
 
 
 def run(
