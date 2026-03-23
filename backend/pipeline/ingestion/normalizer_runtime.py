@@ -150,9 +150,7 @@ class NormalizerRuntime:
         # Dedicated 1-connection pool ensures heartbeat queries never queue
         # behind 250 bookmark/upload operations on the main pool. Without
         # this, pool contention causes false stall-timeout kills.
-        from dataclasses import replace  # noqa: PLC0415
-
-        hb_settings = replace(settings.db, pool_min_size=1, pool_max_size=1)
+        hb_settings = settings.db.replace(pool_min_size=1, pool_max_size=1)
         self._heartbeat_pool = await create_pool_from_settings(hb_settings)
         self._heartbeat_store = FeedStore(self._heartbeat_pool)
 

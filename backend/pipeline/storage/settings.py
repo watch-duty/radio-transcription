@@ -48,3 +48,9 @@ class AlloyDBSettings:
     connect_timeout_sec: float = field(
         default_factory=lambda: float(os.environ.get("DB_CONNECT_TIMEOUT_SEC", "10.0")),
     )
+
+    def replace(self, **kwargs) -> AlloyDBSettings:
+        """Return a new instance with replaced fields."""
+        from dataclasses import replace
+
+        return replace(self, **kwargs)

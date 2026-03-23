@@ -73,7 +73,7 @@ class RulesStore:
     def _prepare_row(self, row: asyncpg.Record) -> dict:
         """Prepare an asyncpg record for Pydantic validation."""
         data = dict(row)
-        if "rule_id" in data and data["rule_id"]:
+        if data.get("rule_id"):
             data["rule_id"] = str(data["rule_id"])
 
         for field in ["scope", "conditions", "metadata"]:
