@@ -96,9 +96,11 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             expected_object_name,
             audio_chunk,
             metadata={
-                "sed_metadata": base64.b64encode(
-                    sed_metadata.SerializeToString()
-                ).decode("ascii"),
+                "metadata": {
+                    "sed_metadata": base64.b64encode(
+                        sed_metadata.SerializeToString()
+                    ).decode("ascii"),
+                },
             },
             content_type="audio/flac",
         )
@@ -384,9 +386,10 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         mock_storage.upload.assert_called_once()
         call_kwargs = mock_storage.upload.call_args
         metadata = call_kwargs.kwargs.get("metadata") or call_kwargs[1].get("metadata")
-        self.assertIn("sed_metadata", metadata)
+        self.assertIn("metadata", metadata)
+        self.assertIn("sed_metadata", metadata["metadata"])
 
-        decoded = base64.b64decode(metadata["sed_metadata"])
+        decoded = base64.b64decode(metadata["metadata"]["sed_metadata"])
         parsed = SedMetadata()
         parsed.ParseFromString(decoded)
         self.assertEqual(len(parsed.sound_events), 1)
