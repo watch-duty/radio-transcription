@@ -4,6 +4,8 @@ import os
 import uuid
 from dataclasses import dataclass, field
 
+from backend.pipeline.storage.settings import AlloyDBSettings
+
 
 def _require_env(name: str) -> str:
     """Return an environment variable or raise if unset."""
@@ -19,8 +21,9 @@ class NormalizerSettings:
     """
     Configuration for the NormalizerRuntime, loaded from environment variables.
 
-    All fields have sensible defaults except those marked as required
-    (``audio_staging_bucket`` and AlloyDB connection parameters).
+    All fields have sensible defaults except ``audio_staging_bucket`` and
+    ``pubsub_topic_path`` which are required. AlloyDB connection parameters
+    are loaded via ``AlloyDBSettings``.
 
     """
 
@@ -72,24 +75,7 @@ class NormalizerSettings:
     )
 
     # Database pool
-    db_pool_min_size: int = field(
-        default_factory=lambda: int(os.environ.get("DB_POOL_MIN_SIZE", "5")),
-    )
-    db_pool_max_size: int = field(
-        default_factory=lambda: int(os.environ.get("DB_POOL_MAX_SIZE", "5")),
-    )
-
-    # Timeouts
-    db_command_timeout_sec: float = field(
-        default_factory=lambda: float(
-            os.environ.get("DB_COMMAND_TIMEOUT_SEC", "30.0"),
-        ),
-    )
-    db_connect_timeout_sec: float = field(
-        default_factory=lambda: float(
-            os.environ.get("DB_CONNECT_TIMEOUT_SEC", "10.0"),
-        ),
-    )
+    db: AlloyDBSettings = field(default_factory=AlloyDBSettings)
 
     # Feed lifecycle
     feed_failure_threshold: int = field(
@@ -137,19 +123,4 @@ class NormalizerSettings:
         ),
     )
 
-    # AlloyDB connection
-    db_host: str = field(
-        default_factory=lambda: _require_env("ALLOYDB_HOST"),
-    )
-    db_port: int = field(
-        default_factory=lambda: int(os.environ.get("ALLOYDB_PORT", "6432")),
-    )
-    db_user: str = field(
-        default_factory=lambda: _require_env("ALLOYDB_USER"),
-    )
-    db_name: str = field(
-        default_factory=lambda: _require_env("ALLOYDB_DB"),
-    )
-    db_password: str = field(
-        default_factory=lambda: os.environ.get("ALLOYDB_PASSWORD", ""),
-    )
+

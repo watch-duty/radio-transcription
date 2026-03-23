@@ -1,6 +1,6 @@
-import os
-
 import asyncpg
+
+from .settings import AlloyDBSettings
 
 
 async def create_pool(
@@ -75,41 +75,23 @@ async def close_pool(pool: asyncpg.Pool) -> None:
     await pool.close()
 
 
-async def create_pool_from_env() -> asyncpg.Pool:
+async def create_pool_from_settings(settings: AlloyDBSettings | None = None) -> asyncpg.Pool:
     """
-    Create an asyncpg connection pool using standard environment variables.
+    Create an asyncpg connection pool using an AlloyDBSettings object.
 
-    Reads configuration from:
-    - ALLOYDB_HOST (default: localhost)
-    - ALLOYDB_PORT (default: 6432)
-    - ALLOYDB_USER (default: postgres)
-    - ALLOYDB_DB (default: postgres)
-    - ALLOYDB_PASSWORD (default: "")
-    - DB_POOL_MIN_SIZE (default: 5)
-    - DB_POOL_MAX_SIZE (default: 5)
-    - DB_COMMAND_TIMEOUT_SEC (default: 30.0)
-    - DB_CONNECT_TIMEOUT_SEC (default: 10.0)
+    If no settings object is provided, it defaults to loading from environment variables.
     """
-    host = os.environ.get("ALLOYDB_HOST", "localhost")
-    port = int(os.environ.get("ALLOYDB_PORT", "6432"))
-    user = os.environ.get("ALLOYDB_USER", "postgres")
-    db_name = os.environ.get("ALLOYDB_DB", "postgres")
-    password = os.environ.get("ALLOYDB_PASSWORD", "")
-
-    min_size = int(os.environ.get("DB_POOL_MIN_SIZE", "5"))
-    max_size = int(os.environ.get("DB_POOL_MAX_SIZE", "5"))
-
-    command_timeout = float(os.environ.get("DB_COMMAND_TIMEOUT_SEC", "30.0"))
-    timeout = float(os.environ.get("DB_CONNECT_TIMEOUT_SEC", "10.0"))
+    if settings is None:
+        settings = AlloyDBSettings()
 
     return await create_pool(
-        host=host,
-        port=port,
-        user=user,
-        db_name=db_name,
-        password=password,
-        min_size=min_size,
-        max_size=max_size,
-        command_timeout=command_timeout,
-        timeout=timeout,
+        host=settings.host,
+        port=settings.port,
+        user=settings.user,
+        db_name=settings.db_name,
+        password=settings.password,
+        min_size=settings.pool_min_size,
+        max_size=settings.pool_max_size,
+        command_timeout=settings.command_timeout_sec,
+        timeout=settings.connect_timeout_sec,
     )

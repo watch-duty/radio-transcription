@@ -1,10 +1,13 @@
 import unittest
+import uuid
 
 from fastapi.testclient import TestClient
 
 from backend.pipeline.common.auth import verify_oidc_token
+from backend.pipeline.common.rules.models import Rule, RuleCreate, RuleUpdate
 
-from ..main import app
+from ..main import app, get_rules_service
+from ..service import BaseRulesService
 
 
 async def skip_auth() -> dict[str, str]:
@@ -12,11 +15,48 @@ async def skip_auth() -> dict[str, str]:
     return {"sub": "test@example.com", "email": "test@example.com"}
 
 
+class MockRulesService(BaseRulesService):
+    """Local mock implementation for unit testing the API logic."""
+
+    def __init__(self) -> None:
+        self._rules: dict[str, Rule] = {}
+
+    async def create_rule(self, rule_in: RuleCreate) -> Rule:
+        rule_id = f"rule_{uuid.uuid4().hex[:8]}"
+        temp_rule = Rule(rule_id=rule_id, **rule_in.model_dump())
+        self._rules[rule_id] = temp_rule
+        return temp_rule
+
+    async def get_rule(self, rule_id: str) -> Rule | None:
+        return self._rules.get(rule_id)
+
+    async def list_rules(self) -> list[Rule]:
+        return list(self._rules.values())
+
+    async def update_rule(self, rule_id: str, rule_in: RuleUpdate) -> Rule | None:
+        if rule_id not in self._rules:
+            return None
+        existing_rule = self._rules[rule_id]
+        update_data = rule_in.model_dump(exclude_unset=True)
+        updated_rule_dict = existing_rule.model_dump()
+        updated_rule_dict.update(update_data)
+        updated_rule = Rule(**updated_rule_dict)
+        self._rules[rule_id] = updated_rule
+        return updated_rule
+
+    async def delete_rule(self, rule_id: str) -> bool:
+        if rule_id in self._rules:
+            del self._rules[rule_id]
+            return True
+        return False
+
+
 class TestRulesAPI(unittest.TestCase):
     def setUp(self) -> None:
-        """Set up a test client before each test."""
-        # Override the auth dependency for tests
+        """Set up a test client and dependency overrides before each test."""
+        self.mock_service = MockRulesService()
         app.dependency_overrides[verify_oidc_token] = skip_auth
+        app.dependency_overrides[get_rules_service] = lambda: self.mock_service
         self.client = TestClient(app)
 
     def tearDown(self) -> None:

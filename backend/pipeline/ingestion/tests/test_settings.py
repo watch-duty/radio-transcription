@@ -54,17 +54,17 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.heartbeat_stall_timeout_sec, 30.0)
         self.assertEqual(settings.graceful_shutdown_timeout_sec, 8.0)
         self.assertEqual(settings.audio_staging_bucket, "staging-bucket")
-        self.assertEqual(settings.db_pool_min_size, 3)
-        self.assertEqual(settings.db_pool_max_size, 25)
-        self.assertEqual(settings.db_command_timeout_sec, 40.0)
-        self.assertEqual(settings.db_connect_timeout_sec, 12.5)
+        self.assertEqual(settings.db.pool_min_size, 3)
+        self.assertEqual(settings.db.pool_max_size, 25)
+        self.assertEqual(settings.db.command_timeout_sec, 40.0)
+        self.assertEqual(settings.db.connect_timeout_sec, 12.5)
         self.assertEqual(settings.feed_failure_threshold, 7)
         self.assertEqual(settings.abandonment_window_sec, 120.0)
-        self.assertEqual(settings.db_host, "127.0.0.1")
-        self.assertEqual(settings.db_port, 6543)
-        self.assertEqual(settings.db_user, "radio_user")
-        self.assertEqual(settings.db_name, "radio_db")
-        self.assertEqual(settings.db_password, "secret")
+        self.assertEqual(settings.db.host, "127.0.0.1")
+        self.assertEqual(settings.db.port, 6543)
+        self.assertEqual(settings.db.user, "radio_user")
+        self.assertEqual(settings.db.db_name, "radio_db")
+        self.assertEqual(settings.db.password, "secret")
         self.assertEqual(settings.gcs_upload_max_retries, 5)
         self.assertEqual(settings.gcs_upload_retry_base_delay_sec, 1.0)
         self.assertEqual(settings.gcs_upload_retry_max_delay_sec, 16.0)
@@ -83,14 +83,14 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.heartbeat_interval_sec, 15.0)
         self.assertEqual(settings.heartbeat_stall_timeout_sec, 45.0)
         self.assertEqual(settings.graceful_shutdown_timeout_sec, 10.0)
-        self.assertEqual(settings.db_pool_min_size, 5)
-        self.assertEqual(settings.db_pool_max_size, 5)
-        self.assertEqual(settings.db_command_timeout_sec, 30.0)
-        self.assertEqual(settings.db_connect_timeout_sec, 10.0)
+        self.assertEqual(settings.db.pool_min_size, 5)
+        self.assertEqual(settings.db.pool_max_size, 5)
+        self.assertEqual(settings.db.command_timeout_sec, 30.0)
+        self.assertEqual(settings.db.connect_timeout_sec, 10.0)
         self.assertEqual(settings.feed_failure_threshold, 3)
         self.assertEqual(settings.abandonment_window_sec, 60.0)
-        self.assertEqual(settings.db_port, 6432)
-        self.assertEqual(settings.db_password, "")
+        self.assertEqual(settings.db.port, 6432)
+        self.assertEqual(settings.db.password, "")
         self.assertEqual(settings.gcs_upload_max_retries, 3)
         self.assertEqual(settings.gcs_upload_retry_base_delay_sec, 0.5)
         self.assertEqual(settings.gcs_upload_retry_max_delay_sec, 8.0)
@@ -116,8 +116,8 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.max_feeds_per_worker, 0)
         self.assertEqual(settings.lease_poll_interval_sec, 0.0)
         self.assertEqual(settings.heartbeat_interval_sec, -1.0)
-        self.assertEqual(settings.db_pool_min_size, 0)
-        self.assertEqual(settings.db_pool_max_size, -2)
+        self.assertEqual(settings.db.pool_min_size, 0)
+        self.assertEqual(settings.db.pool_max_size, -2)
         self.assertEqual(settings.abandonment_window_sec, -0.5)
 
     def test_invalid_missing_required_env_var_raises(self) -> None:
@@ -133,13 +133,14 @@ class TestNormalizerSettings(unittest.TestCase):
 
     def test_invalid_empty_required_env_var_raises(self) -> None:
         """Raises ValueError when a required environment variable is empty."""
-        env = {**_required_env(), "ALLOYDB_USER": ""}
+        env = {**_required_env(), "AUDIO_STAGING_BUCKET": ""}
 
         with patch.dict("os.environ", env, clear=True):
             with self.assertRaises(ValueError) as context:
                 NormalizerSettings()
 
-        self.assertIn("ALLOYDB_USER", str(context.exception))
+        self.assertIn("AUDIO_STAGING_BUCKET", str(context.exception))
+
 
     def test_invalid_worker_id_raises(self) -> None:
         """Raises ValueError when WORKER_ID is not a valid UUID."""

@@ -11,6 +11,7 @@ import asyncpg
 
 from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
 from backend.pipeline.storage.feed_store import HeartbeatResult, LeasedFeed
+from backend.pipeline.storage.settings import AlloyDBSettings
 
 _WORKER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
@@ -54,15 +55,17 @@ def _make_settings(**overrides) -> mock.MagicMock:
         "graceful_shutdown_timeout_sec": 10.0,
         "audio_staging_bucket": "test-bucket",
         "pubsub_topic_path": "projects/p/topics/t",
-        "db_pool_min_size": 2,
-        "db_pool_max_size": 5,
-        "db_host": "10.0.0.1",
-        "db_port": 6432,
-        "db_user": "user",
-        "db_name": "db",
-        "db_password": "pass",
-        "db_command_timeout_sec": 30.0,
-        "db_connect_timeout_sec": 10.0,
+        "db": AlloyDBSettings(
+            host="10.0.0.1",
+            port=6432,
+            user="user",
+            db_name="db",
+            password="pass",
+            pool_min_size=2,
+            pool_max_size=5,
+            command_timeout_sec=30.0,
+            connect_timeout_sec=10.0,
+        ),
         "feed_failure_threshold": 3,
         "abandonment_window_sec": 60.0,
         # Retry settings — must be real numbers so min()/random.uniform()
@@ -541,15 +544,15 @@ class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.normalizer_runtime.FeedStore",
     )
     @mock.patch(
-        "backend.pipeline.ingestion.normalizer_runtime.create_pool",
+        "backend.pipeline.ingestion.normalizer_runtime.create_pool_from_settings",
         new_callable=mock.AsyncMock,
     )
     async def test_heartbeat_pool_uses_create_pool_helper(
         self,
-        mock_create_pool: mock.AsyncMock,
+        mock_create_pool_from_settings: mock.AsyncMock,
         mock_feed_store: mock.MagicMock,
     ) -> None:
-        """Heartbeat pool must use create_pool helper with min/max_size=1."""
+        """Heartbeat pool must use create_pool_from_settings helper with min/max_size=1."""
         rt = _make_runtime()
 
         with (
@@ -559,10 +562,11 @@ class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
         ):
             await rt._main()
 
-        self.assertEqual(mock_create_pool.call_count, 2)
-        heartbeat_call = mock_create_pool.call_args_list[1]
-        self.assertEqual(heartbeat_call.kwargs["min_size"], 1)
-        self.assertEqual(heartbeat_call.kwargs["max_size"], 1)
+        self.assertEqual(mock_create_pool_from_settings.call_count, 2)
+        heartbeat_call = mock_create_pool_from_settings.call_args_list[1]
+        hb_settings = heartbeat_call.args[0]
+        self.assertEqual(hb_settings.pool_min_size, 1)
+        self.assertEqual(hb_settings.pool_max_size, 1)
 
 
 class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
