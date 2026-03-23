@@ -31,8 +31,6 @@ class BaseRulesService(ABC):
         """Delete a transcription rule."""
 
 
-
-
 class AlloyRulesService(BaseRulesService):
     """Implementation of the Rules Service using AlloyDB."""
 
@@ -53,4 +51,3 @@ class AlloyRulesService(BaseRulesService):
 
     async def delete_rule(self, rule_id: str) -> bool:
         return await self._store.delete_rule(rule_id)
-

@@ -122,5 +122,3 @@ class NormalizerSettings:
             os.environ.get("BOOKMARK_RETRY_MAX_DELAY_SEC", "4.0"),
         ),
     )
-
-

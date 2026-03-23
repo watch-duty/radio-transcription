@@ -141,7 +141,6 @@ class TestNormalizerSettings(unittest.TestCase):
 
         self.assertIn("AUDIO_STAGING_BUCKET", str(context.exception))
 
-
     def test_invalid_worker_id_raises(self) -> None:
         """Raises ValueError when WORKER_ID is not a valid UUID."""
         env = {**_required_env(), "WORKER_ID": "not-a-uuid"}

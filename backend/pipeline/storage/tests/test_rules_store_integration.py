@@ -13,13 +13,13 @@ from testcontainers.postgres import PostgresContainer
 from backend.pipeline.storage.connection import create_pool
 from backend.pipeline.storage.rules_store import RulesStore
 from backend.pipeline.common.rules.models import (
-    RuleCreate, 
-    Scope, 
-    KeywordConditions, 
-    RuleUpdate, 
-    ScopeLevel, 
+    RuleCreate,
+    Scope,
+    KeywordConditions,
+    RuleUpdate,
+    ScopeLevel,
     LogicalOperator,
-    EvaluationType
+    EvaluationType,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -104,14 +104,14 @@ class TestRulesStoreIntegration(unittest.IsolatedAsyncioTestCase):
             conditions=KeywordConditions(
                 evaluation_type=EvaluationType.KEYWORD_MATCH,
                 keywords=["fire", "smoke"],
-                operator=LogicalOperator.ANY
+                operator=LogicalOperator.ANY,
             ),
         )
 
     async def test_create_and_get_rule(self) -> None:
         """Verify adding and retrieving a rule."""
         rule_in = self._create_sample_rule_in("Fire Alert")
-        
+
         # 1. Create
         created = await self.store.create_rule(rule_in)
         self.assertEqual(created.rule_name, "Fire Alert")
@@ -140,37 +140,36 @@ class TestRulesStoreIntegration(unittest.IsolatedAsyncioTestCase):
     async def test_update_rule(self) -> None:
         """Verify partial updates to a rule."""
         created = await self.store.create_rule(self._create_sample_rule_in("Old Name"))
-        
+
         update_in = RuleUpdate(
             rule_name="New Name",
             is_active=False,
             conditions=KeywordConditions(
-                evaluation_type=EvaluationType.KEYWORD_MATCH,
-                keywords=["water"]
-            )
+                evaluation_type=EvaluationType.KEYWORD_MATCH, keywords=["water"]
+            ),
         )
-        
+
         updated = await self.store.update_rule(created.rule_id, update_in)
         self.assertIsNotNone(updated)
         self.assertEqual(updated.rule_name, "New Name")
         self.assertFalse(updated.is_active)
         self.assertEqual(updated.conditions.keywords, ["water"])
-        
+
         # Scope should remain unchanged (COALESCE logic)
         self.assertEqual(updated.scope.target_feeds, ["feed-1"])
 
     async def test_delete_rule(self) -> None:
         """Verify rule deletion."""
         created = await self.store.create_rule(self._create_sample_rule_in())
-        
+
         # Delete
         success = await self.store.delete_rule(created.rule_id)
         self.assertTrue(success)
-        
+
         # Verify gone
         fetched = await self.store.get_rule(created.rule_id)
         self.assertIsNone(fetched)
-        
+
         # Delete non-existent
         success_again = await self.store.delete_rule(str(uuid.uuid4()))
         self.assertFalse(success_again)

@@ -75,7 +75,7 @@ class RulesStore:
         data = dict(row)
         if "rule_id" in data and data["rule_id"]:
             data["rule_id"] = str(data["rule_id"])
-            
+
         for field in ["scope", "conditions", "metadata"]:
             if field in data and isinstance(data[field], str):
                 data[field] = json.loads(data[field])
@@ -85,7 +85,7 @@ class RulesStore:
         """Create a new transcription rule."""
         scope_json = json.dumps(rule_in.scope.model_dump(mode="json"))
         conditions_json = json.dumps(rule_in.conditions.model_dump(mode="json"))
-        
+
         created_by = None
         if rule_in.metadata:
             created_by = rule_in.metadata.created_by
@@ -111,7 +111,7 @@ class RulesStore:
         row = await self._pool.fetchrow(_GET_RULE_SQL, uid)
         if row is None:
             return None
-        
+
         return Rule.model_validate(self._prepare_row(row))
 
     async def list_rules(self) -> list[Rule]:
@@ -127,15 +127,15 @@ class RulesStore:
             return None
 
         update_data = rule_in.model_dump(exclude_unset=True, mode="json")
-        
+
         # Prepare JSON fields if they are being updated
         scope_json = update_data.pop("scope", None)
         if scope_json is not None:
-             scope_json = json.dumps(scope_json)
-            
+            scope_json = json.dumps(scope_json)
+
         conditions_json = update_data.pop("conditions", None)
         if conditions_json is not None:
-             conditions_json = json.dumps(conditions_json)
+            conditions_json = json.dumps(conditions_json)
 
         row = await self._pool.fetchrow(
             _UPDATE_RULE_SQL,
@@ -146,10 +146,10 @@ class RulesStore:
             scope_json,
             conditions_json,
         )
-        
+
         if row is None:
             return None
-            
+
         return Rule.model_validate(self._prepare_row(row))
 
     async def delete_rule(self, rule_id: str) -> bool:

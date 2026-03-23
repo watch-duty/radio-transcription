@@ -75,7 +75,9 @@ async def close_pool(pool: asyncpg.Pool) -> None:
     await pool.close()
 
 
-async def create_pool_from_settings(settings: AlloyDBSettings | None = None) -> asyncpg.Pool:
+async def create_pool_from_settings(
+    settings: AlloyDBSettings | None = None,
+) -> asyncpg.Pool:
     """
     Create an asyncpg connection pool using an AlloyDBSettings object.
 
