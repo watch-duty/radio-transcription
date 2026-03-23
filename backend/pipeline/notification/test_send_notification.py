@@ -13,8 +13,14 @@ with mock.patch("google.cloud.logging.Client") as mock_client:
 
 
 class TestSendNotification(TestCase):
-    @mock.patch("backend.pipeline.notification.send_notification.NOTIFICATION_ENDPOINT_API_KEY", "12345")
-    @mock.patch("backend.pipeline.notification.send_notification.NOTIFICATION_ENDPOINT", "https://api.example.com/mock")
+    @mock.patch(
+        "backend.pipeline.notification.send_notification.NOTIFICATION_ENDPOINT_API_KEY",
+        "12345",
+    )
+    @mock.patch(
+        "backend.pipeline.notification.send_notification.NOTIFICATION_ENDPOINT",
+        "https://api.example.com/mock",
+    )
     @mock.patch("backend.pipeline.notification.send_notification.deduplication")
     @mock.patch("backend.pipeline.notification.send_notification.requests.post")
     def test_send_notification(
@@ -49,10 +55,24 @@ class TestSendNotification(TestCase):
         self.assertEqual(args[0], expected_url)
         self.assertEqual(kwargs["headers"], expected_headers)
         self.assertEqual(kwargs["timeout"], 5)
-        self.assertEqual(json.loads(kwargs["data"]), {"transmissionId": "1234", "sourceAudioUris": ["gs://foo/bar.flac"], "transcript": "This is a test!", "startAudioOffset": "10s"})
+        self.assertEqual(
+            json.loads(kwargs["data"]),
+            {
+                "transmissionId": "1234",
+                "sourceAudioUris": ["gs://foo/bar.flac"],
+                "transcript": "This is a test!",
+                "startAudioOffset": "10s",
+            },
+        )
 
-    @mock.patch("backend.pipeline.notification.send_notification.NOTIFICATION_ENDPOINT_API_KEY", "12345")
-    @mock.patch("backend.pipeline.notification.send_notification.NOTIFICATION_ENDPOINT", "https://api.example.com/mock")
+    @mock.patch(
+        "backend.pipeline.notification.send_notification.NOTIFICATION_ENDPOINT_API_KEY",
+        "12345",
+    )
+    @mock.patch(
+        "backend.pipeline.notification.send_notification.NOTIFICATION_ENDPOINT",
+        "https://api.example.com/mock",
+    )
     @mock.patch("backend.pipeline.notification.send_notification.deduplication")
     @mock.patch("backend.pipeline.notification.send_notification.requests.post")
     def test_duplicate_message(
