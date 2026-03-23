@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 from google.protobuf.duration_pb2 import Duration  # type: ignore[attr-defined]
 
+from backend.pipeline.common.constants import NANOS_PER_SECOND
 from backend.pipeline.schema_types.sed_metadata_pb2 import SedMetadata, SoundEvent
 
 if TYPE_CHECKING:
@@ -39,11 +40,11 @@ class SidecarBuilder:
 
         for region in combined_result.speech_regions:
             start_secs = int(region.start_sec)
-            start_nanos = int((region.start_sec - start_secs) * 1e9)
+            start_nanos = int((region.start_sec - start_secs) * NANOS_PER_SECOND)
 
             duration_sec = region.end_sec - region.start_sec
             dur_secs = int(duration_sec)
-            dur_nanos = int((duration_sec - dur_secs) * 1e9)
+            dur_nanos = int((duration_sec - dur_secs) * NANOS_PER_SECOND)
 
             event = SoundEvent(
                 start_time=Duration(seconds=start_secs, nanos=start_nanos),

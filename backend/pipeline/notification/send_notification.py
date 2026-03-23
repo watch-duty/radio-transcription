@@ -56,7 +56,7 @@ def convert_to_notification(
     notification = AlertNotification(
         feed_id=evaluated_transcribed_audio.feed_id,
         transmission_id=evaluated_transcribed_audio.transmission_id,
-        source_chunk_ids=evaluated_transcribed_audio.source_chunk_ids,
+        source_audio_uris=evaluated_transcribed_audio.source_audio_uris,
         transcript=evaluated_transcribed_audio.transcript,
         evaluation_decisions=evaluated_transcribed_audio.evaluation_decisions,
     )
@@ -66,6 +66,20 @@ def convert_to_notification(
         )
     if evaluated_transcribed_audio.end_timestamp.seconds:
         notification.end_timestamp.CopyFrom(evaluated_transcribed_audio.end_timestamp)
+    if (
+        evaluated_transcribed_audio.start_audio_offset.seconds
+        or evaluated_transcribed_audio.start_audio_offset.nanos
+    ):
+        notification.start_audio_offset.CopyFrom(
+            evaluated_transcribed_audio.start_audio_offset
+        )
+    if (
+        evaluated_transcribed_audio.end_audio_offset.seconds
+        or evaluated_transcribed_audio.end_audio_offset.nanos
+    ):
+        notification.end_audio_offset.CopyFrom(
+            evaluated_transcribed_audio.end_audio_offset
+        )
     return notification
 
 
@@ -86,4 +100,7 @@ def send_notification(cloud_event: CloudEvent) -> None:
         return
 
     # Send a POST request to the endpoint
-    request_handler.send_notification(alert_notification)
+    try:
+        request_handler.send_notification(alert_notification)
+    except Exception:
+        logger.exception("Failed to send notification")

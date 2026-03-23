@@ -1,18 +1,48 @@
 syntax = "proto3";
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
 
 // Represents a processed audio transmission, including its metadata, source segment IDs, and the resulting transcript.
 message TranscribedAudio {
 
+  // --- Identifiers & Base Metadata ---
+  
+  // A unique, deterministic identifier for this specific transmission (formatted as a RFC 4122 UUID).
   string transmission_id = 1;
-    // List of unique IDs for the audio segments that make up this transmission.
-  repeated string source_chunk_ids = 2;
-    // Unique ID of the feed.
-  string feed_id = 3;
-    // Start timestamp of the audio.
+
+  // The unique identifier of the radio feed this transmission originated from (formatted as a RFC 4122 UUID).
+  string feed_id = 2;
+
+
+  // --- Transcription Content ---
+  
+  // The full transcript text evaluated from the audio transmission.
+  string transcript = 3;
+
+
+  // --- Global Timing & Context Flags ---
+  
+  // The exact global timestamp when this transmission started.
   google.protobuf.Timestamp start_timestamp = 4;
-    // End timestamp of the audio.
+
+  // The exact global timestamp when this transmission ended.
   google.protobuf.Timestamp end_timestamp = 5;
-    // Full transcript text evaluated from the audio.
-  string transcript = 6;
+
+  // Indicates this transmission lacks prior context (e.g., cut off abruptly mid-speech).
+  bool missing_prior_context = 6;
+
+  // Indicates this transmission lacks subsequent context (e.g., transmission duration exceeded).
+  bool missing_post_context = 7;
+
+
+  // --- Physical Audio Storage Details ---
+
+  // Ordered list of GCS URIs for the raw audio files used to assemble this transmission.
+  repeated string source_audio_uris = 8;
+
+  // The exact slice offset within the *first* URI where the transcribed speech formally begins.
+  google.protobuf.Duration start_audio_offset = 9;
+
+  // The exact slice offset within the *last* URI where the transcribed speech formally ends.
+  google.protobuf.Duration end_audio_offset = 10;
 }

@@ -21,8 +21,11 @@ class TestSendNotification(TestCase):
         mock_dedupe.process_notification.return_value = True
 
         evaluated_payload = EvaluatedTranscribedAudio(
-            transcript="This is a test!", transmission_id="1234"
+            transcript="This is a test!",
+            transmission_id="1234",
+            source_audio_uris=["gs://foo/bar.flac"],
         )
+        evaluated_payload.start_audio_offset.seconds = 10
         raw_data = base64.b64encode(evaluated_payload.SerializeToString())
         event_data = {"message": {"data": raw_data, "messageId": "1234"}}
 
@@ -37,8 +40,14 @@ class TestSendNotification(TestCase):
 
         mock_dedupe.process_notification.assert_called_with("1234")
 
+        expected_notification = AlertNotification(
+            transcript="This is a test!",
+            transmission_id="1234",
+            source_audio_uris=["gs://foo/bar.flac"],
+        )
+        expected_notification.start_audio_offset.seconds = 10
         mock_request_handler.send_notification.assert_called_once_with(
-            AlertNotification(transcript="This is a test!", transmission_id="1234")
+            expected_notification
         )
 
     @mock.patch("backend.pipeline.notification.send_notification.deduplication")
