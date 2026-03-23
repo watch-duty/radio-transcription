@@ -491,40 +491,40 @@ class StitchAudioTest(unittest.TestCase):
 
             results[DEAD_LETTER_QUEUE_TAG] | "Print DLQ" >> beam.Map(print_dlq)
 
-            def assert_flush_requests(elements: list[FlushRequest]) -> None:
+            def assert_flush_requests(elements: list[tuple[str, FlushRequest]]) -> None:
 
                 assert len(elements) == 3, (
                     f"Expected 3 flush requests, got {len(elements)}: {elements}"
                 )
 
                 # Sort elements by start time to make assertions deterministic
-                elements.sort(key=lambda x: x.time_range.start_ms)
+                elements.sort(key=lambda x: x[1].time_range.start_ms)
 
                 # First element: chunks 100, 115
                 assert any(
                     "11111111-1111-1111-1111-111111111111" in u
-                    for u in elements[0].contributing_audio_uris
+                    for u in elements[0][1].contributing_audio_uris
                 )
                 assert any(
                     "22222222-2222-2222-2222-222222222222" in u
-                    for u in elements[0].contributing_audio_uris
+                    for u in elements[0][1].contributing_audio_uris
                 )
-                assert elements[0].missing_prior_context is False
+                assert elements[0][1].missing_prior_context is False
 
                 # Second element: chunk 130
                 # DID follow a gap (chunk 115 speech ended at 122, 130 starts at 130, gap=8s >= 3s)
                 assert any(
                     "33333333-3333-3333-3333-333333333333" in u
-                    for u in elements[1].contributing_audio_uris
+                    for u in elements[1][1].contributing_audio_uris
                 )
-                assert elements[1].missing_prior_context is False
+                assert elements[1][1].missing_prior_context is False
 
                 # Third element: chunk 160 (chunk 150 was dropped as useless silence after a disconnected gap)
                 assert any(
                     "55555555-5555-5555-5555-555555555555" in u
-                    for u in elements[2].contributing_audio_uris
+                    for u in elements[2][1].contributing_audio_uris
                 )
-                assert elements[2].missing_prior_context is True
+                assert elements[2][1].missing_prior_context is True
 
             assert_that(
                 results.main, assert_flush_requests, label="CheckMainFlushRequests"
@@ -639,26 +639,26 @@ class StitchAudioTest(unittest.TestCase):
                 )
             )
 
-            def assert_flush_requests(elements: list[FlushRequest]) -> None:
+            def assert_flush_requests(elements: list[tuple[str, FlushRequest]]) -> None:
 
                 assert len(elements) == 2, (
                     f"Expected 2 flush requests (Chunk 3 remains buffered due to skipped timer), got {len(elements)}"
                 )
 
-                elements.sort(key=lambda x: x.time_range.start_ms)
+                elements.sort(key=lambda x: x[1].time_range.start_ms)
 
                 assert any(
                     "11111111-1111-1111-1111-111111111111" in u
-                    for u in elements[0].contributing_audio_uris
+                    for u in elements[0][1].contributing_audio_uris
                 )
-                assert elements[0].missing_post_context is True
+                assert elements[0][1].missing_post_context is True
 
                 assert any(
                     "22222222-2222-2222-2222-222222222222" in u
-                    for u in elements[1].contributing_audio_uris
+                    for u in elements[1][1].contributing_audio_uris
                 )
-                assert elements[1].missing_prior_context is False
-                assert elements[1].missing_post_context is True
+                assert elements[1][1].missing_prior_context is False
+                assert elements[1][1].missing_post_context is True
 
             assert_that(
                 results.main, assert_flush_requests, label="CheckLateChunkRequests"
@@ -798,30 +798,30 @@ class StitchAudioTest(unittest.TestCase):
                 ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
             )
 
-            def assert_flush_requests(elements: list[FlushRequest]) -> None:
+            def assert_flush_requests(elements: list[tuple[str, FlushRequest]]) -> None:
 
                 assert len(elements) == 2, (
                     f"Expected 2 flush requests, got {len(elements)}: {elements}"
                 )
-                elements.sort(key=lambda x: x.time_range.start_ms)
+                elements.sort(key=lambda x: x[1].time_range.start_ms)
 
                 # First chunk reached max duration limit without a gap
                 assert any(
                     "77777777-7777-7777-7777-777777777777" in u
-                    for u in elements[0].contributing_audio_uris
+                    for u in elements[0][1].contributing_audio_uris
                 )
                 assert any(
                     "88888888-8888-8888-8888-888888888888" in u
-                    for u in elements[0].contributing_audio_uris
+                    for u in elements[0][1].contributing_audio_uris
                 )
-                assert elements[0].missing_prior_context is False
+                assert elements[0][1].missing_prior_context is False
 
                 # Second chunk is immediately following the forced cut off -> missing context IS true (severed head inherited)
                 assert any(
                     "99999999-9999-9999-9999-999999999999" in u
-                    for u in elements[1].contributing_audio_uris
+                    for u in elements[1][1].contributing_audio_uris
                 )
-                assert elements[1].missing_prior_context is True
+                assert elements[1][1].missing_prior_context is True
 
             assert_that(
                 results.main,
@@ -896,10 +896,10 @@ class StitchAudioTest(unittest.TestCase):
                 ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
             )
 
-            def assert_stale_match(elements: list[FlushRequest]) -> None:
+            def assert_stale_match(elements: list[tuple[str, FlushRequest]]) -> None:
 
                 assert len(elements) == 1, f"Expected 1 element, got {len(elements)}"
-                res = elements[0]
+                _, res = elements[0]
                 assert res.feed_id == "feed-123"
                 assert any(
                     "11111111-1111-1111-1111-111111111111" in u
@@ -955,11 +955,14 @@ class TranscribeAudioTest(unittest.TestCase):
         with BeamTestPipeline() as p:
             elements = p | beam.Create(
                 [
-                    FlushRequest(
-                        feed_id="feed-123",
-                        buffer=AudioSegment.silent(duration=500),
-                        contributing_audio_uris=["gs://f/11111111.flac"],
-                        time_range=TimeRange(start_ms=101000, end_ms=101500),
+                    (
+                        "feed-123",
+                        FlushRequest(
+                            feed_id="feed-123",
+                            buffer=AudioSegment.silent(duration=500),
+                            contributing_audio_uris=["gs://f/11111111.flac"],
+                            time_range=TimeRange(start_ms=101000, end_ms=101500),
+                        ),
                     )
                 ]
             )

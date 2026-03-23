@@ -77,7 +77,7 @@ def get_pipeline(
         )
     )
 
-    # Claim-Check: Download the raw bytes for ordered chunks currently just passing as URIs
+    # Claim-check: Download the raw bytes for ordered chunks currently just passing as URIs
     download_config = StitchAudioConfig(
         project_id=options.project_id,
         vad_type=options.vad_type,

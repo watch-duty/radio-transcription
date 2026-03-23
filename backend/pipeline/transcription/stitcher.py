@@ -65,6 +65,12 @@ STALE_TIMER_SPEC = TimerSpec("stale_timer", beam.TimeDomain.WATERMARK)
 # A Beam Watermark timer. If no new data advances the watermark past its deadline, it fires to flush whatever audio is stranded in the TRANSMISSION_BUFFER.
 STALE_TIMER_PARAM = beam.DoFn.TimerParam(STALE_TIMER_SPEC)
 
+SEQUENTIAL_BARRIER_SPEC = ReadModifyWriteStateSpec(
+    "sequential_barrier", beam.coders.BooleanCoder()
+)
+# A dummy state parameter used exclusively to enforce chronological processing constraints on the Beam Runner per feed_id.
+SEQUENTIAL_BARRIER_STATE = beam.DoFn.StateParam(SEQUENTIAL_BARRIER_SPEC)
+
 
 class StitchAudioFn(beam.DoFn):
     """A stateful Beam DoFn responsible for maintaining chronological continuous audio state per radio feed.
@@ -89,6 +95,9 @@ class StitchAudioFn(beam.DoFn):
         self.gap_flush_count = Metrics.counter("StitchAudioFn", "gap_flush_count")
         self.max_duration_flush_count = Metrics.counter(
             "StitchAudioFn", "max_duration_flush_count"
+        )
+        self.multiple_transmissions_count = Metrics.counter(
+            "StitchAudioFn", "multiple_transmissions_per_chunk_count"
         )
         self.dlq_count = Metrics.counter("StitchAudioFn", "dlq_count")
 
@@ -128,7 +137,7 @@ class StitchAudioFn(beam.DoFn):
         transmission_context: ReadModifyWriteRuntimeState,
         transmission_buffer: BagRuntimeState,
         stale_timer: RuntimeTimer,
-    ) -> Generator[FlushRequest, None, None]:  # noqa: UP043
+    ) -> Generator[tuple[str, FlushRequest], None, None]:  # noqa: UP043
         """Clears current internal state arrays and yields a compiled FlushRequest downstream."""
         if "Maximum transmission duration" in action.reason:
             self.max_duration_flush_count.inc()
@@ -140,15 +149,18 @@ class StitchAudioFn(beam.DoFn):
             transmission_buffer.read()
         )
         if buffered_audio:
-            yield FlushRequest(
-                buffer=sum(buffered_audio[1:], buffered_audio[0]),
-                feed_id=action.feed_id,
-                contributing_audio_uris=action.contributing_audio_uris,
-                time_range=action.time_range,
-                missing_prior_context=action.missing_prior_context,
-                missing_post_context=action.missing_post_context,
-                start_audio_offset_ms=action.start_audio_offset_ms,
-                end_audio_offset_ms=action.end_audio_offset_ms,
+            yield (
+                action.feed_id,
+                FlushRequest(
+                    buffer=sum(buffered_audio[1:], buffered_audio[0]),
+                    feed_id=action.feed_id,
+                    contributing_audio_uris=action.contributing_audio_uris,
+                    time_range=action.time_range,
+                    missing_prior_context=action.missing_prior_context,
+                    missing_post_context=action.missing_post_context,
+                    start_audio_offset_ms=action.start_audio_offset_ms,
+                    end_audio_offset_ms=action.end_audio_offset_ms,
+                ),
             )
         else:
             logger.warning(
@@ -205,8 +217,12 @@ class StitchAudioFn(beam.DoFn):
         stale_timer: RuntimeTimer,
         ctx: StitcherContext,
         gcs_path: str,
-    ) -> Generator[FlushRequest, None, None]:  # noqa: UP043
+    ) -> Generator[tuple[str, FlushRequest], None, None]:  # noqa: UP043
         """Routes individual StateMachineAction results to appropriate Apache Beam side-effects and emitters."""
+        flush_count = sum(1 for a in actions if isinstance(a, FlushAction))
+        if flush_count > 1:
+            self.multiple_transmissions_count.inc()
+
         for action in actions:
             match action:
                 case FlushAction():
@@ -231,7 +247,7 @@ class StitchAudioFn(beam.DoFn):
         transmission_context: ReadModifyWriteRuntimeState,
         transmission_buffer: BagRuntimeState,
         stale_timer: RuntimeTimer,
-    ) -> Generator[FlushRequest | beam.pvalue.TaggedOutput, None, None]:  # noqa: UP043
+    ) -> Generator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput, None, None]:  # noqa: UP043
         """Top-level executor managing chunk ingestion, VAD decoding, state persistence, and flush delegation."""
         file_start_ms = chunk_data.start_ms
 
@@ -279,7 +295,7 @@ class StitchAudioFn(beam.DoFn):
         transmission_buffer: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         stale_timer: RuntimeTimer = STALE_TIMER_PARAM,  # type: ignore
-    ) -> Generator[FlushRequest | beam.pvalue.TaggedOutput, None, None]:  # noqa: UP043
+    ) -> Generator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput, None, None]:  # noqa: UP043
         """Delegates the incoming audio chunk to the internal state machine for evaluation."""
         key, (gcs_path, chunk_data) = element
 
@@ -309,7 +325,7 @@ class StitchAudioFn(beam.DoFn):
         transmission_buffer: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         stale_timer: RuntimeTimer = STALE_TIMER_PARAM,  # type: ignore
-    ) -> Generator[FlushRequest | beam.pvalue.TaggedOutput, None, None]:  # noqa: UP043
+    ) -> Generator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput, None, None]:  # noqa: UP043
         """Invoked asynchronously by the Beam Runner when the event-time watermark.
 
         passes the timestamp previously scheduled on the `stale_timer`. This provides a critical
@@ -332,18 +348,21 @@ class StitchAudioFn(beam.DoFn):
                     f"STALE FLUSH: start={start_time_ms}, end={end_time_ms}, len(uris)={len(processed_uris)}, len(buffer)={len(audio_buffer)}"
                 )
 
-                yield FlushRequest(
-                    buffer=sum(audio_buffer[1:], audio_buffer[0]),
-                    feed_id=key,
-                    contributing_audio_uris=processed_uris,
-                    time_range=TimeRange(
-                        start_ms=int(start_time_ms),
-                        end_ms=int(end_time_ms),
+                yield (
+                    key,
+                    FlushRequest(
+                        buffer=sum(audio_buffer[1:], audio_buffer[0]),
+                        feed_id=key,
+                        contributing_audio_uris=processed_uris,
+                        time_range=TimeRange(
+                            start_ms=int(start_time_ms),
+                            end_ms=int(end_time_ms),
+                        ),
+                        missing_prior_context=bool(curr_context.missing_prior_context),
+                        missing_post_context=True,  # Flushed by timer cutoff, so we assume the tail is missing context.
+                        start_audio_offset_ms=curr_context.start_audio_offset_ms,
+                        end_audio_offset_ms=curr_context.end_audio_offset_ms,
                     ),
-                    missing_prior_context=bool(curr_context.missing_prior_context),
-                    missing_post_context=True,  # Flushed by timer cutoff, so we assume the tail is missing context.
-                    start_audio_offset_ms=curr_context.start_audio_offset_ms,
-                    end_audio_offset_ms=curr_context.end_audio_offset_ms,
                 )
             except Exception as e:
                 if not self.config.route_to_dlq:
@@ -492,15 +511,17 @@ class TranscribeAudioFn(beam.DoFn):
         )
 
     @override
-    def process(
+    def process(  # type: ignore[override]
         self,
-        element: FlushRequest,
+        element: tuple[str, FlushRequest],
+        sequential_barrier: ReadModifyWriteRuntimeState = SEQUENTIAL_BARRIER_STATE,  # type: ignore
         *args: Any,
         **kwargs: Any,
     ) -> Generator[TranscriptionResult | beam.pvalue.TaggedOutput, None, None]:  # noqa: UP043
-        """Submits the consolidated flushed buffer to the external transcription API."""
+        """Submits the consolidated flushed buffer strictly sequentially to the external transcription API."""
+        feed_id, request = element
         try:
-            transcribed = self._export_and_transcribe(element)
+            transcribed = self._export_and_transcribe(request)
             if transcribed:
                 self.transcription_count.inc()
                 yield transcribed
@@ -508,8 +529,8 @@ class TranscribeAudioFn(beam.DoFn):
             if not self.config.route_to_dlq:
                 raise
             self.dlq_count.inc()
-            logger.exception("Error transcribing buffer for feed %s", element.feed_id)
+            logger.exception("Error transcribing buffer for feed %s", feed_id)
             msg = str(e)
             yield beam.pvalue.TaggedOutput(
-                DEAD_LETTER_QUEUE_TAG, {"error": msg, "feed_id": element.feed_id}
+                DEAD_LETTER_QUEUE_TAG, {"error": msg, "feed_id": feed_id}
             )
