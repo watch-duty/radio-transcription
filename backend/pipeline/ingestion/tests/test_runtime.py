@@ -75,7 +75,9 @@ def _make_settings(**overrides) -> mock.MagicMock:
         "bookmark_retry_max_delay_sec": 4.0,
     }
     defaults.update(overrides)
-    return mock.MagicMock(**defaults)
+    m = mock.MagicMock()
+    m.configure_mock(**defaults)
+    return m
 
 
 def _make_runtime(**settings_overrides) -> NormalizerRuntime:
@@ -184,6 +186,10 @@ class TestLeasingLoopOrphanedTask(unittest.IsolatedAsyncioTestCase):
             ]
             rt._shutdown.set()  # stop after first iteration
             await rt._leasing_loop()
+
+        # Yield to let the event loop process the cancellation
+        # (Python 3.12+ makes task cancellation strictly cooperative)
+        await asyncio.sleep(0)
 
         # Old task must have been cancelled
         self.assertTrue(old_task.cancelled())

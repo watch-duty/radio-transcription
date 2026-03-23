@@ -3,11 +3,12 @@
 import json
 import logging
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import Any
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-STATE = {"last_received": None}
+STATE: dict[str, Any] = {"last_received": None}
 
 
 class RequestHandler(BaseHTTPRequestHandler):

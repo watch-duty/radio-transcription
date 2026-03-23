@@ -2,14 +2,14 @@
 name = "radio-transcription"
 version = "0.0.0"
 readme = "README.md"
-requires-python = "==3.11.5"
+requires-python = ">=3.12"
 dependencies = [
     "functions-framework",
     "requests",
     "cloudevents",
     "google-cloud-pubsub>=2.35.0",
     "google-cloud-logging",
-    "google-cloud-storage>=3.9.0",
+    "google-cloud-storage>=2.18.2,<3",
     "asyncpg>=0.29.0",
     "google-cloud-alloydb-connector[asyncpg]",
     "aiohttp>=3.13.3",
@@ -17,11 +17,17 @@ dependencies = [
     "google-genai>=1.3.0",
     "pydantic>=2.10.6",
     "protobuf>=4.25.3",
+    "apache-beam[gcp]>=2.56.0",
+    "crcmod>=1.7",
+    "google-cloud-monitoring>=2.29.1",
+    "google-cloud-speech>=2.37.0",
+    "numpy>=1.24.0,<2",
+    "pydub>=0.25.0",
+    "ten-vad>=1.0.6.8",
     "fastapi>=0.110.0",
     "uvicorn>=0.27.0",
     "redis>=7.3.0",
     "soundfile>=0.12.1",
-    "numpy>=1.24.0",
     "scipy>=1.11.0",
     "chardet<6",
     "urllib3>=2.6.3",
@@ -42,17 +48,19 @@ build = [
 dev = [
   "ruff>=0.14.14",
   "ty>=0.0.21",
-  "grpcio-tools>=1.65.5",
+  "grpcio-tools",
   "testcontainers[postgres]",
   "docker",
   "httpx",
   "fakeredis",
   "pytest>=9.0.2",
+  "pytest-asyncio>=1.3.0",
   "pre-commit",
   "boto3",
 ]
 
 [tool.ruff]
+target-version = "py312"
 extend-exclude = ["model/colabs", "backend/pipeline/schema_types", "**/*_pb2.py", "**/*_pb2.pyi"]
 
 [tool.ruff.lint]
@@ -197,3 +205,7 @@ convention = "google"
 
 [tool.ty.src]
 exclude = ["model/"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+

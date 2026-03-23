@@ -1,0 +1,158 @@
+"""
+Pluggable Transcription API Architecture.
+
+This module defines the abstract interface for audio transcription services,
+allowing the Beam pipeline to dynamically swap between different engines
+(e.g., Google Cloud Speech-to-Text, Whisper, Custom Models) via configuration.
+"""
+
+import abc
+import json
+import logging
+from dataclasses import dataclass, field
+
+from google.cloud import speech_v2 as cloud_speech
+from google.cloud.speech_v2 import SpeechClient
+
+from backend.pipeline.transcription.constants import BYTES_PER_SECOND_16KHZ_MONO
+from backend.pipeline.transcription.enums import TranscriberType
+
+logger = logging.getLogger(__name__)
+
+
+class Transcriber(abc.ABC):
+    """
+    Abstract interface for handling audio transcription.
+    Allows hot-swapping different external transcription APIs or models.
+    """
+
+    @abc.abstractmethod
+    def setup(self) -> None:
+        """
+        Called once per Beam worker upon initialization.
+        Use this to spin up clients, establish connections, or load models
+        that cannot be pickled/serialized across processes.
+        """
+
+    @abc.abstractmethod
+    def transcribe(
+        self,
+        *,
+        audio_data: bytes,
+    ) -> str:
+        """
+        Transcribes the raw audio bytes and returns the text transcript.
+        """
+
+
+@dataclass(frozen=True)
+class ChirpConfig:
+    """Strongly typed configuration for the Google Chirp V3 Transcriber."""
+
+    location: str = "us"
+    recognizer: str = "_"
+    model: str = "chirp_3"
+    language_codes: list[str] = field(default_factory=lambda: ["en-US"])
+    enable_automatic_punctuation: bool = True
+    enable_word_time_offsets: bool = False
+
+    @classmethod
+    def from_json(cls, json_str: str) -> "ChirpConfig":
+        if not json_str:
+            return cls()
+        try:
+            config_dict = json.loads(json_str)
+            # Filter out unknown keys to prevent TypeError on instantiation
+            valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+            filtered_dict = {k: v for k, v in config_dict.items() if k in valid_keys}
+            return cls(**filtered_dict)
+        except json.JSONDecodeError as e:
+            logger.exception("Failed to parse transcriber_config JSON: %s", json_str)
+            msg = f"Invalid transcriber_config JSON: {e}"
+            raise ValueError(msg) from e
+
+
+class GoogleChirpV3Transcriber(Transcriber):
+    """
+    Transcriber implementation using Google Cloud Speech-to-Text V2 API
+    with the 'chirp_3' model.
+    """
+
+    def __init__(self, project_id: str, config_json: str) -> None:
+        self.project_id = project_id
+        # We hold the raw string in __init__ because Apache Beam pickles this object
+        # to send it to workers. We will parse it in setup().
+        self.config_json = config_json
+
+        # We don't initialize SpeechClient in __init__ because the object
+        # must be pickled by Apache Beam to distribute to workers.
+        self.client: SpeechClient | None = None
+        self.config: ChirpConfig | None = None
+
+    def setup(self) -> None:
+        """Initializes the SpeechClient and parses the config locally on the worker node."""
+        self.client = SpeechClient()
+        self.config = ChirpConfig.from_json(self.config_json)
+
+    def transcribe(
+        self,
+        *,
+        audio_data: bytes,
+    ) -> str:
+
+        if not self.client or not self.config:
+            msg = "Transcriber client used before setup() was called."
+            raise RuntimeError(msg)
+
+        duration_sec = len(audio_data) / BYTES_PER_SECOND_16KHZ_MONO
+
+        logger.info(
+            "--- TRANSCRIBING --- duration: %.2fs",
+            duration_sec,
+        )
+
+        request = cloud_speech.RecognizeRequest(
+            recognizer=f"projects/{self.project_id}/locations/{self.config.location}/recognizers/{self.config.recognizer}",
+            config=cloud_speech.RecognitionConfig(
+                auto_decoding_config=cloud_speech.AutoDetectDecodingConfig(),
+                model=self.config.model,
+                language_codes=self.config.language_codes,
+                features=cloud_speech.RecognitionFeatures(
+                    enable_automatic_punctuation=self.config.enable_automatic_punctuation,
+                    enable_word_time_offsets=self.config.enable_word_time_offsets,
+                ),
+            ),
+            content=audio_data,
+        )
+
+        response = self.client.recognize(request=request)
+        transcript = ""
+        for result in response.results:
+            if result.alternatives:
+                # Chirp v3 is prompted to emit [BACKGROUND] when no speech is detected.
+                # We strip this string explicitly across all chunks.
+                chunk_text = (
+                    result.alternatives[0]
+                    .transcript.replace("[BACKGROUND]", "")
+                    .strip()
+                )
+                if chunk_text:
+                    transcript += chunk_text + " "
+
+        transcript = transcript.rstrip()
+
+        if not transcript:
+            msg = "Transcription returned [BACKGROUND] only or was completely empty (no discernable speech)."
+            logger.warning(msg)
+            raise ValueError(msg)
+
+        return transcript
+
+
+def get_transcriber(
+    transcriber_type: TranscriberType, project_id: str, config_json: str
+) -> Transcriber:
+    if transcriber_type == TranscriberType.GOOGLE_CHIRP_V3:
+        return GoogleChirpV3Transcriber(project_id, config_json)
+    msg = f"Unknown transcriber type: {transcriber_type}"
+    raise ValueError(msg)

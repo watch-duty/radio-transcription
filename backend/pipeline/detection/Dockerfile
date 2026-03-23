@@ -1,5 +1,5 @@
 # ---------- builder: compile protobuf files ----------
-FROM python:3.11-slim AS builder
+FROM python:3.12-slim AS builder
 
 WORKDIR /app
 
@@ -15,7 +15,7 @@ RUN mkdir -p ./backend/pipeline/schema_types \
     && python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto
 
 # ---------- runtime: production image ----------
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
