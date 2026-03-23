@@ -18,7 +18,6 @@ TRANSCRIPTION_TOPIC = os.environ.get("TRANSCRIPTION_TOPIC", "transcription-text-
 MOCK_SERVER_HOST = os.environ.get("MOCK_SERVER_HOST", "localhost:8082")
 
 
-
 def create_test_rule(test_keyword: str) -> None:
     """Creates a temporary rule for testing with a specific keyword."""
     rule_payload = {
