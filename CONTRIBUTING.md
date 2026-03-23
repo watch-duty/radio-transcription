@@ -101,7 +101,7 @@ There is a basic set of integration tests that are currently run against the loc
 These can be found under /integration_tests. Make sure to build and run the pipeline locally
 before running.
 ```
-docker-compose run --rm integration-tests
+docker compose run --rm integration-tests
 ```
 
 ### Frontend tools
