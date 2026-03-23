@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import uuid
+from typing import TYPE_CHECKING
 
-import asyncpg
+if TYPE_CHECKING:
+    import asyncpg
+
 import pytest
 
 from backend.pipeline.common.rules.models import (
@@ -46,6 +49,7 @@ async def test_create_and_get_rule(store: RulesStore) -> None:
     created = await store.create_rule(rule_in)
     assert created.rule_name == "Fire Alert"
     assert created.rule_id is not None
+    assert created.metadata is not None
     assert created.metadata.created_at is not None
 
     # 2. Get
@@ -54,6 +58,7 @@ async def test_create_and_get_rule(store: RulesStore) -> None:
     assert fetched.rule_id == created.rule_id
     assert fetched.rule_name == "Fire Alert"
     assert fetched.scope.target_feeds == ["feed-1"]
+    assert isinstance(fetched.conditions, KeywordConditions)
     assert fetched.conditions.keywords == ["fire", "smoke"]
 
 
@@ -85,6 +90,7 @@ async def test_update_rule(store: RulesStore) -> None:
     assert updated is not None
     assert updated.rule_name == "New Name"
     assert not updated.is_active
+    assert isinstance(updated.conditions, KeywordConditions)
     assert updated.conditions.keywords == ["water"]
 
     # Scope should remain unchanged (COALESCE logic)

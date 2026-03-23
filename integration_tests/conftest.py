@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Generator
 
 import asyncpg
 import docker
@@ -23,7 +27,7 @@ def _docker_available() -> bool:
 
 
 @pytest.fixture(scope="session")
-def postgres_container():
+def postgres_container() -> Generator[dict[str, Any]]:
     """Start AlloyDB Omni container and apply schema once per session."""
     if not _docker_available():
         pytest.skip("Docker is not available")
@@ -56,6 +60,7 @@ def postgres_container():
 
     # Use a fresh event loop for the setup since we're in a session fixture
     # which may run before any test event loop is started.
+
     asyncio.run(_setup_schema())
 
     yield {
@@ -70,7 +75,7 @@ def postgres_container():
 
 
 @pytest.fixture
-async def db_pool(postgres_container):
+async def db_pool(postgres_container: dict[str, Any]) -> AsyncIterator[asyncpg.Pool]:
     """Create an asyncpg pool for a single test."""
     pool = await create_pool(
         host=postgres_container["host"],

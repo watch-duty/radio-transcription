@@ -10,7 +10,10 @@ if TYPE_CHECKING:
     import asyncpg
 
 
-_SELECT_FIELDS = """\
+_CREATE_RULE_SQL = """\
+INSERT INTO rules (rule_name, description, is_active, scope, conditions, created_by)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING
     id AS rule_id,
     rule_name,
     description,
@@ -24,24 +27,40 @@ _SELECT_FIELDS = """\
     ) AS metadata
 """
 
-_CREATE_RULE_SQL = f"""\
-INSERT INTO rules (rule_name, description, is_active, scope, conditions, created_by)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING {_SELECT_FIELDS}
-"""
-
-_GET_RULE_SQL = f"""\
-SELECT {_SELECT_FIELDS}
+_GET_RULE_SQL = """\
+SELECT
+    id AS rule_id,
+    rule_name,
+    description,
+    is_active,
+    scope,
+    conditions,
+    json_build_object(
+        'created_at', created_at,
+        'updated_at', updated_at,
+        'created_by', created_by
+    ) AS metadata
 FROM rules
 WHERE id = $1
 """
 
-_LIST_RULES_SQL = f"""\
-SELECT {_SELECT_FIELDS}
+_LIST_RULES_SQL = """\
+SELECT
+    id AS rule_id,
+    rule_name,
+    description,
+    is_active,
+    scope,
+    conditions,
+    json_build_object(
+        'created_at', created_at,
+        'updated_at', updated_at,
+        'created_by', created_by
+    ) AS metadata
 FROM rules
 """
 
-_UPDATE_RULE_SQL = f"""\
+_UPDATE_RULE_SQL = """\
 UPDATE rules
 SET rule_name = COALESCE($2, rule_name),
     description = COALESCE($3, description),
@@ -50,7 +69,18 @@ SET rule_name = COALESCE($2, rule_name),
     conditions = COALESCE($6, conditions),
     updated_at = NOW()
 WHERE id = $1
-RETURNING {_SELECT_FIELDS}
+RETURNING
+    id AS rule_id,
+    rule_name,
+    description,
+    is_active,
+    scope,
+    conditions,
+    json_build_object(
+        'created_at', created_at,
+        'updated_at', updated_at,
+        'created_by', created_by
+    ) AS metadata
 """
 
 _DELETE_RULE_SQL = """\
@@ -77,8 +107,9 @@ class RulesStore:
             data["rule_id"] = str(data["rule_id"])
 
         for field in ["scope", "conditions", "metadata"]:
-            if field in data and isinstance(data[field], str):
-                data[field] = json.loads(data[field])
+            value = data.get(field)
+            if value and isinstance(value, (str, bytes, bytearray)):
+                data[field] = json.loads(value)
         return data
 
     async def create_rule(self, rule_in: RuleCreate) -> Rule:

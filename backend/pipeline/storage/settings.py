@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from typing import Any
 
 
 def _require_env(name: str) -> str:
@@ -49,8 +50,6 @@ class AlloyDBSettings:
         default_factory=lambda: float(os.environ.get("DB_CONNECT_TIMEOUT_SEC", "10.0")),
     )
 
-    def replace(self, **kwargs) -> AlloyDBSettings:
+    def replace(self, **kwargs: Any) -> AlloyDBSettings:
         """Return a new instance with replaced fields."""
-        from dataclasses import replace
-
         return replace(self, **kwargs)

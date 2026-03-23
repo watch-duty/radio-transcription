@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import uuid
+from typing import TYPE_CHECKING
 
-import asyncpg
+if TYPE_CHECKING:
+    import asyncpg
+
 import pytest
 
 from backend.pipeline.storage.feed_store import FeedStore

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
-from backend.pipeline.common.rules.models import Rule, RuleCreate, RuleUpdate
-from backend.pipeline.storage.rules_store import RulesStore
+if TYPE_CHECKING:
+    from backend.pipeline.common.rules.models import Rule, RuleCreate, RuleUpdate
+    from backend.pipeline.storage.rules_store import RulesStore
 
 
 class BaseRulesService(ABC):

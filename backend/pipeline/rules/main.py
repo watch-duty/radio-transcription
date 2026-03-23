@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, Annotated
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 
@@ -13,7 +17,7 @@ from .service import AlloyRulesService, BaseRulesService
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage the lifecycle of the AlloyDB connection pool."""
     pool = await create_pool_from_settings()
     store = RulesStore(pool)
@@ -43,7 +47,8 @@ def get_rules_service(request: Request) -> BaseRulesService:
     tags=["rules"],
 )
 async def create_rule(
-    rule_in: RuleCreate, service: BaseRulesService = Depends(get_rules_service)
+    rule_in: RuleCreate,
+    service: Annotated[BaseRulesService, Depends(get_rules_service)],
 ) -> Rule:
     """Create a new transcription rule."""
     return await service.create_rule(rule_in)
@@ -55,7 +60,7 @@ async def create_rule(
     tags=["rules"],
 )
 async def list_rules(
-    service: BaseRulesService = Depends(get_rules_service),
+    service: Annotated[BaseRulesService, Depends(get_rules_service)],
 ) -> list[Rule]:
     """List all transcription rules."""
     return await service.list_rules()
@@ -67,7 +72,7 @@ async def list_rules(
     tags=["rules"],
 )
 async def get_rule(
-    rule_id: str, service: BaseRulesService = Depends(get_rules_service)
+    rule_id: str, service: Annotated[BaseRulesService, Depends(get_rules_service)]
 ) -> Rule:
     """Fetch a specific transcription rule by ID."""
     rule = await service.get_rule(rule_id)
@@ -87,7 +92,7 @@ async def get_rule(
 async def update_rule(
     rule_id: str,
     rule_in: RuleUpdate,
-    service: BaseRulesService = Depends(get_rules_service),
+    service: Annotated[BaseRulesService, Depends(get_rules_service)],
 ) -> Rule:
     """Fully update an existing transcription rule."""
     rule = await service.update_rule(rule_id, rule_in)
@@ -105,7 +110,7 @@ async def update_rule(
     tags=["rules"],
 )
 async def delete_rule(
-    rule_id: str, service: BaseRulesService = Depends(get_rules_service)
+    rule_id: str, service: Annotated[BaseRulesService, Depends(get_rules_service)]
 ) -> None:
     """Delete a transcription rule."""
     success = await service.delete_rule(rule_id)
