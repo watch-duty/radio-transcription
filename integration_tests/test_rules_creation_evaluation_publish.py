@@ -18,6 +18,46 @@ TRANSCRIPTION_TOPIC = os.environ.get("TRANSCRIPTION_TOPIC", "transcription-text-
 MOCK_SERVER_HOST = os.environ.get("MOCK_SERVER_HOST", "localhost:8082")
 
 
+def wait_for_services() -> None:
+    """Wait for all required services to be up."""
+    services = [
+        ("Pub/Sub Emulator", f"http://{PUBSUB_EMULATOR_HOST}/"),
+        ("Rules Management", f"http://{RULES_API_HOST}/v1/rules"),
+    ]
+    for name, url in services:
+        logger.info(f"Waiting for {name} at {url}...")
+        for i in range(60):
+            try:
+                response = requests.get(url, timeout=2)
+                if response.status_code < 500:
+                    logger.info(f"{name} is ready.")
+                    break
+            except requests.exceptions.RequestException:
+                pass
+            time.sleep(1)
+        else:
+            logger.error(f"Timed out waiting for {name}.")
+            sys.exit(1)
+
+    topic_url = (
+        f"http://{PUBSUB_EMULATOR_HOST}/v1/projects/{PROJECT_ID}/topics/{TRANSCRIPTION_TOPIC}"
+    )
+
+    logger.info(f"Waiting for topic {TRANSCRIPTION_TOPIC} at {topic_url}...")
+    for i in range(30):
+        try:
+            response = requests.get(topic_url, timeout=2)
+            if response.status_code == 200:
+                logger.info(f"Topic {TRANSCRIPTION_TOPIC} is ready.")
+                break
+        except requests.exceptions.RequestException:
+            pass
+        time.sleep(1)
+    else:
+        logger.error(f"Timed out waiting for topic {TRANSCRIPTION_TOPIC}.")
+        sys.exit(1)
+
+
 def create_test_rule(test_keyword: str) -> None:
     """Creates a temporary rule for testing with a specific keyword."""
     rule_payload = {
