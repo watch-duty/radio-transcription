@@ -145,7 +145,11 @@ class EvaluationService:
         """
         if self.output_topic_path:
             encoded_data = evaluated_payload.SerializeToString()
-            future = self.publisher.publish(self.output_topic_path, encoded_data)
+            future = self.publisher.publish(
+                self.output_topic_path,
+                encoded_data,
+                ordering_key=evaluated_payload.feed_id,
+            )
             message_id = future.result()
 
             logger.info(
