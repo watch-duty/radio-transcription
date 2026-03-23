@@ -4,7 +4,10 @@ import unittest
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 from google.protobuf.duration_pb2 import Duration  # type: ignore
+from multidict import CIMultiDict, CIMultiDictProxy
+from yarl import URL
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
@@ -12,13 +15,21 @@ from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.schema_types.sed_metadata_pb2 import SedMetadata, SoundEvent
 from backend.pipeline.storage.feed_store import LeasedFeed
 
+_DUMMY_REQUEST_INFO = aiohttp.RequestInfo(
+    url=URL("http://example.com"),
+    method="POST",
+    headers=CIMultiDictProxy(CIMultiDict()),
+    real_url=URL("http://example.com"),
+)
 
-def _make_feed(source_type: str, feed_id: int) -> LeasedFeed:
+
+def _make_feed(source_type: str, feed_id: int, fencing_token: int = 0) -> LeasedFeed:
     return LeasedFeed(
         id=uuid.UUID(int=feed_id),
         name=f"test-{source_type}-{feed_id}",
         source_type=source_type,
         last_processed_filename=None,
+        fencing_token=fencing_token,
         stream_url=None,
     )
 
@@ -85,9 +96,11 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             expected_object_name,
             audio_chunk,
             metadata={
-                "sed_metadata": base64.b64encode(
-                    sed_metadata.SerializeToString()
-                ).decode("ascii"),
+                "metadata": {
+                    "sed_metadata": base64.b64encode(
+                        sed_metadata.SerializeToString()
+                    ).decode("ascii"),
+                },
             },
             content_type="audio/flac",
         )
@@ -284,6 +297,41 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
         self.assertIn("exceeds GCS limit", str(context.exception))
         mock_storage.upload.assert_not_called()
 
+    @patch("backend.pipeline.common.gcp_helper.datetime")
+    async def test_upload_staged_audio_with_fencing_token(
+        self,
+        mock_datetime: MagicMock,
+    ) -> None:
+        """Fencing token produces a token-qualified path."""
+        mock_datetime.datetime.now.return_value.strftime.return_value = (
+            "20260305T120000Z"
+        )
+        mock_gcs_client, mock_storage = _make_gcs_client()
+        feed_id = uuid.UUID(int=1234)
+        feed = _make_feed("bcfy_feeds", 1234, fencing_token=7)
+
+        result = await gcp_helper.upload_staged_audio(
+            mock_gcs_client,
+            b"\x00\x01" * 100,
+            feed,
+            "test-bucket",
+            42,
+            fencing_token=7,
+        )
+
+        expected_object_name = f"bcfy_feeds/{feed_id}/token-7/20260305T120000Z_42.flac"
+        expected_path = f"gs://test-bucket/{expected_object_name}"
+
+        mock_storage.upload.assert_called_once_with(
+            "test-bucket",
+            expected_object_name,
+            b"\x00\x01" * 100,
+            metadata=None,
+            content_type="audio/flac",
+            parameters={"ifGenerationMatch": "0"},
+        )
+        self.assertEqual(result, expected_path)
+
 
 class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
     """Tests for the upload_audio function."""
@@ -338,9 +386,10 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         mock_storage.upload.assert_called_once()
         call_kwargs = mock_storage.upload.call_args
         metadata = call_kwargs.kwargs.get("metadata") or call_kwargs[1].get("metadata")
-        self.assertIn("sed_metadata", metadata)
+        self.assertIn("metadata", metadata)
+        self.assertIn("sed_metadata", metadata["metadata"])
 
-        decoded = base64.b64decode(metadata["sed_metadata"])
+        decoded = base64.b64decode(metadata["metadata"]["sed_metadata"])
         parsed = SedMetadata()
         parsed.ParseFromString(decoded)
         self.assertEqual(len(parsed.sound_events), 1)
@@ -379,6 +428,87 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         self.assertIn("exceeds GCS limit", str(ctx.exception))
         mock_storage.upload.assert_not_called()
 
+    async def test_upload_with_if_generation_match(self) -> None:
+        """ifGenerationMatch=0 is passed as parameters to storage.upload."""
+        mock_gcs_client, mock_storage = _make_gcs_client()
+
+        result = await gcp_helper.upload_audio(
+            mock_gcs_client,
+            b"audio",
+            "bucket",
+            "obj.flac",
+            if_generation_match=0,
+        )
+
+        mock_storage.upload.assert_called_once_with(
+            "bucket",
+            "obj.flac",
+            b"audio",
+            metadata=None,
+            content_type="audio/flac",
+            parameters={"ifGenerationMatch": "0"},
+        )
+        self.assertEqual(result, "gs://bucket/obj.flac")
+
+    async def test_upload_412_treated_as_success(self) -> None:
+        """412 Precondition Failed is treated as success when precondition set."""
+        mock_gcs_client, mock_storage = _make_gcs_client()
+        mock_storage.upload.side_effect = aiohttp.ClientResponseError(
+            request_info=_DUMMY_REQUEST_INFO,
+            history=(),
+            status=412,
+            message="Precondition Failed",
+        )
+
+        result = await gcp_helper.upload_audio(
+            mock_gcs_client,
+            b"audio",
+            "bucket",
+            "obj.flac",
+            if_generation_match=0,
+        )
+
+        self.assertEqual(result, "gs://bucket/obj.flac")
+
+    async def test_upload_412_without_precondition_raises(self) -> None:
+        """412 propagates when if_generation_match is not set."""
+        mock_gcs_client, mock_storage = _make_gcs_client()
+        mock_storage.upload.side_effect = aiohttp.ClientResponseError(
+            request_info=_DUMMY_REQUEST_INFO,
+            history=(),
+            status=412,
+            message="Precondition Failed",
+        )
+
+        with self.assertRaises(aiohttp.ClientResponseError):
+            await gcp_helper.upload_audio(
+                mock_gcs_client,
+                b"audio",
+                "bucket",
+                "obj.flac",
+            )
+
+    async def test_upload_non_412_error_raises_with_precondition(self) -> None:
+        """Non-412 errors propagate even when if_generation_match is set."""
+        mock_gcs_client, mock_storage = _make_gcs_client()
+        mock_storage.upload.side_effect = aiohttp.ClientResponseError(
+            request_info=_DUMMY_REQUEST_INFO,
+            history=(),
+            status=500,
+            message="Internal Server Error",
+        )
+
+        with self.assertRaises(aiohttp.ClientResponseError) as ctx:
+            await gcp_helper.upload_audio(
+                mock_gcs_client,
+                b"audio",
+                "bucket",
+                "obj.flac",
+                if_generation_match=0,
+            )
+
+        self.assertEqual(ctx.exception.status, 500)
+
 
 class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
     """Test suite for the publish_audio_chunk function."""
@@ -408,6 +538,8 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
             topic_path="projects/test/topics/audio",
             feed_id="feed-42",
             gcs_uri="gs://bucket/audio.flac",
+            session_id="test-session-1",
+            start_timestamp=mock_now,
         )
 
         self.assertEqual(result, "message-123")
@@ -442,12 +574,16 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
             topic_path="projects/test/topics/audio",
             feed_id="feed-1",
             gcs_uri="gs://bucket/one.flac",
+            session_id="test-session-1",
+            start_timestamp=datetime.datetime(2026, 3, 5, 12, 0, tzinfo=datetime.UTC),
         )
         second_result = await gcp_helper.publish_audio_chunk(
             mock_pubsub_client,
             topic_path="projects/test/topics/audio",
             feed_id="feed-2",
             gcs_uri="gs://bucket/two.flac",
+            session_id="test-session-2",
+            start_timestamp=datetime.datetime(2026, 3, 5, 12, 0, tzinfo=datetime.UTC),
         )
 
         self.assertEqual(first_result, "message-1")

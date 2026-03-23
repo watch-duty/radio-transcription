@@ -237,7 +237,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         # Act: capture -> upload -> bookmark
         shutdown = asyncio.Event()
         chunks_uploaded = []
-        async for flac_chunk in icecast_collector.capture_icecast_stream(
+        async for flac_chunk, _ts in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
@@ -251,6 +251,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 feed["id"],
                 self.worker_id,
                 gcs_path,
+                feed["fencing_token"],
             )
             self.assertTrue(ok)
             chunks_uploaded.append((flac_chunk, gcs_path))
@@ -294,7 +295,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         gcs_paths = []
         seq = 0
-        async for flac_chunk in icecast_collector.capture_icecast_stream(
+        async for flac_chunk, _ts in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
@@ -304,6 +305,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 feed["id"],
                 self.worker_id,
                 gcs_path,
+                feed["fencing_token"],
             )
             gcs_paths.append(gcs_path)
             seq += 1
@@ -348,7 +350,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         gcs_paths = []
         seq = 0
-        async for flac_chunk in icecast_collector.capture_icecast_stream(
+        async for flac_chunk, _ts in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
@@ -358,6 +360,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 feed["id"],
                 self.worker_id,
                 gcs_path,
+                feed["fencing_token"],
             )
             gcs_paths.append(gcs_path)
             seq += 1
@@ -400,7 +403,9 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ffmpeg exited with code 1", str(ctx.exception))
 
         # Simulate what NormalizerRuntime._process_feed does on exception
-        await self.store.report_feed_failure(feed["id"], self.worker_id)
+        await self.store.report_feed_failure(
+            feed["id"], self.worker_id, feed["fencing_token"]
+        )
 
         # Assert: feed transitioned to 'failing'
         row = await self._get_feed_row(feed["id"])
@@ -428,7 +433,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
         shutdown = asyncio.Event()
         gcs_path = None
-        async for flac_chunk in icecast_collector.capture_icecast_stream(
+        async for flac_chunk, _ts in icecast_collector.capture_icecast_stream(
             feed, shutdown
         ):
             gcs_path = await gcp_helper.upload_staged_audio(

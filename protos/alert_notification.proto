@@ -1,5 +1,6 @@
 syntax = "proto3";
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
 
 // Notification sent to the endpoint after the transcription is evaluated.
 message AlertNotification {
@@ -8,8 +9,12 @@ message AlertNotification {
   string feed_id = 1;
   // Unique ID for the generated transmission.
   string transmission_id = 2;
-  // List of unique IDs for the audio segments that make up this transmission.
-  repeated string source_chunk_ids = 3;
+  // List of GCS URIs that chronologically assemble this transmission.
+  repeated string source_audio_uris = 3;
+  // Exact slice offset in the FIRST uri where speech begins natively measured as Duration
+  google.protobuf.Duration start_audio_offset = 8;
+  // Exact slice offset in the LAST uri where speech ends natively measured as Duration
+  google.protobuf.Duration end_audio_offset = 9;
   // Start timestamp of the audio.
   google.protobuf.Timestamp start_timestamp = 4;
   // End timestamp of the audio.
