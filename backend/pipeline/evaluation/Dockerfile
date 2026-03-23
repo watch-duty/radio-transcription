@@ -26,6 +26,6 @@ RUN touch ./backend/pipeline/schema_types/__init__.py
 RUN python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto
 
 CMD ["functions-framework", \
-     "--source=backend/pipeline/evaluation/evaluation_core.py", \
+     "--source=backend/pipeline/evaluation/main.py", \
      "--target=evaluate_transcribed_audio_segment", \
      "--signature-type=cloudevent"]
