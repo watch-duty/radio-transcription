@@ -4,7 +4,11 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from backend.pipeline.common.rules.models import Rule, RuleCreate, RuleUpdate
+    from backend.pipeline.common.rules.models import (
+        Rule,
+        RuleCreate,
+        RuleUpdate,
+    )
     from backend.pipeline.storage.rules_store import RulesStore
 
 
@@ -24,7 +28,9 @@ class BaseRulesService(ABC):
         """List all transcription rules."""
 
     @abstractmethod
-    async def update_rule(self, rule_id: str, rule_in: RuleUpdate) -> Rule | None:
+    async def update_rule(
+        self, rule_id: str, rule_in: RuleUpdate
+    ) -> Rule | None:
         """Fully update an existing transcription rule."""
 
     @abstractmethod
@@ -47,7 +53,9 @@ class AlloyRulesService(BaseRulesService):
     async def list_rules(self) -> list[Rule]:
         return await self._store.list_rules()
 
-    async def update_rule(self, rule_id: str, rule_in: RuleUpdate) -> Rule | None:
+    async def update_rule(
+        self, rule_id: str, rule_in: RuleUpdate
+    ) -> Rule | None:
         return await self._store.update_rule(rule_id, rule_in)
 
     async def delete_rule(self, rule_id: str) -> bool:

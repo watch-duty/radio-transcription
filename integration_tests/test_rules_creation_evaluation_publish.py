@@ -14,7 +14,9 @@ from integration_tests.utils import assert_eventually
 PUBSUB_EMULATOR_HOST = os.environ.get("PUBSUB_EMULATOR_HOST", "localhost:8085")
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "local-project")
 RULES_API_HOST = os.environ.get("RULES_API_HOST", "localhost:8086")
-TRANSCRIPTION_TOPIC = os.environ.get("TRANSCRIPTION_TOPIC", "transcription-text-topic")
+TRANSCRIPTION_TOPIC = os.environ.get(
+    "TRANSCRIPTION_TOPIC", "transcription-text-topic"
+)
 MOCK_SERVER_HOST = os.environ.get("MOCK_SERVER_HOST", "localhost:8082")
 
 
@@ -54,7 +56,11 @@ def publish_test_message(transmission_id: str, transcript: str) -> None:
 
     payload = {
         "messages": [
-            {"data": base64.b64encode(message.SerializeToString()).decode("utf-8")}
+            {
+                "data": base64.b64encode(message.SerializeToString()).decode(
+                    "utf-8"
+                )
+            }
         ]
     }
 

@@ -37,10 +37,14 @@ class AlloyDBSettings:
     )
 
     pool_min_size: int = field(
-        default_factory=lambda: int(os.environ.get("ALLOYDB_POOL_MIN_SIZE", "5")),
+        default_factory=lambda: int(
+            os.environ.get("ALLOYDB_POOL_MIN_SIZE", "5")
+        ),
     )
     pool_max_size: int = field(
-        default_factory=lambda: int(os.environ.get("ALLOYDB_POOL_MAX_SIZE", "5")),
+        default_factory=lambda: int(
+            os.environ.get("ALLOYDB_POOL_MAX_SIZE", "5")
+        ),
     )
 
     command_timeout_sec: float = field(

@@ -33,7 +33,10 @@ def extract_filename_templates(config_path) -> list[str]:
     # Find the opening parenthesis after "devices:"
     paren_start = content.find("(", devices_start)
     if paren_start == -1:
-        print("Warning: No opening parenthesis found after devices:", file=sys.stderr)
+        print(
+            "Warning: No opening parenthesis found after devices:",
+            file=sys.stderr,
+        )
         return []
 
     # Find matching closing parenthesis
@@ -73,7 +76,9 @@ def extract_filename_templates(config_path) -> list[str]:
             in_file_output = True
         # If we're in a file output block, look for filename_template
         elif in_file_output and "filename_template" in line:
-            template_match = re.search(r'filename_template\s*=\s*"([^"]+)"', line)
+            template_match = re.search(
+                r'filename_template\s*=\s*"([^"]+)"', line
+            )
             if template_match:
                 filename_templates.append(template_match.group(1))
             in_file_output = False
@@ -87,7 +92,8 @@ def extract_filename_templates(config_path) -> list[str]:
 def main() -> None:
     if len(sys.argv) != 2:
         print(
-            "Usage: python make_mono_echo_feeds_csv.py <config_file>", file=sys.stderr
+            "Usage: python make_mono_echo_feeds_csv.py <config_file>",
+            file=sys.stderr,
         )
         sys.exit(1)
 

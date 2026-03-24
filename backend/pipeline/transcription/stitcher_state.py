@@ -1,6 +1,9 @@
 """A framework-agnostic state machine isolating sequential audio transmission boundary logic."""
 
-from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS, MS_PER_SECOND
+from backend.pipeline.common.constants import (
+    CHUNK_DURATION_SECONDS,
+    MS_PER_SECOND,
+)
 from backend.pipeline.transcription.datatypes import (
     AppendBufferAction,
     AudioChunkData,
@@ -75,12 +78,18 @@ class AudioStitchingStateMachine:
         actions.extend(new_actions)
 
         # 3. Always update the expected contiguous start time for the NEXT chunk
-        ctx.expected_next_chunk_start_ms = chunk_data.start_ms + chunk_duration_ms
+        ctx.expected_next_chunk_start_ms = (
+            chunk_data.start_ms + chunk_duration_ms
+        )
         actions.append(UpdateStateAction())
         return actions
 
     def _flush_current_transmission(
-        self, reason: str, ctx: StitcherContext, *, missing_post_context: bool = False
+        self,
+        reason: str,
+        ctx: StitcherContext,
+        *,
+        missing_post_context: bool = False,
     ) -> FlushAction:
         """Concludes the active transmission by calculating duration and yields a FlushRequest."""
         if ctx.transmission_start_time_ms is None:
@@ -126,16 +135,22 @@ class AudioStitchingStateMachine:
         if not chunk_data.speech_segments:
             raw_actions.extend(self._process_silent_chunk(chunk_data, temp_ctx))
         else:
-            raw_actions.extend(self._process_speech_segments(chunk_data, temp_ctx))
+            raw_actions.extend(
+                self._process_speech_segments(chunk_data, temp_ctx)
+            )
 
         # Force flush whatever remaining audio was appended via actions
         if temp_ctx.transmission_start_time_ms is not None:
             # We must determine if the trailing audio was chopped by the late chunk's boundary.
             last_segment = (
-                chunk_data.speech_segments[-1] if chunk_data.speech_segments else None
+                chunk_data.speech_segments[-1]
+                if chunk_data.speech_segments
+                else None
             )
-            is_chopped_at_end = last_segment is not None and last_segment.end_ms >= int(
-                CHUNK_DURATION_SECONDS * MS_PER_SECOND
+            is_chopped_at_end = (
+                last_segment is not None
+                and last_segment.end_ms
+                >= int(CHUNK_DURATION_SECONDS * MS_PER_SECOND)
             )
             raw_actions.append(
                 self._flush_current_transmission(
@@ -200,7 +215,8 @@ class AudioStitchingStateMachine:
         is_max_duration_exceeded = (
             ctx.transmission_start_time_ms is not None
             and (
-                (file_start_ms + len(chunk_data.audio)) - ctx.transmission_start_time_ms
+                (file_start_ms + len(chunk_data.audio))
+                - ctx.transmission_start_time_ms
             )
             >= self.config.max_transmission_duration_ms
         )
@@ -214,7 +230,9 @@ class AudioStitchingStateMachine:
             if ctx.transmission_start_time_ms is not None:
                 actions.append(
                     self._flush_current_transmission(
-                        reason, ctx, missing_post_context=is_max_duration_exceeded
+                        reason,
+                        ctx,
+                        missing_post_context=is_max_duration_exceeded,
                     )
                 )
 
@@ -246,7 +264,9 @@ class AudioStitchingStateMachine:
             ctx.last_segment_end_time_ms
             or (chunk_data.start_ms + len(chunk_data.audio))
         ) + self.config.stale_timeout_ms
-        actions.append(ScheduleStaleTimerAction(deadline_ms=expected_stale_deadline_ms))
+        actions.append(
+            ScheduleStaleTimerAction(deadline_ms=expected_stale_deadline_ms)
+        )
         return actions
 
     def _process_speech_segments(
@@ -264,14 +284,20 @@ class AudioStitchingStateMachine:
             # is significant enough to warrant splitting into a new transmission.
             is_significant_gap = (
                 ctx.last_segment_end_time_ms is not None
-                and ((file_start_ms + global_start_ms) - ctx.last_segment_end_time_ms)
+                and (
+                    (file_start_ms + global_start_ms)
+                    - ctx.last_segment_end_time_ms
+                )
                 >= self.config.significant_gap_ms
             )
 
             # 2. Check if this segment would exceed the maximum allowed duration of a transmission.
             is_max_duration_exceeded = (
                 ctx.transmission_start_time_ms is not None
-                and ((file_start_ms + global_start_ms) - ctx.transmission_start_time_ms)
+                and (
+                    (file_start_ms + global_start_ms)
+                    - ctx.transmission_start_time_ms
+                )
                 >= self.config.max_transmission_duration_ms
             )
 
@@ -286,7 +312,9 @@ class AudioStitchingStateMachine:
                 if ctx.transmission_start_time_ms is not None:
                     actions.append(
                         self._flush_current_transmission(
-                            reason, ctx, missing_post_context=is_max_duration_exceeded
+                            reason,
+                            ctx,
+                            missing_post_context=is_max_duration_exceeded,
                         )
                     )
 
@@ -328,5 +356,7 @@ class AudioStitchingStateMachine:
             expected_stale_deadline_ms = 0
 
         # Register the stale timer to ensure Dataflow doesn't hold this buffer forever
-        actions.append(ScheduleStaleTimerAction(deadline_ms=expected_stale_deadline_ms))
+        actions.append(
+            ScheduleStaleTimerAction(deadline_ms=expected_stale_deadline_ms)
+        )
         return actions

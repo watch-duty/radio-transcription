@@ -8,8 +8,15 @@ import json
 import logging
 
 import apache_beam as beam
-from apache_beam.io.gcp.pubsub import PubsubMessage, ReadFromPubSub, WriteToPubSub
-from apache_beam.options.pipeline_options import PipelineOptions, StandardOptions
+from apache_beam.io.gcp.pubsub import (
+    PubsubMessage,
+    ReadFromPubSub,
+    WriteToPubSub,
+)
+from apache_beam.options.pipeline_options import (
+    PipelineOptions,
+    StandardOptions,
+)
 
 from backend.pipeline.transcription.constants import (
     DEAD_LETTER_QUEUE_TAG,
@@ -25,7 +32,10 @@ from backend.pipeline.transcription.datatypes import (
     TranscribeAudioConfig,
 )
 from backend.pipeline.transcription.options import TranscriptionOptions
-from backend.pipeline.transcription.stitcher import StitchAudioFn, TranscribeAudioFn
+from backend.pipeline.transcription.stitcher import (
+    StitchAudioFn,
+    TranscribeAudioFn,
+)
 from backend.pipeline.transcription.transforms import (
     AddEventTimestamp,
     DownloadAudioFn,
@@ -61,11 +71,13 @@ def get_pipeline(
         topic=options.input_topic, with_attributes=True, id_label="chunk_uri"
     )
     # Group incoming messages into Key-Value pairs: (feed_id, gs://uri/to/audio)
-    parsed = messages | "ParseAndKey" >> beam.ParDo(ParseAndKeyFn()).with_outputs(
-        DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG
-    )
+    parsed = messages | "ParseAndKey" >> beam.ParDo(
+        ParseAndKeyFn()
+    ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
-    timestamped = parsed[MAIN_TAG] | "AddTimestamp" >> beam.ParDo(AddEventTimestamp())
+    timestamped = parsed[MAIN_TAG] | "AddTimestamp" >> beam.ParDo(
+        AddEventTimestamp()
+    )
 
     # Order chunks based on exact 15,000ms chunk duration expectations
     restored = timestamped | "RestoreOrder" >> beam.ParDo(
@@ -84,11 +96,14 @@ def get_pipeline(
         vad_config=options.vad_config,
         metrics_exporter_type=options.metrics_exporter_type,
         metrics_config=options.metrics_config,
-        significant_gap_ms=options.significant_gap_ms or DEFAULT_SIGNIFICANT_GAP_MS,
+        significant_gap_ms=options.significant_gap_ms
+        or DEFAULT_SIGNIFICANT_GAP_MS,
         stale_timeout_ms=options.stale_timeout_ms or DEFAULT_STALE_TIMEOUT_MS,
         max_transmission_duration_ms=options.max_transmission_duration_ms
         or DEFAULT_MAX_TRANSMISSION_DURATION_MS,
-        route_to_dlq=options.route_to_dlq if options.route_to_dlq is not None else True,
+        route_to_dlq=options.route_to_dlq
+        if options.route_to_dlq is not None
+        else True,
     )
     downloaded_chunks = restored | "DownloadAudio" >> beam.ParDo(
         DownloadAudioFn(config=download_config)

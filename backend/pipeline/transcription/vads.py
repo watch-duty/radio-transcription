@@ -90,7 +90,9 @@ class TenVadPlugin(VoiceActivityDetector):
             if prob >= self.config.threshold:
                 speech_frames += 1
 
-        total_speech_ms = int((speech_frames * hop_size * MS_PER_SECOND) / sample_rate)
+        total_speech_ms = int(
+            (speech_frames * hop_size * MS_PER_SECOND) / sample_rate
+        )
 
         if total_speech_ms < self.config.min_speech_ms:
             logger.info(

@@ -3,18 +3,24 @@ from unittest import TestCase, main, mock
 
 from cloudevents.http import CloudEvent
 
-from backend.pipeline.schema_types.alert_notification_pb2 import AlertNotification
+from backend.pipeline.schema_types.alert_notification_pb2 import (
+    AlertNotification,
+)
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
 
 with mock.patch("google.cloud.logging.Client") as mock_client:
-    from backend.pipeline.notification.send_notification import send_notification
+    from backend.pipeline.notification.send_notification import (
+        send_notification,
+    )
 
 
 class TestSendNotification(TestCase):
     @mock.patch("backend.pipeline.notification.send_notification.deduplication")
-    @mock.patch("backend.pipeline.notification.send_notification.request_handler")
+    @mock.patch(
+        "backend.pipeline.notification.send_notification.request_handler"
+    )
     def test_send_notification(
         self, mock_request_handler: mock.Mock, mock_dedupe: mock.Mock
     ) -> None:
@@ -51,7 +57,9 @@ class TestSendNotification(TestCase):
         )
 
     @mock.patch("backend.pipeline.notification.send_notification.deduplication")
-    @mock.patch("backend.pipeline.notification.send_notification.request_handler")
+    @mock.patch(
+        "backend.pipeline.notification.send_notification.request_handler"
+    )
     def test_duplicate_message(
         self, mock_request_handler: mock.Mock, mock_dedupe: mock.Mock
     ) -> None:

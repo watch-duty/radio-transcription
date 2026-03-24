@@ -3,7 +3,10 @@
 import logging
 
 from backend.pipeline.transcription.constants import DEFAULT_FLOAT_TOLERANCE_MS
-from backend.pipeline.transcription.datatypes import BufferedChunk, OrderRestorerConfig
+from backend.pipeline.transcription.datatypes import (
+    BufferedChunk,
+    OrderRestorerConfig,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +57,10 @@ class SequenceBuffer:
 
             # Now that the sequence advanced, see if we already possess the newly expected chunks
             # that were previously held in the buffer.
-            expected_next_ts, buffer_elements, drained = self.drain_ready_elements(
-                expected_next_ts, buffer_elements, epsilon_ms
+            expected_next_ts, buffer_elements, drained = (
+                self.drain_ready_elements(
+                    expected_next_ts, buffer_elements, epsilon_ms
+                )
             )
             to_emit.extend(drained)
         elif difference < -epsilon_ms:
@@ -73,7 +78,13 @@ class SequenceBuffer:
             was_buffered = True
             buffer_elements.append(BufferedChunk(current_ts_ms, gcs_uri))
 
-        return expected_next_ts, buffer_elements, to_emit, was_late, was_buffered
+        return (
+            expected_next_ts,
+            buffer_elements,
+            to_emit,
+            was_late,
+            was_buffered,
+        )
 
     def drain_ready_elements(
         self,
@@ -96,7 +107,9 @@ class SequenceBuffer:
             difference = chunk.timestamp_ms - expected_next_ts
             if abs(difference) <= epsilon_ms:
                 to_emit.append(chunk.gcs_uri)
-                expected_next_ts = chunk.timestamp_ms + self.config.chunk_duration_ms
+                expected_next_ts = (
+                    chunk.timestamp_ms + self.config.chunk_duration_ms
+                )
             else:
                 retained.append(chunk)
 

@@ -27,7 +27,9 @@ from backend.pipeline.common.gcp_helper import upload_audio
 from backend.pipeline.detection.detector_executor import DetectorExecutor
 from backend.pipeline.detection.detector_factory import DetectorFactory
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
-from backend.pipeline.schema_types.sed_metadata_pb2 import SedMetadata  # noqa: TC001
+from backend.pipeline.schema_types.sed_metadata_pb2 import (
+    SedMetadata,  # noqa: TC001
+)
 
 # ---------------------------------------------------------------------------
 # Module-level patching: mock Pub/Sub and logging, configure real detector
@@ -53,12 +55,16 @@ with (
     ),
 ):
     from backend.pipeline.detection import normalization_handler
-    from backend.pipeline.detection.normalization_handler import normalize as _wrapped
+    from backend.pipeline.detection.normalization_handler import (
+        normalize as _wrapped,
+    )
 
 normalize = _wrapped.__wrapped__  # type: ignore[union-attr]
 
 _UPLOAD = "backend.pipeline.detection.normalization_handler.upload_audio"
-_PUBLISH = "backend.pipeline.detection.normalization_handler.publish_audio_chunk"
+_PUBLISH = (
+    "backend.pipeline.detection.normalization_handler.publish_audio_chunk"
+)
 
 _CE_ATTRS = {
     "type": "google.cloud.pubsub.topic.v1.messagePublished",
@@ -88,14 +94,18 @@ def _make_flac(samples: np.ndarray, sample_rate: int = 16_000) -> bytes:
     return buf.getvalue()
 
 
-def _make_tone(freq_hz: float, duration_sec: float, sr: int = 16_000) -> np.ndarray:
+def _make_tone(
+    freq_hz: float, duration_sec: float, sr: int = 16_000
+) -> np.ndarray:
     """Generate a pure sine tone as int16."""
     t = np.arange(int(sr * duration_sec), dtype=np.float32) / sr
     audio = np.sin(2 * np.pi * freq_hz * t) * 0.5
     return (audio * 32767).astype(np.int16)
 
 
-def _make_noise(duration_sec: float, sr: int = 16_000, seed: int = 42) -> np.ndarray:
+def _make_noise(
+    duration_sec: float, sr: int = 16_000, seed: int = 42
+) -> np.ndarray:
     """Generate white noise as int16."""
     rng = np.random.default_rng(seed)
     audio = rng.standard_normal(int(sr * duration_sec)).astype(np.float32) * 0.1

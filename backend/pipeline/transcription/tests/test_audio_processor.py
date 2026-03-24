@@ -90,10 +90,15 @@ class AudioProcessorTest(unittest.TestCase):
         shutil.which("ffmpeg") is None, "ffmpeg is required for pydub I/O tests"
     )
     @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
-    @patch("backend.pipeline.transcription.audio_processor.read_sed_segments_from_blob")
+    @patch(
+        "backend.pipeline.transcription.audio_processor.read_sed_segments_from_blob"
+    )
     @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
     def test_download_audio_and_sed(
-        self, mock_get_gcs: MagicMock, mock_read_sed: MagicMock, mock_get_vad: MagicMock
+        self,
+        mock_get_gcs: MagicMock,
+        mock_read_sed: MagicMock,
+        mock_get_vad: MagicMock,
     ) -> None:
         """Simulates downloading a GCS FLAC file, mocking its associated Sound Event Detection (SED) metadata, and parsing it into AudioChunkData."""
         processor = AudioProcessor(vad_type=VadType.TEN_VAD)

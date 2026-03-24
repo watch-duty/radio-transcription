@@ -5,7 +5,11 @@ import unittest
 import uuid
 from unittest import mock
 
-from backend.pipeline.storage.feed_store import FeedStore, HeartbeatResult, LeasedFeed
+from backend.pipeline.storage.feed_store import (
+    FeedStore,
+    HeartbeatResult,
+    LeasedFeed,
+)
 
 _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 _FEED_ID_B = uuid.UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
@@ -356,7 +360,9 @@ class TestReportFeedFailureWithThreshold(unittest.IsolatedAsyncioTestCase):
         pool = _make_pool(execute_result="UPDATE 1")
         store = FeedStore(pool)
 
-        await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1, failure_threshold=5)
+        await store.report_feed_failure(
+            _FEED_ID, _WORKER_ID, 1, failure_threshold=5
+        )
 
         args = pool.execute.call_args[0]
         self.assertEqual(args[1:], (_FEED_ID, _WORKER_ID, 5, 1))

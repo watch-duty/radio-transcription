@@ -32,7 +32,9 @@ with (
 from backend.pipeline.common import gcp_helper  # noqa: E402
 
 _REPO_ROOT = Path(__file__).resolve().parents[5]
-_SQL_DIR = _REPO_ROOT / "terraform" / "modules" / "alloydb" / "sql" / "ingestion"
+_SQL_DIR = (
+    _REPO_ROOT / "terraform" / "modules" / "alloydb" / "sql" / "ingestion"
+)
 
 _FAKE_GCS_PORT = 4443
 _TEST_BUCKET = "test-audio-bucket"
@@ -221,7 +223,9 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
-    async def test_capture_upload_and_bookmark(self, mock_create_ffmpeg) -> None:
+    async def test_capture_upload_and_bookmark(
+        self, mock_create_ffmpeg
+    ) -> None:
         """Happy path: lease -> capture 1 chunk -> upload to GCS -> bookmark in DB."""
         # Arrange: insert feed, lease it
         await self._insert_feed("integration-feed")
@@ -276,7 +280,9 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
-    async def test_multiple_chunks_uploaded_to_gcs(self, mock_create_ffmpeg) -> None:
+    async def test_multiple_chunks_uploaded_to_gcs(
+        self, mock_create_ffmpeg
+    ) -> None:
         """3 segments captured and uploaded to GCS."""
         await self._insert_feed("multi-chunk-feed")
         feed = await self.store.lease_feed(self.worker_id)
@@ -390,7 +396,9 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             raise AssertionError(msg)
 
         # Mock ffmpeg: no segments and non-zero exit
-        mock_create_ffmpeg.side_effect = self._mock_create_ffmpeg([], exit_code=1)
+        mock_create_ffmpeg.side_effect = self._mock_create_ffmpeg(
+            [], exit_code=1
+        )
 
         shutdown = asyncio.Event()
         with self.assertRaises(RuntimeError) as ctx:
@@ -429,7 +437,9 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             raise AssertionError(msg)
 
         expected_segment = _FLAC_MAGIC + bytes(range(64)) * 8
-        mock_create_ffmpeg.side_effect = self._mock_create_ffmpeg([expected_segment])
+        mock_create_ffmpeg.side_effect = self._mock_create_ffmpeg(
+            [expected_segment]
+        )
 
         shutdown = asyncio.Event()
         gcs_path = None

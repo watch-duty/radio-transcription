@@ -38,7 +38,9 @@ class TestLocalIcecastCollector(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("ICECAST_STREAM_URL must be set", str(context.exception))
 
-    async def test_run_local_capture_writes_bytes_and_calls_capture(self) -> None:
+    async def test_run_local_capture_writes_bytes_and_calls_capture(
+        self,
+    ) -> None:
         """Writes captured bytes to disk and calls capture_icecast_stream once."""
 
         async def _fake_capture(_feed: dict[str, Any], _shutdown_event: Any):
@@ -59,10 +61,14 @@ class TestLocalIcecastCollector(unittest.IsolatedAsyncioTestCase):
                     clear=False,
                 ),
                 patch.object(
-                    local_icecast_collector, "capture_icecast_stream", capture_mock
+                    local_icecast_collector,
+                    "capture_icecast_stream",
+                    capture_mock,
                 ),
                 patch.object(
-                    local_icecast_collector.uuid, "uuid4", return_value=fixed_feed_id
+                    local_icecast_collector.uuid,
+                    "uuid4",
+                    return_value=fixed_feed_id,
                 ),
             ):
                 await local_icecast_collector.run_local_capture()
@@ -74,7 +80,9 @@ class TestLocalIcecastCollector(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(feed_arg["name"], "local-icecast-test")
             self.assertEqual(feed_arg["source_type"], "icecast")
             self.assertIsNone(feed_arg["last_processed_filename"])
-            self.assertEqual(feed_arg["stream_url"], "http://example.com/stream")
+            self.assertEqual(
+                feed_arg["stream_url"], "http://example.com/stream"
+            )
             self.assertIsInstance(
                 shutdown_event_arg, local_icecast_collector.asyncio.Event
             )
@@ -84,10 +92,16 @@ class TestLocalIcecastCollector(unittest.IsolatedAsyncioTestCase):
                 [path async for path in AsyncPath(tmp_dir).glob("chunk_*.flac")]
             )
             self.assertEqual(len(written_files), 2)
-            self.assertEqual(await written_files[0].read_bytes(), b"first-bytes")
-            self.assertEqual(await written_files[1].read_bytes(), b"second-bytes")
+            self.assertEqual(
+                await written_files[0].read_bytes(), b"first-bytes"
+            )
+            self.assertEqual(
+                await written_files[1].read_bytes(), b"second-bytes"
+            )
 
-    async def test_run_local_capture_uses_cwd_when_output_dir_not_set(self) -> None:
+    async def test_run_local_capture_uses_cwd_when_output_dir_not_set(
+        self,
+    ) -> None:
         """Falls back to current working directory when output dir env var is unset."""
 
         async def _fake_capture(_feed: dict[str, Any], _shutdown_event: Any):

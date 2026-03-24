@@ -75,7 +75,9 @@ class RulesStore:
         rows = await self._pool.fetch(rules_queries.LIST_RULES_SQL)
         return [Rule.model_validate(self._prepare_row(row)) for row in rows]
 
-    async def update_rule(self, rule_id: str, rule_in: RuleUpdate) -> Rule | None:
+    async def update_rule(
+        self, rule_id: str, rule_in: RuleUpdate
+    ) -> Rule | None:
         """Partially update an existing transcription rule."""
         try:
             uid = uuid.UUID(rule_id)

@@ -4,7 +4,9 @@ from unittest.mock import MagicMock, patch
 
 import fakeredis
 
-with patch.dict(os.environ, {"REDIS_CERTIFICATE_PATH": "/secrets/server_ca.pem"}):
+with patch.dict(
+    os.environ, {"REDIS_CERTIFICATE_PATH": "/secrets/server_ca.pem"}
+):
     from backend.pipeline.common.storage.redis_service import RedisService
 
 

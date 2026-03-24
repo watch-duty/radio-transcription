@@ -10,7 +10,10 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 
 from backend.pipeline.common.auth import verify_oidc_token
 from backend.pipeline.common.rules.models import Rule, RuleCreate, RuleUpdate
-from backend.pipeline.storage.connection import close_pool, create_pool_from_settings
+from backend.pipeline.storage.connection import (
+    close_pool,
+    create_pool_from_settings,
+)
 from backend.pipeline.storage.rules_store import RulesStore
 
 from .service import AlloyRulesService, BaseRulesService
@@ -75,7 +78,8 @@ async def list_rules(
     tags=["rules"],
 )
 async def get_rule(
-    rule_id: str, service: Annotated[BaseRulesService, Depends(get_rules_service)]
+    rule_id: str,
+    service: Annotated[BaseRulesService, Depends(get_rules_service)],
 ) -> Rule:
     """Fetch a specific transcription rule by ID."""
     rule = await service.get_rule(rule_id)
@@ -113,7 +117,8 @@ async def update_rule(
     tags=["rules"],
 )
 async def delete_rule(
-    rule_id: str, service: Annotated[BaseRulesService, Depends(get_rules_service)]
+    rule_id: str,
+    service: Annotated[BaseRulesService, Depends(get_rules_service)],
 ) -> None:
     """Delete a transcription rule."""
     success = await service.delete_rule(rule_id)

@@ -207,7 +207,9 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("missing stream_url", str(context.exception))
 
-    async def test_invalid_input_none_stream_url_raises_value_error(self) -> None:
+    async def test_invalid_input_none_stream_url_raises_value_error(
+        self,
+    ) -> None:
         """Test invalid input: feed with None stream_url raises ValueError."""
         # Arrange
         feed = _make_feed("none-stream-feed", None)

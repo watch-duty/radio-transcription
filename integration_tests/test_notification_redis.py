@@ -48,7 +48,9 @@ def test_notification_sent(
         feed_id="test-feed",
         evaluation_decisions=["rule1", "rule2"],
     )
-    encoded_data = base64.b64encode(test_message.SerializeToString()).decode("utf-8")
+    encoded_data = base64.b64encode(test_message.SerializeToString()).decode(
+        "utf-8"
+    )
     payload = {"messages": [{"data": encoded_data}]}
     pubsub_host = os.environ.get("PUBSUB_EMULATOR_HOST", "localhost:8085")
     pubsub_url = (
@@ -59,7 +61,9 @@ def test_notification_sent(
     try:
         # Publish the message to the topic
         response = requests.post(pubsub_url, json=payload, timeout=10)
-        assert response.status_code == 200, f"Failed to publish: {response.text}"
+        assert response.status_code == 200, (
+            f"Failed to publish: {response.text}"
+        )
 
         # Wait for the notification service to process the message and
         # write to Redis. Expect the notification service to process the
@@ -87,7 +91,9 @@ def test_notification_sent(
                     requests_data = mock_resp.json()
                     filtered = list(
                         filter(
-                            lambda r: r.get("transmissionId") == test_notification_id,
+                            lambda r: (
+                                r.get("transmissionId") == test_notification_id
+                            ),
                             requests_data,
                         )
                     )

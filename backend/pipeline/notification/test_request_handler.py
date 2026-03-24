@@ -13,7 +13,9 @@ with mock.patch.dict(
     },
 ):
     from backend.pipeline.notification.request_handler import RequestHandler
-from backend.pipeline.schema_types.alert_notification_pb2 import AlertNotification
+from backend.pipeline.schema_types.alert_notification_pb2 import (
+    AlertNotification,
+)
 
 
 class TestRequestHandler(TestCase):
@@ -32,7 +34,9 @@ class TestRequestHandler(TestCase):
         notification = AlertNotification(transmission_id="123")
         self.handler.send_notification(notification)
 
-        mock_pool_manager.assert_called_once_with(retries=self.handler.retry_strategy)
+        mock_pool_manager.assert_called_once_with(
+            retries=self.handler.retry_strategy
+        )
         mock_http.request.assert_called_once_with(
             "POST",
             "https://api.example.com/mock",

@@ -13,7 +13,9 @@ class TestTextEvaluator(unittest.TestCase):
     def test_inheritance(self) -> None:
         """Ensure the evaluator correctly implements the base interface."""
         self.assertTrue(
-            issubclass(evaluator.StaticTextEvaluator, evaluator.BaseTextEvaluator)
+            issubclass(
+                evaluator.StaticTextEvaluator, evaluator.BaseTextEvaluator
+            )
         )
         self.assertTrue(
             issubclass(
@@ -68,12 +70,16 @@ class TestTextEvaluator(unittest.TestCase):
         # 'firefly' contains 'fire', but should not match due to \b
         text = "Look at that beautiful firefly."
         result = self.static_evaluator.evaluate(text)
-        self.assertFalse(result["is_flagged"], "'firefly' should not trigger 'fire'")
+        self.assertFalse(
+            result["is_flagged"], "'firefly' should not trigger 'fire'"
+        )
 
         # 'sideburns' contains 'burn', but should not match
         text2 = "He has impressive sideburns."
         result2 = self.static_evaluator.evaluate(text2)
-        self.assertFalse(result2["is_flagged"], "'sideburns' should not trigger 'burn'")
+        self.assertFalse(
+            result2["is_flagged"], "'sideburns' should not trigger 'burn'"
+        )
 
     def test_punctuation_boundaries(self) -> None:
         """Test that keywords next to punctuation are still caught."""
@@ -91,7 +97,9 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         self.api_url = "http://localhost:8080"
         self.remote_evaluator = evaluator.RemoteTextEvaluator(self.api_url)
 
-    @patch("backend.pipeline.evaluation.rules_evaluation.evaluator.get_id_token")
+    @patch(
+        "backend.pipeline.evaluation.rules_evaluation.evaluator.get_id_token"
+    )
     @patch("requests.Session.get")
     def test_evaluate_success(self, mock_get, mock_get_id_token) -> None:
         """Test that RemoteTextEvaluator successfully fetches and evaluates rules."""
@@ -127,7 +135,9 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         )
         mock_get_id_token.assert_called_with(self.api_url)
 
-    @patch("backend.pipeline.evaluation.rules_evaluation.evaluator.get_id_token")
+    @patch(
+        "backend.pipeline.evaluation.rules_evaluation.evaluator.get_id_token"
+    )
     @patch("requests.Session.get")
     def test_evaluate_local_dev(self, mock_get, mock_get_id_token) -> None:
         """Test that RemoteTextEvaluator skips authentication in LOCAL_DEV mode."""
@@ -157,7 +167,9 @@ class TestRemoteTextEvaluator(unittest.TestCase):
                 self.remote_evaluator.session.headers.get("Authorization")
             )
 
-    @patch("backend.pipeline.evaluation.rules_evaluation.evaluator.get_id_token")
+    @patch(
+        "backend.pipeline.evaluation.rules_evaluation.evaluator.get_id_token"
+    )
     @patch("requests.Session.get")
     def test_evaluate_inactive_rule(self, mock_get, mock_get_id_token) -> None:
         """Test that inactive rules are ignored."""

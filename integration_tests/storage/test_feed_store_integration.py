@@ -35,7 +35,9 @@ async def _insert_feed(
     """Insert a feed row and optionally an icecast properties row."""
     heartbeat_expr = "NULL"
     if last_heartbeat_age_seconds is not None:
-        heartbeat_expr = f"NOW() - INTERVAL '{last_heartbeat_age_seconds} seconds'"
+        heartbeat_expr = (
+            f"NOW() - INTERVAL '{last_heartbeat_age_seconds} seconds'"
+        )
 
     feed_id = await pool.fetchval(
         f"INSERT INTO feeds (name, source_type, status, failure_count,"
@@ -392,7 +394,9 @@ async def test_diagnostic_renew_empty_input(store: FeedStore) -> None:
 # -- Tests: release_feed ----------------------------------------------
 
 
-async def test_release_feed_succeeds(db_pool: asyncpg.Pool, store: FeedStore) -> None:
+async def test_release_feed_succeeds(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
     """Release returns True and resets the feed to unclaimed."""
     worker = uuid.uuid4()
     feed_id = await _insert_feed(

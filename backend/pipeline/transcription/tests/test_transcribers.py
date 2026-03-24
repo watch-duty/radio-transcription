@@ -22,13 +22,17 @@ class TestTranscribers(unittest.TestCase):
             # Mock successful response
             mock_response = MagicMock()
             mock_result = MagicMock()
-            mock_result.alternatives = [MagicMock(transcript="Hello world from Chirp")]
+            mock_result.alternatives = [
+                MagicMock(transcript="Hello world from Chirp")
+            ]
             mock_response.results = [mock_result]
             mock_client_instance.recognize.return_value = mock_response
 
             # Initialize Transcriber
             transcriber = get_transcriber(
-                TranscriberType.GOOGLE_CHIRP_V3, "test-project", '{"location": "us"}'
+                TranscriberType.GOOGLE_CHIRP_V3,
+                "test-project",
+                '{"location": "us"}',
             )
             transcriber.setup()
 
@@ -84,7 +88,9 @@ class TestTranscribers(unittest.TestCase):
             # First call raises a transient error, second call succeeds
             mock_response = MagicMock()
             mock_result = MagicMock()
-            mock_result.alternatives = [MagicMock(transcript="Success after retry")]
+            mock_result.alternatives = [
+                MagicMock(transcript="Success after retry")
+            ]
             mock_response.results = [mock_result]
 
             mock_client_instance.recognize.side_effect = [

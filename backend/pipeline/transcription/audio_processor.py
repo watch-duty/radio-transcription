@@ -22,7 +22,10 @@ from backend.pipeline.transcription.metadata import (
     get_gcs_client,
     read_sed_segments_from_blob,
 )
-from backend.pipeline.transcription.vads import VoiceActivityDetector, get_vad_plugin
+from backend.pipeline.transcription.vads import (
+    VoiceActivityDetector,
+    get_vad_plugin,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +70,9 @@ class AudioProcessor:
         blob.download_to_file(in_mem_file)
         in_mem_file.seek(0)
 
-        full_audio_segment = AudioSegment.from_file(in_mem_file, format=AUDIO_FORMAT)
+        full_audio_segment = AudioSegment.from_file(
+            in_mem_file, format=AUDIO_FORMAT
+        )
 
         file_start_ms, speech_segments = read_sed_segments_from_blob(blob)
 

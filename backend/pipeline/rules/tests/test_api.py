@@ -120,7 +120,9 @@ class TestRulesAPI(unittest.TestCase):
     def test_update_rule_not_found(self) -> None:
         """Test updating a non-existent rule returns 404."""
         self.mock_service.update_rule.return_value = None
-        response = self.client.put("/v1/rules/missing", json={"rule_name": "New"})
+        response = self.client.put(
+            "/v1/rules/missing", json={"rule_name": "New"}
+        )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_delete_rule_success(self) -> None:

@@ -55,11 +55,13 @@ class BaseTextEvaluator(ABC):
             flags = 0 if conditions.case_sensitive else re.IGNORECASE
             if conditions.operator == models.LogicalOperator.ANY:
                 return any(
-                    re.search(re.escape(k), text, flags) for k in conditions.keywords
+                    re.search(re.escape(k), text, flags)
+                    for k in conditions.keywords
                 )
             if conditions.operator == models.LogicalOperator.ALL:
                 return all(
-                    re.search(re.escape(k), text, flags) for k in conditions.keywords
+                    re.search(re.escape(k), text, flags)
+                    for k in conditions.keywords
                 )
 
         # For now, we skip GroupConditions as it requires a rule lookup

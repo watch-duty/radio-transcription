@@ -4,7 +4,10 @@ import asyncio
 import unittest
 from unittest import mock
 
-from backend.pipeline.ingestion.retry import LeaseExpiredError, retry_with_lease_check
+from backend.pipeline.ingestion.retry import (
+    LeaseExpiredError,
+    retry_with_lease_check,
+)
 
 
 class TestRetrySuccessFirstAttempt(unittest.IsolatedAsyncioTestCase):
@@ -132,7 +135,9 @@ class TestRetryShutdown(unittest.IsolatedAsyncioTestCase):
             )
         fn.assert_not_awaited()
 
-    async def test_raises_cancelled_on_shutdown_after_failed_attempt(self) -> None:
+    async def test_raises_cancelled_on_shutdown_after_failed_attempt(
+        self,
+    ) -> None:
         """On shutdown after a failed attempt, raise CancelledError."""
         shutdown = asyncio.Event()
 

@@ -87,7 +87,9 @@ class TestCombineMultipleDetectors(unittest.TestCase):
         self.combiner = SoundEventSignalCombiner()
 
     def test_non_overlapping_from_different_detectors(self) -> None:
-        r1 = _result([_region(0.0, 1.0, detector_type="vad")], detector_type="vad")
+        r1 = _result(
+            [_region(0.0, 1.0, detector_type="vad")], detector_type="vad"
+        )
         r2 = _result(
             [_region(2.0, 3.0, detector_type="energy")], detector_type="energy"
         )
@@ -123,11 +125,19 @@ class TestCombineMultipleDetectors(unittest.TestCase):
         self.assertEqual(combined.speech_regions[0].end_sec, 3.0)
 
     def test_detector_type_comma_joined_sorted(self) -> None:
-        r1 = _result([_region(0.0, 1.0, detector_type="zebra")], detector_type="zebra")
-        r2 = _result([_region(0.5, 1.5, detector_type="alpha")], detector_type="alpha")
-        r3 = _result([_region(0.8, 1.2, detector_type="mid")], detector_type="mid")
+        r1 = _result(
+            [_region(0.0, 1.0, detector_type="zebra")], detector_type="zebra"
+        )
+        r2 = _result(
+            [_region(0.5, 1.5, detector_type="alpha")], detector_type="alpha"
+        )
+        r3 = _result(
+            [_region(0.8, 1.2, detector_type="mid")], detector_type="mid"
+        )
         combined = self.combiner.combine([r1, r2, r3])
-        self.assertEqual(combined.speech_regions[0].detector_type, "alpha,mid,zebra")
+        self.assertEqual(
+            combined.speech_regions[0].detector_type, "alpha,mid,zebra"
+        )
 
 
 class TestCombineEdgeCases(unittest.TestCase):

@@ -14,10 +14,20 @@ import asyncpg
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
-from backend.pipeline.ingestion.retry import LeaseExpiredError, retry_with_lease_check
+from backend.pipeline.ingestion.retry import (
+    LeaseExpiredError,
+    retry_with_lease_check,
+)
 from backend.pipeline.ingestion.settings import NormalizerSettings
-from backend.pipeline.storage.connection import close_pool, create_pool_from_settings
-from backend.pipeline.storage.feed_store import FeedStore, HeartbeatResult, LeasedFeed
+from backend.pipeline.storage.connection import (
+    close_pool,
+    create_pool_from_settings,
+)
+from backend.pipeline.storage.feed_store import (
+    FeedStore,
+    HeartbeatResult,
+    LeasedFeed,
+)
 
 FeedID = uuid.UUID
 CaptureFn = Callable[
@@ -328,7 +338,11 @@ class NormalizerRuntime:
                     max_retries=settings.gcs_upload_max_retries,
                     base_delay_sec=settings.gcs_upload_retry_base_delay_sec,
                     max_delay_sec=settings.gcs_upload_retry_max_delay_sec,
-                    retryable=(aiohttp.ClientError, asyncio.TimeoutError, OSError),
+                    retryable=(
+                        aiohttp.ClientError,
+                        asyncio.TimeoutError,
+                        OSError,
+                    ),
                     operation_name="GCS upload",
                 )
                 message_id = await gcp_helper.publish_audio_chunk(
@@ -603,7 +617,10 @@ class NormalizerRuntime:
         # heartbeat thread may be waiting for _heartbeat_cycle() to run ON
         # that event loop — a deadlock that wastes shutdown budget until
         # join() times out.
-        if self._heartbeat_thread is not None and self._heartbeat_thread.is_alive():
+        if (
+            self._heartbeat_thread is not None
+            and self._heartbeat_thread.is_alive()
+        ):
             await asyncio.to_thread(self._heartbeat_thread.join, timeout=5)
 
         # Cancel all feed tasks

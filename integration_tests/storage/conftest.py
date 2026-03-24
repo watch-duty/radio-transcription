@@ -15,7 +15,9 @@ from testcontainers.postgres import PostgresContainer
 from backend.pipeline.storage.connection import create_pool
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_SQL_DIR = _REPO_ROOT / "terraform" / "modules" / "alloydb" / "sql" / "ingestion"
+_SQL_DIR = (
+    _REPO_ROOT / "terraform" / "modules" / "alloydb" / "sql" / "ingestion"
+)
 
 
 def _docker_available() -> bool:
@@ -74,7 +76,9 @@ def postgres_container() -> Generator[dict[str, Any]]:
 
 
 @pytest.fixture
-async def db_pool(postgres_container: dict[str, Any]) -> AsyncIterator[asyncpg.Pool]:
+async def db_pool(
+    postgres_container: dict[str, Any],
+) -> AsyncIterator[asyncpg.Pool]:
     """Create an asyncpg pool for a single test."""
     pool = await create_pool(
         host=postgres_container["host"],

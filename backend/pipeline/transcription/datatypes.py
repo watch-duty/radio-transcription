@@ -4,7 +4,10 @@ from dataclasses import dataclass, field
 
 from pydub import AudioSegment
 
-from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS, MS_PER_SECOND
+from backend.pipeline.common.constants import (
+    CHUNK_DURATION_SECONDS,
+    MS_PER_SECOND,
+)
 from backend.pipeline.transcription.constants import (
     DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
 )

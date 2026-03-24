@@ -28,7 +28,9 @@ class MetricsExporter(abc.ABC):
         """Instantiates unpicklable clients (e.g. gRPC stubs) lazily on the worker node."""
 
     @abc.abstractmethod
-    def record_transcription_time(self, *, feed_id: str, duration_ms: int) -> None:
+    def record_transcription_time(
+        self, *, feed_id: str, duration_ms: int
+    ) -> None:
         """Records the transcription time telemetry."""
 
     @abc.abstractmethod
@@ -83,11 +85,15 @@ class GcpMonitoringExporter(MetricsExporter):
 
         series.points = [point]
         try:
-            self.client.create_time_series(name=project_name, time_series=[series])
+            self.client.create_time_series(
+                name=project_name, time_series=[series]
+            )
         except GoogleAPIError as e:
             logger.warning(f"Failed to export GCP metric {metric_name}: {e}")
 
-    def record_transcription_time(self, *, feed_id: str, duration_ms: int) -> None:
+    def record_transcription_time(
+        self, *, feed_id: str, duration_ms: int
+    ) -> None:
         """Records the transcription time telemetry."""
         if self.config:
             self._record_custom_metric(
@@ -114,15 +120,21 @@ class MultiExporter(MetricsExporter):
         for exporter in self.exporters:
             exporter.setup()
 
-    def record_transcription_time(self, *, feed_id: str, duration_ms: int) -> None:
+    def record_transcription_time(
+        self, *, feed_id: str, duration_ms: int
+    ) -> None:
         """Records the transcription time telemetry."""
         for exporter in self.exporters:
-            exporter.record_transcription_time(feed_id=feed_id, duration_ms=duration_ms)
+            exporter.record_transcription_time(
+                feed_id=feed_id, duration_ms=duration_ms
+            )
 
     def record_stitching_time(self, *, feed_id: str, duration_ms: int) -> None:
         """Records the stitching time telemetry."""
         for exporter in self.exporters:
-            exporter.record_stitching_time(feed_id=feed_id, duration_ms=duration_ms)
+            exporter.record_stitching_time(
+                feed_id=feed_id, duration_ms=duration_ms
+            )
 
 
 def get_metrics_exporter(
