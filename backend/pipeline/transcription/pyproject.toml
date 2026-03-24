@@ -11,6 +11,7 @@ dependencies = [
     "crcmod>=1.7",
     "ten-vad>=1.0.6.8",
     "audioop-lts>=0.2.1",
+    "librosa>=0.11.0",
 ]
 
 [tool.setuptools]

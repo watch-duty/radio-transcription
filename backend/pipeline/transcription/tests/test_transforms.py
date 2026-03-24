@@ -54,6 +54,8 @@ class MockTranscriberFactory:
         transcriber_type: TranscriberType,
         project_id: str,
         config_json: str,
+        *args: Any,
+        **kwargs: Any,
     ) -> Transcriber:
 
         mock = MagicMock()
@@ -111,7 +113,10 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             chunk.SerializeToString(),
             {"feed_id": "test-feed"},
         )
-        with BeamTestPipeline() as p:
+        options = PipelineOptions(
+            flags=["--input_topic=a", "--output_topic=b", "--project_id=c"]
+        )
+        with BeamTestPipeline(options=options) as p:
             messages = p | beam.Create([mock_msg])
             parsed = messages | beam.ParDo(ParseAndKeyFn()).with_outputs(
                 DEAD_LETTER_QUEUE_TAG, main="main"
@@ -134,7 +139,10 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             chunk.SerializeToString(),
             {},  # Missing feed_id
         )
-        with BeamTestPipeline() as p:
+        options = PipelineOptions(
+            flags=["--input_topic=a", "--output_topic=b", "--project_id=c"]
+        )
+        with BeamTestPipeline(options=options) as p:
             messages = p | beam.Create([mock_msg])
             parsed = messages | beam.ParDo(ParseAndKeyFn()).with_outputs(
                 DEAD_LETTER_QUEUE_TAG, main="main"
@@ -198,7 +206,10 @@ class OrderRestorerTest(unittest.TestCase):
         """Verifies that structurally disordered data streams correctly buffer elements in-memory to artificially re-align and emit chronologically."""
         config = OrderRestorerConfig(out_of_order_timeout_ms=5000)
 
-        with BeamTestPipeline() as p:
+        options = PipelineOptions(
+            flags=["--input_topic=a", "--output_topic=b", "--project_id=c"]
+        )
+        with BeamTestPipeline(options=options) as p:
             # Emit chunk 1, then chunk 3. Chunk 3 should be buffered.
             # Then emit chunk 2. Chunk 2 and 3 should be released.
             test_stream = (
@@ -262,7 +273,10 @@ class OrderRestorerTest(unittest.TestCase):
         """Verifies that profoundly late stream elements exceeding the operational buffering timeout are explicitly yielded independently without corrupting stream progression."""
         config = OrderRestorerConfig(out_of_order_timeout_ms=5000)
 
-        with BeamTestPipeline() as p:
+        options = PipelineOptions(
+            flags=["--input_topic=a", "--output_topic=b", "--project_id=c"]
+        )
+        with BeamTestPipeline(options=options) as p:
             test_stream = (
                 BeamTestStream(
                     coder=beam.coders.TupleCoder(
@@ -387,7 +401,9 @@ class StitchAudioTest(unittest.TestCase):
 
         mock_processor_inst.download_audio_and_sed.side_effect = mock_download
 
-        options = PipelineOptions()
+        options = PipelineOptions(
+            flags=["--input_topic=a", "--output_topic=b", "--project_id=c"]
+        )
         options.view_as(StandardOptions).streaming = True
 
         config = get_test_stitch_config(significant_gap_ms=3000)
@@ -522,22 +538,9 @@ class StitchAudioTest(unittest.TestCase):
                 ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
             )
 
-            def debug_print(el):
-
-                return el
-
-            results.main = results.main | beam.Map(debug_print)
-
-            def print_dlq(el):
-
-                print(f"DLQ MESSAGE: {el}")  # noqa: T201
-                return el
-
             results[DEAD_LETTER_QUEUE_TAG] | "Print DLQ" >> beam.Map(print_dlq)
 
-            def assert_flush_requests(
-                elements: list[tuple[str, FlushRequest]],
-            ) -> None:
+            def assert_flush_requests(elements: list[tuple[str, FlushRequest]]) -> None:
 
                 assert len(elements) == 3, (
                     f"Expected 3 flush requests, got {len(elements)}: {elements}"
@@ -611,7 +614,9 @@ class StitchAudioTest(unittest.TestCase):
             )
 
         mock_processor_inst.download_audio_and_sed.side_effect = mock_download
-        options = PipelineOptions()
+        options = PipelineOptions(
+            flags=["--input_topic=a", "--output_topic=b", "--project_id=c"]
+        )
         options.view_as(StandardOptions).streaming = True
         config = get_test_stitch_config(significant_gap_ms=3000)
 
@@ -756,7 +761,9 @@ class StitchAudioTest(unittest.TestCase):
 
         mock_processor_inst.download_audio_and_sed.side_effect = mock_download
 
-        options = PipelineOptions()
+        options = PipelineOptions(
+            flags=["--input_topic=a", "--output_topic=b", "--project_id=c"]
+        )
         options.view_as(StandardOptions).streaming = True
 
         # Set max duration to 30 seconds (2 full chunks).
@@ -916,7 +923,9 @@ class StitchAudioTest(unittest.TestCase):
             gcs_uri="gs://fake-bucket/ab12/feed-123/2026-03-06/101-11111111-1111-1111-1111-111111111111.flac",
         )
 
-        options = PipelineOptions()
+        options = PipelineOptions(
+            flags=["--input_topic=a", "--output_topic=b", "--project_id=c"]
+        )
         options.view_as(StandardOptions).streaming = True
 
         config = get_test_stitch_config()
@@ -993,7 +1002,10 @@ class StitchAudioTest(unittest.TestCase):
         config = get_test_stitch_config()
 
         with self.assertRaises(Exception):
-            with BeamTestPipeline() as p:
+            options = PipelineOptions(
+                flags=["--input_topic=a", "--output_topic=b", "--project_id=c"]
+            )
+            with BeamTestPipeline(options=options) as p:
                 input_elements = [
                     (
                         "feed-123",
@@ -1025,7 +1037,10 @@ class TranscribeAudioTest(unittest.TestCase):
 
         config = get_test_transcribe_config(route_to_dlq=True)
 
-        with BeamTestPipeline() as p:
+        options = PipelineOptions(
+            flags=["--input_topic=a", "--output_topic=b", "--project_id=c"]
+        )
+        with BeamTestPipeline(options=options) as p:
             elements = p | beam.Create(
                 [
                     (
@@ -1116,7 +1131,9 @@ class TranscribeAudioTest(unittest.TestCase):
 
         main_thread_name = threading.current_thread().name
 
-        options = PipelineOptions()
+        options = PipelineOptions(
+            flags=["--input_topic=a", "--output_topic=b", "--project_id=c"]
+        )
         options.view_as(StandardOptions).streaming = True
 
         config = get_test_transcribe_config()

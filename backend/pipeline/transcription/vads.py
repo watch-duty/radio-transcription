@@ -105,11 +105,11 @@ class TenVadPlugin(VoiceActivityDetector):
         return True
 
 
-def get_vad_plugin(vad_type: VadType, vad_config: str) -> VoiceActivityDetector:
+def get_vad_plugin(vad_type: VadType, config_json: str) -> VoiceActivityDetector:
     """Factory function to instantiate the requested VAD plugin."""
     if vad_type == VadType.TEN_VAD:
         plugin = TenVadPlugin()
-        plugin.setup(vad_config)
+        plugin.setup(config_json)
         return plugin
     msg = f"Unknown vad_type: {vad_type}"
     raise ValueError(msg)

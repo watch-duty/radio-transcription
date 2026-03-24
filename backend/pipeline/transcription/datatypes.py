@@ -114,6 +114,8 @@ class StitchAudioConfig:
     significant_gap_ms: int
     stale_timeout_ms: int
     max_transmission_duration_ms: int
+    vad_pre_roll_ms: int
+    vad_post_roll_ms: int
     route_to_dlq: bool = True
 
     def __post_init__(self) -> None:

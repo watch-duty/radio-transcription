@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from pydub import AudioSegment
+from pydub.generators import Sine
 
 from backend.pipeline.common.constants import AUDIO_FORMAT, SAMPLE_RATE_HZ
 from backend.pipeline.transcription.audio_processor import AudioProcessor
@@ -56,7 +57,9 @@ class AudioProcessorTest(unittest.TestCase):
 
         self.processor.setup()
 
-        audio = AudioSegment.silent(duration=1000)
+        # Generate a Sine wave so it bypasses both the new RMS silence gate
+        # and the Spectral Flatness noise gate (pure tone = highly structured)
+        audio = Sine(440).to_audio_segment(duration=1000)
         result = self.processor.check_vad(audio)
 
         self.assertTrue(result)
