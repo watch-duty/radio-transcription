@@ -2,7 +2,7 @@ import logging
 import os
 
 import functions_framework
-import google.cloud.logging
+from backend.pipeline.common.logging import setup_logging
 from cloudevents.http import event as cloudevent
 from google.cloud import pubsub_v1
 
@@ -10,15 +10,8 @@ from backend.pipeline.evaluation import service
 from backend.pipeline.evaluation.rules_evaluation import evaluator
 
 # 1. Setup Logging
+setup_logging()
 logger = logging.getLogger(__name__)
-
-if not os.environ.get("LOCAL_DEV"):
-    client = google.cloud.logging.Client()
-    client.setup_logging()
-else:
-    # If local, just print normally to the Docker console
-    logging.basicConfig(level=logging.INFO)
-    logger.info("Running in LOCAL_DEV mode. Logs will print here.")
 
 # 2. Global Initialization (for performance on warm starts)
 publisher_options = pubsub_v1.types.PublisherOptions(enable_message_ordering=True)

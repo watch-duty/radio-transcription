@@ -3,7 +3,7 @@ import logging
 import os
 
 import functions_framework
-import google.cloud.logging
+from backend.pipeline.common.logging import setup_logging
 from cloudevents.http.event import CloudEvent
 
 from backend.pipeline.common.storage.redis_service import RedisService
@@ -16,19 +16,9 @@ from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
 
-# TODO(schew): https://linear.app/watchduty/issue/GOO-100/create-shared-logging-util-for-consistent-setup-across-pipeline
-if not os.environ.get("LOCAL_DEV"):
-    client = google.cloud.logging.Client()
-    client.setup_logging()
-    logger = logging.getLogger(__name__)
-else:
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
-    handler = logging.StreamHandler()
-    logger.addHandler(handler)
-    logger.info(
-        "Running in LOCAL_DEV mode. Logs will print to console instead of configurable endpoint."
-    )
+# Setup Logging
+setup_logging()
+logger = logging.getLogger(__name__)
 
 # Keeping the notification deduplicate connection outside the main function. This is so the connection is
 # maintained while the function is warm instead of reconnecting each invocation.

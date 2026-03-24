@@ -12,6 +12,7 @@ from backend.pipeline.common.constants import AUDIO_FORMAT
 from backend.pipeline.ingestion.collectors.icecast_collector import (
     capture_icecast_stream,
 )
+from backend.pipeline.common.logging import setup_logging
 
 if TYPE_CHECKING:
     from backend.pipeline.storage.feed_store import LeasedFeed
@@ -66,7 +67,7 @@ async def run_local_capture() -> None:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO)
+    setup_logging()
     asyncio.run(run_local_capture())
 
 

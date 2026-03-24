@@ -13,6 +13,7 @@ import aiohttp
 import asyncpg
 
 from backend.pipeline.common import gcp_helper
+from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.ingestion.retry import LeaseExpiredError, retry_with_lease_check
 from backend.pipeline.ingestion.settings import NormalizerSettings
@@ -99,16 +100,15 @@ class NormalizerRuntime:
 
     # -- Entry point ------------------------------------------------------
 
+
+
     def run(self) -> None:
         """
         Start the runtime. Blocks until shutdown completes.
 
         Sets up logging, then delegates to the async ``_main`` coroutine.
         """
-        logging.basicConfig(
-            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-            level=logging.INFO,
-        )
+        setup_logging()
         logger.info(
             "Starting NormalizerRuntime worker_id=%s max_feeds=%d",
             self._normalizer_settings.worker_id,
