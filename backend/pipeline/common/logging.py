@@ -13,6 +13,8 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+_STATE = {"initialized": False}
+
 
 def setup_logging() -> None:
     """Sets up logging for the application.
@@ -20,6 +22,9 @@ def setup_logging() -> None:
     If LOCAL_DEV is set, it uses basicConfig with a standard format.
     Otherwise, it uses the Google Cloud Logging client.
     """
+    if _STATE["initialized"]:
+        return
+
     if not os.environ.get("LOCAL_DEV"):
         if _cloud_logging is not None:
             client = _cloud_logging.Client()
@@ -39,3 +44,5 @@ def setup_logging() -> None:
         )
         # Log that we are in local dev mode
         logger.info("Running in LOCAL_DEV mode. Logs will print to console.")
+
+    _STATE["initialized"] = True
