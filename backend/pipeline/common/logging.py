@@ -6,6 +6,7 @@ from typing import Any
 _cloud_logging: Any = None
 try:
     from google.cloud import logging as cloud_logging
+
     _cloud_logging = cloud_logging
 except ImportError:
     pass
@@ -26,7 +27,9 @@ def setup_logging() -> None:
         else:
             # Fallback if google-cloud-logging is not installed
             logging.basicConfig(level=logging.INFO)
-            logger.warning("google-cloud-logging not found, falling back to basicConfig")
+            logger.warning(
+                "google-cloud-logging not found, falling back to basicConfig"
+            )
     else:
         # Standardized format for local development
         logging.basicConfig(
