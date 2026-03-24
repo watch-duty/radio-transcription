@@ -142,6 +142,8 @@ class StitchAudioFn(beam.DoFn):
         )
         self.metrics_exporter.setup()
 
+    # Turning off formatter to respect noqa exception.
+    # fmt: off
     def _apply_flush_action(
         self,
         action: FlushAction,
@@ -149,6 +151,7 @@ class StitchAudioFn(beam.DoFn):
         transmission_buffer: BagRuntimeState,
         stale_timer: RuntimeTimer,
     ) -> Generator[tuple[str, FlushRequest], None, None]:  # noqa: UP043
+    # fmt: on
         """Clears current internal state arrays and yields a compiled FlushRequest downstream."""
         if "Maximum transmission duration" in action.reason:
             self.max_duration_flush_count.inc()
@@ -219,6 +222,8 @@ class StitchAudioFn(beam.DoFn):
             else:
                 stale_timer.clear()
 
+    # Turning off formatter to respect noqa exception.
+    # fmt: off
     def _apply_state_actions(
         self,
         *,
@@ -229,6 +234,7 @@ class StitchAudioFn(beam.DoFn):
         ctx: StitcherContext,
         gcs_path: str,
     ) -> Generator[tuple[str, FlushRequest], None, None]:  # noqa: UP043
+    # fmt: on
         """Routes individual StateMachineAction results to appropriate Apache Beam side-effects and emitters."""
         flush_count = sum(1 for a in actions if isinstance(a, FlushAction))
         if flush_count > 1:
@@ -254,6 +260,8 @@ class StitchAudioFn(beam.DoFn):
                 case DropAction(reason=reason):
                     logger.info(f"{reason}: {gcs_path}")
 
+    # Turning off formatter to respect noqa exception.
+    # fmt: off
     def _process_audio_chunk(
         self,
         *,
@@ -263,7 +271,8 @@ class StitchAudioFn(beam.DoFn):
         transmission_context: ReadModifyWriteRuntimeState,
         transmission_buffer: BagRuntimeState,
         stale_timer: RuntimeTimer,
-    ) -> Generator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
+    ) -> Generator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput, None, None]:  # noqa: UP043
+    # fmt: on
         """Top-level executor managing chunk ingestion, VAD decoding, state persistence, and flush delegation."""
         file_start_ms = chunk_data.start_ms
 
@@ -304,6 +313,8 @@ class StitchAudioFn(beam.DoFn):
             gcs_path=gcs_path,
         )
 
+    # Turning off formatter to respect noqa exception.
+    # fmt: off
     @override
     def process(  # type: ignore[override]
         self,
@@ -311,7 +322,8 @@ class StitchAudioFn(beam.DoFn):
         transmission_buffer: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         stale_timer: RuntimeTimer = STALE_TIMER_PARAM,  # type: ignore
-    ) -> Generator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
+    ) -> Generator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput, None, None]:  # noqa: UP043
+    # fmt: on
         """Delegates the incoming audio chunk to the internal state machine for evaluation."""
         key, (gcs_path, chunk_data) = element
 
@@ -336,6 +348,8 @@ class StitchAudioFn(beam.DoFn):
                 DEAD_LETTER_QUEUE_TAG, {"error": msg, "feed_id": key}
             )
 
+    # Turning off formatter to respect noqa exception.
+    # fmt: off
     @on_timer(STALE_TIMER_SPEC)
     def handle_stale_transmission(
         self,
@@ -343,7 +357,8 @@ class StitchAudioFn(beam.DoFn):
         transmission_buffer: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         stale_timer: RuntimeTimer = STALE_TIMER_PARAM,  # type: ignore
-    ) -> Generator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
+    ) -> Generator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput, None, None]:  # noqa: UP043
+    # fmt: on
         """Invoked asynchronously by the Beam Runner when the event-time watermark.
 
         passes the timestamp previously scheduled on the `stale_timer`. This provides a critical
@@ -538,6 +553,8 @@ class TranscribeAudioFn(beam.DoFn):
             end_audio_offset_ms=request.end_audio_offset_ms,
         )
 
+    # Turning off formatter to respect noqa exception.
+    # fmt: off
     @override
     def process(  # type: ignore[override]
         self,
@@ -546,6 +563,7 @@ class TranscribeAudioFn(beam.DoFn):
         *args: Any,
         **kwargs: Any,
     ) -> Generator[TranscriptionResult | beam.pvalue.TaggedOutput, None, None]:  # noqa: UP043
+        # fmt: on
         """Submits the consolidated flushed buffer strictly sequentially to the external transcription API."""
         feed_id, request = element
         try:
