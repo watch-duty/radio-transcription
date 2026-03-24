@@ -89,7 +89,7 @@ class RuleBase(BaseModel):
     is_active: bool = True
     scope: Scope
     conditions: RuleConditions
-    metadata: RuleMetadata | None = None
+    metadata: RuleMetadata = Field(default_factory=RuleMetadata)
 
 
 class RuleCreate(RuleBase):

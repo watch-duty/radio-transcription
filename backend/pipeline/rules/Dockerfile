@@ -28,6 +28,7 @@ RUN uv sync --frozen --no-dev
 COPY backend/__init__.py ./backend/__init__.py
 COPY backend/pipeline/__init__.py ./backend/pipeline/__init__.py
 COPY backend/pipeline/common/ ./backend/pipeline/common/
+COPY backend/pipeline/storage/ ./backend/pipeline/storage/
 COPY backend/pipeline/rules/ ./backend/pipeline/rules/
 
 # 5. Start the application

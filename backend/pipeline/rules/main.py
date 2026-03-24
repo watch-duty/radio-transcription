@@ -1,18 +1,46 @@
 from __future__ import annotations
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, Annotated, Any
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 
 from backend.pipeline.common.auth import verify_oidc_token
 from backend.pipeline.common.rules.models import Rule, RuleCreate, RuleUpdate
+from backend.pipeline.storage.connection import (
+    close_pool,
+    create_pool_from_settings,
+)
+from backend.pipeline.storage.rules_store import RulesStore
 
-from .service import rules_service
+from .service import AlloyRulesService, BaseRulesService
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Manage the lifecycle of the AlloyDB connection pool."""
+    pool = await create_pool_from_settings()
+    store = RulesStore(pool)
+    app.state.rules_service = AlloyRulesService(store)
+    yield
+    await close_pool(pool)
+
 
 app = FastAPI(
     title="Rules Management Service",
     description="API for creating, reading, updating, and deleting transcription rules.",
     version="1.0.0",
+    lifespan=lifespan,
     dependencies=[Depends(verify_oidc_token)],
 )
+
+
+def get_rules_service(request: Request) -> BaseRulesService:
+    """Dependency that retrieves the rules service from the application state."""
+    return request.app.state.rules_service
 
 
 @app.post(
@@ -21,9 +49,15 @@ app = FastAPI(
     status_code=status.HTTP_201_CREATED,
     tags=["rules"],
 )
-async def create_rule(rule_in: RuleCreate) -> Rule:
+async def create_rule(
+    rule_in: RuleCreate,
+    service: Annotated[BaseRulesService, Depends(get_rules_service)],
+    user: Annotated[dict[str, Any], Depends(verify_oidc_token)],
+) -> Rule:
     """Create a new transcription rule."""
-    return rules_service.create_rule(rule_in)
+    # Assign the authenticated user's email to created_by
+    rule_in.metadata.created_by = user.get("email")
+    return await service.create_rule(rule_in)
 
 
 @app.get(
@@ -31,9 +65,11 @@ async def create_rule(rule_in: RuleCreate) -> Rule:
     response_model=list[Rule],
     tags=["rules"],
 )
-async def list_rules() -> list[Rule]:
+async def list_rules(
+    service: Annotated[BaseRulesService, Depends(get_rules_service)],
+) -> list[Rule]:
     """List all transcription rules."""
-    return rules_service.list_rules()
+    return await service.list_rules()
 
 
 @app.get(
@@ -41,9 +77,12 @@ async def list_rules() -> list[Rule]:
     response_model=Rule,
     tags=["rules"],
 )
-async def get_rule(rule_id: str) -> Rule:
+async def get_rule(
+    rule_id: str,
+    service: Annotated[BaseRulesService, Depends(get_rules_service)],
+) -> Rule:
     """Fetch a specific transcription rule by ID."""
-    rule = rules_service.get_rule(rule_id)
+    rule = await service.get_rule(rule_id)
     if not rule:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -57,9 +96,13 @@ async def get_rule(rule_id: str) -> Rule:
     response_model=Rule,
     tags=["rules"],
 )
-async def update_rule(rule_id: str, rule_in: RuleUpdate) -> Rule:
+async def update_rule(
+    rule_id: str,
+    rule_in: RuleUpdate,
+    service: Annotated[BaseRulesService, Depends(get_rules_service)],
+) -> Rule:
     """Fully update an existing transcription rule."""
-    rule = rules_service.update_rule(rule_id, rule_in)
+    rule = await service.update_rule(rule_id, rule_in)
     if not rule:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -73,9 +116,12 @@ async def update_rule(rule_id: str, rule_in: RuleUpdate) -> Rule:
     status_code=status.HTTP_204_NO_CONTENT,
     tags=["rules"],
 )
-async def delete_rule(rule_id: str) -> None:
+async def delete_rule(
+    rule_id: str,
+    service: Annotated[BaseRulesService, Depends(get_rules_service)],
+) -> None:
     """Delete a transcription rule."""
-    success = rules_service.delete_rule(rule_id)
+    success = await service.delete_rule(rule_id)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

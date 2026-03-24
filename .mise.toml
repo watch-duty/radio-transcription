@@ -48,3 +48,23 @@ run = "terraform fmt -recursive"
 [tasks."generate:protos"]
 description = "Generate Python code from Protobuf definitions"
 run = "uv run python -m grpc_tools.protoc --proto_path=protos --python_out=backend/pipeline/schema_types --grpc_python_out=backend/pipeline/schema_types --pyi_out=backend/pipeline/schema_types protos/*.proto"
+
+[tasks."test:unit"]
+description = "Run all unit tests"
+run = "uv run python -m unittest discover backend/pipeline"
+
+[tasks.test]
+description = "Run all unit tests (alias)"
+depends = ["test:unit"]
+
+[tasks."test:rules"]
+description = "Run RulesStore integration tests"
+run = "uv run pytest integration_tests/storage/test_rules_store_integration.py"
+
+[tasks."test:feeds"]
+description = "Run FeedStore integration tests"
+run = "uv run pytest integration_tests/storage/test_feed_store_integration.py"
+
+[tasks."test:integ"]
+description = "Run all storage integration tests"
+run = "uv run pytest integration_tests/storage/"

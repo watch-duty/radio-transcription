@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 import asyncpg
+
+from .settings import AlloyDBSettings
 
 
 async def create_pool(
@@ -73,3 +73,27 @@ async def create_pool(
 async def close_pool(pool: asyncpg.Pool) -> None:
     """Close an asyncpg connection pool."""
     await pool.close()
+
+
+async def create_pool_from_settings(
+    settings: AlloyDBSettings | None = None,
+) -> asyncpg.Pool:
+    """
+    Create an asyncpg connection pool using an AlloyDBSettings object.
+
+    If no settings object is provided, it defaults to loading from environment variables.
+    """
+    if settings is None:
+        settings = AlloyDBSettings()
+
+    return await create_pool(
+        host=settings.host,
+        port=settings.port,
+        user=settings.user,
+        db_name=settings.db_name,
+        password=settings.password,
+        min_size=settings.pool_min_size,
+        max_size=settings.pool_max_size,
+        command_timeout=settings.command_timeout_sec,
+        timeout=settings.connect_timeout_sec,
+    )
