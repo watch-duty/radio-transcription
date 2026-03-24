@@ -16,7 +16,7 @@ from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.ingestion.retry import LeaseExpiredError, retry_with_lease_check
 from backend.pipeline.ingestion.settings import NormalizerSettings
-from backend.pipeline.storage.connection import close_pool, create_pool
+from backend.pipeline.storage.connection import close_pool, create_pool_from_settings
 from backend.pipeline.storage.feed_store import FeedStore, HeartbeatResult, LeasedFeed
 
 FeedID = uuid.UUID
@@ -144,33 +144,14 @@ class NormalizerRuntime:
         # timeout (connect): bounds TCP handshake — without it, a VPC subnet
         # silently dropping packets hangs connect() for 2+ min (Linux TCP
         # SYN-ACK timeout), starving the pool of connections.
-        self._data_pool = await create_pool(
-            host=settings.db_host,
-            user=settings.db_user,
-            db_name=settings.db_name,
-            password=settings.db_password,
-            port=settings.db_port,
-            min_size=settings.db_pool_min_size,
-            max_size=settings.db_pool_max_size,
-            command_timeout=settings.db_command_timeout_sec,
-            timeout=settings.db_connect_timeout_sec,
-        )
+        self._data_pool = await create_pool_from_settings(settings.db)
         self._store = FeedStore(self._data_pool)
 
         # Dedicated 1-connection pool ensures heartbeat queries never queue
         # behind 250 bookmark/upload operations on the main pool. Without
         # this, pool contention causes false stall-timeout kills.
-        self._heartbeat_pool = await create_pool(
-            host=settings.db_host,
-            user=settings.db_user,
-            db_name=settings.db_name,
-            password=settings.db_password,
-            port=settings.db_port,
-            min_size=1,
-            max_size=1,
-            command_timeout=settings.db_command_timeout_sec,
-            timeout=settings.db_connect_timeout_sec,
-        )
+        hb_settings = settings.db.replace(pool_min_size=1, pool_max_size=1)
+        self._heartbeat_pool = await create_pool_from_settings(hb_settings)
         self._heartbeat_store = FeedStore(self._heartbeat_pool)
 
         self._heartbeat_thread = threading.Thread(

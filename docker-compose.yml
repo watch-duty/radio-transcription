@@ -49,6 +49,24 @@ services:
       - pubsub-emulator
       - rules-management
 
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./terraform/modules/alloydb/sql/ingestion:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pipeline-network
+
   rules-management:
     build:
       context: .
@@ -58,6 +76,9 @@ services:
     env_file:
       - ./local_dev/LOCAL.env
     command: ["uvicorn", "backend.pipeline.rules.main:app", "--host", "0.0.0.0", "--port", "8086"]
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - pipeline-network
 
