@@ -8,5 +8,5 @@ CREATE TABLE IF NOT EXISTS rules (
     conditions              JSONB NOT NULL,
     created_at              TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at              TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    created_by              TEXT
+    created_by              TEXT NOT NULL
 );

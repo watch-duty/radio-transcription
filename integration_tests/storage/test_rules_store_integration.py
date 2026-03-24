@@ -13,6 +13,7 @@ from backend.pipeline.common.rules.models import (
     KeywordConditions,
     LogicalOperator,
     RuleCreate,
+    RuleMetadata,
     RuleUpdate,
     Scope,
     ScopeLevel,
@@ -38,6 +39,7 @@ def _create_sample_rule_in(name: str = "Test Rule") -> RuleCreate:
             keywords=["fire", "smoke"],
             operator=LogicalOperator.ANY,
         ),
+        metadata=RuleMetadata(created_by="test-user@example.com"),
     )
 
 

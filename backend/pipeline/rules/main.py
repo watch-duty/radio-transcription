@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -49,8 +49,11 @@ def get_rules_service(request: Request) -> BaseRulesService:
 async def create_rule(
     rule_in: RuleCreate,
     service: Annotated[BaseRulesService, Depends(get_rules_service)],
+    user: Annotated[dict[str, Any], Depends(verify_oidc_token)],
 ) -> Rule:
     """Create a new transcription rule."""
+    # Assign the authenticated user's email to created_by
+    rule_in.metadata.created_by = user.get("email")
     return await service.create_rule(rule_in)
 
 

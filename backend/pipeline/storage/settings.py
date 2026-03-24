@@ -37,17 +37,21 @@ class AlloyDBSettings:
     )
 
     pool_min_size: int = field(
-        default_factory=lambda: int(os.environ.get("DB_POOL_MIN_SIZE", "5")),
+        default_factory=lambda: int(os.environ.get("ALLOYDB_POOL_MIN_SIZE", "5")),
     )
     pool_max_size: int = field(
-        default_factory=lambda: int(os.environ.get("DB_POOL_MAX_SIZE", "5")),
+        default_factory=lambda: int(os.environ.get("ALLOYDB_POOL_MAX_SIZE", "5")),
     )
 
     command_timeout_sec: float = field(
-        default_factory=lambda: float(os.environ.get("DB_COMMAND_TIMEOUT_SEC", "30.0")),
+        default_factory=lambda: float(
+            os.environ.get("ALLOYDB_COMMAND_TIMEOUT_SEC", "30.0")
+        ),
     )
     connect_timeout_sec: float = field(
-        default_factory=lambda: float(os.environ.get("DB_CONNECT_TIMEOUT_SEC", "10.0")),
+        default_factory=lambda: float(
+            os.environ.get("ALLOYDB_CONNECT_TIMEOUT_SEC", "10.0")
+        ),
     )
 
     def replace(self, **kwargs: Any) -> AlloyDBSettings:
