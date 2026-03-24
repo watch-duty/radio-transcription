@@ -13,8 +13,8 @@ import aiohttp
 import asyncpg
 
 from backend.pipeline.common import gcp_helper
-from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.common.clients import gcs_client, pubsub_client
+from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.ingestion.retry import LeaseExpiredError, retry_with_lease_check
 from backend.pipeline.ingestion.settings import NormalizerSettings
 from backend.pipeline.storage.connection import close_pool, create_pool
@@ -99,8 +99,6 @@ class NormalizerRuntime:
         self._pubsub_client = pubsub_client.PubSubClient()
 
     # -- Entry point ------------------------------------------------------
-
-
 
     def run(self) -> None:
         """

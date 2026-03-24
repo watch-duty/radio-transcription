@@ -8,7 +8,6 @@ import logging
 import os
 
 import functions_framework.aio
-from backend.pipeline.common.logging import setup_logging
 import numpy as np
 from cloudevents.http.event import (
     CloudEvent,  # noqa: TC002 (runtime: functions_framework)
@@ -23,6 +22,7 @@ from backend.pipeline.common.gcp_helper import (
     publish_audio_chunk,
     upload_audio,
 )
+from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.detection.detector_executor import DetectorExecutor
 from backend.pipeline.detection.detector_factory import DetectorFactory
 from backend.pipeline.detection.sidecar_builder import SidecarBuilder

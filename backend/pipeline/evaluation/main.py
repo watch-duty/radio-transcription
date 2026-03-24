@@ -2,10 +2,10 @@ import logging
 import os
 
 import functions_framework
-from backend.pipeline.common.logging import setup_logging
 from cloudevents.http import event as cloudevent
 from google.cloud import pubsub_v1
 
+from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.evaluation import service
 from backend.pipeline.evaluation.rules_evaluation import evaluator
 

@@ -1,11 +1,10 @@
 import base64
 import logging
-import os
 
 import functions_framework
-from backend.pipeline.common.logging import setup_logging
 from cloudevents.http.event import CloudEvent
 
+from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.common.storage.redis_service import RedisService
 from backend.pipeline.notification.notification_deduplication import (
     NotificationDeduplication,

@@ -9,10 +9,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from backend.pipeline.common.constants import AUDIO_FORMAT
+from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.ingestion.collectors.icecast_collector import (
     capture_icecast_stream,
 )
-from backend.pipeline.common.logging import setup_logging
 
 if TYPE_CHECKING:
     from backend.pipeline.storage.feed_store import LeasedFeed
