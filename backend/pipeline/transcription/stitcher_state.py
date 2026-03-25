@@ -99,22 +99,34 @@ class AudioStitchingStateMachine:
         # When flushing due to dropped chunks, we might not have a last_segment_end_time_ms yet
         # if the transmission was very short, so fallback to transmission_start_time_ms.
         end_ms = ctx.last_segment_end_time_ms or ctx.transmission_start_time_ms
-        if end_ms is None or ctx.transmission_start_time_ms is None:
+        if (
+            end_ms is None
+            or ctx.transmission_start_time_ms is None
+            or ctx.buffer_start_time_ms is None
+        ):
             msg = "Missing boundary times for buffer flush."
             raise ValueError(msg)
+
+        padded_end_time_ms = end_ms
+        if ctx.buffer_duration_ms > 0 and ctx.buffer_start_time_ms is not None:
+            padded_end_time_ms = ctx.buffer_start_time_ms + ctx.buffer_duration_ms
 
         return FlushAction(
             reason=reason,
             feed_id=ctx.feed_id,
             contributing_audio_uris=ctx.contributing_audio_uris.copy(),
             time_range=TimeRange(
+                start_ms=ctx.buffer_start_time_ms,
+                end_ms=padded_end_time_ms,
+            ),
+            speech_time_range=TimeRange(
                 start_ms=ctx.transmission_start_time_ms,
                 end_ms=end_ms,
             ),
             missing_prior_context=ctx.missing_prior_context,
             missing_post_context=missing_post_context,
             start_audio_offset_ms=ctx.start_audio_offset_ms,
-            end_audio_offset_ms=ctx.end_audio_offset_ms,
+            end_audio_offset_ms=None,
         )
 
     def _process_late_chunk_independently(
@@ -173,6 +185,7 @@ class AudioStitchingStateMachine:
                             reason=action.reason,
                             feed_id=action.feed_id,
                             time_range=action.time_range,
+                            speech_time_range=action.speech_time_range,
                             contributing_audio_uris=action.contributing_audio_uris,
                             missing_prior_context=action.missing_prior_context,
                             missing_post_context=action.missing_post_context,
@@ -190,9 +203,10 @@ class AudioStitchingStateMachine:
     def _reset_transmission_context(self, ctx: StitcherContext) -> None:
         """Resets the ongoing state metrics (timers, timestamps) to begin a fresh transmission window."""
         ctx.transmission_start_time_ms = None
+        ctx.buffer_start_time_ms = None
         ctx.contributing_audio_uris.clear()
         ctx.start_audio_offset_ms = None
-        ctx.end_audio_offset_ms = None
+        ctx.buffer_duration_ms = 0
 
     def _process_silent_chunk(
         self, chunk_data: AudioChunkData, ctx: StitcherContext
@@ -240,8 +254,7 @@ class AudioStitchingStateMachine:
                     actions.append(
                         AppendBufferAction(audio_buffer=chunk_data.audio[0:append_end])
                     )
-                    if ctx.end_audio_offset_ms is not None:
-                        ctx.end_audio_offset_ms += append_end
+                    ctx.buffer_duration_ms += append_end
 
                 actions.append(
                     self._flush_current_transmission(
@@ -279,9 +292,25 @@ class AudioStitchingStateMachine:
             ctx.last_segment_end_time_ms
             or (chunk_data.start_ms + len(chunk_data.audio))
         ) + self.config.stale_timeout_ms
-        actions.append(
-            ScheduleStaleTimerAction(deadline_ms=expected_stale_deadline_ms)
-        )
+        actions.append(ScheduleStaleTimerAction(deadline_ms=expected_stale_deadline_ms))
+
+        # IMPORTANT: We must append the silent audio to preserve post-roll tails!
+        if (
+            ctx.transmission_start_time_ms is not None
+            and ctx.last_segment_end_time_ms is not None
+        ):
+            target_post_roll_end = (
+                ctx.last_segment_end_time_ms + self.config.vad_post_roll_ms
+            )
+            append_end = min(
+                len(chunk_data.audio), max(0, target_post_roll_end - file_start_ms)
+            )
+            if append_end > 0:
+                actions.append(
+                    AppendBufferAction(audio_buffer=chunk_data.audio[0:append_end])
+                )
+                ctx.buffer_duration_ms += append_end
+
         return actions
 
     def _evaluate_mid_stream_flush(
@@ -321,8 +350,7 @@ class AudioStitchingStateMachine:
                         audio_buffer=chunk_data.audio[append_start:append_end]
                     )
                 )
-                if ctx.end_audio_offset_ms is not None:
-                    ctx.end_audio_offset_ms += append_end - append_start
+                ctx.buffer_duration_ms += append_end - append_start
 
             actions.append(
                 self._flush_current_transmission(
@@ -393,6 +421,7 @@ class AudioStitchingStateMachine:
                 ctx.transmission_start_time_ms = file_start_ms + global_start_ms
                 append_start = max(0, global_start_ms - self.config.vad_pre_roll_ms)
                 ctx.start_audio_offset_ms = append_start
+                ctx.buffer_start_time_ms = file_start_ms + append_start
             else:
                 append_start = (
                     audio_append_cursor_ms if audio_append_cursor_ms is not None else 0
@@ -410,7 +439,7 @@ class AudioStitchingStateMachine:
                     )
                 )
                 audio_append_cursor_ms = append_end
-                ctx.end_audio_offset_ms = append_end
+                ctx.buffer_duration_ms += append_end - append_start
 
             if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
                 ctx.contributing_audio_uris.append(ctx.current_gcs_uri)

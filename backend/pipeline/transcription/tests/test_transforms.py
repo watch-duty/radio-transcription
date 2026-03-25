@@ -84,6 +84,8 @@ def get_test_stitch_config(**kwargs: Any) -> StitchAudioConfig:
         "significant_gap_ms": 500,
         "stale_timeout_ms": 60000,
         "max_transmission_duration_ms": 600000,
+        "vad_pre_roll_ms": 0,
+        "vad_post_roll_ms": 0,
     }
     defaults.update(kwargs)
     return StitchAudioConfig(**defaults)  # type: ignore
@@ -374,7 +376,7 @@ class StitchAudioTest(unittest.TestCase):
             "190-66666666-6666-6666-6666-666666666666.flac": [(0.0, 2.0)],
         }
 
-        def mock_download(path: str) -> AudioChunkData:
+        def mock_download(path: str, start_ms: int = 0) -> AudioChunkData:
 
             filename = path.rsplit("/", maxsplit=1)[-1]
             chunk_start = (
@@ -399,7 +401,7 @@ class StitchAudioTest(unittest.TestCase):
                 gcs_uri=path,
             )
 
-        mock_processor_inst.download_audio_and_sed.side_effect = mock_download
+        mock_processor_inst.download_audio_and_detect.side_effect = mock_download
 
         options = PipelineOptions(
             flags=["--input_topic=a", "--output_topic=b", "--project_id=c"]
@@ -597,7 +599,7 @@ class StitchAudioTest(unittest.TestCase):
             "115-22222222-2222-2222-2222-222222222222.flac": [(2.0, 15.0)],
         }
 
-        def mock_download(path: str) -> AudioChunkData:
+        def mock_download(path: str, start_ms: int = 0) -> AudioChunkData:
 
             filename = path.rsplit("/", maxsplit=1)[-1]
             chunk_start = (
@@ -613,7 +615,7 @@ class StitchAudioTest(unittest.TestCase):
                 gcs_uri=path,
             )
 
-        mock_processor_inst.download_audio_and_sed.side_effect = mock_download
+        mock_processor_inst.download_audio_and_detect.side_effect = mock_download
         options = PipelineOptions(
             flags=["--input_topic=a", "--output_topic=b", "--project_id=c"]
         )
@@ -743,7 +745,7 @@ class StitchAudioTest(unittest.TestCase):
             "160-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac": [(0.0, 2.0)],
         }
 
-        def mock_download(path: str) -> AudioChunkData:
+        def mock_download(path: str, start_ms: int = 0) -> AudioChunkData:
 
             filename = path.rsplit("/", maxsplit=1)[-1]
             chunk_start = (
@@ -759,7 +761,7 @@ class StitchAudioTest(unittest.TestCase):
                 gcs_uri=path,
             )
 
-        mock_processor_inst.download_audio_and_sed.side_effect = mock_download
+        mock_processor_inst.download_audio_and_detect.side_effect = mock_download
 
         options = PipelineOptions(
             flags=["--input_topic=a", "--output_topic=b", "--project_id=c"]
@@ -916,7 +918,7 @@ class StitchAudioTest(unittest.TestCase):
         mock_processor_inst.check_vad.return_value = True
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
         mock_processor_inst.export_flac.return_value = b"flac_bytes"
-        mock_processor_inst.download_audio_and_sed.return_value = AudioChunkData(
+        mock_processor_inst.download_audio_and_detect.return_value = AudioChunkData(
             start_ms=101000,
             audio=AudioSegment.silent(duration=20000),
             speech_segments=[TimeRange(12500, 15000)],
@@ -953,7 +955,7 @@ class StitchAudioTest(unittest.TestCase):
                                 "feed-123",
                                 (
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/101-11111111-1111-1111-1111-111111111111.flac",
-                                    mock_processor_inst.download_audio_and_sed.return_value,
+                                    mock_processor_inst.download_audio_and_detect.return_value,
                                 ),
                             ),
                             101,
@@ -1112,7 +1114,7 @@ class TranscribeAudioTest(unittest.TestCase):
         mock_processor_inst.export_flac.return_value = b"flac_bytes"
 
         # Generate fake audio chunks
-        def mock_download(path: str) -> AudioChunkData:
+        def mock_download(path: str, start_ms: int = 0) -> AudioChunkData:
 
             filename = path.rsplit("/", maxsplit=1)[-1]
             chunk_start = (
@@ -1127,7 +1129,7 @@ class TranscribeAudioTest(unittest.TestCase):
                 gcs_uri=path,
             )
 
-        mock_processor_inst.download_audio_and_sed.side_effect = mock_download
+        mock_processor_inst.download_audio_and_detect.side_effect = mock_download
 
         main_thread_name = threading.current_thread().name
 

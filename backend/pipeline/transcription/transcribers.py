@@ -51,7 +51,7 @@ class Transcriber(abc.ABC):
 class ChirpConfig(ConfigBase):
     """Strongly typed configuration for the Google Chirp V3 Transcriber."""
 
-    location: str = "us"
+    location: str = "us-central1"
     recognizer: str = "_"
     model: str = "chirp_3"
     language_codes: list[str] = ["en-US"]

@@ -417,7 +417,11 @@ class DownloadAudioFn(beam.DoFn):
     # fmt: off
     @override
     def process(
-        self, element: tuple[str, str], *args: Any, **kwargs: Any
+        self,
+        element: tuple[str, str],
+        *args: Any,
+        timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore[assignment]
+        **kwargs: Any,
     ) -> Iterator[tuple[str, tuple[str, Any]] | beam.pvalue.TaggedOutput]:
         """Downloads the raw audio bytes from GCS and passes them to the acoustic processor."""
         feed_id, gcs_path = element
@@ -425,8 +429,12 @@ class DownloadAudioFn(beam.DoFn):
             msg = "AudioProcessor not initialized. setup() must be called."
             raise RuntimeError(msg)
 
+        start_ms = int(float(timestamp) * MS_PER_SECOND)
+
         try:
-            chunk_data = self.audio_processor.download_audio_and_sed(gcs_path)
+            chunk_data = self.audio_processor.download_audio_and_detect(
+                gcs_path, start_ms
+            )
             yield (feed_id, (gcs_path, chunk_data))
         except FileNotFoundError:
             logger.info(

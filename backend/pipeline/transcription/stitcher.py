@@ -209,6 +209,8 @@ class StitchAudioFn(beam.DoFn):
             expected_next_chunk_start_ms=ctx.expected_next_chunk_start_ms,
             start_audio_offset_ms=ctx.start_audio_offset_ms,
             end_audio_offset_ms=ctx.end_audio_offset_ms,
+            buffer_start_time_ms=ctx.buffer_start_time_ms,
+            buffer_duration_ms=ctx.buffer_duration_ms,
         )
         transmission_context.write(new_context)
 
@@ -298,6 +300,8 @@ class StitchAudioFn(beam.DoFn):
             expected_next_chunk_start_ms=curr_context.expected_next_chunk_start_ms,
             start_audio_offset_ms=curr_context.start_audio_offset_ms,
             end_audio_offset_ms=curr_context.end_audio_offset_ms,
+            buffer_start_time_ms=curr_context.buffer_start_time_ms,
+            buffer_duration_ms=curr_context.buffer_duration_ms,
         )
 
         pipeline = AudioStitchingStateMachine(self.config)
