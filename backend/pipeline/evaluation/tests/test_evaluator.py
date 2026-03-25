@@ -192,6 +192,76 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         result = self.remote_evaluator.evaluate("This is a test message.", feed_id="test_feed")
         self.assertFalse(result["is_flagged"])
 
+    @patch("backend.pipeline.evaluation.rules_evaluation.evaluator.get_id_token")
+    @patch("requests.Session.get")
+    def test_evaluate_feed_specific_rules(self, mock_get, mock_get_id_token) -> None:
+        """Test that global and feed-specific rules are correctly applied."""
+        mock_get_id_token.return_value = "mock_token"
+
+        rules_data = [
+            {
+                "rule_id": "global_rule",
+                "rule_name": "Global Rule",
+                "is_active": True,
+                "scope": {"level": "GLOBAL", "target_feeds": []},
+                "conditions": {
+                    "evaluation_type": "KEYWORD_MATCH",
+                    "operator": "ANY",
+                    "keywords": ["global"],
+                    "case_sensitive": False,
+                },
+            },
+            {
+                "rule_id": "feed_a_rule",
+                "rule_name": "Feed A Rule",
+                "is_active": True,
+                "scope": {"level": "FEED_SPECIFIC", "target_feeds": ["feed_A"]},
+                "conditions": {
+                    "evaluation_type": "KEYWORD_MATCH",
+                    "operator": "ANY",
+                    "keywords": ["specific"],
+                    "case_sensitive": False,
+                },
+            },
+            {
+                "rule_id": "feed_b_rule",
+                "rule_name": "Feed B Rule",
+                "is_active": True,
+                "scope": {"level": "FEED_SPECIFIC", "target_feeds": ["feed_B"]},
+                "conditions": {
+                    "evaluation_type": "KEYWORD_MATCH",
+                    "operator": "ANY",
+                    "keywords": ["specific"],
+                    "case_sensitive": False,
+                },
+            },
+        ]
+        mock_get.return_value.json.return_value = rules_data
+        mock_get.return_value.status_code = 200
+
+        text = "This matches global and specific words."
+
+        # Test Feed A
+        result_a = self.remote_evaluator.evaluate(text, feed_id="feed_A")
+        self.assertTrue(result_a["is_flagged"])
+        self.assertIn("global_rule", result_a["triggered_rules"])
+        self.assertIn("feed_a_rule", result_a["triggered_rules"])
+        self.assertNotIn("feed_b_rule", result_a["triggered_rules"])
+
+        # Test Feed B
+        result_b = self.remote_evaluator.evaluate(text, feed_id="feed_B")
+        self.assertTrue(result_b["is_flagged"])
+        self.assertIn("global_rule", result_b["triggered_rules"])
+        self.assertIn("feed_b_rule", result_b["triggered_rules"])
+        self.assertNotIn("feed_a_rule", result_b["triggered_rules"])
+
+        # Test Other Feed (only global should match)
+        result_other = self.remote_evaluator.evaluate(text, feed_id="other_feed")
+        self.assertTrue(result_other["is_flagged"])
+        self.assertIn("global_rule", result_other["triggered_rules"])
+        self.assertNotIn("feed_a_rule", result_other["triggered_rules"])
+        self.assertNotIn("feed_b_rule", result_other["triggered_rules"])
+
 
 if __name__ == "__main__":
     unittest.main()
