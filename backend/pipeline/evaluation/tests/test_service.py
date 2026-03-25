@@ -62,7 +62,9 @@ class TestEvaluationService(unittest.TestCase):
 
         self.service.handle_event(self.mock_event)
 
-        self.mock_evaluator.evaluate.assert_called_with("There is a fire", "1234")
+        self.mock_evaluator.evaluate.assert_called_with(
+            "There is a fire", "1234"
+        )
         self.assertTrue(self.mock_publisher.publish.called)
         args, _ = self.mock_publisher.publish.call_args
         sent_proto_bytes = args[1]

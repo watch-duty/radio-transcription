@@ -189,12 +189,18 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         mock_get.return_value.json.return_value = [mock_rule]
         mock_get.return_value.status_code = 200
 
-        result = self.remote_evaluator.evaluate("This is a test message.", feed_id="test_feed")
+        result = self.remote_evaluator.evaluate(
+            "This is a test message.", feed_id="test_feed"
+        )
         self.assertFalse(result["is_flagged"])
 
-    @patch("backend.pipeline.evaluation.rules_evaluation.evaluator.get_id_token")
+    @patch(
+        "backend.pipeline.evaluation.rules_evaluation.evaluator.get_id_token"
+    )
     @patch("requests.Session.get")
-    def test_evaluate_feed_specific_rules(self, mock_get, mock_get_id_token) -> None:
+    def test_evaluate_feed_specific_rules(
+        self, mock_get, mock_get_id_token
+    ) -> None:
         """Test that global and feed-specific rules are correctly applied."""
         mock_get_id_token.return_value = "mock_token"
 
@@ -256,7 +262,9 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         self.assertNotIn("feed_a_rule", result_b["triggered_rules"])
 
         # Test Other Feed (only global should match)
-        result_other = self.remote_evaluator.evaluate(text, feed_id="other_feed")
+        result_other = self.remote_evaluator.evaluate(
+            text, feed_id="other_feed"
+        )
         self.assertTrue(result_other["is_flagged"])
         self.assertIn("global_rule", result_other["triggered_rules"])
         self.assertNotIn("feed_a_rule", result_other["triggered_rules"])
