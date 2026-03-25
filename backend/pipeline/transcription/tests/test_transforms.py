@@ -401,7 +401,9 @@ class StitchAudioTest(unittest.TestCase):
                 gcs_uri=path,
             )
 
-        mock_processor_inst.download_audio_and_detect.side_effect = mock_download
+        mock_processor_inst.download_audio_and_detect.side_effect = (
+            mock_download
+        )
 
         options = PipelineOptions(
             flags=["--input_topic=a", "--output_topic=b", "--project_id=c"]
@@ -540,9 +542,9 @@ class StitchAudioTest(unittest.TestCase):
                 ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
             )
 
-            results[DEAD_LETTER_QUEUE_TAG] | "Print DLQ" >> beam.Map(print_dlq)
-
-            def assert_flush_requests(elements: list[tuple[str, FlushRequest]]) -> None:
+            def assert_flush_requests(
+                elements: list[tuple[str, FlushRequest]],
+            ) -> None:
 
                 assert len(elements) == 3, (
                     f"Expected 3 flush requests, got {len(elements)}: {elements}"
@@ -615,7 +617,9 @@ class StitchAudioTest(unittest.TestCase):
                 gcs_uri=path,
             )
 
-        mock_processor_inst.download_audio_and_detect.side_effect = mock_download
+        mock_processor_inst.download_audio_and_detect.side_effect = (
+            mock_download
+        )
         options = PipelineOptions(
             flags=["--input_topic=a", "--output_topic=b", "--project_id=c"]
         )
@@ -761,7 +765,9 @@ class StitchAudioTest(unittest.TestCase):
                 gcs_uri=path,
             )
 
-        mock_processor_inst.download_audio_and_detect.side_effect = mock_download
+        mock_processor_inst.download_audio_and_detect.side_effect = (
+            mock_download
+        )
 
         options = PipelineOptions(
             flags=["--input_topic=a", "--output_topic=b", "--project_id=c"]
@@ -1129,7 +1135,9 @@ class TranscribeAudioTest(unittest.TestCase):
                 gcs_uri=path,
             )
 
-        mock_processor_inst.download_audio_and_detect.side_effect = mock_download
+        mock_processor_inst.download_audio_and_detect.side_effect = (
+            mock_download
+        )
 
         main_thread_name = threading.current_thread().name
 
