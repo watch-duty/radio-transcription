@@ -16,7 +16,7 @@ ALL_FEEDS_URL = f"{BROADCASTIFY_API_BASE_URL}/feeds/v1/feeds/"
 NEAR_FEEDS_URL = f"{BROADCASTIFY_API_BASE_URL}/feeds/v1/near/"
 ARCHIVES_URL = BROADCASTIFY_API_BASE_URL + "/feeds/v1/archives/{feed_id}"
 ARCHIVES_FILES_URL = (
-    BROADCASTIFY_API_BASE_URL + "/feeds/v1/archives_trial/{feed_id}"
+    BROADCASTIFY_API_BASE_URL + "/feeds/v1/archives/{feed_id}"
 )
 
 BROADCASTIFY_APP_ID = os.getenv("BROADCASTIFY_APP_ID", "6797c432dc150")

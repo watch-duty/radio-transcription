@@ -23,7 +23,6 @@ with open(input_csv) as f:
 
 
 def fetch_all_archives_for_feed(feed_id) -> list[str]:
-    # uses the 12-hour "trial" API for now
     return fetch_archive_files(feed_id)
 
 
