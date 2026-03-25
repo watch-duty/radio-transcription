@@ -4,8 +4,7 @@
 <!-- AI Agent / Developer: Provide a strictly 1-sentence summary of the changes made. Do not list file names or dump git logs here. -->
 
 **Context & Motivation:**
-<!-- AI Agent / Developer: Explain the 'why' behind this change. Focus on the problem solved. Do not hallucinate business logic. -->
-Fixes # (issue number)
+<!-- AI Agent / Developer: Explain the 'why' behind this change. Focus on the problem solved. Provide any relevant links to design docs and/or issues Do not hallucinate business logic. -->
 
 **Future Work / Out of Scope:**
 <!-- AI Agent / Developer: List any known limitations, edge cases not covered, or planned follow-up work. -->
