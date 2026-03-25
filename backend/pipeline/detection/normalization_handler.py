@@ -8,7 +8,6 @@ import logging
 import os
 
 import functions_framework.aio
-import google.cloud.logging
 import numpy as np
 from cloudevents.http.event import (
     CloudEvent,  # noqa: TC002 (runtime: functions_framework)
@@ -23,6 +22,7 @@ from backend.pipeline.common.gcp_helper import (
     publish_audio_chunk,
     upload_audio,
 )
+from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.detection.detector_executor import DetectorExecutor
 from backend.pipeline.detection.detector_factory import DetectorFactory
 from backend.pipeline.detection.sidecar_builder import SidecarBuilder
@@ -31,15 +31,7 @@ from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 logger = logging.getLogger(__name__)
 
 # --- Module-level initialization (matches evaluation/transcription pattern) ---
-
-if not os.environ.get("LOCAL_DEV"):
-    _log_client = google.cloud.logging.Client()
-    _log_client.setup_logging()
-else:
-    logger.setLevel(logging.INFO)
-    _handler = logging.StreamHandler()
-    logger.addHandler(_handler)
-    logger.info("Running in LOCAL_DEV mode. Logs will print here.")
+setup_logging()
 
 _detector_config = json.loads(
     os.environ.get("DETECTOR_CONFIG", '{"detectors": []}')

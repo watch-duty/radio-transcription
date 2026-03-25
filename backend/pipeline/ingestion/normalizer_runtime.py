@@ -115,10 +115,6 @@ class NormalizerRuntime:
 
         Sets up logging, then delegates to the async ``_main`` coroutine.
         """
-        logging.basicConfig(
-            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-            level=logging.INFO,
-        )
         logger.info(
             "Starting NormalizerRuntime worker_id=%s max_feeds=%d",
             self._normalizer_settings.worker_id,
