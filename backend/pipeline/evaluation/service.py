@@ -83,7 +83,7 @@ class EvaluationService:
 
             # 2. Call the evaluator
             evaluation_result = self.text_evaluator.evaluate(
-                new_audio.transcript
+                new_audio.transcript, new_audio.feed_id
             )
 
             logger.info(
