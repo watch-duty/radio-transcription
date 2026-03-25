@@ -8,6 +8,7 @@ import subprocess
 import unittest
 from unittest import mock
 
+import aiohttp
 import numpy as np
 import soundfile as sf
 from cloudevents.http import CloudEvent
@@ -17,6 +18,7 @@ from backend.pipeline.detection.types import (
     SpeechRegion,
 )
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
+from backend.pipeline.schema_types.sed_metadata_pb2 import SedMetadata
 
 # Patch module-level initialization before importing the handler.
 with (
@@ -47,6 +49,9 @@ _DOWNLOAD = "backend.pipeline.detection.normalization_handler.download_audio"
 _UPLOAD = "backend.pipeline.detection.normalization_handler.upload_audio"
 _PUBLISH = (
     "backend.pipeline.detection.normalization_handler.publish_audio_chunk"
+)
+_GET_METADATA = (
+    "backend.pipeline.detection.normalization_handler._get_existing_metadata"
 )
 
 
@@ -110,15 +115,19 @@ class TestNormalize(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result)
 
     @mock.patch(_DOWNLOAD, new_callable=mock.AsyncMock)
-    async def test_download_failure_raises(self, mock_download) -> None:
+    @mock.patch(_GET_METADATA, new_callable=mock.AsyncMock, return_value=None)
+    async def test_download_failure_raises(
+        self, mock_meta, mock_download
+    ) -> None:
         mock_download.side_effect = Exception("Network error")
 
-        with self.assertRaises(Exception, msg="Network error"):
+        with self.assertRaisesRegex(Exception, "Network error"):
             await normalize(_make_cloud_event())
 
     @mock.patch(_DOWNLOAD, new_callable=mock.AsyncMock)
+    @mock.patch(_GET_METADATA, new_callable=mock.AsyncMock, return_value=None)
     async def test_flac_decode_failure_returns_normally(
-        self, mock_download
+        self, mock_meta, mock_download
     ) -> None:
         mock_download.return_value = b"flac-bytes"
 
@@ -132,8 +141,9 @@ class TestNormalize(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result)
 
     @mock.patch(_DOWNLOAD, new_callable=mock.AsyncMock)
+    @mock.patch(_GET_METADATA, new_callable=mock.AsyncMock, return_value=None)
     async def test_wrong_sample_rate_returns_normally(
-        self, mock_download
+        self, mock_meta, mock_download
     ) -> None:
         mock_download.return_value = b"flac-bytes"
 
@@ -153,8 +163,9 @@ class TestNormalize(unittest.IsolatedAsyncioTestCase):
         return_value=(np.zeros(16000, dtype=np.int16), 16000),
     )
     @mock.patch(_DOWNLOAD, new_callable=mock.AsyncMock)
+    @mock.patch(_GET_METADATA, new_callable=mock.AsyncMock, return_value=None)
     async def test_no_detectors_uploads_empty_sidecar(
-        self, mock_download, mock_decode, mock_upload
+        self, mock_meta, mock_download, mock_decode, mock_upload
     ) -> None:
         mock_download.return_value = b"flac-bytes"
 
@@ -165,6 +176,9 @@ class TestNormalize(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(result)
         mock_upload.assert_called_once()
+        # Verify if_generation_match=0 is passed for idempotency
+        _, kwargs = mock_upload.call_args
+        self.assertEqual(kwargs.get("if_generation_match"), 0)
 
     @mock.patch(
         _UPLOAD,
@@ -177,8 +191,9 @@ class TestNormalize(unittest.IsolatedAsyncioTestCase):
         return_value=(np.zeros(16000, dtype=np.int16), 16000),
     )
     @mock.patch(_DOWNLOAD, new_callable=mock.AsyncMock)
+    @mock.patch(_GET_METADATA, new_callable=mock.AsyncMock, return_value=None)
     async def test_upload_failure_raises(
-        self, mock_download, mock_decode, mock_upload
+        self, mock_meta, mock_download, mock_decode, mock_upload
     ) -> None:
         mock_download.return_value = b"flac-bytes"
 
@@ -186,7 +201,7 @@ class TestNormalize(unittest.IsolatedAsyncioTestCase):
             mock.patch.dict(
                 os.environ, {"INGESTION_CANONICAL_BUCKET": "canonical"}
             ),
-            self.assertRaises(Exception, msg="Upload failed"),
+            self.assertRaisesRegex(Exception, "Upload failed"),
         ):
             await normalize(_make_cloud_event())
 
@@ -199,8 +214,10 @@ class TestNormalize(unittest.IsolatedAsyncioTestCase):
         return_value=(np.zeros(16000, dtype=np.int16), 16000),
     )
     @mock.patch(_DOWNLOAD, new_callable=mock.AsyncMock)
+    @mock.patch(_GET_METADATA, new_callable=mock.AsyncMock, return_value=None)
     async def test_speech_detected_publishes_to_transcription(
         self,
+        mock_meta,
         mock_download,
         mock_decode,
         mock_executor,
@@ -230,8 +247,10 @@ class TestNormalize(unittest.IsolatedAsyncioTestCase):
         return_value=(np.zeros(16000, dtype=np.int16), 16000),
     )
     @mock.patch(_DOWNLOAD, new_callable=mock.AsyncMock)
+    @mock.patch(_GET_METADATA, new_callable=mock.AsyncMock, return_value=None)
     async def test_publish_forwards_original_capture_timestamp(
         self,
+        mock_meta,
         mock_download,
         mock_decode,
         mock_executor,
@@ -271,8 +290,10 @@ class TestNormalize(unittest.IsolatedAsyncioTestCase):
         return_value=(np.zeros(16000, dtype=np.int16), 16000),
     )
     @mock.patch(_DOWNLOAD, new_callable=mock.AsyncMock)
+    @mock.patch(_GET_METADATA, new_callable=mock.AsyncMock, return_value=None)
     async def test_publish_failure_still_returns_normally(
         self,
+        mock_meta,
         mock_download,
         mock_decode,
         mock_executor,
@@ -288,6 +309,254 @@ class TestNormalize(unittest.IsolatedAsyncioTestCase):
                 "INGESTION_CANONICAL_BUCKET": "canonical",
                 "TRANSCRIPTION_TOPIC_PATH": "projects/p/topics/t",
             },
+        ):
+            result = await normalize(_make_cloud_event())
+
+        self.assertIsNone(result)
+
+
+class TestIdempotency(unittest.IsolatedAsyncioTestCase):
+    """Tests for redelivery handling and idempotent uploads."""
+
+    @mock.patch(_PUBLISH, new_callable=mock.AsyncMock, return_value="msg-999")
+    @mock.patch(_DOWNLOAD, new_callable=mock.AsyncMock)
+    @mock.patch(
+        _GET_METADATA,
+        new_callable=mock.AsyncMock,
+    )
+    async def test_already_processed_skips_reprocessing(
+        self, mock_meta, mock_download, mock_publish
+    ) -> None:
+        """Redelivered message skips download/decode/detect, re-publishes."""
+        sed = SedMetadata()
+        sed.sound_events.add()  # Add one event to indicate speech
+        mock_meta.return_value = sed
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "INGESTION_CANONICAL_BUCKET": "canonical",
+                "TRANSCRIPTION_TOPIC_PATH": "projects/p/topics/t",
+            },
+        ):
+            result = await normalize(_make_cloud_event())
+
+        self.assertIsNone(result)
+        mock_download.assert_not_called()
+        mock_publish.assert_called_once()
+
+    @mock.patch(_PUBLISH, new_callable=mock.AsyncMock)
+    @mock.patch(_DOWNLOAD, new_callable=mock.AsyncMock)
+    @mock.patch(
+        _GET_METADATA,
+        new_callable=mock.AsyncMock,
+        return_value=SedMetadata(),
+    )
+    async def test_already_processed_no_speech(
+        self, mock_meta, mock_download, mock_publish
+    ) -> None:
+        """Redelivered message with no speech skips publish."""
+        with mock.patch.dict(
+            os.environ, {"INGESTION_CANONICAL_BUCKET": "canonical"}
+        ):
+            result = await normalize(_make_cloud_event())
+
+        self.assertIsNone(result)
+        mock_download.assert_not_called()
+        mock_publish.assert_not_called()
+
+    @mock.patch(_PUBLISH, new_callable=mock.AsyncMock)
+    @mock.patch(_DOWNLOAD, new_callable=mock.AsyncMock)
+    async def test_already_processed_missing_sed_metadata(
+        self, mock_download, mock_publish
+    ) -> None:
+        """Object exists but has no sed_metadata — treat as no-speech."""
+        mock_storage = mock.AsyncMock()
+        mock_storage.download_metadata.return_value = {"metadata": {}}
+
+        with (
+            mock.patch.object(
+                normalization_handler._gcs_client,
+                "get_storage",
+                return_value=mock_storage,
+            ),
+            mock.patch.dict(
+                os.environ, {"INGESTION_CANONICAL_BUCKET": "canonical"}
+            ),
+        ):
+            result = await normalize(_make_cloud_event())
+
+        self.assertIsNone(result)
+        mock_download.assert_not_called()
+        mock_publish.assert_not_called()
+
+    @mock.patch(_PUBLISH, new_callable=mock.AsyncMock)
+    @mock.patch(_DOWNLOAD, new_callable=mock.AsyncMock)
+    async def test_already_processed_corrupt_sed_metadata(
+        self, mock_download, mock_publish
+    ) -> None:
+        """Object exists but sed_metadata is corrupt proto — treat as no-speech."""
+        # Valid base64 but invalid protobuf bytes — exercises the
+        # ParseFromString failure branch, not the b64decode failure branch.
+        corrupt_proto = base64.b64encode(b"\xff\xfe not a valid proto").decode()
+        mock_storage = mock.AsyncMock()
+        mock_storage.download_metadata.return_value = {
+            "metadata": {"sed_metadata": corrupt_proto}
+        }
+
+        with (
+            mock.patch.object(
+                normalization_handler._gcs_client,
+                "get_storage",
+                return_value=mock_storage,
+            ),
+            mock.patch.dict(
+                os.environ, {"INGESTION_CANONICAL_BUCKET": "canonical"}
+            ),
+        ):
+            result = await normalize(_make_cloud_event())
+
+        self.assertIsNone(result)
+        mock_download.assert_not_called()
+        mock_publish.assert_not_called()
+
+    @mock.patch(_UPLOAD, new_callable=mock.AsyncMock)
+    @mock.patch.object(
+        normalization_handler,
+        "_decode_flac",
+        return_value=(np.zeros(16000, dtype=np.int16), 16000),
+    )
+    @mock.patch(_DOWNLOAD, new_callable=mock.AsyncMock)
+    async def test_metadata_404_proceeds_to_full_processing(
+        self, mock_download, mock_decode, mock_upload
+    ) -> None:
+        """404 from metadata check means not yet processed — run full flow."""
+        mock_storage = mock.AsyncMock()
+        mock_storage.download_metadata.side_effect = (
+            aiohttp.ClientResponseError(
+                request_info=mock.Mock(),
+                history=(),
+                status=404,
+                message="Not Found",
+            )
+        )
+
+        mock_download.return_value = b"flac-bytes"
+
+        with (
+            mock.patch.object(
+                normalization_handler._gcs_client,
+                "get_storage",
+                return_value=mock_storage,
+            ),
+            mock.patch.dict(
+                os.environ, {"INGESTION_CANONICAL_BUCKET": "canonical"}
+            ),
+        ):
+            await normalize(_make_cloud_event())
+
+        mock_download.assert_called_once()
+        mock_upload.assert_called_once()
+
+    async def test_metadata_non_404_error_raises(self) -> None:
+        """Non-404 GCS error propagates (500 → Pub/Sub retry)."""
+        mock_storage = mock.AsyncMock()
+        mock_storage.download_metadata.side_effect = (
+            aiohttp.ClientResponseError(
+                request_info=mock.Mock(),
+                history=(),
+                status=500,
+                message="Internal Server Error",
+            )
+        )
+
+        with (
+            mock.patch.object(
+                normalization_handler._gcs_client,
+                "get_storage",
+                return_value=mock_storage,
+            ),
+            mock.patch.dict(
+                os.environ, {"INGESTION_CANONICAL_BUCKET": "canonical"}
+            ),
+            self.assertRaises(aiohttp.ClientResponseError),
+        ):
+            await normalize(_make_cloud_event())
+
+    @mock.patch(
+        _PUBLISH,
+        new_callable=mock.AsyncMock,
+        side_effect=Exception("Pub/Sub error"),
+    )
+    @mock.patch(_DOWNLOAD, new_callable=mock.AsyncMock)
+    @mock.patch(
+        _GET_METADATA,
+        new_callable=mock.AsyncMock,
+    )
+    async def test_already_processed_publish_failure_propagates(
+        self, mock_meta, mock_download, mock_publish
+    ) -> None:
+        """Redelivery publish failure propagates (500 → Pub/Sub retry)."""
+        sed = SedMetadata()
+        sed.sound_events.add()
+        mock_meta.return_value = sed
+
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "INGESTION_CANONICAL_BUCKET": "canonical",
+                    "TRANSCRIPTION_TOPIC_PATH": "projects/p/topics/t",
+                },
+            ),
+            self.assertRaisesRegex(Exception, "Pub/Sub error"),
+        ):
+            await normalize(_make_cloud_event())
+
+        mock_download.assert_not_called()
+
+    @mock.patch(_UPLOAD, new_callable=mock.AsyncMock)
+    @mock.patch.object(
+        normalization_handler,
+        "_decode_flac",
+        return_value=(np.zeros(16000, dtype=np.int16), 16000),
+    )
+    @mock.patch(_DOWNLOAD, new_callable=mock.AsyncMock)
+    @mock.patch(_GET_METADATA, new_callable=mock.AsyncMock, return_value=None)
+    async def test_upload_passes_if_generation_match(
+        self, mock_meta, mock_download, mock_decode, mock_upload
+    ) -> None:
+        """Upload uses if_generation_match=0 for idempotency."""
+        mock_download.return_value = b"flac-bytes"
+
+        with mock.patch.dict(
+            os.environ, {"INGESTION_CANONICAL_BUCKET": "canonical"}
+        ):
+            await normalize(_make_cloud_event())
+
+        mock_upload.assert_called_once()
+        _, kwargs = mock_upload.call_args
+        self.assertEqual(kwargs.get("if_generation_match"), 0)
+
+    @mock.patch(_UPLOAD, new_callable=mock.AsyncMock)
+    @mock.patch.object(
+        normalization_handler,
+        "_decode_flac",
+        return_value=(np.zeros(16000, dtype=np.int16), 16000),
+    )
+    @mock.patch(_DOWNLOAD, new_callable=mock.AsyncMock)
+    @mock.patch(_GET_METADATA, new_callable=mock.AsyncMock, return_value=None)
+    async def test_upload_412_returns_success(
+        self, mock_meta, mock_download, mock_decode, mock_upload
+    ) -> None:
+        """Upload 412 (object exists) is handled by upload_audio — no 500."""
+        mock_download.return_value = b"flac-bytes"
+        # upload_audio internally handles 412 and returns normally,
+        # so we simulate that by having it return without raising.
+        mock_upload.return_value = "gs://canonical/feeds/abc/audio.flac"
+
+        with mock.patch.dict(
+            os.environ, {"INGESTION_CANONICAL_BUCKET": "canonical"}
         ):
             result = await normalize(_make_cloud_event())
 
