@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, TypedDict
 
 if TYPE_CHECKING:
@@ -7,15 +8,21 @@ if TYPE_CHECKING:
 
     import asyncpg
 
+logger = logging.getLogger(__name__)
+
 
 _LEASE_FEED_SQL = """\
 WITH available_feed AS (
     SELECT id
     FROM feeds
-    WHERE status IN ('unclaimed'::feed_status, 'failing'::feed_status, 'active'::feed_status)
-      AND (worker_id IS NULL OR last_heartbeat < NOW() - INTERVAL '60 seconds')
+    WHERE (
+        status = 'unclaimed'::feed_status
+        OR (status = 'failing'::feed_status AND (retry_after IS NULL OR retry_after <= NOW()))
+        OR (status = 'active'::feed_status
+            AND last_heartbeat < NOW() - INTERVAL '60 seconds')
+    )
     ORDER BY (status = 'unclaimed'::feed_status) DESC,
-             failure_count ASC,
+             retry_after ASC NULLS FIRST,
              last_heartbeat ASC NULLS FIRST
     LIMIT 1
     FOR UPDATE SKIP LOCKED
@@ -24,6 +31,7 @@ leased AS (
     UPDATE feeds
     SET worker_id = $1,
         status = 'active'::feed_status,
+        retry_after = NULL,
         last_heartbeat = NOW(),
         fencing_token = fencing_token + 1
     FROM available_feed
@@ -82,10 +90,14 @@ _ACQUIRE_FEEDS_BATCH_SQL = """\
 WITH available_feeds AS (
     SELECT id
     FROM feeds
-    WHERE status IN ('unclaimed'::feed_status, 'failing'::feed_status, 'active'::feed_status)
-      AND (worker_id IS NULL OR last_heartbeat < NOW() - $2::interval)
+    WHERE (
+        status = 'unclaimed'::feed_status
+        OR (status = 'failing'::feed_status AND (retry_after IS NULL OR retry_after <= NOW()))
+        OR (status = 'active'::feed_status
+            AND last_heartbeat < NOW() - $2::interval)
+    )
     ORDER BY (status = 'unclaimed'::feed_status) DESC,
-             failure_count ASC,
+             retry_after ASC NULLS FIRST,
              last_heartbeat ASC NULLS FIRST
     LIMIT $3
     FOR UPDATE SKIP LOCKED
@@ -94,6 +106,7 @@ leased AS (
     UPDATE feeds
     SET worker_id = $1,
         status = 'active'::feed_status,
+        retry_after = NULL,
         last_heartbeat = NOW(),
         fencing_token = fencing_token + 1
     FROM available_feeds
@@ -107,18 +120,24 @@ FROM leased
 LEFT JOIN feed_properties_icecast fpi ON fpi.feed_id = leased.id
 """
 
-# NOTE: $3 = failure_threshold (SET clause), $4 = fencing_token (WHERE clause).
-# The method signature puts fencing_token before failure_threshold (required
-# param before defaulted param), but execute() reorders to match the SQL.
-_REPORT_FAILURE_PARAMETERIZED_SQL = """\
+# NOTE: $3 = failure_threshold, $4 = fencing_token,
+#       $5 = backoff_max_sec, $6 = backoff_base_sec.
+# Backoff formula: base * 2^(failure_count), capped at max, plus 0-10s jitter.
+_REPORT_FAILURE_SQL = """\
 UPDATE feeds
 SET status = CASE WHEN failure_count + 1 >= $3
                   THEN 'quarantined'::feed_status
                   ELSE 'failing'::feed_status END,
     failure_count = failure_count + 1,
     worker_id = NULL,
-    last_heartbeat = NOW()
+    last_heartbeat = NOW(),
+    retry_after = CASE WHEN failure_count + 1 < $3
+                       THEN NOW() + LEAST($5 * INTERVAL '1 second',
+                            $6 * INTERVAL '1 second' * POWER(2, failure_count))
+                            + (RANDOM() * INTERVAL '10 seconds')
+                       ELSE NULL END
 WHERE id = $1 AND worker_id = $2 AND fencing_token = $4
+RETURNING status::text, failure_count, retry_after
 """
 
 
@@ -267,36 +286,66 @@ class FeedStore:
         feed_id: uuid.UUID,
         worker_id: uuid.UUID,
         fencing_token: int,
-        failure_threshold: int = 3,
+        failure_threshold: int = 5,
+        backoff_base_sec: int = 15,
+        backoff_max_sec: int = 600,
     ) -> bool:
-        """
-        Report a feed failure, incrementing the failure count.
+        """Report a feed failure with exponential backoff.
 
-        Releases the worker's lease and transitions the feed to ``'failing'``
-        or ``'quarantined'`` (if the failure threshold is reached).
+        Atomically increments ``failure_count``, computes ``retry_after``
+        with exponential backoff + jitter, and transitions to
+        ``'quarantined'`` if *failure_threshold* is reached.
 
-        This is a fenced operation — it only succeeds if the given worker still
-        holds the lease AND the fencing token matches.
+        Backoff formula: ``min(backoff_base_sec * 2^failure_count,
+        backoff_max_sec) + random(0-10s) jitter``.
+
+        This is a fenced operation — it only succeeds if the given worker
+        still holds the lease AND the fencing token matches.
 
         Args:
             feed_id: UUID of the feed that failed.
             worker_id: UUID of the worker reporting the failure.
             fencing_token: The fencing token received at lease acquisition.
-            failure_threshold: Number of failures before quarantine (default 3).
+            failure_threshold: Number of consecutive failures before
+                quarantine.
+            backoff_base_sec: Base delay in seconds for the first retry.
+            backoff_max_sec: Maximum backoff cap in seconds.
 
         Returns:
             ``True`` if the failure was recorded, ``False`` if the lease was
             already lost.
 
         """
-        result = await self._pool.execute(
-            _REPORT_FAILURE_PARAMETERIZED_SQL,
+        row = await self._pool.fetchrow(
+            _REPORT_FAILURE_SQL,
             feed_id,
             worker_id,
             failure_threshold,
             fencing_token,
+            backoff_max_sec,
+            backoff_base_sec,
         )
-        return result == "UPDATE 1"
+        if row is None:
+            return False
+
+        if row["status"] == "quarantined":
+            logger.critical(
+                "Feed quarantined",
+                extra={
+                    "feed_id": str(feed_id),
+                    "failure_count": row["failure_count"],
+                },
+            )
+        else:
+            logger.info(
+                "Feed failure recorded",
+                extra={
+                    "feed_id": str(feed_id),
+                    "failure_count": row["failure_count"],
+                    "retry_after": str(row["retry_after"]),
+                },
+            )
+        return True
 
     async def release_feed(
         self,

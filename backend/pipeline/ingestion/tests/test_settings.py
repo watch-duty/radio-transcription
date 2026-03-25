@@ -87,7 +87,7 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.db.pool_max_size, 5)
         self.assertEqual(settings.db.command_timeout_sec, 30.0)
         self.assertEqual(settings.db.connect_timeout_sec, 10.0)
-        self.assertEqual(settings.feed_failure_threshold, 3)
+        self.assertEqual(settings.feed_failure_threshold, 5)
         self.assertEqual(settings.abandonment_window_sec, 60.0)
         self.assertEqual(settings.db.port, 6432)
         self.assertEqual(settings.db.password, "")

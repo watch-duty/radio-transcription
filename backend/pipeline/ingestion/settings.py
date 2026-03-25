@@ -80,7 +80,7 @@ class NormalizerSettings:
     # Feed lifecycle
     feed_failure_threshold: int = field(
         default_factory=lambda: int(
-            os.environ.get("FEED_FAILURE_THRESHOLD", "3"),
+            os.environ.get("FEED_FAILURE_THRESHOLD", "5"),
         ),
     )
     abandonment_window_sec: float = field(
