@@ -70,7 +70,9 @@ def get_pipeline(
     options = pipeline_options.view_as(TranscriptionOptions)
 
     # Validate logical pipeline timeout configuration rules
-    ooo_timeout = options.out_of_order_timeout_ms or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS
+    ooo_timeout = (
+        options.out_of_order_timeout_ms or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS
+    )
     stale_timeout = options.stale_timeout_ms or DEFAULT_STALE_TIMEOUT_MS
 
     if ooo_timeout >= stale_timeout:

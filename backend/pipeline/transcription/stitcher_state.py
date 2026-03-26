@@ -109,7 +109,9 @@ class AudioStitchingStateMachine:
 
         padded_end_time_ms = end_ms
         if ctx.buffer_duration_ms > 0 and ctx.buffer_start_time_ms is not None:
-            padded_end_time_ms = ctx.buffer_start_time_ms + ctx.buffer_duration_ms
+            padded_end_time_ms = (
+                ctx.buffer_start_time_ms + ctx.buffer_duration_ms
+            )
 
         return FlushAction(
             reason=reason,
@@ -252,7 +254,9 @@ class AudioStitchingStateMachine:
                 append_end = min(len(chunk_data.audio), target_post_roll_end)
                 if append_end > 0:
                     actions.append(
-                        AppendBufferAction(audio_buffer=chunk_data.audio[0:append_end])
+                        AppendBufferAction(
+                            audio_buffer=chunk_data.audio[0:append_end]
+                        )
                     )
                     ctx.buffer_duration_ms += append_end
 
@@ -292,7 +296,9 @@ class AudioStitchingStateMachine:
             ctx.last_segment_end_time_ms
             or (chunk_data.start_ms + len(chunk_data.audio))
         ) + self.config.stale_timeout_ms
-        actions.append(ScheduleStaleTimerAction(deadline_ms=expected_stale_deadline_ms))
+        actions.append(
+            ScheduleStaleTimerAction(deadline_ms=expected_stale_deadline_ms)
+        )
 
         # IMPORTANT: We must append the silent audio to preserve post-roll tails!
         if (
@@ -303,11 +309,14 @@ class AudioStitchingStateMachine:
                 ctx.last_segment_end_time_ms + self.config.vad_post_roll_ms
             )
             append_end = min(
-                len(chunk_data.audio), max(0, target_post_roll_end - file_start_ms)
+                len(chunk_data.audio),
+                max(0, target_post_roll_end - file_start_ms),
             )
             if append_end > 0:
                 actions.append(
-                    AppendBufferAction(audio_buffer=chunk_data.audio[0:append_end])
+                    AppendBufferAction(
+                        audio_buffer=chunk_data.audio[0:append_end]
+                    )
                 )
                 ctx.buffer_duration_ms += append_end
 
@@ -419,17 +428,22 @@ class AudioStitchingStateMachine:
 
                 # We didn't have an active recording, so this formally starts a new one!
                 ctx.transmission_start_time_ms = file_start_ms + global_start_ms
-                append_start = max(0, global_start_ms - self.config.vad_pre_roll_ms)
+                append_start = max(
+                    0, global_start_ms - self.config.vad_pre_roll_ms
+                )
                 ctx.start_audio_offset_ms = append_start
                 ctx.buffer_start_time_ms = file_start_ms + append_start
             else:
                 append_start = (
-                    audio_append_cursor_ms if audio_append_cursor_ms is not None else 0
+                    audio_append_cursor_ms
+                    if audio_append_cursor_ms is not None
+                    else 0
                 )
 
             # Target end for this segment's append is global_end_ms + vad_post_roll_ms
             append_end = min(
-                len(chunk_data.audio), global_end_ms + self.config.vad_post_roll_ms
+                len(chunk_data.audio),
+                global_end_ms + self.config.vad_post_roll_ms,
             )
 
             if append_end > append_start:

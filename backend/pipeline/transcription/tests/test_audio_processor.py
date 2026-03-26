@@ -91,10 +91,13 @@ class AudioProcessorTest(unittest.TestCase):
         self.assertTrue(flac_bytes.startswith(b"fLaC"))
 
     @pytest.mark.skipif(
-        shutil.which("ffmpeg") is None, reason="ffmpeg is required for pydub I/O tests"
+        shutil.which("ffmpeg") is None,
+        reason="ffmpeg is required for pydub I/O tests",
     )
     @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
-    @patch("backend.pipeline.transcription.audio_processor.AcousticGateDetector")
+    @patch(
+        "backend.pipeline.transcription.audio_processor.AcousticGateDetector"
+    )
     @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
     def test_download_audio_and_detect(
         self,
@@ -159,4 +162,6 @@ class AudioProcessorTest(unittest.TestCase):
 
         # Act & Assert
         with self.assertRaises(FileNotFoundError):
-            processor.download_audio_and_detect("gs://my-bucket/missing.flac", 0)
+            processor.download_audio_and_detect(
+                "gs://my-bucket/missing.flac", 0
+            )

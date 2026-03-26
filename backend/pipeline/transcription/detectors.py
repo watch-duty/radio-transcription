@@ -67,9 +67,7 @@ class AcousticGateDetector:
             msg = f"threshold must be in [0.0, 1.0], got {threshold}"
             raise ValueError(msg)
         if not (0.0 <= lower_threshold < threshold):
-            msg = (
-                f"lower_threshold must be in [0.0, {threshold}), got {lower_threshold}"
-            )
+            msg = f"lower_threshold must be in [0.0, {threshold}), got {lower_threshold}"
             raise ValueError(msg)
         if hangover_frames < 0:
             msg = f"hangover_frames must be >= 0, got {hangover_frames}"
@@ -105,7 +103,9 @@ class AcousticGateDetector:
             )
             raise ValueError(msg)
 
-    def detect(self, samples: np.ndarray, file_start_ms: int = 0) -> list[TimeRange]:
+    def detect(
+        self, samples: np.ndarray, file_start_ms: int = 0
+    ) -> list[TimeRange]:
         if samples.size == 0 or samples.size < self._fft_size:
             return []
 
@@ -156,7 +156,9 @@ class AcousticGateDetector:
 
         if debounce_frames > 1 and len(signal_present) >= debounce_frames:
             signal_present = (
-                medfilt(signal_present.astype(float), kernel_size=debounce_frames)
+                medfilt(
+                    signal_present.astype(float), kernel_size=debounce_frames
+                )
                 > MEDIAN_FILTER_VOTING_THRESHOLD
             )
 
@@ -164,7 +166,9 @@ class AcousticGateDetector:
             # Convolution applies a rolling asymmetric forward hangover
             kernel = np.ones(self._hangover_frames + 1, dtype=int)
             signal_present = (
-                np.convolve(signal_present, kernel, mode="full")[: len(signal_present)]
+                np.convolve(signal_present, kernel, mode="full")[
+                    : len(signal_present)
+                ]
                 > 0
             )
 
@@ -176,11 +180,14 @@ class AcousticGateDetector:
             starts = np.flatnonzero(diffs == 1)
             ends = np.flatnonzero(diffs == -1)
 
-            time_per_frame_ms = (self._hop_size / AUDIO_SAMPLE_RATE) * MS_PER_SECOND
+            time_per_frame_ms = (
+                self._hop_size / AUDIO_SAMPLE_RATE
+            ) * MS_PER_SECOND
             for start_idx, end_idx in zip(starts, ends, strict=True):
                 regions.append(
                     TimeRange(
-                        start_ms=file_start_ms + int(start_idx * time_per_frame_ms),
+                        start_ms=file_start_ms
+                        + int(start_idx * time_per_frame_ms),
                         end_ms=file_start_ms + int(end_idx * time_per_frame_ms),
                     )
                 )

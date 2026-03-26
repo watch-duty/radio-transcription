@@ -105,7 +105,9 @@ class TenVadPlugin(VoiceActivityDetector):
         return True
 
 
-def get_vad_plugin(vad_type: VadType, config_json: str) -> VoiceActivityDetector:
+def get_vad_plugin(
+    vad_type: VadType, config_json: str
+) -> VoiceActivityDetector:
     """Factory function to instantiate the requested VAD plugin."""
     if vad_type == VadType.TEN_VAD:
         plugin = TenVadPlugin()

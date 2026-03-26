@@ -46,7 +46,9 @@ def compute_rms_energy(
 
     shape = (num_frames, frame_length)
     strides = (y_padded.strides[0] * hop_length, y_padded.strides[0])
-    frames = np.lib.stride_tricks.as_strided(y_padded, shape=shape, strides=strides)
+    frames = np.lib.stride_tricks.as_strided(
+        y_padded, shape=shape, strides=strides
+    )
 
     # Compute RMS natively
     mean_sq = np.mean(frames**2, axis=-1)
