@@ -1,0 +1,36 @@
+{
+  "name": "Transcription Pipeline Template",
+  "description": "Flex Template for the Audio Transcription Pipeline (Dataflow).",
+  "parameters": [
+    {
+      "name": "input_topic",
+      "label": "Input Topic",
+      "helpText": "Full path of the Pub/Sub topic to read from (e.g. projects/your-project/topics/raw-audio-topic).",
+      "isOptional": false
+    },
+    {
+      "name": "output_topic",
+      "label": "Output Topic",
+      "helpText": "Full path of the Pub/Sub topic to publish transcribed text to.",
+      "isOptional": false
+    },
+    {
+      "name": "stitched_audio_bucket",
+      "label": "Stitched Audio Bucket",
+      "helpText": "GCS bucket for storing clean, stitched audio. If omitted, binary output is skipped.",
+      "isOptional": true
+    },
+    {
+      "name": "max_transmission_duration_ms",
+      "label": "Max Transmission Duration (MS)",
+      "helpText": "Absolute limit on continuous transmission duration.",
+      "isOptional": true
+    },
+    {
+      "name": "route_to_dlq",
+      "label": "Route to DLQ",
+      "helpText": "If false, exception bubbles immediately instead of Pub/Sub DLQ.",
+      "isOptional": true
+    }
+  ]
+}
