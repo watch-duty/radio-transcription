@@ -628,6 +628,10 @@ class NormalizerRuntime:
                 timeout=self._normalizer_settings.graceful_shutdown_timeout_sec,
             )
 
+        # We MUST release leases AFTER cancelling tasks and waiting for them to
+        # exit! If we release leases while tasks are still running, they might
+        # see their lease as NULL during a progress update and trigger an
+        # accidental fence violation (os._exit(1)).
         logger.info(
             "Releasing all leases for worker %s",
             self._normalizer_settings.worker_id,
