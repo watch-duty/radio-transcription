@@ -7,7 +7,7 @@ from backend.pipeline.ingestion.settings import NormalizerSettings
 
 def _required_env() -> dict[str, str]:
     return {
-        "COLLECTOR_OUTPUT_BUCKET": "staging-bucket",
+        "AUDIO_STAGING_BUCKET": "staging-bucket",
         "PUBSUB_TOPIC_PATH": "projects/test-project/topics/test-topic",
         "ALLOYDB_HOST": "127.0.0.1",
         "ALLOYDB_USER": "radio_user",
@@ -53,7 +53,8 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.heartbeat_interval_sec, 10.0)
         self.assertEqual(settings.heartbeat_stall_timeout_sec, 30.0)
         self.assertEqual(settings.graceful_shutdown_timeout_sec, 8.0)
-        self.assertEqual(settings.collector_output_bucket, "staging-bucket")
+        self.assertEqual(settings.audio_staging_bucket, "staging-bucket")
+
         self.assertEqual(settings.db.pool_min_size, 3)
         self.assertEqual(settings.db.pool_max_size, 25)
         self.assertEqual(settings.db.command_timeout_sec, 40.0)
@@ -123,23 +124,23 @@ class TestNormalizerSettings(unittest.TestCase):
     def test_invalid_missing_required_env_var_raises(self) -> None:
         """Raises ValueError when a required environment variable is missing."""
         env = _required_env()
-        del env["COLLECTOR_OUTPUT_BUCKET"]
+        del env["AUDIO_STAGING_BUCKET"]
 
         with patch.dict("os.environ", env, clear=True):
             with self.assertRaises(ValueError) as context:
                 NormalizerSettings()
 
-        self.assertIn("COLLECTOR_OUTPUT_BUCKET", str(context.exception))
+        self.assertIn("AUDIO_STAGING_BUCKET", str(context.exception))
 
     def test_invalid_empty_required_env_var_raises(self) -> None:
         """Raises ValueError when a required environment variable is empty."""
-        env = {**_required_env(), "COLLECTOR_OUTPUT_BUCKET": ""}
+        env = {**_required_env(), "AUDIO_STAGING_BUCKET": ""}
 
         with patch.dict("os.environ", env, clear=True):
             with self.assertRaises(ValueError) as context:
                 NormalizerSettings()
 
-        self.assertIn("COLLECTOR_OUTPUT_BUCKET", str(context.exception))
+        self.assertIn("AUDIO_STAGING_BUCKET", str(context.exception))
 
     def test_invalid_worker_id_raises(self) -> None:
         """Raises ValueError when WORKER_ID is not a valid UUID."""

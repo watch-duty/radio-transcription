@@ -326,7 +326,7 @@ class NormalizerRuntime:
                     self._gcs_client,
                     audio_chunk,
                     feed,
-                    settings.collector_output_bucket,
+                    settings.audio_staging_bucket,
                     chunk_seq,
                     fencing_token,
                     lease_lost=self._lease_lost,
