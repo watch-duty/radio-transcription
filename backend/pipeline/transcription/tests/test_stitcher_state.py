@@ -15,7 +15,9 @@ from backend.pipeline.transcription.datatypes import (
     UpdateStateAction,
 )
 from backend.pipeline.transcription.enums import VadType
-from backend.pipeline.transcription.stitcher_state import AudioStitchingStateMachine
+from backend.pipeline.transcription.stitcher_state import (
+    AudioStitchingStateMachine,
+)
 
 
 def get_test_stitch_config(
@@ -78,7 +80,9 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         actions = self._process(chunk)
 
         self.assertTrue(any(isinstance(a, DropAction) for a in actions))
-        self.assertTrue(any(isinstance(a, ScheduleStaleTimerAction) for a in actions))
+        self.assertTrue(
+            any(isinstance(a, ScheduleStaleTimerAction) for a in actions)
+        )
 
     def test_continuous_speech_accumulation(self) -> None:
         """Verifies adjacent speech segments beneath gap boundaries strictly trigger AppendBuffer bounds across sequential requests."""
@@ -87,7 +91,9 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         actions1 = self._process(chunk1)
 
         # Should output an Append buffer from 0.5s (due to 500ms pre-roll) to 12.5s (due to 500ms post-roll)
-        self.assertTrue(any(isinstance(a, AppendBufferAction) for a in actions1))
+        self.assertTrue(
+            any(isinstance(a, AppendBufferAction) for a in actions1)
+        )
         self.assertFalse(any(isinstance(a, FlushAction) for a in actions1))
         self.assertEqual(self.ctx.start_audio_offset_ms, 500)
         self.assertIn("gs://fake/1.flac", self.ctx.contributing_audio_uris)
@@ -95,11 +101,15 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         # Chunk 2: Arrives at 15.0s, speech from 0.0s to 4.0s.
         # Last speech ended at 12.0s. Next chunk speech starts at 15.0s. Gap is 3.0s.
         # Wait, our significant gap is 3000ms. Gap = 3000ms. So it precisely crosses the threshold and FLUSHES!
-        chunk2 = mock_audio_chunk(15000, 15000, [(0.0, 4.0)], "gs://fake/2.flac")
+        chunk2 = mock_audio_chunk(
+            15000, 15000, [(0.0, 4.0)], "gs://fake/2.flac"
+        )
         actions2 = self._process(chunk2)
 
         # Verify a flush occurred due to reaching exactly 3s gap
-        flush_action = next((a for a in actions2 if isinstance(a, FlushAction)), None)
+        flush_action = next(
+            (a for a in actions2 if isinstance(a, FlushAction)), None
+        )
         self.assertIsNotNone(flush_action)
         assert flush_action is not None
         self.assertEqual(flush_action.reason, "Significant gap detected")
@@ -125,7 +135,9 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         chunk3 = mock_audio_chunk(30000, 15000, [])
         actions3 = self._process(chunk3)
 
-        flush_action = next((a for a in actions3 if isinstance(a, FlushAction)), None)
+        flush_action = next(
+            (a for a in actions3 if isinstance(a, FlushAction)), None
+        )
         self.assertIsNotNone(flush_action)
         assert flush_action is not None
         self.assertEqual(
@@ -134,7 +146,9 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
 
     def test_max_transmission_duration_mid_stream_severing(self) -> None:
         """Verifies infinite-length callers are violently disconnected gracefully the instant they exceed bounded operational processing timeouts."""
-        config = get_test_stitch_config(max_transmission_duration_ms=10000)  # 10s max
+        config = get_test_stitch_config(
+            max_transmission_duration_ms=10000
+        )  # 10s max
         self.state_machine = AudioStitchingStateMachine(config)
 
         # Send chunk 1
@@ -146,11 +160,15 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         chunk2 = mock_audio_chunk(15000, 15000, [(0.0, 15.0)])
         actions2 = self._process(chunk2)
 
-        flush_action = next((a for a in actions2 if isinstance(a, FlushAction)), None)
+        flush_action = next(
+            (a for a in actions2 if isinstance(a, FlushAction)), None
+        )
         self.assertIsNotNone(flush_action)
         assert flush_action is not None
 
-        self.assertEqual(flush_action.reason, "Maximum transmission duration exceeded")
+        self.assertEqual(
+            flush_action.reason, "Maximum transmission duration exceeded"
+        )
         self.assertTrue(flush_action.missing_post_context)
 
         # And because it was severed arbitrarily, the NEXT queued segment inherits a severed head (missing prior context)
@@ -166,7 +184,9 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         actions = self._process(chunk_late)
 
         # It must eject via FlushAction purely to isolate Traversing the backend independently
-        flush_action = next((a for a in actions if isinstance(a, FlushAction)), None)
+        flush_action = next(
+            (a for a in actions if isinstance(a, FlushAction)), None
+        )
         self.assertIsNotNone(flush_action)
         assert flush_action is not None
 

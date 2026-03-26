@@ -53,7 +53,7 @@ def _make_settings(**overrides) -> mock.MagicMock:
         "heartbeat_interval_sec": 15.0,
         "heartbeat_stall_timeout_sec": 45.0,
         "graceful_shutdown_timeout_sec": 10.0,
-        "audio_staging_bucket": "test-bucket",
+        "collector_output_bucket": "test-bucket",
         "pubsub_topic_path": "projects/p/topics/t",
         "db": AlloyDBSettings(
             host="10.0.0.1",

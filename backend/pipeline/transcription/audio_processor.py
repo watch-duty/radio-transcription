@@ -33,7 +33,6 @@ from backend.pipeline.transcription.dsp import (
 )
 from backend.pipeline.transcription.enums import VadType
 from backend.pipeline.transcription.resources import SharedResources
-from backend.pipeline.transcription.vads import VoiceActivityDetector, get_vad_plugin
 from backend.pipeline.transcription.vads import (
     VoiceActivityDetector,
     get_vad_plugin,
@@ -59,7 +58,8 @@ class AudioProcessor:
         vad_type: VadType = VadType.TEN_VAD,
         vad_config: str = "{}",
         shared_resources: SharedResources | None = None,
-        vad_factory: Callable[[VadType, str], VoiceActivityDetector] | None = None,
+        vad_factory: Callable[[VadType, str], VoiceActivityDetector]
+        | None = None,
         gcs_factory: Callable[[], Any] | None = None,
     ) -> None:
         self.vad_type = vad_type
@@ -86,7 +86,9 @@ class AudioProcessor:
             self.vad = active_vad_factory(self.vad_type, self.vad_config)
             self.gcs_client = active_gcs_factory()
 
-    def download_audio_and_detect(self, gcs_path: str, start_ms: int) -> AudioChunkData:
+    def download_audio_and_detect(
+        self, gcs_path: str, start_ms: int
+    ) -> AudioChunkData:
         """Downloads FLAC bytes from GCS and runs the spectral flatness detector natively."""
         if not self.gcs_client:
             msg = "GCS client not initialized. Call setup() first."
@@ -166,8 +168,12 @@ class AudioProcessor:
                 samples=samples, frame_length=n_fft, hop_length=hop_length
             )
         )
-        if mean_rms < VAD_RMS_SILENCE_THRESHOLD:  # Approx -46 dBFS (total silence)
-            logger.info(f"VAD Heuristic: Dropped quiet segment (RMS: {mean_rms:.5f})")
+        if (
+            mean_rms < VAD_RMS_SILENCE_THRESHOLD
+        ):  # Approx -46 dBFS (total silence)
+            logger.info(
+                f"VAD Heuristic: Dropped quiet segment (RMS: {mean_rms:.5f})"
+            )
             return False
 
         # 1b. Spectral Flatness Noise Gate: Drop chunks that are purely uniform "white noise" static.

@@ -21,7 +21,7 @@ class NormalizerSettings:
     """
     Configuration for the NormalizerRuntime, loaded from environment variables.
 
-    All fields have sensible defaults except ``audio_staging_bucket`` and
+    All fields have sensible defaults except ``collector_output_bucket`` and
     ``pubsub_topic_path`` which are required. AlloyDB connection parameters
     are loaded via ``AlloyDBSettings``.
 
@@ -64,8 +64,8 @@ class NormalizerSettings:
     )
 
     # GCS
-    audio_staging_bucket: str = field(
-        default_factory=lambda: _require_env("AUDIO_STAGING_BUCKET"),
+    collector_output_bucket: str = field(
+        default_factory=lambda: _require_env("COLLECTOR_OUTPUT_BUCKET"),
     )
 
     # Pub/Sub
