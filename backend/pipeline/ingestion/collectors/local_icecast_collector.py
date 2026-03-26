@@ -17,7 +17,6 @@ from backend.pipeline.ingestion.collectors.icecast_collector import (
 if TYPE_CHECKING:
     from backend.pipeline.storage.feed_store import LeasedFeed
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
 
