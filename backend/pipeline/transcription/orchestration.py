@@ -150,6 +150,7 @@ def get_pipeline(
                 route_to_dlq=options.route_to_dlq
                 if options.route_to_dlq is not None
                 else True,
+                stitched_audio_bucket=options.stitched_audio_bucket,
             )
         )
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
