@@ -544,7 +544,7 @@ class TranscribeAudioFn(beam.DoFn):
 
         flac_bytes = self.audio_processor.export_flac(processed_audio)
 
-        if self.config.canonical_bucket:
+        if self.config.stitched_audio_bucket:
             if not self.audio_processor or not self.audio_processor.gcs_client:
                 msg = "AudioProcessor or GCS client not initialized"
                 raise RuntimeError(msg)
@@ -557,19 +557,19 @@ class TranscribeAudioFn(beam.DoFn):
 
             try:
                 bucket = self.audio_processor.gcs_client.bucket(
-                    self.config.canonical_bucket
+                    self.config.stitched_audio_bucket
                 )
                 blob = bucket.blob(object_name)
                 blob.upload_from_string(flac_bytes, content_type="audio/flac")
                 logger.info(
                     "Uploaded stitched audio to gs://%s/%s",
-                    self.config.canonical_bucket,
+                    self.config.stitched_audio_bucket,
                     object_name,
                 )
             except Exception:
                 logger.exception(
                     "Failed to upload stitched audio to gs://%s/%s",
-                    self.config.canonical_bucket,
+                    self.config.stitched_audio_bucket,
                     object_name,
                 )
                 raise
