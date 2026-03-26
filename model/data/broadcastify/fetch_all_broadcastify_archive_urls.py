@@ -2,7 +2,7 @@ import csv
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from bcfy_api import fetch_archive_files, fetch_archive_days
+from bcfy_api import fetch_archive_days, fetch_archive_files
 
 if len(sys.argv) < 2:
     print(
@@ -26,7 +26,7 @@ with open(input_csv) as f:
 
 
 def fetch_all_archives_for_feed(
-    feed_id: int, use_trial_api: bool = False
+    feed_id: int, *, use_trial_api: bool
 ) -> list[str]:
     if use_trial_api:
         return fetch_archive_files(feed_id)
@@ -36,7 +36,9 @@ def fetch_all_archives_for_feed(
 # use a threadpool to get archive URLs for all of the feeds
 with ThreadPoolExecutor(max_workers=10) as executor:
     future_to_feed = {
-        executor.submit(fetch_all_archives_for_feed, feed_id, use_trial_api): (
+        executor.submit(
+            fetch_all_archives_for_feed, feed_id, use_trial_api=use_trial_api
+        ): (
             feed_id,
             feed_name,
             is_audio_trimmed,
