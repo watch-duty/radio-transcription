@@ -3,6 +3,7 @@
 import logging
 import time
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from typing import Any, override
 
 import apache_beam as beam
@@ -549,11 +550,13 @@ class TranscribeAudioFn(beam.DoFn):
                 msg = "AudioProcessor or GCS client not initialized"
                 raise RuntimeError(msg)
 
-            timestamp_str = time.strftime(
-                "%Y%m%dT%H%M%SZ",
-                time.gmtime(request.time_range.start_ms / 1000.0),
+            dt = datetime.fromtimestamp(
+                request.time_range.start_ms / 1000.0, tz=UTC
             )
-            object_name = f"stitched/{request.feed_id}/{timestamp_str}.flac"
+            timestamp_str = dt.strftime("%Y%m%dT%H%M%SZ")
+            object_name = (
+                f"stitched/{request.feed_id}/{dt:%Y/%m/%d}/{timestamp_str}.flac"
+            )
 
             try:
                 bucket = self.audio_processor.gcs_client.bucket(
