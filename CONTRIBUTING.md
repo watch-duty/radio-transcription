@@ -79,8 +79,7 @@ export ICECAST_LOCAL_OUTPUT_DIR="/tmp/audio_chunks"
 cat <<EOF > backend/pipeline/ingestion/collectors/.icecast_env
 BROADCASTIFY_USERNAME=<your broadcastify username>
 BROADCASTIFY_PASSWORD=<your broadcastify pword>
-AUDIO_STAGING_BUCKET=<your collector output bucket>
-
+AUDIO_STAGING_BUCKET=<your audio staging bucket>
 PUBSUB_TOPIC_PATH=<your pubsub topic path>
 ALLOYDB_HOST=<your alloydb host>
 ALLOYDB_USER=<your alloydb user>

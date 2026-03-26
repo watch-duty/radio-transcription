@@ -54,7 +54,6 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.heartbeat_stall_timeout_sec, 30.0)
         self.assertEqual(settings.graceful_shutdown_timeout_sec, 8.0)
         self.assertEqual(settings.audio_staging_bucket, "staging-bucket")
-
         self.assertEqual(settings.db.pool_min_size, 3)
         self.assertEqual(settings.db.pool_max_size, 25)
         self.assertEqual(settings.db.command_timeout_sec, 40.0)

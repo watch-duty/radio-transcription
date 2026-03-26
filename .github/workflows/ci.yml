@@ -165,7 +165,6 @@ jobs:
             -e BROADCASTIFY_PASSWORD=smoke-test \
             -e PUBSUB_EMULATOR_HOST=localhost:8085 \
             -e AUDIO_STAGING_BUCKET=smoke-test-bucket \
-
             -e PUBSUB_TOPIC_PATH=projects/test/topics/test \
             -e ALLOYDB_HOST=localhost \
             -e ALLOYDB_USER=worker \
