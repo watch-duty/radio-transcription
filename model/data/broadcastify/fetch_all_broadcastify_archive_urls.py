@@ -30,8 +30,7 @@ def fetch_all_archives_for_feed(
 ) -> list[str]:
     if use_trial_api:
         return fetch_archive_files(feed_id)
-    else:
-        return fetch_archive_days(feed_id)
+    return fetch_archive_days(feed_id)
 
 
 # use a threadpool to get archive URLs for all of the feeds
