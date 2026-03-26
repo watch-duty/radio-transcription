@@ -31,4 +31,4 @@ RUN mkdir -p ./backend/pipeline/schema_types
 RUN touch ./backend/pipeline/schema_types/__init__.py
 RUN python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto
 
-CMD ["python", "-m", "backend.pipeline.ingestion.collectors.icecast_collector"]
+CMD ["python", "-m", "backend.pipeline.ingestion.main"]
