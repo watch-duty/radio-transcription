@@ -204,6 +204,9 @@ async def _create_ffmpeg_process(
     #    for true real-time network flow.
     # 3. discardcorrupt: Mitigates parsing crashes over TCP jitter, which is necessary
     #    since our micro probesize doesn't deeply validate stream integrity.
+    # 4. -reconnect 1 / -reconnect_at_eof 1 / -reconnect_streamed 1: Enables native
+    #    HTTP/TCP reconnects for short internet drops. The external Python timeout
+    #    (30s) acts as a secondary dead-man's switch.
     return await asyncio.create_subprocess_exec(
         "ffmpeg", "-nostdin",
         "-reconnect", "1",
