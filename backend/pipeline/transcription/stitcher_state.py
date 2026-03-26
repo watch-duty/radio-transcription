@@ -99,22 +99,36 @@ class AudioStitchingStateMachine:
         # When flushing due to dropped chunks, we might not have a last_segment_end_time_ms yet
         # if the transmission was very short, so fallback to transmission_start_time_ms.
         end_ms = ctx.last_segment_end_time_ms or ctx.transmission_start_time_ms
-        if end_ms is None or ctx.transmission_start_time_ms is None:
+        if (
+            end_ms is None
+            or ctx.transmission_start_time_ms is None
+            or ctx.buffer_start_time_ms is None
+        ):
             msg = "Missing boundary times for buffer flush."
             raise ValueError(msg)
+
+        padded_end_time_ms = end_ms
+        if ctx.buffer_duration_ms > 0 and ctx.buffer_start_time_ms is not None:
+            padded_end_time_ms = (
+                ctx.buffer_start_time_ms + ctx.buffer_duration_ms
+            )
 
         return FlushAction(
             reason=reason,
             feed_id=ctx.feed_id,
             contributing_audio_uris=ctx.contributing_audio_uris.copy(),
             time_range=TimeRange(
+                start_ms=ctx.buffer_start_time_ms,
+                end_ms=padded_end_time_ms,
+            ),
+            speech_time_range=TimeRange(
                 start_ms=ctx.transmission_start_time_ms,
                 end_ms=end_ms,
             ),
             missing_prior_context=ctx.missing_prior_context,
             missing_post_context=missing_post_context,
             start_audio_offset_ms=ctx.start_audio_offset_ms,
-            end_audio_offset_ms=ctx.end_audio_offset_ms,
+            end_audio_offset_ms=None,
         )
 
     def _process_late_chunk_independently(
@@ -173,6 +187,7 @@ class AudioStitchingStateMachine:
                             reason=action.reason,
                             feed_id=action.feed_id,
                             time_range=action.time_range,
+                            speech_time_range=action.speech_time_range,
                             contributing_audio_uris=action.contributing_audio_uris,
                             missing_prior_context=action.missing_prior_context,
                             missing_post_context=action.missing_post_context,
@@ -190,9 +205,10 @@ class AudioStitchingStateMachine:
     def _reset_transmission_context(self, ctx: StitcherContext) -> None:
         """Resets the ongoing state metrics (timers, timestamps) to begin a fresh transmission window."""
         ctx.transmission_start_time_ms = None
+        ctx.buffer_start_time_ms = None
         ctx.contributing_audio_uris.clear()
         ctx.start_audio_offset_ms = None
-        ctx.end_audio_offset_ms = None
+        ctx.buffer_duration_ms = 0
 
     def _process_silent_chunk(
         self, chunk_data: AudioChunkData, ctx: StitcherContext
@@ -228,6 +244,22 @@ class AudioStitchingStateMachine:
                 reason = "Maximum transmission duration exceeded by silent file"
 
             if ctx.transmission_start_time_ms is not None:
+                if ctx.last_segment_end_time_ms is None:
+                    msg = "Unreachable: active transmission without segment anchor"
+                    raise RuntimeError(msg)
+
+                target_post_roll_end = (
+                    ctx.last_segment_end_time_ms + self.config.vad_post_roll_ms
+                ) - file_start_ms
+                append_end = min(len(chunk_data.audio), target_post_roll_end)
+                if append_end > 0:
+                    actions.append(
+                        AppendBufferAction(
+                            audio_buffer=chunk_data.audio[0:append_end]
+                        )
+                    )
+                    ctx.buffer_duration_ms += append_end
+
                 actions.append(
                     self._flush_current_transmission(
                         reason,
@@ -267,7 +299,80 @@ class AudioStitchingStateMachine:
         actions.append(
             ScheduleStaleTimerAction(deadline_ms=expected_stale_deadline_ms)
         )
+
+        # IMPORTANT: We must append the silent audio to preserve post-roll tails!
+        if (
+            ctx.transmission_start_time_ms is not None
+            and ctx.last_segment_end_time_ms is not None
+        ):
+            target_post_roll_end = (
+                ctx.last_segment_end_time_ms + self.config.vad_post_roll_ms
+            )
+            append_end = min(
+                len(chunk_data.audio),
+                max(0, target_post_roll_end - file_start_ms),
+            )
+            if append_end > 0:
+                actions.append(
+                    AppendBufferAction(
+                        audio_buffer=chunk_data.audio[0:append_end]
+                    )
+                )
+                ctx.buffer_duration_ms += append_end
+
         return actions
+
+    def _evaluate_mid_stream_flush(
+        self,
+        ctx: StitcherContext,
+        chunk_data: AudioChunkData,
+        actions: list[StateMachineAction],
+        file_start_ms: int,
+        global_start_ms: int,
+        audio_append_cursor_ms: int | None,
+        *,
+        is_significant_gap: bool,
+        is_max_duration_exceeded: bool,
+    ) -> int | None:
+        if not (is_significant_gap or is_max_duration_exceeded):
+            return audio_append_cursor_ms
+
+        if is_significant_gap:
+            reason = "Significant gap detected"
+        else:
+            reason = "Maximum transmission duration exceeded"
+
+        # Flush the currently buffered transmission before starting this next segment
+        if ctx.transmission_start_time_ms is not None:
+            if ctx.last_segment_end_time_ms is None:
+                msg = "Unreachable: active transmission without segment anchor"
+                raise RuntimeError(msg)
+            target_post_roll_end = (
+                ctx.last_segment_end_time_ms + self.config.vad_post_roll_ms
+            ) - file_start_ms
+            append_end = min(target_post_roll_end, global_start_ms)
+            append_start = audio_append_cursor_ms or 0
+
+            if 0 <= append_start < append_end:
+                actions.append(
+                    AppendBufferAction(
+                        audio_buffer=chunk_data.audio[append_start:append_end]
+                    )
+                )
+                ctx.buffer_duration_ms += append_end - append_start
+
+            actions.append(
+                self._flush_current_transmission(
+                    reason, ctx, missing_post_context=is_max_duration_exceeded
+                )
+            )
+
+            # If this was cut arbitrarily by max_duration mid-stream, the next segment inherits a severed head flag!
+            ctx.missing_prior_context = is_max_duration_exceeded
+
+        # Reset state to cleanly begin accumulating the next transmission
+        self._reset_transmission_context(ctx)
+        return None
 
     def _process_speech_segments(
         self, chunk_data: AudioChunkData, ctx: StitcherContext
@@ -275,6 +380,7 @@ class AudioStitchingStateMachine:
         """Evaluates consecutive speech data, updating length counters and triggering mid-stream flushes if gap or duration limits are reached."""
         actions: list[StateMachineAction] = []
         file_start_ms = chunk_data.start_ms
+        audio_append_cursor_ms: int | None = None
 
         for segment in chunk_data.speech_segments:
             global_start_ms = segment.start_ms
@@ -302,32 +408,18 @@ class AudioStitchingStateMachine:
             )
 
             # 3. If there is a gap OR max duration is exceeded, flush whatever is in the buffer currently.
-            if is_significant_gap or is_max_duration_exceeded:
-                if is_significant_gap:
-                    reason = "Significant gap detected"
-                else:
-                    reason = "Maximum transmission duration exceeded"
-
-                # Flush the currently buffered transmission before starting this next segment
-                if ctx.transmission_start_time_ms is not None:
-                    actions.append(
-                        self._flush_current_transmission(
-                            reason,
-                            ctx,
-                            missing_post_context=is_max_duration_exceeded,
-                        )
-                    )
-
-                    # If this was cut arbitrarily by max_duration mid-stream, the next segment inherits a severed head flag!
-                    ctx.missing_prior_context = is_max_duration_exceeded
-
-                # Reset state to cleanly begin accumulating the next transmission
-                self._reset_transmission_context(ctx)
+            audio_append_cursor_ms = self._evaluate_mid_stream_flush(
+                ctx=ctx,
+                chunk_data=chunk_data,
+                actions=actions,
+                file_start_ms=file_start_ms,
+                global_start_ms=global_start_ms,
+                audio_append_cursor_ms=audio_append_cursor_ms,
+                is_significant_gap=is_significant_gap,
+                is_max_duration_exceeded=is_max_duration_exceeded,
+            )
 
             # 4. Append this specific speech segment to the state
-            # Slice the valid speech audio out of the chunk using the bounds found by VAD
-            speech_audio = chunk_data.audio[global_start_ms:global_end_ms]
-
             if ctx.transmission_start_time_ms is None:
                 # If the VAD segment starts beyond 0.0, the speaker starts after the file begins.
                 # The start of their sentence is perfectly robust and untruncated.
@@ -336,12 +428,33 @@ class AudioStitchingStateMachine:
 
                 # We didn't have an active recording, so this formally starts a new one!
                 ctx.transmission_start_time_ms = file_start_ms + global_start_ms
-                ctx.start_audio_offset_ms = global_start_ms
+                append_start = max(
+                    0, global_start_ms - self.config.vad_pre_roll_ms
+                )
+                ctx.start_audio_offset_ms = append_start
+                ctx.buffer_start_time_ms = file_start_ms + append_start
+            else:
+                append_start = (
+                    audio_append_cursor_ms
+                    if audio_append_cursor_ms is not None
+                    else 0
+                )
 
-            # Append this specific speech segment to the state
-            actions.append(AppendBufferAction(audio_buffer=speech_audio))
+            # Target end for this segment's append is global_end_ms + vad_post_roll_ms
+            append_end = min(
+                len(chunk_data.audio),
+                global_end_ms + self.config.vad_post_roll_ms,
+            )
 
-            ctx.end_audio_offset_ms = global_end_ms
+            if append_end > append_start:
+                actions.append(
+                    AppendBufferAction(
+                        audio_buffer=chunk_data.audio[append_start:append_end]
+                    )
+                )
+                audio_append_cursor_ms = append_end
+                ctx.buffer_duration_ms += append_end - append_start
+
             if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
                 ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
             ctx.last_segment_end_time_ms = file_start_ms + global_end_ms

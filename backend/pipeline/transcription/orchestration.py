@@ -24,6 +24,8 @@ from backend.pipeline.transcription.constants import (
     DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_SIGNIFICANT_GAP_MS,
     DEFAULT_STALE_TIMEOUT_MS,
+    DEFAULT_VAD_POST_ROLL_MS,
+    DEFAULT_VAD_PRE_ROLL_MS,
     MAIN_TAG,
 )
 from backend.pipeline.transcription.datatypes import (
@@ -63,12 +65,31 @@ def get_pipeline(
 ) -> beam.Pipeline:
     """Constructs the Apache Beam pipeline DAG and returns the pipeline object."""
     # Require streaming mode since we handle unbounded logical streams from Pub/Sub
-    pipeline_options.view_as(StandardOptions).streaming = True
+    standard_options = pipeline_options.view_as(StandardOptions)
+    standard_options.streaming = True
     options = pipeline_options.view_as(TranscriptionOptions)
 
+    # Validate logical pipeline timeout configuration rules
+    ooo_timeout = (
+        options.out_of_order_timeout_ms or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS
+    )
+    stale_timeout = options.stale_timeout_ms or DEFAULT_STALE_TIMEOUT_MS
+
+    if ooo_timeout >= stale_timeout:
+        err_msg = (
+            f"Invalid pipeline configuration: stale_timeout_ms ({stale_timeout}) must be strictly "
+            f"greater than out_of_order_timeout_ms ({ooo_timeout}) to prevent fragmented audio stitching."
+        )
+        raise ValueError(err_msg)
+
     pipeline = beam.Pipeline(options=pipeline_options)
+
+    # Note: DirectRunner's dummy PubSub emulator natively rejects id_label.
+    # To run locally, explicitly pass --id_label "" to bypass exact-once deduplication.
     messages = pipeline | "ReadFromPubSub" >> ReadFromPubSub(
-        topic=options.input_topic, with_attributes=True, id_label="chunk_uri"
+        topic=options.input_topic,
+        id_label=options.id_label or None,
+        with_attributes=True,
     )
     # Group incoming messages into Key-Value pairs: (feed_id, gs://uri/to/audio)
     parsed = messages | "ParseAndKey" >> beam.ParDo(
@@ -77,10 +98,10 @@ def get_pipeline(
 
     timestamped = parsed[MAIN_TAG] | "AddTimestamp" >> beam.ParDo(
         AddEventTimestamp()
-    )
+    ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
     # Order chunks based on exact 15,000ms chunk duration expectations
-    restored = timestamped | "RestoreOrder" >> beam.ParDo(
+    restored = timestamped.main | "RestoreOrder" >> beam.ParDo(
         RestoreOrderFn(
             config=OrderRestorerConfig(
                 out_of_order_timeout_ms=options.out_of_order_timeout_ms
@@ -101,6 +122,8 @@ def get_pipeline(
         stale_timeout_ms=options.stale_timeout_ms or DEFAULT_STALE_TIMEOUT_MS,
         max_transmission_duration_ms=options.max_transmission_duration_ms
         or DEFAULT_MAX_TRANSMISSION_DURATION_MS,
+        vad_pre_roll_ms=options.vad_pre_roll_ms or DEFAULT_VAD_PRE_ROLL_MS,
+        vad_post_roll_ms=options.vad_post_roll_ms or DEFAULT_VAD_POST_ROLL_MS,
         route_to_dlq=options.route_to_dlq
         if options.route_to_dlq is not None
         else True,
@@ -143,6 +166,7 @@ def get_pipeline(
     # Route all DLQ (Dead Letter Queue) outputs from intermediate steps to a dedicated topic
     dlq_combined = (
         parsed[DEAD_LETTER_QUEUE_TAG],
+        timestamped[DEAD_LETTER_QUEUE_TAG],
         downloaded_chunks[DEAD_LETTER_QUEUE_TAG],
         stitching_results[DEAD_LETTER_QUEUE_TAG],
         transcripts[DEAD_LETTER_QUEUE_TAG],
@@ -150,7 +174,7 @@ def get_pipeline(
 
     dlq_messages = dlq_combined | "FormatDlq" >> beam.Map(format_dlq_message)
     dlq_messages | "WriteDlqToPubSub" >> WriteToPubSub(
-        topic=f"{options.output_topic}-dlq",
+        topic=options.dlq_topic or f"{options.output_topic}-dlq",
         with_attributes=True,
     )
 

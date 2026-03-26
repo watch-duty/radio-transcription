@@ -9,6 +9,7 @@ import abc
 import logging
 
 import tenacity
+from google.api_core import client_options
 from google.api_core.exceptions import GoogleAPIError, RetryError
 from google.cloud import speech_v2 as cloud_speech
 from google.cloud.speech_v2 import SpeechClient
@@ -50,7 +51,7 @@ class Transcriber(abc.ABC):
 class ChirpConfig(ConfigBase):
     """Strongly typed configuration for the Google Chirp V3 Transcriber."""
 
-    location: str = "us"
+    location: str = "us-central1"
     recognizer: str = "_"
     model: str = "chirp_3"
     language_codes: list[str] = ["en-US"]
@@ -59,12 +60,15 @@ class ChirpConfig(ConfigBase):
 
 
 class GoogleChirpV3Transcriber(Transcriber):
-    """Transcriber implementation using Google Cloud Speech-to-Text V2 API.
-
+    """Transcriber implementation using Google Cloud Speech-to-Text V2 API
     with the 'chirp_3' model.
     """
 
-    def __init__(self, project_id: str, config_json: str) -> None:
+    def __init__(
+        self,
+        project_id: str,
+        config_json: str,
+    ) -> None:
         """Binds the GCP Project ID and dynamic Chirp configuration JSON."""
         self.project_id = project_id
         self.config_json = config_json
@@ -72,10 +76,18 @@ class GoogleChirpV3Transcriber(Transcriber):
         self.client: SpeechClient | None = None
         self.config: ChirpConfig | None = None
 
+    def _init_client(self) -> SpeechClient:
+        opts = None
+        if self.config and self.config.location:
+            opts = client_options.ClientOptions(
+                api_endpoint=f"{self.config.location}-speech.googleapis.com"
+            )
+        return SpeechClient(client_options=opts)
+
     def setup(self) -> None:
-        """Instantiates the Speech-to-Text API gRPC client lazily on the executing worker."""
-        self.client = SpeechClient()
+        """Instantiates the Speech-to-Text API gRPC client."""
         self.config = ChirpConfig.from_json(self.config_json)
+        self.client = self._init_client()
 
     @tenacity.retry(
         wait=tenacity.wait_exponential(
@@ -146,7 +158,9 @@ class GoogleChirpV3Transcriber(Transcriber):
 
 
 def get_transcriber(
-    transcriber_type: TranscriberType, project_id: str, config_json: str
+    transcriber_type: TranscriberType,
+    project_id: str,
+    config_json: str,
 ) -> Transcriber:
     """A factory method instantiating the requested Transcriber implementation based on the enum type."""
     if transcriber_type == TranscriberType.GOOGLE_CHIRP_V3:

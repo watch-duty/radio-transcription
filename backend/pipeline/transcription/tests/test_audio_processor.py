@@ -5,7 +5,9 @@ import shutil
 import unittest
 from unittest.mock import MagicMock, patch
 
+import pytest
 from pydub import AudioSegment
+from pydub.generators import Sine
 
 from backend.pipeline.common.constants import AUDIO_FORMAT, SAMPLE_RATE_HZ
 from backend.pipeline.transcription.audio_processor import AudioProcessor
@@ -42,7 +44,7 @@ class AudioProcessorTest(unittest.TestCase):
         processor = AudioProcessor(vad_type=VadType.TEN_VAD)
         # Act & Assert
         with self.assertRaises(RuntimeError):
-            processor.download_audio_and_sed("gs://test/file.flac")
+            processor.download_audio_and_detect("gs://test/file.flac", 0)
 
     @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
     @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
@@ -56,7 +58,9 @@ class AudioProcessorTest(unittest.TestCase):
 
         self.processor.setup()
 
-        audio = AudioSegment.silent(duration=1000)
+        # Generate a Sine wave so it bypasses both the new RMS silence gate
+        # and the Spectral Flatness noise gate (pure tone = highly structured)
+        audio = Sine(440).to_audio_segment(duration=1000)
         result = self.processor.check_vad(audio)
 
         self.assertTrue(result)
@@ -86,21 +90,26 @@ class AudioProcessorTest(unittest.TestCase):
         self.assertIsInstance(flac_bytes, bytes)
         self.assertTrue(flac_bytes.startswith(b"fLaC"))
 
-    @unittest.skipIf(
-        shutil.which("ffmpeg") is None, "ffmpeg is required for pydub I/O tests"
+    @pytest.mark.skipif(
+        shutil.which("ffmpeg") is None,
+        reason="ffmpeg is required for pydub I/O tests",
     )
     @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
     @patch(
-        "backend.pipeline.transcription.audio_processor.read_sed_segments_from_blob"
+        "backend.pipeline.transcription.audio_processor.AcousticGateDetector"
     )
     @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
-    def test_download_audio_and_sed(
+    def test_download_audio_and_detect(
         self,
         mock_get_gcs: MagicMock,
-        mock_read_sed: MagicMock,
+        mock_detector_cls: MagicMock,
         mock_get_vad: MagicMock,
     ) -> None:
         """Simulates downloading a GCS FLAC file, mocking its associated Sound Event Detection (SED) metadata, and parsing it into AudioChunkData."""
+        mock_detector_instance = MagicMock()
+        mock_detector_instance.detect.return_value = [TimeRange(5000, 7000)]
+        mock_detector_cls.return_value = mock_detector_instance
+
         processor = AudioProcessor(vad_type=VadType.TEN_VAD)
         processor.setup()
         processor.gcs_client = MagicMock()
@@ -121,15 +130,13 @@ class AudioProcessorTest(unittest.TestCase):
         mock_bucket.get_blob.return_value = mock_blob
         processor.gcs_client.bucket.return_value = mock_bucket
 
-        mock_read_sed.return_value = (5000, [TimeRange(5000, 7000)])
-
         # Act
-        result = processor.download_audio_and_sed(
-            "gs://my-bucket/audio/feed1/12345.flac"
+        result = processor.download_audio_and_detect(
+            "gs://my-bucket/audio/feed1/12345.flac", start_ms=5000
         )
 
         # Assert
-        mock_read_sed.assert_called_once_with(mock_blob)
+        mock_detector_instance.detect.assert_called_once()
 
         self.assertIsInstance(result, AudioChunkData)
         self.assertEqual(result.start_ms, 5000)
@@ -155,4 +162,6 @@ class AudioProcessorTest(unittest.TestCase):
 
         # Act & Assert
         with self.assertRaises(FileNotFoundError):
-            processor.download_audio_and_sed("gs://my-bucket/missing.flac")
+            processor.download_audio_and_detect(
+                "gs://my-bucket/missing.flac", 0
+            )

@@ -9,6 +9,8 @@ from backend.pipeline.transcription.constants import (
     DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_SIGNIFICANT_GAP_MS,
     DEFAULT_STALE_TIMEOUT_MS,
+    DEFAULT_VAD_POST_ROLL_MS,
+    DEFAULT_VAD_PRE_ROLL_MS,
 )
 from backend.pipeline.transcription.enums import (
     MetricsExporterType,
@@ -34,6 +36,19 @@ class TranscriptionOptions(PipelineOptions):
             type=str,
             required=True,
             help="Pub/Sub topic to write to",
+        )
+        parser.add_argument(
+            "--dlq_topic",
+            type=str,
+            required=False,
+            help="Pub/Sub topic to route Dead-Letter Queue (DLQ) processing failures. Defaults to output_topic appended with '-dlq'.",
+        )
+        parser.add_argument(
+            "--id_label",
+            type=str,
+            required=False,
+            default="chunk_uri",
+            help="Pub/Sub attribute to use for strictly exactly-once deduplication.",
         )
         parser.add_argument(
             "--project_id",
@@ -96,6 +111,18 @@ class TranscriptionOptions(PipelineOptions):
             type=int,
             default=DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
             help="Milliseconds to wait for missing chunks before accepting a gap.",
+        )
+        parser.add_argument(
+            "--vad_pre_roll_ms",
+            type=int,
+            default=DEFAULT_VAD_PRE_ROLL_MS,
+            help="Milliseconds of audio to include before the first spoken segment to provide a background noise floor.",
+        )
+        parser.add_argument(
+            "--vad_post_roll_ms",
+            type=int,
+            default=DEFAULT_VAD_POST_ROLL_MS,
+            help="Milliseconds of audio to include after the last spoken segment to provide a background noise floor.",
         )
         parser.add_argument(
             "--max_transmission_duration_ms",

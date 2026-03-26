@@ -47,7 +47,7 @@ class AudioChunkData:
 
 @dataclass(frozen=True)
 class TranscriptionResult:
-    """Picklable dataclass to hold intermediate transcription results before Protobuf serialization."""
+    """Intermediate transcription result holding payload data before Protobuf serialization, bypassing Protobuf pickling issues during Dataflow shuffle."""
 
     feed_id: str
     contributing_audio_uris: list[str]
@@ -61,19 +61,22 @@ class TranscriptionResult:
 
 @dataclass(frozen=True)
 class TransmissionContext:
-    """A Picklable dataclass storing all metadata for the current audio transmission.
+    """Dataclass storing all metadata for the current audio transmission.
 
     This consolidated struct massively reduces I/O roundtrips to Dataflow's state storage.
+    We use standard dataclasses here because native Protobuf classes cannot be cleanly pickled.
     """
 
     last_end_time_ms: int | None = None
     stale_start_time_ms: int | None = None
+    buffer_start_time_ms: int | None = None
     contributing_audio_uris: list[str] = field(default_factory=list)
     missing_prior_context: bool = False
     missing_post_context: bool = False
     expected_next_chunk_start_ms: int | None = None
     start_audio_offset_ms: int | None = None
     end_audio_offset_ms: int | None = None
+    buffer_duration_ms: int = 0
 
 
 @dataclass
@@ -88,10 +91,12 @@ class StitcherContext:
     file_start_ms: int
     last_segment_end_time_ms: int | None = None
     transmission_start_time_ms: int | None = None
+    buffer_start_time_ms: int | None = None
     missing_prior_context: bool = False
     expected_next_chunk_start_ms: int | None = None
     start_audio_offset_ms: int | None = None
     end_audio_offset_ms: int | None = None
+    buffer_duration_ms: int = 0
 
 
 @dataclass(frozen=True)
@@ -114,6 +119,8 @@ class StitchAudioConfig:
     significant_gap_ms: int
     stale_timeout_ms: int
     max_transmission_duration_ms: int
+    vad_pre_roll_ms: int
+    vad_post_roll_ms: int
     route_to_dlq: bool = True
 
     def __post_init__(self) -> None:
@@ -186,6 +193,7 @@ class FlushAction(StateMachineAction):
     reason: str
     feed_id: str
     time_range: TimeRange
+    speech_time_range: TimeRange
     contributing_audio_uris: list[str]
     missing_prior_context: bool
     missing_post_context: bool
