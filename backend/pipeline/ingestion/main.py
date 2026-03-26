@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from collectors.icecast_collector import capture_icecast_stream
-
 from backend.pipeline.common.logging import setup_logging
+from backend.pipeline.ingestion.collectors.icecast_collector import (
+    capture_icecast_stream,
+)
 from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
 from backend.pipeline.ingestion.settings import NormalizerSettings
 
