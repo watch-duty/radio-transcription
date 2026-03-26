@@ -431,5 +431,37 @@ class TestBackoffFormula(unittest.TestCase):
         assert min(15 * (2**9), 600) == 600
 
 
+class TestReleaseFeedsBatch(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.release_feeds_batch."""
+
+    async def test_returns_count_when_released(self) -> None:
+        """The number of released feeds is returned."""
+        pool = _make_pool(execute_result="UPDATE 2")
+        store = FeedStore(pool)
+
+        result = await store.release_feeds_batch(_WORKER_ID)
+
+        self.assertEqual(result, 2)
+
+    async def test_returns_zero_when_none_released(self) -> None:
+        """Zero is returned when no feeds were released."""
+        pool = _make_pool(execute_result="UPDATE 0")
+        store = FeedStore(pool)
+
+        result = await store.release_feeds_batch(_WORKER_ID)
+
+        self.assertEqual(result, 0)
+
+    async def test_passes_correct_parameters(self) -> None:
+        """The worker_id is passed as a parameter to the query."""
+        pool = _make_pool(execute_result="UPDATE 1")
+        store = FeedStore(pool)
+
+        await store.release_feeds_batch(_WORKER_ID)
+
+        args = pool.execute.call_args[0]
+        self.assertEqual(args[1], _WORKER_ID)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -628,6 +628,24 @@ class NormalizerRuntime:
                 timeout=self._normalizer_settings.graceful_shutdown_timeout_sec,
             )
 
+        logger.info(
+            "Releasing all leases for worker %s",
+            self._normalizer_settings.worker_id,
+        )
+        try:
+            count = await self._store.release_feeds_batch(
+                self._normalizer_settings.worker_id
+            )
+            logger.info(
+                "Successfully released %d leases for worker %s",
+                count,
+                self._normalizer_settings.worker_id,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to batch-release feeds on shutdown (safety net will recover)"
+            )
+
         await self._pubsub_client.close()
         await self._gcs_client.close()
 
