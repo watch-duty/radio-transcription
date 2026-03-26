@@ -45,7 +45,8 @@ class TestRouteCapturer(unittest.TestCase):
             route_capturer(feed, shutdown_event)
 
         self.assertEqual(
-            str(context.exception), "Unsupported source_type: unknown_radio_type"
+            str(context.exception),
+            "Unsupported source_type: unknown_radio_type",
         )
 
 
