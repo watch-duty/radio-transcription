@@ -151,6 +151,7 @@ class TranscribeAudioConfig:
     metrics_exporter_type: str
     metrics_config: str
     route_to_dlq: bool = True
+    canonical_bucket: str | None = None
 
 
 @dataclass(frozen=True)
