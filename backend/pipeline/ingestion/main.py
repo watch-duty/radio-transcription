@@ -17,7 +17,9 @@ if TYPE_CHECKING:
     from backend.pipeline.storage.feed_store import LeasedFeed
 
 
-def _route_capturer(feed: LeasedFeed, shutdown_event: asyncio.Event) -> AsyncIterator[tuple[bytes, datetime.datetime]]:
+def _route_capturer(
+    feed: LeasedFeed, shutdown_event: asyncio.Event
+) -> AsyncIterator[tuple[bytes, datetime.datetime]]:
     match feed["source_type"]:
         case "bcfy_feeds":
             return capture_icecast_stream(feed, shutdown_event)
