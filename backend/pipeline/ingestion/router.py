@@ -2,10 +2,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from backend.pipeline.ingestion.collectors.icecast_collector import (
-    capture_icecast_stream,
-)
-
 if TYPE_CHECKING:
     import asyncio
     import datetime
@@ -22,6 +18,9 @@ def route_capturer(
     """
     match feed["source_type"]:
         case "bcfy_feeds":
+            from backend.pipeline.ingestion.collectors.icecast_collector import (  # noqa: PLC0415
+                capture_icecast_stream,
+            )
             return capture_icecast_stream(feed, shutdown_event)
         case _:
             msg = f"Unsupported source_type: {feed['source_type']}"
