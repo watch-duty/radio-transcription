@@ -16,6 +16,7 @@ from backend.pipeline.schema_types.sed_metadata_pb2 import (
     SedMetadata,
     SoundEvent,
 )
+from backend.pipeline.schema_types.source_types_pb2 import SourceType
 from backend.pipeline.storage.feed_store import LeasedFeed
 
 _DUMMY_REQUEST_INFO = aiohttp.RequestInfo(
@@ -27,11 +28,11 @@ _DUMMY_REQUEST_INFO = aiohttp.RequestInfo(
 
 
 def _make_feed(
-    source_type: str, feed_id: int, fencing_token: int = 0
+    source_type: SourceType, feed_id: int, fencing_token: int = 0
 ) -> LeasedFeed:
     return LeasedFeed(
         id=uuid.UUID(int=feed_id),
-        name=f"test-{source_type}-{feed_id}",
+        name=f"test-{SourceType.Name(source_type)}-{feed_id}",
         source_type=source_type,
         last_processed_filename=None,
         fencing_token=fencing_token,
@@ -72,7 +73,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
 
         audio_chunk = b"\x00\x01" * 100
         feed_id = uuid.UUID(int=1234)
-        feed = _make_feed("BCFY_FEEDS", 1234)
+        feed = _make_feed(SourceType.BCFY_FEEDS, 1234)
         bucket = "test-bucket"
         chunk_seq = 42
         sound_event = SoundEvent(
@@ -125,7 +126,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
 
         audio_chunk = b"\x00\x01" * 1000
         feed_id = uuid.UUID(int=1234)
-        feed = _make_feed("BCFY_FEEDS", 1234)
+        feed = _make_feed(SourceType.BCFY_FEEDS, 1234)
         bucket = "test-bucket"
         chunk_seq = 5
 
@@ -165,7 +166,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
 
         audio_chunk = b""
         feed_id = uuid.UUID(int=5678)
-        feed = _make_feed("echo_feeds", 5678)
+        feed = _make_feed(SourceType.BCFY_CALLS, 5678)
         bucket = "test-bucket"
         chunk_seq = 0
 
@@ -179,7 +180,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
         )
 
         # Assert
-        expected_object_name = f"echo_feeds/{feed_id}/20260305T120000Z_0.flac"
+        expected_object_name = f"BCFY_CALLS/{feed_id}/20260305T120000Z_0.flac"
         expected_path = f"gs://{bucket}/{expected_object_name}"
 
         mock_storage.upload.assert_called_once_with(
@@ -205,7 +206,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
         mock_storage.upload.side_effect = Exception("GCS upload failed")
 
         audio_chunk = b"\x00\x01" * 1000
-        feed = _make_feed("BCFY_FEEDS", 1234)
+        feed = _make_feed(SourceType.BCFY_FEEDS, 1234)
         bucket = "test-bucket"
         chunk_seq = 5
 
@@ -225,7 +226,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
         mock_gcs_client, mock_storage = _make_gcs_client()
 
         audio_chunk = b"\x00\x01" * 100
-        feed = _make_feed("BCFY_FEEDS", 1234)
+        feed = _make_feed(SourceType.BCFY_FEEDS, 1234)
         bucket = "test-bucket"
 
         # Act - Upload twice with the same client
@@ -253,7 +254,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
 
         audio_chunk = b"\x00\x01" * 100
         feed_id = uuid.UUID(int=1234)
-        feed = _make_feed("BCFY_FEEDS", 1234)
+        feed = _make_feed(SourceType.BCFY_FEEDS, 1234)
         bucket = "test-bucket"
         chunk_seq = 999999999
 
@@ -283,7 +284,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
         mock_gcs_client, mock_storage = _make_gcs_client()
 
         audio_chunk = b"\x00\x01" * 100
-        feed = _make_feed("BCFY_FEEDS", 1234)
+        feed = _make_feed(SourceType.BCFY_FEEDS, 1234)
         bucket = "test-bucket"
         chunk_seq = 9
         # A large proto payload that guarantees the base64 metadata exceeds 8 KiB.
@@ -315,7 +316,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
         )
         mock_gcs_client, mock_storage = _make_gcs_client()
         feed_id = uuid.UUID(int=1234)
-        feed = _make_feed("BCFY_FEEDS", 1234, fencing_token=7)
+        feed = _make_feed(SourceType.BCFY_FEEDS, 1234, fencing_token=7)
 
         result = await gcp_helper.upload_staged_audio(
             mock_gcs_client,

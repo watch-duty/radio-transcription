@@ -10,6 +10,7 @@ import aiohttp
 
 from backend.pipeline.common.constants import GCS_METADATA_SIZE_LIMIT
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
+from backend.pipeline.schema_types.source_types_pb2 import SourceType
 
 if TYPE_CHECKING:
     from backend.pipeline.common.clients.gcs_client import GcsClient
@@ -104,13 +105,11 @@ async def upload_staged_audio(
     # never overwrite the current holder's objects.
     if fencing_token is not None:
         object_name = (
-            f"{feed['source_type']}/{feed['id']}/"
+            f"{SourceType.Name(feed['source_type'])}/{feed['id']}/"
             f"token-{fencing_token}/{timestamp}_{chunk_seq}.flac"
         )
     else:
-        object_name = (
-            f"{feed['source_type']}/{feed['id']}/{timestamp}_{chunk_seq}.flac"
-        )
+        object_name = f"{SourceType.Name(feed['source_type'])}/{feed['id']}/{timestamp}_{chunk_seq}.flac"
 
     return await upload_audio(
         gcs_client,
