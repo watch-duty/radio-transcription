@@ -61,8 +61,6 @@ class ParseAndKeyFn(beam.DoFn):
     for all subsequent stateful operations (like stitching) on that feed.
     """
 
-    # Turning off formatter to respect noqa exception.
-    # fmt: off
     @override
     def process(
         self, element: PubsubMessage, *args: Any, **kwargs: Any
@@ -93,8 +91,6 @@ class AddEventTimestamp(beam.DoFn):
     the chronological ordering of the hardware audio events.
     """
 
-    # Turning off formatter to respect noqa exception.
-    # fmt: off
     @override
     def process(
         self, element: tuple[str, bytes], *args: Any, **kwargs: Any
@@ -117,7 +113,9 @@ class AddEventTimestamp(beam.DoFn):
                     DEAD_LETTER_QUEUE_TAG, {"error": msg, "feed_id": feed_id}
                 )
             elif not chunk_proto.gcs_uri:
-                msg = f"AudioChunk missing required gcs_uri (feed_id: {feed_id})"
+                msg = (
+                    f"AudioChunk missing required gcs_uri (feed_id: {feed_id})"
+                )
                 yield beam.pvalue.TaggedOutput(
                     DEAD_LETTER_QUEUE_TAG, {"error": msg, "feed_id": feed_id}
                 )
@@ -146,8 +144,6 @@ class SerializeToPubSubMessageFn(beam.DoFn):
     and wraps it in a `PubsubMessage` for downstream publishing.
     """
 
-    # Turning off formatter to respect noqa exception.
-    # fmt: off
     @override
     def process(
         self, element: TranscriptionResult, *args: Any, **kwargs: Any
@@ -184,6 +180,7 @@ class SerializeToPubSubMessageFn(beam.DoFn):
             missing_post_context=element.missing_post_context,
             start_audio_offset=start_offset,
             end_audio_offset=end_offset,
+            canonical_audio_uri=element.canonical_audio_uri,
         )
         proto.start_timestamp.FromMicroseconds(
             element.time_range.start_ms * MICROSECONDS_PER_MS
@@ -252,8 +249,6 @@ class RestoreOrderFn(beam.DoFn):
             self.__class__, "chunks_dropped_late"
         )
 
-    # Turning off formatter to respect noqa exception.
-    # fmt: off
     @override
     def process(  # type: ignore[override]
         self,
@@ -335,8 +330,6 @@ class RestoreOrderFn(beam.DoFn):
             out_of_order_timer.clear()
             timer_active_state.clear()
 
-    # Turning off formatter to respect noqa exception.
-    # fmt: off
     @on_timer(OUT_OF_ORDER_TIMER_SPEC)
     def handle_gap_timeout(
         self,
@@ -413,8 +406,6 @@ class DownloadAudioFn(beam.DoFn):
         )
         self.audio_processor.setup()
 
-    # Turning off formatter to respect noqa exception.
-    # fmt: off
     @override
     def process(
         self,

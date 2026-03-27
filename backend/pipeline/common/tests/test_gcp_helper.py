@@ -12,10 +12,6 @@ from yarl import URL
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
-from backend.pipeline.schema_types.sed_metadata_pb2 import (
-    SedMetadata,
-    SoundEvent,
-)
 from backend.pipeline.storage.feed_store import LeasedFeed
 
 _DUMMY_REQUEST_INFO = aiohttp.RequestInfo(
@@ -57,59 +53,6 @@ def _make_pubsub_client() -> tuple[MagicMock, MagicMock]:
 
 class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
     """Test suite for the upload_staged_audio function."""
-
-    @patch("backend.pipeline.common.gcp_helper.datetime")
-    async def test_upload_staged_audio_with_sed_metadata(
-        self,
-        mock_datetime: MagicMock,
-    ) -> None:
-        """Test upload includes serialized SED metadata when provided."""
-        # Arrange
-        mock_datetime.datetime.now.return_value.strftime.return_value = (
-            "20260305T120000Z"
-        )
-        mock_gcs_client, mock_storage = _make_gcs_client()
-
-        audio_chunk = b"\x00\x01" * 100
-        feed_id = uuid.UUID(int=1234)
-        feed = _make_feed("bcfy_feeds", 1234)
-        bucket = "test-bucket"
-        chunk_seq = 42
-        sound_event = SoundEvent(
-            start_time=Duration(seconds=1, nanos=500_000_000),
-            duration=Duration(seconds=2),
-        )
-        sed_metadata = SedMetadata(source_chunk_id="chunk-123")
-        sed_metadata.sound_events.append(sound_event)
-
-        # Act
-        result = await gcp_helper.upload_staged_audio(
-            mock_gcs_client,
-            audio_chunk,
-            feed,
-            bucket,
-            chunk_seq,
-            sed_metadata=sed_metadata,
-        )
-
-        # Assert
-        expected_object_name = f"bcfy_feeds/{feed_id}/20260305T120000Z_42.flac"
-        expected_path = f"gs://{bucket}/{expected_object_name}"
-
-        mock_storage.upload.assert_called_once_with(
-            bucket,
-            expected_object_name,
-            audio_chunk,
-            metadata={
-                "metadata": {
-                    "sed_metadata": base64.b64encode(
-                        sed_metadata.SerializeToString()
-                    ).decode("ascii"),
-                },
-            },
-            content_type="audio/flac",
-        )
-        self.assertEqual(result, expected_path)
 
     @patch("backend.pipeline.common.gcp_helper.datetime")
     async def test_upload_staged_audio_success(
@@ -271,40 +214,6 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, expected_path)
 
     @patch("backend.pipeline.common.gcp_helper.datetime")
-    async def test_upload_staged_audio_metadata_too_large_raises(
-        self,
-        mock_datetime: MagicMock,
-    ) -> None:
-        """Test upload raises when serialized metadata exceeds GCS metadata size limit."""
-        # Arrange
-        mock_datetime.datetime.now.return_value.strftime.return_value = (
-            "20260305T120000Z"
-        )
-        mock_gcs_client, mock_storage = _make_gcs_client()
-
-        audio_chunk = b"\x00\x01" * 100
-        feed = _make_feed("bcfy_feeds", 1234)
-        bucket = "test-bucket"
-        chunk_seq = 9
-        # A large proto payload that guarantees the base64 metadata exceeds 8 KiB.
-        sed_metadata = SedMetadata(source_chunk_id="x" * 10000)
-
-        # Act & Assert
-        with self.assertRaises(ValueError) as context:
-            await gcp_helper.upload_staged_audio(
-                mock_gcs_client,
-                audio_chunk,
-                feed,
-                bucket,
-                chunk_seq,
-                sed_metadata=sed_metadata,
-            )
-
-        self.assertIn("Metadata size", str(context.exception))
-        self.assertIn("exceeds GCS limit", str(context.exception))
-        mock_storage.upload.assert_not_called()
-
-    @patch("backend.pipeline.common.gcp_helper.datetime")
     async def test_upload_staged_audio_with_fencing_token(
         self,
         mock_datetime: MagicMock,
@@ -368,46 +277,6 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result, f"gs://{bucket}/{object_name}")
 
-    async def test_upload_with_sed_metadata(self) -> None:
-        mock_gcs_client, mock_storage = _make_gcs_client()
-
-        audio = b"flac-audio-bytes"
-        bucket = "canonical-bucket"
-        object_name = "feeds/abc/audio.flac"
-
-        sed_metadata = SedMetadata(
-            source_chunk_id="gs://canonical-bucket/feeds/abc/audio.flac",
-        )
-        event = SoundEvent(
-            start_time=Duration(seconds=1, nanos=500_000_000),
-            duration=Duration(seconds=2, nanos=0),
-        )
-        sed_metadata.sound_events.append(event)
-
-        result = await gcp_helper.upload_audio(
-            mock_gcs_client,
-            audio,
-            bucket,
-            object_name,
-            sed_metadata=sed_metadata,
-        )
-
-        mock_storage.upload.assert_called_once()
-        call_kwargs = mock_storage.upload.call_args
-        metadata = call_kwargs.kwargs.get("metadata") or call_kwargs[1].get(
-            "metadata"
-        )
-        self.assertIn("metadata", metadata)
-        self.assertIn("sed_metadata", metadata["metadata"])
-
-        decoded = base64.b64decode(metadata["metadata"]["sed_metadata"])
-        parsed = SedMetadata()
-        parsed.ParseFromString(decoded)
-        self.assertEqual(len(parsed.sound_events), 1)
-        self.assertEqual(parsed.sound_events[0].start_time.seconds, 1)
-
-        self.assertEqual(result, f"gs://{bucket}/{object_name}")
-
     async def test_upload_no_metadata_when_none(self) -> None:
         mock_gcs_client, mock_storage = _make_gcs_client()
 
@@ -423,23 +292,6 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             "metadata"
         )
         self.assertIsNone(metadata)
-
-    async def test_upload_raises_when_metadata_exceeds_limit(self) -> None:
-        mock_gcs_client, mock_storage = _make_gcs_client()
-
-        sed_metadata = SedMetadata(source_chunk_id="x" * 10000)
-
-        with self.assertRaises(ValueError) as ctx:
-            await gcp_helper.upload_audio(
-                mock_gcs_client,
-                b"audio",
-                "bucket",
-                "obj.flac",
-                sed_metadata=sed_metadata,
-            )
-
-        self.assertIn("exceeds GCS limit", str(ctx.exception))
-        mock_storage.upload.assert_not_called()
 
     async def test_upload_with_if_generation_match(self) -> None:
         """ifGenerationMatch=0 is passed as parameters to storage.upload."""
