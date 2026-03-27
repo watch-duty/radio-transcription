@@ -16,7 +16,9 @@ A snapshot from 2026-01 is in `all_bcfy_feeds_202601.csv`.
 
 ```sh
 # pass output from above
-python fetch_all_broadcastify_archive_urls.py <feeds_csv>
+python fetch_all_broadcastify_archive_urls.py <feeds_csv> [--use-trial-api] 
+# --use-trial-api uses the 12-hour trial API (faster, but only 12 hours of data)
+# without --use-trial-api, it uses the full archive API
 # outputs a new CSV file with the feed ID, URL, and is_audio_trimmed columns
 ```
 
