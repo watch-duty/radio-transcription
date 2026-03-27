@@ -52,6 +52,7 @@ class Transcriber(abc.ABC):
 
 class KeywordItem(pydantic.BaseModel):
     """Pydantic model representing a single keyword/phrase entry."""
+
     phrase: str
     boost: float | None = None
 
@@ -65,7 +66,9 @@ class ChirpConfig(ConfigBase):
     language_codes: list[str] = ["en-US"]
     enable_automatic_punctuation: bool = True
     enable_word_time_offsets: bool = False
-    keywords_file_path: str = "/app/backend/pipeline/transcription/chirp_keywords.json"
+    keywords_file_path: str = (
+        "/app/backend/pipeline/transcription/chirp_keywords.json"
+    )
     boost: float = 10.0
 
 
@@ -105,7 +108,9 @@ class GoogleChirpV3Transcriber(Transcriber):
             if p.exists():
                 try:
                     with p.open("r") as f:
-                        self.keywords_list = pydantic.TypeAdapter(list[KeywordItem]).validate_json(f.read())
+                        self.keywords_list = pydantic.TypeAdapter(
+                            list[KeywordItem]
+                        ).validate_json(f.read())
                         logger.info(
                             "Loaded %d keywords from %s",
                             len(self.keywords_list),

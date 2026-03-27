@@ -68,7 +68,9 @@ class TestTranscribers(unittest.TestCase):
             mock_client_instance.recognize.return_value = mock_response
 
             transcriber = get_transcriber(
-                TranscriberType.GOOGLE_CHIRP_V3, "test-project", '{"keywords_file_path": ""}'
+                TranscriberType.GOOGLE_CHIRP_V3,
+                "test-project",
+                '{"keywords_file_path": ""}',
             )
             transcriber.setup()
 
@@ -102,7 +104,9 @@ class TestTranscribers(unittest.TestCase):
             ]
 
             transcriber = get_transcriber(
-                TranscriberType.GOOGLE_CHIRP_V3, "test-project", '{"keywords_file_path": ""}'
+                TranscriberType.GOOGLE_CHIRP_V3,
+                "test-project",
+                '{"keywords_file_path": ""}',
             )
             transcriber.setup()
 
@@ -185,7 +189,6 @@ class TestTranscribers(unittest.TestCase):
                 else:
                     self.assertIsInstance(item, str)
 
-
     def test_google_chirp_transcriber_setup_missing_file_fail(self) -> None:
         """Verifies that setup() fails fast if keywords_file_path is specified but missing."""
         with patch(
@@ -225,10 +228,14 @@ class TestTranscribers(unittest.TestCase):
             finally:
                 pathlib.Path(temp_path).unlink()
 
-    def test_google_chirp_transcriber_transcribe_before_setup_fail(self) -> None:
+    def test_google_chirp_transcriber_transcribe_before_setup_fail(
+        self,
+    ) -> None:
         """Verifies that transcribe() throws RuntimeError if called before setup()."""
         transcriber = get_transcriber(
-            TranscriberType.GOOGLE_CHIRP_V3, "test-project", '{"keywords_file_path": ""}'
+            TranscriberType.GOOGLE_CHIRP_V3,
+            "test-project",
+            '{"keywords_file_path": ""}',
         )
         with self.assertRaises(RuntimeError):
             transcriber.transcribe(audio_data=b"\x00")
