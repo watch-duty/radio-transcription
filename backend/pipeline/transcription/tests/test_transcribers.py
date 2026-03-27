@@ -256,7 +256,9 @@ class TestTranscribers(unittest.TestCase):
             finally:
                 pathlib.Path(temp_path).unlink()
 
-    def test_google_chirp_transcriber_transcribe_before_setup_fail(self) -> None:
+    def test_google_chirp_transcriber_transcribe_before_setup_fail(
+        self,
+    ) -> None:
         """Verifies that transcribe() throws RuntimeError if called before setup()."""
         transcriber = GoogleChirpV3Transcriber(
             "test-project", ChirpConfig(keywords_file_path=None)
