@@ -1,12 +1,12 @@
 """Unit tests for the audio transcription plugins."""
 
+import json
+import pathlib
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
 from google.api_core.exceptions import GoogleAPIError
-import json
-import pathlib
-import tempfile
 
 from backend.pipeline.common.constants import BYTES_PER_SECOND_16KHZ_MONO
 from backend.pipeline.transcription.enums import TranscriberType
@@ -35,7 +35,7 @@ class TestTranscribers(unittest.TestCase):
             transcriber = get_transcriber(
                 TranscriberType.GOOGLE_CHIRP_V3,
                 "test-project",
-                '{"location": "us"}',
+                '{"location": "us", "keywords_file_path": ""}',
             )
             transcriber.setup()
 
@@ -68,7 +68,7 @@ class TestTranscribers(unittest.TestCase):
             mock_client_instance.recognize.return_value = mock_response
 
             transcriber = get_transcriber(
-                TranscriberType.GOOGLE_CHIRP_V3, "test-project", "{}"
+                TranscriberType.GOOGLE_CHIRP_V3, "test-project", '{"keywords_file_path": ""}'
             )
             transcriber.setup()
 
@@ -102,7 +102,7 @@ class TestTranscribers(unittest.TestCase):
             ]
 
             transcriber = get_transcriber(
-                TranscriberType.GOOGLE_CHIRP_V3, "test-project", "{}"
+                TranscriberType.GOOGLE_CHIRP_V3, "test-project", '{"keywords_file_path": ""}'
             )
             transcriber.setup()
 

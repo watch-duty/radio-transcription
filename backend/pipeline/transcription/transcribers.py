@@ -106,17 +106,18 @@ class GoogleChirpV3Transcriber(Transcriber):
             if p.exists():
                 try:
                     with p.open("r") as f:
-                        raw_data = json.load(f)
-                        self.keywords_list = pydantic.TypeAdapter(list[KeywordItem]).validate_python(raw_data)
+                        self.keywords_list = pydantic.TypeAdapter(list[KeywordItem]).validate_json(f.read())
                         logger.info(
                             "Loaded %d keywords from %s",
                             len(self.keywords_list),
                             self.config.keywords_file_path,
                         )
-                except Exception:
-                    logger.exception("Failed to load keywords from file %s", self.config.keywords_file_path)
+                except Exception as e:
+                    msg = f"Failed to load keywords from file {self.config.keywords_file_path}: {e}"
+                    raise ValueError(msg) from e
             else:
-                logger.warning("Keywords file %s does not exist", self.config.keywords_file_path)
+                msg = f"Keywords file {self.config.keywords_file_path} does not exist"
+                raise FileNotFoundError(msg)
 
     @tenacity.retry(
         wait=tenacity.wait_exponential(
