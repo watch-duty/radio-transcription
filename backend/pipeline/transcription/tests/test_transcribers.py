@@ -307,5 +307,47 @@ class TestTranscribers(unittest.TestCase):
                 else:
                     self.assertIsInstance(item, str)
 
+    def test_google_chirp_transcriber_setup_missing_file_fail(self) -> None:
+        """Verifies that setup() fails fast if keywords_file_path is specified but missing."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.SpeechClient"
+        ) as mock_speech_client_cls:
+            mock_client_instance = MagicMock()
+            mock_speech_client_cls.return_value = mock_client_instance
+
+            transcriber = GoogleChirpV3Transcriber(
+                "test-project", ChirpConfig(keywords_file_path="/path/to/nonexistent/file.json")
+            )
+            with self.assertRaises(FileNotFoundError):
+                transcriber.setup()
+
+    def test_google_chirp_transcriber_setup_corrupt_file_fail(self) -> None:
+        """Verifies that setup() fails fast if keywords_file_path is specified but un-parsable."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.SpeechClient"
+        ) as mock_speech_client_cls:
+            mock_client_instance = MagicMock()
+            mock_speech_client_cls.return_value = mock_client_instance
+
+            with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+                f.write('{"corrupt": "invalid_json"')
+                temp_path = f.name
+
+            try:
+                transcriber = GoogleChirpV3Transcriber(
+                    "test-project", ChirpConfig(keywords_file_path=temp_path)
+                )
+                with self.assertRaises(ValueError):
+                    transcriber.setup()
+            finally:
+                pathlib.Path(temp_path).unlink()
+
+    def test_google_chirp_transcriber_transcribe_before_setup_fail(self) -> None:
+        """Verifies that transcribe() throws RuntimeError if called before setup()."""
+        transcriber = GoogleChirpV3Transcriber(
+            "test-project", ChirpConfig(keywords_file_path=None)
+        )
+        with self.assertRaises(RuntimeError):
+            transcriber.transcribe(audio_data=b"\x00")
 if __name__ == "__main__":
     unittest.main()
