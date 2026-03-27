@@ -38,10 +38,10 @@ leased AS (
         fencing_token = fencing_token + 1
     FROM available_feed
     WHERE feeds.id = available_feed.id
-    RETURNING feeds.id, feeds.name, feeds.source_type,
+    RETURNING feeds.id, feeds.name, feeds.source_type, feeds.source_type_enum,
               feeds.last_processed_filename, feeds.fencing_token
 )
-SELECT leased.id, leased.name, leased.source_type,
+SELECT leased.id, leased.name, leased.source_type, leased.source_type_enum,
        leased.last_processed_filename, leased.fencing_token, fpi.stream_url
 FROM leased
 LEFT JOIN feed_properties_icecast fpi ON fpi.feed_id = leased.id
@@ -121,10 +121,10 @@ leased AS (
         fencing_token = fencing_token + 1
     FROM available_feeds
     WHERE feeds.id = available_feeds.id
-    RETURNING feeds.id, feeds.name, feeds.source_type,
+    RETURNING feeds.id, feeds.name, feeds.source_type, feeds.source_type_enum,
               feeds.last_processed_filename, feeds.fencing_token
 )
-SELECT leased.id, leased.name, leased.source_type,
+SELECT leased.id, leased.name, leased.source_type, leased.source_type_enum,
        leased.last_processed_filename, leased.fencing_token, fpi.stream_url
 FROM leased
 LEFT JOIN feed_properties_icecast fpi ON fpi.feed_id = leased.id
