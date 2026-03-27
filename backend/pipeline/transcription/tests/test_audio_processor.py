@@ -90,6 +90,18 @@ class AudioProcessorTest(unittest.TestCase):
         self.assertIsInstance(flac_bytes, bytes)
         self.assertTrue(flac_bytes.startswith(b"fLaC"))
 
+    @unittest.skipIf(
+        shutil.which("ffmpeg") is None, "ffmpeg is required for pydub I/O tests"
+    )
+    def test_export_m4a(self) -> None:
+        """Tests that exporting to M4A produces a valid byte array with valid ftyp header."""
+        audio = AudioSegment.silent(duration=500)
+        m4a_bytes = self.processor.export_m4a(audio)
+        self.assertIsInstance(m4a_bytes, bytes)
+        self.assertTrue(len(m4a_bytes) > 0)
+        # M4A (MP4 container) should contain an ftyp box
+        self.assertIn(b"ftyp", m4a_bytes)
+
     @pytest.mark.skipif(
         shutil.which("ffmpeg") is None,
         reason="ffmpeg is required for pydub I/O tests",
