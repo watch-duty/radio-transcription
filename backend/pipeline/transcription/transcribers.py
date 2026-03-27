@@ -6,8 +6,11 @@ allowing the Beam pipeline to dynamically swap between different engines
 """
 
 import abc
+import json
 import logging
+import pathlib
 
+import pydantic
 import tenacity
 from google.api_core import client_options
 from google.api_core.exceptions import GoogleAPIError, RetryError
@@ -48,6 +51,12 @@ class Transcriber(abc.ABC):
         """Transcribes the raw audio bytes and returns the text transcript."""
 
 
+class KeywordItem(pydantic.BaseModel):
+    """Pydantic model representing a single keyword/phrase entry."""
+    phrase: str
+    boost: float | None = None
+
+
 class ChirpConfig(ConfigBase):
     """Strongly typed configuration for the Google Chirp V3 Transcriber."""
 
@@ -57,6 +66,8 @@ class ChirpConfig(ConfigBase):
     language_codes: list[str] = ["en-US"]
     enable_automatic_punctuation: bool = True
     enable_word_time_offsets: bool = False
+    keywords_file_path: str = "/app/backend/pipeline/transcription/chirp_keywords.json"
+    boost: float = 10.0
 
 
 class GoogleChirpV3Transcriber(Transcriber):
@@ -85,9 +96,27 @@ class GoogleChirpV3Transcriber(Transcriber):
         return SpeechClient(client_options=opts)
 
     def setup(self) -> None:
-        """Instantiates the Speech-to-Text API gRPC client."""
+        """Instantiates the Speech-to-Text API gRPC client and loads keywords if available."""
         self.config = ChirpConfig.from_json(self.config_json)
         self.client = self._init_client()
+        self.keywords_list = []
+
+        if self.config and self.config.keywords_file_path:
+            p = pathlib.Path(self.config.keywords_file_path)
+            if p.exists():
+                try:
+                    with p.open("r") as f:
+                        raw_data = json.load(f)
+                        self.keywords_list = pydantic.TypeAdapter(list[KeywordItem]).validate_python(raw_data)
+                        logger.info(
+                            "Loaded %d keywords from %s",
+                            len(self.keywords_list),
+                            self.config.keywords_file_path,
+                        )
+                except Exception:
+                    logger.exception("Failed to load keywords from file %s", self.config.keywords_file_path)
+            else:
+                logger.warning("Keywords file %s does not exist", self.config.keywords_file_path)
 
     @tenacity.retry(
         wait=tenacity.wait_exponential(
@@ -114,6 +143,31 @@ class GoogleChirpV3Transcriber(Transcriber):
             duration_sec,
         )
 
+        adaptation = None
+        if self.keywords_list:
+            phrases = []
+            for kw in self.keywords_list:
+                phrase_value = kw.phrase
+                phrase_boost = kw.boost or self.config.boost
+
+                if phrase_value:
+                    phrases.append(
+                        cloud_speech.PhraseSet.Phrase(
+                            value=phrase_value,
+                            boost=phrase_boost,
+                        )
+                    )
+
+            adaptation = cloud_speech.SpeechAdaptation(
+                phrase_sets=[
+                    cloud_speech.SpeechAdaptation.AdaptationPhraseSet(
+                        inline_phrase_set=cloud_speech.PhraseSet(
+                            phrases=phrases,
+                        )
+                    )
+                ]
+            )
+
         request = cloud_speech.RecognizeRequest(
             recognizer=cloud_speech.SpeechClient.recognizer_path(
                 self.project_id, self.config.location, self.config.recognizer
@@ -126,6 +180,7 @@ class GoogleChirpV3Transcriber(Transcriber):
                     enable_automatic_punctuation=self.config.enable_automatic_punctuation,
                     enable_word_time_offsets=self.config.enable_word_time_offsets,
                 ),
+                adaptation=adaptation,
             ),
             content=audio_data,
         )
