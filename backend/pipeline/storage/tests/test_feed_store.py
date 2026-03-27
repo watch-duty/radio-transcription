@@ -327,7 +327,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
             {
                 "id": _FEED_ID,
                 "name": "Feed A",
-                "source_type": "bcfy_feeds",
+                "source_type": "BCFY_FEEDS",
                 "last_processed_filename": None,
                 "fencing_token": 1,
                 "stream_url": "http://stream.example.com/a",
@@ -335,7 +335,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
             {
                 "id": _FEED_ID_B,
                 "name": "Feed B",
-                "source_type": "bcfy_feeds",
+                "source_type": "BCFY_FEEDS",
                 "last_processed_filename": "gs://bucket/path",
                 "fencing_token": 1,
                 "stream_url": None,

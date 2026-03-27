@@ -72,7 +72,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
 
         audio_chunk = b"\x00\x01" * 100
         feed_id = uuid.UUID(int=1234)
-        feed = _make_feed("bcfy_feeds", 1234)
+        feed = _make_feed("BCFY_FEEDS", 1234)
         bucket = "test-bucket"
         chunk_seq = 42
         sound_event = SoundEvent(
@@ -125,7 +125,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
 
         audio_chunk = b"\x00\x01" * 1000
         feed_id = uuid.UUID(int=1234)
-        feed = _make_feed("bcfy_feeds", 1234)
+        feed = _make_feed("BCFY_FEEDS", 1234)
         bucket = "test-bucket"
         chunk_seq = 5
 
@@ -205,7 +205,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
         mock_storage.upload.side_effect = Exception("GCS upload failed")
 
         audio_chunk = b"\x00\x01" * 1000
-        feed = _make_feed("bcfy_feeds", 1234)
+        feed = _make_feed("BCFY_FEEDS", 1234)
         bucket = "test-bucket"
         chunk_seq = 5
 
@@ -225,7 +225,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
         mock_gcs_client, mock_storage = _make_gcs_client()
 
         audio_chunk = b"\x00\x01" * 100
-        feed = _make_feed("bcfy_feeds", 1234)
+        feed = _make_feed("BCFY_FEEDS", 1234)
         bucket = "test-bucket"
 
         # Act - Upload twice with the same client
@@ -253,7 +253,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
 
         audio_chunk = b"\x00\x01" * 100
         feed_id = uuid.UUID(int=1234)
-        feed = _make_feed("bcfy_feeds", 1234)
+        feed = _make_feed("BCFY_FEEDS", 1234)
         bucket = "test-bucket"
         chunk_seq = 999999999
 
@@ -283,7 +283,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
         mock_gcs_client, mock_storage = _make_gcs_client()
 
         audio_chunk = b"\x00\x01" * 100
-        feed = _make_feed("bcfy_feeds", 1234)
+        feed = _make_feed("BCFY_FEEDS", 1234)
         bucket = "test-bucket"
         chunk_seq = 9
         # A large proto payload that guarantees the base64 metadata exceeds 8 KiB.
@@ -315,7 +315,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
         )
         mock_gcs_client, mock_storage = _make_gcs_client()
         feed_id = uuid.UUID(int=1234)
-        feed = _make_feed("bcfy_feeds", 1234, fencing_token=7)
+        feed = _make_feed("BCFY_FEEDS", 1234, fencing_token=7)
 
         result = await gcp_helper.upload_staged_audio(
             mock_gcs_client,
