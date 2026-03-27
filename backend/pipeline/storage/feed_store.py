@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, TypedDict
-from backend.pipeline.schema_types.source_types_pb2 import SourceType
+
 
 if TYPE_CHECKING:
     import uuid
 
     import asyncpg
+
+    from backend.pipeline.schema_types.source_types_pb2 import SourceType
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +213,7 @@ class FeedStore:
         return LeasedFeed(
             id=row["id"],
             name=row["name"],
-            source_type=SourceType(row["source_type"]),
+            source_type=row["source_type"],
             last_processed_filename=row["last_processed_filename"],
             fencing_token=row["fencing_token"],
             stream_url=row["stream_url"],
@@ -440,7 +442,7 @@ class FeedStore:
             LeasedFeed(
                 id=row["id"],
                 name=row["name"],
-                source_type=SourceType(row["source_type"]),
+                source_type=row["source_type"],
                 last_processed_filename=row["last_processed_filename"],
                 fencing_token=row["fencing_token"],
                 stream_url=row["stream_url"],
