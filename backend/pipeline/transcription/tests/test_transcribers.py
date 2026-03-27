@@ -1,14 +1,12 @@
 """Unit tests for the audio transcription plugins."""
 
 import json
+import pathlib
 import tempfile
 import unittest
 from unittest.mock import MagicMock, call, patch
 
 from google.api_core.exceptions import GoogleAPIError
-import json
-import pathlib
-import tempfile
 
 from backend.pipeline.common.constants import BYTES_PER_SECOND_16KHZ_MONO
 from backend.pipeline.transcription.enums import TranscriberType
