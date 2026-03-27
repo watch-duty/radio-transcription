@@ -10,6 +10,7 @@ import aiohttp
 
 from backend.pipeline.common.constants import GCS_METADATA_SIZE_LIMIT
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
+from backend.pipeline.schema_types.source_types_pb2 import SourceType
 
 if TYPE_CHECKING:
     from backend.pipeline.common.clients.gcs_client import GcsClient
@@ -102,14 +103,15 @@ async def upload_staged_audio(
     # if token < max_seen."  Putting the token in the path sidesteps this:
     # different lease holders write to different paths, so a zombie can
     # never overwrite the current holder's objects.
+    source_type_name = SourceType.Name(feed["source_type"])
     if fencing_token is not None:
         object_name = (
-            f"{feed['source_type']}/{feed['id']}/"
+            f"{source_type_name}/{feed['id']}/"
             f"token-{fencing_token}/{timestamp}_{chunk_seq}.flac"
         )
     else:
         object_name = (
-            f"{feed['source_type']}/{feed['id']}/{timestamp}_{chunk_seq}.flac"
+            f"{source_type_name}/{feed['id']}/{timestamp}_{chunk_seq}.flac"
         )
 
     return await upload_audio(

@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS feeds (
     source_type             TEXT NOT NULL REFERENCES source_types(slug),
     status                  feed_status NOT NULL DEFAULT 'unclaimed'::feed_status,
     failure_count           INT NOT NULL DEFAULT 0,
+    source_type_enum        INT NOT NULL DEFAULT 0,
 
     -- Dynamic leasing & state columns
     worker_id               UUID,

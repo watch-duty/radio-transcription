@@ -13,6 +13,7 @@ from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.ingestion.collectors.icecast_collector import (
     capture_icecast_stream,
 )
+from backend.pipeline.schema_types.source_types_pb2 import SourceType
 
 if TYPE_CHECKING:
     from backend.pipeline.storage.feed_store import LeasedFeed
@@ -42,7 +43,7 @@ async def run_local_capture() -> None:
     feed: LeasedFeed = {
         "id": uuid.uuid4(),
         "name": "local-icecast-test",
-        "source_type": "icecast",
+        "source_type": SourceType.BCFY_FEEDS,
         "last_processed_filename": None,
         "fencing_token": 0,
         "stream_url": stream_url,

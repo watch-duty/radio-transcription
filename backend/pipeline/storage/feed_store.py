@@ -8,6 +8,8 @@ if TYPE_CHECKING:
 
     import asyncpg
 
+    from backend.pipeline.schema_types.source_types_pb2 import SourceType
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,10 +38,10 @@ leased AS (
         fencing_token = fencing_token + 1
     FROM available_feed
     WHERE feeds.id = available_feed.id
-    RETURNING feeds.id, feeds.name, feeds.source_type,
+    RETURNING feeds.id, feeds.name, feeds.source_type, feeds.source_type_enum,
               feeds.last_processed_filename, feeds.fencing_token
 )
-SELECT leased.id, leased.name, leased.source_type,
+SELECT leased.id, leased.name, leased.source_type, leased.source_type_enum,
        leased.last_processed_filename, leased.fencing_token, fpi.stream_url
 FROM leased
 LEFT JOIN feed_properties_icecast fpi ON fpi.feed_id = leased.id
@@ -119,10 +121,10 @@ leased AS (
         fencing_token = fencing_token + 1
     FROM available_feeds
     WHERE feeds.id = available_feeds.id
-    RETURNING feeds.id, feeds.name, feeds.source_type,
+    RETURNING feeds.id, feeds.name, feeds.source_type, feeds.source_type_enum,
               feeds.last_processed_filename, feeds.fencing_token
 )
-SELECT leased.id, leased.name, leased.source_type,
+SELECT leased.id, leased.name, leased.source_type, leased.source_type_enum,
        leased.last_processed_filename, leased.fencing_token, fpi.stream_url
 FROM leased
 LEFT JOIN feed_properties_icecast fpi ON fpi.feed_id = leased.id
@@ -154,7 +156,7 @@ class LeasedFeed(TypedDict):
 
     id: uuid.UUID
     name: str
-    source_type: str
+    source_type: SourceType
     last_processed_filename: str | None
     fencing_token: int
     stream_url: str | None
@@ -210,7 +212,7 @@ class FeedStore:
         return LeasedFeed(
             id=row["id"],
             name=row["name"],
-            source_type=row["source_type"],
+            source_type=row["source_type_enum"],
             last_processed_filename=row["last_processed_filename"],
             fencing_token=row["fencing_token"],
             stream_url=row["stream_url"],
@@ -439,7 +441,7 @@ class FeedStore:
             LeasedFeed(
                 id=row["id"],
                 name=row["name"],
-                source_type=row["source_type"],
+                source_type=row["source_type_enum"],
                 last_processed_filename=row["last_processed_filename"],
                 fencing_token=row["fencing_token"],
                 stream_url=row["stream_url"],

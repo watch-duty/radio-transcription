@@ -5,6 +5,7 @@ import unittest
 import uuid
 from unittest import mock
 
+from backend.pipeline.schema_types.source_types_pb2 import SourceType
 from backend.pipeline.storage.feed_store import (
     FeedStore,
     HeartbeatResult,
@@ -18,7 +19,7 @@ _WORKER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _LEASE_ROW = {
     "id": _FEED_ID,
     "name": "My Feed",
-    "source_type": "bcfy_feeds",
+    "source_type_enum": SourceType.BCFY_FEEDS,
     "last_processed_filename": None,
     "fencing_token": 1,
     "stream_url": "http://stream.example.com/feed",
@@ -52,7 +53,7 @@ class TestLeaseFeed(unittest.IsolatedAsyncioTestCase):
         expected: LeasedFeed = {
             "id": _FEED_ID,
             "name": "My Feed",
-            "source_type": "bcfy_feeds",
+            "source_type": SourceType.BCFY_FEEDS,
             "last_processed_filename": None,
             "fencing_token": 1,
             "stream_url": "http://stream.example.com/feed",
@@ -326,7 +327,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
             {
                 "id": _FEED_ID,
                 "name": "Feed A",
-                "source_type": "bcfy_feeds",
+                "source_type_enum": SourceType.BCFY_FEEDS,
                 "last_processed_filename": None,
                 "fencing_token": 1,
                 "stream_url": "http://stream.example.com/a",
@@ -334,7 +335,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
             {
                 "id": _FEED_ID_B,
                 "name": "Feed B",
-                "source_type": "bcfy_feeds",
+                "source_type_enum": SourceType.BCFY_FEEDS,
                 "last_processed_filename": "gs://bucket/path",
                 "fencing_token": 1,
                 "stream_url": None,
