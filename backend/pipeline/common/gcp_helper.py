@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import datetime
 import logging
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
-from backend.pipeline.common.constants import GCS_METADATA_SIZE_LIMIT
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 
 if TYPE_CHECKING:

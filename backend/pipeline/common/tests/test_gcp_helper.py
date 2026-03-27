@@ -1,11 +1,9 @@
-import base64
 import datetime
 import unittest
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
-from google.protobuf.duration_pb2 import Duration  # type: ignore
 from multidict import CIMultiDict, CIMultiDictProxy
 from yarl import URL
 
