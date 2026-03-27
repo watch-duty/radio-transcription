@@ -1,4 +1,9 @@
+FROM gcr.io/dataflow-templates-base/python3-template-launcher-base AS template_launcher
+
 FROM apache/beam_python3.13_sdk:2.70.0
+
+# Copy the Flex Template launcher binary from the base image
+COPY --from=template_launcher /opt/google/dataflow/python_template_launcher /opt/google/dataflow/python_template_launcher
 
 # Install OS dependencies: ffmpeg and libomp5
 USER root
