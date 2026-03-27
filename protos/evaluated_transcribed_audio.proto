@@ -59,4 +59,7 @@ message EvaluatedTranscribedAudio {
   }
 
   repeated EvaluationErrorType evaluation_errors = 13;
+
+  // The URI of the audio file optimized for playback (e.g., compressed M4A/Opus).
+  string playback_audio_uri = 14;
 }

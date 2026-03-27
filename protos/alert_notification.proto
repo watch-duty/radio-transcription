@@ -51,4 +51,7 @@ message AlertNotification {
   // --- Decisions ---
   // The list of rules triggered by this transcript during evaluation (e.g. fire, medical).
   repeated string evaluation_decisions = 12;
+
+  // The URI of the audio file optimized for playback (e.g., compressed M4A/Opus).
+  string playback_audio_uri = 13;
 }
