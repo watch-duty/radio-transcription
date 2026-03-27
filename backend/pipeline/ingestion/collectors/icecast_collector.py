@@ -18,9 +18,6 @@ from backend.pipeline.common.constants import (
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
 )
-from backend.pipeline.common.logging import setup_logging
-from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
-from backend.pipeline.ingestion.settings import NormalizerSettings
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -266,20 +263,3 @@ async def _cleanup_ffmpeg_process(
                 feed_name,
                 e,
             )
-
-
-def main() -> None:
-    """
-    Entry point for the Icecast stream collector.
-
-    Initializes NormalizerRuntime with the Icecast capture function and
-    blocks until graceful shutdown completes.
-    """
-    setup_logging()
-    settings = NormalizerSettings()
-    runtime = NormalizerRuntime(capture_icecast_stream, settings)
-    runtime.run()
-
-
-if __name__ == "__main__":
-    main()
