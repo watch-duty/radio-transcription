@@ -1,8 +1,6 @@
 syntax = "proto3";
 
 // Audio data sources.
-// Note: Updates to this enum should be in sync with the source_types.sql
-// Add to 006_seed_source_types.sql
 enum SourceType {
     SOURCE_TYPE_UNSPECIFIED = 0;
     BCFY_FEEDS = 1;

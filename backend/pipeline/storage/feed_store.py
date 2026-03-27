@@ -212,7 +212,7 @@ class FeedStore:
         return LeasedFeed(
             id=row["id"],
             name=row["name"],
-            source_type=row["source_type"],
+            source_type=row["source_type_enum"],
             last_processed_filename=row["last_processed_filename"],
             fencing_token=row["fencing_token"],
             stream_url=row["stream_url"],
@@ -441,7 +441,7 @@ class FeedStore:
             LeasedFeed(
                 id=row["id"],
                 name=row["name"],
-                source_type=row["source_type"],
+                source_type=row["source_type_enum"],
                 last_processed_filename=row["last_processed_filename"],
                 fencing_token=row["fencing_token"],
                 stream_url=row["stream_url"],
