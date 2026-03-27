@@ -103,7 +103,7 @@ async def upload_staged_audio(
     # if token < max_seen."  Putting the token in the path sidesteps this:
     # different lease holders write to different paths, so a zombie can
     # never overwrite the current holder's objects.
-    source_type_name = SourceType.Name(int(feed["source_type"]))
+    source_type_name = SourceType.Name(feed["source_type"])
     if fencing_token is not None:
         object_name = (
             f"{source_type_name}/{feed['id']}/"
