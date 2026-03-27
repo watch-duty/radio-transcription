@@ -181,6 +181,7 @@ class SerializeToPubSubMessageFn(beam.DoFn):
             start_audio_offset=start_offset,
             end_audio_offset=end_offset,
             canonical_audio_uri=element.canonical_audio_uri,
+            playback_audio_uri=element.playback_audio_uri,
         )
         proto.start_timestamp.FromMicroseconds(
             element.time_range.start_ms * MICROSECONDS_PER_MS

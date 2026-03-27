@@ -496,7 +496,7 @@ class TranscribeAudioFn(beam.DoFn):
         )
         self.metrics_exporter.setup()
 
-    def _export_and_transcribe(
+    def _export_and_transcribe(  # noqa: PLR0915
         self,
         request: FlushRequest,
     ) -> TranscriptionResult | None:
@@ -536,6 +536,8 @@ class TranscribeAudioFn(beam.DoFn):
         flac_bytes = self.audio_processor.export_flac(processed_audio)
 
         canonical_audio_uri = None
+        playback_audio_uri = None
+
         if self.config.stitched_audio_bucket:
             if not self.audio_processor or not self.audio_processor.gcs_client:
                 msg = "AudioProcessor or GCS client not initialized"
@@ -545,29 +547,40 @@ class TranscribeAudioFn(beam.DoFn):
                 request.time_range.start_ms / 1000.0, tz=UTC
             )
             timestamp_str = dt.strftime("%Y%m%dT%H%M%SZ")
-            object_name = (
-                f"stitched/{request.feed_id}/{dt:%Y/%m/%d}/{timestamp_str}.flac"
+
+            flac_object_name = f"stitched/lossless/{request.feed_id}/{dt:%Y/%m/%d}/{timestamp_str}.flac"
+            m4a_object_name = f"stitched/playback/{request.feed_id}/{dt:%Y/%m/%d}/{timestamp_str}.m4a"
+
+            canonical_audio_uri = (
+                f"gs://{self.config.stitched_audio_bucket}/{flac_object_name}"
+            )
+            playback_audio_uri = (
+                f"gs://{self.config.stitched_audio_bucket}/{m4a_object_name}"
             )
 
             try:
                 bucket = self.audio_processor.gcs_client.bucket(
                     self.config.stitched_audio_bucket
                 )
-                blob = bucket.blob(object_name)
-                blob.upload_from_string(flac_bytes, content_type="audio/flac")
+                # Upload FLAC
+                flac_blob = bucket.blob(flac_object_name)
+                flac_blob.upload_from_string(
+                    flac_bytes, content_type="audio/flac"
+                )
                 logger.info(
-                    "Uploaded stitched audio to gs://%s/%s",
-                    self.config.stitched_audio_bucket,
-                    object_name,
+                    "Uploaded stitched audio to %s", canonical_audio_uri
                 )
-                canonical_audio_uri = (
-                    f"gs://{self.config.stitched_audio_bucket}/{object_name}"
-                )
+
+                # Export & Upload M4A
+                m4a_bytes = self.audio_processor.export_m4a(processed_audio)
+                m4a_blob = bucket.blob(m4a_object_name)
+                m4a_blob.upload_from_string(m4a_bytes, content_type="audio/mp4")
+                logger.info("Uploaded playback audio to %s", playback_audio_uri)
+
             except Exception:
                 logger.exception(
-                    "Failed to upload stitched audio to gs://%s/%s",
+                    "Failed to upload audio derivatives to gs://%s/",
                     self.config.stitched_audio_bucket,
-                    object_name,
                 )
                 raise
         elif (
@@ -602,6 +615,7 @@ class TranscribeAudioFn(beam.DoFn):
             start_audio_offset_ms=request.start_audio_offset_ms,
             end_audio_offset_ms=request.end_audio_offset_ms,
             canonical_audio_uri=canonical_audio_uri,
+            playback_audio_uri=playback_audio_uri,
         )
 
     @override

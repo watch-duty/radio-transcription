@@ -55,6 +55,7 @@ def convert_to_notification(
         missing_prior_context=evaluated_transcribed_audio.missing_prior_context,
         missing_post_context=evaluated_transcribed_audio.missing_post_context,
         evaluation_decisions=evaluated_transcribed_audio.evaluation_decisions,
+        playback_audio_uri=evaluated_transcribed_audio.playback_audio_uri,
     )
     if evaluated_transcribed_audio.start_timestamp.seconds:
         notification.start_timestamp.CopyFrom(

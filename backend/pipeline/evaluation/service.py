@@ -112,6 +112,7 @@ class EvaluationService:
                 evaluation_decisions=evaluation_result.get(
                     "triggered_rules", []
                 ),
+                playback_audio_uri=new_audio.playback_audio_uri,
             )
             evaluated_payload.start_timestamp.CopyFrom(
                 new_audio.start_timestamp
