@@ -1,4 +1,4 @@
-FROM gcr.io/dataflow-templates-base/python311-template-launcher-base:latest AS launcher
+FROM gcr.io/dataflow-templates-base/python313-template-launcher-base:latest AS launcher
 
 FROM apache/beam_python3.13_sdk:2.70.0
 
