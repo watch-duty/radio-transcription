@@ -3,7 +3,6 @@
 import logging
 import time
 from collections.abc import Iterator
-from datetime import UTC, datetime
 from typing import Any, override
 
 import apache_beam as beam
@@ -18,10 +17,10 @@ from apache_beam.transforms.userstate import (
     on_timer,
 )
 from apache_beam.utils.timestamp import Timestamp
-from pydub import AudioSegment
 
 from backend.pipeline.common.constants import MS_PER_SECOND
 from backend.pipeline.transcription.audio_processor import AudioProcessor
+from backend.pipeline.transcription.audio_uploader import AudioUploader
 from backend.pipeline.transcription.constants import (
     DEAD_LETTER_QUEUE_TAG,
 )
@@ -497,58 +496,11 @@ class TranscribeAudioFn(beam.DoFn):
         )
         self.metrics_exporter.setup()
 
-    def _upload_audio_to_gcs(
-        self,
-        request: FlushRequest,
-        processed_audio: AudioSegment,
-        flac_bytes: bytes,
-    ) -> tuple[str | None, str | None]:
-        if not self.config.stitched_audio_bucket:
-            return None, None
-
-        if not self.audio_processor or not self.audio_processor.gcs_client:
-            msg = "AudioProcessor or GCS client not initialized"
-            raise RuntimeError(msg)
-
-        dt = datetime.fromtimestamp(
-            request.time_range.start_ms / 1000.0, tz=UTC
+        self.audio_uploader = AudioUploader(
+            gcs_client=self.audio_processor.gcs_client,
+            stitched_audio_bucket=self.config.stitched_audio_bucket,
+            export_m4a_fn=self.audio_processor.export_m4a,
         )
-        timestamp_str = dt.strftime("%Y%m%dT%H%M%SZ")
-
-        flac_object_name = f"stitched/lossless/{request.feed_id}/{dt:%Y/%m/%d}/{timestamp_str}.flac"
-        m4a_object_name = f"stitched/playback/{request.feed_id}/{dt:%Y/%m/%d}/{timestamp_str}.m4a"
-
-        canonical_audio_uri = (
-            f"gs://{self.config.stitched_audio_bucket}/{flac_object_name}"
-        )
-        playback_audio_uri = (
-            f"gs://{self.config.stitched_audio_bucket}/{m4a_object_name}"
-        )
-
-        try:
-            bucket = self.audio_processor.gcs_client.bucket(
-                self.config.stitched_audio_bucket
-            )
-
-            # Upload FLAC
-            flac_blob = bucket.blob(flac_object_name)
-            flac_blob.upload_from_string(flac_bytes, content_type="audio/flac")
-            logger.info("Uploaded stitched audio to %s", canonical_audio_uri)
-
-            # Export & Upload M4A
-            m4a_bytes = self.audio_processor.export_m4a(processed_audio)
-            m4a_blob = bucket.blob(m4a_object_name)
-            m4a_blob.upload_from_string(m4a_bytes, content_type="audio/mp4")
-            logger.info("Uploaded playback audio to %s", playback_audio_uri)
-
-        except Exception:
-            logger.exception(
-                "Failed to upload audio derivatives to gs://%s/",
-                self.config.stitched_audio_bucket,
-            )
-            raise
-
-        return canonical_audio_uri, playback_audio_uri
 
     def _export_and_transcribe(
         self,
@@ -568,15 +520,10 @@ class TranscribeAudioFn(beam.DoFn):
         if not request.buffer or len(request.buffer) == 0:
             return None
 
-        processed_audio = self.audio_processor.preprocess_audio(request.buffer)
-
-        vad_start = time.time()
-        has_speech = self.audio_processor.check_vad(processed_audio)
-        self.vad_eval_time_ms.update(
-            int((time.time() - vad_start) * MS_PER_SECOND)
+        success, flac_bytes, processed_audio = (
+            self.audio_processor.process_buffer(request.buffer)
         )
-
-        if not has_speech:
+        if not success or flac_bytes is None or processed_audio is None:
             self.vad_silence_count.inc()
             logger.info(
                 "VAD detected no speech in buffer. Dropping transmission."
@@ -587,10 +534,10 @@ class TranscribeAudioFn(beam.DoFn):
         duration_sec = len(processed_audio) / float(MS_PER_SECOND)
         self.speech_duration_sec_dist.update(int(duration_sec))
 
-        flac_bytes = self.audio_processor.export_flac(processed_audio)
-
-        canonical_audio_uri, playback_audio_uri = self._upload_audio_to_gcs(
-            request, processed_audio, flac_bytes
+        canonical_audio_uri, playback_audio_uri = (
+            self.audio_uploader.upload_derivatives(
+                request, processed_audio, flac_bytes
+            )
         )
         if not canonical_audio_uri and (
             request.contributing_audio_uris

@@ -218,3 +218,14 @@ class AudioProcessor:
             parameters=["-ar", "16000", "-ac", "1", "-b:a", "32k"],
         )
         return buf.getvalue()
+
+    def process_buffer(
+        self, audio_buffer: AudioSegment
+    ) -> tuple[bool, bytes | None, AudioSegment | None]:
+        """Encapsulates sequence of pre-processing, VAD check, and FLAC export."""
+        processed_audio = self.preprocess_audio(audio_buffer)
+        if not self.check_vad(processed_audio):
+            return False, None, None
+
+        flac_bytes = self.export_flac(processed_audio)
+        return True, flac_bytes, processed_audio
