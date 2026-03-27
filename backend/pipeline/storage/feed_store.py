@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, TypedDict
 
-
 if TYPE_CHECKING:
     import uuid
 
