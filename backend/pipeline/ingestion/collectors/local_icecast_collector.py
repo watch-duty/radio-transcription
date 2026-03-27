@@ -10,10 +10,10 @@ from typing import TYPE_CHECKING
 
 from backend.pipeline.common.constants import AUDIO_FORMAT
 from backend.pipeline.common.logging import setup_logging
-from backend.pipeline.schema_types.source_types_pb2 import SourceType
 from backend.pipeline.ingestion.collectors.icecast_collector import (
     capture_icecast_stream,
 )
+from backend.pipeline.schema_types.source_types_pb2 import SourceType
 
 if TYPE_CHECKING:
     from backend.pipeline.storage.feed_store import LeasedFeed
