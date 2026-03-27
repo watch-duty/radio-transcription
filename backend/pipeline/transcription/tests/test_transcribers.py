@@ -1,5 +1,7 @@
 """Unit tests for the audio transcription plugins."""
 
+import json
+import pathlib
 import tempfile
 import unittest
 from unittest.mock import MagicMock, call, patch
@@ -288,6 +290,21 @@ class TestTranscribers(unittest.TestCase):
             mock_cs.CustomPromptConfig.assert_called_once_with(
                 custom_prompt="Test prompt"
             )
+
+    def test_chirp_keywords_json_valid(self) -> None:
+        """Verifies that the default chirp_keywords.json file is valid JSON and non-empty."""
+        p = pathlib.Path(__file__).parent.parent / "chirp_keywords.json"
+
+        self.assertTrue(p.exists(), f"Keywords file {p} does not exist")
+        with p.open("r") as f:
+            data = json.load(f)
+            self.assertIsInstance(data, list)
+            self.assertTrue(len(data) > 0)
+            for item in data:
+                if isinstance(item, dict):
+                    self.assertIn("phrase", item)
+                else:
+                    self.assertIsInstance(item, str)
 
 
 if __name__ == "__main__":

@@ -103,6 +103,7 @@ class GoogleChirpV3Transcriber(Transcriber):
     def setup(self) -> None:
         """Instantiates the Speech-to-Text API gRPC client and loads phrase hints if configured."""
         self.client = self._init_client()
+        self.keywords_list = []
 
         if self.config.phrase_hints_file_path:
             p = pathlib.Path(self.config.phrase_hints_file_path)
