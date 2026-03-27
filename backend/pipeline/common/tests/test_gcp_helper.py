@@ -93,7 +93,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
         )
 
         # Assert
-        expected_object_name = f"bcfy_feeds/{feed_id}/20260305T120000Z_42.flac"
+        expected_object_name = f"BCFY_FEEDS/{feed_id}/20260305T120000Z_42.flac"
         expected_path = f"gs://{bucket}/{expected_object_name}"
 
         mock_storage.upload.assert_called_once_with(
@@ -139,7 +139,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
         )
 
         # Assert
-        expected_object_name = f"bcfy_feeds/{feed_id}/20260305T120000Z_5.flac"
+        expected_object_name = f"BCFY_FEEDS/{feed_id}/20260305T120000Z_5.flac"
         expected_path = f"gs://{bucket}/{expected_object_name}"
 
         mock_storage.upload.assert_called_once_with(
@@ -264,7 +264,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
 
         # Assert
         expected_object_name = (
-            f"bcfy_feeds/{feed_id}/20260305T120000Z_999999999.flac"
+            f"BCFY_FEEDS/{feed_id}/20260305T120000Z_999999999.flac"
         )
         expected_path = f"gs://{bucket}/{expected_object_name}"
 
@@ -327,7 +327,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
         )
 
         expected_object_name = (
-            f"bcfy_feeds/{feed_id}/token-7/20260305T120000Z_42.flac"
+            f"BCFY_FEEDS/{feed_id}/token-7/20260305T120000Z_42.flac"
         )
         expected_path = f"gs://test-bucket/{expected_object_name}"
 
@@ -350,7 +350,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
 
         audio = b"flac-audio-bytes"
         bucket = "canonical-bucket"
-        object_name = "bcfy_feeds/abc/20260305T120000Z_0.flac"
+        object_name = "BCFY_FEEDS/abc/20260305T120000Z_0.flac"
 
         result = await gcp_helper.upload_audio(
             mock_gcs_client,

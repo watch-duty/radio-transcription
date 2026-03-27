@@ -78,7 +78,7 @@ class TestLocalIcecastCollector(unittest.IsolatedAsyncioTestCase):
             feed_arg, shutdown_event_arg = capture_mock.call_args.args
             self.assertEqual(feed_arg["id"], fixed_feed_id)
             self.assertEqual(feed_arg["name"], "local-icecast-test")
-            self.assertEqual(feed_arg["source_type"], "icecast")
+            self.assertEqual(feed_arg["source_type"], 1)
             self.assertIsNone(feed_arg["last_processed_filename"])
             self.assertEqual(
                 feed_arg["stream_url"], "http://example.com/stream"
