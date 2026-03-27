@@ -105,7 +105,10 @@ class EvaluationService:
                 feed_id=new_audio.feed_id,
                 transmission_id=new_audio.transmission_id,
                 source_audio_uris=new_audio.source_audio_uris,
+                canonical_audio_uri=new_audio.canonical_audio_uri,
                 transcript=new_audio.transcript,
+                missing_prior_context=new_audio.missing_prior_context,
+                missing_post_context=new_audio.missing_post_context,
                 evaluation_decisions=evaluation_result.get(
                     "triggered_rules", []
                 ),
