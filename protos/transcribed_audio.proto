@@ -40,12 +40,15 @@ message TranscribedAudio {
   // Ordered list of GCS URIs for the raw audio files used to assemble this transmission.
   repeated string source_audio_uris = 8;
 
-  // The exact slice offset within the *first* URI where the transcribed speech formally begins.
+  // The exact slice offset within the *first* URI in source_audio_uris where the transcribed speech formally begins.
   google.protobuf.Duration start_audio_offset = 9;
 
-  // The exact slice offset within the *last* URI where the transcribed speech formally ends.
+  // The exact slice offset within the *last* URI in source_audio_uris where the transcribed speech formally ends.
   google.protobuf.Duration end_audio_offset = 10;
 
   // The final unified canonical reference audio file URI for this transmission.
   string canonical_audio_uri = 11;
+
+  // The URI of the audio file optimized for playback (e.g., compressed M4A/Opus).
+  string playback_audio_uri = 12;
 }

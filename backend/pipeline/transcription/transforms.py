@@ -21,7 +21,7 @@ from apache_beam.transforms.userstate import (
     on_timer,
 )
 from apache_beam.utils.timestamp import Timestamp
-from google.protobuf.duration_pb2 import Duration  # type: ignore[attr-defined]
+from google.protobuf.duration_pb2 import Duration  # type: ignore
 from google.protobuf.message import DecodeError
 
 from backend.pipeline.common.constants import (
@@ -181,6 +181,7 @@ class SerializeToPubSubMessageFn(beam.DoFn):
             start_audio_offset=start_offset,
             end_audio_offset=end_offset,
             canonical_audio_uri=element.canonical_audio_uri,
+            playback_audio_uri=element.playback_audio_uri,
         )
         proto.start_timestamp.FromMicroseconds(
             element.time_range.start_ms * MICROSECONDS_PER_MS
@@ -253,20 +254,20 @@ class RestoreOrderFn(beam.DoFn):
     def process(  # type: ignore[override]
         self,
         element: tuple[str, tuple[str, str]],
-        timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore[assignment]
-        session_id_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore[assignment] # noqa: B008
+        timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
+        session_id_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
             SESSION_ID_SPEC
         ),
-        expected_next_ts_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore[assignment] # noqa: B008
+        expected_next_ts_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
             EXPECTED_NEXT_TS_SPEC
         ),
-        out_of_order_buffer_state: BagRuntimeState = beam.DoFn.StateParam(  # type: ignore[assignment] # noqa: B008
+        out_of_order_buffer_state: BagRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
             OUT_OF_ORDER_BUFFER_SPEC
         ),
-        timer_active_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore[assignment] # noqa: B008
+        timer_active_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
             TIMER_ACTIVE_SPEC
         ),
-        out_of_order_timer: RuntimeTimer = beam.DoFn.TimerParam(  # type: ignore[assignment] # noqa: B008
+        out_of_order_timer: RuntimeTimer = beam.DoFn.TimerParam(  # type: ignore # noqa: B008
             OUT_OF_ORDER_TIMER_SPEC
         ),
     ) -> Iterator[tuple[str, str]]:
@@ -333,14 +334,14 @@ class RestoreOrderFn(beam.DoFn):
     @on_timer(OUT_OF_ORDER_TIMER_SPEC)
     def handle_gap_timeout(
         self,
-        feed_id: str = beam.DoFn.KeyParam,  # type: ignore[assignment]
-        expected_next_ts_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore[assignment] # noqa: B008
+        feed_id: str = beam.DoFn.KeyParam,  # type: ignore
+        expected_next_ts_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
             EXPECTED_NEXT_TS_SPEC
         ),
-        out_of_order_buffer_state: BagRuntimeState = beam.DoFn.StateParam(  # type: ignore[assignment] # noqa: B008
+        out_of_order_buffer_state: BagRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
             OUT_OF_ORDER_BUFFER_SPEC
         ),
-        timer_active_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore[assignment] # noqa: B008
+        timer_active_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
             TIMER_ACTIVE_SPEC
         ),
     ) -> Iterator[tuple[str, str]]:
@@ -411,7 +412,7 @@ class DownloadAudioFn(beam.DoFn):
         self,
         element: tuple[str, str],
         *args: Any,
-        timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore[assignment]
+        timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
         **kwargs: Any,
     ) -> Iterator[tuple[str, tuple[str, Any]] | beam.pvalue.TaggedOutput]:
         """Downloads the raw audio bytes from GCS and passes them to the acoustic processor."""

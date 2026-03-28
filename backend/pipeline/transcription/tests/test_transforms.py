@@ -1042,6 +1042,11 @@ class TranscribeAudioTest(unittest.TestCase):
         mock_processor_inst.check_vad.return_value = True
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
         mock_processor_inst.export_flac.return_value = b"flac_bytes"
+        mock_processor_inst.process_buffer.return_value = (
+            True,
+            b"flac_bytes",
+            AudioSegment.silent(duration=500),
+        )
 
         config = get_test_transcribe_config(route_to_dlq=True)
 
