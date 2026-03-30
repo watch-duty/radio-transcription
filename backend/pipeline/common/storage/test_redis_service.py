@@ -57,7 +57,7 @@ class TestRedisService(unittest.TestCase):
         self.assertIn("/secrets/server_ca.pem", kwargs.get("ssl_ca_certs", ""))
 
     @patch.dict(os.environ, {}, clear=True)
-    def test_ssl_configuration_not_passed_in_local_dev(self) -> None:
+    def test_ssl_configuration_not_passed_outside_gcp(self) -> None:
         self.service = RedisService()
 
         self.mock_redis_factory.assert_called()

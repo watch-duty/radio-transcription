@@ -140,8 +140,8 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         "backend.pipeline.evaluation.rules_evaluation.evaluator.get_id_token"
     )
     @patch("requests.Session.get")
-    def test_evaluate_local_dev(self, mock_get, mock_get_id_token) -> None:
-        """Test that RemoteTextEvaluator skips authentication in LOCAL_DEV mode."""
+    def test_evaluate_outside_gcp(self, mock_get, mock_get_id_token) -> None:
+        """Test that RemoteTextEvaluator skips authentication when not in GCP."""
         with patch.dict("os.environ", {}, clear=True):
             # Mock rule from API
             mock_rule = {
