@@ -270,7 +270,7 @@ class FeedStore:
         worker_id: uuid.UUID,
         new_gcs_path: str,
         fencing_token: int,
-        last_bookmark: datetime.datetime | None = None,
+        last_bookmark: datetime.datetime | None,
     ) -> bool:
         """
         Update the feed's bookmark and heartbeat after a successful write.

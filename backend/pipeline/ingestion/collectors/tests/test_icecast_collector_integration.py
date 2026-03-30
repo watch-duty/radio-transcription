@@ -244,7 +244,8 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         # Act: capture -> upload -> bookmark
         shutdown = asyncio.Event()
         chunks_uploaded = []
-        async for flac_chunk, _ts in icecast_collector.capture_icecast_stream(
+        last_chunk_ts = None
+        async for flac_chunk, chunk_ts in icecast_collector.capture_icecast_stream(
             feed, shutdown, url_base="https://mock.example.com/"
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
@@ -259,8 +260,10 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 self.worker_id,
                 gcs_path,
                 feed["fencing_token"],
+                chunk_ts,
             )
             self.assertTrue(ok)
+            last_chunk_ts = chunk_ts
             chunks_uploaded.append((flac_chunk, gcs_path))
 
         # Assert: exactly 1 chunk uploaded
@@ -277,6 +280,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         # Assert: DB bookmark updated
         row = await self._get_feed_row(feed["id"])
         self.assertEqual(row["last_processed_filename"], gcs_path)
+        self.assertEqual(row["last_bookmark"], last_chunk_ts)
         self.assertEqual(row["failure_count"], 0)
 
     @patch(
@@ -303,8 +307,9 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
         shutdown = asyncio.Event()
         gcs_paths = []
+        chunk_timestamps = []
         seq = 0
-        async for flac_chunk, _ts in icecast_collector.capture_icecast_stream(
+        async for flac_chunk, chunk_ts in icecast_collector.capture_icecast_stream(
             feed, shutdown, url_base="https://mock.example.com/"
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
@@ -315,8 +320,10 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 self.worker_id,
                 gcs_path,
                 feed["fencing_token"],
+                chunk_ts,
             )
             gcs_paths.append(gcs_path)
+            chunk_timestamps.append(chunk_ts)
             seq += 1
 
         # Assert: 3 distinct uploads
@@ -329,9 +336,10 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(downloaded, segments[i])
             self.assertEqual(downloaded[:4], _FLAC_MAGIC)
 
-        # Assert: DB bookmark points to last uploaded path
+        # Assert: DB bookmark points to last uploaded path and timestamp
         row = await self._get_feed_row(feed["id"])
         self.assertEqual(row["last_processed_filename"], gcs_paths[-1])
+        self.assertEqual(row["last_bookmark"], chunk_timestamps[-1])
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
@@ -358,8 +366,9 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
         shutdown = asyncio.Event()
         gcs_paths = []
+        last_chunk_ts = None
         seq = 0
-        async for flac_chunk, _ts in icecast_collector.capture_icecast_stream(
+        async for flac_chunk, chunk_ts in icecast_collector.capture_icecast_stream(
             feed, shutdown, url_base="https://mock.example.com/"
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
@@ -370,8 +379,10 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 self.worker_id,
                 gcs_path,
                 feed["fencing_token"],
+                chunk_ts,
             )
             gcs_paths.append(gcs_path)
+            last_chunk_ts = chunk_ts
             seq += 1
             # Signal shutdown after first chunk
             shutdown.set()
@@ -382,6 +393,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         # Assert: DB bookmark reflects single upload
         row = await self._get_feed_row(feed["id"])
         self.assertEqual(row["last_processed_filename"], gcs_paths[0])
+        self.assertEqual(row["last_bookmark"], last_chunk_ts)
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
@@ -495,6 +507,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         row = await self._get_feed_row(feed["id"])
         self.assertEqual(row["status"], "active")
         self.assertIsNone(row["last_processed_filename"])
+        self.assertIsNone(row["last_bookmark"])
 
 
 if __name__ == "__main__":

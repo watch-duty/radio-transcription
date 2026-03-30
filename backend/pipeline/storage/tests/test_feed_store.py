@@ -121,6 +121,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             "gs://bucket/path/file.ogg",
             1,
+            None,
         )
 
         self.assertTrue(result)
@@ -135,6 +136,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             "gs://bucket/path/file.ogg",
             1,
+            None,
         )
 
         self.assertFalse(result)
@@ -145,10 +147,34 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
         gcs_path = "gs://bucket/path/file.ogg"
 
-        await store.update_feed_progress(_FEED_ID, _WORKER_ID, gcs_path, 1)
+        await store.update_feed_progress(_FEED_ID, _WORKER_ID, gcs_path, 1, None)
 
         args = pool.execute.call_args[0]
         self.assertEqual(args[1:], (gcs_path, _FEED_ID, _WORKER_ID, 1, None))
+
+    async def test_passes_non_none_last_bookmark(self) -> None:
+        """Non-None last_bookmark is forwarded as the 5th SQL parameter."""
+        pool = _make_pool(execute_result="UPDATE 1")
+        store = FeedStore(pool)
+        gcs_path = "gs://bucket/path/file.ogg"
+        last_bookmark = datetime.datetime(
+            2024,
+            1,
+            2,
+            tzinfo=datetime.UTC,
+        )
+        await store.update_feed_progress(
+            _FEED_ID,
+            _WORKER_ID,
+            gcs_path,
+            1,
+            last_bookmark,
+        )
+        args = pool.execute.call_args[0]
+        self.assertEqual(
+            args[1:],
+            (gcs_path, _FEED_ID, _WORKER_ID, 1, last_bookmark),
+        )
 
 
 class TestRenewHeartbeatsBatchDiagnostic(unittest.IsolatedAsyncioTestCase):
