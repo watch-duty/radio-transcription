@@ -47,7 +47,9 @@ def create_topic(topic_path: str) -> None:
     if response.status_code in (200, 409):
         logger.info("Topic '%s' ready.", topic_path)
     else:
-        logger.error("Failed to create topic '%s': %s", topic_path, response.text)
+        logger.error(
+            "Failed to create topic '%s': %s", topic_path, response.text
+        )
 
 
 def create_push_subscription(
