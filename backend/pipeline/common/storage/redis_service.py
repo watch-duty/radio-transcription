@@ -7,6 +7,7 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import TimeoutError as RedisTimeoutError
 from redis.retry import Retry
 
+from backend.pipeline.common.env import is_gcp_env
 from backend.pipeline.common.storage.cache_provider import CacheProvider
 
 NUM_CONNECTION_RETRIES = 3
@@ -25,7 +26,7 @@ class RedisService(CacheProvider):
 
     def __init__(self) -> None:
         retry = Retry(ExponentialBackoff(), NUM_CONNECTION_RETRIES)
-        ssl_enabled = not os.environ.get("LOCAL_DEV")
+        ssl_enabled = is_gcp_env()
         self.client = Redis(
             host=REDIS_HOST,
             port=REDIS_PORT,

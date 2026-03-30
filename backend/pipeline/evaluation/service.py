@@ -30,8 +30,7 @@ class EvaluationService:
     def __init__(
         self,
         publisher: pubsub_v1.PublisherClient,
-        project_id: str | None,
-        output_topic_id: str | None,
+        output_topic_path: str | None,
         text_evaluator: evaluator.BaseTextEvaluator,
     ) -> None:
         """
@@ -39,21 +38,14 @@ class EvaluationService:
 
         Args:
             publisher: Instance of pubsub_v1.PublisherClient.
-            project_id: GCP Project ID for the output topic.
-            output_topic_id: Topic ID to publish evaluation results.
+            output_topic_path: Full path to the output topic.
             text_evaluator: An instance of a text evaluator.
         """
         self.publisher = publisher
-        self.project_id = project_id
-        self.output_topic_id = output_topic_id
+        self.output_topic_path = output_topic_path
         self.text_evaluator = text_evaluator
-        if project_id and output_topic_id:
-            self.output_topic_path = publisher.topic_path(
-                project_id, output_topic_id
-            )
-        else:
-            logger.warning("OUTPUT_TOPIC or PROJECT_ID env var not set.")
-            self.output_topic_path = None
+        if not output_topic_path:
+            logger.warning("output_topic_path not provided.")
 
     def handle_event(self, cloud_event: cloudevent.CloudEvent) -> None:
         """
@@ -174,7 +166,7 @@ class EvaluationService:
             logger.info(
                 "Success! Published enriched message %s to %s",
                 message_id,
-                self.output_topic_id,
+                self.output_topic_path,
             )
         else:
             logger.warning("Skipping publish: Output topic not configured.")

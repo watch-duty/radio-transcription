@@ -17,14 +17,12 @@ class TestEvaluationService(unittest.TestCase):
     def setUp(self) -> None:
         """Sets up test fixtures."""
         self.mock_publisher = MagicMock()
-        self.project_id = "test-project"
-        self.output_topic_id = "test-topic"
+        self.output_topic_path = "projects/test-project/topics/test-topic"
 
         self.mock_evaluator = MagicMock()
         self.service = service.EvaluationService(
             publisher=self.mock_publisher,
-            project_id=self.project_id,
-            output_topic_id=self.output_topic_id,
+            output_topic_path=self.output_topic_path,
             text_evaluator=self.mock_evaluator,
         )
 
@@ -93,8 +91,7 @@ class TestEvaluationService(unittest.TestCase):
         # Create service without topic
         service_no_topic = service.EvaluationService(
             publisher=self.mock_publisher,
-            project_id=None,
-            output_topic_id=None,
+            output_topic_path=None,
             text_evaluator=self.mock_evaluator,
         )
 
@@ -107,6 +104,19 @@ class TestEvaluationService(unittest.TestCase):
 
         self.mock_evaluator.evaluate.assert_called()
         self.mock_publisher.publish.assert_not_called()
+
+    def test_full_topic_path(self) -> None:
+        """Ensures that full topic paths are not double-prefixed."""
+        full_topic_path = "projects/my-project/topics/my-topic"
+        service_with_full_path = service.EvaluationService(
+            publisher=self.mock_publisher,
+            output_topic_path=full_topic_path,
+            text_evaluator=self.mock_evaluator,
+        )
+
+        self.assertEqual(
+            service_with_full_path.output_topic_path, full_topic_path
+        )
 
 
 if __name__ == "__main__":

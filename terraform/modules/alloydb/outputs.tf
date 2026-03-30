@@ -33,6 +33,11 @@ output "worker_user_id" {
   value       = var.create_worker_user ? google_alloydb_user.worker[0].user_id : null
 }
 
+output "database_name" {
+  description = "The name of the database"
+  value       = var.schema_database_name # which defaults to "postgres"
+}
+
 # -----------------------------------------------------------------------------
 # Schema Application Outputs
 # -----------------------------------------------------------------------------
