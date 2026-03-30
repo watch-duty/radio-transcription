@@ -6,7 +6,7 @@ def test_pipeline_topology_typehints() -> None:
     """Builds the DAG to trigger Apache Beam's static type checker instantaneously."""
     options = TranscriptionOptions(
         flags=[
-            "--project_id",
+            "--project",
             "test-project",
             "--input_topic",
             "projects/test-project/topics/in",
