@@ -147,6 +147,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         name: str,
         *,
         source_feed_id: str | None = "123",
+        external_id: str = "test-external-id",
     ) -> uuid.UUID:
         """Insert an unclaimed feed row, optionally with icecast properties."""
         feed_id = await self.pool.fetchval(
@@ -157,10 +158,11 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         )
         if source_feed_id is not None:
             await self.pool.execute(
-                "INSERT INTO feed_properties (feed_id, source_feed_id)"
-                " VALUES ($1::uuid, $2)",
+                "INSERT INTO feed_properties (feed_id, source_feed_id, external_id)"
+                " VALUES ($1::uuid, $2, $3)",
                 str(feed_id),
                 source_feed_id,
+                external_id,
             )
         return feed_id
 
