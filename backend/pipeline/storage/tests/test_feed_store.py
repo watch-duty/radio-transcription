@@ -148,9 +148,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
         await store.update_feed_progress(_FEED_ID, _WORKER_ID, gcs_path, 1)
 
         args = pool.execute.call_args[0]
-        self.assertEqual(
-            args[1:], (gcs_path, _FEED_ID, _WORKER_ID, 1, None)
-        )
+        self.assertEqual(args[1:], (gcs_path, _FEED_ID, _WORKER_ID, 1, None))
 
 
 class TestRenewHeartbeatsBatchDiagnostic(unittest.IsolatedAsyncioTestCase):

@@ -22,6 +22,7 @@ def _make_feed(source_type: SourceType) -> LeasedFeed:
         name=f"test-{source_type}",
         source_type=typing.cast("SourceType", source_type),
         last_processed_filename=None,
+        last_bookmark=None,
         fencing_token=0,
         source_feed_id="123",
     )
