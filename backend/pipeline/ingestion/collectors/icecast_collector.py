@@ -29,9 +29,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# URL Base
+ICECAST_URL_BASE = "https://audio.broadcastify.com/"
+
 # Audio processing constants
 SAMPLE_FORMAT = "s16"  # 16-bit signed integer
-
 READ_TIMEOUT_SEC = 30
 POLL_INTERVAL_SEC = 0.25
 
@@ -67,7 +69,7 @@ async def capture_icecast_stream(
     decodable file rather than an arbitrary slice of a continuous bytestream.
 
     Args:
-        feed: Leased feed containing stream_url and metadata
+        feed: Leased feed containing source_feed_id and metadata
         shutdown_event: Signals graceful shutdown request
 
     Yields:
@@ -76,16 +78,17 @@ async def capture_icecast_stream(
         - (datetime.datetime) The exact audio start time of the segment window
 
     Raises:
-        ValueError: If stream_url is missing from feed properties
+        ValueError: If source_feed_id is missing from feed properties
         RuntimeError: If ffmpeg exits unexpectedly or stalls
 
     """
-    url = feed.get("stream_url")
+    source_feed_id = feed.get("source_feed_id")
     feed_id = feed.get("id")
     feed_name = feed.get("name")
-    if not url:
-        msg = f"Feed {feed_id} ({feed_name}) missing stream_url in feed_properties_icecast"
+    if not source_feed_id:
+        msg = f"Feed {feed_id} ({feed_name}) missing source_feed_id in feed_properties"
         raise ValueError(msg)
+    url = f"{ICECAST_URL_BASE}{source_feed_id}.mp3"
 
     with tempfile.TemporaryDirectory(prefix="icecast_segments_") as tmp_dir:
         segment_dir = Path(tmp_dir)

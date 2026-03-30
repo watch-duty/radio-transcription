@@ -36,7 +36,7 @@ def _make_feed(
         source_type=source_type,
         last_processed_filename=None,
         fencing_token=fencing_token,
-        stream_url=None,
+        source_feed_id=None,
     )
 
 

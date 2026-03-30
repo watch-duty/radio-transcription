@@ -2,7 +2,6 @@
 
 # Audio processing shared constants
 CHUNK_DURATION_SECONDS = 15
-AUDIO_SAMPLE_RATE = 16_000  # 16 kHz
 SAMPLE_RATE_HZ = 16000
 NUM_AUDIO_CHANNELS = 1
 AUDIO_FORMAT = "flac"

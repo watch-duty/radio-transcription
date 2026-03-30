@@ -30,7 +30,7 @@ async def _insert_feed(
     failure_count: int = 0,
     worker_id: uuid.UUID | None = None,
     last_heartbeat_age_seconds: int | None = None,
-    stream_url: str | None = None,
+    source_feed_id: str | None = None,
 ) -> uuid.UUID:
     """Insert a feed row and optionally an icecast properties row."""
     heartbeat_expr = "NULL"
@@ -51,12 +51,12 @@ async def _insert_feed(
         str(worker_id) if worker_id else None,
     )
 
-    if stream_url is not None:
+    if source_feed_id is not None:
         await pool.execute(
-            "INSERT INTO feed_properties_icecast (feed_id, stream_url) "
+            "INSERT INTO feed_properties (feed_id, source_feed_id) "
             "VALUES ($1::uuid, $2)",
             str(feed_id),
-            stream_url,
+            source_feed_id,
         )
 
     return feed_id
@@ -80,12 +80,12 @@ async def _get_feed_status(pool: asyncpg.Pool, feed_id: uuid.UUID) -> dict:
 async def test_lease_returns_feed_with_icecast_properties(
     db_pool: asyncpg.Pool, store: FeedStore
 ) -> None:
-    """Leased feed includes stream_url from LEFT JOIN."""
+    """Leased feed includes source_feed_id from LEFT JOIN."""
     worker = uuid.uuid4()
     await _insert_feed(
         db_pool,
         "Icecast Feed",
-        stream_url="http://stream.example.com/live",
+        source_feed_id="123",
     )
 
     result = await store.lease_feed(worker)
@@ -93,14 +93,14 @@ async def test_lease_returns_feed_with_icecast_properties(
     assert result is not None
     assert result["name"] == "Icecast Feed"
     assert result["source_type"] == "BCFY_FEEDS"
-    assert result["stream_url"] == "http://stream.example.com/live"
+    assert result["source_feed_id"] == "123"
     assert result["fencing_token"] == 1
 
 
 async def test_lease_returns_feed_without_icecast_properties(
     db_pool: asyncpg.Pool, store: FeedStore
 ) -> None:
-    """Non-icecast feed has stream_url=None."""
+    """Non-icecast feed has source_feed_id=None."""
     worker = uuid.uuid4()
     await _insert_feed(db_pool, "API Feed", source_type="bcfy_calls")
 
@@ -108,7 +108,7 @@ async def test_lease_returns_feed_without_icecast_properties(
 
     assert result is not None
     assert result["name"] == "API Feed"
-    assert result["stream_url"] is None
+    assert result["source_feed_id"] is None
     assert result["fencing_token"] == 1
 
 

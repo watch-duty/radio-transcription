@@ -146,7 +146,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self,
         name: str,
         *,
-        stream_url: str | None = "http://example.com/stream",
+        source_feed_id: str | None = "123",
     ) -> uuid.UUID:
         """Insert an unclaimed feed row, optionally with icecast properties."""
         feed_id = await self.pool.fetchval(
@@ -155,12 +155,12 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             " RETURNING id",
             name,
         )
-        if stream_url is not None:
+        if source_feed_id is not None:
             await self.pool.execute(
-                "INSERT INTO feed_properties_icecast (feed_id, stream_url)"
+                "INSERT INTO feed_properties (feed_id, source_feed_id)"
                 " VALUES ($1::uuid, $2)",
                 str(feed_id),
-                stream_url,
+                source_feed_id,
             )
         return feed_id
 
@@ -464,15 +464,17 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(downloaded, expected_segment)
         self.assertEqual(downloaded[:4], _FLAC_MAGIC)
 
-    async def test_missing_stream_url_raises_without_side_effects(self) -> None:
+    async def test_missing_source_feed_id_raises_without_side_effects(
+        self,
+    ) -> None:
         """Feed without icecast properties -> ValueError, no GCS upload."""
-        # Insert feed WITHOUT stream_url (no feed_properties_icecast row)
-        await self._insert_feed("no-url-feed", stream_url=None)
+        # Insert feed WITHOUT source_feed_id (no feed_properties row)
+        await self._insert_feed("no-url-feed", source_feed_id=None)
         feed = await self.store.lease_feed(self.worker_id)
         if feed is None:
             msg = "Expected a LeasedFeed, got None"
             raise AssertionError(msg)
-        self.assertIsNone(feed["stream_url"])
+        self.assertIsNone(feed["source_feed_id"])
 
         shutdown = asyncio.Event()
         with self.assertRaises(ValueError) as ctx:
@@ -482,7 +484,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             ):
                 pass
 
-        self.assertIn("missing stream_url", str(ctx.exception))
+        self.assertIn("missing source_feed_id", str(ctx.exception))
 
         # Assert: DB state unchanged (still active, no bookmark)
         row = await self._get_feed_row(feed["id"])

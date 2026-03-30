@@ -27,13 +27,13 @@ async def run_local_capture() -> None:
     Does not use the AlloyDB feed claiming or write to pubsub.
 
     Environment variables:
-    - ICECAST_STREAM_URL: Required stream URL. Example: "https://example.com:8000/stream"
+    - ICECAST_SOURCE_FEED_ID: Required feed id of data source. Example: "123"
     - ICECAST_LOCAL_OUTPUT_DIR: Optional output directory for audio chunks.
       Defaults to the current working directory.
     """
-    stream_url = os.getenv("ICECAST_STREAM_URL")
-    if not stream_url:
-        msg = "ICECAST_STREAM_URL must be set"
+    source_feed_id = os.getenv("ICECAST_SOURCE_FEED_ID")
+    if not source_feed_id:
+        msg = "ICECAST_SOURCE_FEED_ID must be set"
         raise ValueError(msg)
 
     output_dir = Path(os.getenv("ICECAST_LOCAL_OUTPUT_DIR") or Path.cwd())
@@ -46,7 +46,7 @@ async def run_local_capture() -> None:
         "source_type": SourceType.BCFY_FEEDS,
         "last_processed_filename": None,
         "fencing_token": 0,
-        "stream_url": stream_url,
+        "source_feed_id": source_feed_id,
     }
     shutdown_event = asyncio.Event()
 

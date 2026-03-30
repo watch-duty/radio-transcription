@@ -26,14 +26,14 @@ with (
 TEST_FEED_ID = uuid.UUID("12345678-1234-5678-1234-567812345678")
 
 
-def _make_feed(name: str, stream_url: str | None) -> LeasedFeed:
+def _make_feed(name: str, source_feed_id: str | None) -> LeasedFeed:
     return LeasedFeed(
         id=TEST_FEED_ID,
         name=name,
         source_type=SourceType.BCFY_FEEDS,
         last_processed_filename=None,
         fencing_token=1,
-        stream_url=stream_url,
+        source_feed_id=source_feed_id,
     )
 
 
@@ -187,8 +187,8 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(StopAsyncIteration):
             await asyncio.wait_for(gen.__anext__(), timeout=1.0)
 
-    async def test_invalid_input_missing_stream_url(self) -> None:
-        """Test invalid input: feed missing stream_url raises ValueError."""
+    async def test_invalid_input_missing_source_feed_id(self) -> None:
+        """Test invalid input: feed missing source_feed_id raises ValueError."""
         # Arrange
         feed = cast(
             "LeasedFeed",
@@ -206,12 +206,12 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError) as context:
             await gen.__anext__()
 
-        self.assertIn("missing stream_url", str(context.exception))
+        self.assertIn("missing source_feed_id", str(context.exception))
 
-    async def test_invalid_input_none_stream_url_raises_value_error(
+    async def test_invalid_input_none_source_feed_id_raises_value_error(
         self,
     ) -> None:
-        """Test invalid input: feed with None stream_url raises ValueError."""
+        """Test invalid input: feed with None source_feed_id raises ValueError."""
         # Arrange
         feed = _make_feed("none-stream-feed", None)
         shutdown_event = asyncio.Event()
@@ -221,14 +221,14 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError) as context:
             await gen.__anext__()
 
-        self.assertIn("missing stream_url", str(context.exception))
+        self.assertIn("missing source_feed_id", str(context.exception))
         self.assertIn(str(TEST_FEED_ID), str(context.exception))
         self.assertIn("none-stream-feed", str(context.exception))
 
-    async def test_invalid_input_empty_string_stream_url_raises_value_error(
+    async def test_invalid_input_empty_string_source_feed_id_raises_value_error(
         self,
     ) -> None:
-        """Test invalid input: feed with empty stream_url raises ValueError."""
+        """Test invalid input: feed with empty source_feed_id raises ValueError."""
         # Arrange
         feed = _make_feed("empty-stream-feed", "")
         shutdown_event = asyncio.Event()
@@ -239,7 +239,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             await gen.__anext__()
 
         self.assertIn(str(TEST_FEED_ID), str(context.exception))
-        self.assertIn("missing stream_url", str(context.exception))
+        self.assertIn("missing source_feed_id", str(context.exception))
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
