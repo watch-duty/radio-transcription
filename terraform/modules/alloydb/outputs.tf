@@ -34,7 +34,8 @@ output "worker_user_id" {
 }
 
 output "database_name" {
-  value = var.schema_database_name # which defaults to "postgres"
+  description = "The name of the database to use for schema migration."
+  value       = var.schema_database_name # which defaults to "postgres"
 }
 
 # -----------------------------------------------------------------------------
