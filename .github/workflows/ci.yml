@@ -143,10 +143,26 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
       - name: Build ingestion Docker image
-        run: docker build -t ingestion-smoke-test -f backend/pipeline/ingestion/Dockerfile .
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: backend/pipeline/ingestion/Dockerfile
+          tags: ingestion-smoke-test:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          load: true
       - name: Build transcription Docker image
-        run: docker build -t transcription-smoke-test -f backend/pipeline/transcription/Dockerfile .
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: backend/pipeline/transcription/Dockerfile
+          tags: transcription-smoke-test:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          load: true
       # PUBSUB_EMULATOR_HOST bypasses GCP credential resolution in the
       # module-level PublisherClient() instantiation in normalizer_runtime.py.
       # Without it, the Pub/Sub SDK attempts ADC which fails inside Docker.
@@ -171,4 +187,3 @@ jobs:
             -e ALLOYDB_DB=postgres \
             ingestion-smoke-test \
             python -c "from backend.pipeline.ingestion.settings import NormalizerSettings; NormalizerSettings()"
-

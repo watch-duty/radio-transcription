@@ -51,12 +51,6 @@ class TranscriptionOptions(PipelineOptions):
             help="Pub/Sub attribute to use for strictly exactly-once deduplication.",
         )
         parser.add_argument(
-            "--project_id",
-            type=str,
-            required=True,
-            help="GCP Project ID for Speech-to-Text API.",
-        )
-        parser.add_argument(
             "--transcriber_type",
             type=str,
             choices=[e.value for e in TranscriberType],

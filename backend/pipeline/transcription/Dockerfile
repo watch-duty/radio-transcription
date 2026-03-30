@@ -27,6 +27,7 @@ COPY backend/ ./backend/
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app"
+ENV FLEX_TEMPLATE_PYTHON_PY_FILE="/app/backend/pipeline/transcription/main.py"
 
 RUN uv sync --frozen --no-dev && uv pip install grpcio-tools
 
@@ -37,5 +38,5 @@ RUN mkdir -p ./backend/pipeline/schema_types
 RUN touch ./backend/pipeline/schema_types/__init__.py
 RUN python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto
 
-# Set the entrypoint to the Beam worker harness
-ENTRYPOINT ["/opt/apache/beam/boot"]
+# Set the entrypoint to the Dataflow template launcher
+ENTRYPOINT ["/opt/google/dataflow/python_template_launcher"]

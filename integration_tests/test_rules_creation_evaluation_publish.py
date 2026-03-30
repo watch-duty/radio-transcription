@@ -64,10 +64,7 @@ def publish_test_message(transmission_id: str, transcript: str) -> None:
         ]
     }
 
-    url = (
-        f"http://{PUBSUB_EMULATOR_HOST}/v1/projects/"
-        f"{PROJECT_ID}/topics/{TRANSCRIPTION_TOPIC}:publish"
-    )
+    url = f"http://{PUBSUB_EMULATOR_HOST}/v1/{TRANSCRIPTION_TOPIC}:publish"
 
     response = requests.post(url, json=payload, timeout=10)
     response.raise_for_status()
