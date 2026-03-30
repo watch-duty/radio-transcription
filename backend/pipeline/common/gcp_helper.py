@@ -48,6 +48,8 @@ async def upload_staged_audio(
     Without a fencing token the legacy path is used:
     ``{source_type}/{feed_id}/{timestamp}_{seq}.flac``
 
+    Note: the timestamp is the timestamp of upload, not the original capture time.
+
     Args:
         gcs_client: Shared GCS client manager used for upload.
         audio_chunk: Raw audio bytes to upload.

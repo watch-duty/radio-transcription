@@ -28,6 +28,7 @@ def _make_feed(
         name=f"test-{source_type}-{feed_id}",
         source_type=source_type,
         last_processed_filename=None,
+        last_bookmark=None,
         fencing_token=fencing_token,
         source_feed_id=None,
     )

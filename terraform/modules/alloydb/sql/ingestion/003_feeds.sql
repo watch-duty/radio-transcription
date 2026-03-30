@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS feeds (
     worker_id               UUID,
     last_heartbeat          TIMESTAMP WITH TIME ZONE,
     last_processed_filename TEXT,
+    last_bookmark           TIMESTAMP WITH TIME ZONE,
 
     created_at              TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );

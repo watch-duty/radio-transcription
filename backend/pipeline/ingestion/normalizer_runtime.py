@@ -364,6 +364,7 @@ class NormalizerRuntime:
                     worker_id,
                     gcs_uri,
                     fencing_token,
+                    chunk_start_time,
                     lease_lost=self._lease_lost,
                     shutdown=self._shutdown,
                     max_retries=settings.bookmark_max_retries,

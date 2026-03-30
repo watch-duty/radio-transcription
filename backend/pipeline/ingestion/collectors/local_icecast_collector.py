@@ -46,6 +46,7 @@ async def run_local_capture() -> None:
         "name": "local-icecast-test",
         "source_type": SourceType.BCFY_FEEDS,
         "last_processed_filename": None,
+        "last_bookmark": None,
         "fencing_token": 0,
         "source_feed_id": source_feed_id,
     }

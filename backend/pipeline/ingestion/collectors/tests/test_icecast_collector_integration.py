@@ -169,7 +169,8 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
     async def _get_feed_row(self, feed_id: uuid.UUID) -> dict:
         """Read back feed status fields from the database."""
         row = await self.pool.fetchrow(
-            "SELECT status, failure_count, worker_id, last_processed_filename"
+            "SELECT status, failure_count, worker_id,"
+            " last_processed_filename, last_bookmark"
             " FROM feeds WHERE id = $1::uuid",
             str(feed_id),
         )

@@ -21,6 +21,7 @@ _LEASE_ROW = {
     "name": "My Feed",
     "source_type": "bcfy_feeds",
     "last_processed_filename": None,
+    "last_bookmark": None,
     "fencing_token": 1,
     "source_feed_id": "123",
 }
@@ -55,6 +56,7 @@ class TestLeaseFeed(unittest.IsolatedAsyncioTestCase):
             "name": "My Feed",
             "source_type": SourceType.BCFY_FEEDS,
             "last_processed_filename": None,
+            "last_bookmark": None,
             "fencing_token": 1,
             "source_feed_id": "123",
         }
@@ -146,7 +148,9 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
         await store.update_feed_progress(_FEED_ID, _WORKER_ID, gcs_path, 1)
 
         args = pool.execute.call_args[0]
-        self.assertEqual(args[1:], (gcs_path, _FEED_ID, _WORKER_ID, 1))
+        self.assertEqual(
+            args[1:], (gcs_path, _FEED_ID, _WORKER_ID, 1, None)
+        )
 
 
 class TestRenewHeartbeatsBatchDiagnostic(unittest.IsolatedAsyncioTestCase):
@@ -355,6 +359,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
                 "name": "Feed A",
                 "source_type": "bcfy_feeds",
                 "last_processed_filename": None,
+                "last_bookmark": None,
                 "fencing_token": 1,
                 "source_feed_id": "123",
             },
@@ -363,6 +368,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
                 "name": "Feed B",
                 "source_type": "bcfy_feeds",
                 "last_processed_filename": "gs://bucket/path",
+                "last_bookmark": None,
                 "fencing_token": 1,
                 "source_feed_id": None,
             },

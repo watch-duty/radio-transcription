@@ -25,6 +25,7 @@ _FEED = LeasedFeed(
     name="Test Feed",
     source_type=SourceType.BCFY_FEEDS,
     last_processed_filename=None,
+    last_bookmark=None,
     fencing_token=1,
     source_feed_id="123",
 )
