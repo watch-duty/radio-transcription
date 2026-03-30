@@ -3,6 +3,7 @@ import os
 
 import functions_framework
 from cloudevents.http import event as cloudevent
+
 from backend.pipeline.common.clients import pubsub_client
 from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.evaluation import service

@@ -3,7 +3,6 @@ import logging
 
 from cloudevents.http import event as cloudevent
 from google.cloud import pubsub_v1
-from backend.pipeline.common.clients import pubsub_client
 
 from backend.pipeline.evaluation.rules_evaluation import evaluator
 from backend.pipeline.schema_types import (
