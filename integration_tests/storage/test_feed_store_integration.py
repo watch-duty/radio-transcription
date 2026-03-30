@@ -202,6 +202,7 @@ async def test_progress_update_succeeds_with_correct_worker(
         worker,
         "gs://bucket/path/file.ogg",
         0,
+        None,
     )
 
     assert result is True
@@ -227,6 +228,7 @@ async def test_progress_update_fails_with_wrong_worker(
         uuid.uuid4(),
         "gs://bucket/path/file.ogg",
         0,
+        None,
     )
 
     assert result is False
@@ -372,6 +374,7 @@ async def test_successful_processing_resets_failure_count(
         new_worker,
         "chunk_001.flac",
         result["fencing_token"],
+        None,
     )
     row = await db_pool.fetchrow(
         "SELECT failure_count FROM feeds WHERE id = $1",
@@ -563,6 +566,7 @@ async def test_progress_update_fails_with_wrong_fencing_token(
         worker,
         "gs://bucket/path/file.ogg",
         999,  # wrong fencing_token
+        None,
     )
 
     assert result is False
