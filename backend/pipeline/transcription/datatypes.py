@@ -57,6 +57,7 @@ class TranscriptionResult:
     missing_post_context: bool = False
     start_audio_offset_ms: int | None = None
     end_audio_offset_ms: int | None = None
+    canonical_audio_uri: str | None = None
 
 
 @dataclass(frozen=True)
@@ -151,6 +152,7 @@ class TranscribeAudioConfig:
     metrics_exporter_type: str
     metrics_config: str
     route_to_dlq: bool = True
+    stitched_audio_bucket: str | None = None
 
 
 @dataclass(frozen=True)

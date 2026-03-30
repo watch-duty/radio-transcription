@@ -86,6 +86,14 @@ SET worker_id = NULL,
 WHERE id = $1 AND worker_id = $2 AND fencing_token = $3
 """
 
+_RELEASE_FEEDS_BATCH_SQL = """\
+UPDATE feeds
+SET worker_id = NULL,
+    status = 'unclaimed'::feed_status,
+    last_heartbeat = NOW()
+WHERE worker_id = $1 AND status = 'active'::feed_status
+"""
+
 _ACQUIRE_FEEDS_BATCH_SQL = """\
 WITH available_feeds AS (
     SELECT id
@@ -380,6 +388,24 @@ class FeedStore:
             fencing_token,
         )
         return result == "UPDATE 1"
+
+    async def release_feeds_batch(self, worker_id: uuid.UUID) -> int:
+        """
+        Release all active leases held by this worker.
+
+        Used during graceful shutdown to allow other workers to immediately claim
+        the feeds without waiting for timeout expiration.
+
+        Args:
+            worker_id: UUID of the worker releasing leases.
+
+        Returns:
+            The number of feeds released.
+        """
+        result = await self._pool.execute(_RELEASE_FEEDS_BATCH_SQL, worker_id)
+        if result.startswith("UPDATE "):
+            return int(result.split()[1])
+        return 0
 
     async def acquire_feeds_batch(
         self,

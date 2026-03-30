@@ -1,20 +1,17 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import datetime
 import logging
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
-from backend.pipeline.common.constants import GCS_METADATA_SIZE_LIMIT
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 
 if TYPE_CHECKING:
     from backend.pipeline.common.clients.gcs_client import GcsClient
     from backend.pipeline.common.clients.pubsub_client import PubSubClient
-    from backend.pipeline.schema_types.sed_metadata_pb2 import SedMetadata
     from backend.pipeline.storage.feed_store import LeasedFeed
 
 logger = logging.getLogger(__name__)
@@ -22,34 +19,6 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------
 # Private helper functions
 # -----------------------------------------------------------------------------
-
-
-def _build_sed_metadata(
-    object_name: str,
-    sed_metadata: SedMetadata | None,
-) -> dict[str, dict[str, str]] | None:
-    """Encode and validate optional SED metadata for GCS object metadata."""
-    if not sed_metadata:
-        return None
-
-    sed_metadata_bytes = sed_metadata.SerializeToString()
-    encoded_metadata = base64.b64encode(sed_metadata_bytes).decode("ascii")
-    metadata = {"metadata": {"sed_metadata": encoded_metadata}}
-
-    inner = metadata["metadata"]
-    metadata_size = sum(
-        len(key.encode()) + len(value.encode()) for key, value in inner.items()
-    )
-    if metadata_size > GCS_METADATA_SIZE_LIMIT:
-        msg = (
-            f"Metadata size ({metadata_size} bytes) exceeds GCS limit "
-            f"({GCS_METADATA_SIZE_LIMIT} bytes) for object "
-            f"'{object_name}'"
-        )
-        logger.error(msg)
-        raise ValueError(msg)
-
-    return metadata
 
 
 # -----------------------------------------------------------------------------
@@ -64,7 +33,6 @@ async def upload_staged_audio(
     bucket: str,
     chunk_seq: int,
     fencing_token: int | None = None,
-    sed_metadata: SedMetadata | None = None,
 ) -> str:
     """
     Upload an unnormalized audio chunk to GCS and return the object path.
@@ -85,7 +53,6 @@ async def upload_staged_audio(
         fencing_token: Fencing token from lease acquisition. When set,
             produces a token-qualified path and uses ``ifGenerationMatch=0``
             to guarantee create-only semantics.
-        sed_metadata: Optional SED metadata serialized into object metadata.
 
     Returns:
         The full GCS path (``gs://bucket/object``).
@@ -117,7 +84,6 @@ async def upload_staged_audio(
         audio_chunk,
         bucket,
         object_name,
-        sed_metadata,
         if_generation_match=0 if fencing_token is not None else None,
     )
 
@@ -127,7 +93,6 @@ async def upload_audio(
     audio_chunk: bytes,
     bucket: str,
     object_name: str,
-    sed_metadata: SedMetadata | None = None,
     if_generation_match: int | None = None,
 ) -> str:
     """
@@ -142,7 +107,6 @@ async def upload_audio(
         audio_chunk: Raw audio bytes to upload.
         bucket: Destination GCS bucket name.
         object_name: Object path within the bucket.
-        sed_metadata: Optional SED metadata attached as custom metadata.
         if_generation_match: GCS generation precondition. Set to ``0`` for
             create-only semantics (fails with 412 if the object exists).
             When set, a 412 is treated as success (idempotent retry).
@@ -152,12 +116,8 @@ async def upload_audio(
 
     """
     storage = gcs_client.get_storage()
-    metadata = _build_sed_metadata(object_name, sed_metadata)
-
-    # Build kwargs conditionally: passing parameters=None would break
-    # existing assert_called_once_with assertions that do exact matching.
     upload_kwargs: dict[str, Any] = {
-        "metadata": metadata,
+        "metadata": None,
         "content_type": "audio/flac",
     }
     if if_generation_match is not None:
@@ -170,7 +130,7 @@ async def upload_audio(
         extra={
             "bucket": bucket,
             "object": object_name,
-            "has_metadata": metadata is not None,
+            "has_metadata": False,
         },
     )
 

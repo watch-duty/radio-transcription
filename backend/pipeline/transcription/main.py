@@ -9,7 +9,6 @@ import sys
 
 from apache_beam.options.pipeline_options import PipelineOptions
 
-from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.transcription.options import TranscriptionOptions
 from backend.pipeline.transcription.orchestration import get_pipeline
 
@@ -42,5 +41,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    setup_logging()
+    # Note: Do *not* add backend.pipeline.common.logging.setup_logging() here. It is handled by the Dataflow runner.
     main()

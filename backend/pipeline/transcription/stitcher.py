@@ -3,6 +3,7 @@
 import logging
 import time
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from typing import Any, override
 
 import apache_beam as beam
@@ -152,8 +153,6 @@ class StitchAudioFn(beam.DoFn):
         )
         self.metrics_exporter.setup()
 
-    # Turning off formatter to respect noqa exception.
-    # fmt: off
     def _apply_flush_action(
         self,
         action: FlushAction,
@@ -233,8 +232,6 @@ class StitchAudioFn(beam.DoFn):
             else:
                 stale_timer.clear()
 
-    # Turning off formatter to respect noqa exception.
-    # fmt: off
     def _apply_state_actions(
         self,
         *,
@@ -270,8 +267,6 @@ class StitchAudioFn(beam.DoFn):
                 case DropAction(reason=reason):
                     logger.info(f"{reason}: {gcs_path}")
 
-    # Turning off formatter to respect noqa exception.
-    # fmt: off
     def _process_audio_chunk(
         self,
         *,
@@ -324,8 +319,6 @@ class StitchAudioFn(beam.DoFn):
             gcs_path=gcs_path,
         )
 
-    # Turning off formatter to respect noqa exception.
-    # fmt: off
     @override
     def process(  # type: ignore[override]
         self,
@@ -358,8 +351,6 @@ class StitchAudioFn(beam.DoFn):
                 DEAD_LETTER_QUEUE_TAG, {"error": msg, "feed_id": key}
             )
 
-    # Turning off formatter to respect noqa exception.
-    # fmt: off
     @on_timer(STALE_TIMER_SPEC)
     def handle_stale_transmission(
         self,
@@ -544,7 +535,49 @@ class TranscribeAudioFn(beam.DoFn):
 
         flac_bytes = self.audio_processor.export_flac(processed_audio)
 
+        canonical_audio_uri = None
+        if self.config.stitched_audio_bucket:
+            if not self.audio_processor or not self.audio_processor.gcs_client:
+                msg = "AudioProcessor or GCS client not initialized"
+                raise RuntimeError(msg)
+
+            dt = datetime.fromtimestamp(
+                request.time_range.start_ms / 1000.0, tz=UTC
+            )
+            timestamp_str = dt.strftime("%Y%m%dT%H%M%SZ")
+            object_name = (
+                f"stitched/{request.feed_id}/{dt:%Y/%m/%d}/{timestamp_str}.flac"
+            )
+
+            try:
+                bucket = self.audio_processor.gcs_client.bucket(
+                    self.config.stitched_audio_bucket
+                )
+                blob = bucket.blob(object_name)
+                blob.upload_from_string(flac_bytes, content_type="audio/flac")
+                logger.info(
+                    "Uploaded stitched audio to gs://%s/%s",
+                    self.config.stitched_audio_bucket,
+                    object_name,
+                )
+                canonical_audio_uri = (
+                    f"gs://{self.config.stitched_audio_bucket}/{object_name}"
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to upload stitched audio to gs://%s/%s",
+                    self.config.stitched_audio_bucket,
+                    object_name,
+                )
+                raise
+        elif (
+            request.contributing_audio_uris
+            and len(request.contributing_audio_uris) == 1
+        ):
+            canonical_audio_uri = request.contributing_audio_uris[0]
+
         transcribe_start = time.time()
+
         transcript = self.transcriber.transcribe(
             audio_data=flac_bytes,
         )
@@ -568,10 +601,9 @@ class TranscribeAudioFn(beam.DoFn):
             missing_post_context=request.missing_post_context,
             start_audio_offset_ms=request.start_audio_offset_ms,
             end_audio_offset_ms=request.end_audio_offset_ms,
+            canonical_audio_uri=canonical_audio_uri,
         )
 
-    # Turning off formatter to respect noqa exception.
-    # fmt: off
     @override
     def process(  # type: ignore[override]
         self,

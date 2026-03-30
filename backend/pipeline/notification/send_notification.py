@@ -50,7 +50,10 @@ def convert_to_notification(
         feed_id=evaluated_transcribed_audio.feed_id,
         transmission_id=evaluated_transcribed_audio.transmission_id,
         source_audio_uris=evaluated_transcribed_audio.source_audio_uris,
+        canonical_audio_uri=evaluated_transcribed_audio.canonical_audio_uri,
         transcript=evaluated_transcribed_audio.transcript,
+        missing_prior_context=evaluated_transcribed_audio.missing_prior_context,
+        missing_post_context=evaluated_transcribed_audio.missing_post_context,
         evaluation_decisions=evaluated_transcribed_audio.evaluation_decisions,
     )
     if evaluated_transcribed_audio.start_timestamp.seconds:
