@@ -15,8 +15,7 @@ logger = logging.getLogger(__name__)
 # 2. Global Initialization (for performance on warm starts)
 pubsub_client_instance = pubsub_client.PubSubClient()
 publisher = pubsub_client_instance.get_publisher()
-PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT")
-OUTPUT_TOPIC_ID = os.environ.get("RULES_EVALUATION_RESULTS_TOPIC")
+OUTPUT_TOPIC_PATH = os.environ.get("RULES_EVALUATION_RESULTS_TOPIC")
 
 # 3. Initialize Evaluator
 RULES_API_URL = os.environ.get("RULES_API_URL")
@@ -29,8 +28,7 @@ else:
 
 evaluation_service = service.EvaluationService(
     publisher=publisher,
-    project_id=PROJECT_ID,
-    output_topic_id=OUTPUT_TOPIC_ID,
+    output_topic_path=OUTPUT_TOPIC_PATH,
     text_evaluator=text_evaluator,
 )
 

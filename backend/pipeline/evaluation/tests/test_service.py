@@ -17,14 +17,12 @@ class TestEvaluationService(unittest.TestCase):
     def setUp(self) -> None:
         """Sets up test fixtures."""
         self.mock_publisher = MagicMock()
-        self.project_id = "test-project"
-        self.output_topic_id = "test-topic"
+        self.output_topic_path = "projects/test-project/topics/test-topic"
 
         self.mock_evaluator = MagicMock()
         self.service = service.EvaluationService(
             publisher=self.mock_publisher,
-            project_id=self.project_id,
-            output_topic_id=self.output_topic_id,
+            output_topic_path=self.output_topic_path,
             text_evaluator=self.mock_evaluator,
         )
 
@@ -93,8 +91,7 @@ class TestEvaluationService(unittest.TestCase):
         # Create service without topic
         service_no_topic = service.EvaluationService(
             publisher=self.mock_publisher,
-            project_id=None,
-            output_topic_id=None,
+            output_topic_path=None,
             text_evaluator=self.mock_evaluator,
         )
 
@@ -113,8 +110,7 @@ class TestEvaluationService(unittest.TestCase):
         full_topic_path = "projects/my-project/topics/my-topic"
         service_with_full_path = service.EvaluationService(
             publisher=self.mock_publisher,
-            project_id="test-project",
-            output_topic_id=full_topic_path,
+            output_topic_path=full_topic_path,
             text_evaluator=self.mock_evaluator,
         )
 
