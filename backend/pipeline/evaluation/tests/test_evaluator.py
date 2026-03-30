@@ -100,10 +100,14 @@ class TestRemoteTextEvaluator(unittest.TestCase):
     @patch(
         "backend.pipeline.evaluation.rules_evaluation.evaluator.get_id_token"
     )
+    @patch("backend.pipeline.evaluation.rules_evaluation.evaluator.is_gcp_env")
     @patch("requests.Session.get")
-    @patch.dict("os.environ", {"K_SERVICE": "1"})
-    def test_evaluate_success(self, mock_get, mock_get_id_token) -> None:
+    def test_evaluate_success(
+        self, mock_get, mock_is_gcp, mock_get_id_token
+    ) -> None:
         """Test that RemoteTextEvaluator successfully fetches and evaluates rules."""
+        # Force GCP environment for this test
+        mock_is_gcp.return_value = True
         # Mock token
         mock_get_id_token.return_value = "mock_token"
         # Mock rule from API
@@ -139,34 +143,38 @@ class TestRemoteTextEvaluator(unittest.TestCase):
     @patch(
         "backend.pipeline.evaluation.rules_evaluation.evaluator.get_id_token"
     )
+    @patch("backend.pipeline.evaluation.rules_evaluation.evaluator.is_gcp_env")
     @patch("requests.Session.get")
-    def test_evaluate_outside_gcp(self, mock_get, mock_get_id_token) -> None:
+    def test_evaluate_outside_gcp(
+        self, mock_get, mock_is_gcp, mock_get_id_token
+    ) -> None:
         """Test that RemoteTextEvaluator skips authentication when not in GCP."""
-        with patch.dict("os.environ", {}, clear=True):
-            # Mock rule from API
-            mock_rule = {
-                "rule_id": "test_rule_1",
-                "rule_name": "Test Rule 1",
-                "is_active": True,
-                "scope": {"level": "GLOBAL", "target_feeds": []},
-                "conditions": {
-                    "evaluation_type": "KEYWORD_MATCH",
-                    "operator": "ANY",
-                    "keywords": ["test"],
-                    "case_sensitive": False,
-                },
-            }
-            mock_get.return_value.json.return_value = [mock_rule]
-            mock_get.return_value.status_code = 200
+        # Force non-GCP environment for this test
+        mock_is_gcp.return_value = False
+        # Mock rule from API
+        mock_rule = {
+            "rule_id": "test_rule_1",
+            "rule_name": "Test Rule 1",
+            "is_active": True,
+            "scope": {"level": "GLOBAL", "target_feeds": []},
+            "conditions": {
+                "evaluation_type": "KEYWORD_MATCH",
+                "operator": "ANY",
+                "keywords": ["test"],
+                "case_sensitive": False,
+            },
+        }
+        mock_get.return_value.json.return_value = [mock_rule]
+        mock_get.return_value.status_code = 200
 
-            text = "This is a test message."
-            result = self.remote_evaluator.evaluate(text)
+        text = "This is a test message."
+        result = self.remote_evaluator.evaluate(text)
 
-            self.assertTrue(result["is_flagged"])
-            mock_get_id_token.assert_not_called()
-            self.assertIsNone(
-                self.remote_evaluator.session.headers.get("Authorization")
-            )
+        self.assertTrue(result["is_flagged"])
+        mock_get_id_token.assert_not_called()
+        self.assertIsNone(
+            self.remote_evaluator.session.headers.get("Authorization")
+        )
 
     @patch(
         "backend.pipeline.evaluation.rules_evaluation.evaluator.get_id_token"

@@ -45,8 +45,10 @@ class TestRedisService(unittest.TestCase):
         self.assertFalse(result)
         self.assertEqual(self.service.client.get(key), value)
 
-    @patch.dict(os.environ, {"K_SERVICE": "1"})
-    def test_ssl_configuration_is_passed(self) -> None:
+    @patch("backend.pipeline.common.storage.redis_service.is_gcp_env")
+    def test_ssl_configuration_is_passed(self, mock_is_gcp) -> None:
+        # Force GCP environment for this test
+        mock_is_gcp.return_value = True
         self.service = RedisService()
         self.mock_redis_factory.assert_called()
 
@@ -56,8 +58,12 @@ class TestRedisService(unittest.TestCase):
         self.assertEqual(kwargs.get("ssl_cert_reqs"), "required")
         self.assertIn("/secrets/server_ca.pem", kwargs.get("ssl_ca_certs", ""))
 
-    @patch.dict(os.environ, {}, clear=True)
-    def test_ssl_configuration_not_passed_outside_gcp(self) -> None:
+    @patch("backend.pipeline.common.storage.redis_service.is_gcp_env")
+    def test_ssl_configuration_not_passed_outside_gcp(
+        self, mock_is_gcp
+    ) -> None:
+        # Force non-GCP environment for this test
+        mock_is_gcp.return_value = False
         self.service = RedisService()
 
         self.mock_redis_factory.assert_called()

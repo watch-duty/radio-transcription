@@ -1,5 +1,4 @@
 import logging
-import os
 from unittest import TestCase, mock
 
 from backend.pipeline.common.logging import setup_logging
@@ -15,7 +14,10 @@ class TestLogging(TestCase):
         mock_client_inst = mock.Mock()
         mock_cloud_logging.Client.return_value = mock_client_inst
 
-        with mock.patch.dict(os.environ, {"K_SERVICE": "1"}):
+        # Explicitly mock is_gcp_env to return True to trigger the GCP logging path
+        with mock.patch(
+            "backend.pipeline.common.logging.is_gcp_env", return_value=True
+        ):
             # First call should initialize cloud logging
             setup_logging()
             mock_cloud_logging.Client.assert_called_once()
@@ -28,8 +30,10 @@ class TestLogging(TestCase):
 
     @mock.patch("logging.basicConfig")
     def test_setup_logging_local(self, mock_basic_config) -> None:
-        # Ensure serverless env vars are not set
-        with mock.patch.dict(os.environ, {}, clear=True):
+        # Mock is_gcp_env to return False to trigger local logging path
+        with mock.patch(
+            "backend.pipeline.common.logging.is_gcp_env", return_value=False
+        ):
             # First call should initialize local logging
             setup_logging()
             mock_basic_config.assert_called_once()
