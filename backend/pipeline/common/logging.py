@@ -26,4 +26,6 @@ def setup_logging() -> None:
             force=True,
         )
         # Log that we are not in a detected GCP environment
-        logger.info("Running without Cloud Logging. Logs will print to console.")
+        logger.info(
+            "Running without Cloud Logging. Logs will print to console."
+        )
