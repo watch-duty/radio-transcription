@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Annotated, Any
 
 import google.auth.transport.requests
 import google.oauth2.id_token
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from backend.pipeline.common.env import is_gcp_env
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ async def verify_oidc_token(
 
     Returns the decoded token claims if valid.
     """
-    if os.environ.get("LOCAL_DEV") == "true":
+    if not is_gcp_env():
         return {
             "sub": "local-dev@example.com",
             "email": "local-dev@example.com",
