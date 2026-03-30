@@ -153,8 +153,6 @@ class StitchAudioFn(beam.DoFn):
         )
         self.metrics_exporter.setup()
 
-    # Turning off formatter to respect noqa exception.
-    # fmt: off
     def _apply_flush_action(
         self,
         action: FlushAction,
@@ -234,8 +232,6 @@ class StitchAudioFn(beam.DoFn):
             else:
                 stale_timer.clear()
 
-    # Turning off formatter to respect noqa exception.
-    # fmt: off
     def _apply_state_actions(
         self,
         *,
@@ -271,8 +267,6 @@ class StitchAudioFn(beam.DoFn):
                 case DropAction(reason=reason):
                     logger.info(f"{reason}: {gcs_path}")
 
-    # Turning off formatter to respect noqa exception.
-    # fmt: off
     def _process_audio_chunk(
         self,
         *,
@@ -325,8 +319,6 @@ class StitchAudioFn(beam.DoFn):
             gcs_path=gcs_path,
         )
 
-    # Turning off formatter to respect noqa exception.
-    # fmt: off
     @override
     def process(  # type: ignore[override]
         self,
@@ -359,8 +351,6 @@ class StitchAudioFn(beam.DoFn):
                 DEAD_LETTER_QUEUE_TAG, {"error": msg, "feed_id": key}
             )
 
-    # Turning off formatter to respect noqa exception.
-    # fmt: off
     @on_timer(STALE_TIMER_SPEC)
     def handle_stale_transmission(
         self,
@@ -545,6 +535,7 @@ class TranscribeAudioFn(beam.DoFn):
 
         flac_bytes = self.audio_processor.export_flac(processed_audio)
 
+        canonical_audio_uri = None
         if self.config.stitched_audio_bucket:
             if not self.audio_processor or not self.audio_processor.gcs_client:
                 msg = "AudioProcessor or GCS client not initialized"
@@ -569,6 +560,9 @@ class TranscribeAudioFn(beam.DoFn):
                     self.config.stitched_audio_bucket,
                     object_name,
                 )
+                canonical_audio_uri = (
+                    f"gs://{self.config.stitched_audio_bucket}/{object_name}"
+                )
             except Exception:
                 logger.exception(
                     "Failed to upload stitched audio to gs://%s/%s",
@@ -576,6 +570,11 @@ class TranscribeAudioFn(beam.DoFn):
                     object_name,
                 )
                 raise
+        elif (
+            request.contributing_audio_uris
+            and len(request.contributing_audio_uris) == 1
+        ):
+            canonical_audio_uri = request.contributing_audio_uris[0]
 
         transcribe_start = time.time()
 
@@ -602,10 +601,9 @@ class TranscribeAudioFn(beam.DoFn):
             missing_post_context=request.missing_post_context,
             start_audio_offset_ms=request.start_audio_offset_ms,
             end_audio_offset_ms=request.end_audio_offset_ms,
+            canonical_audio_uri=canonical_audio_uri,
         )
 
-    # Turning off formatter to respect noqa exception.
-    # fmt: off
     @override
     def process(  # type: ignore[override]
         self,

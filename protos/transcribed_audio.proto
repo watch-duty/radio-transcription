@@ -45,4 +45,7 @@ message TranscribedAudio {
 
   // The exact slice offset within the *last* URI where the transcribed speech formally ends.
   google.protobuf.Duration end_audio_offset = 10;
+
+  // The final unified canonical reference audio file URI for this transmission.
+  string canonical_audio_uri = 11;
 }

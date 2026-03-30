@@ -1,4 +1,8 @@
+FROM gcr.io/dataflow-templates-base/python311-template-launcher-base:latest AS launcher
+
 FROM apache/beam_python3.13_sdk:2.70.0
+
+COPY --from=launcher /opt/google/dataflow/python_template_launcher /opt/google/dataflow/python_template_launcher
 
 # Install OS dependencies: ffmpeg and libomp5
 USER root
