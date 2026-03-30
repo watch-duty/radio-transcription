@@ -1,5 +1,4 @@
 import asyncio
-import types
 import unittest
 import uuid
 from unittest.mock import MagicMock, patch
@@ -29,7 +28,7 @@ class TestRouteCapturer(unittest.TestCase):
     ) -> None:
         """bcfy_feeds source_type routes to capture_icecast_stream."""
         mock_capture = MagicMock(return_value="mock_async_iterator")
-        mock_module = types.ModuleType("fake_collector")
+        mock_module = MagicMock()
         mock_module.capture_icecast_stream = mock_capture
         mock_import.return_value = mock_module
 
