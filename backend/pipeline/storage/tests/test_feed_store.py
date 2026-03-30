@@ -147,7 +147,9 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
         gcs_path = "gs://bucket/path/file.ogg"
 
-        await store.update_feed_progress(_FEED_ID, _WORKER_ID, gcs_path, 1, None)
+        await store.update_feed_progress(
+            _FEED_ID, _WORKER_ID, gcs_path, 1, None
+        )
 
         args = pool.execute.call_args[0]
         self.assertEqual(args[1:], (gcs_path, _FEED_ID, _WORKER_ID, 1, None))
