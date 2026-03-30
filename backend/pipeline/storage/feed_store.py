@@ -73,7 +73,7 @@ LEFT JOIN feed_properties fpi ON fpi.feed_id = leased.id
 _UPDATE_PROGRESS_SQL = """\
 UPDATE feeds
 SET last_processed_filename = $1,
-    last_bookmark = $5,
+    last_bookmark = COALESCE($5, last_bookmark),
     last_heartbeat = NOW(),
     failure_count = 0
 WHERE id = $2 AND worker_id = $3 AND fencing_token = $4
