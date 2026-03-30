@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 PUBSUB_EMULATOR_HOST = os.environ["PUBSUB_EMULATOR_HOST"]
 PROJECT_ID = os.environ["GOOGLE_CLOUD_PROJECT"]
-PUBSUB_ENDPOINT = f"http://{PUBSUB_EMULATOR_HOST}/v1/projects/{PROJECT_ID}"
+PUBSUB_ENDPOINT = f"http://{PUBSUB_EMULATOR_HOST}/v1"
 
 
 def wait_for_emulator() -> None:
@@ -33,25 +33,27 @@ def wait_for_emulator() -> None:
     sys.exit(1)
 
 
-def create_topic(topic_id: str) -> None:
+def create_topic(topic_path: str) -> None:
     """Creates a topic in the Pub/Sub emulator.
 
     Ignores pre-existing topics.
 
     Args:
-        topic_id: The ID of the topic to create.
+        topic_path: The full resource path of the topic to create.
     """
-    url = f"{PUBSUB_ENDPOINT}/topics/{topic_id}"
+    url = f"{PUBSUB_ENDPOINT}/{topic_path}"
     response = requests.put(url, json={}, timeout=10)
     # 200 Created, 409 Already exists
     if response.status_code in (200, 409):
-        logger.info("Topic '%s' ready.", topic_id)
+        logger.info("Topic '%s' ready.", topic_path)
     else:
-        logger.error("Failed to create topic '%s': %s", topic_id, response.text)
+        logger.error(
+            "Failed to create topic '%s': %s", topic_path, response.text
+        )
 
 
 def create_push_subscription(
-    subscription_id: str, topic_id: str, push_endpoint: str
+    subscription_id: str, topic_path: str, push_endpoint: str
 ) -> None:
     """Creates a push subscription in the Pub/Sub emulator.
 
@@ -59,12 +61,12 @@ def create_push_subscription(
 
     Args:
         subscription_id: The ID of the subscription to create.
-        topic_id: The ID of the topic to subscribe to.
+        topic_path: The full resource path of the topic to subscribe to.
         push_endpoint: The HTTP endpoint to push messages to.
     """
-    url = f"{PUBSUB_ENDPOINT}/subscriptions/{subscription_id}"
+    url = f"{PUBSUB_ENDPOINT}/projects/{PROJECT_ID}/subscriptions/{subscription_id}"
     payload = {
-        "topic": f"projects/{PROJECT_ID}/topics/{topic_id}",
+        "topic": topic_path,
         "pushConfig": {"pushEndpoint": push_endpoint},
     }
     response = requests.put(url, json=payload, timeout=10)

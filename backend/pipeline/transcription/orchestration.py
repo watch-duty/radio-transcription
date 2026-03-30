@@ -14,6 +14,7 @@ from apache_beam.io.gcp.pubsub import (
     WriteToPubSub,
 )
 from apache_beam.options.pipeline_options import (
+    GoogleCloudOptions,
     PipelineOptions,
     StandardOptions,
 )
@@ -112,7 +113,7 @@ def get_pipeline(
 
     # Claim-check: Download the raw bytes for ordered chunks currently just passing as URIs
     download_config = StitchAudioConfig(
-        project_id=options.project_id,
+        project_id=pipeline_options.view_as(GoogleCloudOptions).project,
         vad_type=options.vad_type,
         vad_config=options.vad_config,
         metrics_exporter_type=options.metrics_exporter_type,
@@ -140,7 +141,7 @@ def get_pipeline(
     transcripts = stitching_results.main | "TranscribeAudio" >> beam.ParDo(
         TranscribeAudioFn(
             config=TranscribeAudioConfig(
-                project_id=options.project_id,
+                project_id=pipeline_options.view_as(GoogleCloudOptions).project,
                 transcriber_type=options.transcriber_type,
                 transcriber_config=options.transcriber_config,
                 vad_type=options.vad_type,
