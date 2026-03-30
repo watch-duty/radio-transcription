@@ -108,6 +108,20 @@ class TestEvaluationService(unittest.TestCase):
         self.mock_evaluator.evaluate.assert_called()
         self.mock_publisher.publish.assert_not_called()
 
+    def test_full_topic_path(self) -> None:
+        """Ensures that full topic paths are not double-prefixed."""
+        full_topic_path = "projects/my-project/topics/my-topic"
+        service_with_full_path = service.EvaluationService(
+            publisher=self.mock_publisher,
+            project_id="test-project",
+            output_topic_id=full_topic_path,
+            text_evaluator=self.mock_evaluator,
+        )
+
+        self.assertEqual(
+            service_with_full_path.output_topic_path, full_topic_path
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,8 +3,7 @@ import os
 
 import functions_framework
 from cloudevents.http import event as cloudevent
-from google.cloud import pubsub_v1
-
+from backend.pipeline.common.clients import pubsub_client
 from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.evaluation import service
 from backend.pipeline.evaluation.rules_evaluation import evaluator
@@ -14,10 +13,8 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 # 2. Global Initialization (for performance on warm starts)
-publisher_options = pubsub_v1.types.PublisherOptions(
-    enable_message_ordering=True
-)
-publisher = pubsub_v1.PublisherClient(publisher_options=publisher_options)
+pubsub_client_instance = pubsub_client.PubSubClient()
+publisher = pubsub_client_instance.get_publisher()
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT")
 OUTPUT_TOPIC_ID = os.environ.get("RULES_EVALUATION_RESULTS_TOPIC")
 

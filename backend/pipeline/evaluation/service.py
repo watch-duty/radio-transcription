@@ -3,6 +3,7 @@ import logging
 
 from cloudevents.http import event as cloudevent
 from google.cloud import pubsub_v1
+from backend.pipeline.common.clients import pubsub_client
 
 from backend.pipeline.evaluation.rules_evaluation import evaluator
 from backend.pipeline.schema_types import (
@@ -48,8 +49,8 @@ class EvaluationService:
         self.output_topic_id = output_topic_id
         self.text_evaluator = text_evaluator
         if project_id and output_topic_id:
-            self.output_topic_path = publisher.topic_path(
-                project_id, output_topic_id
+            self.output_topic_path = pubsub_client.PubSubClient.get_topic_path(
+                publisher, project_id, output_topic_id
             )
         else:
             logger.warning("OUTPUT_TOPIC or PROJECT_ID env var not set.")
