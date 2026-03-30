@@ -101,6 +101,7 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         "backend.pipeline.evaluation.rules_evaluation.evaluator.get_id_token"
     )
     @patch("requests.Session.get")
+    @patch.dict("os.environ", {"K_SERVICE": "1"})
     def test_evaluate_success(self, mock_get, mock_get_id_token) -> None:
         """Test that RemoteTextEvaluator successfully fetches and evaluates rules."""
         # Mock token
@@ -141,7 +142,7 @@ class TestRemoteTextEvaluator(unittest.TestCase):
     @patch("requests.Session.get")
     def test_evaluate_local_dev(self, mock_get, mock_get_id_token) -> None:
         """Test that RemoteTextEvaluator skips authentication in LOCAL_DEV mode."""
-        with patch.dict("os.environ", {"LOCAL_DEV": "true"}):
+        with patch.dict("os.environ", {}, clear=True):
             # Mock rule from API
             mock_rule = {
                 "rule_id": "test_rule_1",

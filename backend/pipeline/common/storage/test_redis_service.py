@@ -45,7 +45,9 @@ class TestRedisService(unittest.TestCase):
         self.assertFalse(result)
         self.assertEqual(self.service.client.get(key), value)
 
+    @patch.dict(os.environ, {"K_SERVICE": "1"})
     def test_ssl_configuration_is_passed(self) -> None:
+        self.service = RedisService()
         self.mock_redis_factory.assert_called()
 
         _, kwargs = self.mock_redis_factory.call_args
@@ -54,7 +56,7 @@ class TestRedisService(unittest.TestCase):
         self.assertEqual(kwargs.get("ssl_cert_reqs"), "required")
         self.assertIn("/secrets/server_ca.pem", kwargs.get("ssl_ca_certs", ""))
 
-    @patch.dict(os.environ, {"LOCAL_DEV": "True"})
+    @patch.dict(os.environ, {}, clear=True)
     def test_ssl_configuration_not_passed_in_local_dev(self) -> None:
         self.service = RedisService()
 

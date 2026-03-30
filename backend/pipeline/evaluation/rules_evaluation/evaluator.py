@@ -7,6 +7,7 @@ from typing import TypedDict
 import requests
 
 from backend.pipeline.common.auth import get_id_token
+from backend.pipeline.common.env import is_gcp_env
 from backend.pipeline.common.rules import models
 
 logger = logging.getLogger(__name__)
@@ -160,7 +161,7 @@ class RemoteTextEvaluator(BaseTextEvaluator):
             A list of Rule objects.
         """
         # When running on Cloud Run, use the metadata server to get an ID token
-        if os.environ.get("LOCAL_DEV") != "true":
+        if is_gcp_env():
             token = get_id_token(self.api_url)
             self.session.headers.update({"Authorization": f"Bearer {token}"})
 
