@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -9,19 +10,31 @@ if TYPE_CHECKING:
 
     from backend.pipeline.storage.feed_store import LeasedFeed
 
+# Maps source_type -> (module_path, function_name).
+# To add a new collector, add a single entry here.
+_COLLECTOR_REGISTRY: dict[str, tuple[str, str]] = {
+    "bcfy_feeds": (
+        "backend.pipeline.ingestion.collectors.icecast_collector",
+        "capture_icecast_stream",
+    ),
+}
+
 
 def route_capturer(
     feed: LeasedFeed, shutdown_event: asyncio.Event
 ) -> AsyncIterator[tuple[bytes, datetime.datetime]]:
+    """Routes the feed to the appropriate capture function.
+
+    Looks up the collector in ``_COLLECTOR_REGISTRY`` by source_type,
+    lazily imports it, and calls it with the feed and shutdown event.
     """
-    Routes the feed to the appropriate capture function based on its source_type.
-    """
-    match feed["source_type"]:
-        case "bcfy_feeds":
-            from backend.pipeline.ingestion.collectors.icecast_collector import (  # noqa: PLC0415
-                capture_icecast_stream,
-            )
-            return capture_icecast_stream(feed, shutdown_event)
-        case _:
-            msg = f"Unsupported source_type: {feed['source_type']}"
-            raise ValueError(msg)
+    source_type = feed["source_type"]
+    entry = _COLLECTOR_REGISTRY.get(source_type)
+    if entry is None:
+        msg = f"Unsupported source_type: {source_type}"
+        raise ValueError(msg)
+
+    module_path, func_name = entry
+    module = importlib.import_module(module_path)
+    capture_fn = getattr(module, func_name)
+    return capture_fn(feed, shutdown_event)

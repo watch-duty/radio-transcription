@@ -1,4 +1,5 @@
 import asyncio
+import types
 import unittest
 import uuid
 from unittest.mock import MagicMock, patch
@@ -22,17 +23,24 @@ def _make_feed(source_type: str) -> LeasedFeed:
 class TestRouteCapturer(unittest.TestCase):
     """Tests for the route_capturer routing logic."""
 
-    @patch("backend.pipeline.ingestion.router.capture_icecast_stream")
+    @patch("backend.pipeline.ingestion.router.importlib.import_module")
     def test_routes_bcfy_feeds_to_icecast_collector(
-        self, mock_capture: MagicMock
+        self, mock_import: MagicMock
     ) -> None:
         """bcfy_feeds source_type routes to capture_icecast_stream."""
-        mock_capture.return_value = "mock_async_iterator"
+        mock_capture = MagicMock(return_value="mock_async_iterator")
+        mock_module = types.ModuleType("fake_collector")
+        mock_module.capture_icecast_stream = mock_capture
+        mock_import.return_value = mock_module
+
         feed = _make_feed("bcfy_feeds")
         shutdown_event = MagicMock(spec=asyncio.Event)
 
         result = route_capturer(feed, shutdown_event)
 
+        mock_import.assert_called_once_with(
+            "backend.pipeline.ingestion.collectors.icecast_collector"
+        )
         mock_capture.assert_called_once_with(feed, shutdown_event)
         self.assertEqual(result, "mock_async_iterator")
 
