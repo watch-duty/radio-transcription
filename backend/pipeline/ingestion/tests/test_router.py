@@ -27,18 +27,17 @@ def _make_feed(source_type: str) -> LeasedFeed:
 class TestRouteCapturerRegistered(unittest.TestCase):
     """Tests that every registered source_type routes correctly."""
 
-    @mock.patch(
-        "backend.pipeline.ingestion.router.importlib.import_module"
-    )
+    @mock.patch("backend.pipeline.ingestion.router.importlib.import_module")
     def test_each_registered_source_type_routes_correctly(
         self, mock_import: mock.MagicMock
     ) -> None:
         """Each registry entry imports the right module and calls
         the expected function.
         """
-        for source_type, (module_path, func_name) in (
-            _COLLECTOR_REGISTRY.items()
-        ):
+        for source_type, (
+            module_path,
+            func_name,
+        ) in _COLLECTOR_REGISTRY.items():
             with self.subTest(source_type=source_type):
                 mock_import.reset_mock()
                 sentinel = object()
@@ -53,9 +52,7 @@ class TestRouteCapturerRegistered(unittest.TestCase):
                 result = route_capturer(feed, shutdown_event)
 
                 mock_import.assert_called_once_with(module_path)
-                mock_fn.assert_called_once_with(
-                    feed, shutdown_event
-                )
+                mock_fn.assert_called_once_with(feed, shutdown_event)
                 self.assertIs(result, sentinel)
 
 
