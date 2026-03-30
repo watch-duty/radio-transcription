@@ -144,7 +144,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build ingestion Docker image
-        run: docker build -t ingestion-smoke-test -f backend/pipeline/ingestion/collectors/Dockerfile .
+        run: docker build -t ingestion-smoke-test -f backend/pipeline/ingestion/Dockerfile .
       - name: Build transcription Docker image
         run: docker build -t transcription-smoke-test -f backend/pipeline/transcription/Dockerfile .
       # PUBSUB_EMULATOR_HOST bypasses GCP credential resolution in the
@@ -157,7 +157,7 @@ jobs:
             -e BROADCASTIFY_PASSWORD=smoke-test \
             -e PUBSUB_EMULATOR_HOST=localhost:8085 \
             ingestion-smoke-test \
-            python -c "import backend.pipeline.ingestion.collectors.icecast_collector"
+            python -c "import backend.pipeline.ingestion.main"
       - name: Verify ingestion settings instantiation
         run: |
           docker run --rm \
