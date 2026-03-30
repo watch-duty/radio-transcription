@@ -62,6 +62,3 @@ backend/pipeline/ingestion/collectors/.*
 *.egg
 build/
 dist/
-
-# Firebase
-.firebase/
