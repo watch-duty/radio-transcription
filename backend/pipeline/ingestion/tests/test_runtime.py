@@ -22,7 +22,7 @@ _FEED = LeasedFeed(
     source_type="bcfy_feeds",
     last_processed_filename=None,
     fencing_token=1,
-    stream_url="http://stream.example.com/feed",
+    source_feed_id="123",
 )
 
 

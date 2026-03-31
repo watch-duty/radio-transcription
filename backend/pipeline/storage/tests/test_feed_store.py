@@ -21,7 +21,7 @@ _LEASE_ROW = {
     "source_type": "bcfy_feeds",
     "last_processed_filename": None,
     "fencing_token": 1,
-    "stream_url": "http://stream.example.com/feed",
+    "source_feed_id": "123",
 }
 
 
@@ -55,7 +55,7 @@ class TestLeaseFeed(unittest.IsolatedAsyncioTestCase):
             "source_type": "bcfy_feeds",
             "last_processed_filename": None,
             "fencing_token": 1,
-            "stream_url": "http://stream.example.com/feed",
+            "source_feed_id": "123",
         }
         self.assertEqual(result, expected)
 
@@ -329,7 +329,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
                 "source_type": "bcfy_feeds",
                 "last_processed_filename": None,
                 "fencing_token": 1,
-                "stream_url": "http://stream.example.com/a",
+                "source_feed_id": "123",
             },
             {
                 "id": _FEED_ID_B,
@@ -337,7 +337,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
                 "source_type": "bcfy_feeds",
                 "last_processed_filename": "gs://bucket/path",
                 "fencing_token": 1,
-                "stream_url": None,
+                "source_feed_id": None,
             },
         ]
         pool = _make_pool(fetch_result=rows)

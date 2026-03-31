@@ -40,9 +40,9 @@ leased AS (
               feeds.last_processed_filename, feeds.fencing_token
 )
 SELECT leased.id, leased.name, leased.source_type,
-       leased.last_processed_filename, leased.fencing_token, fpi.stream_url
+       leased.last_processed_filename, leased.fencing_token, fpi.source_feed_id
 FROM leased
-LEFT JOIN feed_properties_icecast fpi ON fpi.feed_id = leased.id
+LEFT JOIN feed_properties fpi ON fpi.feed_id = leased.id
 """
 
 _UPDATE_PROGRESS_SQL = """\
@@ -123,9 +123,9 @@ leased AS (
               feeds.last_processed_filename, feeds.fencing_token
 )
 SELECT leased.id, leased.name, leased.source_type,
-       leased.last_processed_filename, leased.fencing_token, fpi.stream_url
+       leased.last_processed_filename, leased.fencing_token, fpi.source_feed_id
 FROM leased
-LEFT JOIN feed_properties_icecast fpi ON fpi.feed_id = leased.id
+LEFT JOIN feed_properties fpi ON fpi.feed_id = leased.id
 """
 
 # NOTE: $3 = failure_threshold, $4 = fencing_token,
@@ -157,7 +157,7 @@ class LeasedFeed(TypedDict):
     source_type: str
     last_processed_filename: str | None
     fencing_token: int
-    stream_url: str | None
+    source_feed_id: str | None
 
 
 class HeartbeatResult(TypedDict):
@@ -213,7 +213,7 @@ class FeedStore:
             source_type=row["source_type"],
             last_processed_filename=row["last_processed_filename"],
             fencing_token=row["fencing_token"],
-            stream_url=row["stream_url"],
+            source_feed_id=row["source_feed_id"],
         )
 
     async def update_feed_progress(
@@ -442,7 +442,7 @@ class FeedStore:
                 source_type=row["source_type"],
                 last_processed_filename=row["last_processed_filename"],
                 fencing_token=row["fencing_token"],
-                stream_url=row["stream_url"],
+                source_feed_id=row["source_feed_id"],
             )
             for row in rows
         ]

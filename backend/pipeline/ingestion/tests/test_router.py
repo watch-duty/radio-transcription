@@ -20,7 +20,7 @@ def _make_feed(source_type: str) -> LeasedFeed:
         source_type=source_type,
         last_processed_filename=None,
         fencing_token=0,
-        stream_url="http://example.com/stream",
+        source_feed_id="123",
     )
 
 
