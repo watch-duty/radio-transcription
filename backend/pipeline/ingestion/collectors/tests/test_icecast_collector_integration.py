@@ -149,7 +149,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         source_feed_id: str | None = "123",
         external_id: str | None = "external-123",
     ) -> uuid.UUID:
-        """Insert an unclaimed feed row, optionally with icecast properties."""
+        """Insert an unclaimed feed row, optionally with feed properties."""
         feed_id = await self.pool.fetchval(
             "INSERT INTO feeds (name, source_type, status)"
             " VALUES ($1, 'bcfy_feeds', 'unclaimed')"

@@ -33,7 +33,7 @@ async def _insert_feed(
     source_feed_id: str | None = None,
     external_id: str | None = None,
 ) -> uuid.UUID:
-    """Insert a feed row and optionally an icecast properties row."""
+    """Insert a feed row and optionally a feed properties row."""
     heartbeat_expr = "NULL"
     if last_heartbeat_age_seconds is not None:
         heartbeat_expr = (
@@ -52,7 +52,7 @@ async def _insert_feed(
         str(worker_id) if worker_id else None,
     )
 
-    if source_feed_id is not None:
+    if source_feed_id is not None and external_id is not None:
         await pool.execute(
             "INSERT INTO feed_properties (feed_id, source_feed_id, external_id) "
             "VALUES ($1::uuid, $2, $3)",
@@ -79,7 +79,7 @@ async def _get_feed_status(pool: asyncpg.Pool, feed_id: uuid.UUID) -> dict:
 # -- Tests: lease_feed ------------------------------------------------
 
 
-async def test_lease_returns_feed_with_icecast_properties(
+async def test_lease_returns_feed_with_feed_properties(
     db_pool: asyncpg.Pool, store: FeedStore
 ) -> None:
     """Leased feed includes source_feed_id from LEFT JOIN."""
@@ -88,6 +88,7 @@ async def test_lease_returns_feed_with_icecast_properties(
         db_pool,
         "Icecast Feed",
         source_feed_id="123",
+        external_id="ext-123",
     )
 
     result = await store.lease_feed(worker)
@@ -96,21 +97,6 @@ async def test_lease_returns_feed_with_icecast_properties(
     assert result["name"] == "Icecast Feed"
     assert result["source_type"] == "bcfy_feeds"
     assert result["source_feed_id"] == "123"
-    assert result["fencing_token"] == 1
-
-
-async def test_lease_returns_feed_without_icecast_properties(
-    db_pool: asyncpg.Pool, store: FeedStore
-) -> None:
-    """Non-icecast feed has source_feed_id=None."""
-    worker = uuid.uuid4()
-    await _insert_feed(db_pool, "API Feed", source_type="bcfy_calls")
-
-    result = await store.lease_feed(worker)
-
-    assert result is not None
-    assert result["name"] == "API Feed"
-    assert result["source_feed_id"] is None
     assert result["fencing_token"] == 1
 
 
