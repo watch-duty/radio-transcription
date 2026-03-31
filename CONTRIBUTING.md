@@ -111,6 +111,8 @@ docker compose run --rm integration-tests
 * Formatting and linting: `prettier` and `eslint`
 * Bundling: `vite` (https://vite.dev/)
 * Testing: [Vitest](https://vitest.dev/) with [React Testing Library](https://testing-library.com/react)
+* Install Node (`sudo apt install npm` or from https://nodejs.org/en/download/)
+* (Optional) Install Firebase CLI (https://firebase.google.com/docs/cli) for hosting deployments
 
 
 ### Making Changes to Files
