@@ -107,7 +107,7 @@ class BaseTextEvaluator(ABC):
         self, rules: list[models.Rule], text: str, feed_id: str
     ) -> EvaluationResult:
         if not text:
-            return {"is_flagged": False, "triggered_rules": []}
+            return {"is_flagged": False, "triggered_rules": [], "errors": []}
 
         organized_rules = self._organize_rules(rules)
         rules_to_evaluate = self._get_applicable_rules(organized_rules, feed_id)
@@ -121,6 +121,7 @@ class BaseTextEvaluator(ABC):
         return {
             "is_flagged": len(unique_matches) > 0,
             "triggered_rules": unique_matches,
+            "errors": [],
         }
 
 
