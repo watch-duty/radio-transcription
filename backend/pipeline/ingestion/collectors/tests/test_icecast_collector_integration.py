@@ -466,7 +466,9 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(downloaded, expected_segment)
         self.assertEqual(downloaded[:4], _FLAC_MAGIC)
 
-    async def test_missing_source_feed_id_raises_without_side_effects(self) -> None:
+    async def test_missing_source_feed_id_raises_without_side_effects(
+        self,
+    ) -> None:
         """Feed without icecast properties -> ValueError, no GCS upload."""
         # Insert feed WITHOUT source_feed_id (no feed_properties row)
         await self._insert_feed("no-url-feed", source_feed_id=None)

@@ -23,7 +23,9 @@ with (
 class TestLocalIcecastCollector(unittest.IsolatedAsyncioTestCase):
     """Tests for local_icecast_collector local debugging entrypoint."""
 
-    async def test_run_local_capture_requires_source_feed_id_env_var(self) -> None:
+    async def test_run_local_capture_requires_source_feed_id_env_var(
+        self,
+    ) -> None:
         """Raises ValueError when ICECAST_SOURCE_FEED_ID is unset."""
         with patch.dict(
             os.environ,
@@ -36,7 +38,9 @@ class TestLocalIcecastCollector(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError) as context:
                 await local_icecast_collector.run_local_capture()
 
-        self.assertIn("ICECAST_SOURCE_FEED_ID must be set", str(context.exception))
+        self.assertIn(
+            "ICECAST_SOURCE_FEED_ID must be set", str(context.exception)
+        )
 
     async def test_run_local_capture_writes_bytes_and_calls_capture(
         self,
@@ -80,9 +84,7 @@ class TestLocalIcecastCollector(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(feed_arg["name"], "local-icecast-test")
             self.assertEqual(feed_arg["source_type"], "icecast")
             self.assertIsNone(feed_arg["last_processed_filename"])
-            self.assertEqual(
-                feed_arg["source_feed_id"], "123"
-            )
+            self.assertEqual(feed_arg["source_feed_id"], "123")
             self.assertIsInstance(
                 shutdown_event_arg, local_icecast_collector.asyncio.Event
             )
