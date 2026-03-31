@@ -3,7 +3,6 @@ import unittest
 from unittest.mock import MagicMock
 
 from backend.pipeline.evaluation import service
-from backend.pipeline.evaluation.rules_evaluation import evaluator
 from backend.pipeline.schema_types import (
     evaluated_transcribed_audio_pb2 as evaluated_pb2,
 )

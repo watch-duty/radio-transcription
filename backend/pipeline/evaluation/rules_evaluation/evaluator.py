@@ -1,7 +1,6 @@
 import logging
 import re
 from abc import ABC, abstractmethod
-from enum import StrEnum
 from typing import TypedDict
 
 import requests
@@ -9,7 +8,6 @@ import requests
 from backend.pipeline.common.auth import get_id_token
 from backend.pipeline.common.env import is_gcp_env
 from backend.pipeline.common.rules import models
-
 from backend.pipeline.schema_types import (
     evaluated_transcribed_audio_pb2 as evaluated_pb2,
 )
