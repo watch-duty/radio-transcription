@@ -31,6 +31,12 @@
       "label": "Route to DLQ",
       "helpText": "If false, exception bubbles immediately instead of Pub/Sub DLQ.",
       "isOptional": true
+    },
+    {
+      "name": "metrics_exporter_type",
+      "label": "Metrics Exporter Type",
+      "helpText": "Comma-separated metrics platforms (e.g. 'gcp'). Defaults to 'none'.",
+      "isOptional": true
     }
   ]
 }

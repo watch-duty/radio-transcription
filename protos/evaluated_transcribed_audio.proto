@@ -49,6 +49,6 @@ message EvaluatedTranscribedAudio {
 
 
   // --- Decisions ---
-  // The list of rules triggered by this transcript during evaluation (e.g. fire, medical).
+  // The list of rule IDs triggered by this transcript during evaluation.
   repeated string evaluation_decisions = 12;
 }
