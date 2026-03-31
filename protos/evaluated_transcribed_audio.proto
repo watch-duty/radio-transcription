@@ -51,4 +51,12 @@ message EvaluatedTranscribedAudio {
   // --- Decisions ---
   // The list of rule IDs triggered by this transcript during evaluation.
   repeated string evaluation_decisions = 12;
+
+  enum EvaluationErrorType {
+    ERROR_UNSPECIFIED = 0;
+    ERROR_FEED_ID_MISSING = 1;
+    ERROR_RULES_FETCH_FAILED = 2;
+  }
+
+  repeated EvaluationErrorType evaluation_errors = 13;
 }

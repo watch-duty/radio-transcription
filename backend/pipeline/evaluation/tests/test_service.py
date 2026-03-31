@@ -121,11 +121,12 @@ class TestEvaluationService(unittest.TestCase):
             service_with_full_path.output_topic_path, full_topic_path
         )
 
-    def test_publish_on_error_rule(self) -> None:
-        """Ensures publication proceeds if evaluating returns an error rule."""
+    def test_publish_on_proto_error(self) -> None:
+        """Ensures publication proceeds if evaluating returns a proto error."""
         self.mock_evaluator.evaluate.return_value = {
-            "is_flagged": True,
-            "triggered_rules": [evaluator.ErrorRule.FEED_ID_MISSING],
+            "is_flagged": False,
+            "triggered_rules": [],
+            "errors": [evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_FEED_ID_MISSING],
         }
 
         mock_future = MagicMock()

@@ -85,9 +85,12 @@ class EvaluationService:
             )
 
             # 3. Handle Errors
-            if not evaluation_result.get("is_flagged"):
+            errors = evaluation_result.get("errors", [])
+            is_flagged = evaluation_result.get("is_flagged", False)
+
+            if not errors and not is_flagged:
                 logger.info(
-                    "No rules triggered for ID: %s. Skipping publish.",
+                    "No rules triggered and no errors for ID: %s. Skipping publish.",
                     transmission_id,
                 )
                 return
@@ -104,6 +107,7 @@ class EvaluationService:
                 evaluation_decisions=evaluation_result.get(
                     "triggered_rules", []
                 ),
+                evaluation_errors=errors,
             )
             evaluated_payload.start_timestamp.CopyFrom(
                 new_audio.start_timestamp
