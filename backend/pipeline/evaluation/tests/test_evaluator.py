@@ -283,7 +283,10 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         """Test that missing feed_id returns ERROR_FEED_ID_MISSING rule."""
         result = self.remote_evaluator.evaluate("Some text", feed_id="")
         self.assertFalse(result["is_flagged"])
-        self.assertIn(evaluator.evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_FEED_ID_MISSING, result["errors"])
+        self.assertIn(
+            evaluator.evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_FEED_ID_MISSING,
+            result["errors"],
+        )
 
     @patch("requests.Session.get")
     def test_evaluate_rules_fetch_failure(self, mock_get) -> None:
@@ -294,7 +297,10 @@ class TestRemoteTextEvaluator(unittest.TestCase):
             "Some text", feed_id="test_feed"
         )
         self.assertFalse(result["is_flagged"])
-        self.assertIn(evaluator.evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_RULES_FETCH_FAILED, result["errors"])
+        self.assertIn(
+            evaluator.evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_RULES_FETCH_FAILED,
+            result["errors"],
+        )
 
 
 if __name__ == "__main__":

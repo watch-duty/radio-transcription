@@ -126,7 +126,9 @@ class TestEvaluationService(unittest.TestCase):
         self.mock_evaluator.evaluate.return_value = {
             "is_flagged": False,
             "triggered_rules": [],
-            "errors": [evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_FEED_ID_MISSING],
+            "errors": [
+                evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_FEED_ID_MISSING
+            ],
         }
 
         mock_future = MagicMock()
