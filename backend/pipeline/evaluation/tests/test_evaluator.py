@@ -283,16 +283,22 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         """Test that missing feed_id returns ERROR_FEED_ID_MISSING rule."""
         result = self.remote_evaluator.evaluate("Some text", feed_id="")
         self.assertTrue(result["is_flagged"])
-        self.assertIn(evaluator.ErrorRule.FEED_ID_MISSING, result["triggered_rules"])
+        self.assertIn(
+            evaluator.ErrorRule.FEED_ID_MISSING, result["triggered_rules"]
+        )
 
     @patch("requests.Session.get")
     def test_evaluate_rules_fetch_failure(self, mock_get) -> None:
         """Test that API failure returns ERROR_RULES_FETCH_FAILED rule."""
         mock_get.side_effect = Exception("API Down")
 
-        result = self.remote_evaluator.evaluate("Some text", feed_id="test_feed")
+        result = self.remote_evaluator.evaluate(
+            "Some text", feed_id="test_feed"
+        )
         self.assertTrue(result["is_flagged"])
-        self.assertIn(evaluator.ErrorRule.RULES_FETCH_FAILED, result["triggered_rules"])
+        self.assertIn(
+            evaluator.ErrorRule.RULES_FETCH_FAILED, result["triggered_rules"]
+        )
 
 
 if __name__ == "__main__":

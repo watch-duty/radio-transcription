@@ -12,6 +12,7 @@ from backend.pipeline.common.rules import models
 
 logger = logging.getLogger(__name__)
 
+
 class ErrorRule(StrEnum):
     FEED_ID_MISSING = "ERROR_FEED_ID_MISSING"
     RULES_FETCH_FAILED = "ERROR_RULES_FETCH_FAILED"
@@ -20,9 +21,6 @@ class ErrorRule(StrEnum):
 class EvaluationResult(TypedDict):
     is_flagged: bool
     triggered_rules: list[str]
-
-
-
 
 
 class OrganizedRules:
