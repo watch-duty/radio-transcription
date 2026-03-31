@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import MagicMock
 
 from backend.pipeline.evaluation import service
+from backend.pipeline.evaluation.rules_evaluation import evaluator
 from backend.pipeline.schema_types import (
     evaluated_transcribed_audio_pb2 as evaluated_pb2,
 )
@@ -119,6 +120,21 @@ class TestEvaluationService(unittest.TestCase):
         self.assertEqual(
             service_with_full_path.output_topic_path, full_topic_path
         )
+
+    def test_publish_on_error_rule(self) -> None:
+        """Ensures publication proceeds if evaluating returns an error rule."""
+        self.mock_evaluator.evaluate.return_value = {
+            "is_flagged": True,
+            "triggered_rules": [evaluator.ErrorRule.FEED_ID_MISSING],
+        }
+
+        mock_future = MagicMock()
+        mock_future.result.return_value = "msg_id_999"
+        self.mock_publisher.publish.return_value = mock_future
+
+        self.service.handle_event(self.mock_event)
+
+        self.assertTrue(self.mock_publisher.publish.called)
 
 
 if __name__ == "__main__":

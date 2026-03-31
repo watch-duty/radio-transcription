@@ -84,7 +84,7 @@ class EvaluationService:
                 evaluation_result.get("is_flagged"),
             )
 
-            # 3. If not flagged, skip publishing
+            # 3. Handle Errors
             if not evaluation_result.get("is_flagged"):
                 logger.info(
                     "No rules triggered for ID: %s. Skipping publish.",

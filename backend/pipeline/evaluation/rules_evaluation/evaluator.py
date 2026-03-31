@@ -1,6 +1,7 @@
 import logging
 import re
 from abc import ABC, abstractmethod
+from enum import StrEnum
 from typing import TypedDict
 
 import requests
@@ -11,10 +12,17 @@ from backend.pipeline.common.rules import models
 
 logger = logging.getLogger(__name__)
 
+class ErrorRule(StrEnum):
+    FEED_ID_MISSING = "ERROR_FEED_ID_MISSING"
+    RULES_FETCH_FAILED = "ERROR_RULES_FETCH_FAILED"
+
 
 class EvaluationResult(TypedDict):
     is_flagged: bool
     triggered_rules: list[str]
+
+
+
 
 
 class OrganizedRules:
@@ -177,11 +185,19 @@ class RemoteTextEvaluator(BaseTextEvaluator):
         Returns:
             An EvaluationResult containing flagging status and triggered rules.
         """
+        if not feed_id:
+            return {
+                "is_flagged": True,
+                "triggered_rules": [ErrorRule.FEED_ID_MISSING],
+            }
         try:
             rules = self._fetch_rules()
         except Exception:
             logger.exception("Failed to fetch rules from API")
-            raise
+            return {
+                "is_flagged": True,
+                "triggered_rules": [ErrorRule.RULES_FETCH_FAILED],
+            }
 
         return self._evaluate_ruleset(rules, text, feed_id)
 
