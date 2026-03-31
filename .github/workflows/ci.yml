@@ -151,8 +151,8 @@ jobs:
           context: .
           file: backend/pipeline/ingestion/Dockerfile
           tags: ingestion-smoke-test:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=ingestion
+          cache-to: type=gha,mode=max,scope=ingestion
           load: true
       - name: Build transcription Docker image
         uses: docker/build-push-action@v5
@@ -160,8 +160,8 @@ jobs:
           context: .
           file: backend/pipeline/transcription/Dockerfile
           tags: transcription-smoke-test:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=transcription
+          cache-to: type=gha,mode=max,scope=transcription
           load: true
       # PUBSUB_EMULATOR_HOST bypasses GCP credential resolution in the
       # module-level PublisherClient() instantiation in normalizer_runtime.py.
