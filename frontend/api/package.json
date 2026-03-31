@@ -8,7 +8,8 @@
     "start": "functions-framework --target=api",
     "dev": "yarn build && yarn start",
     "lint": "eslint .",
-    "lint:fix": "eslint . --fix"
+    "lint:fix": "eslint . --fix",
+    "test": "vitest"
   },
   "dependencies": {
     "@google-cloud/functions-framework": "^5.0.2",
@@ -23,6 +24,7 @@
     "eslint": "^10.1.0",
     "globals": "^17.4.0",
     "typescript": "^6.0.2",
-    "typescript-eslint": "^8.58.0"
+    "typescript-eslint": "^8.58.0",
+    "vitest": "^3.0.0"
   }
 }
