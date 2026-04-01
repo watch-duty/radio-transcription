@@ -23,9 +23,13 @@ from google.cloud import pubsub_v1, storage
 from pydub import AudioSegment
 
 try:
-    from schema_types.raw_audio_chunk_pb2 import AudioChunk  # type: ignore[import]
+    from schema_types.raw_audio_chunk_pb2 import (
+        AudioChunk,  # type: ignore[import]
+    )
 except ModuleNotFoundError:
-    from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk  # type: ignore[import]
+    from backend.pipeline.schema_types.raw_audio_chunk_pb2 import (
+        AudioChunk,  # type: ignore[import]
+    )
 
 if TYPE_CHECKING:
     from cloudevents.http import event as cloudevent
@@ -35,13 +39,13 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-ALLOYDB_HOST = os.environ["ALLOYDB_HOST"]
+ALLOYDB_HOST = os.environ.get("ALLOYDB_HOST", "")
 ALLOYDB_PORT = int(os.environ.get("ALLOYDB_PORT", "6432"))
 ALLOYDB_USER = os.environ.get("ALLOYDB_USER", "worker")
 ALLOYDB_DB = os.environ.get("ALLOYDB_DB", "postgres")
-ALLOYDB_PASSWORD = os.environ["ALLOYDB_PASSWORD"]
-CANONICAL_BUCKET = os.environ["CANONICAL_BUCKET"]
-RAW_AUDIO_TOPIC = os.environ["RAW_AUDIO_TOPIC"]
+ALLOYDB_PASSWORD = os.environ.get("ALLOYDB_PASSWORD", "")
+CANONICAL_BUCKET = os.environ.get("CANONICAL_BUCKET", "")
+RAW_AUDIO_TOPIC = os.environ.get("RAW_AUDIO_TOPIC", "")
 FAILURE_THRESHOLD = int(os.environ.get("FAILURE_THRESHOLD", "5"))
 BASE_BACKOFF_SEC = int(os.environ.get("BASE_BACKOFF_SEC", "15"))
 MAX_BACKOFF_SEC = int(os.environ.get("MAX_BACKOFF_SEC", "600"))
@@ -54,12 +58,11 @@ TARGET_SAMPLE_WIDTH = 2  # 16-bit
 # ---------------------------------------------------------------------------
 # Global state (persisted across warm invocations)
 # ---------------------------------------------------------------------------
-gcs_client = storage.Client()
-publisher = pubsub_v1.PublisherClient(
-    publisher_options=pubsub_v1.types.PublisherOptions(
-        enable_message_ordering=True,
-    ),
-)
+
+# GCS and Pub/Sub clients are initialized lazily on first invocation so that
+# importing this module in unit tests does not require GCP credentials.
+gcs_client: storage.Client | None = None
+publisher: pubsub_v1.PublisherClient | None = None
 
 # Persistent event loop for asyncpg — shared across concurrent request threads.
 # CF v2 with concurrency=10 dispatches requests across threads. asyncpg pools
@@ -113,6 +116,15 @@ WHERE id = $1
 @functions_framework.cloud_event
 def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
     """Sync entry point — submits async work to the shared event loop."""
+    global gcs_client, publisher  # noqa: PLW0603
+    if gcs_client is None:
+        gcs_client = storage.Client()
+    if publisher is None:
+        publisher = pubsub_v1.PublisherClient(
+            publisher_options=pubsub_v1.types.PublisherOptions(
+                enable_message_ordering=True,
+            ),
+        )
     future = asyncio.run_coroutine_threadsafe(_handle(cloud_event), _loop)
     future.result(timeout=30)
 
