@@ -16,6 +16,7 @@ from backend.pipeline.ingestion.collectors.echo.main import (
     _handle,
     _parse_timestamp,
 )
+from backend.pipeline.storage.sync_feed_store import SyncFeedStore
 
 _FAKE_FLAC = b"fLaC" + b"\x00" * 64
 _ffmpeg_available = shutil.which("ffmpeg") is not None
@@ -100,26 +101,22 @@ class TestConvertToFlac:
 # ---------------------------------------------------------------------------
 class TestHandle:
     @pytest.fixture
-    def mock_conn(self) -> MagicMock:
-        """A mock psycopg connection supporting context manager protocol."""
-        conn = MagicMock()
-        conn.__enter__ = MagicMock(return_value=conn)
-        conn.__exit__ = MagicMock(return_value=False)
-        cursor = MagicMock()
-        conn.execute.return_value = cursor
-        cursor.fetchone.return_value = None
-        return conn
+    def mock_store(self) -> MagicMock:
+        """A mock SyncFeedStore."""
+        store = MagicMock(spec=SyncFeedStore)
+        store.resolve_echo_feed.return_value = None
+        return store
 
     @pytest.fixture
-    def _patch_globals(self, mock_conn):
+    def _patch_globals(self, mock_store):
         """Patch global state used by _handle."""
         mock_publisher = MagicMock()
         mock_publisher.publish.return_value.result.return_value = "msg-id"
 
         with (
             patch(
-                "backend.pipeline.ingestion.collectors.echo.main._connect_db",
-                return_value=mock_conn,
+                "backend.pipeline.ingestion.collectors.echo.main.feed_store",
+                mock_store,
             ),
             patch(
                 "backend.pipeline.ingestion.collectors.echo.main.gcs_client"
@@ -137,7 +134,7 @@ class TestHandle:
             mock_gcs.bucket.return_value.blob.return_value.upload_from_string = MagicMock()
 
             yield {
-                "conn": mock_conn,
+                "store": mock_store,
                 "gcs": mock_gcs,
                 "pubsub": mock_pubsub,
                 "publisher": mock_publisher,
@@ -153,26 +150,26 @@ class TestHandle:
         }
         return event
 
-    def _set_feed(self, mock_conn: MagicMock, feed: dict | None) -> None:
-        """Configure mock_conn to return a feed row from the resolve query."""
-        mock_conn.execute.return_value.fetchone.return_value = feed
+    def _set_feed(self, mock_store: MagicMock, feed: dict | None) -> None:
+        """Configure mock_store to return a feed row from resolve."""
+        mock_store.resolve_echo_feed.return_value = feed
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_skips_non_mp3(self, mock_conn) -> None:
+    def test_skips_non_mp3(self, mock_store) -> None:
         event = self._make_event(name="fire-ca/20260326/notes.txt")
         _handle(event)
-        mock_conn.execute.assert_not_called()
+        mock_store.resolve_echo_feed.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_skips_unknown_channel(self, mock_conn) -> None:
-        self._set_feed(mock_conn, None)
+    def test_skips_unknown_channel(self, mock_store) -> None:
+        self._set_feed(mock_store, None)
         _handle(self._make_event())
-        mock_conn.execute.assert_called_once()
+        mock_store.resolve_echo_feed.assert_called_once()
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_quarantined_feed_raises_for_retry(self, mock_conn) -> None:
+    def test_quarantined_feed_raises_for_retry(self, mock_store) -> None:
         self._set_feed(
-            mock_conn,
+            mock_store,
             {
                 "id": uuid.uuid4(),
                 "status": "quarantined",
@@ -183,9 +180,9 @@ class TestHandle:
             _handle(self._make_event())
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_skips_deactivated_feed(self, mock_conn) -> None:
+    def test_skips_deactivated_feed(self, mock_store) -> None:
         self._set_feed(
-            mock_conn,
+            mock_store,
             {
                 "id": uuid.uuid4(),
                 "status": "deactivated",
@@ -195,10 +192,10 @@ class TestHandle:
         _handle(self._make_event())
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_successful_processing(self, mock_conn, _patch_globals) -> None:
+    def test_successful_processing(self, mock_store, _patch_globals) -> None:
         feed_id = uuid.uuid4()
         self._set_feed(
-            mock_conn,
+            mock_store,
             {
                 "id": feed_id,
                 "status": "active",
@@ -225,16 +222,14 @@ class TestHandle:
         assert call_kwargs["ordering_key"] == str(feed_id)
         assert call_kwargs["source_type"] == "echo"
 
-        # Verify heartbeat written (second _connect_db call)
-        assert mock_conn.execute.call_count >= 2
-        heartbeat_sql = mock_conn.execute.call_args_list[-1][0][0]
-        assert "last_heartbeat" in heartbeat_sql
+        # Verify heartbeat recorded
+        mock_store.record_heartbeat.assert_called_once_with(feed_id)
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_failure_records_in_db(self, mock_conn, _patch_globals) -> None:
+    def test_failure_records_in_db(self, mock_store, _patch_globals) -> None:
         feed_id = uuid.uuid4()
         self._set_feed(
-            mock_conn,
+            mock_store,
             {
                 "id": feed_id,
                 "status": "active",
@@ -250,37 +245,36 @@ class TestHandle:
         with pytest.raises(Exception, match="GCS error"):
             _handle(self._make_event())
 
-        # Verify failure recorded — the last execute call should be the failure SQL
-        last_sql = mock_conn.execute.call_args_list[-1][0][0]
-        assert "failure_count + 1" in last_sql
+        mock_store.record_failure.assert_called_once_with(feed_id)
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_failure_recording_db_error_preserves_original(
-        self, mock_conn, _patch_globals
+        self, mock_store, _patch_globals
     ) -> None:
         feed_id = uuid.uuid4()
-        cursor = MagicMock()
-        cursor.fetchone.return_value = {
-            "id": feed_id,
-            "status": "active",
-            "failure_count": 0,
-        }
+        self._set_feed(
+            mock_store,
+            {
+                "id": feed_id,
+                "status": "active",
+                "failure_count": 0,
+            },
+        )
 
         gcs = _patch_globals["gcs"]
         gcs.bucket.return_value.blob.return_value.download_as_bytes.side_effect = Exception(
             "Original error"
         )
 
-        # First execute (feed resolution) succeeds, second (failure recording) fails
-        mock_conn.execute.side_effect = [cursor, Exception("DB error")]
+        mock_store.record_failure.side_effect = Exception("DB error")
 
         with pytest.raises(Exception, match="Original error"):
             _handle(self._make_event())
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_malformed_filename_skips_gracefully(self, mock_conn) -> None:
+    def test_malformed_filename_skips_gracefully(self, mock_store) -> None:
         self._set_feed(
-            mock_conn,
+            mock_store,
             {
                 "id": uuid.uuid4(),
                 "status": "active",
@@ -291,14 +285,16 @@ class TestHandle:
         _handle(self._make_event(name="fire-ca/20260326/badname.mp3"))
 
         # Only the resolve query — no heartbeat or failure recording
-        assert mock_conn.execute.call_count == 1
+        mock_store.resolve_echo_feed.assert_called_once()
+        mock_store.record_heartbeat.assert_not_called()
+        mock_store.record_failure.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_corrupt_audio_skips_gracefully(
-        self, mock_conn, _patch_globals
+        self, mock_store, _patch_globals
     ) -> None:
         self._set_feed(
-            mock_conn,
+            mock_store,
             {
                 "id": uuid.uuid4(),
                 "status": "active",
@@ -312,17 +308,17 @@ class TestHandle:
         ):
             _handle(self._make_event())
 
-        # Only the resolve query — no failure recording
-        assert mock_conn.execute.call_count == 1
+        mock_store.record_heartbeat.assert_not_called()
+        mock_store.record_failure.assert_not_called()
         _patch_globals["publisher"].publish.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_publish_failure_records_in_db(
-        self, mock_conn, _patch_globals
+        self, mock_store, _patch_globals
     ) -> None:
         feed_id = uuid.uuid4()
         self._set_feed(
-            mock_conn,
+            mock_store,
             {
                 "id": feed_id,
                 "status": "active",
@@ -336,5 +332,4 @@ class TestHandle:
         with pytest.raises(Exception, match="Pub/Sub error"):
             _handle(self._make_event())
 
-        last_sql = mock_conn.execute.call_args_list[-1][0][0]
-        assert "failure_count + 1" in last_sql
+        mock_store.record_failure.assert_called_once_with(feed_id)

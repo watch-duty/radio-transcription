@@ -11,6 +11,7 @@ import io
 import os
 import shutil
 import unittest
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
@@ -29,6 +30,9 @@ from testcontainers.core.waiting_utils import wait_for_logs
 from testcontainers.postgres import PostgresContainer
 
 from backend.pipeline.ingestion.collectors.echo import main as echo_main
+from backend.pipeline.storage.connection import connect_db
+from backend.pipeline.storage.settings import AlloyDBSettings
+from backend.pipeline.storage.sync_feed_store import SyncFeedStore
 
 _REPO_ROOT = Path(__file__).resolve().parents[6]
 _SQL_DIR = (
@@ -118,6 +122,15 @@ class TestEchoCollectorIntegration(unittest.TestCase):
             )
             resp.raise_for_status()
 
+        # Shared DB settings for handler connections
+        cls._db_settings = AlloyDBSettings(
+            host=cls._db_host,
+            port=cls._db_port,
+            user="postgres",
+            password="postgres",
+            db_name="postgres",
+        )
+
     @classmethod
     def tearDownClass(cls) -> None:
         cls.gcs_container.stop()
@@ -196,34 +209,19 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         resp.raise_for_status()
         return resp.content
 
-    def _make_handler_db_conn(self) -> psycopg.Connection[dict[str, Any]]:
-        """Create a separate psycopg connection for the handler to use."""
-        return cast(
-            "psycopg.Connection[dict[str, Any]]",
-            psycopg.connect(
-                host=self._db_host,
-                port=self._db_port,
-                user="postgres",
-                password="postgres",
-                dbname="postgres",
-                autocommit=True,
-                row_factory=cast("Any", dict_row),
-            ),
-        )
-
     def _run_handler(self, event: MagicMock) -> None:
         """Run _handle with real GCS + DB, mocked publisher."""
         mock_pubsub = MagicMock()
         mock_pubsub.get_publisher.return_value = self.mock_publisher
 
+        store = SyncFeedStore(partial(connect_db, self._db_settings))
+
         with (
             patch.object(echo_main, "gcs_client", self.gcs),
             patch.object(echo_main, "pubsub_client", mock_pubsub),
+            patch.object(echo_main, "feed_store", store),
             patch.object(echo_main, "RAW_AUDIO_TOPIC", _RAW_AUDIO_TOPIC),
             patch.object(echo_main, "CANONICAL_BUCKET", _CANONICAL_BUCKET),
-            patch.object(
-                echo_main, "_connect_db", side_effect=self._make_handler_db_conn
-            ),
         ):
             echo_main._handle(event)
 
