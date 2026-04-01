@@ -1,12 +1,8 @@
-from __future__ import annotations
-
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime
-from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
-from pydantic import BaseModel
 
 from backend.pipeline.common.auth import verify_oidc_token
 from backend.pipeline.storage.connection import (
@@ -15,30 +11,10 @@ from backend.pipeline.storage.connection import (
 )
 from backend.pipeline.storage.transcript_store import TranscriptStore
 
+from .models import Transcript
 from .service import TranscriptService
 
-if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-    from datetime import datetime
-
 logger = logging.getLogger(__name__)
-
-
-class Transcript(BaseModel):
-    """Transcript type used for API responses."""
-
-    feed_id: str
-    transmission_id: str
-    transcript: str
-    start_timestamp: datetime | None = None
-    end_timestamp: datetime | None = None
-    missing_prior_context: bool = False
-    missing_post_context: bool = False
-    source_audio_uris: list[str] = []
-    canonical_audio_uri: str | None = None
-    start_audio_offset: str | None = None
-    end_audio_offset: str | None = None
-    evaluation_decisions: list[str] = []
 
 
 @asynccontextmanager
@@ -67,14 +43,12 @@ app = FastAPI(
 )
 async def create_transcript(
     request: Request,
-    transcript_in: dict[str, Any],
-    user: Annotated[dict[str, Any], Depends(verify_oidc_token)],
+    transcript: Transcript,
 ) -> Transcript:
     """Create a new transcription record."""
     service: TranscriptService = request.app.state.transcript_service
     try:
-        data = await service.create_transcript(transcript_in)
-        return Transcript(**data)
+        return await service.create_transcript(transcript)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -92,13 +66,13 @@ async def get_transcript(
 ) -> Transcript:
     """Fetch a specific transcript by transmission ID."""
     service: TranscriptService = request.app.state.transcript_service
-    transcript_data = await service.get_transcript(transmission_id)
-    if not transcript_data:
+    transcript = await service.get_transcript(transmission_id)
+    if not transcript:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Transcript for transmission {transmission_id} not found",
         )
-    return Transcript(**transcript_data)
+    return transcript
 
 
 @app.get(
@@ -112,10 +86,8 @@ async def list_transcripts(
     """List transcripts, optionally filtered by feed ID."""
     service: TranscriptService = request.app.state.transcript_service
     if feed_id:
-        data = await service.list_transcripts_by_feed_id(feed_id)
-    else:
-        data = await service.list_transcripts()
-    return [Transcript(**t) for t in data]
+        return await service.list_transcripts_by_feed_id(feed_id)
+    return await service.list_transcripts()
 
 
 @app.delete(

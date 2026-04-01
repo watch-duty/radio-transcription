@@ -85,7 +85,8 @@ class TestTranscriptsAPI(unittest.TestCase):
         payload = {
             "transmission_id": _TRANSMISSION_ID,
             "feed_id": _FEED_ID,
-            "start_timestamp": "invalid-time",
+            "transcript": "bad transcript",
+            "start_audio_offset": "not-a-duration",
         }
 
         response = self.client.post("/v1/transcripts", json=payload)
