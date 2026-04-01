@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 from typing import TYPE_CHECKING
 
+from backend.pipeline.storage.feed_store import SourceType
+
 if TYPE_CHECKING:
     import asyncio
     import datetime
@@ -12,8 +14,8 @@ if TYPE_CHECKING:
 
 # Maps source_type -> (module_path, function_name).
 # To add a new collector, add a single entry here.
-_COLLECTOR_REGISTRY: dict[str, tuple[str, str]] = {
-    "bcfy_feeds": (
+_COLLECTOR_REGISTRY: dict[SourceType, tuple[str, str]] = {
+    SourceType.BCFY_FEEDS: (
         "backend.pipeline.ingestion.collectors.icecast_collector",
         "capture_icecast_stream",
     ),
