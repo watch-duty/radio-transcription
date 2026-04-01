@@ -44,7 +44,6 @@ class GCSAudioUploader:
             blob.upload_from_string(data, content_type=content_type)
             uri = f"gs://{bucket_name}/{destination_path}"
             logger.debug("Uploaded artifact to %s", uri)
-            return uri
         except Exception:
             logger.exception(
                 "Failed to upload artifact to gs://%s/%s",
@@ -52,6 +51,8 @@ class GCSAudioUploader:
                 destination_path,
             )
             raise
+        else:
+            return uri
 
     def upload_audio_derivatives(
         self,
