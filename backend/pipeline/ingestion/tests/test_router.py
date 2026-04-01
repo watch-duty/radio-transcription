@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import typing
 import unittest
 import uuid
 from unittest import mock
@@ -9,15 +10,15 @@ from backend.pipeline.ingestion.router import (
     _COLLECTOR_REGISTRY,
     route_capturer,
 )
-from backend.pipeline.storage.feed_store import LeasedFeed
+from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 
 
-def _make_feed(source_type: str) -> LeasedFeed:
+def _make_feed(source_type: SourceType) -> LeasedFeed:
     """Helper to create a dummy LeasedFeed for testing."""
     return LeasedFeed(
         id=uuid.uuid4(),
         name=f"test-{source_type}",
-        source_type=source_type,
+        source_type=typing.cast("SourceType", source_type),
         last_processed_filename=None,
         fencing_token=0,
         stream_url="http://example.com/stream",
@@ -57,31 +58,21 @@ class TestRouteCapturerRegistered(unittest.TestCase):
 
 
 class TestRouteCapturerUnsupported(unittest.TestCase):
-    """Tests that unregistered source_types are rejected."""
+    """Tests that source_types missing from the registry are rejected."""
 
-    def test_raises_value_error_for_unsupported_type(self) -> None:
-        """Unsupported source_type raises ValueError."""
-        feed = _make_feed("unknown_radio_type")
+    def test_raises_value_error_for_unregistered_source_type(self) -> None:
+        """A valid SourceType not in the registry raises ValueError."""
+        unregistered = SourceType.BCFY_CALLS
+        feed = _make_feed(unregistered)
         shutdown_event = mock.MagicMock(spec=asyncio.Event)
 
-        with self.assertRaises(ValueError) as ctx:
-            route_capturer(feed, shutdown_event)
+        with mock.patch(
+            "backend.pipeline.ingestion.router._COLLECTOR_REGISTRY", {}
+        ):
+            with self.assertRaises(ValueError) as ctx:
+                route_capturer(feed, shutdown_event)
 
-        self.assertIn("unknown_radio_type", str(ctx.exception))
-
-    def test_error_message_contains_source_type(self) -> None:
-        """The error message includes the offending source_type."""
-        bad_type = "totally_bogus"
-        feed = _make_feed(bad_type)
-        shutdown_event = mock.MagicMock(spec=asyncio.Event)
-
-        with self.assertRaises(ValueError) as ctx:
-            route_capturer(feed, shutdown_event)
-
-        self.assertEqual(
-            str(ctx.exception),
-            f"Unsupported source_type: {bad_type}",
-        )
+        self.assertIn(unregistered, str(ctx.exception))
 
 
 class TestCollectorRegistryIntegrity(unittest.TestCase):

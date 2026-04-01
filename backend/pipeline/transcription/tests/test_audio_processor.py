@@ -1,6 +1,7 @@
 """Unit tests for the audio processor."""
 
 import io
+import logging
 import shutil
 import unittest
 from unittest.mock import MagicMock, patch
@@ -13,6 +14,14 @@ from backend.pipeline.common.constants import AUDIO_FORMAT, SAMPLE_RATE_HZ
 from backend.pipeline.transcription.audio_processor import AudioProcessor
 from backend.pipeline.transcription.datatypes import AudioChunkData, TimeRange
 from backend.pipeline.transcription.enums import VadType
+
+logger = logging.getLogger(__name__)
+
+# Warn if ffmpeg is missing for I/O tests
+if shutil.which("ffmpeg") is None:
+    logger.warning(
+        "FFMPEG is not installed. Audio I/O tests requiring ffmpeg will be skipped."
+    )
 
 
 class AudioProcessorTest(unittest.TestCase):
@@ -89,6 +98,18 @@ class AudioProcessorTest(unittest.TestCase):
         flac_bytes = self.processor.export_flac(audio)
         self.assertIsInstance(flac_bytes, bytes)
         self.assertTrue(flac_bytes.startswith(b"fLaC"))
+
+    @unittest.skipIf(
+        shutil.which("ffmpeg") is None, "ffmpeg is required for pydub I/O tests"
+    )
+    def test_export_m4a(self) -> None:
+        """Tests that exporting to M4A produces a valid byte array with valid ftyp header."""
+        audio = AudioSegment.silent(duration=500)
+        m4a_bytes = self.processor.export_m4a(audio)
+        self.assertIsInstance(m4a_bytes, bytes)
+        self.assertTrue(len(m4a_bytes) > 0)
+        # M4A (MP4 container) should contain an ftyp box
+        self.assertIn(b"ftyp", m4a_bytes)
 
     @pytest.mark.skipif(
         shutil.which("ffmpeg") is None,

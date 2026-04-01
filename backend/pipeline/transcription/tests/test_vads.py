@@ -22,7 +22,7 @@ class TestVadPlugins(unittest.TestCase):
     def test_get_vad_plugin_unknown(self) -> None:
         """Verifies that attempting to synthesize an unsupported or entirely invalid VadType explicitly raises a distinct ValueError immediately."""
         with self.assertRaises(ValueError):
-            get_vad_plugin("unknown_type", "{}")  # type: ignore[invalid-argument-type]
+            get_vad_plugin("unknown_type", "{}")  # type: ignore
 
     def test_get_vad_plugin_invalid_json(self) -> None:
         """Verifies that deploying a functionally valid VadType with maliciously or malformed JSON payload parameters is strictly intercepted and blocked by a ValueError."""
