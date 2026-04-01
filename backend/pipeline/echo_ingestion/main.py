@@ -18,6 +18,7 @@ from pathlib import Path
 
 import asyncpg
 import functions_framework
+from cloudevents.http import event as cloudevent
 from google.cloud import pubsub_v1, storage
 from pydub import AudioSegment
 from schema_types.raw_audio_chunk_pb2 import AudioChunk
@@ -103,13 +104,13 @@ WHERE id = $1
 # Entry point
 # ---------------------------------------------------------------------------
 @functions_framework.cloud_event
-def handle_notification(cloud_event) -> None:
+def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
     """Sync entry point — submits async work to the shared event loop."""
     future = asyncio.run_coroutine_threadsafe(_handle(cloud_event), _loop)
     future.result(timeout=30)
 
 
-async def _handle(cloud_event):
+async def _handle(cloud_event: cloudevent.CloudEvent) -> None:
     """Core async handler for a single GCS OBJECT_FINALIZE event."""
     data = cloud_event.data
     name = data["name"]
@@ -187,7 +188,7 @@ async def _handle(cloud_event):
             logger.exception(
                 "Failed to record failure for feed %s", feed["id"]
             )
-        raise exc
+        raise
 
 
 # ---------------------------------------------------------------------------
