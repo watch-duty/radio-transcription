@@ -1,13 +1,12 @@
-"""Tests for the Echo audio ingestion Cloud Function."""
+"""Tests for the Echo audio ingestion handler."""
 
 from __future__ import annotations
 
-import asyncio
 import io
 import shutil
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from pydub import AudioSegment
@@ -93,57 +92,60 @@ class TestConvertToFlac:
         mp3_bytes = self._make_mp3_bytes()
         flac_bytes = _convert_to_flac(mp3_bytes)
         assert len(flac_bytes) > 0
-        # FLAC magic number: "fLaC"
         assert flac_bytes[:4] == b"fLaC"
 
 
 # ---------------------------------------------------------------------------
-# _handle (async handler)
+# _handle (sync handler)
 # ---------------------------------------------------------------------------
 class TestHandle:
     @pytest.fixture
-    def mock_pool(self) -> AsyncMock:
-        return AsyncMock()
+    def mock_conn(self) -> MagicMock:
+        """A mock psycopg connection supporting context manager protocol."""
+        conn = MagicMock()
+        conn.__enter__ = MagicMock(return_value=conn)
+        conn.__exit__ = MagicMock(return_value=False)
+        cursor = MagicMock()
+        conn.execute.return_value = cursor
+        cursor.fetchone.return_value = None
+        return conn
 
     @pytest.fixture
-    def _patch_globals(self, mock_pool):
+    def _patch_globals(self, mock_conn):
         """Patch global state used by _handle."""
-        mock_publish = AsyncMock(return_value="msg-id")
+        mock_publisher = MagicMock()
+        mock_publisher.publish.return_value.result.return_value = "msg-id"
+
         with (
             patch(
-                "backend.pipeline.ingestion.collectors.echo.main._get_pool",
-                new_callable=AsyncMock,
-                return_value=mock_pool,
+                "backend.pipeline.ingestion.collectors.echo.main._connect_db",
+                return_value=mock_conn,
             ),
             patch(
                 "backend.pipeline.ingestion.collectors.echo.main.gcs_client"
             ) as mock_gcs,
             patch(
-                "backend.pipeline.ingestion.collectors.echo.main.pubsub_client",
-                MagicMock(),
+                "backend.pipeline.ingestion.collectors.echo.main.pubsub_client"
             ) as mock_pubsub,
-            patch(
-                "backend.pipeline.ingestion.collectors.echo.main.publish_audio_chunk",
-                mock_publish,
-            ),
             patch(
                 "backend.pipeline.ingestion.collectors.echo.main._convert_to_flac",
                 return_value=_FAKE_FLAC,
             ),
         ):
+            mock_pubsub.get_publisher.return_value = mock_publisher
             mock_gcs.bucket.return_value.blob.return_value.download_as_bytes.return_value = b"mp3-placeholder"
             mock_gcs.bucket.return_value.blob.return_value.upload_from_string = MagicMock()
 
             yield {
-                "pool": mock_pool,
+                "conn": mock_conn,
                 "gcs": mock_gcs,
                 "pubsub": mock_pubsub,
-                "publish": mock_publish,
+                "publisher": mock_publisher,
             }
 
     def _make_event(
         self, name: str = "fire-ca/20260326/fire_20260326_143022.mp3"
-    ):
+    ) -> MagicMock:
         event = MagicMock()
         event.data = {
             "name": name,
@@ -151,53 +153,62 @@ class TestHandle:
         }
         return event
 
+    def _set_feed(self, mock_conn: MagicMock, feed: dict | None) -> None:
+        """Configure mock_conn to return a feed row from the resolve query."""
+        mock_conn.execute.return_value.fetchone.return_value = feed
+
     @pytest.mark.usefixtures("_patch_globals")
-    def test_skips_non_mp3(self, mock_pool) -> None:
+    def test_skips_non_mp3(self, mock_conn) -> None:
         event = self._make_event(name="fire-ca/20260326/notes.txt")
-        asyncio.run(_handle(event))
-        mock_pool.fetchrow.assert_not_called()
+        _handle(event)
+        mock_conn.execute.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_skips_unknown_channel(self, mock_pool) -> None:
-        mock_pool.fetchrow.return_value = None
-        event = self._make_event()
-        asyncio.run(_handle(event))
-        mock_pool.fetchrow.assert_called_once()
+    def test_skips_unknown_channel(self, mock_conn) -> None:
+        self._set_feed(mock_conn, None)
+        _handle(self._make_event())
+        mock_conn.execute.assert_called_once()
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_quarantined_feed_raises_for_retry(self, mock_pool) -> None:
-        mock_pool.fetchrow.return_value = {
-            "id": uuid.uuid4(),
-            "status": "quarantined",
-            "failure_count": 5,
-        }
-        event = self._make_event()
+    def test_quarantined_feed_raises_for_retry(self, mock_conn) -> None:
+        self._set_feed(
+            mock_conn,
+            {
+                "id": uuid.uuid4(),
+                "status": "quarantined",
+                "failure_count": 5,
+            },
+        )
         with pytest.raises(RuntimeError, match="quarantined"):
-            asyncio.run(_handle(event))
+            _handle(self._make_event())
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_skips_deactivated_feed(self, mock_pool) -> None:
-        mock_pool.fetchrow.return_value = {
-            "id": uuid.uuid4(),
-            "status": "deactivated",
-            "failure_count": 0,
-        }
-        event = self._make_event()
-        asyncio.run(_handle(event))
+    def test_skips_deactivated_feed(self, mock_conn) -> None:
+        self._set_feed(
+            mock_conn,
+            {
+                "id": uuid.uuid4(),
+                "status": "deactivated",
+                "failure_count": 0,
+            },
+        )
+        _handle(self._make_event())
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_successful_processing(self, mock_pool, _patch_globals) -> None:
+    def test_successful_processing(self, mock_conn, _patch_globals) -> None:
         feed_id = uuid.uuid4()
-        mock_pool.fetchrow.return_value = {
-            "id": feed_id,
-            "status": "active",
-            "failure_count": 0,
-        }
+        self._set_feed(
+            mock_conn,
+            {
+                "id": feed_id,
+                "status": "active",
+                "failure_count": 0,
+            },
+        )
 
-        event = self._make_event()
-        asyncio.run(_handle(event))
+        _handle(self._make_event())
 
-        # Verify FLAC uploaded to canonical bucket
+        # Verify FLAC uploaded
         gcs = _patch_globals["gcs"]
         upload_call = (
             gcs.bucket.return_value.blob.return_value.upload_from_string
@@ -206,120 +217,124 @@ class TestHandle:
         flac_bytes = upload_call.call_args[0][0]
         assert flac_bytes[:4] == b"fLaC"
 
-        # Verify publish_audio_chunk called with correct args
-        mock_publish = _patch_globals["publish"]
-        mock_publish.assert_called_once()
-        call_kwargs = mock_publish.call_args.kwargs
+        # Verify AudioChunk published
+        pub = _patch_globals["publisher"]
+        pub.publish.assert_called_once()
+        call_kwargs = pub.publish.call_args.kwargs
+        assert call_kwargs["feed_id"] == str(feed_id)
+        assert call_kwargs["ordering_key"] == str(feed_id)
         assert call_kwargs["source_type"] == "echo"
 
-        # Verify heartbeat written
-        mock_pool.execute.assert_called_once()
-        sql = mock_pool.execute.call_args[0][0]
-        assert "last_heartbeat" in sql
+        # Verify heartbeat written (second _connect_db call)
+        assert mock_conn.execute.call_count >= 2
+        heartbeat_sql = mock_conn.execute.call_args_list[-1][0][0]
+        assert "last_heartbeat" in heartbeat_sql
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_failure_records_in_db(self, mock_pool, _patch_globals) -> None:
+    def test_failure_records_in_db(self, mock_conn, _patch_globals) -> None:
         feed_id = uuid.uuid4()
-        mock_pool.fetchrow.return_value = {
-            "id": feed_id,
-            "status": "active",
-            "failure_count": 0,
-        }
+        self._set_feed(
+            mock_conn,
+            {
+                "id": feed_id,
+                "status": "active",
+                "failure_count": 0,
+            },
+        )
 
-        # Make GCS download fail
         gcs = _patch_globals["gcs"]
         gcs.bucket.return_value.blob.return_value.download_as_bytes.side_effect = Exception(
             "GCS error"
         )
 
-        event = self._make_event()
         with pytest.raises(Exception, match="GCS error"):
-            asyncio.run(_handle(event))
+            _handle(self._make_event())
 
-        # Verify failure recorded in DB
-        mock_pool.execute.assert_called_once()
-        sql = mock_pool.execute.call_args[0][0]
-        assert "failure_count + 1" in sql
+        # Verify failure recorded — the last execute call should be the failure SQL
+        last_sql = mock_conn.execute.call_args_list[-1][0][0]
+        assert "failure_count + 1" in last_sql
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_failure_recording_db_error_preserves_original(
-        self, mock_pool, _patch_globals
+        self, mock_conn, _patch_globals
     ) -> None:
         feed_id = uuid.uuid4()
-        mock_pool.fetchrow.return_value = {
+        cursor = MagicMock()
+        cursor.fetchone.return_value = {
             "id": feed_id,
             "status": "active",
             "failure_count": 0,
         }
 
-        # Make GCS download fail
         gcs = _patch_globals["gcs"]
         gcs.bucket.return_value.blob.return_value.download_as_bytes.side_effect = Exception(
             "Original error"
         )
-        # Make DB failure recording also fail
-        mock_pool.execute.side_effect = Exception("DB error")
 
-        event = self._make_event()
+        # First execute (feed resolution) succeeds, second (failure recording) fails
+        mock_conn.execute.side_effect = [cursor, Exception("DB error")]
+
         with pytest.raises(Exception, match="Original error"):
-            asyncio.run(_handle(event))
+            _handle(self._make_event())
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_malformed_filename_skips_gracefully(self, mock_pool) -> None:
-        feed_id = uuid.uuid4()
-        mock_pool.fetchrow.return_value = {
-            "id": feed_id,
-            "status": "active",
-            "failure_count": 0,
-        }
+    def test_malformed_filename_skips_gracefully(self, mock_conn) -> None:
+        self._set_feed(
+            mock_conn,
+            {
+                "id": uuid.uuid4(),
+                "status": "active",
+                "failure_count": 0,
+            },
+        )
 
-        event = self._make_event(name="fire-ca/20260326/badname.mp3")
-        asyncio.run(_handle(event))
+        _handle(self._make_event(name="fire-ca/20260326/badname.mp3"))
 
-        # No failure recorded — bad filenames are not the feed's fault
-        mock_pool.execute.assert_not_called()
+        # Only the resolve query — no heartbeat or failure recording
+        assert mock_conn.execute.call_count == 1
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_corrupt_audio_skips_gracefully(
-        self, mock_pool, _patch_globals
+        self, mock_conn, _patch_globals
     ) -> None:
-        feed_id = uuid.uuid4()
-        mock_pool.fetchrow.return_value = {
-            "id": feed_id,
-            "status": "active",
-            "failure_count": 0,
-        }
+        self._set_feed(
+            mock_conn,
+            {
+                "id": uuid.uuid4(),
+                "status": "active",
+                "failure_count": 0,
+            },
+        )
 
-        # Override the fixture's _convert_to_flac mock to simulate corrupt audio
         with patch(
             "backend.pipeline.ingestion.collectors.echo.main._convert_to_flac",
             side_effect=Exception("ffmpeg decode error"),
         ):
-            event = self._make_event()
-            asyncio.run(_handle(event))
+            _handle(self._make_event())
 
-        # No failure recorded — corrupt files are not the feed's fault
-        mock_pool.execute.assert_not_called()
-        _patch_globals["publish"].assert_not_called()
+        # Only the resolve query — no failure recording
+        assert mock_conn.execute.call_count == 1
+        _patch_globals["publisher"].publish.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_publish_failure_records_in_db(
-        self, mock_pool, _patch_globals
+        self, mock_conn, _patch_globals
     ) -> None:
         feed_id = uuid.uuid4()
-        mock_pool.fetchrow.return_value = {
-            "id": feed_id,
-            "status": "active",
-            "failure_count": 0,
-        }
+        self._set_feed(
+            mock_conn,
+            {
+                "id": feed_id,
+                "status": "active",
+                "failure_count": 0,
+            },
+        )
 
-        _patch_globals["publish"].side_effect = Exception("Pub/Sub error")
+        pub = _patch_globals["publisher"]
+        pub.publish.return_value.result.side_effect = Exception("Pub/Sub error")
 
-        event = self._make_event()
         with pytest.raises(Exception, match="Pub/Sub error"):
-            asyncio.run(_handle(event))
+            _handle(self._make_event())
 
-        # Verify failure recorded in DB
-        mock_pool.execute.assert_called_once()
-        sql = mock_pool.execute.call_args[0][0]
-        assert "failure_count + 1" in sql
+        last_sql = mock_conn.execute.call_args_list[-1][0][0]
+        assert "failure_count + 1" in last_sql

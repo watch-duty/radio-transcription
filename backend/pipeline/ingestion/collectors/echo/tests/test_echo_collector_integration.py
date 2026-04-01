@@ -1,4 +1,4 @@
-"""Integration tests for the Echo audio ingestion Cloud Function.
+"""Integration tests for the Echo audio ingestion handler.
 
 Uses testcontainers for AlloyDB Omni and fake-gcs-server to verify
 the full flow: MP3 upload -> feed resolution -> FLAC conversion ->
@@ -7,23 +7,22 @@ canonical bucket write -> Pub/Sub publish -> lifecycle update.
 
 from __future__ import annotations
 
-import asyncio
 import io
 import os
+import shutil
 import unittest
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 if TYPE_CHECKING:
     import uuid
 
-import shutil
-
-import asyncpg
 import docker
+import psycopg
 import requests as sync_requests
 from google.cloud import storage
+from psycopg.rows import dict_row
 from pydub import AudioSegment
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.waiting_utils import wait_for_logs
@@ -66,7 +65,7 @@ def _make_mp3_bytes(
 
 @unittest.skipUnless(_docker_available(), "Docker is not available")
 @unittest.skipUnless(_ffmpeg_available(), "ffmpeg is not available")
-class TestEchoCollectorIntegration(unittest.IsolatedAsyncioTestCase):
+class TestEchoCollectorIntegration(unittest.TestCase):
     """Integration tests for echo ingestion with real GCS and DB."""
 
     db_container: PostgresContainer
@@ -86,19 +85,17 @@ class TestEchoCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         cls._db_host = cls.db_container.get_container_host_ip()
         cls._db_port = int(cls.db_container.get_exposed_port(5432))
 
-        async def _setup_schema() -> None:
-            conn = await asyncpg.connect(
-                host=cls._db_host,
-                port=cls._db_port,
-                user="postgres",
-                password="postgres",
-                database="postgres",
-            )
+        # Apply schema using psycopg (sync)
+        with psycopg.connect(
+            host=cls._db_host,
+            port=cls._db_port,
+            user="postgres",
+            password="postgres",
+            dbname="postgres",
+            autocommit=True,
+        ) as conn:
             for sql_file in sorted(_SQL_DIR.glob("*.sql")):
-                await conn.execute(sql_file.read_text())
-            await conn.close()
-
-        asyncio.run(_setup_schema())
+                conn.execute(sql_file.read_text())
 
         # --- Fake GCS Server ---
         cls.gcs_container = (
@@ -126,55 +123,54 @@ class TestEchoCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         cls.gcs_container.stop()
         cls.db_container.stop()
 
-    async def asyncSetUp(self) -> None:
-        self.pool = await asyncpg.create_pool(
+    def setUp(self) -> None:
+        self.conn = psycopg.connect(
             host=self._db_host,
             port=self._db_port,
             user="postgres",
             password="postgres",
-            database="postgres",
-            min_size=2,
-            max_size=5,
+            dbname="postgres",
+            autocommit=True,
+            row_factory=dict_row,
         )
-        await self.pool.execute("TRUNCATE feeds CASCADE")
+        self.conn.execute("TRUNCATE feeds CASCADE")
 
         # Point GCS client at fake server
         os.environ["STORAGE_EMULATOR_HOST"] = self._gcs_url
         self.gcs = storage.Client(project="test")
 
-        # Mock publish_audio_chunk to capture published messages
-        self.mock_publish = AsyncMock(return_value="msg-id")
+        # Mock publisher to capture published messages
+        self.mock_publisher = MagicMock()
+        self.mock_publisher.publish.return_value.result.return_value = "msg-id"
 
-    async def asyncTearDown(self) -> None:
+    def tearDown(self) -> None:
         os.environ.pop("STORAGE_EMULATOR_HOST", None)
-        await self.pool.close()
+        self.conn.close()
 
     # -- Helpers ----------------------------------------------------------
 
-    async def _insert_echo_feed(
+    def _insert_echo_feed(
         self, channel_name: str, *, status: str = "active"
     ) -> uuid.UUID:
-        feed_id = await self.pool.fetchval(
+        row = self.conn.execute(
             "INSERT INTO feeds (name, source_type, status)"
-            " VALUES ($1, 'echo', $2::feed_status)"
+            " VALUES (%s, 'echo', %s::feed_status)"
             " RETURNING id",
-            channel_name,
-            status,
-        )
-        await self.pool.execute(
+            (channel_name, status),
+        ).fetchone()
+        feed_id = row["id"]
+        self.conn.execute(
             "INSERT INTO feed_properties_echo (feed_id, channel_name)"
-            " VALUES ($1, $2)",
-            feed_id,
-            channel_name,
+            " VALUES (%s, %s)",
+            (feed_id, channel_name),
         )
         return feed_id
 
-    async def _get_feed_row(self, feed_id: uuid.UUID) -> dict:
-        row = await self.pool.fetchrow(
-            "SELECT status::text, failure_count FROM feeds WHERE id = $1",
-            feed_id,
-        )
-        return dict(row)
+    def _get_feed_row(self, feed_id: uuid.UUID) -> dict:
+        return self.conn.execute(
+            "SELECT status::text, failure_count FROM feeds WHERE id = %s",
+            (feed_id,),
+        ).fetchone()
 
     def _upload_mp3(self, name: str) -> bytes:
         mp3_bytes = _make_mp3_bytes()
@@ -194,33 +190,44 @@ class TestEchoCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         resp.raise_for_status()
         return resp.content
 
-    async def _run_handler(self, event: MagicMock) -> None:
-        """Run _handle with real GCS + DB, mocked publish."""
+    def _make_handler_db_conn(self) -> psycopg.Connection:
+        """Create a separate psycopg connection for the handler to use."""
+        return psycopg.connect(
+            host=self._db_host,
+            port=self._db_port,
+            user="postgres",
+            password="postgres",
+            dbname="postgres",
+            autocommit=True,
+            row_factory=dict_row,
+        )
+
+    def _run_handler(self, event: MagicMock) -> None:
+        """Run _handle with real GCS + DB, mocked publisher."""
+        mock_pubsub = MagicMock()
+        mock_pubsub.get_publisher.return_value = self.mock_publisher
+
         with (
             patch.object(echo_main, "gcs_client", self.gcs),
-            patch.object(echo_main, "pubsub_client", MagicMock()),
-            patch.object(echo_main, "publish_audio_chunk", self.mock_publish),
+            patch.object(echo_main, "pubsub_client", mock_pubsub),
             patch.object(echo_main, "RAW_AUDIO_TOPIC", _RAW_AUDIO_TOPIC),
             patch.object(echo_main, "CANONICAL_BUCKET", _CANONICAL_BUCKET),
             patch.object(
-                echo_main,
-                "_get_pool",
-                new_callable=AsyncMock,
-                return_value=self.pool,
+                echo_main, "_connect_db", side_effect=self._make_handler_db_conn
             ),
         ):
-            await echo_main._handle(event)
+            echo_main._handle(event)
 
     # -- Tests ------------------------------------------------------------
 
-    async def test_successful_mp3_to_flac_pipeline(self) -> None:
+    def test_successful_mp3_to_flac_pipeline(self) -> None:
         """Upload MP3 -> resolve feed -> convert FLAC -> upload -> publish."""
         channel = "fire-ca_almaden"
-        feed_id = await self._insert_echo_feed(channel)
+        feed_id = self._insert_echo_feed(channel)
         name = f"{channel}/20260326/fire_20260326_143022.mp3"
         self._upload_mp3(name)
 
-        await self._run_handler(self._make_cloud_event(name))
+        self._run_handler(self._make_cloud_event(name))
 
         # Verify FLAC in canonical bucket
         flac_path = f"echo/{feed_id}/20260326/fire_20260326_143022.flac"
@@ -233,135 +240,132 @@ class TestEchoCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(audio.channels, 1)
         self.assertEqual(audio.sample_width, 2)
 
-        # Verify publish_audio_chunk called with correct args
-        self.mock_publish.assert_called_once()
-        call_args = self.mock_publish.call_args
-        self.assertEqual(call_args[0][2], str(feed_id))  # feed_id
-        self.assertEqual(
-            call_args[0][3],
-            f"gs://{_CANONICAL_BUCKET}/{flac_path}",
-        )  # gcs_uri
-        self.assertEqual(call_args.kwargs["source_type"], "echo")
+        # Verify AudioChunk published with correct attributes
+        self.mock_publisher.publish.assert_called_once()
+        call_kwargs = self.mock_publisher.publish.call_args.kwargs
+        self.assertEqual(call_kwargs["feed_id"], str(feed_id))
+        self.assertEqual(call_kwargs["ordering_key"], str(feed_id))
+        self.assertEqual(call_kwargs["source_type"], "echo")
 
-    async def test_unknown_channel_skips_silently(self) -> None:
+    def test_unknown_channel_skips_silently(self) -> None:
         """MP3 from unregistered channel -> no GCS write, no publish."""
         name = "unknown-channel/20260326/unknown_20260326_143022.mp3"
         self._upload_mp3(name)
 
-        await self._run_handler(self._make_cloud_event(name))
+        self._run_handler(self._make_cloud_event(name))
 
-        self.mock_publish.assert_not_called()
+        self.mock_publisher.publish.assert_not_called()
 
-    async def test_quarantined_feed_raises_for_retry(self) -> None:
+    def test_quarantined_feed_raises_for_retry(self) -> None:
         """Quarantined feed -> raise so Eventarc retries."""
         channel = "quarantined-ch"
-        await self._insert_echo_feed(channel, status="quarantined")
+        self._insert_echo_feed(channel, status="quarantined")
         name = f"{channel}/20260326/quarantined_20260326_143022.mp3"
         self._upload_mp3(name)
 
         with self.assertRaises(RuntimeError):
-            await self._run_handler(self._make_cloud_event(name))
+            self._run_handler(self._make_cloud_event(name))
 
-        self.mock_publish.assert_not_called()
+        self.mock_publisher.publish.assert_not_called()
 
-    async def test_malformed_filename_skips_gracefully(self) -> None:
+    def test_malformed_filename_skips_gracefully(self) -> None:
         """Malformed filename -> log warning, return 200, no failure recorded."""
         channel = "bad-ch"
-        feed_id = await self._insert_echo_feed(channel)
+        feed_id = self._insert_echo_feed(channel)
         name = f"{channel}/20260326/badname.mp3"
         self._upload_mp3(name)
 
-        await self._run_handler(self._make_cloud_event(name))
+        self._run_handler(self._make_cloud_event(name))
 
-        row = await self._get_feed_row(feed_id)
+        row = self._get_feed_row(feed_id)
         self.assertEqual(row["failure_count"], 0)
         self.assertEqual(row["status"], "active")
-        self.mock_publish.assert_not_called()
+        self.mock_publisher.publish.assert_not_called()
 
-    async def test_corrupt_audio_skips_gracefully(self) -> None:
+    def test_corrupt_audio_skips_gracefully(self) -> None:
         """Corrupt MP3 -> log warning, return 200, no failure recorded."""
         channel = "corrupt-ch"
-        feed_id = await self._insert_echo_feed(channel)
+        feed_id = self._insert_echo_feed(channel)
         name = f"{channel}/20260326/corrupt_20260326_143022.mp3"
         blob = self.gcs.bucket(_ECHO_BUCKET).blob(name)
         blob.upload_from_string(b"not-valid-audio", content_type="audio/mpeg")
 
-        await self._run_handler(self._make_cloud_event(name))
+        self._run_handler(self._make_cloud_event(name))
 
-        row = await self._get_feed_row(feed_id)
+        row = self._get_feed_row(feed_id)
         self.assertEqual(row["failure_count"], 0)
         self.assertEqual(row["status"], "active")
-        self.mock_publish.assert_not_called()
+        self.mock_publisher.publish.assert_not_called()
 
-    async def test_failure_increments_to_quarantine(self) -> None:
+    def test_failure_increments_to_quarantine(self) -> None:
         """5 consecutive infrastructure failures -> feed quarantined."""
         channel = "failing-ch"
-        feed_id = await self._insert_echo_feed(channel)
+        feed_id = self._insert_echo_feed(channel)
 
         # Pre-set failure_count to 4 (one below threshold)
-        await self.pool.execute(
+        self.conn.execute(
             "UPDATE feeds SET failure_count = 4, status = 'failing'"
-            " WHERE id = $1",
-            feed_id,
+            " WHERE id = %s",
+            (feed_id,),
         )
 
         name = f"{channel}/20260326/failing_20260326_143022.mp3"
         self._upload_mp3(name)
 
         # Simulate an infrastructure failure (Pub/Sub outage)
-        self.mock_publish.side_effect = Exception("Pub/Sub unavailable")
+        self.mock_publisher.publish.return_value.result.side_effect = Exception(
+            "Pub/Sub unavailable"
+        )
 
         with self.assertRaises(Exception):
-            await self._run_handler(self._make_cloud_event(name))
+            self._run_handler(self._make_cloud_event(name))
 
-        row = await self._get_feed_row(feed_id)
+        row = self._get_feed_row(feed_id)
         self.assertEqual(row["failure_count"], 5)
         self.assertEqual(row["status"], "quarantined")
 
-    async def test_success_resets_failure_count(self) -> None:
+    def test_success_resets_failure_count(self) -> None:
         """Successful processing resets failure_count to 0."""
         channel = "recovering-ch"
-        feed_id = await self._insert_echo_feed(channel)
+        feed_id = self._insert_echo_feed(channel)
 
         # Pre-set a previous failure
-        await self.pool.execute(
+        self.conn.execute(
             "UPDATE feeds SET failure_count = 2, status = 'failing'"
-            " WHERE id = $1",
-            feed_id,
+            " WHERE id = %s",
+            (feed_id,),
         )
 
         name = f"{channel}/20260326/recovering_20260326_143022.mp3"
         self._upload_mp3(name)
 
-        await self._run_handler(self._make_cloud_event(name))
+        self._run_handler(self._make_cloud_event(name))
 
-        row = await self._get_feed_row(feed_id)
+        row = self._get_feed_row(feed_id)
         self.assertEqual(row["failure_count"], 0)
         self.assertEqual(row["status"], "active")
 
-    async def test_non_mp3_file_ignored(self) -> None:
+    def test_non_mp3_file_ignored(self) -> None:
         """Non-MP3 file -> return immediately, no DB lookup."""
         name = "some-channel/20260326/notes.txt"
-        await self._run_handler(self._make_cloud_event(name))
-        self.mock_publish.assert_not_called()
+        self._run_handler(self._make_cloud_event(name))
+        self.mock_publisher.publish.assert_not_called()
 
-    async def test_idempotent_redelivery(self) -> None:
-        """Same file processed twice -> both invocations publish (safe for Beam EO dedup)."""
+    def test_idempotent_redelivery(self) -> None:
+        """Same file processed twice -> both invocations publish."""
         channel = "idempotent-ch"
-        feed_id = await self._insert_echo_feed(channel)
+        feed_id = self._insert_echo_feed(channel)
         name = f"{channel}/20260326/idempotent_20260326_143022.mp3"
         self._upload_mp3(name)
 
-        await self._run_handler(self._make_cloud_event(name))
-        await self._run_handler(self._make_cloud_event(name))
+        self._run_handler(self._make_cloud_event(name))
+        self._run_handler(self._make_cloud_event(name))
 
         # Verify FLAC still valid
         flac_path = f"echo/{feed_id}/20260326/idempotent_20260326_143022.flac"
         flac_bytes = self._download_canonical(flac_path)
         self.assertTrue(flac_bytes[:4] == _FLAC_MAGIC)
 
-        # Both invocations publish — the second upload is skipped via
-        # if_generation_match=0 but we always proceed to publish so that
-        # retries after a crash-between-upload-and-publish still deliver.
-        # Downstream Beam exactly-once dedup handles the duplicate.
-        self.assertEqual(self.mock_publish.call_count, 2)
+        # Both invocations publish — second upload skipped via
+        # if_generation_match=0 but we always proceed to publish.
+        self.assertEqual(self.mock_publisher.publish.call_count, 2)
