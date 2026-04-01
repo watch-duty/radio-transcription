@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -25,24 +25,24 @@ class TestParseTimestamp:
     def test_standard_path(self) -> None:
         name = "fire-ca_almaden_valley/20260326/fire_20260326_143022.mp3"
         result = _parse_timestamp(name)
-        assert result == datetime(2026, 3, 26, 14, 30, 22, tzinfo=datetime.UTC)
+        assert result == datetime(2026, 3, 26, 14, 30, 22, tzinfo=UTC)
 
     def test_channel_with_underscores(self) -> None:
         name = (
             "fire_station-ca_almaden/20260326/fire_station_20260326_090000.mp3"
         )
         result = _parse_timestamp(name)
-        assert result == datetime(2026, 3, 26, 9, 0, 0, tzinfo=datetime.UTC)
+        assert result == datetime(2026, 3, 26, 9, 0, 0, tzinfo=UTC)
 
     def test_midnight(self) -> None:
         name = "ch-loc/20260101/ch_20260101_000000.mp3"
         result = _parse_timestamp(name)
-        assert result == datetime(2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC)
+        assert result == datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
 
     def test_timezone_is_utc(self) -> None:
         name = "ch-loc/20260326/ch_20260326_143022.mp3"
         result = _parse_timestamp(name)
-        assert result.tzinfo is datetime.UTC
+        assert result.tzinfo is UTC
 
     def test_malformed_filename_too_few_parts(self) -> None:
         name = "ch-loc/20260326/badname.mp3"

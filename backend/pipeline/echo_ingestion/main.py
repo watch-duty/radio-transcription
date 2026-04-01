@@ -13,7 +13,7 @@ import logging
 import os
 import threading
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -21,7 +21,7 @@ import asyncpg
 import functions_framework
 from google.cloud import pubsub_v1, storage
 from pydub import AudioSegment
-from schema_types.raw_audio_chunk_pb2 import AudioChunk
+from schema_types.raw_audio_chunk_pb2 import AudioChunk  # type: ignore[import]
 
 if TYPE_CHECKING:
     from cloudevents.http import event as cloudevent
@@ -220,7 +220,7 @@ def _parse_timestamp(name: str) -> datetime:
         raise ValueError(msg)
     date_str, time_str = parts[-2], parts[-1]
     return datetime.strptime(f"{date_str}{time_str}", "%Y%m%d%H%M%S").replace(
-        tzinfo=datetime.UTC
+        tzinfo=UTC
     )
 
 
