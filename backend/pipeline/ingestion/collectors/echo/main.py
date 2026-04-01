@@ -50,7 +50,8 @@ FAILURE_THRESHOLD = int(os.environ.get("FAILURE_THRESHOLD", "5"))
 BASE_BACKOFF_SEC = int(os.environ.get("BASE_BACKOFF_SEC", "15"))
 MAX_BACKOFF_SEC = int(os.environ.get("MAX_BACKOFF_SEC", "600"))
 
-# Target audio format (matches Icecast collector output)
+# Target audio format — mirrors constants.py (SAMPLE_RATE_HZ, NUM_AUDIO_CHANNELS)
+# but defined inline because the Docker image only bundles main.py.
 TARGET_SAMPLE_RATE = 16_000
 TARGET_CHANNELS = 1
 TARGET_SAMPLE_WIDTH = 2  # 16-bit

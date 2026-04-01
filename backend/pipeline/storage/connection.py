@@ -13,6 +13,7 @@ async def create_pool(
     max_size: int = 5,
     command_timeout: float | None = None,
     timeout: float | None = None,  # noqa: ASYNC109
+    max_inactive_connection_lifetime: float | None = None,
 ) -> asyncpg.Pool:
     """
     Create an asyncpg connection pool to the AlloyDB instance.
@@ -30,6 +31,9 @@ async def create_pool(
         max_size: Maximum number of connections in the pool.
         command_timeout: Query execution timeout in seconds.
         timeout: TCP connection timeout in seconds.
+        max_inactive_connection_lifetime: Seconds before idle connections are
+            closed. Useful for Cloud Run where CPU freezes between requests
+            cause TCP connections to go stale.
 
     Returns:
         An asyncpg connection pool.
@@ -53,6 +57,10 @@ async def create_pool(
         kwargs["command_timeout"] = command_timeout
     if timeout is not None:
         kwargs["timeout"] = timeout
+    if max_inactive_connection_lifetime is not None:
+        kwargs["max_inactive_connection_lifetime"] = (
+            max_inactive_connection_lifetime
+        )
 
     try:
         return await asyncpg.create_pool(**kwargs)
