@@ -263,15 +263,14 @@ class TestEchoCollectorIntegration(unittest.TestCase):
 
         self.mock_publisher.publish.assert_not_called()
 
-    def test_quarantined_feed_raises_for_retry(self) -> None:
-        """Quarantined feed -> raise so Eventarc retries."""
+    def test_quarantined_feed_drops_event(self) -> None:
+        """Quarantined feed -> drop event (return 200), no publish."""
         channel = "quarantined-ch"
         self._insert_echo_feed(channel, status="quarantined")
         name = f"{channel}/20260326/quarantined_20260326_143022.mp3"
         self._upload_mp3(name)
 
-        with self.assertRaises(RuntimeError):
-            self._run_handler(self._make_cloud_event(name))
+        self._run_handler(self._make_cloud_event(name))
 
         self.mock_publisher.publish.assert_not_called()
 

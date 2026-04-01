@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
+from google.api_core.exceptions import NotFound
 from pydub import AudioSegment
 
 from backend.pipeline.ingestion.collectors.echo.main import (
@@ -167,7 +168,7 @@ class TestHandle:
         mock_store.resolve_echo_feed.assert_called_once()
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_quarantined_feed_raises_for_retry(self, mock_store) -> None:
+    def test_quarantined_feed_drops_event(self, mock_store) -> None:
         self._set_feed(
             mock_store,
             {
@@ -176,8 +177,9 @@ class TestHandle:
                 "failure_count": 5,
             },
         )
-        with pytest.raises(RuntimeError, match="quarantined"):
-            _handle(self._make_event())
+        _handle(self._make_event())
+        mock_store.record_heartbeat.assert_not_called()
+        mock_store.record_failure.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_skips_deactivated_feed(self, mock_store) -> None:
@@ -224,6 +226,31 @@ class TestHandle:
 
         # Verify heartbeat recorded
         mock_store.record_heartbeat.assert_called_once_with(feed_id)
+
+    @pytest.mark.usefixtures("_patch_globals")
+    def test_gcs_not_found_skips_gracefully(
+        self, mock_store, _patch_globals
+    ) -> None:
+        feed_id = uuid.uuid4()
+        self._set_feed(
+            mock_store,
+            {
+                "id": feed_id,
+                "status": "active",
+                "failure_count": 0,
+            },
+        )
+
+        gcs = _patch_globals["gcs"]
+        gcs.bucket.return_value.blob.return_value.download_as_bytes.side_effect = (
+            NotFound("Object deleted")
+        )
+
+        _handle(self._make_event())
+
+        mock_store.record_heartbeat.assert_not_called()
+        mock_store.record_failure.assert_not_called()
+        _patch_globals["publisher"].publish.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_failure_records_in_db(self, mock_store, _patch_globals) -> None:

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import functions_framework
-from google.api_core.exceptions import PreconditionFailed
+from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
 from pydub import AudioSegment
 
@@ -77,7 +77,7 @@ def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
     _handle(cloud_event)
 
 
-def _handle(cloud_event: cloudevent.CloudEvent) -> None:
+def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR0915
     """Core handler — fully synchronous."""
     if gcs_client is None or pubsub_client is None or feed_store is None:
         msg = (
@@ -113,8 +113,12 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:
         )
         return
     if feed["status"] == "quarantined":
-        msg = f"Feed {feed['id']} is quarantined (channel: {channel_name})"
-        raise RuntimeError(msg)
+        logger.warning(
+            "Feed %s is quarantined (channel: %s), dropping event",
+            feed["id"],
+            channel_name,
+        )
+        return
 
     # Bad filenames are not the feed's fault — skip without failure increment.
     try:
@@ -124,8 +128,13 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:
         return
 
     try:
-        # Download MP3
-        mp3_bytes = gcs_client.bucket(bucket).blob(name).download_as_bytes()
+        # Download MP3.  A NotFound means the object was deleted between the
+        # OBJECT_FINALIZE event and our download — not the feed's fault.
+        try:
+            mp3_bytes = gcs_client.bucket(bucket).blob(name).download_as_bytes()
+        except NotFound:
+            logger.warning("Object deleted before download, skipping: %s", name)
+            return
 
         # Convert MP3 → FLAC. Corrupt audio is a per-file issue — skip it.
         try:
