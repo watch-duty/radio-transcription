@@ -12,7 +12,7 @@ import os
 import shutil
 import unittest
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
 if TYPE_CHECKING:
@@ -95,7 +95,7 @@ class TestEchoCollectorIntegration(unittest.TestCase):
             autocommit=True,
         ) as conn:
             for sql_file in sorted(_SQL_DIR.glob("*.sql")):
-                conn.execute(sql_file.read_text())
+                conn.execute(sql_file.read_bytes())
 
         # --- Fake GCS Server ---
         cls.gcs_container = (
@@ -124,14 +124,17 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         cls.db_container.stop()
 
     def setUp(self) -> None:
-        self.conn = psycopg.connect(
-            host=self._db_host,
-            port=self._db_port,
-            user="postgres",
-            password="postgres",
-            dbname="postgres",
-            autocommit=True,
-            row_factory=dict_row,
+        self.conn: psycopg.Connection[dict[str, Any]] = cast(
+            psycopg.Connection[dict[str, Any]],
+            psycopg.connect(
+                host=self._db_host,
+                port=self._db_port,
+                user="postgres",
+                password="postgres",
+                dbname="postgres",
+                autocommit=True,
+                row_factory=cast(Any, dict_row),
+            ),
         )
         self.conn.execute("TRUNCATE feeds CASCADE")
 
@@ -158,6 +161,7 @@ class TestEchoCollectorIntegration(unittest.TestCase):
             " RETURNING id",
             (channel_name, status),
         ).fetchone()
+        assert row is not None
         feed_id = row["id"]
         self.conn.execute(
             "INSERT INTO feed_properties_echo (feed_id, channel_name)"
@@ -166,11 +170,13 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         )
         return feed_id
 
-    def _get_feed_row(self, feed_id: uuid.UUID) -> dict:
-        return self.conn.execute(
+    def _get_feed_row(self, feed_id: uuid.UUID) -> dict[str, Any]:
+        row = self.conn.execute(
             "SELECT status::text, failure_count FROM feeds WHERE id = %s",
             (feed_id,),
         ).fetchone()
+        assert row is not None
+        return row
 
     def _upload_mp3(self, name: str) -> bytes:
         mp3_bytes = _make_mp3_bytes()
@@ -190,16 +196,19 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         resp.raise_for_status()
         return resp.content
 
-    def _make_handler_db_conn(self) -> psycopg.Connection:
+    def _make_handler_db_conn(self) -> psycopg.Connection[dict[str, Any]]:
         """Create a separate psycopg connection for the handler to use."""
-        return psycopg.connect(
-            host=self._db_host,
-            port=self._db_port,
-            user="postgres",
-            password="postgres",
-            dbname="postgres",
-            autocommit=True,
-            row_factory=dict_row,
+        return cast(
+            psycopg.Connection[dict[str, Any]],
+            psycopg.connect(
+                host=self._db_host,
+                port=self._db_port,
+                user="postgres",
+                password="postgres",
+                dbname="postgres",
+                autocommit=True,
+                row_factory=cast(Any, dict_row),
+            ),
         )
 
     def _run_handler(self, event: MagicMock) -> None:

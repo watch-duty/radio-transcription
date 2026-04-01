@@ -14,7 +14,7 @@ import os
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import functions_framework
 import psycopg
@@ -215,20 +215,23 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _connect_db() -> psycopg.Connection:
+def _connect_db() -> psycopg.Connection[dict[str, Any]]:
     """Open a fresh connection to AlloyDB via pgBouncer.
 
     No pool needed — pgBouncer handles server-side pooling, and Cloud Run
     concurrency=1 means at most one connection per instance at a time.
     """
-    return psycopg.connect(
-        host=ALLOYDB_HOST,
-        port=ALLOYDB_PORT,
-        user=ALLOYDB_USER,
-        password=ALLOYDB_PASSWORD,
-        dbname=ALLOYDB_DB,
-        autocommit=True,
-        row_factory=dict_row,
+    return cast(
+        psycopg.Connection[dict[str, Any]],
+        psycopg.connect(
+            host=ALLOYDB_HOST,
+            port=ALLOYDB_PORT,
+            user=ALLOYDB_USER,
+            password=ALLOYDB_PASSWORD,
+            dbname=ALLOYDB_DB,
+            autocommit=True,
+            row_factory=cast(Any, dict_row),
+        ),
     )
 
 
