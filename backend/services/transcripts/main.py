@@ -1,8 +1,6 @@
-from __future__ import annotations
-
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 
@@ -13,10 +11,8 @@ from backend.pipeline.storage.connection import (
 )
 from backend.pipeline.storage.transcript_store import TranscriptStore
 
+from .models import Transcript
 from .service import TranscriptService
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
 
 logger = logging.getLogger(__name__)
 
@@ -47,13 +43,12 @@ app = FastAPI(
 )
 async def create_transcript(
     request: Request,
-    transcript_in: dict[str, Any],
-    user: Annotated[dict[str, Any], Depends(verify_oidc_token)],
-) -> dict[str, Any]:
+    transcript: Transcript,
+) -> Transcript:
     """Create a new transcription record."""
     service: TranscriptService = request.app.state.transcript_service
     try:
-        return await service.create_transcript(transcript_in)
+        return await service.create_transcript(transcript)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -68,7 +63,7 @@ async def create_transcript(
 async def get_transcript(
     request: Request,
     transmission_id: str,
-) -> dict[str, Any]:
+) -> Transcript:
     """Fetch a specific transcript by transmission ID."""
     service: TranscriptService = request.app.state.transcript_service
     transcript = await service.get_transcript(transmission_id)
@@ -87,7 +82,7 @@ async def get_transcript(
 async def list_transcripts(
     request: Request,
     feed_id: str | None = None,
-) -> list[dict[str, Any]]:
+) -> list[Transcript]:
     """List transcripts, optionally filtered by feed ID."""
     service: TranscriptService = request.app.state.transcript_service
     if feed_id:
