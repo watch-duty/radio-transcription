@@ -62,6 +62,12 @@ feed_store: SyncFeedStore | None = None
 def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
     """Sync entry point for Eventarc GCS OBJECT_FINALIZE events."""
     global gcs_client, pubsub_client, feed_store  # noqa: PLW0603
+    if not CANONICAL_BUCKET:
+        msg = "CANONICAL_BUCKET environment variable is not set"
+        raise RuntimeError(msg)
+    if not RAW_AUDIO_TOPIC:
+        msg = "RAW_AUDIO_TOPIC environment variable is not set"
+        raise RuntimeError(msg)
     if gcs_client is None:
         gcs_client = storage.Client()
     if pubsub_client is None:
@@ -86,7 +92,12 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:
     if not name.endswith(".mp3"):
         return
 
-    channel_name = name.split("/")[0]
+    parts = name.split("/")
+    if len(parts) != 3:
+        logger.warning("Unexpected path structure, skipping: %s", name)
+        return
+
+    channel_name = parts[0]
 
     # Resolve feed from DB
     feed = feed_store.resolve_echo_feed(channel_name)
@@ -127,7 +138,7 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:
 
         # Upload FLAC. if_generation_match=0 skips redundant writes but we
         # always proceed to publish (prior invocation may have crashed after upload).
-        date_dir = name.split("/")[1]
+        date_dir = parts[1]
         flac_path = f"echo/{feed['id']}/{date_dir}/{Path(name).stem}.flac"
         canonical_uri = f"gs://{CANONICAL_BUCKET}/{flac_path}"
         blob = gcs_client.bucket(CANONICAL_BUCKET).blob(flac_path)
