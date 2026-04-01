@@ -23,7 +23,7 @@ async def _get_db_connection() -> asyncpg.Connection:
 
 @pytest.fixture
 async def api_client() -> AsyncIterator[httpx.AsyncClient]:
-    """Fixture that yields an httpx.AsyncClient with base_url."""
+    """Sets up client for requests."""
     async with httpx.AsyncClient(
         base_url=f"http://{TRANSCRIPTS_API_HOST}/v1"
     ) as client:
