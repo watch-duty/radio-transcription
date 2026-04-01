@@ -177,7 +177,6 @@ async def _handle(cloud_event: cloudevent.CloudEvent) -> None:
         return
 
     try:
-
         # Download MP3 — run in thread pool to avoid blocking the event loop
         mp3_bytes = await asyncio.to_thread(
             gcs_client.bucket(bucket).blob(name).download_as_bytes
