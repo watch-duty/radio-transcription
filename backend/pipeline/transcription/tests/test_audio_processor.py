@@ -6,7 +6,6 @@ import shutil
 import unittest
 from unittest.mock import MagicMock, patch
 
-import pytest
 from pydub import AudioSegment
 from pydub.generators import Sine
 
