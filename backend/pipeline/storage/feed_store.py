@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class SourceType(str, enum.Enum):
+class SourceType(enum.StrEnum):
     """Supported audio source types.
 
     Each value corresponds to a slug in the ``source_types`` database table.
