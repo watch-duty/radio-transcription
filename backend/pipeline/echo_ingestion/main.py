@@ -13,15 +13,18 @@ import logging
 import os
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import asyncpg
 import functions_framework
-from cloudevents.http import event as cloudevent
 from google.cloud import pubsub_v1, storage
 from pydub import AudioSegment
 from schema_types.raw_audio_chunk_pb2 import AudioChunk
+
+if TYPE_CHECKING:
+    from cloudevents.http import event as cloudevent
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +178,7 @@ async def _handle(cloud_event: cloudevent.CloudEvent) -> None:
         # Conditional reset — only writes if recovering from a previous failure
         await pool.execute(_RESET_FAILURE_SQL, feed["id"])
 
-    except Exception as exc:
+    except Exception:
         try:
             await pool.execute(
                 _RECORD_FAILURE_SQL,
@@ -211,7 +214,7 @@ def _parse_timestamp(name: str) -> datetime:
     Expected path: {channel}-{location}/{YYYYMMDD}/{channel}_{YYYYMMDD}_{HHMMSS}.mp3
     Example: fire-ca_almaden_valley/20260326/fire_20260326_143022.mp3
     """
-    filename = name.split("/")[-1]
+    filename = name.rsplit("/", 1)[-1]
     stem = Path(filename).stem  # fire_20260326_143022
     parts = stem.rsplit("_", 2)
     if len(parts) < 3:
@@ -220,7 +223,7 @@ def _parse_timestamp(name: str) -> datetime:
     date_str, time_str = parts[-2], parts[-1]
     return datetime.strptime(
         f"{date_str}{time_str}", "%Y%m%d%H%M%S"
-    ).replace(tzinfo=timezone.utc)
+    ).replace(tzinfo=datetime.UTC)
 
 
 async def _get_pool() -> asyncpg.Pool:
