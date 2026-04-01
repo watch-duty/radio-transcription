@@ -32,7 +32,7 @@ async def api_client() -> AsyncIterator[httpx.AsyncClient]:
 
 @pytest.fixture
 async def test_feed() -> AsyncIterator[str]:
-    """Fixture that creates a test feed and yields its ID, then deletes it."""
+    """Feed set up, which are required to associated with transcripts."""
     conn = await _get_db_connection()
     feed_name = f"integration-test-feed-{uuid.uuid4()}"
     feed_id = await conn.fetchval(
@@ -49,10 +49,9 @@ async def test_feed() -> AsyncIterator[str]:
 
 
 @pytest.mark.asyncio
-async def test_transcripts_lifecycle(
+async def test_transcripts_api(
     api_client: httpx.AsyncClient, test_feed: str
 ) -> None:
-    """Test creating, listing, and deleting a transcript in a single flow."""
     transmission_id = str(uuid.uuid4())
     transcript_text = "Hello integration test for transcripts API"
 
