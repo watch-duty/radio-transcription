@@ -130,7 +130,9 @@ def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
 async def _handle(cloud_event: cloudevent.CloudEvent) -> None:
     """Core async handler for a single GCS OBJECT_FINALIZE event."""
     if gcs_client is None or publisher is None:
-        msg = "Clients not initialized — handle_notification must be called first"
+        msg = (
+            "Clients not initialized — handle_notification must be called first"
+        )
         raise RuntimeError(msg)
     data = cloud_event.data
     name = data["name"]
