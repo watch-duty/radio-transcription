@@ -108,19 +108,26 @@ class TestTranscribers(unittest.TestCase):
             self.assertEqual(transcript, "Success after retry")
             self.assertEqual(mock_client_instance.recognize.call_count, 2)
 
-    def test_google_chirp_transcriber_no_keywords_omits_adaptation(self) -> None:
+    def test_google_chirp_transcriber_no_keywords_omits_adaptation(
+        self,
+    ) -> None:
         """Verifies that adaptation=None is passed to RecognitionConfig when no keywords file is configured."""
-        with patch(
-            "backend.pipeline.transcription.transcribers.SpeechClient"
-        ) as mock_speech_client_cls, patch(
-            "backend.pipeline.transcription.transcribers.cloud_speech"
-        ) as mock_cs:
+        with (
+            patch(
+                "backend.pipeline.transcription.transcribers.SpeechClient"
+            ) as mock_speech_client_cls,
+            patch(
+                "backend.pipeline.transcription.transcribers.cloud_speech"
+            ) as mock_cs,
+        ):
             mock_client_instance = MagicMock()
             mock_speech_client_cls.return_value = mock_client_instance
 
             mock_response = MagicMock()
             mock_result = MagicMock()
-            mock_result.alternatives = [MagicMock(transcript="All units respond")]
+            mock_result.alternatives = [
+                MagicMock(transcript="All units respond")
+            ]
             mock_response.results = [mock_result]
             mock_client_instance.recognize.return_value = mock_response
 
@@ -135,7 +142,9 @@ class TestTranscribers(unittest.TestCase):
             _, kwargs = mock_cs.RecognitionConfig.call_args
             self.assertIsNone(kwargs.get("adaptation"))
 
-    def test_google_chirp_transcriber_keywords_file_loads_and_builds_adaptation(self) -> None:
+    def test_google_chirp_transcriber_keywords_file_loads_and_builds_adaptation(
+        self,
+    ) -> None:
         """Verifies that keywords are loaded from a JSON file and used to build SpeechAdaptation, with per-phrase boost respected and the default applied when absent."""
         keywords = [
             {"phrase": "Code 3", "boost": 20.0},
@@ -150,11 +159,14 @@ class TestTranscribers(unittest.TestCase):
 
         config = ChirpConfig(keywords_file_path=keywords_path)
 
-        with patch(
-            "backend.pipeline.transcription.transcribers.SpeechClient"
-        ) as mock_speech_client_cls, patch(
-            "backend.pipeline.transcription.transcribers.cloud_speech"
-        ) as mock_cs:
+        with (
+            patch(
+                "backend.pipeline.transcription.transcribers.SpeechClient"
+            ) as mock_speech_client_cls,
+            patch(
+                "backend.pipeline.transcription.transcribers.cloud_speech"
+            ) as mock_cs,
+        ):
             mock_client_instance = MagicMock()
             mock_speech_client_cls.return_value = mock_client_instance
 
@@ -180,9 +192,13 @@ class TestTranscribers(unittest.TestCase):
             )
             mock_cs.SpeechAdaptation.assert_called_once()
 
-    def test_google_chirp_transcriber_keywords_file_missing_raises(self) -> None:
+    def test_google_chirp_transcriber_keywords_file_missing_raises(
+        self,
+    ) -> None:
         """Verifies that setup() raises FileNotFoundError when keywords_file_path points to a non-existent file."""
-        config = ChirpConfig(keywords_file_path="/nonexistent/path/keywords.json")
+        config = ChirpConfig(
+            keywords_file_path="/nonexistent/path/keywords.json"
+        )
 
         with patch("backend.pipeline.transcription.transcribers.SpeechClient"):
             transcriber = GoogleChirpV3Transcriber("test-project", config)

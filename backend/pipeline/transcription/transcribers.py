@@ -231,6 +231,8 @@ def get_transcriber(
 ) -> Transcriber:
     """A factory method instantiating the requested Transcriber implementation based on the enum type."""
     if transcriber_type == TranscriberType.GOOGLE_CHIRP_V3:
-        return GoogleChirpV3Transcriber(project_id, ChirpConfig.from_json(config_json))
+        return GoogleChirpV3Transcriber(
+            project_id, ChirpConfig.from_json(config_json)
+        )
     msg = f"Unknown transcriber type: {transcriber_type}"
     raise ValueError(msg)
