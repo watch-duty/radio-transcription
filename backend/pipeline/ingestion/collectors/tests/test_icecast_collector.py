@@ -8,7 +8,7 @@ from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
-from backend.pipeline.storage.feed_store import LeasedFeed
+from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 
 MOCK_ENV_VARS = {
     "BROADCASTIFY_USERNAME": "test_user",
@@ -29,7 +29,7 @@ def _make_feed(name: str, stream_url: str | None) -> LeasedFeed:
     return LeasedFeed(
         id=TEST_FEED_ID,
         name=name,
-        source_type="icecast",
+        source_type=SourceType.BCFY_FEEDS,
         last_processed_filename=None,
         fencing_token=1,
         stream_url=stream_url,
