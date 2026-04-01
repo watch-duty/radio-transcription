@@ -130,12 +130,13 @@ def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
         gcs_client = storage.Client()
     if pubsub_client is None:
         pubsub_client = PubSubClient()
-    future = asyncio.run_coroutine_threadsafe(_handle(cloud_event), _loop)
-    try:
-        future.result(timeout=30)
-    except TimeoutError:
-        future.cancel()
-        raise
+    # Timeout fires inside the event loop (28s) so the CancelledError handler
+    # in _handle has ~2s to record the failure in AlloyDB before Cloud Run's
+    # 30s hard deadline freezes the container's CPU.
+    future = asyncio.run_coroutine_threadsafe(
+        asyncio.wait_for(_handle(cloud_event), timeout=28.0), _loop
+    )
+    future.result()
 
 
 async def _handle(cloud_event: cloudevent.CloudEvent) -> None:

@@ -10,6 +10,8 @@ import aiohttp
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 
 if TYPE_CHECKING:
+    import concurrent.futures
+
     from backend.pipeline.common.clients.gcs_client import GcsClient
     from backend.pipeline.common.clients.pubsub_client import PubSubClient
     from backend.pipeline.storage.feed_store import LeasedFeed
@@ -224,16 +226,19 @@ async def publish_audio_chunk(
     if source_type is not None:
         attrs["source_type"] = source_type
 
-    try:
-        future = publisher.publish(
-            topic_path,
-            audio_chunk_msg.SerializeToString(),
-            ordering_key=feed_id,
-            **attrs,
-        )
-        return await asyncio.to_thread(future.result)
-    except Exception:
-        # A failed publish pauses the ordering key; resume it so
-        # subsequent messages for this feed are not permanently blocked.
-        publisher.resume_publish(topic_path, feed_id)
-        raise
+    future = publisher.publish(
+        topic_path,
+        audio_chunk_msg.SerializeToString(),
+        ordering_key=feed_id,
+        **attrs,
+    )
+
+    # Done-callback runs on Pub/Sub's background thread, so it fires even
+    # if the calling coroutine is cancelled (e.g. by asyncio.wait_for).
+    # Without this, a cancelled await leaks a paused ordering key.
+    def _resume_on_err(f: concurrent.futures.Future) -> None:
+        if f.exception() is not None:
+            publisher.resume_publish(topic_path, feed_id)
+
+    future.add_done_callback(_resume_on_err)
+    return await asyncio.to_thread(future.result)
