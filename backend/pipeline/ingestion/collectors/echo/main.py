@@ -185,7 +185,7 @@ async def _handle(cloud_event: cloudevent.CloudEvent) -> None:
         chunk.start_timestamp.FromDatetime(start_ts)
         chunk.session_id = str(uuid.uuid4())
         feed_id_str = str(feed["id"])
-        publisher.publish(
+        future = publisher.publish(
             RAW_AUDIO_TOPIC,
             chunk.SerializeToString(),
             feed_id=feed_id_str,
@@ -193,6 +193,7 @@ async def _handle(cloud_event: cloudevent.CloudEvent) -> None:
             chunk_uri=canonical_uri,
             source_type="echo",
         )
+        await asyncio.to_thread(future.result)
 
         # Conditional reset — only writes if recovering from a previous failure
         await pool.execute(_RESET_FAILURE_SQL, feed["id"])

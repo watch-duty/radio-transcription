@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydub import AudioSegment
 
-from backend.pipeline.echo_ingestion.main import (
+from backend.pipeline.ingestion.collectors.echo.main import (
     _convert_to_flac,
     _handle,
     _parse_timestamp,
@@ -105,14 +105,16 @@ class TestHandle:
         """Patch global state used by _handle."""
         with (
             patch(
-                "backend.pipeline.echo_ingestion.main._get_pool",
+                "backend.pipeline.ingestion.collectors.echo.main._get_pool",
                 new_callable=AsyncMock,
                 return_value=mock_pool,
             ),
             patch(
-                "backend.pipeline.echo_ingestion.main.gcs_client"
+                "backend.pipeline.ingestion.collectors.echo.main.gcs_client"
             ) as mock_gcs,
-            patch("backend.pipeline.echo_ingestion.main.publisher") as mock_pub,
+            patch(
+                "backend.pipeline.ingestion.collectors.echo.main.publisher"
+            ) as mock_pub,
         ):
             # GCS download returns minimal MP3
             audio = AudioSegment.silent(duration=500, frame_rate=8000)

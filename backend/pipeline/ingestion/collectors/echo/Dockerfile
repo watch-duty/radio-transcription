@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
@@ -12,7 +12,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy proto sources and compile. The generated _pb2.py files are not checked
 # into the repository — they are produced by `mise run generate:protos`.
 COPY protos/ protos/
-RUN python -m grpc_tools.protoc \
+RUN mkdir -p schema_types \
+    && python -m grpc_tools.protoc \
         --proto_path=protos \
         --python_out=schema_types \
         --pyi_out=schema_types \
