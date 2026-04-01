@@ -235,7 +235,9 @@ async def _handle(cloud_event: cloudevent.CloudEvent) -> None:
         # Unconditional heartbeat — also resets failure_count if recovering
         await pool.execute(_HEARTBEAT_SQL, feed["id"])
 
-    except Exception:
+    except (Exception, asyncio.CancelledError):
+        # CancelledError is a BaseException in Python 3.9+, so it must be
+        # caught explicitly to record timeouts in the failure counter.
         try:
             await pool.execute(
                 _RECORD_FAILURE_SQL,
