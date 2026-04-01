@@ -281,8 +281,23 @@ class TestEchoCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["status"], "active")
         self.mock_publisher.publish.assert_not_called()
 
+    async def test_corrupt_audio_skips_gracefully(self) -> None:
+        """Corrupt MP3 -> log warning, return 200, no failure recorded."""
+        channel = "corrupt-ch"
+        feed_id = await self._insert_echo_feed(channel)
+        name = f"{channel}/20260326/corrupt_20260326_143022.mp3"
+        blob = self.gcs.bucket(_ECHO_BUCKET).blob(name)
+        blob.upload_from_string(b"not-valid-audio", content_type="audio/mpeg")
+
+        await self._run_handler(self._make_cloud_event(name))
+
+        row = await self._get_feed_row(feed_id)
+        self.assertEqual(row["failure_count"], 0)
+        self.assertEqual(row["status"], "active")
+        self.mock_publisher.publish.assert_not_called()
+
     async def test_failure_increments_to_quarantine(self) -> None:
-        """5 consecutive failures -> feed quarantined."""
+        """5 consecutive infrastructure failures -> feed quarantined."""
         channel = "failing-ch"
         feed_id = await self._insert_echo_feed(channel)
 
@@ -293,10 +308,13 @@ class TestEchoCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             feed_id,
         )
 
-        # Upload corrupt audio (valid filename) to trigger a conversion failure
         name = f"{channel}/20260326/failing_20260326_143022.mp3"
-        blob = self.gcs.bucket(_ECHO_BUCKET).blob(name)
-        blob.upload_from_string(b"not-valid-audio", content_type="audio/mpeg")
+        self._upload_mp3(name)
+
+        # Simulate an infrastructure failure (Pub/Sub outage)
+        self.mock_publisher.publish.return_value.result.side_effect = Exception(
+            "Pub/Sub unavailable"
+        )
 
         with self.assertRaises(Exception):
             await self._run_handler(self._make_cloud_event(name))

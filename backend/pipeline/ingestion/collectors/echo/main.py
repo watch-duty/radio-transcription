@@ -8,6 +8,7 @@ and publishes an AudioChunk to the raw-audio topic for downstream transcription.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import io
 import logging
 import os
@@ -67,6 +68,12 @@ publisher: pubsub_v1.PublisherClient | None = None
 # CF v2 with concurrency=10 dispatches requests across threads. asyncpg pools
 # are bound to one event loop, so we use a single background loop for all DB work.
 _loop = asyncio.new_event_loop()
+# Match Cloud Run max_instance_request_concurrency (10) so every concurrent
+# request can run its asyncio.to_thread calls without queuing on the default
+# executor (which caps at min(32, cpu_count+4) = 5 on 1 vCPU).
+_loop.set_default_executor(
+    concurrent.futures.ThreadPoolExecutor(max_workers=10)
+)
 _loop_thread = threading.Thread(target=_loop.run_forever, daemon=True)
 _loop_thread.start()
 
@@ -85,10 +92,12 @@ JOIN feed_properties_echo fpe ON fpe.feed_id = f.id
 WHERE fpe.channel_name = $1
 """
 
-_RESET_FAILURE_SQL = """\
+_HEARTBEAT_SQL = """\
 UPDATE feeds
-SET failure_count = 0, status = 'active'::feed_status, last_heartbeat = NOW()
-WHERE id = $1 AND failure_count > 0
+SET last_heartbeat = NOW(),
+    failure_count = CASE WHEN failure_count > 0 THEN 0 ELSE failure_count END,
+    status = CASE WHEN failure_count > 0 THEN 'active'::feed_status ELSE status END
+WHERE id = $1
 """
 
 # NOTE: $2 = failure_threshold, $3 = backoff_base_sec, $4 = backoff_max_sec.
@@ -182,8 +191,16 @@ async def _handle(cloud_event: cloudevent.CloudEvent) -> None:
             gcs_client.bucket(bucket).blob(name).download_as_bytes
         )
 
-        # Convert MP3 → FLAC (16kHz, 16-bit, mono)
-        flac_bytes = await asyncio.to_thread(_convert_to_flac, mp3_bytes)
+        # Convert MP3 → FLAC (16kHz, 16-bit, mono).
+        # Corrupt audio is a per-file issue, not an infrastructure failure —
+        # isolate it so it doesn't increment failure_count or trigger retries.
+        try:
+            flac_bytes = await asyncio.to_thread(_convert_to_flac, mp3_bytes)
+        except Exception:
+            logger.warning(
+                "Failed to decode audio, skipping corrupt file: %s", name
+            )
+            return
 
         # Upload FLAC to canonical bucket. if_generation_match=0 skips a
         # redundant write when the object already exists (concurrent retry
@@ -206,31 +223,10 @@ async def _handle(cloud_event: cloudevent.CloudEvent) -> None:
                 canonical_uri,
             )
 
-        # Publish AudioChunk (matches gcp_helper.publish_audio_chunk pattern).
-        # Deterministic session_id so Eventarc redeliveries produce the same
-        # ID and downstream Stitcher dedup recognises the duplicate.
-        chunk = AudioChunk(gcs_uri=canonical_uri)
-        chunk.start_timestamp.FromDatetime(start_ts)
-        chunk.session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, canonical_uri))
-        feed_id_str = str(feed["id"])
-        try:
-            future = publisher.publish(
-                RAW_AUDIO_TOPIC,
-                chunk.SerializeToString(),
-                feed_id=feed_id_str,
-                ordering_key=feed_id_str,
-                chunk_uri=canonical_uri,
-                source_type="echo",
-            )
-            await asyncio.to_thread(future.result)
-        except Exception:
-            # A failed publish pauses the ordering key; resume it so
-            # subsequent messages for this feed are not permanently blocked.
-            publisher.resume_publish(RAW_AUDIO_TOPIC, feed_id_str)
-            raise
+        await _publish_audio_chunk(canonical_uri, start_ts, str(feed["id"]))
 
-        # Conditional reset — only writes if recovering from a previous failure
-        await pool.execute(_RESET_FAILURE_SQL, feed["id"])
+        # Unconditional heartbeat — also resets failure_count if recovering
+        await pool.execute(_HEARTBEAT_SQL, feed["id"])
 
     except Exception:
         try:
@@ -249,6 +245,35 @@ async def _handle(cloud_event: cloudevent.CloudEvent) -> None:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+async def _publish_audio_chunk(
+    canonical_uri: str, start_ts: datetime, feed_id: str
+) -> None:
+    """Build and publish an AudioChunk. Resumes ordering key on failure."""
+    if publisher is None:
+        msg = "Publisher not initialized"
+        raise RuntimeError(msg)
+    chunk = AudioChunk(gcs_uri=canonical_uri)
+    chunk.start_timestamp.FromDatetime(start_ts)
+    # Deterministic session_id so Eventarc redeliveries produce the same
+    # ID and downstream Stitcher dedup recognises the duplicate.
+    chunk.session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, canonical_uri))
+    try:
+        future = publisher.publish(
+            RAW_AUDIO_TOPIC,
+            chunk.SerializeToString(),
+            feed_id=feed_id,
+            ordering_key=feed_id,
+            chunk_uri=canonical_uri,
+            source_type="echo",
+        )
+        await asyncio.to_thread(future.result)
+    except Exception:
+        # A failed publish pauses the ordering key; resume it so
+        # subsequent messages for this feed are not permanently blocked.
+        publisher.resume_publish(RAW_AUDIO_TOPIC, feed_id)
+        raise
+
+
 def _convert_to_flac(mp3_bytes: bytes) -> bytes:
     """Convert MP3 to FLAC (16kHz, 16-bit, mono). CPU-bound — called via to_thread."""
     audio = AudioSegment.from_mp3(io.BytesIO(mp3_bytes))
@@ -294,5 +319,6 @@ async def _get_pool() -> asyncpg.Pool:
                 min_size=2,
                 max_size=5,
                 statement_cache_size=0,  # Required for pgBouncer transaction mode
+                max_inactive_connection_lifetime=60.0,  # Evict stale conns after Cloud Run freeze
             )
     return _db_pool

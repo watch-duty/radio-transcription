@@ -207,8 +207,10 @@ class TestHandle:
         assert call_kwargs.kwargs["ordering_key"] == str(feed_id)
         assert call_kwargs.kwargs["source_type"] == "echo"
 
-        # Verify conditional reset called
+        # Verify heartbeat written
         mock_pool.execute.assert_called_once()
+        sql = mock_pool.execute.call_args[0][0]
+        assert "last_heartbeat" in sql
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_failure_records_in_db(self, mock_pool, _patch_globals) -> None:
@@ -271,6 +273,29 @@ class TestHandle:
 
         # No failure recorded — bad filenames are not the feed's fault
         mock_pool.execute.assert_not_called()
+
+    @pytest.mark.usefixtures("_patch_globals")
+    def test_corrupt_audio_skips_gracefully(
+        self, mock_pool, _patch_globals
+    ) -> None:
+        feed_id = uuid.uuid4()
+        mock_pool.fetchrow.return_value = {
+            "id": feed_id,
+            "status": "active",
+            "failure_count": 0,
+        }
+
+        # Override the fixture's _convert_to_flac mock to simulate corrupt audio
+        with patch(
+            "backend.pipeline.ingestion.collectors.echo.main._convert_to_flac",
+            side_effect=Exception("ffmpeg decode error"),
+        ):
+            event = self._make_event()
+            asyncio.run(_handle(event))
+
+        # No failure recorded — corrupt files are not the feed's fault
+        mock_pool.execute.assert_not_called()
+        _patch_globals["publisher"].publish.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_publish_failure_resumes_ordering_key(
