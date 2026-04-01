@@ -23,13 +23,11 @@ from google.cloud import pubsub_v1, storage
 from pydub import AudioSegment
 
 try:
-    from schema_types.raw_audio_chunk_pb2 import (
-        AudioChunk,  # type: ignore[import]
+    from schema_types.raw_audio_chunk_pb2 import (  # type: ignore[unresolved-import]
+        AudioChunk,
     )
 except ModuleNotFoundError:
-    from backend.pipeline.schema_types.raw_audio_chunk_pb2 import (
-        AudioChunk,  # type: ignore[import]
-    )
+    from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 
 if TYPE_CHECKING:
     from cloudevents.http import event as cloudevent
@@ -131,6 +129,9 @@ def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
 
 async def _handle(cloud_event: cloudevent.CloudEvent) -> None:
     """Core async handler for a single GCS OBJECT_FINALIZE event."""
+    if gcs_client is None or publisher is None:
+        msg = "Clients not initialized — handle_notification must be called first"
+        raise RuntimeError(msg)
     data = cloud_event.data
     name = data["name"]
     bucket = data["bucket"]
