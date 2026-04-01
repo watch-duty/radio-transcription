@@ -66,7 +66,7 @@ services:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
-      retries: 20
+      retries: 5
     networks:
       - pipeline-network
 
@@ -132,6 +132,7 @@ services:
     image: python:3.13-slim
     depends_on:
       - pubsub-emulator
+      - transcripts-api
       - rules-management
       - rules-evaluation
       - notification
