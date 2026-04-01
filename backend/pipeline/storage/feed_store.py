@@ -227,10 +227,16 @@ class FeedStore:
         if row is None:
             return None
 
+        try:
+            source_type = SourceType(row["source_type"])
+        except ValueError as e:
+            msg = f"Unknown source type {row['source_type']!r} for feed {row['id']}"
+            raise ValueError(msg) from e
+
         return LeasedFeed(
             id=row["id"],
             name=row["name"],
-            source_type=SourceType(row["source_type"]),
+            source_type=source_type,
             last_processed_filename=row["last_processed_filename"],
             fencing_token=row["fencing_token"],
             stream_url=row["stream_url"],
@@ -455,14 +461,22 @@ class FeedStore:
             datetime.timedelta(seconds=abandonment_window_sec),
             limit,
         )
-        return [
-            LeasedFeed(
-                id=row["id"],
-                name=row["name"],
-                source_type=SourceType(row["source_type"]),
-                last_processed_filename=row["last_processed_filename"],
-                fencing_token=row["fencing_token"],
-                stream_url=row["stream_url"],
+
+        leased_feeds = []
+        for row in rows:
+            try:
+                source_type = SourceType(row["source_type"])
+            except ValueError as e:
+                msg = f"Unknown source type {row['source_type']!r} for feed {row['id']}"
+                raise ValueError(msg) from e
+            leased_feeds.append(
+                LeasedFeed(
+                    id=row["id"],
+                    name=row["name"],
+                    source_type=source_type,
+                    last_processed_filename=row["last_processed_filename"],
+                    fencing_token=row["fencing_token"],
+                    stream_url=row["stream_url"],
+                )
             )
-            for row in rows
-        ]
+        return leased_feeds
