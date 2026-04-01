@@ -6,5 +6,6 @@
 -- When adding a new source type, add a row here AND a new enum member there.
 INSERT INTO source_types (slug, description) VALUES
     ('bcfy_feeds', 'Broadcastify Icecast live streams'),
-    ('bcfy_calls', 'Broadcastify API-polled call recordings')
+    ('bcfy_calls', 'Broadcastify API-polled call recordings'),
+    ('echo', 'Watch Duty Echo device recordings')
 ON CONFLICT (slug) DO NOTHING;
