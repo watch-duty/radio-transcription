@@ -13,7 +13,7 @@ import os
 import unittest
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 if TYPE_CHECKING:
     import uuid
@@ -197,7 +197,12 @@ class TestEchoCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             patch.object(echo_main, "publisher", self.mock_publisher),
             patch.object(echo_main, "RAW_AUDIO_TOPIC", _RAW_AUDIO_TOPIC),
             patch.object(echo_main, "CANONICAL_BUCKET", _CANONICAL_BUCKET),
-            patch.object(echo_main, "_get_pool", return_value=self.pool),
+            patch.object(
+                echo_main,
+                "_get_pool",
+                new_callable=AsyncMock,
+                return_value=self.pool,
+            ),
         ):
             await echo_main._handle(event)
 
