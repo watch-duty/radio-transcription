@@ -3,6 +3,7 @@
 import logging
 import time
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from typing import Any, override
 
 import apache_beam as beam
@@ -20,7 +21,7 @@ from apache_beam.utils.timestamp import Timestamp
 
 from backend.pipeline.common.constants import MS_PER_SECOND
 from backend.pipeline.transcription.audio_processor import AudioProcessor
-from backend.pipeline.transcription.audio_uploader import AudioUploader
+from backend.pipeline.common.storage.gcs_uploader import GCSAudioUploader
 from backend.pipeline.transcription.constants import (
     DEAD_LETTER_QUEUE_TAG,
 )
@@ -496,10 +497,12 @@ class TranscribeAudioFn(beam.DoFn):
         )
         self.metrics_exporter.setup()
 
-        self.audio_uploader = AudioUploader(
+        if self.audio_processor.gcs_client is None:
+            msg = "GCS client not found in AudioProcessor. must call setup() first."
+            raise RuntimeError(msg)
+
+        self.audio_uploader = GCSAudioUploader(
             gcs_client=self.audio_processor.gcs_client,
-            stitched_audio_bucket=self.config.stitched_audio_bucket,
-            export_m4a_fn=self.audio_processor.export_m4a,
         )
 
     def _export_and_transcribe(
@@ -534,11 +537,27 @@ class TranscribeAudioFn(beam.DoFn):
         duration_sec = len(processed_audio) / float(MS_PER_SECOND)
         self.speech_duration_sec_dist.update(int(duration_sec))
 
-        canonical_audio_uri, playback_audio_uri = (
-            self.audio_uploader.upload_derivatives(
-                request, processed_audio, flac_bytes
+        if not self.config.stitched_audio_bucket:
+            canonical_audio_uri, playback_audio_uri = None, None
+        else:
+            dt = datetime.fromtimestamp(
+                request.time_range.start_ms / 1000.0, tz=UTC
             )
-        )
+            timestamp_str = dt.strftime("%Y%m%dT%H%M%SZ")
+
+            flac_path = f"stitched/lossless/{request.feed_id}/{dt:%Y/%m/%d}/{timestamp_str}.flac"
+            m4a_path = f"stitched/playback/{request.feed_id}/{dt:%Y/%m/%d}/{timestamp_str}.m4a"
+
+            canonical_audio_uri, playback_audio_uri = (
+                self.audio_uploader.upload_audio_derivatives(
+                    bucket_name=self.config.stitched_audio_bucket,
+                    flac_path=flac_path,
+                    m4a_path=m4a_path,
+                    flac_bytes=flac_bytes,
+                    processed_audio=processed_audio,
+                    export_m4a_fn=self.audio_processor.export_m4a,
+                )
+            )
         if not canonical_audio_uri and (
             request.contributing_audio_uris
             and len(request.contributing_audio_uris) == 1
