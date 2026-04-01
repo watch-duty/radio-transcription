@@ -196,6 +196,7 @@ async def publish_audio_chunk(
     gcs_uri: str,
     session_id: str,
     start_timestamp: datetime.datetime,
+    source_type: str | None = None,
 ) -> str:
     """
     Publish a GCS audio chunk URI to Pub/Sub and return message ID.
@@ -206,8 +207,8 @@ async def publish_audio_chunk(
         feed_id: Feed identifier, used as ordering key.
         gcs_uri: GCS URI of the audio chunk.
         start_timestamp: Original capture timestamp to preserve.
-            Defaults to ``datetime.now(UTC)`` if not provided.
         session_id: The session ID for this connected stream ingestion.
+        source_type: Optional source type attribute (e.g. "echo", "icecast").
 
     """
     publisher = pubsub_client.get_publisher()
@@ -216,11 +217,23 @@ async def publish_audio_chunk(
     audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
     audio_chunk_msg.session_id = session_id
 
-    future = publisher.publish(
-        topic_path,
-        audio_chunk_msg.SerializeToString(),
-        feed_id=feed_id,
-        ordering_key=feed_id,
-        chunk_uri=gcs_uri,
-    )
-    return await asyncio.to_thread(future.result)
+    attrs: dict[str, str] = {
+        "feed_id": feed_id,
+        "chunk_uri": gcs_uri,
+    }
+    if source_type is not None:
+        attrs["source_type"] = source_type
+
+    try:
+        future = publisher.publish(
+            topic_path,
+            audio_chunk_msg.SerializeToString(),
+            ordering_key=feed_id,
+            **attrs,
+        )
+        return await asyncio.to_thread(future.result)
+    except Exception:
+        # A failed publish pauses the ordering key; resume it so
+        # subsequent messages for this feed are not permanently blocked.
+        publisher.resume_publish(topic_path, feed_id)
+        raise

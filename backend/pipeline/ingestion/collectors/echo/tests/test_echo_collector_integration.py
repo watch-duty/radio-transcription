@@ -142,11 +142,8 @@ class TestEchoCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         os.environ["STORAGE_EMULATOR_HOST"] = self._gcs_url
         self.gcs = storage.Client(project="test")
 
-        # Mock publisher to capture published messages
-        self.mock_publisher = MagicMock()
-        self.published_future = MagicMock()
-        self.published_future.result = MagicMock(return_value="msg-id")
-        self.mock_publisher.publish.return_value = self.published_future
+        # Mock publish_audio_chunk to capture published messages
+        self.mock_publish = AsyncMock(return_value="msg-id")
 
     async def asyncTearDown(self) -> None:
         os.environ.pop("STORAGE_EMULATOR_HOST", None)
@@ -198,10 +195,11 @@ class TestEchoCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         return resp.content
 
     async def _run_handler(self, event: MagicMock) -> None:
-        """Run _handle with real GCS + DB, mocked publisher."""
+        """Run _handle with real GCS + DB, mocked publish."""
         with (
             patch.object(echo_main, "gcs_client", self.gcs),
-            patch.object(echo_main, "publisher", self.mock_publisher),
+            patch.object(echo_main, "pubsub_client", MagicMock()),
+            patch.object(echo_main, "publish_audio_chunk", self.mock_publish),
             patch.object(echo_main, "RAW_AUDIO_TOPIC", _RAW_AUDIO_TOPIC),
             patch.object(echo_main, "CANONICAL_BUCKET", _CANONICAL_BUCKET),
             patch.object(
@@ -235,16 +233,15 @@ class TestEchoCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(audio.channels, 1)
         self.assertEqual(audio.sample_width, 2)
 
-        # Verify AudioChunk published with correct attributes
-        self.mock_publisher.publish.assert_called_once()
-        call_kwargs = self.mock_publisher.publish.call_args
-        self.assertEqual(call_kwargs.kwargs["feed_id"], str(feed_id))
-        self.assertEqual(call_kwargs.kwargs["ordering_key"], str(feed_id))
-        self.assertEqual(call_kwargs.kwargs["source_type"], "echo")
+        # Verify publish_audio_chunk called with correct args
+        self.mock_publish.assert_called_once()
+        call_args = self.mock_publish.call_args
+        self.assertEqual(call_args[0][2], str(feed_id))  # feed_id
         self.assertEqual(
-            call_kwargs.kwargs["chunk_uri"],
+            call_args[0][3],
             f"gs://{_CANONICAL_BUCKET}/{flac_path}",
-        )
+        )  # gcs_uri
+        self.assertEqual(call_args.kwargs["source_type"], "echo")
 
     async def test_unknown_channel_skips_silently(self) -> None:
         """MP3 from unregistered channel -> no GCS write, no publish."""
@@ -253,7 +250,7 @@ class TestEchoCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
         await self._run_handler(self._make_cloud_event(name))
 
-        self.mock_publisher.publish.assert_not_called()
+        self.mock_publish.assert_not_called()
 
     async def test_quarantined_feed_raises_for_retry(self) -> None:
         """Quarantined feed -> raise so Eventarc retries."""
@@ -265,7 +262,7 @@ class TestEchoCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RuntimeError):
             await self._run_handler(self._make_cloud_event(name))
 
-        self.mock_publisher.publish.assert_not_called()
+        self.mock_publish.assert_not_called()
 
     async def test_malformed_filename_skips_gracefully(self) -> None:
         """Malformed filename -> log warning, return 200, no failure recorded."""
@@ -279,7 +276,7 @@ class TestEchoCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         row = await self._get_feed_row(feed_id)
         self.assertEqual(row["failure_count"], 0)
         self.assertEqual(row["status"], "active")
-        self.mock_publisher.publish.assert_not_called()
+        self.mock_publish.assert_not_called()
 
     async def test_corrupt_audio_skips_gracefully(self) -> None:
         """Corrupt MP3 -> log warning, return 200, no failure recorded."""
@@ -294,7 +291,7 @@ class TestEchoCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         row = await self._get_feed_row(feed_id)
         self.assertEqual(row["failure_count"], 0)
         self.assertEqual(row["status"], "active")
-        self.mock_publisher.publish.assert_not_called()
+        self.mock_publish.assert_not_called()
 
     async def test_failure_increments_to_quarantine(self) -> None:
         """5 consecutive infrastructure failures -> feed quarantined."""
@@ -312,9 +309,7 @@ class TestEchoCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self._upload_mp3(name)
 
         # Simulate an infrastructure failure (Pub/Sub outage)
-        self.mock_publisher.publish.return_value.result.side_effect = Exception(
-            "Pub/Sub unavailable"
-        )
+        self.mock_publish.side_effect = Exception("Pub/Sub unavailable")
 
         with self.assertRaises(Exception):
             await self._run_handler(self._make_cloud_event(name))
@@ -348,7 +343,7 @@ class TestEchoCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         """Non-MP3 file -> return immediately, no DB lookup."""
         name = "some-channel/20260326/notes.txt"
         await self._run_handler(self._make_cloud_event(name))
-        self.mock_publisher.publish.assert_not_called()
+        self.mock_publish.assert_not_called()
 
     async def test_idempotent_redelivery(self) -> None:
         """Same file processed twice -> both invocations publish (safe for Beam EO dedup)."""
@@ -369,4 +364,4 @@ class TestEchoCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         # if_generation_match=0 but we always proceed to publish so that
         # retries after a crash-between-upload-and-publish still deliver.
         # Downstream Beam exactly-once dedup handles the duplicate.
-        self.assertEqual(self.mock_publisher.publish.call_count, 2)
+        self.assertEqual(self.mock_publish.call_count, 2)

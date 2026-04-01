@@ -108,6 +108,7 @@ class TestHandle:
     @pytest.fixture
     def _patch_globals(self, mock_pool):
         """Patch global state used by _handle."""
+        mock_publish = AsyncMock(return_value="msg-id")
         with (
             patch(
                 "backend.pipeline.ingestion.collectors.echo.main._get_pool",
@@ -118,8 +119,13 @@ class TestHandle:
                 "backend.pipeline.ingestion.collectors.echo.main.gcs_client"
             ) as mock_gcs,
             patch(
-                "backend.pipeline.ingestion.collectors.echo.main.publisher"
-            ) as mock_pub,
+                "backend.pipeline.ingestion.collectors.echo.main.pubsub_client",
+                MagicMock(),
+            ) as mock_pubsub,
+            patch(
+                "backend.pipeline.ingestion.collectors.echo.main.publish_audio_chunk",
+                mock_publish,
+            ),
             patch(
                 "backend.pipeline.ingestion.collectors.echo.main._convert_to_flac",
                 return_value=_FAKE_FLAC,
@@ -131,7 +137,8 @@ class TestHandle:
             yield {
                 "pool": mock_pool,
                 "gcs": mock_gcs,
-                "publisher": mock_pub,
+                "pubsub": mock_pubsub,
+                "publish": mock_publish,
             }
 
     def _make_event(
@@ -199,13 +206,11 @@ class TestHandle:
         flac_bytes = upload_call.call_args[0][0]
         assert flac_bytes[:4] == b"fLaC"
 
-        # Verify AudioChunk published
-        pub = _patch_globals["publisher"]
-        pub.publish.assert_called_once()
-        call_kwargs = pub.publish.call_args
-        assert call_kwargs.kwargs["feed_id"] == str(feed_id)
-        assert call_kwargs.kwargs["ordering_key"] == str(feed_id)
-        assert call_kwargs.kwargs["source_type"] == "echo"
+        # Verify publish_audio_chunk called with correct args
+        mock_publish = _patch_globals["publish"]
+        mock_publish.assert_called_once()
+        call_kwargs = mock_publish.call_args.kwargs
+        assert call_kwargs["source_type"] == "echo"
 
         # Verify heartbeat written
         mock_pool.execute.assert_called_once()
@@ -295,10 +300,10 @@ class TestHandle:
 
         # No failure recorded — corrupt files are not the feed's fault
         mock_pool.execute.assert_not_called()
-        _patch_globals["publisher"].publish.assert_not_called()
+        _patch_globals["publish"].assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_publish_failure_resumes_ordering_key(
+    def test_publish_failure_records_in_db(
         self, mock_pool, _patch_globals
     ) -> None:
         feed_id = uuid.uuid4()
@@ -308,13 +313,13 @@ class TestHandle:
             "failure_count": 0,
         }
 
-        pub = _patch_globals["publisher"]
-        publish_future = MagicMock()
-        publish_future.result.side_effect = Exception("gRPC timeout")
-        pub.publish.return_value = publish_future
+        _patch_globals["publish"].side_effect = Exception("Pub/Sub error")
 
         event = self._make_event()
-        with pytest.raises(Exception, match="gRPC timeout"):
+        with pytest.raises(Exception, match="Pub/Sub error"):
             asyncio.run(_handle(event))
 
-        pub.resume_publish.assert_called_once()
+        # Verify failure recorded in DB
+        mock_pool.execute.assert_called_once()
+        sql = mock_pool.execute.call_args[0][0]
+        assert "failure_count + 1" in sql

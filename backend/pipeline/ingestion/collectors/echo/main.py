@@ -18,20 +18,21 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import asyncpg
 import functions_framework
 from google.api_core.exceptions import PreconditionFailed
-from google.cloud import pubsub_v1, storage
+from google.cloud import storage
 from pydub import AudioSegment
 
-try:
-    from schema_types.raw_audio_chunk_pb2 import (  # type: ignore[unresolved-import]
-        AudioChunk,
-    )
-except ModuleNotFoundError:
-    from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
+from backend.pipeline.common.clients.pubsub_client import PubSubClient
+from backend.pipeline.common.constants import (
+    AUDIO_SAMPLE_RATE,
+    NUM_AUDIO_CHANNELS,
+)
+from backend.pipeline.common.gcp_helper import publish_audio_chunk
+from backend.pipeline.storage.connection import create_pool
 
 if TYPE_CHECKING:
+    import asyncpg
     from cloudevents.http import event as cloudevent
 
 logger = logging.getLogger(__name__)
@@ -50,11 +51,8 @@ FAILURE_THRESHOLD = int(os.environ.get("FAILURE_THRESHOLD", "5"))
 BASE_BACKOFF_SEC = int(os.environ.get("BASE_BACKOFF_SEC", "15"))
 MAX_BACKOFF_SEC = int(os.environ.get("MAX_BACKOFF_SEC", "600"))
 
-# Target audio format — mirrors constants.py (SAMPLE_RATE_HZ, NUM_AUDIO_CHANNELS)
-# but defined inline because the Docker image only bundles main.py.
-TARGET_SAMPLE_RATE = 16_000
-TARGET_CHANNELS = 1
-TARGET_SAMPLE_WIDTH = 2  # 16-bit
+# 16-bit PCM sample width (no shared constant; matches BYTES_PER_SECOND formula)
+TARGET_SAMPLE_WIDTH = 2
 
 # ---------------------------------------------------------------------------
 # Global state (persisted across warm invocations)
@@ -63,7 +61,7 @@ TARGET_SAMPLE_WIDTH = 2  # 16-bit
 # GCS and Pub/Sub clients are initialized lazily on first invocation so that
 # importing this module in unit tests does not require GCP credentials.
 gcs_client: storage.Client | None = None
-publisher: pubsub_v1.PublisherClient | None = None
+pubsub_client: PubSubClient | None = None
 
 # Persistent event loop for asyncpg — shared across concurrent request threads.
 # CF v2 with concurrency=10 dispatches requests across threads. asyncpg pools
@@ -127,15 +125,11 @@ WHERE id = $1
 @functions_framework.cloud_event
 def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
     """Sync entry point — submits async work to the shared event loop."""
-    global gcs_client, publisher  # noqa: PLW0603
+    global gcs_client, pubsub_client  # noqa: PLW0603
     if gcs_client is None:
         gcs_client = storage.Client()
-    if publisher is None:
-        publisher = pubsub_v1.PublisherClient(
-            publisher_options=pubsub_v1.types.PublisherOptions(
-                enable_message_ordering=True,
-            ),
-        )
+    if pubsub_client is None:
+        pubsub_client = PubSubClient()
     future = asyncio.run_coroutine_threadsafe(_handle(cloud_event), _loop)
     try:
         future.result(timeout=30)
@@ -146,7 +140,7 @@ def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
 
 async def _handle(cloud_event: cloudevent.CloudEvent) -> None:
     """Core async handler for a single GCS OBJECT_FINALIZE event."""
-    if gcs_client is None or publisher is None:
+    if gcs_client is None or pubsub_client is None:
         msg = (
             "Clients not initialized — handle_notification must be called first"
         )
@@ -224,7 +218,19 @@ async def _handle(cloud_event: cloudevent.CloudEvent) -> None:
                 canonical_uri,
             )
 
-        await _publish_audio_chunk(canonical_uri, start_ts, str(feed["id"]))
+        # Deterministic session_id so Eventarc redeliveries produce the same
+        # ID and downstream Stitcher dedup recognises the duplicate.
+        feed_id_str = str(feed["id"])
+        session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, canonical_uri))
+        await publish_audio_chunk(
+            pubsub_client,
+            RAW_AUDIO_TOPIC,
+            feed_id_str,
+            canonical_uri,
+            session_id,
+            start_ts,
+            source_type="echo",
+        )
 
         # Unconditional heartbeat — also resets failure_count if recovering
         await pool.execute(_HEARTBEAT_SQL, feed["id"])
@@ -246,40 +252,11 @@ async def _handle(cloud_event: cloudevent.CloudEvent) -> None:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-async def _publish_audio_chunk(
-    canonical_uri: str, start_ts: datetime, feed_id: str
-) -> None:
-    """Build and publish an AudioChunk. Resumes ordering key on failure."""
-    if publisher is None:
-        msg = "Publisher not initialized"
-        raise RuntimeError(msg)
-    chunk = AudioChunk(gcs_uri=canonical_uri)
-    chunk.start_timestamp.FromDatetime(start_ts)
-    # Deterministic session_id so Eventarc redeliveries produce the same
-    # ID and downstream Stitcher dedup recognises the duplicate.
-    chunk.session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, canonical_uri))
-    try:
-        future = publisher.publish(
-            RAW_AUDIO_TOPIC,
-            chunk.SerializeToString(),
-            feed_id=feed_id,
-            ordering_key=feed_id,
-            chunk_uri=canonical_uri,
-            source_type="echo",
-        )
-        await asyncio.to_thread(future.result)
-    except Exception:
-        # A failed publish pauses the ordering key; resume it so
-        # subsequent messages for this feed are not permanently blocked.
-        publisher.resume_publish(RAW_AUDIO_TOPIC, feed_id)
-        raise
-
-
 def _convert_to_flac(mp3_bytes: bytes) -> bytes:
     """Convert MP3 to FLAC (16kHz, 16-bit, mono). CPU-bound — called via to_thread."""
     audio = AudioSegment.from_mp3(io.BytesIO(mp3_bytes))
-    audio = audio.set_frame_rate(TARGET_SAMPLE_RATE)
-    audio = audio.set_channels(TARGET_CHANNELS)
+    audio = audio.set_frame_rate(AUDIO_SAMPLE_RATE)
+    audio = audio.set_channels(NUM_AUDIO_CHANNELS)
     audio = audio.set_sample_width(TARGET_SAMPLE_WIDTH)
     buf = io.BytesIO()
     audio.export(buf, format="flac")
@@ -311,15 +288,14 @@ async def _get_pool() -> asyncpg.Pool:
         _pool_lock = asyncio.Lock()
     async with _pool_lock:
         if _db_pool is None:
-            _db_pool = await asyncpg.create_pool(
+            _db_pool = await create_pool(
                 host=ALLOYDB_HOST,
-                port=ALLOYDB_PORT,
                 user=ALLOYDB_USER,
+                db_name=ALLOYDB_DB,
                 password=ALLOYDB_PASSWORD,
-                database=ALLOYDB_DB,
+                port=ALLOYDB_PORT,
                 min_size=2,
                 max_size=5,
-                statement_cache_size=0,  # Required for pgBouncer transaction mode
-                max_inactive_connection_lifetime=60.0,  # Evict stale conns after Cloud Run freeze
+                max_inactive_connection_lifetime=60.0,
             )
     return _db_pool
