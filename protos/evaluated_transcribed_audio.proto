@@ -5,6 +5,12 @@ import "google/protobuf/duration.proto";
 // Identifiers, timestamps, transcript, and evaluation decisions for transcribed audio.
 message EvaluatedTranscribedAudio {
 
+  enum EvaluationErrorType {
+    ERROR_UNSPECIFIED = 0;
+    ERROR_FEED_ID_MISSING = 1;
+    ERROR_RULES_FETCH_FAILED = 2;
+  }
+
   // --- Identifiers ---
   // The unique identifier of the radio feed this transmission originated from (formatted as a RFC 4122 UUID).
   string feed_id = 1;
@@ -33,13 +39,9 @@ message EvaluatedTranscribedAudio {
   // Indicates this transmission lacks subsequent context (e.g., transmission duration exceeded).
   bool missing_post_context = 7;
 
-
   // --- Physical Audio Tracking ---
   // Ordered list of GCS URIs for the raw audio files used to assemble this transmission.
   repeated string source_audio_uris = 8;
-
-  // The final unified canonical reference audio file URI for this transmission.
-  string canonical_audio_uri = 11;
 
   // The exact slice offset within the *first* URI where the transcribed speech formally begins.
   google.protobuf.Duration start_audio_offset = 9;
@@ -47,19 +49,16 @@ message EvaluatedTranscribedAudio {
   // The exact slice offset within the *last* URI where the transcribed speech formally ends.
   google.protobuf.Duration end_audio_offset = 10;
 
+  // The final unified canonical reference audio file URI for this transmission.
+  string canonical_audio_uri = 11;
+
+  // The URI of the audio file optimized for playback (e.g., compressed M4A/Opus).
+  string playback_audio_uri = 12; 
 
   // --- Decisions ---
   // The list of rule IDs triggered by this transcript during evaluation.
-  repeated string evaluation_decisions = 12;
+  repeated string evaluation_decisions = 13;
 
-  enum EvaluationErrorType {
-    ERROR_UNSPECIFIED = 0;
-    ERROR_FEED_ID_MISSING = 1;
-    ERROR_RULES_FETCH_FAILED = 2;
-  }
-
-  repeated EvaluationErrorType evaluation_errors = 13;
-
-  // The URI of the audio file optimized for playback (e.g., compressed M4A/Opus).
-  string playback_audio_uri = 14;
+  // The list of errors encountered during evaluation.
+  repeated EvaluationErrorType evaluation_errors = 14;
 }
