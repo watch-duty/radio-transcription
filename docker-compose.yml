@@ -95,8 +95,8 @@ services:
       - ./local_dev/LOCAL.env
     command: ["uvicorn", "backend.services.transcripts.main:app", "--host", "0.0.0.0", "--port", "8087"]
     depends_on:
-      - postgres
-      - pubsub-emulator
+      postgres:
+        condition: service_healthy
     networks:
       - pipeline-network
 
