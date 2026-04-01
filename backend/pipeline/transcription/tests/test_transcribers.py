@@ -34,25 +34,20 @@ class TestTranscribers(unittest.TestCase):
             mock_response.results = [mock_result]
             mock_client_instance.recognize.return_value = mock_response
 
-            # Initialize Transcriber
             transcriber = get_transcriber(
                 TranscriberType.GOOGLE_CHIRP_V3,
                 "test-project",
-                '{"location": "us"}',
+                '{"location": "us", "keywords_file_path": null}',
             )
             transcriber.setup()
 
-            # Execute transcribe
             dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
 
             transcript = transcriber.transcribe(
                 audio_data=dummy_audio,
             )
 
-            # Assert output
             self.assertEqual(transcript, "Hello world from Chirp")
-
-            # Assert recognize called
             mock_client_instance.recognize.assert_called_once()
 
     def test_google_chirp_transcriber_background(self) -> None:
@@ -63,23 +58,20 @@ class TestTranscribers(unittest.TestCase):
             mock_client_instance = MagicMock()
             mock_speech_client_cls.return_value = mock_client_instance
 
-            # Mock [BACKGROUND] response
             mock_response = MagicMock()
             mock_result = MagicMock()
             mock_result.alternatives = [MagicMock(transcript="[BACKGROUND]")]
             mock_response.results = [mock_result]
             mock_client_instance.recognize.return_value = mock_response
 
-            transcriber = get_transcriber(
-                TranscriberType.GOOGLE_CHIRP_V3, "test-project", "{}"
+            transcriber = GoogleChirpV3Transcriber(
+                "test-project", ChirpConfig(keywords_file_path=None)
             )
             transcriber.setup()
 
             dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
 
-            transcript = transcriber.transcribe(
-                audio_data=dummy_audio,
-            )
+            transcript = transcriber.transcribe(audio_data=dummy_audio)
 
             self.assertIsNone(transcript)
 
@@ -91,7 +83,6 @@ class TestTranscribers(unittest.TestCase):
             mock_client_instance = MagicMock()
             mock_speech_client_cls.return_value = mock_client_instance
 
-            # First call raises a transient error, second call succeeds
             mock_response = MagicMock()
             mock_result = MagicMock()
             mock_result.alternatives = [
@@ -104,24 +95,21 @@ class TestTranscribers(unittest.TestCase):
                 mock_response,
             ]
 
-            transcriber = get_transcriber(
-                TranscriberType.GOOGLE_CHIRP_V3, "test-project", "{}"
+            transcriber = GoogleChirpV3Transcriber(
+                "test-project", ChirpConfig(keywords_file_path=None)
             )
             transcriber.setup()
 
             dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
 
-            # Patch time.sleep to avoid actually waiting during the test
             with patch("time.sleep"):
-                transcript = transcriber.transcribe(
-                    audio_data=dummy_audio,
-                )
+                transcript = transcriber.transcribe(audio_data=dummy_audio)
 
             self.assertEqual(transcript, "Success after retry")
             self.assertEqual(mock_client_instance.recognize.call_count, 2)
 
-    def test_google_chirp_transcriber_no_hints_omits_adaptation(self) -> None:
-        """Verifies that adaptation=None is passed to RecognitionConfig when no keywords or phrase_hints are configured."""
+    def test_google_chirp_transcriber_no_keywords_omits_adaptation(self) -> None:
+        """Verifies that adaptation=None is passed to RecognitionConfig when no keywords file is configured."""
         with patch(
             "backend.pipeline.transcription.transcribers.SpeechClient"
         ) as mock_speech_client_cls, patch(
@@ -136,7 +124,9 @@ class TestTranscribers(unittest.TestCase):
             mock_response.results = [mock_result]
             mock_client_instance.recognize.return_value = mock_response
 
-            transcriber = GoogleChirpV3Transcriber("test-project", ChirpConfig())
+            transcriber = GoogleChirpV3Transcriber(
+                "test-project", ChirpConfig(keywords_file_path=None)
+            )
             transcriber.setup()
 
             dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
@@ -145,47 +135,11 @@ class TestTranscribers(unittest.TestCase):
             _, kwargs = mock_cs.RecognitionConfig.call_args
             self.assertIsNone(kwargs.get("adaptation"))
 
-    def test_google_chirp_transcriber_inline_phrase_hints_build_adaptation(self) -> None:
-        """Verifies that a SpeechAdaptation with the correct PhraseSet is constructed when inline phrase_hints are provided."""
-        hints = ["Code 3", "10-4", "Engine 7"]
-        boost = 15.0
-        config = ChirpConfig(phrase_hints=hints, phrase_boost=boost)
-
-        with patch(
-            "backend.pipeline.transcription.transcribers.SpeechClient"
-        ) as mock_speech_client_cls, patch(
-            "backend.pipeline.transcription.transcribers.cloud_speech"
-        ) as mock_cs:
-            mock_client_instance = MagicMock()
-            mock_speech_client_cls.return_value = mock_client_instance
-
-            mock_response = MagicMock()
-            mock_result = MagicMock()
-            mock_result.alternatives = [MagicMock(transcript="Code 3, all units")]
-            mock_response.results = [mock_result]
-            mock_client_instance.recognize.return_value = mock_response
-
-            transcriber = GoogleChirpV3Transcriber("test-project", config)
-            transcriber.setup()
-
-            dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
-            transcriber.transcribe(audio_data=dummy_audio)
-
-            expected_phrase_calls = [
-                call(value=hint, boost=boost) for hint in hints
-            ]
-            mock_cs.PhraseSet.Phrase.assert_has_calls(
-                expected_phrase_calls, any_order=False
-            )
-            mock_cs.SpeechAdaptation.assert_called_once()
-            _, kwargs = mock_cs.RecognitionConfig.call_args
-            self.assertIsNotNone(kwargs.get("adaptation"))
-
     def test_google_chirp_transcriber_keywords_file_loads_and_builds_adaptation(self) -> None:
-        """Verifies that keywords are loaded from a JSON file and used to build SpeechAdaptation, with per-phrase boost respected and the default boost applied when absent."""
+        """Verifies that keywords are loaded from a JSON file and used to build SpeechAdaptation, with per-phrase boost respected and the default applied when absent."""
         keywords = [
             {"phrase": "Code 3", "boost": 20.0},
-            {"phrase": "10-4"},  # no boost — should fall back to phrase_boost
+            {"phrase": "10-4"},  # no boost — uses KeywordItem default
         ]
 
         with tempfile.NamedTemporaryFile(
@@ -194,7 +148,7 @@ class TestTranscribers(unittest.TestCase):
             json.dump(keywords, f)
             keywords_path = f.name
 
-        config = ChirpConfig(keywords_file_path=keywords_path, phrase_boost=12.0)
+        config = ChirpConfig(keywords_file_path=keywords_path)
 
         with patch(
             "backend.pipeline.transcription.transcribers.SpeechClient"
@@ -216,10 +170,10 @@ class TestTranscribers(unittest.TestCase):
             dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
             transcriber.transcribe(audio_data=dummy_audio)
 
-            # Per-phrase boost for "Code 3", fallback phrase_boost for "10-4"
+            # Explicit boost for "Code 3"; KeywordItem default (10.0) for "10-4"
             expected_phrase_calls = [
                 call(value="Code 3", boost=20.0),
-                call(value="10-4", boost=12.0),
+                call(value="10-4", boost=10.0),
             ]
             mock_cs.PhraseSet.Phrase.assert_has_calls(
                 expected_phrase_calls, any_order=False

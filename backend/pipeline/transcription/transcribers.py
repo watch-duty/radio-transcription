@@ -18,6 +18,12 @@ from google.cloud.speech_v2 import SpeechClient
 
 from backend.pipeline.common.constants import BYTES_PER_SECOND_16KHZ_MONO
 from backend.pipeline.transcription.constants import (
+    DEFAULT_CHIRP_LANGUAGE_CODES,
+    DEFAULT_CHIRP_LOCATION,
+    DEFAULT_CHIRP_MODEL,
+    DEFAULT_CHIRP_RECOGNIZER,
+    DEFAULT_KEYWORD_BOOST,
+    DEFAULT_KEYWORDS_FILE_PATH,
     DEFAULT_MAX_RETRIES,
     DEFAULT_RETRY_MAX_SECONDS,
 )
@@ -51,31 +57,25 @@ class Transcriber(abc.ABC):
 
 
 class KeywordItem(pydantic.BaseModel):
-    """A single keyword/phrase entry with an optional per-phrase boost override."""
+    """A single keyword/phrase entry loaded from the keywords JSON file."""
 
     phrase: str
-    boost: float | None = None
+    boost: float = DEFAULT_KEYWORD_BOOST
 
 
 class ChirpConfig(ConfigBase):
     """Strongly typed configuration for the Google Chirp V3 Transcriber."""
 
-    location: str = "us-central1"
-    recognizer: str = "_"
-    model: str = "chirp_3"
-    language_codes: list[str] = ["en-US"]
+    location: str = DEFAULT_CHIRP_LOCATION
+    recognizer: str = DEFAULT_CHIRP_RECOGNIZER
+    model: str = DEFAULT_CHIRP_MODEL
+    language_codes: list[str] = DEFAULT_CHIRP_LANGUAGE_CODES
     enable_automatic_punctuation: bool = True
     enable_word_time_offsets: bool = False
-    # Path to a JSON file containing KeywordItem entries. Each entry may specify
-    # its own boost; entries without one fall back to phrase_boost. Optional —
-    # if omitted no file is loaded.
-    keywords_file_path: str | None = None
-    # Inline phrase hints as a convenience alternative (or complement) to a
-    # keywords file. Useful for per-job overrides without a container rebuild.
-    phrase_hints: list[str] = []
-    # Default boost applied to inline phrase_hints and to any KeywordItem that
-    # does not specify its own boost value.
-    phrase_boost: float = 10.0
+    # Path to a JSON file containing KeywordItem entries for phrase adaptation.
+    # Defaults to the packaged file in the container image; explicitly set to
+    # None to disable adaptation (e.g. in tests or non-container environments).
+    keywords_file_path: str | None = DEFAULT_KEYWORDS_FILE_PATH
 
 
 class GoogleChirpV3Transcriber(Transcriber):
@@ -125,29 +125,18 @@ class GoogleChirpV3Transcriber(Transcriber):
                 raise ValueError(msg) from e
 
     def _build_adaptation(self) -> cloud_speech.SpeechAdaptation | None:
-        """Builds a SpeechAdaptation combining file-loaded keywords and inline phrase hints.
+        """Builds a SpeechAdaptation from the loaded keywords list.
 
-        File-loaded KeywordItems may specify a per-phrase boost; those without
-        one fall back to phrase_boost. Inline phrase_hints always use phrase_boost.
-        Returns None when no keywords or hints are configured.
+        Returns None when no keywords are loaded, skipping adaptation entirely.
         """
+        if not self.keywords_list:
+            return None
+
         phrases = [
-            cloud_speech.PhraseSet.Phrase(
-                value=kw.phrase,
-                boost=kw.boost if kw.boost is not None else self.config.phrase_boost,
-            )
+            cloud_speech.PhraseSet.Phrase(value=kw.phrase, boost=kw.boost)
             for kw in self.keywords_list
             if kw.phrase
-        ] + [
-            cloud_speech.PhraseSet.Phrase(
-                value=hint,
-                boost=self.config.phrase_boost,
-            )
-            for hint in self.config.phrase_hints
         ]
-
-        if not phrases:
-            return None
 
         return cloud_speech.SpeechAdaptation(
             phrase_sets=[
