@@ -111,9 +111,8 @@ class AudioProcessorTest(unittest.TestCase):
         # M4A (MP4 container) should contain an ftyp box
         self.assertIn(b"ftyp", m4a_bytes)
 
-    @pytest.mark.skipif(
-        shutil.which("ffmpeg") is None,
-        reason="ffmpeg is required for pydub I/O tests",
+    @unittest.skipIf(
+        shutil.which("ffmpeg") is None, "ffmpeg is required for pydub I/O tests"
     )
     @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
     @patch(
