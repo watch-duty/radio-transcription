@@ -8,6 +8,9 @@ import requests
 from backend.pipeline.common.auth import get_id_token
 from backend.pipeline.common.env import is_gcp_env
 from backend.pipeline.common.rules import models
+from backend.pipeline.schema_types import (
+    evaluated_transcribed_audio_pb2 as evaluated_pb2,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +18,13 @@ logger = logging.getLogger(__name__)
 class EvaluationResult(TypedDict):
     is_flagged: bool
     triggered_rules: list[str]
+    errors: list[int]  # Using proto enum integer values
+
+
+class OrganizedRules:
+    def __init__(self) -> None:
+        self.global_rules: list[models.Rule] = []
+        self.feed_specific_rules: dict[str, list[models.Rule]] = {}
 
 
 class BaseTextEvaluator(ABC):
@@ -23,12 +33,13 @@ class BaseTextEvaluator(ABC):
     """
 
     @abstractmethod
-    def evaluate(self, text: str) -> EvaluationResult:
+    def evaluate(self, text: str, feed_id: str) -> EvaluationResult:
         """
         Evaluates the given text.
 
         Args:
             text: The text to evaluate.
+            feed_id: ID of the feed the text belongs to.
 
         Returns:
             An EvaluationResult containing flagging status and triggered rules.
@@ -67,6 +78,50 @@ class BaseTextEvaluator(ABC):
         # For now, we skip GroupConditions as it requires a rule lookup
         return False
 
+    def _organize_rules(self, rules: list[models.Rule]) -> OrganizedRules:
+        organized_rules = OrganizedRules()
+        for rule in rules:
+            if not rule.is_active:
+                continue
+
+            if rule.scope.level == models.ScopeLevel.GLOBAL:
+                organized_rules.global_rules.append(rule)
+            elif rule.scope.level == models.ScopeLevel.FEED_SPECIFIC:
+                for feed_id in rule.scope.target_feeds:
+                    if feed_id not in organized_rules.feed_specific_rules:
+                        organized_rules.feed_specific_rules[feed_id] = []
+                    organized_rules.feed_specific_rules[feed_id].append(rule)
+        return organized_rules
+
+    def _get_applicable_rules(
+        self, organized_rules: OrganizedRules, feed_id: str
+    ) -> list[models.Rule]:
+        return (
+            organized_rules.global_rules
+            + organized_rules.feed_specific_rules.get(feed_id, [])
+        )
+
+    def _evaluate_ruleset(
+        self, rules: list[models.Rule], text: str, feed_id: str
+    ) -> EvaluationResult:
+        if not text:
+            return {"is_flagged": False, "triggered_rules": [], "errors": []}
+
+        organized_rules = self._organize_rules(rules)
+        rules_to_evaluate = self._get_applicable_rules(organized_rules, feed_id)
+
+        matches = []
+        for rule in rules_to_evaluate:
+            if self._evaluate_rule(rule, text):
+                matches.append(rule.rule_id)
+
+        unique_matches = list(dict.fromkeys(matches))
+        return {
+            "is_flagged": len(unique_matches) > 0,
+            "triggered_rules": unique_matches,
+            "errors": [],
+        }
+
 
 class StaticTextEvaluator(BaseTextEvaluator):
     """
@@ -87,25 +142,18 @@ class StaticTextEvaluator(BaseTextEvaluator):
         ),
     ]
 
-    def evaluate(self, text: str) -> EvaluationResult:
+    def evaluate(self, text: str, feed_id: str) -> EvaluationResult:
         """
         Evaluates text using class-level rules.
 
         Args:
             text: The text to evaluate.
+            feed_id: The ID of the feed associated with the text.
 
         Returns:
             An EvaluationResult containing flagging status and triggered rules.
         """
-        if not text:
-            return {"is_flagged": False, "triggered_rules": []}
-
-        matches = []
-        for rule in self._RULES:
-            if self._evaluate_rule(rule, text):
-                matches.append(rule.rule_id)
-
-        return {"is_flagged": len(matches) > 0, "triggered_rules": matches}
+        return self._evaluate_ruleset(self._RULES, text, feed_id)
 
 
 class RemoteTextEvaluator(BaseTextEvaluator):
@@ -123,34 +171,38 @@ class RemoteTextEvaluator(BaseTextEvaluator):
         self.api_url = api_url.rstrip("/")
         self.session = requests.Session()
 
-    def evaluate(self, text: str) -> EvaluationResult:
+    def evaluate(self, text: str, feed_id: str) -> EvaluationResult:
         """
         Evaluates the given text by fetching rules from the API.
 
         Args:
             text: The text to evaluate.
+            feed_id: The ID of the feed associated with the text.
 
         Returns:
             An EvaluationResult containing flagging status and triggered rules.
         """
-        if not text:
-            return {"is_flagged": False, "triggered_rules": []}
-
+        if not feed_id:
+            return {
+                "is_flagged": False,
+                "triggered_rules": [],
+                "errors": [
+                    evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_FEED_ID_MISSING
+                ],
+            }
         try:
             rules = self._fetch_rules()
         except Exception:
             logger.exception("Failed to fetch rules from API")
-            # Fallback or re-raise? For now, we'll re-raise as the caller handles it
-            raise
+            return {
+                "is_flagged": False,
+                "triggered_rules": [],
+                "errors": [
+                    evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_RULES_FETCH_FAILED
+                ],
+            }
 
-        matches = []
-        for rule in rules:
-            if not rule.is_active:
-                continue
-            if self._evaluate_rule(rule, text):
-                matches.append(rule.rule_id)
-
-        return {"is_flagged": len(matches) > 0, "triggered_rules": matches}
+        return self._evaluate_ruleset(rules, text, feed_id)
 
     def _fetch_rules(self) -> list[models.Rule]:
         """

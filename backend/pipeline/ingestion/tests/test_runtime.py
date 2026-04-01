@@ -10,7 +10,11 @@ import aiohttp
 import asyncpg
 
 from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
-from backend.pipeline.storage.feed_store import HeartbeatResult, LeasedFeed
+from backend.pipeline.storage.feed_store import (
+    HeartbeatResult,
+    LeasedFeed,
+    SourceType,
+)
 from backend.pipeline.storage.settings import AlloyDBSettings
 
 _WORKER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
@@ -19,7 +23,7 @@ _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 _FEED = LeasedFeed(
     id=_FEED_ID,
     name="Test Feed",
-    source_type="bcfy_feeds",
+    source_type=SourceType.BCFY_FEEDS,
     last_processed_filename=None,
     fencing_token=1,
     stream_url="http://stream.example.com/feed",

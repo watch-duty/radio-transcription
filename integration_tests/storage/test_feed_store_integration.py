@@ -8,7 +8,7 @@ if TYPE_CHECKING:
 
 import pytest
 
-from backend.pipeline.storage.feed_store import FeedStore
+from backend.pipeline.storage.feed_store import FeedStore, SourceType
 
 
 @pytest.fixture
@@ -92,7 +92,7 @@ async def test_lease_returns_feed_with_icecast_properties(
 
     assert result is not None
     assert result["name"] == "Icecast Feed"
-    assert result["source_type"] == "bcfy_feeds"
+    assert result["source_type"] == SourceType.BCFY_FEEDS
     assert result["stream_url"] == "http://stream.example.com/live"
     assert result["fencing_token"] == 1
 
