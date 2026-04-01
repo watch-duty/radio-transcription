@@ -21,7 +21,11 @@ import asyncpg
 import functions_framework
 from google.cloud import pubsub_v1, storage
 from pydub import AudioSegment
-from schema_types.raw_audio_chunk_pb2 import AudioChunk  # type: ignore[import]
+
+try:
+    from schema_types.raw_audio_chunk_pb2 import AudioChunk  # type: ignore[import]
+except ModuleNotFoundError:
+    from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk  # type: ignore[import]
 
 if TYPE_CHECKING:
     from cloudevents.http import event as cloudevent
