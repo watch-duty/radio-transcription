@@ -69,15 +69,14 @@ async def upload_staged_audio(
     # if token < max_seen."  Putting the token in the path sidesteps this:
     # different lease holders write to different paths, so a zombie can
     # never overwrite the current holder's objects.
-    source_type_name = feed["source_type"].name
     if fencing_token is not None:
         object_name = (
-            f"{source_type_name}/{feed['id']}/"
+            f"{feed['source_type']}/{feed['id']}/"
             f"token-{fencing_token}/{timestamp}_{chunk_seq}.flac"
         )
     else:
         object_name = (
-            f"{source_type_name}/{feed['id']}/{timestamp}_{chunk_seq}.flac"
+            f"{feed['source_type']}/{feed['id']}/{timestamp}_{chunk_seq}.flac"
         )
 
     return await upload_audio(
