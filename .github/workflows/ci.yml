@@ -125,7 +125,7 @@ jobs:
       - name: Generate Protobuf Python files
         run: mise run generate:protos
       - name: Run tests
-        run: uv run python -m unittest -b
+        run: uv run python -m pytest backend/ -q
 
   # Builds each service's Dockerfile and verifies all transitive imports resolve
   # and required environment variables are documented. This catches:
