@@ -330,7 +330,7 @@ class TestEchoCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.mock_publisher.publish.assert_not_called()
 
     async def test_idempotent_overwrite(self) -> None:
-        """Same file processed twice -> FLAC overwritten, no error."""
+        """Same file processed twice -> second invocation is a no-op (no duplicate publish)."""
         channel = "idempotent-ch"
         feed_id = await self._insert_echo_feed(channel)
         name = f"{channel}/20260326/idempotent_20260326_143022.mp3"
@@ -344,5 +344,6 @@ class TestEchoCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         flac_bytes = self._download_canonical(flac_path)
         self.assertTrue(flac_bytes[:4] == _FLAC_MAGIC)
 
-        # Published twice (once per invocation)
-        self.assertEqual(self.mock_publisher.publish.call_count, 2)
+        # if_generation_match=0 causes the second upload to raise PreconditionFailed,
+        # so we return early and publish only once — preventing duplicate AudioChunks.
+        self.assertEqual(self.mock_publisher.publish.call_count, 1)
