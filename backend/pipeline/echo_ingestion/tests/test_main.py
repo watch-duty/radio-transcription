@@ -139,14 +139,14 @@ class TestHandle:
         mock_pool.fetchrow.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_skips_unknown_channel(self, mock_pool):
+    def test_skips_unknown_channel(self, mock_pool) -> None:
         mock_pool.fetchrow.return_value = None
         event = self._make_event()
         asyncio.run(_handle(event))
         mock_pool.fetchrow.assert_called_once()
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_skips_quarantined_feed(self, mock_pool):
+    def test_skips_quarantined_feed(self, mock_pool) -> None:
         mock_pool.fetchrow.return_value = {
             "id": uuid.uuid4(),
             "status": "quarantined",
@@ -156,7 +156,7 @@ class TestHandle:
         asyncio.run(_handle(event))
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_skips_deactivated_feed(self, mock_pool):
+    def test_skips_deactivated_feed(self, mock_pool) -> None:
         mock_pool.fetchrow.return_value = {
             "id": uuid.uuid4(),
             "status": "deactivated",
@@ -166,7 +166,7 @@ class TestHandle:
         asyncio.run(_handle(event))
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_successful_processing(self, mock_pool, _patch_globals):
+    def test_successful_processing(self, mock_pool, _patch_globals) -> None:
         feed_id = uuid.uuid4()
         mock_pool.fetchrow.return_value = {
             "id": feed_id,
@@ -196,7 +196,7 @@ class TestHandle:
         mock_pool.execute.assert_called_once()
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_failure_records_in_db(self, mock_pool, _patch_globals):
+    def test_failure_records_in_db(self, mock_pool, _patch_globals) -> None:
         feed_id = uuid.uuid4()
         mock_pool.fetchrow.return_value = {
             "id": feed_id,
@@ -220,7 +220,7 @@ class TestHandle:
         assert "failure_count + 1" in sql
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_failure_recording_db_error_preserves_original(self, mock_pool, _patch_globals):
+    def test_failure_recording_db_error_preserves_original(self, mock_pool, _patch_globals) -> None:
         feed_id = uuid.uuid4()
         mock_pool.fetchrow.return_value = {
             "id": feed_id,
@@ -241,7 +241,7 @@ class TestHandle:
             asyncio.run(_handle(event))
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_malformed_filename_records_failure(self, mock_pool, _patch_globals):
+    def test_malformed_filename_records_failure(self, mock_pool, _patch_globals) -> None:
         feed_id = uuid.uuid4()
         mock_pool.fetchrow.return_value = {
             "id": feed_id,
