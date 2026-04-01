@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 import asyncpg
 import functions_framework
+from google.api_core.exceptions import PreconditionFailed
 from google.cloud import pubsub_v1, storage
 from pydub import AudioSegment
 
@@ -124,7 +125,11 @@ def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
             ),
         )
     future = asyncio.run_coroutine_threadsafe(_handle(cloud_event), _loop)
-    future.result(timeout=30)
+    try:
+        future.result(timeout=30)
+    except TimeoutError:
+        future.cancel()
+        raise
 
 
 async def _handle(cloud_event: cloudevent.CloudEvent) -> None:
@@ -168,17 +173,26 @@ async def _handle(cloud_event: cloudevent.CloudEvent) -> None:
         # Convert MP3 → FLAC (16kHz, 16-bit, mono)
         flac_bytes = await asyncio.to_thread(_convert_to_flac, mp3_bytes)
 
-        # Upload FLAC to canonical bucket
+        # Upload FLAC to canonical bucket (if_generation_match=0 ensures
+        # exactly-once: a concurrent retry that already wrote the object
+        # will trigger PreconditionFailed and we skip the duplicate).
         date_dir = name.split("/")[1]
         flac_path = f"echo/{feed['id']}/{date_dir}/{Path(name).stem}.flac"
         canonical_uri = f"gs://{CANONICAL_BUCKET}/{flac_path}"
-        await asyncio.to_thread(
-            gcs_client.bucket(CANONICAL_BUCKET)
-            .blob(flac_path)
-            .upload_from_string,
-            flac_bytes,
-            "audio/flac",
-        )
+        blob = gcs_client.bucket(CANONICAL_BUCKET).blob(flac_path)
+        try:
+            await asyncio.to_thread(
+                blob.upload_from_string,
+                flac_bytes,
+                content_type="audio/flac",
+                if_generation_match=0,
+            )
+        except PreconditionFailed:
+            logger.info(
+                "Object already exists (concurrent upload): %s",
+                canonical_uri,
+            )
+            return
 
         # Publish AudioChunk (matches gcp_helper.publish_audio_chunk pattern)
         chunk = AudioChunk(gcs_uri=canonical_uri)
