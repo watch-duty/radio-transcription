@@ -49,7 +49,7 @@ class TestParseTimestamp:
 
     def test_malformed_filename_bad_date(self) -> None:
         name = "ch-loc/20260326/ch_notadate_143022.mp3"
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="does not match format"):
             _parse_timestamp(name)
 
 
@@ -90,12 +90,11 @@ class TestConvertToFlac:
 # _handle (async handler)
 # ---------------------------------------------------------------------------
 class TestHandle:
-    @pytest.fixture()
-    def mock_pool(self):
-        pool = AsyncMock()
-        return pool
+    @pytest.fixture
+    def mock_pool(self) -> AsyncMock:
+        return AsyncMock()
 
-    @pytest.fixture()
+    @pytest.fixture
     def _patch_globals(self, mock_pool):
         """Patch global state used by _handle."""
         with (
