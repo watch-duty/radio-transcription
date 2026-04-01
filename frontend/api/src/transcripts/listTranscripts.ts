@@ -3,8 +3,6 @@ import { Request, Response } from 'express';
 import axios from 'axios';
 import { GoogleAuth } from 'google-auth-library';
 
-
-
 /**
  * HTTP Cloud Run Function which returns a list of transcripts for a feed ID.
  * 
