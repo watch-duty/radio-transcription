@@ -48,6 +48,9 @@ services:
     depends_on:
       - pubsub-emulator
       - rules-management
+      - postgres
+      # This dependency is for the rules evaluation to create transcripts
+      - transcripts-api 
 
   postgres:
     image: postgres:15-alpine
@@ -79,6 +82,21 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    networks:
+      - pipeline-network
+
+  transcripts-api:
+    build:
+      context: .
+      dockerfile: backend/services/transcripts/Dockerfile
+    ports:
+      - "8087:8087"
+    env_file:
+      - ./local_dev/LOCAL.env
+    command: ["uvicorn", "backend.services.transcripts.main:app", "--host", "0.0.0.0", "--port", "8087"]
+    depends_on:
+      - postgres
+      - pubsub-emulator
     networks:
       - pipeline-network
 
