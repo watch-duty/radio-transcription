@@ -242,8 +242,8 @@ class TestHandle:
         )
 
         gcs = _patch_globals["gcs"]
-        gcs.bucket.return_value.blob.return_value.download_as_bytes.side_effect = (
-            NotFound("Object deleted")
+        gcs.bucket.return_value.blob.return_value.download_as_bytes.side_effect = NotFound(
+            "Object deleted"
         )
 
         _handle(self._make_event())
