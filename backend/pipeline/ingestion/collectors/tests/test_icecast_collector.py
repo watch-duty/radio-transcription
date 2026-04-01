@@ -8,8 +8,7 @@ from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
-from backend.pipeline.schema_types.source_types_pb2 import SourceType
-from backend.pipeline.storage.feed_store import LeasedFeed
+from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 
 MOCK_ENV_VARS = {
     "BROADCASTIFY_USERNAME": "test_user",
