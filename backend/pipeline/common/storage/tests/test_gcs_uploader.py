@@ -55,8 +55,12 @@ class GCSAudioUploaderTest(unittest.TestCase):
             export_m4a_fn=mock_export_m4a,
         )
 
-        self.assertEqual(canonical_uri, "gs://test-bucket/stitched/lossless/f1.flac")
-        self.assertEqual(playback_uri, "gs://test-bucket/stitched/playback/f1.m4a")
+        self.assertEqual(
+            canonical_uri, "gs://test-bucket/stitched/lossless/f1.flac"
+        )
+        self.assertEqual(
+            playback_uri, "gs://test-bucket/stitched/playback/f1.m4a"
+        )
 
         self.assertEqual(mock_bucket.blob.call_count, 2)
         mock_blob.upload_from_string.assert_any_call(
