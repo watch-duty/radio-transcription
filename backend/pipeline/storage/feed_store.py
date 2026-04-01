@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import enum
 import logging
 from typing import TYPE_CHECKING, TypedDict
 
@@ -8,9 +9,26 @@ if TYPE_CHECKING:
 
     import asyncpg
 
-    from backend.pipeline.schema_types.source_types_pb2 import SourceType
-
 logger = logging.getLogger(__name__)
+
+
+class SourceType(str, enum.Enum):
+    """Supported audio source types.
+
+    Each value corresponds to a slug in the ``source_types`` database table.
+
+    .. important::
+        This enum **must** be kept in sync with the following SQL files:
+
+        - ``terraform/modules/alloydb/sql/ingestion/002_source_types.sql``
+        - ``terraform/modules/alloydb/sql/ingestion/006_seed_source_types.sql``
+
+        When adding or renaming a source type, update both this enum and the
+        SQL files together.
+    """
+
+    BCFY_FEEDS = "bcfy_feeds"
+    BCFY_CALLS = "bcfy_calls"
 
 
 _LEASE_FEED_SQL = """\
@@ -38,10 +56,10 @@ leased AS (
         fencing_token = fencing_token + 1
     FROM available_feed
     WHERE feeds.id = available_feed.id
-    RETURNING feeds.id, feeds.name, feeds.source_type, feeds.source_type_enum,
+    RETURNING feeds.id, feeds.name, feeds.source_type,
               feeds.last_processed_filename, feeds.fencing_token
 )
-SELECT leased.id, leased.name, leased.source_type, leased.source_type_enum,
+SELECT leased.id, leased.name, leased.source_type,
        leased.last_processed_filename, leased.fencing_token, fpi.stream_url
 FROM leased
 LEFT JOIN feed_properties_icecast fpi ON fpi.feed_id = leased.id
@@ -121,10 +139,10 @@ leased AS (
         fencing_token = fencing_token + 1
     FROM available_feeds
     WHERE feeds.id = available_feeds.id
-    RETURNING feeds.id, feeds.name, feeds.source_type, feeds.source_type_enum,
+    RETURNING feeds.id, feeds.name, feeds.source_type,
               feeds.last_processed_filename, feeds.fencing_token
 )
-SELECT leased.id, leased.name, leased.source_type, leased.source_type_enum,
+SELECT leased.id, leased.name, leased.source_type,
        leased.last_processed_filename, leased.fencing_token, fpi.stream_url
 FROM leased
 LEFT JOIN feed_properties_icecast fpi ON fpi.feed_id = leased.id
@@ -212,7 +230,7 @@ class FeedStore:
         return LeasedFeed(
             id=row["id"],
             name=row["name"],
-            source_type=row["source_type_enum"],
+            source_type=SourceType(row["source_type"]),
             last_processed_filename=row["last_processed_filename"],
             fencing_token=row["fencing_token"],
             stream_url=row["stream_url"],
@@ -441,7 +459,7 @@ class FeedStore:
             LeasedFeed(
                 id=row["id"],
                 name=row["name"],
-                source_type=row["source_type_enum"],
+                source_type=SourceType(row["source_type"]),
                 last_processed_filename=row["last_processed_filename"],
                 fencing_token=row["fencing_token"],
                 stream_url=row["stream_url"],

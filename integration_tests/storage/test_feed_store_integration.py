@@ -8,7 +8,7 @@ if TYPE_CHECKING:
 
 import pytest
 
-from backend.pipeline.storage.feed_store import FeedStore
+from backend.pipeline.storage.feed_store import FeedStore, SourceType
 
 
 @pytest.fixture
@@ -24,7 +24,7 @@ async def store(db_pool: asyncpg.Pool) -> FeedStore:
 async def _insert_feed(
     pool: asyncpg.Pool,
     name: str,
-    source_type: str = "BCFY_FEEDS",
+    source_type: str = "bcfy_feeds",
     *,
     status: str = "unclaimed",
     failure_count: int = 0,
@@ -92,7 +92,7 @@ async def test_lease_returns_feed_with_icecast_properties(
 
     assert result is not None
     assert result["name"] == "Icecast Feed"
-    assert result["source_type"] == "BCFY_FEEDS"
+    assert result["source_type"] == SourceType.BCFY_FEEDS
     assert result["stream_url"] == "http://stream.example.com/live"
     assert result["fencing_token"] == 1
 

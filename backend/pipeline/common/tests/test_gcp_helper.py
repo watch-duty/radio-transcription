@@ -10,8 +10,7 @@ from yarl import URL
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
-from backend.pipeline.schema_types.source_types_pb2 import SourceType
-from backend.pipeline.storage.feed_store import LeasedFeed
+from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 
 _DUMMY_REQUEST_INFO = aiohttp.RequestInfo(
     url=URL("http://example.com"),
@@ -26,7 +25,7 @@ def _make_feed(
 ) -> LeasedFeed:
     return LeasedFeed(
         id=uuid.UUID(int=feed_id),
-        name=f"test-{SourceType.Name(source_type)}-{feed_id}",
+        name=f"test-{source_type.name}-{feed_id}",
         source_type=source_type,
         last_processed_filename=None,
         fencing_token=fencing_token,
