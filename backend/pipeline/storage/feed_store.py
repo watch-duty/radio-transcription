@@ -29,6 +29,7 @@ class SourceType(enum.StrEnum):
 
     BCFY_FEEDS = "bcfy_feeds"
     BCFY_CALLS = "bcfy_calls"
+    ECHO = "echo"
 
 
 _LEASE_FEED_SQL = """\

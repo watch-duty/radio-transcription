@@ -31,8 +31,8 @@ WHERE fpe.channel_name = %s
 _HEARTBEAT_SQL = """\
 UPDATE feeds
 SET last_heartbeat = NOW(),
-    failure_count = CASE WHEN failure_count > 0 THEN 0 ELSE failure_count END,
-    status = CASE WHEN failure_count > 0 THEN 'active'::feed_status ELSE status END
+    failure_count = CASE WHEN status = 'failing'::feed_status THEN 0 ELSE failure_count END,
+    status = CASE WHEN status = 'failing'::feed_status THEN 'active'::feed_status ELSE status END
 WHERE id = %s
 """
 
