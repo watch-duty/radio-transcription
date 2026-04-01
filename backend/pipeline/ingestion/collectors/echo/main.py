@@ -222,7 +222,7 @@ def _connect_db() -> psycopg.Connection[dict[str, Any]]:
     concurrency=1 means at most one connection per instance at a time.
     """
     return cast(
-        psycopg.Connection[dict[str, Any]],
+        "psycopg.Connection[dict[str, Any]]",
         psycopg.connect(
             host=ALLOYDB_HOST,
             port=ALLOYDB_PORT,
@@ -230,7 +230,7 @@ def _connect_db() -> psycopg.Connection[dict[str, Any]]:
             password=ALLOYDB_PASSWORD,
             dbname=ALLOYDB_DB,
             autocommit=True,
-            row_factory=cast(Any, dict_row),
+            row_factory=cast("Any", dict_row),
         ),
     )
 

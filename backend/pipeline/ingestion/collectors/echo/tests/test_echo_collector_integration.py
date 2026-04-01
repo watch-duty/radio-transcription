@@ -125,7 +125,7 @@ class TestEchoCollectorIntegration(unittest.TestCase):
 
     def setUp(self) -> None:
         self.conn: psycopg.Connection[dict[str, Any]] = cast(
-            psycopg.Connection[dict[str, Any]],
+            "psycopg.Connection[dict[str, Any]]",
             psycopg.connect(
                 host=self._db_host,
                 port=self._db_port,
@@ -133,7 +133,7 @@ class TestEchoCollectorIntegration(unittest.TestCase):
                 password="postgres",
                 dbname="postgres",
                 autocommit=True,
-                row_factory=cast(Any, dict_row),
+                row_factory=cast("Any", dict_row),
             ),
         )
         self.conn.execute("TRUNCATE feeds CASCADE")
@@ -199,7 +199,7 @@ class TestEchoCollectorIntegration(unittest.TestCase):
     def _make_handler_db_conn(self) -> psycopg.Connection[dict[str, Any]]:
         """Create a separate psycopg connection for the handler to use."""
         return cast(
-            psycopg.Connection[dict[str, Any]],
+            "psycopg.Connection[dict[str, Any]]",
             psycopg.connect(
                 host=self._db_host,
                 port=self._db_port,
@@ -207,7 +207,7 @@ class TestEchoCollectorIntegration(unittest.TestCase):
                 password="postgres",
                 dbname="postgres",
                 autocommit=True,
-                row_factory=cast(Any, dict_row),
+                row_factory=cast("Any", dict_row),
             ),
         )
 
