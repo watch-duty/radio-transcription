@@ -21,7 +21,7 @@ describe('listTranscripts', () => {
   let res: Partial<Response>;
 
   beforeEach(() => {
-    req = { method: 'GET', body: { feedId: 'test' } };
+    req = { method: 'GET', params: { feedId: 'test' } };
     res = {
       status: vi.fn().mockReturnThis(),
       send: vi.fn(),
