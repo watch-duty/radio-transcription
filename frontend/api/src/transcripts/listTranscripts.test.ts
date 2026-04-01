@@ -4,6 +4,17 @@ import axios from 'axios';
 import { Request, Response } from 'express';
 
 vi.mock('axios');
+vi.mock('google-auth-library', () => {
+  return {
+    GoogleAuth: vi.fn().mockImplementation(() => ({
+      getIdTokenClient: vi.fn().mockResolvedValue({
+        getRequestHeaders: vi.fn().mockResolvedValue({
+          get: vi.fn().mockReturnValue('Bearer mock-token')
+        })
+      })
+    }))
+  };
+});
 
 describe('listTranscripts', () => {
   let req: Partial<Request>;
@@ -28,7 +39,10 @@ describe('listTranscripts', () => {
 
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith(mockData);
-    expect(axios.get).toHaveBeenCalledWith('http://api.example.com', { params: { feedId: 'test' } });
+    expect(axios.get).toHaveBeenCalledWith('http://api.example.com', {
+      params: { feedId: 'test' },
+      headers: { Authorization: 'Bearer mock-token' }
+    });
   });
 
   it('should return 500 if TRANSCRIPT_API_URL is missing', async () => {

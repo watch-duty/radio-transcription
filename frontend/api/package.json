@@ -14,7 +14,8 @@
   "dependencies": {
     "@google-cloud/functions-framework": "^5.0.2",
     "axios": "^1.14.0",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "google-auth-library": "^10.6.2"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

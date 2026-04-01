@@ -1,6 +1,7 @@
 import { HttpFunction } from '@google-cloud/functions-framework';
 import { Request, Response } from 'express';
 import axios from 'axios';
+import { GoogleAuth } from 'google-auth-library';
 
 // Interface for the request body.
 interface ListTranscriptsRequest {
@@ -21,9 +22,15 @@ export const listTranscripts: HttpFunction = async (req: Request, res: Response)
       return;
     }
 
+    // Get the Authentication token to allow us to call the Cloud Run function.
+    const auth = new GoogleAuth();
+    const client = await auth.getIdTokenClient(apiUrl);
+    const tokenResponse = await client.getRequestHeaders();
+    const token = tokenResponse.get('Authorization');
+
     let body: ListTranscriptsRequest = req.body;
     try {
-      const response = await axios.get(apiUrl, { params: body });
+      const response = await axios.get(apiUrl, { params: body, headers: { Authorization: token } });
       res.status(200).json(response.data);
     } catch (error: unknown) {
       if (error instanceof Error) {
