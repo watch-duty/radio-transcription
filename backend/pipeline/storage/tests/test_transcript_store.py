@@ -30,7 +30,7 @@ _TRANSCRIPT_ROW = {
 }
 
 
-def _make_pool(
+def _make_mock_pool(
     *,
     fetchrow_result: dict | None = None,
     execute_result: str = "UPDATE 0",
@@ -49,7 +49,7 @@ class BaseTranscriptStoreTest(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.pool = _make_pool(
+        self.pool = _make_mock_pool(
             fetchrow_result=_TRANSCRIPT_ROW, fetch_result=[_TRANSCRIPT_ROW]
         )
         self.store = TranscriptStore(self.pool)
