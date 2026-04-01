@@ -158,14 +158,15 @@ class TestHandle:
         mock_pool.fetchrow.assert_called_once()
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_skips_quarantined_feed(self, mock_pool) -> None:
+    def test_quarantined_feed_raises_for_retry(self, mock_pool) -> None:
         mock_pool.fetchrow.return_value = {
             "id": uuid.uuid4(),
             "status": "quarantined",
             "failure_count": 5,
         }
         event = self._make_event()
-        asyncio.run(_handle(event))
+        with pytest.raises(RuntimeError, match="quarantined"):
+            asyncio.run(_handle(event))
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_skips_deactivated_feed(self, mock_pool) -> None:
@@ -257,7 +258,22 @@ class TestHandle:
             asyncio.run(_handle(event))
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_malformed_filename_records_failure(
+    def test_malformed_filename_skips_gracefully(self, mock_pool) -> None:
+        feed_id = uuid.uuid4()
+        mock_pool.fetchrow.return_value = {
+            "id": feed_id,
+            "status": "active",
+            "failure_count": 0,
+        }
+
+        event = self._make_event(name="fire-ca/20260326/badname.mp3")
+        asyncio.run(_handle(event))
+
+        # No failure recorded — bad filenames are not the feed's fault
+        mock_pool.execute.assert_not_called()
+
+    @pytest.mark.usefixtures("_patch_globals")
+    def test_publish_failure_resumes_ordering_key(
         self, mock_pool, _patch_globals
     ) -> None:
         feed_id = uuid.uuid4()
@@ -267,9 +283,13 @@ class TestHandle:
             "failure_count": 0,
         }
 
-        event = self._make_event(name="fire-ca/20260326/badname.mp3")
-        with pytest.raises(ValueError, match="Cannot parse timestamp"):
+        pub = _patch_globals["publisher"]
+        publish_future = MagicMock()
+        publish_future.result.side_effect = Exception("gRPC timeout")
+        pub.publish.return_value = publish_future
+
+        event = self._make_event()
+        with pytest.raises(Exception, match="gRPC timeout"):
             asyncio.run(_handle(event))
 
-        # Verify failure recorded
-        mock_pool.execute.assert_called_once()
+        pub.resume_publish.assert_called_once()

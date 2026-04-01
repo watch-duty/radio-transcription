@@ -71,7 +71,9 @@ _loop_thread = threading.Thread(target=_loop.run_forever, daemon=True)
 _loop_thread.start()
 
 _db_pool: asyncpg.Pool | None = None
-_pool_lock = asyncio.Lock()
+# Lazily created on _loop inside _get_pool() to avoid cross-loop RuntimeError.
+# Safe without a threading guard because all callers run on the single _loop.
+_pool_lock: asyncio.Lock | None = None
 
 # ---------------------------------------------------------------------------
 # SQL
@@ -153,17 +155,28 @@ async def _handle(cloud_event: cloudevent.CloudEvent) -> None:
     if not feed:
         logger.warning("No feed found for channel: %s", channel_name)
         return
-    if feed["status"] in ("deactivated", "quarantined"):
+    if feed["status"] == "deactivated":
         logger.info(
-            "Skipping %s feed %s (channel: %s)",
-            feed["status"],
+            "Draining deactivated feed %s (channel: %s)",
             feed["id"],
             channel_name,
         )
         return
+    if feed["status"] == "quarantined":
+        # Raise so Eventarc retries until the feed is un-quarantined,
+        # rather than silently discarding recordings during a transient outage.
+        msg = f"Feed {feed['id']} is quarantined (channel: {channel_name})"
+        raise RuntimeError(msg)
 
+    # Catch unparseable filenames early — bad filenames are not the feed's
+    # fault and must not increment failure_count or trigger Eventarc retries.
     try:
         start_ts = _parse_timestamp(name)
+    except ValueError:
+        logger.warning("Unparseable filename, skipping: %s", name)
+        return
+
+    try:
 
         # Download MP3 — run in thread pool to avoid blocking the event loop
         mp3_bytes = await asyncio.to_thread(
@@ -194,20 +207,28 @@ async def _handle(cloud_event: cloudevent.CloudEvent) -> None:
                 canonical_uri,
             )
 
-        # Publish AudioChunk (matches gcp_helper.publish_audio_chunk pattern)
+        # Publish AudioChunk (matches gcp_helper.publish_audio_chunk pattern).
+        # Deterministic session_id so Eventarc redeliveries produce the same
+        # ID and downstream Stitcher dedup recognises the duplicate.
         chunk = AudioChunk(gcs_uri=canonical_uri)
         chunk.start_timestamp.FromDatetime(start_ts)
-        chunk.session_id = str(uuid.uuid4())
+        chunk.session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, canonical_uri))
         feed_id_str = str(feed["id"])
-        future = publisher.publish(
-            RAW_AUDIO_TOPIC,
-            chunk.SerializeToString(),
-            feed_id=feed_id_str,
-            ordering_key=feed_id_str,
-            chunk_uri=canonical_uri,
-            source_type="echo",
-        )
-        await asyncio.to_thread(future.result)
+        try:
+            future = publisher.publish(
+                RAW_AUDIO_TOPIC,
+                chunk.SerializeToString(),
+                feed_id=feed_id_str,
+                ordering_key=feed_id_str,
+                chunk_uri=canonical_uri,
+                source_type="echo",
+            )
+            await asyncio.to_thread(future.result)
+        except Exception:
+            # A failed publish pauses the ordering key; resume it so
+            # subsequent messages for this feed are not permanently blocked.
+            publisher.resume_publish(RAW_AUDIO_TOPIC, feed_id_str)
+            raise
 
         # Conditional reset — only writes if recovering from a previous failure
         await pool.execute(_RESET_FAILURE_SQL, feed["id"])
@@ -260,7 +281,9 @@ def _parse_timestamp(name: str) -> datetime:
 
 async def _get_pool() -> asyncpg.Pool:
     """Return the shared asyncpg pool, creating it lazily with a lock."""
-    global _db_pool  # noqa: PLW0603
+    global _db_pool, _pool_lock  # noqa: PLW0603
+    if _pool_lock is None:
+        _pool_lock = asyncio.Lock()
     async with _pool_lock:
         if _db_pool is None:
             _db_pool = await asyncpg.create_pool(

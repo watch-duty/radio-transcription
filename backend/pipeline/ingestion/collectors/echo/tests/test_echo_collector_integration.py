@@ -255,30 +255,31 @@ class TestEchoCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
         self.mock_publisher.publish.assert_not_called()
 
-    async def test_quarantined_feed_skips(self) -> None:
-        """Quarantined feed -> skip processing."""
+    async def test_quarantined_feed_raises_for_retry(self) -> None:
+        """Quarantined feed -> raise so Eventarc retries."""
         channel = "quarantined-ch"
         await self._insert_echo_feed(channel, status="quarantined")
         name = f"{channel}/20260326/quarantined_20260326_143022.mp3"
         self._upload_mp3(name)
 
-        await self._run_handler(self._make_cloud_event(name))
+        with self.assertRaises(RuntimeError):
+            await self._run_handler(self._make_cloud_event(name))
 
         self.mock_publisher.publish.assert_not_called()
 
-    async def test_malformed_filename_records_failure(self) -> None:
-        """Malformed filename -> failure recorded in DB."""
+    async def test_malformed_filename_skips_gracefully(self) -> None:
+        """Malformed filename -> log warning, return 200, no failure recorded."""
         channel = "bad-ch"
         feed_id = await self._insert_echo_feed(channel)
         name = f"{channel}/20260326/badname.mp3"
         self._upload_mp3(name)
 
-        with self.assertRaises(ValueError, msg="Cannot parse timestamp"):
-            await self._run_handler(self._make_cloud_event(name))
+        await self._run_handler(self._make_cloud_event(name))
 
         row = await self._get_feed_row(feed_id)
-        self.assertEqual(row["failure_count"], 1)
-        self.assertEqual(row["status"], "failing")
+        self.assertEqual(row["failure_count"], 0)
+        self.assertEqual(row["status"], "active")
+        self.mock_publisher.publish.assert_not_called()
 
     async def test_failure_increments_to_quarantine(self) -> None:
         """5 consecutive failures -> feed quarantined."""
@@ -292,10 +293,12 @@ class TestEchoCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             feed_id,
         )
 
-        name = f"{channel}/20260326/badname.mp3"
-        self._upload_mp3(name)
+        # Upload corrupt audio (valid filename) to trigger a conversion failure
+        name = f"{channel}/20260326/failing_20260326_143022.mp3"
+        blob = self.gcs.bucket(_ECHO_BUCKET).blob(name)
+        blob.upload_from_string(b"not-valid-audio", content_type="audio/mpeg")
 
-        with self.assertRaises(ValueError):
+        with self.assertRaises(Exception):
             await self._run_handler(self._make_cloud_event(name))
 
         row = await self._get_feed_row(feed_id)
