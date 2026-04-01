@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import typing
 import unittest
 import uuid
 from unittest import mock
@@ -17,7 +18,7 @@ def _make_feed(source_type: SourceType) -> LeasedFeed:
     return LeasedFeed(
         id=uuid.uuid4(),
         name=f"test-{source_type}",
-        source_type=source_type,
+        source_type=typing.cast("SourceType", source_type),
         last_processed_filename=None,
         fencing_token=0,
         stream_url="http://example.com/stream",
