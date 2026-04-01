@@ -18,6 +18,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 if TYPE_CHECKING:
     import uuid
 
+import shutil
+
 import asyncpg
 import docker
 import requests as sync_requests
@@ -49,6 +51,10 @@ def _docker_available() -> bool:
     return True
 
 
+def _ffmpeg_available() -> bool:
+    return shutil.which("ffmpeg") is not None
+
+
 def _make_mp3_bytes(
     *, sample_rate: int = 8000, duration_ms: int = 500
 ) -> bytes:
@@ -59,6 +65,7 @@ def _make_mp3_bytes(
 
 
 @unittest.skipUnless(_docker_available(), "Docker is not available")
+@unittest.skipUnless(_ffmpeg_available(), "ffmpeg is not available")
 class TestEchoCollectorIntegration(unittest.IsolatedAsyncioTestCase):
     """Integration tests for echo ingestion with real GCS and DB."""
 

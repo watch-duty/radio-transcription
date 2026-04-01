@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import shutil
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,6 +17,9 @@ from backend.pipeline.ingestion.collectors.echo.main import (
     _handle,
     _parse_timestamp,
 )
+
+_FAKE_FLAC = b"fLaC" + b"\x00" * 64
+_ffmpeg_available = shutil.which("ffmpeg") is not None
 
 
 # ---------------------------------------------------------------------------
@@ -58,6 +62,7 @@ class TestParseTimestamp:
 # ---------------------------------------------------------------------------
 # _convert_to_flac
 # ---------------------------------------------------------------------------
+@pytest.mark.skipif(not _ffmpeg_available, reason="ffmpeg not available")
 class TestConvertToFlac:
     def _make_mp3_bytes(
         self, *, sample_rate: int = 8000, duration_ms: int = 1000
@@ -115,12 +120,12 @@ class TestHandle:
             patch(
                 "backend.pipeline.ingestion.collectors.echo.main.publisher"
             ) as mock_pub,
+            patch(
+                "backend.pipeline.ingestion.collectors.echo.main._convert_to_flac",
+                return_value=_FAKE_FLAC,
+            ),
         ):
-            # GCS download returns minimal MP3
-            audio = AudioSegment.silent(duration=500, frame_rate=8000)
-            buf = io.BytesIO()
-            audio.export(buf, format="mp3")
-            mock_gcs.bucket.return_value.blob.return_value.download_as_bytes.return_value = buf.getvalue()
+            mock_gcs.bucket.return_value.blob.return_value.download_as_bytes.return_value = b"mp3-placeholder"
             mock_gcs.bucket.return_value.blob.return_value.upload_from_string = MagicMock()
 
             yield {
