@@ -173,9 +173,10 @@ async def _handle(cloud_event: cloudevent.CloudEvent) -> None:
         # Convert MP3 → FLAC (16kHz, 16-bit, mono)
         flac_bytes = await asyncio.to_thread(_convert_to_flac, mp3_bytes)
 
-        # Upload FLAC to canonical bucket (if_generation_match=0 ensures
-        # exactly-once: a concurrent retry that already wrote the object
-        # will trigger PreconditionFailed and we skip the duplicate).
+        # Upload FLAC to canonical bucket. if_generation_match=0 skips a
+        # redundant write when the object already exists (concurrent retry
+        # or Eventarc redelivery), but we always proceed to publish — a
+        # prior invocation may have crashed between upload and publish.
         date_dir = name.split("/")[1]
         flac_path = f"echo/{feed['id']}/{date_dir}/{Path(name).stem}.flac"
         canonical_uri = f"gs://{CANONICAL_BUCKET}/{flac_path}"
@@ -189,10 +190,9 @@ async def _handle(cloud_event: cloudevent.CloudEvent) -> None:
             )
         except PreconditionFailed:
             logger.info(
-                "Object already exists (concurrent upload): %s",
+                "FLAC already exists, skipping upload: %s",
                 canonical_uri,
             )
-            return
 
         # Publish AudioChunk (matches gcp_helper.publish_audio_chunk pattern)
         chunk = AudioChunk(gcs_uri=canonical_uri)

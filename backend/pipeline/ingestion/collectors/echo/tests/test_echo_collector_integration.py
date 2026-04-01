@@ -329,8 +329,8 @@ class TestEchoCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         await self._run_handler(self._make_cloud_event(name))
         self.mock_publisher.publish.assert_not_called()
 
-    async def test_idempotent_overwrite(self) -> None:
-        """Same file processed twice -> second invocation is a no-op (no duplicate publish)."""
+    async def test_idempotent_redelivery(self) -> None:
+        """Same file processed twice -> both invocations publish (safe for Beam EO dedup)."""
         channel = "idempotent-ch"
         feed_id = await self._insert_echo_feed(channel)
         name = f"{channel}/20260326/idempotent_20260326_143022.mp3"
@@ -344,6 +344,8 @@ class TestEchoCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         flac_bytes = self._download_canonical(flac_path)
         self.assertTrue(flac_bytes[:4] == _FLAC_MAGIC)
 
-        # if_generation_match=0 causes the second upload to raise PreconditionFailed,
-        # so we return early and publish only once — preventing duplicate AudioChunks.
-        self.assertEqual(self.mock_publisher.publish.call_count, 1)
+        # Both invocations publish — the second upload is skipped via
+        # if_generation_match=0 but we always proceed to publish so that
+        # retries after a crash-between-upload-and-publish still deliver.
+        # Downstream Beam exactly-once dedup handles the duplicate.
+        self.assertEqual(self.mock_publisher.publish.call_count, 2)
