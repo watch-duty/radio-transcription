@@ -8,9 +8,7 @@ import asyncpg
 import httpx
 import pytest
 
-TRANSCRIPTS_API_HOST = os.environ.get(
-    "TRANSCRIPTS_API_HOST", "transcripts-api:8087"
-)
+TRANSCRIPTS_API_HOST = os.environ.get("TRANSCRIPTS_API_HOST", "localhost:8087")
 
 
 async def _get_db_connection() -> asyncpg.Connection:
