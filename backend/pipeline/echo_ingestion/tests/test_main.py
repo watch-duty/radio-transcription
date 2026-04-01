@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,32 +22,32 @@ from backend.pipeline.echo_ingestion.main import (
 # _parse_timestamp
 # ---------------------------------------------------------------------------
 class TestParseTimestamp:
-    def test_standard_path(self):
+    def test_standard_path(self) -> None:
         name = "fire-ca_almaden_valley/20260326/fire_20260326_143022.mp3"
         result = _parse_timestamp(name)
-        assert result == datetime(2026, 3, 26, 14, 30, 22, tzinfo=timezone.utc)
+        assert result == datetime(2026, 3, 26, 14, 30, 22, tzinfo=datetime.UTC)
 
-    def test_channel_with_underscores(self):
+    def test_channel_with_underscores(self) -> None:
         name = "fire_station-ca_almaden/20260326/fire_station_20260326_090000.mp3"
         result = _parse_timestamp(name)
-        assert result == datetime(2026, 3, 26, 9, 0, 0, tzinfo=timezone.utc)
+        assert result == datetime(2026, 3, 26, 9, 0, 0, tzinfo=datetime.UTC)
 
-    def test_midnight(self):
+    def test_midnight(self) -> None:
         name = "ch-loc/20260101/ch_20260101_000000.mp3"
         result = _parse_timestamp(name)
-        assert result == datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        assert result == datetime(2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC)
 
-    def test_timezone_is_utc(self):
+    def test_timezone_is_utc(self) -> None:
         name = "ch-loc/20260326/ch_20260326_143022.mp3"
         result = _parse_timestamp(name)
-        assert result.tzinfo is timezone.utc
+        assert result.tzinfo is datetime.UTC
 
-    def test_malformed_filename_too_few_parts(self):
+    def test_malformed_filename_too_few_parts(self) -> None:
         name = "ch-loc/20260326/badname.mp3"
         with pytest.raises(ValueError, match="Cannot parse timestamp"):
             _parse_timestamp(name)
 
-    def test_malformed_filename_bad_date(self):
+    def test_malformed_filename_bad_date(self) -> None:
         name = "ch-loc/20260326/ch_notadate_143022.mp3"
         with pytest.raises(ValueError):
             _parse_timestamp(name)
@@ -64,7 +64,7 @@ class TestConvertToFlac:
         audio.export(buf, format="mp3")
         return buf.getvalue()
 
-    def test_converts_to_flac(self):
+    def test_converts_to_flac(self) -> None:
         mp3_bytes = self._make_mp3_bytes()
         flac_bytes = _convert_to_flac(mp3_bytes)
         audio = AudioSegment.from_file(io.BytesIO(flac_bytes), format="flac")
@@ -72,13 +72,13 @@ class TestConvertToFlac:
         assert audio.channels == 1
         assert audio.sample_width == 2
 
-    def test_upsamples_from_8khz(self):
+    def test_upsamples_from_8khz(self) -> None:
         mp3_bytes = self._make_mp3_bytes(sample_rate=8000)
         flac_bytes = _convert_to_flac(mp3_bytes)
         audio = AudioSegment.from_file(io.BytesIO(flac_bytes), format="flac")
         assert audio.frame_rate == 16000
 
-    def test_output_is_valid_flac(self):
+    def test_output_is_valid_flac(self) -> None:
         mp3_bytes = self._make_mp3_bytes()
         flac_bytes = _convert_to_flac(mp3_bytes)
         assert len(flac_bytes) > 0
@@ -133,7 +133,7 @@ class TestHandle:
         return event
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_skips_non_mp3(self, mock_pool):
+    def test_skips_non_mp3(self, mock_pool) -> None:
         event = self._make_event(name="fire-ca/20260326/notes.txt")
         asyncio.run(_handle(event))
         mock_pool.fetchrow.assert_not_called()

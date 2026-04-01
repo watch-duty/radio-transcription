@@ -230,7 +230,7 @@ async def _get_pool() -> asyncpg.Pool:
     """Return the shared asyncpg pool, creating it lazily with a lock."""
     global _db_pool  # noqa: PLW0603
     async with _pool_lock:
-        if _db_pool is None or _db_pool._closed:
+        if _db_pool is None:
             _db_pool = await asyncpg.create_pool(
                 host=ALLOYDB_HOST,
                 port=ALLOYDB_PORT,
