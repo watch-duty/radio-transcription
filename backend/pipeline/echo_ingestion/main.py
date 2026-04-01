@@ -20,7 +20,6 @@ import asyncpg
 import functions_framework
 from google.cloud import pubsub_v1, storage
 from pydub import AudioSegment
-
 from schema_types.raw_audio_chunk_pb2 import AudioChunk
 
 logger = logging.getLogger(__name__)
@@ -104,7 +103,7 @@ WHERE id = $1
 # Entry point
 # ---------------------------------------------------------------------------
 @functions_framework.cloud_event
-def handle_notification(cloud_event):
+def handle_notification(cloud_event) -> None:
     """Sync entry point — submits async work to the shared event loop."""
     future = asyncio.run_coroutine_threadsafe(_handle(cloud_event), _loop)
     future.result(timeout=30)
