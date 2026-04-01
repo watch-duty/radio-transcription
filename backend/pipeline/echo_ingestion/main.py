@@ -188,9 +188,7 @@ async def _handle(cloud_event: cloudevent.CloudEvent) -> None:
                 MAX_BACKOFF_SEC,
             )
         except Exception:
-            logger.exception(
-                "Failed to record failure for feed %s", feed["id"]
-            )
+            logger.exception("Failed to record failure for feed %s", feed["id"])
         raise
 
 
@@ -221,9 +219,9 @@ def _parse_timestamp(name: str) -> datetime:
         msg = f"Cannot parse timestamp from filename: {name}"
         raise ValueError(msg)
     date_str, time_str = parts[-2], parts[-1]
-    return datetime.strptime(
-        f"{date_str}{time_str}", "%Y%m%d%H%M%S"
-    ).replace(tzinfo=datetime.UTC)
+    return datetime.strptime(f"{date_str}{time_str}", "%Y%m%d%H%M%S").replace(
+        tzinfo=datetime.UTC
+    )
 
 
 async def _get_pool() -> asyncpg.Pool:

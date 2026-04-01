@@ -28,7 +28,9 @@ class TestParseTimestamp:
         assert result == datetime(2026, 3, 26, 14, 30, 22, tzinfo=datetime.UTC)
 
     def test_channel_with_underscores(self) -> None:
-        name = "fire_station-ca_almaden/20260326/fire_station_20260326_090000.mp3"
+        name = (
+            "fire_station-ca_almaden/20260326/fire_station_20260326_090000.mp3"
+        )
         result = _parse_timestamp(name)
         assert result == datetime(2026, 3, 26, 9, 0, 0, tzinfo=datetime.UTC)
 
@@ -57,9 +59,13 @@ class TestParseTimestamp:
 # _convert_to_flac
 # ---------------------------------------------------------------------------
 class TestConvertToFlac:
-    def _make_mp3_bytes(self, *, sample_rate: int = 8000, duration_ms: int = 1000) -> bytes:
+    def _make_mp3_bytes(
+        self, *, sample_rate: int = 8000, duration_ms: int = 1000
+    ) -> bytes:
         """Generate a minimal MP3 for testing."""
-        audio = AudioSegment.silent(duration=duration_ms, frame_rate=sample_rate)
+        audio = AudioSegment.silent(
+            duration=duration_ms, frame_rate=sample_rate
+        )
         buf = io.BytesIO()
         audio.export(buf, format="mp3")
         return buf.getvalue()
@@ -103,19 +109,17 @@ class TestHandle:
                 new_callable=AsyncMock,
                 return_value=mock_pool,
             ),
-            patch("backend.pipeline.echo_ingestion.main.gcs_client") as mock_gcs,
+            patch(
+                "backend.pipeline.echo_ingestion.main.gcs_client"
+            ) as mock_gcs,
             patch("backend.pipeline.echo_ingestion.main.publisher") as mock_pub,
         ):
             # GCS download returns minimal MP3
             audio = AudioSegment.silent(duration=500, frame_rate=8000)
             buf = io.BytesIO()
             audio.export(buf, format="mp3")
-            mock_gcs.bucket.return_value.blob.return_value.download_as_bytes.return_value = (
-                buf.getvalue()
-            )
-            mock_gcs.bucket.return_value.blob.return_value.upload_from_string = (
-                MagicMock()
-            )
+            mock_gcs.bucket.return_value.blob.return_value.download_as_bytes.return_value = buf.getvalue()
+            mock_gcs.bucket.return_value.blob.return_value.upload_from_string = MagicMock()
 
             yield {
                 "pool": mock_pool,
@@ -123,7 +127,9 @@ class TestHandle:
                 "publisher": mock_pub,
             }
 
-    def _make_event(self, name: str = "fire-ca/20260326/fire_20260326_143022.mp3"):
+    def _make_event(
+        self, name: str = "fire-ca/20260326/fire_20260326_143022.mp3"
+    ):
         event = MagicMock()
         event.data = {
             "name": name,
@@ -178,7 +184,9 @@ class TestHandle:
 
         # Verify FLAC uploaded to canonical bucket
         gcs = _patch_globals["gcs"]
-        upload_call = gcs.bucket.return_value.blob.return_value.upload_from_string
+        upload_call = (
+            gcs.bucket.return_value.blob.return_value.upload_from_string
+        )
         upload_call.assert_called_once()
         flac_bytes = upload_call.call_args[0][0]
         assert flac_bytes[:4] == b"fLaC"
@@ -205,8 +213,8 @@ class TestHandle:
 
         # Make GCS download fail
         gcs = _patch_globals["gcs"]
-        gcs.bucket.return_value.blob.return_value.download_as_bytes.side_effect = (
-            Exception("GCS error")
+        gcs.bucket.return_value.blob.return_value.download_as_bytes.side_effect = Exception(
+            "GCS error"
         )
 
         event = self._make_event()
@@ -219,7 +227,9 @@ class TestHandle:
         assert "failure_count + 1" in sql
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_failure_recording_db_error_preserves_original(self, mock_pool, _patch_globals) -> None:
+    def test_failure_recording_db_error_preserves_original(
+        self, mock_pool, _patch_globals
+    ) -> None:
         feed_id = uuid.uuid4()
         mock_pool.fetchrow.return_value = {
             "id": feed_id,
@@ -229,8 +239,8 @@ class TestHandle:
 
         # Make GCS download fail
         gcs = _patch_globals["gcs"]
-        gcs.bucket.return_value.blob.return_value.download_as_bytes.side_effect = (
-            Exception("Original error")
+        gcs.bucket.return_value.blob.return_value.download_as_bytes.side_effect = Exception(
+            "Original error"
         )
         # Make DB failure recording also fail
         mock_pool.execute.side_effect = Exception("DB error")
@@ -240,7 +250,9 @@ class TestHandle:
             asyncio.run(_handle(event))
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_malformed_filename_records_failure(self, mock_pool, _patch_globals) -> None:
+    def test_malformed_filename_records_failure(
+        self, mock_pool, _patch_globals
+    ) -> None:
         feed_id = uuid.uuid4()
         mock_pool.fetchrow.return_value = {
             "id": feed_id,
