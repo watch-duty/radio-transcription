@@ -1,6 +1,7 @@
 """Unit tests for the audio processor."""
 
 import io
+import logging
 import shutil
 import unittest
 from unittest.mock import MagicMock, patch
@@ -13,6 +14,14 @@ from backend.pipeline.common.constants import AUDIO_FORMAT, SAMPLE_RATE_HZ
 from backend.pipeline.transcription.audio_processor import AudioProcessor
 from backend.pipeline.transcription.datatypes import AudioChunkData, TimeRange
 from backend.pipeline.transcription.enums import VadType
+
+logger = logging.getLogger(__name__)
+
+# Warn if ffmpeg is missing for I/O tests
+if shutil.which("ffmpeg") is None:
+    logger.warning(
+        "FFMPEG is not installed. Audio I/O tests requiring ffmpeg will be skipped."
+    )
 
 
 class AudioProcessorTest(unittest.TestCase):
