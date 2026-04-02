@@ -68,7 +68,10 @@ class EvaluationEventProcessor:
                 new_audio.transmission_id,
             )
             return
-        # Historic sink storing egress moved to PR 3
+
+        # 3. Always write to Transcripts API
+        # TODO (https://linear.app/watchduty/issue/GOO-245/): Handle write failure.
+        self.transcripts_client.create_transcript(evaluated_payload)
 
         # 4. Publish to Downstream Topic if flagged or has errors
         if (
