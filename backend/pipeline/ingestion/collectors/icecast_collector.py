@@ -17,7 +17,6 @@ from backend.pipeline.common.constants import (
     AUDIO_FORMAT,
     CHUNK_DURATION_SECONDS,
     NUM_AUDIO_CHANNELS,
-    SAMPLE_RATE_HZ,
 )
 
 if TYPE_CHECKING:
@@ -221,7 +220,6 @@ async def _create_ffmpeg_process(
         "-i", url,
         "-vn", "-sn", "-dn",
         "-acodec", AUDIO_FORMAT,
-        "-ar", str(SAMPLE_RATE_HZ),
         "-sample_fmt", SAMPLE_FORMAT,
         "-ac", str(NUM_AUDIO_CHANNELS),
         "-compression_level", "0",

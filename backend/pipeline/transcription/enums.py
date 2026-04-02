@@ -13,6 +13,7 @@ class VadType(enum.StrEnum):
     """Supported Voice Activity Detection models."""
 
     TEN_VAD = "ten_vad"
+    SILERO_VAD = "silero_vad"
 
 
 class MetricsExporterType(enum.StrEnum):

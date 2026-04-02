@@ -36,6 +36,16 @@ class BufferedChunk:
 
 
 @dataclass(frozen=True)
+class PaddedSegment:
+    """A speech segment that has been padded and verified to be clean."""
+
+    audio: AudioSegment
+    start_ms: int  # Absolute start time of the padded segment
+    speech_start_ms: int  # Absolute start time of the speech within it
+    speech_end_ms: int  # Absolute end time of the speech within it
+
+
+@dataclass(frozen=True)
 class AudioChunkData:
     """A domain model representing a single decoded audio chunk and its VAD metadata."""
 
@@ -43,6 +53,9 @@ class AudioChunkData:
     audio: AudioSegment
     speech_segments: list[TimeRange]
     gcs_uri: str
+    silence_segments: list[TimeRange] = field(default_factory=list)
+    noise_segments: list[TimeRange] = field(default_factory=list)
+    padded_segments: list[PaddedSegment] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

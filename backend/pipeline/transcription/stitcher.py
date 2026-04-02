@@ -172,10 +172,18 @@ class StitchAudioFn(beam.DoFn):
             transmission_buffer.read()
         )
         if buffered_audio:
+            full_audio = sum(buffered_audio[1:], buffered_audio[0])
+            speech_end_rel_ms = action.speech_time_range.end_ms - action.time_range.start_ms
+            desired_len_ms = speech_end_rel_ms + self.config.vad_post_roll_ms
+
+            if len(full_audio) > desired_len_ms:
+                logger.info(f"Truncating trailing silence. Original: {len(full_audio)}ms, New: {desired_len_ms}ms")
+                full_audio = full_audio[:desired_len_ms]
+
             yield (
                 action.feed_id,
                 FlushRequest(
-                    buffer=sum(buffered_audio[1:], buffered_audio[0]),
+                    buffer=full_audio,
                     feed_id=action.feed_id,
                     contributing_audio_uris=action.contributing_audio_uris,
                     time_range=action.time_range,
@@ -299,6 +307,37 @@ class StitchAudioFn(beam.DoFn):
             buffer_start_time_ms=curr_context.buffer_start_time_ms,
             buffer_duration_ms=curr_context.buffer_duration_ms,
         )
+
+        # Run VAD if it wasn't already processed by the silence gate
+        # (If both are empty, it means AudioProcessor skipped VAD but wasn't silent)
+        if not chunk_data.speech_segments and not chunk_data.silence_segments:
+            assert self.audio_processor is not None, "AudioProcessor not initialized"
+
+            # Read previous chunk from buffer for overlap
+            audio_buffer = list(transmission_buffer.read())
+            prev_chunk = audio_buffer[-1] if audio_buffer else None
+
+            padded_segments = self.audio_processor.detect_vad_with_overlap(
+                chunk_audio=chunk_data.audio,
+                prev_chunk_audio=prev_chunk,
+                start_ms=file_start_ms,
+            )
+
+            speech_segments = [
+                TimeRange(start_ms=p.speech_start_ms, end_ms=p.speech_end_ms)
+                for p in padded_segments
+            ]
+
+            # Reconstruct chunk_data with detected segments
+            chunk_data = AudioChunkData(
+                start_ms=chunk_data.start_ms,
+                audio=chunk_data.audio,
+                speech_segments=speech_segments,
+                gcs_uri=chunk_data.gcs_uri,
+                silence_segments=chunk_data.silence_segments,
+                noise_segments=chunk_data.noise_segments,
+                padded_segments=padded_segments,
+            )
 
         pipeline = AudioStitchingStateMachine(self.config)
 
