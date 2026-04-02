@@ -53,9 +53,7 @@ def _segment_path(directory: Path, index: int) -> Path:
 
 
 async def capture_icecast_stream(
-    feed: LeasedFeed,
-    shutdown_event: asyncio.Event,
-    url_base: str
+    feed: LeasedFeed, shutdown_event: asyncio.Event, url_base: str
 ) -> AsyncIterator[tuple[bytes, datetime.datetime]]:
     """
     Capture audio chunks from an Icecast stream using ffmpeg segment muxing.

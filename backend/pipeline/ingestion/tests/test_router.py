@@ -54,7 +54,9 @@ class TestRouteCapturerRegistered(unittest.TestCase):
                 result = route_capturer(feed, shutdown_event)
 
                 mock_import.assert_called_once_with(module_path)
-                mock_fn.assert_called_once_with(feed, shutdown_event, url_base=url_base)
+                mock_fn.assert_called_once_with(
+                    feed, shutdown_event, url_base=url_base
+                )
                 self.assertIs(result, sentinel)
 
 
