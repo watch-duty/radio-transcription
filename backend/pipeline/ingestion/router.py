@@ -12,13 +12,15 @@ if TYPE_CHECKING:
 
     from backend.pipeline.storage.feed_store import LeasedFeed
 
+BCFY_FEEDS_URL_BASE = "https://partner.broadcastify.com/"
+
 # Maps source_type -> (module_path, function_name, url_base).
 # To add a new collector, add a single entry here.
 _COLLECTOR_REGISTRY: dict[SourceType, tuple[str, str, str]] = {
     SourceType.BCFY_FEEDS: (
         "backend.pipeline.ingestion.collectors.icecast_collector",
         "capture_icecast_stream",
-        "https://partner.broadcastify.com/",
+        BCFY_FEEDS_URL_BASE,
     ),
 }
 

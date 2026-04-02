@@ -13,6 +13,7 @@ from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.ingestion.collectors.icecast_collector import (
     capture_icecast_stream,
 )
+from backend.pipeline.ingestion.router import BCFY_FEEDS_URL_BASE
 from backend.pipeline.storage.feed_store import SourceType
 
 if TYPE_CHECKING:
@@ -52,7 +53,7 @@ async def run_local_capture() -> None:
 
     chunk_count = 0
     async for audio_data, start_ts in capture_icecast_stream(
-        feed, shutdown_event, "https://partner.broadcastify.com/"
+        feed, shutdown_event, BCFY_FEEDS_URL_BASE
     ):
         chunk_count += 1
         timestamp = datetime.now(UTC).isoformat(timespec="milliseconds")

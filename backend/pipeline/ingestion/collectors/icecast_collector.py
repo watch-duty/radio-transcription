@@ -11,6 +11,7 @@ import tempfile
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urljoin
 
 from backend.pipeline.common.constants import (
     AUDIO_FORMAT,
@@ -83,7 +84,7 @@ async def capture_icecast_stream(
     if not source_feed_id:
         msg = f"Feed {feed_id} ({feed_name}) missing source_feed_id in feed_properties"
         raise ValueError(msg)
-    url = f"{url_base}{source_feed_id.strip()}.mp3"
+    url = urljoin(url_base, f"{source_feed_id.strip()}.mp3")
 
     with tempfile.TemporaryDirectory(prefix="icecast_segments_") as tmp_dir:
         segment_dir = Path(tmp_dir)
