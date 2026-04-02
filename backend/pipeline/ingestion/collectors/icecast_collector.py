@@ -26,9 +26,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# URL Base
-ICECAST_URL_BASE = "https://audio.broadcastify.com/"
-
 # Audio processing constants
 SAMPLE_FORMAT = "s16"  # 16-bit signed integer
 
@@ -58,6 +55,7 @@ def _segment_path(directory: Path, index: int) -> Path:
 async def capture_icecast_stream(
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
+    url_base: str
 ) -> AsyncIterator[tuple[bytes, datetime.datetime]]:
     """
     Capture audio chunks from an Icecast stream using ffmpeg segment muxing.
@@ -69,6 +67,7 @@ async def capture_icecast_stream(
     Args:
         feed: Leased feed containing source_feed_id and metadata
         shutdown_event: Signals graceful shutdown request
+        url_base: The base URL to prepend to the source_feed_id for stream access
 
     Yields:
         A tuple containing:
@@ -86,7 +85,7 @@ async def capture_icecast_stream(
     if not source_feed_id:
         msg = f"Feed {feed_id} ({feed_name}) missing source_feed_id in feed_properties"
         raise ValueError(msg)
-    url = f"{ICECAST_URL_BASE}{source_feed_id.strip()}.mp3"
+    url = f"{url_base}{source_feed_id.strip()}.mp3"
 
     with tempfile.TemporaryDirectory(prefix="icecast_segments_") as tmp_dir:
         segment_dir = Path(tmp_dir)

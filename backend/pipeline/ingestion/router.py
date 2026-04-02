@@ -12,12 +12,13 @@ if TYPE_CHECKING:
 
     from backend.pipeline.storage.feed_store import LeasedFeed
 
-# Maps source_type -> (module_path, function_name).
+# Maps source_type -> (module_path, function_name, url_base).
 # To add a new collector, add a single entry here.
-_COLLECTOR_REGISTRY: dict[SourceType, tuple[str, str]] = {
+_COLLECTOR_REGISTRY: dict[SourceType, tuple[str, str, str]] = {
     SourceType.BCFY_FEEDS: (
         "backend.pipeline.ingestion.collectors.icecast_collector",
         "capture_icecast_stream",
+        "https://partner.broadcastify.com/",
     ),
 }
 
@@ -36,7 +37,7 @@ def route_capturer(
         msg = f"Unsupported source_type: {source_type}"
         raise ValueError(msg)
 
-    module_path, func_name = entry
+    module_path, func_name, url_base = entry
     module = importlib.import_module(module_path)
     capture_fn = getattr(module, func_name)
-    return capture_fn(feed, shutdown_event)
+    return capture_fn(feed, shutdown_event, url_base=url_base)
