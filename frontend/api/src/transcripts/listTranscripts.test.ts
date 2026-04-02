@@ -31,7 +31,7 @@ describe('listTranscripts', () => {
   });
 
   it('should return 200 and data on success', async () => {
-    process.env.TRANSCRIPT_API_URL = 'http://api.example.com';
+    process.env.TRANSCRIPTS_API_URL = 'http://api.example.com';
     const mockData = { transcripts: [{ id: '1', title: 'test' }] };
     vi.mocked(axios.get).mockResolvedValueOnce({ data: mockData });
 
@@ -45,17 +45,17 @@ describe('listTranscripts', () => {
     });
   });
 
-  it('should return 500 if TRANSCRIPT_API_URL is missing', async () => {
-    delete process.env.TRANSCRIPT_API_URL;
+  it('should return 500 if TRANSCRIPTS_API_URL is missing', async () => {
+    delete process.env.TRANSCRIPTS_API_URL;
 
     await listTranscripts(req as Request, res as Response);
 
     expect(res.status).toHaveBeenCalledWith(500);
-    expect(res.send).toHaveBeenCalledWith('TRANSCRIPT_API_URL environment variable is not set');
+    expect(res.send).toHaveBeenCalledWith('TRANSCRIPTS_API_URL environment variable is not set');
   });
 
   it('should return 500 on API failure with error message', async () => {
-    process.env.TRANSCRIPT_API_URL = 'http://api.example.com';
+    process.env.TRANSCRIPTS_API_URL = 'http://api.example.com';
     const errorMessage = 'Network Error';
     vi.mocked(axios.get).mockRejectedValueOnce(new Error(errorMessage));
 

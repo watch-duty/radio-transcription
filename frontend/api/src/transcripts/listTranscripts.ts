@@ -11,9 +11,9 @@ import { GoogleAuth } from 'google-auth-library';
  */
 export const listTranscripts: HttpFunction = async (req: Request, res: Response) => {
   if (req.method === 'GET') {
-    const apiUrl = process.env.TRANSCRIPT_API_URL;
+    const apiUrl = process.env.TRANSCRIPTS_API_URL;
     if (!apiUrl) {
-      res.status(500).send('TRANSCRIPT_API_URL environment variable is not set');
+      res.status(500).send('TRANSCRIPTS_API_URL environment variable is not set');
       return;
     }
 
