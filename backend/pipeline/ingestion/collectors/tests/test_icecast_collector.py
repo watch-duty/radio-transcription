@@ -31,7 +31,7 @@ def _make_feed(name: str, source_feed_id: str | None) -> LeasedFeed:
         name=name,
         source_type=SourceType.BCFY_FEEDS,
         last_processed_filename=None,
-        last_bookmark=None,
+        last_bookmark_time=None,
         fencing_token=1,
         source_feed_id=source_feed_id,
     )
@@ -201,7 +201,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
                 "name": "incomplete-feed",
                 "source_type": "icecast",
                 "last_processed_filename": None,
-                "last_bookmark": None,
+                "last_bookmark_time": None,
             },
         )
         shutdown_event = asyncio.Event()

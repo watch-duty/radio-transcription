@@ -613,10 +613,10 @@ async def test_report_feed_failure_fails_with_wrong_fencing_token(
     assert row["failure_count"] == 0
 
 
-# -- Tests: last_bookmark ------------------------------------------------
+# -- Tests: last_bookmark_time ------------------------------------------------
 
 
-async def test_last_bookmark_round_trips_through_lease(
+async def test_last_bookmark_time_round_trips_through_lease(
     db_pool: asyncpg.Pool, store: FeedStore
 ) -> None:
     """Bookmark set via update_feed_progress survives release and re-lease."""
@@ -626,7 +626,7 @@ async def test_last_bookmark_round_trips_through_lease(
     # Lease the feed.
     result1 = await store.lease_feed(worker)
     assert result1 is not None
-    assert result1["last_bookmark"] is None
+    assert result1["last_bookmark_time"] is None
 
     # Record a bookmark.
     bookmark = datetime.datetime(2026, 3, 30, 12, 0, 0, tzinfo=datetime.UTC)
@@ -645,4 +645,4 @@ async def test_last_bookmark_round_trips_through_lease(
 
     assert result2 is not None
     assert result2["id"] == result1["id"]
-    assert result2["last_bookmark"] == bookmark
+    assert result2["last_bookmark_time"] == bookmark

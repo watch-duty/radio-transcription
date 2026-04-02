@@ -170,7 +170,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         """Read back feed status fields from the database."""
         row = await self.pool.fetchrow(
             "SELECT status, failure_count, worker_id,"
-            " last_processed_filename, last_bookmark"
+            " last_processed_filename, last_bookmark_time"
             " FROM feeds WHERE id = $1::uuid",
             str(feed_id),
         )
@@ -281,7 +281,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         # Assert: DB bookmark updated
         row = await self._get_feed_row(feed["id"])
         self.assertEqual(row["last_processed_filename"], gcs_path)
-        self.assertEqual(row["last_bookmark"], last_chunk_ts)
+        self.assertEqual(row["last_bookmark_time"], last_chunk_ts)
         self.assertEqual(row["failure_count"], 0)
 
     @patch(
@@ -341,7 +341,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         # Assert: DB bookmark points to last uploaded path and timestamp
         row = await self._get_feed_row(feed["id"])
         self.assertEqual(row["last_processed_filename"], gcs_paths[-1])
-        self.assertEqual(row["last_bookmark"], chunk_timestamps[-1])
+        self.assertEqual(row["last_bookmark_time"], chunk_timestamps[-1])
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
@@ -396,7 +396,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         # Assert: DB bookmark reflects single upload
         row = await self._get_feed_row(feed["id"])
         self.assertEqual(row["last_processed_filename"], gcs_paths[0])
-        self.assertEqual(row["last_bookmark"], last_chunk_ts)
+        self.assertEqual(row["last_bookmark_time"], last_chunk_ts)
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
@@ -510,7 +510,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         row = await self._get_feed_row(feed["id"])
         self.assertEqual(row["status"], "active")
         self.assertIsNone(row["last_processed_filename"])
-        self.assertIsNone(row["last_bookmark"])
+        self.assertIsNone(row["last_bookmark_time"])
 
 
 if __name__ == "__main__":

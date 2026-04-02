@@ -21,7 +21,7 @@ _LEASE_ROW = {
     "name": "My Feed",
     "source_type": "bcfy_feeds",
     "last_processed_filename": None,
-    "last_bookmark": None,
+    "last_bookmark_time": None,
     "fencing_token": 1,
     "source_feed_id": "123",
 }
@@ -56,7 +56,7 @@ class TestLeaseFeed(unittest.IsolatedAsyncioTestCase):
             "name": "My Feed",
             "source_type": SourceType.BCFY_FEEDS,
             "last_processed_filename": None,
-            "last_bookmark": None,
+            "last_bookmark_time": None,
             "fencing_token": 1,
             "source_feed_id": "123",
         }
@@ -154,12 +154,12 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
         args = pool.execute.call_args[0]
         self.assertEqual(args[1:], (gcs_path, _FEED_ID, _WORKER_ID, 1, None))
 
-    async def test_passes_non_none_last_bookmark(self) -> None:
-        """Non-None last_bookmark is forwarded as the 5th SQL parameter."""
+    async def test_passes_non_none_last_bookmark_time(self) -> None:
+        """Non-None last_bookmark_time is forwarded as the 5th SQL parameter."""
         pool = _make_pool(execute_result="UPDATE 1")
         store = FeedStore(pool)
         gcs_path = "gs://bucket/path/file.ogg"
-        last_bookmark = datetime.datetime(
+        last_bookmark_time = datetime.datetime(
             2024,
             1,
             2,
@@ -170,12 +170,12 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             gcs_path,
             1,
-            last_bookmark,
+            last_bookmark_time,
         )
         args = pool.execute.call_args[0]
         self.assertEqual(
             args[1:],
-            (gcs_path, _FEED_ID, _WORKER_ID, 1, last_bookmark),
+            (gcs_path, _FEED_ID, _WORKER_ID, 1, last_bookmark_time),
         )
 
 
@@ -385,7 +385,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
                 "name": "Feed A",
                 "source_type": "bcfy_feeds",
                 "last_processed_filename": None,
-                "last_bookmark": None,
+                "last_bookmark_time": None,
                 "fencing_token": 1,
                 "source_feed_id": "123",
             },
@@ -394,7 +394,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
                 "name": "Feed B",
                 "source_type": "bcfy_feeds",
                 "last_processed_filename": "gs://bucket/path",
-                "last_bookmark": None,
+                "last_bookmark_time": None,
                 "fencing_token": 1,
                 "source_feed_id": None,
             },
