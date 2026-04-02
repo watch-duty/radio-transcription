@@ -79,7 +79,7 @@ class TestLocalIcecastCollector(unittest.IsolatedAsyncioTestCase):
 
             # Ensure capture function was called with expected feed metadata.
             capture_mock.assert_called_once()
-            feed_arg, shutdown_event_arg = capture_mock.call_args.args
+            feed_arg, shutdown_event_arg, url_base_arg = capture_mock.call_args.args
             self.assertEqual(feed_arg["id"], fixed_feed_id)
             self.assertEqual(feed_arg["name"], "local-icecast-test")
             self.assertEqual(
@@ -91,6 +91,10 @@ class TestLocalIcecastCollector(unittest.IsolatedAsyncioTestCase):
             self.assertIsInstance(
                 shutdown_event_arg, local_icecast_collector.asyncio.Event
             )
+            self.assertEqual(
+                url_base_arg, "https://partner.broadcastify.com/"
+            )
+
 
             # Ensure two chunk files were written and include expected bytes.
             written_files = sorted(
