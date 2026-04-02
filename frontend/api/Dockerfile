@@ -18,8 +18,6 @@ COPY --from=builder /app/package.json /app/yarn.lock ./
 # Install only prod dependencies to keep image small
 RUN yarn install --production --frozen-lockfile --non-interactive
 
-EXPOSE 8080
-
 CMD ["npx", \
      "@google-cloud/functions-framework", \
      "--target=api", \
