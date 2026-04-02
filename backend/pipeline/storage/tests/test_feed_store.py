@@ -394,7 +394,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
             "source_type": "invalid_type",
             "last_processed_filename": None,
             "fencing_token": 1,
-            "stream_url": None,
+            "source_feed_id": None,
         }
         pool = _make_pool(fetch_result=[bad_row])
         store = FeedStore(pool)

@@ -2,5 +2,5 @@
 CREATE TABLE IF NOT EXISTS feed_properties (
     feed_id     UUID PRIMARY KEY REFERENCES feeds(id) ON DELETE CASCADE,
     source_feed_id  TEXT NOT NULL,
-    external_id TEXT NOT NULL
+    external_id TEXT NOT NULL -- The ID used for mapping feed ID within application
 );

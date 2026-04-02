@@ -100,21 +100,6 @@ async def test_lease_returns_feed_with_feed_properties(
     assert result["fencing_token"] == 1
 
 
-async def test_lease_returns_feed_without_icecast_properties(
-    db_pool: asyncpg.Pool, store: FeedStore
-) -> None:
-    """Non-icecast feed has stream_url=None."""
-    worker = uuid.uuid4()
-    await _insert_feed(db_pool, "API Feed", source_type="bcfy_calls")
-
-    result = await store.lease_feed(worker)
-
-    assert result is not None
-    assert result["name"] == "API Feed"
-    assert result["stream_url"] is None
-    assert result["fencing_token"] == 1
-
-
 async def test_lease_returns_none_when_no_feeds(store: FeedStore) -> None:
     """Empty database returns None."""
     result = await store.lease_feed(uuid.uuid4())
