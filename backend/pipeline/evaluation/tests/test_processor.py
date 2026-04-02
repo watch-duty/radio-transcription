@@ -68,9 +68,7 @@ class TestEvaluationEventProcessor(unittest.TestCase):
 
         # Verify
         self.mock_service.evaluate.assert_called_once()
-        self.mock_transcripts_client.create_transcript.assert_called_once_with(
-            self.evaluated_payload
-        )
+        self.mock_transcripts_client.create_transcript.assert_not_called()
         self.mock_raw_publisher.publish.assert_called_once_with(
             self.output_topic_path,
             self.evaluated_payload.SerializeToString(),
@@ -94,9 +92,7 @@ class TestEvaluationEventProcessor(unittest.TestCase):
 
         # Verify
         self.mock_service.evaluate.assert_called_once()
-        self.mock_transcripts_client.create_transcript.assert_called_once_with(
-            self.evaluated_payload
-        )
+        self.mock_transcripts_client.create_transcript.assert_not_called()
         self.mock_raw_publisher.publish.assert_not_called()
 
     def test_process_event_has_errors_publishes(self) -> None:
