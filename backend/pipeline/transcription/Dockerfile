@@ -38,5 +38,10 @@ RUN mkdir -p ./backend/pipeline/schema_types
 RUN touch ./backend/pipeline/schema_types/__init__.py
 RUN python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto
 
-# Set the entrypoint to the Dataflow template launcher
-ENTRYPOINT ["/opt/google/dataflow/python_template_launcher"]
+# Copy the entrypoint wrapper
+COPY backend/pipeline/transcription/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# Set the entrypoint to the wrapper (which sets PYTHONPATH and calls python_template_launcher)
+ENTRYPOINT ["/app/entrypoint.sh"]
+
