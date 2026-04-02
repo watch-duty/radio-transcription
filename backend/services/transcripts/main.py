@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -19,8 +20,35 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Manage the lifecycle of the AlloyDB connection pool."""
-    pool = await create_pool_from_settings()
+    """Manage the lifecycle of the AlloyDB connection pool with retries."""
+    retries = 10
+    delay = 2
+    pool = None
+
+    for i in range(retries):
+        try:
+            pool = await create_pool_from_settings()
+            break
+        except ConnectionError as e:
+            if i == retries - 1:
+                logger.exception(
+                    "Failed to connect to database after %d attempts. Crashing.",
+                    retries,
+                )
+                raise
+            logger.warning(
+                "Failed to connect to database, retrying in %ds... (%d/%d): %s",
+                delay,
+                i + 1,
+                retries,
+                e,
+            )
+            await asyncio.sleep(delay)
+
+    if pool is None:
+        error_msg = "Failed to initialize database pool"
+        raise RuntimeError(error_msg)
+
     store = TranscriptStore(pool)
     app.state.transcript_service = TranscriptService(store)
     yield
