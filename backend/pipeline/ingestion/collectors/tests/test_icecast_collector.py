@@ -149,7 +149,9 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         feed = _make_feed("test-feed", "http://example.com/stream")
         shutdown_event = asyncio.Event()
 
-        gen = icecast_collector.capture_icecast_stream(feed, shutdown_event)
+        gen = icecast_collector.capture_icecast_stream(
+            feed, shutdown_event, url_base="https://mock.example.com/"
+        )
         chunks = await _collect_chunks(gen)
 
         # Assert - segments should be yielded without modification
@@ -176,7 +178,9 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         shutdown_event = asyncio.Event()
 
         # Act
-        gen = icecast_collector.capture_icecast_stream(feed, shutdown_event)
+        gen = icecast_collector.capture_icecast_stream(
+            feed, shutdown_event, url_base="https://mock.example.com/"
+        )
 
         # Give it time to start and yield first chunk if available
         await asyncio.sleep(0.1)
@@ -201,7 +205,9 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         shutdown_event = asyncio.Event()
 
         # Act & Assert
-        gen = icecast_collector.capture_icecast_stream(feed, shutdown_event)
+        gen = icecast_collector.capture_icecast_stream(
+            feed, shutdown_event, url_base="https://mock.example.com/"
+        )
         with self.assertRaises(ValueError) as context:
             await gen.__anext__()
 
@@ -216,7 +222,9 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         shutdown_event = asyncio.Event()
 
         # Act & Assert
-        gen = icecast_collector.capture_icecast_stream(feed, shutdown_event)
+        gen = icecast_collector.capture_icecast_stream(
+            feed, shutdown_event, url_base="https://mock.example.com/"
+        )
         with self.assertRaises(ValueError) as context:
             await gen.__anext__()
 
@@ -233,7 +241,9 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         shutdown_event = asyncio.Event()
 
         # Act & Assert
-        gen = icecast_collector.capture_icecast_stream(feed, shutdown_event)
+        gen = icecast_collector.capture_icecast_stream(
+            feed, shutdown_event, url_base="https://mock.example.com/"
+        )
         with self.assertRaises(ValueError) as context:
             await gen.__anext__()
 
@@ -259,7 +269,9 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         shutdown_event = asyncio.Event()
 
         # Act & Assert - should exit cleanly without raising
-        gen = icecast_collector.capture_icecast_stream(feed, shutdown_event)
+        gen = icecast_collector.capture_icecast_stream(
+            feed, shutdown_event, url_base="https://mock.example.com/"
+        )
 
         chunks = await _collect_chunks(gen)
         self.assertGreaterEqual(len(chunks), 1)
@@ -282,7 +294,9 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         shutdown_event = asyncio.Event()
 
         # Act & Assert
-        gen = icecast_collector.capture_icecast_stream(feed, shutdown_event)
+        gen = icecast_collector.capture_icecast_stream(
+            feed, shutdown_event, url_base="https://mock.example.com/"
+        )
         with self.assertRaises(RuntimeError) as context:
             await asyncio.wait_for(gen.__anext__(), timeout=1.0)
 
@@ -307,7 +321,9 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         shutdown_event = asyncio.Event()
 
         # Act & Assert
-        gen = icecast_collector.capture_icecast_stream(feed, shutdown_event)
+        gen = icecast_collector.capture_icecast_stream(
+            feed, shutdown_event, url_base="https://mock.example.com/"
+        )
         with self.assertRaises(RuntimeError):
             await asyncio.wait_for(gen.__anext__(), timeout=1.0)
 
@@ -335,7 +351,9 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         feed = _make_feed("multi-segment-feed", "http://example.com/stream")
         shutdown_event = asyncio.Event()
 
-        gen = icecast_collector.capture_icecast_stream(feed, shutdown_event)
+        gen = icecast_collector.capture_icecast_stream(
+            feed, shutdown_event, url_base="https://mock.example.com/"
+        )
         chunks = await _collect_chunks(gen)
 
         # Assert - should have collected multiple segments
@@ -367,7 +385,9 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         feed = _make_feed("timestamp-feed", "http://example.com/stream")
         shutdown_event = asyncio.Event()
 
-        gen = icecast_collector.capture_icecast_stream(feed, shutdown_event)
+        gen = icecast_collector.capture_icecast_stream(
+            feed, shutdown_event, url_base="https://mock.example.com/"
+        )
         results = await _collect_chunks_with_timestamps(gen)
 
         self.assertEqual(len(results), 3)

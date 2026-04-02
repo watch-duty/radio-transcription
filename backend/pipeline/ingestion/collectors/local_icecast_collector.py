@@ -13,6 +13,7 @@ from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.ingestion.collectors.icecast_collector import (
     capture_icecast_stream,
 )
+from backend.pipeline.ingestion.router import BCFY_FEEDS_URL_BASE
 from backend.pipeline.storage.feed_store import SourceType
 
 if TYPE_CHECKING:
@@ -51,7 +52,9 @@ async def run_local_capture() -> None:
     shutdown_event = asyncio.Event()
 
     chunk_count = 0
-    async for audio_data, _ts in capture_icecast_stream(feed, shutdown_event):
+    async for audio_data, start_ts in capture_icecast_stream(
+        feed, shutdown_event, BCFY_FEEDS_URL_BASE
+    ):
         chunk_count += 1
         timestamp = datetime.now(UTC).isoformat(timespec="milliseconds")
         file_timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S_%fZ")
@@ -59,10 +62,11 @@ async def run_local_capture() -> None:
         file_path = output_dir / file_name
         await asyncio.to_thread(file_path.write_bytes, audio_data)
         logger.info(
-            "Local capture chunk %d received (%d bytes) at %s -> %s",
+            "Local capture chunk %d received (%d bytes) at %s (start: %s) -> %s",
             chunk_count,
             len(audio_data),
             timestamp,
+            start_ts.isoformat(timespec="milliseconds"),
             file_path,
         )
 
