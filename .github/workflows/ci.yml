@@ -112,10 +112,9 @@ jobs:
         with:
           fetch-depth: 100
       - name: Cache APT packages
-        uses: tlylt/install-apt-pkgs-action@v1
+        uses: awalsh128/cache-apt-pkgs-action@v1
         with:
           packages: ffmpeg libomp5-18
-          save-cache: true
       - name: Install system dependencies (ffmpeg for pydub, libomp5 for TenVAD)
         run: |
           sudo apt-get update
