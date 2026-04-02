@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import importlib
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from backend.pipeline.storage.feed_store import SourceType
 
@@ -12,12 +12,30 @@ if TYPE_CHECKING:
 
     from backend.pipeline.storage.feed_store import LeasedFeed
 
-# Maps source_type -> (module_path, function_name).
+BCFY_FEEDS_URL_BASE = "https://partner.broadcastify.com/"
+
+
+class CollectorEntry(NamedTuple):
+    """Registry entry describing how to locate and invoke a collector.
+
+    Attributes:
+        module_path: Fully-qualified Python module path of the collector.
+        func_name: Name of the capture function within that module.
+        url_base: Base URL passed to the capture function.
+    """
+
+    module_path: str
+    func_name: str
+    url_base: str
+
+
+# Maps source_type -> CollectorEntry.
 # To add a new collector, add a single entry here.
-_COLLECTOR_REGISTRY: dict[SourceType, tuple[str, str]] = {
-    SourceType.BCFY_FEEDS: (
-        "backend.pipeline.ingestion.collectors.icecast_collector",
-        "capture_icecast_stream",
+_COLLECTOR_REGISTRY: dict[SourceType, CollectorEntry] = {
+    SourceType.BCFY_FEEDS: CollectorEntry(
+        module_path="backend.pipeline.ingestion.collectors.icecast_collector",
+        func_name="capture_icecast_stream",
+        url_base=BCFY_FEEDS_URL_BASE,
     ),
 }
 
@@ -36,7 +54,6 @@ def route_capturer(
         msg = f"Unsupported source_type: {source_type}"
         raise ValueError(msg)
 
-    module_path, func_name = entry
-    module = importlib.import_module(module_path)
-    capture_fn = getattr(module, func_name)
-    return capture_fn(feed, shutdown_event)
+    module = importlib.import_module(entry.module_path)
+    capture_fn = getattr(module, entry.func_name)
+    return capture_fn(feed, shutdown_event, url_base=entry.url_base)
