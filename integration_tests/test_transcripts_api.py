@@ -21,8 +21,8 @@ async def _get_db_connection() -> asyncpg.Connection:
     )
 
 
-@pytest.fixture
-async def api_client() -> AsyncIterator[httpx.AsyncClient]:
+@pytest.fixture(name="api_client")
+async def create_api_client() -> AsyncIterator[httpx.AsyncClient]:
     """Sets up client for requests."""
     async with httpx.AsyncClient(
         base_url=f"http://{TRANSCRIPTS_API_HOST}/v1"
@@ -30,8 +30,8 @@ async def api_client() -> AsyncIterator[httpx.AsyncClient]:
         yield client
 
 
-@pytest.fixture
-async def test_feed() -> AsyncIterator[str]:
+@pytest.fixture(name="test_feed")
+async def create_test_feed() -> AsyncIterator[str]:
     """Feed set up, which are required to associated with transcripts."""
     conn = await _get_db_connection()
     feed_name = f"integration-test-feed-{uuid.uuid4()}"
