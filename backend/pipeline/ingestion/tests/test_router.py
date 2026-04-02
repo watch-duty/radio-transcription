@@ -7,6 +7,7 @@ import uuid
 from unittest import mock
 
 from backend.pipeline.ingestion.router import (
+    CollectorEntry,
     _COLLECTOR_REGISTRY,
     route_capturer,
 )
@@ -85,20 +86,16 @@ class TestCollectorRegistryIntegrity(unittest.TestCase):
         self.assertTrue(_COLLECTOR_REGISTRY)
 
     def test_all_entries_have_valid_shape(self) -> None:
-        """Each value is a (module_path, func_name, url_base) 3-tuple of
-        non-empty strings.
-        """
+        """Each value is a CollectorEntry with non-empty string fields."""
         for source_type, entry in _COLLECTOR_REGISTRY.items():
             with self.subTest(source_type=source_type):
-                self.assertIsInstance(entry, tuple)
-                self.assertEqual(len(entry), 3)
-                module_path, func_name, url_base = entry
-                self.assertIsInstance(module_path, str)
-                self.assertIsInstance(func_name, str)
-                self.assertIsInstance(url_base, str)
-                self.assertTrue(module_path)
-                self.assertTrue(func_name)
-                self.assertTrue(url_base)
+                self.assertIsInstance(entry, CollectorEntry)
+                self.assertIsInstance(entry.module_path, str)
+                self.assertIsInstance(entry.func_name, str)
+                self.assertIsInstance(entry.url_base, str)
+                self.assertTrue(entry.module_path)
+                self.assertTrue(entry.func_name)
+                self.assertTrue(entry.url_base)
 
 
 if __name__ == "__main__":
