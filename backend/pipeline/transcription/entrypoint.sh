@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
 
+export PYTHONPATH="/app:$PYTHONPATH"
+
 # Dataflow workers are invoked with specific flags like --logging_endpoint
 # If we see that flag, we know we are running as a worker.
 if [[ "$*" == *"--logging_endpoint"* ]]; then
