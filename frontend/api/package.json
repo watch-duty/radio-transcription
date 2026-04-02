@@ -1,5 +1,5 @@
 {
-  "name": "transcription-apis",
+  "name": "radio-transcription-apis",
   "version": "1.0.0",
   "main": "dist/index.js",
   "type": "module",
