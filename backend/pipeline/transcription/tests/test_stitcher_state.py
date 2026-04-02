@@ -7,6 +7,7 @@ from backend.pipeline.transcription.datatypes import (
     AudioChunkData,
     DropAction,
     FlushAction,
+    PaddedSegment,
     ScheduleStaleTimerAction,
     StateMachineAction,
     StitchAudioConfig,
@@ -46,13 +47,61 @@ def mock_audio_chunk(
     speech_segments: list[tuple[float, float]],
     gcs_uri: str = "gs://fake/1.flac",
 ) -> AudioChunkData:
+    speech_ranges = [
+        TimeRange(int(s * 1000), int(e * 1000)) for s, e in speech_segments
+    ]
+
+    silence_ranges = []
+    last_end = 0
+    for s, e in speech_segments:
+        s_ms = int(s * 1000)
+        if s_ms > last_end:
+            silence_ranges.append(
+                TimeRange(start_ms=start_ms + last_end, end_ms=start_ms + s_ms)
+            )
+        last_end = int(e * 1000)
+    if last_end < duration_ms:
+        silence_ranges.append(
+            TimeRange(
+                start_ms=start_ms + last_end, end_ms=start_ms + duration_ms
+            )
+        )
+
+    # Create padded segments!
+    padded_segments = []
+    # Default in get_test_stitch_config is 500ms!
+    pre_roll_ms = 500
+    post_roll_ms = 500
+
+    for s_range in speech_ranges:
+        s_ms = s_range.start_ms
+        e_ms = s_range.end_ms
+
+        # Make them absolute for padded_segments!
+        abs_s_ms = start_ms + s_ms
+        abs_e_ms = start_ms + e_ms
+
+        pad_start = max(start_ms, abs_s_ms - pre_roll_ms)
+        pad_end = min(start_ms + duration_ms, abs_e_ms + post_roll_ms)
+
+        duration = pad_end - pad_start
+
+        padded_segments.append(
+            PaddedSegment(
+                audio=AudioSegment.silent(duration=duration),
+                start_ms=pad_start,
+                speech_start_ms=abs_s_ms,
+                speech_end_ms=abs_e_ms,
+            )
+        )
+
     return AudioChunkData(
         start_ms=start_ms,
         audio=AudioSegment.silent(duration=duration_ms),
-        speech_segments=[
-            TimeRange(int(s * 1000), int(e * 1000)) for s, e in speech_segments
-        ],
+        speech_segments=speech_ranges,
+        silence_segments=silence_ranges,
         gcs_uri=gcs_uri,
+        padded_segments=padded_segments,
     )
 
 

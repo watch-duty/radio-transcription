@@ -46,6 +46,8 @@ class AcousticGateDetector:
         *,
         threshold: float = DEFAULT_AGD_THRESHOLD,
         lower_threshold: float = DEFAULT_AGD_LOWER_THRESHOLD,
+        noise_flatness_threshold: float = 0.75,
+        min_gap_to_split_ms: int = 500,
         energy_threshold: float = DEFAULT_AGD_ENERGY_THRESHOLD,
         debounce_window: float = DEFAULT_AGD_DEBOUNCE_WINDOW_SEC,
         hangover_frames: int = DEFAULT_AGD_HANGOVER_FRAMES,
@@ -72,6 +74,10 @@ class AcousticGateDetector:
         if hangover_frames < 0:
             msg = f"hangover_frames must be >= 0, got {hangover_frames}"
             raise ValueError(msg)
+        if min_gap_to_split_ms < 0:
+            msg = f"min_gap_to_split_ms must be >= 0, got {min_gap_to_split_ms}"
+            raise ValueError(msg)
+        self.min_gap_to_split_ms = min_gap_to_split_ms
         if low_freq_hz <= 0:
             msg = f"low_freq_hz must be > 0, got {low_freq_hz}"
             raise ValueError(msg)
@@ -85,6 +91,7 @@ class AcousticGateDetector:
 
         self._threshold = threshold
         self._lower_threshold = lower_threshold
+        self._noise_flatness_threshold = noise_flatness_threshold
         self._energy_threshold = energy_threshold
         self._debounce_window = debounce_window
         self._hangover_frames = hangover_frames
@@ -105,9 +112,9 @@ class AcousticGateDetector:
 
     def detect(
         self, samples: np.ndarray, file_start_ms: int = 0
-    ) -> list[TimeRange]:
+    ) -> tuple[list[TimeRange], list[TimeRange], list[TimeRange]]:
         if samples.size == 0 or samples.size < self._fft_size:
-            return []
+            return [], [], []
 
         audio = samples.astype(np.float32) / INT16_MAX_FLOAT
 
@@ -125,7 +132,7 @@ class AcousticGateDetector:
 
         n_time = min(len(rms_energy), len(flatness_arr))
         if n_time == 0:
-            return []
+            return [], [], []
 
         rms_energy = rms_energy[:n_time]
         flatness_arr = flatness_arr[:n_time]
@@ -174,7 +181,11 @@ class AcousticGateDetector:
 
         # Group consecutive True frames into TimeRanges using vectorized boundary detection
         regions: list[TimeRange] = []
+        silence_regions: list[TimeRange] = []
+        noise_regions: list[TimeRange] = []
+
         if len(signal_present) > 0:
+            # Speech regions
             padded = np.pad(signal_present.astype(int), (1, 1), mode="constant")
             diffs = np.diff(padded)
             starts = np.flatnonzero(diffs == 1)
@@ -192,4 +203,90 @@ class AcousticGateDetector:
                     )
                 )
 
-        return regions
+            # Silence regions are where energy is below the dynamic threshold!
+            silence_present = rms_energy < dynamic_energy_thresh
+            padded_silence = np.pad(
+                silence_present.astype(int), (1, 1), mode="constant"
+            )
+            diffs_silence = np.diff(padded_silence)
+            starts_silence = np.flatnonzero(diffs_silence == 1)
+            ends_silence = np.flatnonzero(diffs_silence == -1)
+            for start_idx, end_idx in zip(
+                starts_silence, ends_silence, strict=True
+            ):
+                silence_regions.append(
+                    TimeRange(
+                        start_ms=file_start_ms
+                        + int(start_idx * time_per_frame_ms),
+                        end_ms=file_start_ms + int(end_idx * time_per_frame_ms),
+                    )
+                )
+
+            # Noise regions are where energy is above the dynamic threshold but flatness is above threshold!
+            noise_present = (rms_energy >= dynamic_energy_thresh) & (
+                flatness_arr >= self._noise_flatness_threshold
+            )
+            padded_noise = np.pad(
+                noise_present.astype(int), (1, 1), mode="constant"
+            )
+            diffs_noise = np.diff(padded_noise)
+            starts_noise = np.flatnonzero(diffs_noise == 1)
+            ends_noise = np.flatnonzero(diffs_noise == -1)
+            for start_idx, end_idx in zip(
+                starts_noise, ends_noise, strict=True
+            ):
+                noise_regions.append(
+                    TimeRange(
+                        start_ms=file_start_ms
+                        + int(start_idx * time_per_frame_ms),
+                        end_ms=file_start_ms + int(end_idx * time_per_frame_ms),
+                    )
+                )
+
+            # Broaden noise regions to avoid thin lines
+            if noise_regions:
+                padded_noise_regions: list[TimeRange] = []
+                for n in noise_regions:
+                    padded_noise_regions.append(
+                        TimeRange(
+                            start_ms=max(file_start_ms, n.start_ms - 100),
+                            end_ms=n.end_ms + 100,
+                        )
+                    )
+
+                # Merge overlapping padded noise regions
+                merged_noise: list[TimeRange] = []
+                current_n = padded_noise_regions[0]
+                for next_n in padded_noise_regions[1:]:
+                    if next_n.start_ms <= current_n.end_ms:
+                        current_n = TimeRange(
+                            start_ms=current_n.start_ms,
+                            end_ms=max(current_n.end_ms, next_n.end_ms),
+                        )
+                    else:
+                        merged_noise.append(current_n)
+                        current_n = next_n
+                merged_noise.append(current_n)
+                noise_regions = merged_noise
+
+            # Merge close speech segments
+            if self.min_gap_to_split_ms > 0 and len(regions) > 1:
+                merged_regions: list[TimeRange] = []
+                current_reg = regions[0]
+                for next_reg in regions[1:]:
+                    if (
+                        next_reg.start_ms - current_reg.end_ms
+                        < self.min_gap_to_split_ms
+                    ):
+                        # Merge them!
+                        current_reg = TimeRange(
+                            start_ms=current_reg.start_ms,
+                            end_ms=max(current_reg.end_ms, next_reg.end_ms),
+                        )
+                    else:
+                        merged_regions.append(current_reg)
+                        current_reg = next_reg
+                merged_regions.append(current_reg)
+                regions = merged_regions
+
+        return regions, silence_regions, noise_regions

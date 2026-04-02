@@ -36,6 +36,12 @@ dependencies = [
     "google-cloud-secret-manager>=2.26.0",
     "curl-cffi>=0.9.1",
     "cachetools>=5.5.0",
+    "librosa>=0.11.0",
+    "rvadfast>=0.0.5",
+    "silero-vad>=6.2.1",
+    "onnxruntime==1.23.2",
+    "huggingface-hub>=1.8.0",
+    "sherpa-onnx>=1.12.34",
 ]
 
 [tool.uv]

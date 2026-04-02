@@ -13,3 +13,14 @@ class VadType(enum.StrEnum):
     """Supported Voice Activity Detection models."""
 
     TEN_VAD = "ten_vad"
+<<<<<<< HEAD
+=======
+    SILERO_VAD = "silero_vad"
+
+
+class MetricsExporterType(enum.StrEnum):
+    """Supported telemetry and observability destinations."""
+
+    NONE = "none"
+    GCP = "gcp"
+>>>>>>> fd25e6f (Capture retained changes in tracked files)
