@@ -12,8 +12,8 @@ import pytest
 from google.api_core.exceptions import NotFound
 from pydub import AudioSegment
 
+from backend.pipeline.common.audio import convert_to_flac
 from backend.pipeline.ingestion.collectors.echo.main import (
-    _convert_to_flac,
     _handle,
     _parse_timestamp,
 )
@@ -61,7 +61,7 @@ class TestParseTimestamp:
 
 
 # ---------------------------------------------------------------------------
-# _convert_to_flac
+# convert_to_flac (shared in backend.pipeline.common.audio)
 # ---------------------------------------------------------------------------
 @pytest.mark.skipif(not _ffmpeg_available, reason="ffmpeg not available")
 class TestConvertToFlac:
@@ -78,7 +78,7 @@ class TestConvertToFlac:
 
     def test_converts_to_flac(self) -> None:
         mp3_bytes = self._make_mp3_bytes()
-        flac_bytes = _convert_to_flac(mp3_bytes)
+        flac_bytes = convert_to_flac(mp3_bytes, "mp3")
         audio = AudioSegment.from_file(io.BytesIO(flac_bytes), format="flac")
         assert audio.frame_rate == 16000
         assert audio.channels == 1
@@ -86,13 +86,13 @@ class TestConvertToFlac:
 
     def test_upsamples_from_8khz(self) -> None:
         mp3_bytes = self._make_mp3_bytes(sample_rate=8000)
-        flac_bytes = _convert_to_flac(mp3_bytes)
+        flac_bytes = convert_to_flac(mp3_bytes, "mp3")
         audio = AudioSegment.from_file(io.BytesIO(flac_bytes), format="flac")
         assert audio.frame_rate == 16000
 
     def test_output_is_valid_flac(self) -> None:
         mp3_bytes = self._make_mp3_bytes()
-        flac_bytes = _convert_to_flac(mp3_bytes)
+        flac_bytes = convert_to_flac(mp3_bytes, "mp3")
         assert len(flac_bytes) > 0
         assert flac_bytes[:4] == b"fLaC"
 
@@ -126,7 +126,7 @@ class TestHandle:
                 "backend.pipeline.ingestion.collectors.echo.main.pubsub_client"
             ) as mock_pubsub,
             patch(
-                "backend.pipeline.ingestion.collectors.echo.main._convert_to_flac",
+                "backend.pipeline.ingestion.collectors.echo.main.convert_to_flac",
                 return_value=_FAKE_FLAC,
             ),
         ):
@@ -330,7 +330,7 @@ class TestHandle:
         )
 
         with patch(
-            "backend.pipeline.ingestion.collectors.echo.main._convert_to_flac",
+            "backend.pipeline.ingestion.collectors.echo.main.convert_to_flac",
             side_effect=Exception("ffmpeg decode error"),
         ):
             _handle(self._make_event())

@@ -8,7 +8,6 @@ downstream transcription.
 
 from __future__ import annotations
 
-import io
 import logging
 import os
 import uuid
@@ -19,13 +18,9 @@ from typing import TYPE_CHECKING
 import functions_framework
 from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
-from pydub import AudioSegment
 
+from backend.pipeline.common.audio import convert_to_flac
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
-from backend.pipeline.common.constants import (
-    NUM_AUDIO_CHANNELS,
-    SAMPLE_RATE_HZ,
-)
 from backend.pipeline.common.gcp_helper import publish_audio_chunk_sync
 from backend.pipeline.storage.connection import connect_db
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
@@ -40,9 +35,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 CANONICAL_BUCKET = os.environ.get("CANONICAL_BUCKET", "")
 RAW_AUDIO_TOPIC = os.environ.get("RAW_AUDIO_TOPIC", "")
-
-# 16-bit PCM sample width (no shared constant; matches BYTES_PER_SECOND formula)
-TARGET_SAMPLE_WIDTH = 2
 
 # ---------------------------------------------------------------------------
 # Global state (persisted across warm invocations)
@@ -138,7 +130,7 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
 
         # Convert MP3 → FLAC. Corrupt audio is a per-file issue — skip it.
         try:
-            flac_bytes = _convert_to_flac(mp3_bytes)
+            flac_bytes = convert_to_flac(mp3_bytes, "mp3")
         except Exception:
             logger.warning(
                 "Failed to decode audio, skipping corrupt file: %s", name
@@ -190,17 +182,6 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _convert_to_flac(mp3_bytes: bytes) -> bytes:
-    """Convert MP3 to FLAC (16kHz, 16-bit, mono)."""
-    audio = AudioSegment.from_mp3(io.BytesIO(mp3_bytes))
-    audio = audio.set_frame_rate(SAMPLE_RATE_HZ)
-    audio = audio.set_channels(NUM_AUDIO_CHANNELS)
-    audio = audio.set_sample_width(TARGET_SAMPLE_WIDTH)
-    buf = io.BytesIO()
-    audio.export(buf, format="flac")
-    return buf.getvalue()
-
-
 def _parse_timestamp(name: str) -> datetime:
     """Extract UTC timestamp from an Echo recording filename.
 
