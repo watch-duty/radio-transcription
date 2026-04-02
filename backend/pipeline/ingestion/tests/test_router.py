@@ -10,6 +10,7 @@ from backend.pipeline.ingestion.router import (
     _COLLECTOR_REGISTRY,
     CollectorEntry,
     route_capturer,
+    supported_source_types,
 )
 from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 
@@ -77,6 +78,21 @@ class TestRouteCapturerUnsupported(unittest.TestCase):
                 route_capturer(feed, shutdown_event)
 
         self.assertIn(unregistered, str(ctx.exception))
+
+
+class TestSupportedSourceTypes(unittest.TestCase):
+    """Tests for the supported_source_types() helper."""
+
+    def test_returns_registered_source_type_slugs(self) -> None:
+        """Returns the string slugs of all registered source types."""
+        result = supported_source_types()
+        expected = [st.value for st in _COLLECTOR_REGISTRY]
+        self.assertEqual(result, expected)
+
+    def test_excludes_unregistered_types(self) -> None:
+        """Source types not in the registry are not returned."""
+        result = supported_source_types()
+        self.assertNotIn(SourceType.ECHO.value, result)
 
 
 class TestCollectorRegistryIntegrity(unittest.TestCase):
