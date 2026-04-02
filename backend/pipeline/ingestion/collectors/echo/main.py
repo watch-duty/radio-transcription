@@ -23,8 +23,8 @@ from pydub import AudioSegment
 
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.constants import (
-    AUDIO_SAMPLE_RATE,
     NUM_AUDIO_CHANNELS,
+    SAMPLE_RATE_HZ,
 )
 from backend.pipeline.common.gcp_helper import publish_audio_chunk_sync
 from backend.pipeline.storage.connection import connect_db
@@ -193,7 +193,7 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
 def _convert_to_flac(mp3_bytes: bytes) -> bytes:
     """Convert MP3 to FLAC (16kHz, 16-bit, mono)."""
     audio = AudioSegment.from_mp3(io.BytesIO(mp3_bytes))
-    audio = audio.set_frame_rate(AUDIO_SAMPLE_RATE)
+    audio = audio.set_frame_rate(SAMPLE_RATE_HZ)
     audio = audio.set_channels(NUM_AUDIO_CHANNELS)
     audio = audio.set_sample_width(TARGET_SAMPLE_WIDTH)
     buf = io.BytesIO()
