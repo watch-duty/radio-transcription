@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import enum
 import logging
 from typing import TYPE_CHECKING, TypedDict
 
@@ -9,6 +10,25 @@ if TYPE_CHECKING:
     import asyncpg
 
 logger = logging.getLogger(__name__)
+
+
+class SourceType(enum.StrEnum):
+    """Supported audio source types.
+
+    Each value corresponds to a slug in the ``source_types`` database table.
+
+    .. important::
+        This enum **must** be kept in sync with the following SQL files:
+
+        - ``terraform/modules/alloydb/sql/ingestion/002_source_types.sql``
+        - ``terraform/modules/alloydb/sql/ingestion/006_seed_source_types.sql``
+
+        When adding or renaming a source type, update both this enum and the
+        SQL files together.
+    """
+
+    BCFY_FEEDS = "bcfy_feeds"
+    BCFY_CALLS = "bcfy_calls"
 
 
 _LEASE_FEED_SQL = """\
@@ -154,7 +174,7 @@ class LeasedFeed(TypedDict):
 
     id: uuid.UUID
     name: str
-    source_type: str
+    source_type: SourceType
     last_processed_filename: str | None
     fencing_token: int
     source_feed_id: str | None
@@ -207,10 +227,16 @@ class FeedStore:
         if row is None:
             return None
 
+        try:
+            source_type = SourceType(row["source_type"])
+        except ValueError as e:
+            msg = f"Unknown source type {row['source_type']!r} for feed {row['id']}"
+            raise ValueError(msg) from e
+
         return LeasedFeed(
             id=row["id"],
             name=row["name"],
-            source_type=row["source_type"],
+            source_type=source_type,
             last_processed_filename=row["last_processed_filename"],
             fencing_token=row["fencing_token"],
             source_feed_id=row["source_feed_id"],
@@ -435,14 +461,22 @@ class FeedStore:
             datetime.timedelta(seconds=abandonment_window_sec),
             limit,
         )
-        return [
-            LeasedFeed(
-                id=row["id"],
-                name=row["name"],
-                source_type=row["source_type"],
-                last_processed_filename=row["last_processed_filename"],
-                fencing_token=row["fencing_token"],
-                source_feed_id=row["source_feed_id"],
+
+        leased_feeds = []
+        for row in rows:
+            try:
+                source_type = SourceType(row["source_type"])
+            except ValueError as e:
+                msg = f"Unknown source type {row['source_type']!r} for feed {row['id']}"
+                raise ValueError(msg) from e
+            leased_feeds.append(
+                LeasedFeed(
+                    id=row["id"],
+                    name=row["name"],
+                    source_type=source_type,
+                    last_processed_filename=row["last_processed_filename"],
+                    fencing_token=row["fencing_token"],
+                    source_feed_id=row["source_feed_id"],
+                )
             )
-            for row in rows
-        ]
+        return leased_feeds

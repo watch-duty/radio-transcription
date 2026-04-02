@@ -8,7 +8,7 @@ if TYPE_CHECKING:
 
 import pytest
 
-from backend.pipeline.storage.feed_store import FeedStore
+from backend.pipeline.storage.feed_store import FeedStore, SourceType
 
 
 @pytest.fixture
@@ -95,8 +95,23 @@ async def test_lease_returns_feed_with_feed_properties(
 
     assert result is not None
     assert result["name"] == "Icecast Feed"
-    assert result["source_type"] == "bcfy_feeds"
+    assert result["source_type"] == SourceType.BCFY_FEEDS
     assert result["source_feed_id"] == "123"
+    assert result["fencing_token"] == 1
+
+
+async def test_lease_returns_feed_without_icecast_properties(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """Non-icecast feed has stream_url=None."""
+    worker = uuid.uuid4()
+    await _insert_feed(db_pool, "API Feed", source_type="bcfy_calls")
+
+    result = await store.lease_feed(worker)
+
+    assert result is not None
+    assert result["name"] == "API Feed"
+    assert result["stream_url"] is None
     assert result["fencing_token"] == 1
 
 

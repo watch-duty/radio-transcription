@@ -60,7 +60,9 @@ class TestEvaluationService(unittest.TestCase):
 
         self.service.handle_event(self.mock_event)
 
-        self.mock_evaluator.evaluate.assert_called_with("There is a fire")
+        self.mock_evaluator.evaluate.assert_called_with(
+            "There is a fire", "1234"
+        )
         self.assertTrue(self.mock_publisher.publish.called)
         args, _ = self.mock_publisher.publish.call_args
         sent_proto_bytes = args[1]
@@ -117,6 +119,24 @@ class TestEvaluationService(unittest.TestCase):
         self.assertEqual(
             service_with_full_path.output_topic_path, full_topic_path
         )
+
+    def test_publish_on_proto_error(self) -> None:
+        """Ensures publication proceeds if evaluating returns a proto error."""
+        self.mock_evaluator.evaluate.return_value = {
+            "is_flagged": False,
+            "triggered_rules": [],
+            "errors": [
+                evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_FEED_ID_MISSING
+            ],
+        }
+
+        mock_future = MagicMock()
+        mock_future.result.return_value = "msg_id_999"
+        self.mock_publisher.publish.return_value = mock_future
+
+        self.service.handle_event(self.mock_event)
+
+        self.assertTrue(self.mock_publisher.publish.called)
 
 
 if __name__ == "__main__":

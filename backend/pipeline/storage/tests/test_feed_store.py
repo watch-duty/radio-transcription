@@ -9,6 +9,7 @@ from backend.pipeline.storage.feed_store import (
     FeedStore,
     HeartbeatResult,
     LeasedFeed,
+    SourceType,
 )
 
 _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
@@ -52,7 +53,7 @@ class TestLeaseFeed(unittest.IsolatedAsyncioTestCase):
         expected: LeasedFeed = {
             "id": _FEED_ID,
             "name": "My Feed",
-            "source_type": "bcfy_feeds",
+            "source_type": SourceType.BCFY_FEEDS,
             "last_processed_filename": None,
             "fencing_token": 1,
             "source_feed_id": "123",
@@ -77,6 +78,21 @@ class TestLeaseFeed(unittest.IsolatedAsyncioTestCase):
 
         args = pool.fetchrow.call_args
         self.assertEqual(args[0][1], _WORKER_ID)
+
+    async def test_raises_value_error_on_unknown_source_type(self) -> None:
+        """ValueError is raised with details if the DB returns an unknown source type slug."""
+        bad_row = _LEASE_ROW.copy()
+        bad_row["source_type"] = "unknown_slug"
+        pool = _make_pool(fetchrow_result=bad_row)
+        store = FeedStore(pool)
+
+        with self.assertRaises(ValueError) as ctx:
+            await store.lease_feed(_WORKER_ID)
+
+        self.assertIn(
+            f"Unknown source type 'unknown_slug' for feed {_FEED_ID}",
+            str(ctx.exception),
+        )
 
 
 class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
@@ -369,6 +385,27 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[1], _WORKER_ID)
         self.assertEqual(args[2], datetime.timedelta(seconds=60.0))
         self.assertEqual(args[3], 5)
+
+    async def test_raises_value_error_on_unknown_source_type(self) -> None:
+        """ValueError is raised with details if the DB returns an unknown source type slug."""
+        bad_row = {
+            "id": _FEED_ID,
+            "name": "Bad Feed",
+            "source_type": "invalid_type",
+            "last_processed_filename": None,
+            "fencing_token": 1,
+            "stream_url": None,
+        }
+        pool = _make_pool(fetch_result=[bad_row])
+        store = FeedStore(pool)
+
+        with self.assertRaises(ValueError) as ctx:
+            await store.acquire_feeds_batch(_WORKER_ID, 60.0, limit=1)
+
+        self.assertIn(
+            f"Unknown source type 'invalid_type' for feed {_FEED_ID}",
+            str(ctx.exception),
+        )
 
 
 class TestReportFeedFailureWithThreshold(unittest.IsolatedAsyncioTestCase):

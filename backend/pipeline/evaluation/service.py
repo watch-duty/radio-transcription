@@ -75,7 +75,7 @@ class EvaluationService:
 
             # 2. Call the evaluator
             evaluation_result = self.text_evaluator.evaluate(
-                new_audio.transcript
+                new_audio.transcript, new_audio.feed_id
             )
 
             logger.info(
@@ -84,10 +84,13 @@ class EvaluationService:
                 evaluation_result.get("is_flagged"),
             )
 
-            # 3. If not flagged, skip publishing
-            if not evaluation_result.get("is_flagged"):
+            # 3. Handle Errors
+            errors = evaluation_result.get("errors", [])
+            is_flagged = evaluation_result.get("is_flagged", False)
+
+            if not errors and not is_flagged:
                 logger.info(
-                    "No rules triggered for ID: %s. Skipping publish.",
+                    "No rules triggered and no errors for ID: %s. Skipping publish.",
                     transmission_id,
                 )
                 return
@@ -97,13 +100,15 @@ class EvaluationService:
                 feed_id=new_audio.feed_id,
                 transmission_id=new_audio.transmission_id,
                 source_audio_uris=new_audio.source_audio_uris,
-                canonical_audio_uri=new_audio.canonical_audio_uri,
                 transcript=new_audio.transcript,
                 missing_prior_context=new_audio.missing_prior_context,
                 missing_post_context=new_audio.missing_post_context,
                 evaluation_decisions=evaluation_result.get(
                     "triggered_rules", []
                 ),
+                evaluation_errors=errors,
+                canonical_audio_uri=new_audio.canonical_audio_uri,
+                playback_audio_uri=new_audio.playback_audio_uri,
             )
             evaluated_payload.start_timestamp.CopyFrom(
                 new_audio.start_timestamp
