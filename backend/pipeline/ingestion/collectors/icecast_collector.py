@@ -53,7 +53,7 @@ def _segment_path(directory: Path, index: int) -> Path:
     return directory / f"chunk_{index:06d}.{AUDIO_FORMAT}"
 
 
-async def capture_icecast_stream(
+async def capture_icecast_stream(  # noqa: PLR0915
     feed: LeasedFeed, shutdown_event: asyncio.Event, url_base: str
 ) -> AsyncIterator[tuple[bytes, datetime.datetime]]:
     """
