@@ -225,7 +225,7 @@ class FeedStore:
 
         Finds the highest-priority available feed (unclaimed or failing with a
         stale heartbeat), assigns it to the given worker, and returns the feed
-        details including any Icecast-specific properties.
+        details including source-specific properties from ``feed_properties``.
 
         Args:
             worker_id: UUID of the worker requesting the lease.
