@@ -24,8 +24,9 @@ if TYPE_CHECKING:
 _RESOLVE_ECHO_FEED_SQL = """\
 SELECT f.id, f.status, f.failure_count
 FROM feeds f
-JOIN feed_properties_echo fpe ON fpe.feed_id = f.id
-WHERE fpe.channel_name = %s
+JOIN feed_properties fp ON fp.feed_id = f.id
+WHERE fp.source_feed_id = %s
+AND fp.source_type = 'echo'
 """
 
 _HEARTBEAT_SQL = """\

@@ -49,7 +49,8 @@ class TestResolveEchoFeed:
         assert result == feed_row
         conn.execute.assert_called_once()
         sql = conn.execute.call_args[0][0]
-        assert "feed_properties_echo" in sql
+        assert "feed_properties" in sql
+        assert "source_type" in sql
         assert conn.execute.call_args[0][1] == ("fire-ca",)
 
     def test_returns_none_for_unknown_channel(self) -> None:
