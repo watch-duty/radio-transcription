@@ -1,8 +1,4 @@
-import base64
 import logging
-
-from cloudevents.http import event as cloudevent
-from google.cloud import pubsub_v1
 
 from backend.pipeline.evaluation.rules_evaluation import evaluator
 from backend.pipeline.schema_types import (
@@ -20,49 +16,34 @@ class EvaluationService:
     Business logic for evaluating transcribed audio segments against rules.
 
     Attributes:
-        publisher: Google Cloud Pub/Sub publisher client.
-        project_id: The GCP project ID.
-        output_topic_id: ID of the topic to publish results to.
-        output_topic_path: Full path to the output topic.
         text_evaluator: The evaluator instance used to check transcripts.
     """
 
     def __init__(
         self,
-        publisher: pubsub_v1.PublisherClient,
-        output_topic_path: str | None,
         text_evaluator: evaluator.BaseTextEvaluator,
     ) -> None:
         """
         Initializes the EvaluationService.
 
         Args:
-            publisher: Instance of pubsub_v1.PublisherClient.
-            output_topic_path: Full path to the output topic.
             text_evaluator: An instance of a text evaluator.
         """
-        self.publisher = publisher
-        self.output_topic_path = output_topic_path
         self.text_evaluator = text_evaluator
-        if not output_topic_path:
-            logger.warning("output_topic_path not provided.")
 
-    def handle_event(self, cloud_event: cloudevent.CloudEvent) -> None:
+    def evaluate(
+        self, new_audio: transcribed_pb2.TranscribedAudio
+    ) -> evaluated_pb2.EvaluatedTranscribedAudio | None:
         """
-        Coordinates parsing, evaluation, and publishing of the result.
+        Evaluates the transcript.
 
         Args:
-            cloud_event: The CloudEvent triggered by Pub/Sub.
+            new_audio: The transcribed audio object.
+
+        Returns:
+            The evaluated payload or None if processing was skipped.
         """
         try:
-            # 1. Decode the Incoming Message
-            new_audio = self._parse_cloud_event(cloud_event)
-            if new_audio is None:
-                logger.warning(
-                    "Transcribed audio could not be parsed. Skipping."
-                )
-                return
-
             transmission_id = new_audio.transmission_id
             logger.info("Processing transmission ID: %s", transmission_id)
 
@@ -71,7 +52,7 @@ class EvaluationService:
                     "No transcript for ID: %s. Skipping evaluation.",
                     transmission_id,
                 )
-                return
+                return None
 
             # 2. Call the evaluator
             evaluation_result = self.text_evaluator.evaluate(
@@ -86,14 +67,6 @@ class EvaluationService:
 
             # 3. Handle Errors
             errors = evaluation_result.get("errors", [])
-            is_flagged = evaluation_result.get("is_flagged", False)
-
-            if not errors and not is_flagged:
-                logger.info(
-                    "No rules triggered and no errors for ID: %s. Skipping publish.",
-                    transmission_id,
-                )
-                return
 
             # 4. Create Evaluation Result Payload
             evaluated_payload = evaluated_pb2.EvaluatedTranscribedAudio(
@@ -121,57 +94,8 @@ class EvaluationService:
                 new_audio.end_audio_offset
             )
 
-            # 5. Publish to Downstream Topic
-            self._publish_evaluation_result(evaluated_payload)
-
         except Exception:
             logger.exception("Error processing new audio message")
             raise
-
-    def _parse_cloud_event(
-        self, cloud_event: cloudevent.CloudEvent
-    ) -> transcribed_pb2.TranscribedAudio | None:
-        """
-        Parses the CloudEvent into a TranscribedAudio proto.
-
-        Args:
-            cloud_event: The raw CloudEvent data.
-
-        Returns:
-            A TranscribedAudio object or None if parsing fails.
-        """
-        pubsub_message = cloud_event.data.get("message", {})
-        transcribed_audio = transcribed_pb2.TranscribedAudio()
-        raw_data = pubsub_message.get("data", "")
-        if not raw_data:
-            logger.warning("No data provided in CloudEvent")
-            return None
-        decoded_data = base64.b64decode(raw_data)
-        transcribed_audio.ParseFromString(decoded_data)
-        return transcribed_audio
-
-    def _publish_evaluation_result(
-        self, evaluated_payload: evaluated_pb2.EvaluatedTranscribedAudio
-    ) -> None:
-        """
-        Publishes the evaluation result to the configured Pub/Sub topic.
-
-        Args:
-            evaluated_payload: The enriched evaluation payload.
-        """
-        if self.output_topic_path:
-            encoded_data = evaluated_payload.SerializeToString()
-            future = self.publisher.publish(
-                self.output_topic_path,
-                encoded_data,
-                ordering_key=evaluated_payload.feed_id,
-            )
-            message_id = future.result()
-
-            logger.info(
-                "Success! Published enriched message %s to %s",
-                message_id,
-                self.output_topic_path,
-            )
         else:
-            logger.warning("Skipping publish: Output topic not configured.")
+            return evaluated_payload

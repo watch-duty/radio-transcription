@@ -1,4 +1,3 @@
-import base64
 import unittest
 from unittest.mock import MagicMock
 
@@ -16,13 +15,8 @@ class TestEvaluationService(unittest.TestCase):
 
     def setUp(self) -> None:
         """Sets up test fixtures."""
-        self.mock_publisher = MagicMock()
-        self.output_topic_path = "projects/test-project/topics/test-topic"
-
         self.mock_evaluator = MagicMock()
         self.service = service.EvaluationService(
-            publisher=self.mock_publisher,
-            output_topic_path=self.output_topic_path,
             text_evaluator=self.mock_evaluator,
         )
 
@@ -36,92 +30,43 @@ class TestEvaluationService(unittest.TestCase):
         self.transcribed_audio.end_timestamp.seconds = 1234567999
         self.transcribed_audio.end_timestamp.nanos = 0
 
-        self.data_bytes = self.transcribed_audio.SerializeToString()
-        self.b64_encoded_data = base64.b64encode(self.data_bytes).decode(
-            "utf-8"
-        )
-
-        self.mock_event = MagicMock()
-        self.mock_event.data = {
-            "message": {"data": self.b64_encoded_data},
-            "publish_time": "2023-01-01T12:00:00Z",
-        }
-
     def test_successful_flow(self) -> None:
-        """Tests a basic successful evaluation and publication flow."""
+        """Tests a basic successful evaluation flow returning payload."""
         self.mock_evaluator.evaluate.return_value = {
             "is_flagged": True,
             "triggered_rules": ["basic_fire_terms"],
         }
 
-        mock_future = MagicMock()
-        mock_future.result.return_value = "msg_id_999"
-        self.mock_publisher.publish.return_value = mock_future
-
-        self.service.handle_event(self.mock_event)
+        result_proto = self.service.evaluate(self.transcribed_audio)
 
         self.mock_evaluator.evaluate.assert_called_with(
             "There is a fire", "1234"
         )
-        self.assertTrue(self.mock_publisher.publish.called)
-        args, _ = self.mock_publisher.publish.call_args
-        sent_proto_bytes = args[1]
-
-        result_proto = evaluated_pb2.EvaluatedTranscribedAudio()
-        result_proto.ParseFromString(sent_proto_bytes)
-
+        self.assertIsNotNone(result_proto)
+        assert result_proto is not None
         self.assertEqual(result_proto.transmission_id, "12345")
         self.assertEqual(result_proto.transcript, "There is a fire")
         self.assertEqual(
-            result_proto.evaluation_decisions, ["basic_fire_terms"]
+            list(result_proto.evaluation_decisions), ["basic_fire_terms"]
         )
 
-    def test_no_publish_if_not_flagged(self) -> None:
-        """Ensures no publication occurs if the text is not flagged."""
+    def test_return_payload_if_not_flagged(self) -> None:
+        """Ensures payload is returned even if the text is not flagged."""
         self.mock_evaluator.evaluate.return_value = {
             "is_flagged": False,
             "triggered_rules": [],
         }
 
-        self.service.handle_event(self.mock_event)
+        result_proto = self.service.evaluate(self.transcribed_audio)
 
         self.mock_evaluator.evaluate.assert_called()
-        self.mock_publisher.publish.assert_not_called()
+        self.assertIsNotNone(result_proto)
+        assert result_proto is not None
+        self.assertEqual(result_proto.transmission_id, "12345")
+        self.assertEqual(len(result_proto.evaluation_decisions), 0)
 
-    def test_no_publish_if_no_topic(self) -> None:
-        """Ensures no publication occurs if no output topic is configured."""
-        # Create service without topic
-        service_no_topic = service.EvaluationService(
-            publisher=self.mock_publisher,
-            output_topic_path=None,
-            text_evaluator=self.mock_evaluator,
-        )
-
-        self.mock_evaluator.evaluate.return_value = {
-            "is_flagged": True,
-            "triggered_rules": ["basic_fire_terms"],
-        }
-
-        service_no_topic.handle_event(self.mock_event)
-
-        self.mock_evaluator.evaluate.assert_called()
-        self.mock_publisher.publish.assert_not_called()
-
-    def test_full_topic_path(self) -> None:
-        """Ensures that full topic paths are not double-prefixed."""
-        full_topic_path = "projects/my-project/topics/my-topic"
-        service_with_full_path = service.EvaluationService(
-            publisher=self.mock_publisher,
-            output_topic_path=full_topic_path,
-            text_evaluator=self.mock_evaluator,
-        )
-
-        self.assertEqual(
-            service_with_full_path.output_topic_path, full_topic_path
-        )
-
-    def test_publish_on_proto_error(self) -> None:
-        """Ensures publication proceeds if evaluating returns a proto error."""
+    def test_return_payload_on_proto_error(self) -> None:
+        """Ensures payload is returned if evaluating returns a proto error."""
         self.mock_evaluator.evaluate.return_value = {
             "is_flagged": False,
             "triggered_rules": [],
@@ -130,13 +75,16 @@ class TestEvaluationService(unittest.TestCase):
             ],
         }
 
-        mock_future = MagicMock()
-        mock_future.result.return_value = "msg_id_999"
-        self.mock_publisher.publish.return_value = mock_future
+        result_proto = self.service.evaluate(self.transcribed_audio)
 
-        self.service.handle_event(self.mock_event)
-
-        self.assertTrue(self.mock_publisher.publish.called)
+        self.assertIsNotNone(result_proto)
+        assert result_proto is not None
+        self.assertEqual(
+            list(result_proto.evaluation_errors),
+            [
+                evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_FEED_ID_MISSING
+            ],
+        )
 
 
 if __name__ == "__main__":
