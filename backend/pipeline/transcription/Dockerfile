@@ -29,7 +29,11 @@ ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app"
 ENV FLEX_TEMPLATE_PYTHON_PY_FILE="/app/backend/pipeline/transcription/main.py"
 
-RUN uv sync --frozen --no-dev && uv pip install grpcio-tools
+RUN uv sync --frozen --no-dev && uv pip install grpcio-tools && \
+    # Register /app in site-packages so 'backend' is importable regardless of
+    # PYTHONPATH — Beam's SDK harness spawns worker processes that do not
+    # reliably inherit ENV-set PYTHONPATH, but .pth files are always loaded.
+    echo "/app" > /app/.venv/lib/python3.13/site-packages/backend_workspace.pth
 
 COPY protos/ ./protos
 
