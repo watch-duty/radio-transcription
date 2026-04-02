@@ -1,14 +1,22 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any, cast
 
 import asyncpg
 import psycopg
 from psycopg.rows import dict_row
+from tenacity import (
+    RetryCallState,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from .settings import AlloyDBSettings
+
+_logger = logging.getLogger(__name__)
 
 
 async def create_pool(
@@ -143,43 +151,34 @@ async def create_pool_from_settings(
     )
 
 
-_logger = logging.getLogger(__name__)
+def _log_retry(retry_state: RetryCallState) -> None:
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    _logger.warning(
+        "AlloyDB connection attempt %d failed (%s). Retrying...",
+        retry_state.attempt_number,
+        exc,
+    )
 
 
+@retry(
+    retry=retry_if_exception_type((TimeoutError, ConnectionError, OSError)),
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=1, min=2, max=30),
+    before_sleep=_log_retry,
+    reraise=True,
+)
 async def create_pool_with_retry(
     settings: AlloyDBSettings | None = None,
-    max_attempts: int = 5,
-    base_delay: float = 2.0,
 ) -> asyncpg.Pool:
     """
     Create an asyncpg connection pool with exponential backoff retry.
 
-    Retries on transient connection failures, which can occur during Cloud Run
-    cold starts when multiple services spin up simultaneously and briefly
-    saturate the AlloyDB managed connection pooler.
+    Retries on transient connection failures (up to 5 attempts, starting at 2s
+    and doubling up to 30s). Intended for Cloud Run cold starts where multiple
+    services spinning up simultaneously can briefly saturate the AlloyDB
+    managed connection pooler.
 
     Args:
         settings: AlloyDB connection settings. Defaults to env vars.
-        max_attempts: Maximum number of connection attempts.
-        base_delay: Initial retry delay in seconds (doubles each attempt).
     """
-    last_exc: Exception | None = None
-    for attempt in range(1, max_attempts + 1):
-        try:
-            return await create_pool_from_settings(settings)
-        except (TimeoutError, ConnectionError, OSError) as exc:
-            last_exc = exc
-            if attempt == max_attempts:
-                break
-            delay = base_delay * (2 ** (attempt - 1))
-            _logger.warning(
-                "AlloyDB connection attempt %d/%d failed (%s). Retrying in %.1fs.",
-                attempt,
-                max_attempts,
-                exc,
-                delay,
-            )
-            await asyncio.sleep(delay)
-    raise RuntimeError(
-        f"Failed to connect to AlloyDB after {max_attempts} attempts."
-    ) from last_exc
+    return await create_pool_from_settings(settings)
