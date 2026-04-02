@@ -21,7 +21,7 @@ def _make_feed(source_type: SourceType) -> LeasedFeed:
         source_type=typing.cast("SourceType", source_type),
         last_processed_filename=None,
         fencing_token=0,
-        stream_url="http://example.com/stream",
+        source_feed_id="123",
     )
 
 
