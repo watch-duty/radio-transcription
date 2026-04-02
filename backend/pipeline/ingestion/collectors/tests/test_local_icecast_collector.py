@@ -47,7 +47,7 @@ class TestLocalIcecastCollector(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Writes captured bytes to disk and calls capture_icecast_stream once."""
 
-        async def _fake_capture(_feed: dict[str, Any], _shutdown_event: Any):
+        async def _fake_capture(_feed: dict[str, Any], _shutdown_event: Any, _url_base: str):
             yield b"first-bytes", datetime.datetime.now()
             yield b"second-bytes", datetime.datetime.now()
 
@@ -109,7 +109,7 @@ class TestLocalIcecastCollector(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Falls back to current working directory when output dir env var is unset."""
 
-        async def _fake_capture(_feed: dict[str, Any], _shutdown_event: Any):
+        async def _fake_capture(_feed: dict[str, Any], _shutdown_event: Any, _url_base: str):
             yield b"cwd-bytes", datetime.datetime.now()
 
         with tempfile.TemporaryDirectory() as tmp_dir:
