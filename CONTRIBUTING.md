@@ -34,7 +34,13 @@ Note that currently the following are missing from the E2E setup:
 Locally run the full pipeline from E2E
 ```bash
 docker-compose down -v && docker-compose up --build -d &&
-docker-compose logs -f rules-evaluation notification mock-server integration-test
+docker-compose logs -f \
+  transcripts-api\
+  rules-evaluation\
+  rules-management\
+  notification\
+  mock-server\
+  integration-tests
 ```
 
 Send a test payload to the Transcription PubSub (ingested by the Rules Evaluation service) to test the path from the Rules Evaluation service to the Notification service.

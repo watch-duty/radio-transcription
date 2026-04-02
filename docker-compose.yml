@@ -43,11 +43,19 @@ services:
     volumes:
       - ./local_dev/run_evaluation_publish.py:/app/run_evaluation_publish.py
     command: ["functions-framework", "--source=backend/pipeline/evaluation/main.py", "--target=evaluate_transcribed_audio_segment", "--signature-type=cloudevent", "--port=8080"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8080))"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     networks:
       - pipeline-network
     depends_on:
       - pubsub-emulator
       - rules-management
+      - postgres
+      # This dependency is for the rules evaluation to create transcripts
+      - transcripts-api 
 
   postgres:
     image: postgres:15-alpine
@@ -76,6 +84,31 @@ services:
     env_file:
       - ./local_dev/LOCAL.env
     command: ["uvicorn", "backend.pipeline.rules.main:app", "--host", "0.0.0.0", "--port", "8086"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8086))"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - pipeline-network
+
+  transcripts-api:
+    build:
+      context: .
+      dockerfile: backend/services/transcripts/Dockerfile
+    ports:
+      - "8087:8087"
+    env_file:
+      - ./local_dev/LOCAL.env
+    command: ["uvicorn", "backend.services.transcripts.main:app", "--host", "0.0.0.0", "--port", "8087"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8087))"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     depends_on:
       postgres:
         condition: service_healthy
@@ -93,6 +126,11 @@ services:
     environment:
       - REDIS_HOST=redis
     command: ["functions-framework", "--source=backend/pipeline/notification/send_notification.py", "--target=send_notification", "--signature-type=cloudevent", "--port=8081"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8081))"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     networks:
       - pipeline-network
     depends_on:
@@ -113,13 +151,24 @@ services:
   integration-tests:
     image: python:3.13-slim
     depends_on:
-      - pubsub-emulator
-      - rules-management
-      - rules-evaluation
-      - notification
-      - redis
-      - mock-server
-      - pubsub-init
+      postgres:
+        condition: service_healthy
+      transcripts-api:
+        condition: service_healthy
+      rules-management:
+        condition: service_healthy
+      rules-evaluation:
+        condition: service_healthy
+      notification:
+        condition: service_healthy
+      pubsub-emulator:
+        condition: service_started
+      redis:
+        condition: service_started
+      mock-server:
+        condition: service_started
+      pubsub-init:
+        condition: service_started
     env_file:
       - ./local_dev/LOCAL.env
     environment:
