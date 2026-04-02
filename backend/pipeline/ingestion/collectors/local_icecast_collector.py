@@ -51,8 +51,8 @@ async def run_local_capture() -> None:
     shutdown_event = asyncio.Event()
 
     chunk_count = 0
-    async for audio_data, _ts in capture_icecast_stream(
-        feed, shutdown_event, url_base="https://partner.broadcastify.com/"
+    async for audio_data, start_ts in capture_icecast_stream(
+        feed, shutdown_event, "https://partner.broadcastify.com/"
     ):
         chunk_count += 1
         timestamp = datetime.now(UTC).isoformat(timespec="milliseconds")
@@ -61,10 +61,11 @@ async def run_local_capture() -> None:
         file_path = output_dir / file_name
         await asyncio.to_thread(file_path.write_bytes, audio_data)
         logger.info(
-            "Local capture chunk %d received (%d bytes) at %s -> %s",
+            "Local capture chunk %d received (%d bytes) at %s (start: %s) -> %s",
             chunk_count,
             len(audio_data),
             timestamp,
+            start_ts.isoformat(timespec="milliseconds"),
             file_path,
         )
 
