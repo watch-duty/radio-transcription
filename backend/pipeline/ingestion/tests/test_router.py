@@ -38,6 +38,7 @@ class TestRouteCapturerRegistered(unittest.TestCase):
         for source_type, (
             module_path,
             func_name,
+            url_base,
         ) in _COLLECTOR_REGISTRY.items():
             with self.subTest(source_type=source_type):
                 mock_import.reset_mock()
@@ -53,7 +54,7 @@ class TestRouteCapturerRegistered(unittest.TestCase):
                 result = route_capturer(feed, shutdown_event)
 
                 mock_import.assert_called_once_with(module_path)
-                mock_fn.assert_called_once_with(feed, shutdown_event)
+                mock_fn.assert_called_once_with(feed, shutdown_event, url_base=url_base)
                 self.assertIs(result, sentinel)
 
 
@@ -82,18 +83,20 @@ class TestCollectorRegistryIntegrity(unittest.TestCase):
         self.assertTrue(_COLLECTOR_REGISTRY)
 
     def test_all_entries_have_valid_shape(self) -> None:
-        """Each value is a (module_path, func_name) 2-tuple of
+        """Each value is a (module_path, func_name, url_base) 3-tuple of
         non-empty strings.
         """
         for source_type, entry in _COLLECTOR_REGISTRY.items():
             with self.subTest(source_type=source_type):
                 self.assertIsInstance(entry, tuple)
-                self.assertEqual(len(entry), 2)
-                module_path, func_name = entry
+                self.assertEqual(len(entry), 3)
+                module_path, func_name, url_base = entry
                 self.assertIsInstance(module_path, str)
                 self.assertIsInstance(func_name, str)
+                self.assertIsInstance(url_base, str)
                 self.assertTrue(module_path)
                 self.assertTrue(func_name)
+                self.assertTrue(url_base)
 
 
 if __name__ == "__main__":
