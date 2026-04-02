@@ -84,7 +84,9 @@ async def capture_icecast_stream(
     if not source_feed_id:
         msg = f"Feed {feed_id} ({feed_name}) missing source_feed_id in feed_properties"
         raise ValueError(msg)
-    url = urljoin(url_base, f"{source_feed_id.strip()}.mp3")
+
+    normalized_url_base = url_base if url_base.endswith("/") else f"{url_base}/"
+    url = urljoin(normalized_url_base, f"{source_feed_id.strip()}.mp3")
 
     with tempfile.TemporaryDirectory(prefix="icecast_segments_") as tmp_dir:
         segment_dir = Path(tmp_dir)
