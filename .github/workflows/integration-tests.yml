@@ -17,8 +17,3 @@ jobs:
 
       - name: Run integration tests
         run: docker compose run --rm integration-tests
-
-      # for testing only
-      - name: Print transcripts-api logs on failure
-        if: failure()
-        run: docker compose logs transcripts-api
