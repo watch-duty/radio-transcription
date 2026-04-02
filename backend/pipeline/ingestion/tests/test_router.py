@@ -7,8 +7,8 @@ import uuid
 from unittest import mock
 
 from backend.pipeline.ingestion.router import (
-    CollectorEntry,
     _COLLECTOR_REGISTRY,
+    CollectorEntry,
     route_capturer,
 )
 from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
