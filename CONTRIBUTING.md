@@ -143,3 +143,10 @@ uv run pre-commit run --all-files
 
 ### Deployments and Local Testing
 * Docker
+
+### Debugging
+
+## Github Workflows
+If there is a workflow that is failing, and for the life of you, you cannot figure out why, you can open an SSH session into the workflow. Rerun the job by triggering a manual workflow.
+![Manual workflow trigger instructions](manual_workflow_trigger.png)
+Note that this is only available on workflows that have it configured. If you want to configure it for a new workflow, you'll need open a new PR and merge the configuration into main before the option is available for you.
