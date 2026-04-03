@@ -132,7 +132,13 @@ def _authenticate() -> dict[str, Any]:
         response = http_client.post(AUTH_URL, headers=headers, data=data)
 
     if response.status_code != 200:
-        msg = f"Authentication failed: {response.status_code} - {response.text}"
+        request_id = (
+            response.headers.get("X-Request-ID")
+            or response.headers.get("X-Correlation-ID")
+        )
+        msg = f"Authentication failed with status {response.status_code}"
+        if request_id:
+            msg = f"{msg} (request_id={request_id})"
         raise RuntimeError(msg)
 
     try:
@@ -163,7 +169,15 @@ def broadcastify_credential_rotation(request: flask.Request) -> tuple[str, int]:
     uid = auth_data.get("uid")
     token = auth_data.get("token")
     if not uid or not token:
-        msg = f"Authentication response missing expected fields: {auth_data}"
+        missing_fields = []
+        if not uid:
+            missing_fields.append("uid")
+        if not token:
+            missing_fields.append("token")
+        msg = (
+            "Authentication response missing expected fields: "
+            f"{', '.join(missing_fields)}"
+        )
         raise RuntimeError(msg)
 
     auth_jwt_token = _generate_jwt({"sub": uid, "utk": token})
