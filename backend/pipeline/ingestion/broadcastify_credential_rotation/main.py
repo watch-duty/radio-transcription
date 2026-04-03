@@ -2,6 +2,8 @@ import logging
 import os
 import time
 
+import flask
+import functions_framework
 import httpx
 import jwt
 from google.cloud import secretmanager
@@ -19,7 +21,8 @@ BROADCASTIFY_PASSWORD = os.environ.get("BROADCASTIFY_PASSWORD")
 BROADCASTIFY_API_KEY = os.environ.get("BROADCASTIFY_API_KEY")
 BROADCASTIFY_API_APP_ID = os.environ.get("BROADCASTIFY_API_APP_ID")
 BROADCASTIFY_API_KEY_ID = os.environ.get("BROADCASTIFY_API_KEY_ID")
-project_id = os.environ["GOOGLE_CLOUD_PROJECT"]
+PROJECT_ID = os.environ["GOOGLE_CLOUD_PROJECT"]
+SECRET_JWT = os.environ.get("BROADCASTIFY_JWT_SECRET_ID")
 
 if not all(
     [
@@ -28,14 +31,13 @@ if not all(
         BROADCASTIFY_API_KEY,
         BROADCASTIFY_API_APP_ID,
         BROADCASTIFY_API_KEY_ID,
+        SECRET_JWT,
     ]
 ):
     logger.exception("All BROADCASTIFY_* environment variables must be set.")
+    msg = "All BROADCASTIFY_* environment variables must be set."
+    raise ValueError(msg)
 
-# 3. Get secret IDs from environment variables or use defaults
-SECRET_JWT = os.environ.get("BROADCASTIFY_JWT_SECRET_ID", "broadcastify-jwt")
-SECRET_UTK = os.environ.get("BROADCASTIFY_UTK_SECRET_ID", "broadcastify-utk")
-SECRET_UID = os.environ.get("BROADCASTIFY_UID_SECRET_ID", "broadcastify-uid")
 
 
 def add_secret_version(secret_id: str, payload: str) -> str:
@@ -51,7 +53,7 @@ def add_secret_version(secret_id: str, payload: str) -> str:
     Returns:
         The created secret version resource name.
     """
-    parent = client.secret_path(project_id, secret_id)
+    parent = client.secret_path(PROJECT_ID, secret_id)
     response = client.add_secret_version(
         request={"parent": parent, "payload": {"data": payload.encode()}}
     )
@@ -70,7 +72,7 @@ def _generate_jwt(auth_claims: dict[str, str] | None = None) -> str:
     """
     if not BROADCASTIFY_API_KEY:
         msg = "BROADCASTIFY_API_KEY environment variable is not set"
-        logger.error(msg)
+        logger.exception(msg)
         raise ValueError(msg)
 
     now = int(time.time())
@@ -87,8 +89,8 @@ def _generate_jwt(auth_claims: dict[str, str] | None = None) -> str:
         payload, BROADCASTIFY_API_KEY, algorithm="HS256", headers=headers
     )
 
-
-def broadcastify_credential_rotation() -> tuple[str, int]:
+@functions_framework.http
+def broadcastify_credential_rotation(request: flask.Request) -> tuple[str, int]:
     """
     Broadcastify credential rotation entry point.
 
@@ -111,23 +113,26 @@ def broadcastify_credential_rotation() -> tuple[str, int]:
         res_data = response.json()
         logger.info("Authentication Successful")
     else:
-        logger.error(f"Authentication Failed: {response.status_code}")
+        logger.exception(f"Authentication Failed: {response.status_code}")
         msg = f"Authentication Failed: {response.status_code} - {response.text}"
         raise RuntimeError(msg)
 
     if not res_data.get("uid") or not res_data.get("token"):
         msg = f"Authentication response missing expected fields: {res_data}"
         logger.exception(msg)
+        raise RuntimeError(msg)
 
     # Get auth JWT
     auth_jwt_token = _generate_jwt(
         {"sub": res_data["uid"], "utk": res_data["token"]}
     )
 
-    # Update JWT, UTK, and UID in Secret Manager
+    # Update JWT in Secret Manager
+    if not SECRET_JWT:
+        msg = "BROADCASTIFY_JWT_SECRET_ID environment variable is not set"
+        logger.exception(msg)
+        raise ValueError(msg)
     add_secret_version(SECRET_JWT, auth_jwt_token)
-    add_secret_version(SECRET_UTK, res_data["token"])
-    add_secret_version(SECRET_UID, res_data["uid"])
 
     # Cloud Functions require a return string or object
     return "Successfully updated broadcastify credentials", 200
