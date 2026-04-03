@@ -36,11 +36,6 @@ try {
     openapi.components.securitySchemes.google_id_token['x-google-auth'] =
       googleAuth;
 
-    // Delete original
-    delete openapi.components.securitySchemes.google_id_token.flows[
-      'x-google-auth'
-    ];
-
     // Write back
     fs.writeFileSync(
       openapiPath,
