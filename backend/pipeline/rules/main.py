@@ -12,7 +12,7 @@ from backend.pipeline.common.auth import verify_oidc_token
 from backend.pipeline.common.rules.models import Rule, RuleCreate, RuleUpdate
 from backend.pipeline.storage.connection import (
     close_pool,
-    create_pool_from_settings,
+    create_pool_with_retry,
 )
 from backend.pipeline.storage.rules_store import RulesStore
 
@@ -22,7 +22,7 @@ from .service import AlloyRulesService, BaseRulesService
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage the lifecycle of the AlloyDB connection pool."""
-    pool = await create_pool_from_settings()
+    pool = await create_pool_with_retry()
     store = RulesStore(pool)
     app.state.rules_service = AlloyRulesService(store)
     yield

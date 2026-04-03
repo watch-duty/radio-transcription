@@ -169,5 +169,91 @@ class TestClosePool(unittest.IsolatedAsyncioTestCase):
         mock_pool.close.assert_awaited_once()
 
 
+class TestCreatePoolWithRetry(unittest.IsolatedAsyncioTestCase):
+    """Tests for create_pool_with_retry."""
+
+    @mock.patch(
+        "backend.pipeline.storage.connection.create_pool_from_settings",
+        new_callable=mock.AsyncMock,
+    )
+    @mock.patch("asyncio.sleep", new_callable=mock.AsyncMock)
+    async def test_succeeds_on_first_attempt(
+        self,
+        mock_sleep: mock.AsyncMock,
+        mock_create: mock.AsyncMock,
+    ) -> None:
+        """No retries when connection succeeds immediately."""
+        mock_pool = mock.AsyncMock()
+        mock_create.return_value = mock_pool
+
+        result = await connection.create_pool_with_retry()
+
+        mock_create.assert_awaited_once()
+        mock_sleep.assert_not_awaited()
+        self.assertEqual(result, mock_pool)
+
+    @mock.patch(
+        "backend.pipeline.storage.connection.create_pool_from_settings",
+        new_callable=mock.AsyncMock,
+    )
+    @mock.patch("asyncio.sleep", new_callable=mock.AsyncMock)
+    async def test_retries_and_succeeds(
+        self,
+        mock_sleep: mock.AsyncMock,
+        mock_create: mock.AsyncMock,
+    ) -> None:
+        """Succeeds after two transient TimeoutErrors."""
+        mock_pool = mock.AsyncMock()
+        mock_create.side_effect = [
+            TimeoutError("timeout"),
+            TimeoutError("timeout"),
+            mock_pool,
+        ]
+
+        result = await connection.create_pool_with_retry()
+
+        self.assertEqual(mock_create.await_count, 3)
+        self.assertEqual(mock_sleep.await_count, 2)
+        self.assertEqual(result, mock_pool)
+
+    @mock.patch(
+        "backend.pipeline.storage.connection.create_pool_from_settings",
+        new_callable=mock.AsyncMock,
+    )
+    @mock.patch("asyncio.sleep", new_callable=mock.AsyncMock)
+    async def test_reraises_after_max_attempts(
+        self,
+        mock_sleep: mock.AsyncMock,
+        mock_create: mock.AsyncMock,
+    ) -> None:
+        """Re-raises the original exception after all 5 attempts are exhausted."""
+        mock_create.side_effect = ConnectionError("pooler unavailable")
+
+        with self.assertRaises(ConnectionError, msg="pooler unavailable"):
+            await connection.create_pool_with_retry()
+
+        self.assertEqual(mock_create.await_count, 5)
+        self.assertEqual(mock_sleep.await_count, 4)
+
+    @mock.patch(
+        "backend.pipeline.storage.connection.create_pool_from_settings",
+        new_callable=mock.AsyncMock,
+    )
+    @mock.patch("asyncio.sleep", new_callable=mock.AsyncMock)
+    async def test_retries_on_os_error(
+        self,
+        mock_sleep: mock.AsyncMock,
+        mock_create: mock.AsyncMock,
+    ) -> None:
+        """OSError (e.g. network unreachable) is also retried."""
+        mock_pool = mock.AsyncMock()
+        mock_create.side_effect = [OSError("network unreachable"), mock_pool]
+
+        result = await connection.create_pool_with_retry()
+
+        self.assertEqual(mock_create.await_count, 2)
+        self.assertEqual(result, mock_pool)
+
+
 if __name__ == "__main__":
     unittest.main()
