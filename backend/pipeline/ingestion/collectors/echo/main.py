@@ -62,15 +62,13 @@ def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
     if not RAW_AUDIO_TOPIC:
         msg = "RAW_AUDIO_TOPIC environment variable is not set"
         raise RuntimeError(msg)
-    cold_start = gcs_client is None
     if gcs_client is None:
         gcs_client = storage.Client()
+        logger.info("Echo ingestion initialized (bucket=%s)", CANONICAL_BUCKET)
     if pubsub_client is None:
         pubsub_client = PubSubClient()
     if feed_store is None:
         feed_store = SyncFeedStore(connect_db)
-    if cold_start:
-        logger.info("Echo ingestion initialized (bucket=%s)", CANONICAL_BUCKET)
     _handle(cloud_event)
 
 
