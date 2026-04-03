@@ -44,11 +44,10 @@ export class TranscriptsController extends Controller {
       const response = await axios.get(apiUrl, { params: { feedId }, headers: { Authorization: token } });
       return response.data;
     } catch (error: unknown) {
+      console.error('Error fetching transcript:', error);
       if (error instanceof Error) {
-        console.error('Error fetching transcript:', error);
         throw new Error(`Error fetching transcript: ${error.message}`);
       } else {
-        console.error('Error fetching transcript:', error);
         throw new Error('Error fetching transcript');
       }
     }
