@@ -94,7 +94,6 @@ async def close_pool(pool: asyncpg.Pool) -> None:
     await pool.close()
 
 
-
 async def create_pool_from_settings(
     settings: AlloyDBSettings | None = None,
 ) -> asyncpg.Pool:
