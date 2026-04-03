@@ -1,4 +1,4 @@
-openapi: 3.1.0
+openapi: 3.0.0
 components:
   examples: {}
   headers: {}
@@ -63,7 +63,7 @@ components:
       additionalProperties: false
   securitySchemes: {}
 info:
-  title: radio-transcription-apis
+  title: radio-transcription-api
   version: 1.0.0
   contact: {}
 paths:
