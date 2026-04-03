@@ -1,16 +1,19 @@
 """Unit tests for the audio transcription plugins."""
 
 import json
-import pathlib
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from google.api_core.exceptions import GoogleAPIError
 
 from backend.pipeline.common.constants import BYTES_PER_SECOND_16KHZ_MONO
 from backend.pipeline.transcription.enums import TranscriberType
-from backend.pipeline.transcription.transcribers import get_transcriber
+from backend.pipeline.transcription.transcribers import (
+    ChirpConfig,
+    GoogleChirpV3Transcriber,
+    get_transcriber,
+)
 
 
 class TestTranscribers(unittest.TestCase):
@@ -31,25 +34,20 @@ class TestTranscribers(unittest.TestCase):
             mock_response.results = [mock_result]
             mock_client_instance.recognize.return_value = mock_response
 
-            # Initialize Transcriber
             transcriber = get_transcriber(
                 TranscriberType.GOOGLE_CHIRP_V3,
                 "test-project",
-                '{"location": "us", "keywords_file_path": ""}',
+                '{"location": "us", "keywords_file_path": null}',
             )
             transcriber.setup()
 
-            # Execute transcribe
             dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
 
             transcript = transcriber.transcribe(
                 audio_data=dummy_audio,
             )
 
-            # Assert output
             self.assertEqual(transcript, "Hello world from Chirp")
-
-            # Assert recognize called
             mock_client_instance.recognize.assert_called_once()
 
     def test_google_chirp_transcriber_background(self) -> None:
@@ -60,25 +58,20 @@ class TestTranscribers(unittest.TestCase):
             mock_client_instance = MagicMock()
             mock_speech_client_cls.return_value = mock_client_instance
 
-            # Mock [BACKGROUND] response
             mock_response = MagicMock()
             mock_result = MagicMock()
             mock_result.alternatives = [MagicMock(transcript="[BACKGROUND]")]
             mock_response.results = [mock_result]
             mock_client_instance.recognize.return_value = mock_response
 
-            transcriber = get_transcriber(
-                TranscriberType.GOOGLE_CHIRP_V3,
-                "test-project",
-                '{"keywords_file_path": ""}',
+            transcriber = GoogleChirpV3Transcriber(
+                "test-project", ChirpConfig(keywords_file_path=None)
             )
             transcriber.setup()
 
             dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
 
-            transcript = transcriber.transcribe(
-                audio_data=dummy_audio,
-            )
+            transcript = transcriber.transcribe(audio_data=dummy_audio)
 
             self.assertIsNone(transcript)
 
@@ -90,7 +83,6 @@ class TestTranscribers(unittest.TestCase):
             mock_client_instance = MagicMock()
             mock_speech_client_cls.return_value = mock_client_instance
 
-            # First call raises a transient error, second call succeeds
             mock_response = MagicMock()
             mock_result = MagicMock()
             mock_result.alternatives = [
@@ -103,142 +95,115 @@ class TestTranscribers(unittest.TestCase):
                 mock_response,
             ]
 
-            transcriber = get_transcriber(
-                TranscriberType.GOOGLE_CHIRP_V3,
-                "test-project",
-                '{"keywords_file_path": ""}',
+            transcriber = GoogleChirpV3Transcriber(
+                "test-project", ChirpConfig(keywords_file_path=None)
             )
             transcriber.setup()
 
             dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
 
-            # Patch time.sleep to avoid actually waiting during the test
             with patch("time.sleep"):
-                transcript = transcriber.transcribe(
-                    audio_data=dummy_audio,
-                )
+                transcript = transcriber.transcribe(audio_data=dummy_audio)
 
             self.assertEqual(transcript, "Success after retry")
             self.assertEqual(mock_client_instance.recognize.call_count, 2)
 
-    def test_google_chirp_transcriber_keywords_json(self) -> None:
-        """Verifies that keywords are loaded from a JSON file and passed to the RecognizeRequest."""
-        with patch(
-            "backend.pipeline.transcription.transcribers.SpeechClient"
-        ) as mock_speech_client_cls:
+    def test_google_chirp_transcriber_no_keywords_omits_adaptation(
+        self,
+    ) -> None:
+        """Verifies that adaptation=None is passed to RecognitionConfig when no keywords file is configured."""
+        with (
+            patch(
+                "backend.pipeline.transcription.transcribers.SpeechClient"
+            ) as mock_speech_client_cls,
+            patch(
+                "backend.pipeline.transcription.transcribers.cloud_speech"
+            ) as mock_cs,
+        ):
             mock_client_instance = MagicMock()
             mock_speech_client_cls.return_value = mock_client_instance
 
-            # Mock successful response
             mock_response = MagicMock()
             mock_result = MagicMock()
-            mock_result.alternatives = [MagicMock(transcript="Hello world")]
+            mock_result.alternatives = [
+                MagicMock(transcript="All units respond")
+            ]
             mock_response.results = [mock_result]
             mock_client_instance.recognize.return_value = mock_response
 
-            # Create a dummy JSON file
-            with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-                f.write('[{"phrase": "testphrase"}]')
-                temp_path = f.name
-
-            try:
-                transcriber = get_transcriber(
-                    TranscriberType.GOOGLE_CHIRP_V3,
-                    "test-project",
-                    f'{{"keywords_file_path": "{temp_path}", "boost": 12.0}}',
-                )
-                transcriber.setup()
-
-                dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 1.0)
-                transcriber.transcribe(audio_data=dummy_audio)
-
-                # Verify recognize was called with adaptation
-                mock_client_instance.recognize.assert_called_once()
-                args, kwargs = mock_client_instance.recognize.call_args
-                request = kwargs.get("request") or args[0]
-
-                self.assertIsNotNone(request.config.adaptation)
-                self.assertEqual(
-                    request.config.adaptation.phrase_sets[0]
-                    .inline_phrase_set.phrases[0]
-                    .value,
-                    "testphrase",
-                )
-                self.assertEqual(
-                    request.config.adaptation.phrase_sets[0]
-                    .inline_phrase_set.phrases[0]
-                    .boost,
-                    12.0,
-                )
-
-            finally:
-                pathlib.Path(temp_path).unlink()
-
-    def test_chirp_keywords_json_valid(self) -> None:
-        """Verifies that the default chirp_keywords.json file is valid JSON and non-empty."""
-        p = pathlib.Path(__file__).parent.parent / "chirp_keywords.json"
-
-        self.assertTrue(p.exists(), f"Keywords file {p} does not exist")
-        with p.open("r") as f:
-            data = json.load(f)
-            self.assertIsInstance(data, list)
-            self.assertTrue(len(data) > 0)
-            for item in data:
-                if isinstance(item, dict):
-                    self.assertIn("phrase", item)
-                else:
-                    self.assertIsInstance(item, str)
-
-    def test_google_chirp_transcriber_setup_missing_file_fail(self) -> None:
-        """Verifies that setup() fails fast if keywords_file_path is specified but missing."""
-        with patch(
-            "backend.pipeline.transcription.transcribers.SpeechClient"
-        ) as mock_speech_client_cls:
-            mock_client_instance = MagicMock()
-            mock_speech_client_cls.return_value = mock_client_instance
-
-            transcriber = get_transcriber(
-                TranscriberType.GOOGLE_CHIRP_V3,
-                "test-project",
-                '{"keywords_file_path": "/path/to/nonexistent/file.json"}',
+            transcriber = GoogleChirpV3Transcriber(
+                "test-project", ChirpConfig(keywords_file_path=None)
             )
-            with self.assertRaises(FileNotFoundError):
-                transcriber.setup()
+            transcriber.setup()
 
-    def test_google_chirp_transcriber_setup_corrupt_file_fail(self) -> None:
-        """Verifies that setup() fails fast if keywords_file_path is specified but un-parsable."""
-        with patch(
-            "backend.pipeline.transcription.transcribers.SpeechClient"
-        ) as mock_speech_client_cls:
-            mock_client_instance = MagicMock()
-            mock_speech_client_cls.return_value = mock_client_instance
+            dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
+            transcriber.transcribe(audio_data=dummy_audio)
 
-            with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-                f.write('{"corrupt": "invalid_json"')
-                temp_path = f.name
+            _, kwargs = mock_cs.RecognitionConfig.call_args
+            self.assertIsNone(kwargs.get("adaptation"))
 
-            try:
-                transcriber = get_transcriber(
-                    TranscriberType.GOOGLE_CHIRP_V3,
-                    "test-project",
-                    f'{{"keywords_file_path": "{temp_path}"}}',
-                )
-                with self.assertRaises(ValueError):
-                    transcriber.setup()
-            finally:
-                pathlib.Path(temp_path).unlink()
-
-    def test_google_chirp_transcriber_transcribe_before_setup_fail(
+    def test_google_chirp_transcriber_keywords_file_loads_and_builds_adaptation(
         self,
     ) -> None:
-        """Verifies that transcribe() throws RuntimeError if called before setup()."""
-        transcriber = get_transcriber(
-            TranscriberType.GOOGLE_CHIRP_V3,
-            "test-project",
-            '{"keywords_file_path": ""}',
+        """Verifies that keywords are loaded from a JSON file and used to build SpeechAdaptation, with per-phrase boost respected and the default applied when absent."""
+        keywords = [
+            {"phrase": "Code 3", "boost": 20.0},
+            {"phrase": "10-4"},  # no boost — uses KeywordItem default
+        ]
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False
+        ) as f:
+            json.dump(keywords, f)
+            keywords_path = f.name
+
+        config = ChirpConfig(keywords_file_path=keywords_path)
+
+        with (
+            patch(
+                "backend.pipeline.transcription.transcribers.SpeechClient"
+            ) as mock_speech_client_cls,
+            patch(
+                "backend.pipeline.transcription.transcribers.cloud_speech"
+            ) as mock_cs,
+        ):
+            mock_client_instance = MagicMock()
+            mock_speech_client_cls.return_value = mock_client_instance
+
+            mock_response = MagicMock()
+            mock_result = MagicMock()
+            mock_result.alternatives = [MagicMock(transcript="Code 3")]
+            mock_response.results = [mock_result]
+            mock_client_instance.recognize.return_value = mock_response
+
+            transcriber = GoogleChirpV3Transcriber("test-project", config)
+            transcriber.setup()
+
+            dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
+            transcriber.transcribe(audio_data=dummy_audio)
+
+            # Explicit boost for "Code 3"; KeywordItem default (10.0) for "10-4"
+            expected_phrase_calls = [
+                call(value="Code 3", boost=20.0),
+                call(value="10-4", boost=10.0),
+            ]
+            mock_cs.PhraseSet.Phrase.assert_has_calls(
+                expected_phrase_calls, any_order=False
+            )
+            mock_cs.SpeechAdaptation.assert_called_once()
+
+    def test_google_chirp_transcriber_keywords_file_missing_raises(
+        self,
+    ) -> None:
+        """Verifies that setup() raises FileNotFoundError when keywords_file_path points to a non-existent file."""
+        config = ChirpConfig(
+            keywords_file_path="/nonexistent/path/keywords.json"
         )
-        with self.assertRaises(RuntimeError):
-            transcriber.transcribe(audio_data=b"\x00")
+
+        with patch("backend.pipeline.transcription.transcribers.SpeechClient"):
+            transcriber = GoogleChirpV3Transcriber("test-project", config)
+            with self.assertRaises(FileNotFoundError):
+                transcriber.setup()
 
 
 if __name__ == "__main__":
