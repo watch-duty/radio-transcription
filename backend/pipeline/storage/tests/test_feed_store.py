@@ -70,14 +70,25 @@ class TestLeaseFeed(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result)
 
     async def test_passes_worker_id_as_parameter(self) -> None:
-        """The worker_id is passed as a parameter to the query."""
+        """The worker_id and source_types are passed as parameters to the query."""
         pool = _make_pool(fetchrow_result=None)
         store = FeedStore(pool)
 
         await store.lease_feed(_WORKER_ID)
 
-        args = pool.fetchrow.call_args
-        self.assertEqual(args[0][1], _WORKER_ID)
+        args = pool.fetchrow.call_args[0]
+        self.assertEqual(args[1], _WORKER_ID)
+        self.assertIsNone(args[2])  # source_types default
+
+    async def test_passes_source_types_filter(self) -> None:
+        """When FeedStore is constructed with source_types, the filter is passed to the query."""
+        pool = _make_pool(fetchrow_result=None)
+        store = FeedStore(pool, source_types=["bcfy_feeds"])
+
+        await store.lease_feed(_WORKER_ID)
+
+        args = pool.fetchrow.call_args[0]
+        self.assertEqual(args[2], ["bcfy_feeds"])
 
     async def test_raises_value_error_on_unknown_source_type(self) -> None:
         """ValueError is raised with details if the DB returns an unknown source type slug."""
@@ -375,7 +386,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, [])
 
     async def test_passes_correct_parameters(self) -> None:
-        """Parameters include worker_id, timedelta, and limit."""
+        """Parameters include worker_id, timedelta, limit, and source_types."""
         pool = _make_pool(fetch_result=[])
         store = FeedStore(pool)
 
@@ -385,6 +396,17 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[1], _WORKER_ID)
         self.assertEqual(args[2], datetime.timedelta(seconds=60.0))
         self.assertEqual(args[3], 5)
+        self.assertIsNone(args[4])  # source_types default
+
+    async def test_passes_source_types_filter(self) -> None:
+        """When FeedStore is constructed with source_types, the filter is passed to the query."""
+        pool = _make_pool(fetch_result=[])
+        store = FeedStore(pool, source_types=["bcfy_feeds", "bcfy_calls"])
+
+        await store.acquire_feeds_batch(_WORKER_ID, 60.0, limit=5)
+
+        args = pool.fetch.call_args[0]
+        self.assertEqual(args[4], ["bcfy_feeds", "bcfy_calls"])
 
     async def test_raises_value_error_on_unknown_source_type(self) -> None:
         """ValueError is raised with details if the DB returns an unknown source type slug."""

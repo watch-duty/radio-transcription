@@ -18,6 +18,12 @@ from google.cloud.speech_v2 import SpeechClient
 
 from backend.pipeline.common.constants import BYTES_PER_SECOND_16KHZ_MONO
 from backend.pipeline.transcription.constants import (
+    DEFAULT_CHIRP_LANGUAGE_CODES,
+    DEFAULT_CHIRP_LOCATION,
+    DEFAULT_CHIRP_MODEL,
+    DEFAULT_CHIRP_RECOGNIZER,
+    DEFAULT_KEYWORD_BOOST,
+    DEFAULT_KEYWORDS_FILE_PATH,
     DEFAULT_MAX_RETRIES,
     DEFAULT_RETRY_MAX_SECONDS,
 )
@@ -51,25 +57,25 @@ class Transcriber(abc.ABC):
 
 
 class KeywordItem(pydantic.BaseModel):
-    """Pydantic model representing a single keyword/phrase entry."""
+    """A single keyword/phrase entry loaded from the keywords JSON file."""
 
     phrase: str
-    boost: float | None = None
+    boost: float = DEFAULT_KEYWORD_BOOST
 
 
 class ChirpConfig(ConfigBase):
     """Strongly typed configuration for the Google Chirp V3 Transcriber."""
 
-    location: str = "us-central1"
-    recognizer: str = "_"
-    model: str = "chirp_3"
-    language_codes: list[str] = ["en-US"]
+    location: str = DEFAULT_CHIRP_LOCATION
+    recognizer: str = DEFAULT_CHIRP_RECOGNIZER
+    model: str = DEFAULT_CHIRP_MODEL
+    language_codes: list[str] = DEFAULT_CHIRP_LANGUAGE_CODES
     enable_automatic_punctuation: bool = True
     enable_word_time_offsets: bool = False
-    keywords_file_path: str = (
-        "/app/backend/pipeline/transcription/chirp_keywords.json"
-    )
-    boost: float = 10.0
+    # Path to a JSON file containing KeywordItem entries for phrase adaptation.
+    # Defaults to the packaged file in the container image; explicitly set to
+    # None to disable adaptation (e.g. in tests or non-container environments).
+    keywords_file_path: str | None = DEFAULT_KEYWORDS_FILE_PATH
 
 
 class GoogleChirpV3Transcriber(Transcriber):
@@ -80,48 +86,65 @@ class GoogleChirpV3Transcriber(Transcriber):
     def __init__(
         self,
         project_id: str,
-        config_json: str,
+        config: ChirpConfig,
     ) -> None:
-        """Binds the GCP Project ID and dynamic Chirp configuration JSON."""
+        """Binds the GCP Project ID and parsed Chirp configuration."""
         self.project_id = project_id
-        self.config_json = config_json
+        self.config = config
 
         self.client: SpeechClient | None = None
-        self.config: ChirpConfig | None = None
+        self.keywords_list: list[KeywordItem] = []
 
     def _init_client(self) -> SpeechClient:
-        opts = None
-        if self.config and self.config.location:
-            opts = client_options.ClientOptions(
-                api_endpoint=f"{self.config.location}-speech.googleapis.com"
-            )
+        opts = client_options.ClientOptions(
+            api_endpoint=f"{self.config.location}-speech.googleapis.com"
+        )
         return SpeechClient(client_options=opts)
 
     def setup(self) -> None:
-        """Instantiates the Speech-to-Text API gRPC client and loads keywords if available."""
-        self.config = ChirpConfig.from_json(self.config_json)
+        """Instantiates the Speech-to-Text API gRPC client and loads keywords if configured."""
         self.client = self._init_client()
-        self.keywords_list = []
 
-        if self.config and self.config.keywords_file_path:
+        if self.config.keywords_file_path:
             p = pathlib.Path(self.config.keywords_file_path)
-            if p.exists():
-                try:
-                    with p.open("r") as f:
-                        self.keywords_list = pydantic.TypeAdapter(
-                            list[KeywordItem]
-                        ).validate_json(f.read())
-                        logger.info(
-                            "Loaded %d keywords from %s",
-                            len(self.keywords_list),
-                            self.config.keywords_file_path,
-                        )
-                except Exception as e:
-                    msg = f"Failed to load keywords from file {self.config.keywords_file_path}: {e}"
-                    raise ValueError(msg) from e
-            else:
+            if not p.exists():
                 msg = f"Keywords file {self.config.keywords_file_path} does not exist"
                 raise FileNotFoundError(msg)
+            try:
+                with p.open("r") as f:
+                    self.keywords_list = pydantic.TypeAdapter(
+                        list[KeywordItem]
+                    ).validate_json(f.read())
+                    logger.info(
+                        "Loaded %d keywords from %s",
+                        len(self.keywords_list),
+                        self.config.keywords_file_path,
+                    )
+            except pydantic.ValidationError as e:
+                msg = f"Failed to parse keywords file {self.config.keywords_file_path}: {e}"
+                raise ValueError(msg) from e
+
+    def _build_adaptation(self) -> cloud_speech.SpeechAdaptation | None:
+        """Builds a SpeechAdaptation from the loaded keywords list.
+
+        Returns None when no keywords are loaded, skipping adaptation entirely.
+        """
+        if not self.keywords_list:
+            return None
+
+        phrases = [
+            cloud_speech.PhraseSet.Phrase(value=kw.phrase, boost=kw.boost)
+            for kw in self.keywords_list
+            if kw.phrase
+        ]
+
+        return cloud_speech.SpeechAdaptation(
+            phrase_sets=[
+                cloud_speech.SpeechAdaptation.AdaptationPhraseSet(
+                    inline_phrase_set=cloud_speech.PhraseSet(phrases=phrases)
+                )
+            ]
+        )
 
     @tenacity.retry(
         wait=tenacity.wait_exponential(
@@ -137,7 +160,7 @@ class GoogleChirpV3Transcriber(Transcriber):
         audio_data: bytes,
     ) -> str | None:
         """Transcribes the given audio payload."""
-        if not self.client or not self.config:
+        if not self.client:
             msg = "Transcriber client used before setup() was called."
             raise RuntimeError(msg)
 
@@ -148,31 +171,6 @@ class GoogleChirpV3Transcriber(Transcriber):
             duration_sec,
         )
 
-        adaptation = None
-        if self.keywords_list:
-            phrases = []
-            for kw in self.keywords_list:
-                phrase_value = kw.phrase
-                phrase_boost = kw.boost or self.config.boost
-
-                if phrase_value:
-                    phrases.append(
-                        cloud_speech.PhraseSet.Phrase(
-                            value=phrase_value,
-                            boost=phrase_boost,
-                        )
-                    )
-
-            adaptation = cloud_speech.SpeechAdaptation(
-                phrase_sets=[
-                    cloud_speech.SpeechAdaptation.AdaptationPhraseSet(
-                        inline_phrase_set=cloud_speech.PhraseSet(
-                            phrases=phrases,
-                        )
-                    )
-                ]
-            )
-
         request = cloud_speech.RecognizeRequest(
             recognizer=cloud_speech.SpeechClient.recognizer_path(
                 self.project_id, self.config.location, self.config.recognizer
@@ -181,23 +179,32 @@ class GoogleChirpV3Transcriber(Transcriber):
                 auto_decoding_config=cloud_speech.AutoDetectDecodingConfig(),
                 model=self.config.model,
                 language_codes=self.config.language_codes,
+                adaptation=self._build_adaptation(),
                 features=cloud_speech.RecognitionFeatures(
                     enable_automatic_punctuation=self.config.enable_automatic_punctuation,
                     enable_word_time_offsets=self.config.enable_word_time_offsets,
                 ),
-                adaptation=adaptation,
             ),
             content=audio_data,
         )
 
         response = self.client.recognize(request=request)
+        return self._parse_response(response)
+
+    def _parse_response(
+        self,
+        response: cloud_speech.RecognizeResponse,
+    ) -> str | None:
+        """Extracts and joins transcript text from a RecognizeResponse.
+
+        Strips Chirp v3's [BACKGROUND] marker (emitted when no speech is
+        detected) and returns None if no meaningful text remains.
+        """
         chunks = []
         for result in response.results:
             if not result.alternatives:
                 continue
 
-            # Chirp v3 is prompted to emit [BACKGROUND] when no speech is detected.
-            # We strip this string explicitly across all chunks.
             chunk_text = (
                 result.alternatives[0]
                 .transcript.replace("[BACKGROUND]", "")
@@ -224,6 +231,8 @@ def get_transcriber(
 ) -> Transcriber:
     """A factory method instantiating the requested Transcriber implementation based on the enum type."""
     if transcriber_type == TranscriberType.GOOGLE_CHIRP_V3:
-        return GoogleChirpV3Transcriber(project_id, config_json)
+        return GoogleChirpV3Transcriber(
+            project_id, ChirpConfig.from_json(config_json)
+        )
     msg = f"Unknown transcriber type: {transcriber_type}"
     raise ValueError(msg)

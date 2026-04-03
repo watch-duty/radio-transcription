@@ -45,4 +45,3 @@ RUN mkdir -p ./backend/pipeline/schema_types && \
     python3 -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto
 
 ENTRYPOINT ["/opt/google/dataflow/python_template_launcher"]
-
