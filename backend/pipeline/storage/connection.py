@@ -9,7 +9,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from .settings import AlloyDBSettings
+from backend.pipeline.storage.settings import AlloyDBSettings
 
 _logger = logging.getLogger(__name__)
 
