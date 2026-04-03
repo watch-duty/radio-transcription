@@ -5,8 +5,6 @@ inside Cloud Functions Framework, which expects a synchronous handler.
 Each call opens a fresh connection; pgBouncer provides server-side pooling.
 """
 
-from __future__ import annotations
-
 from typing import Any, cast
 
 import psycopg
