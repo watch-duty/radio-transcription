@@ -42,7 +42,11 @@ logger = logging.getLogger(__name__)
 secret_client: secretmanager.SecretManagerServiceClient | None = None
 
 
-def add_secret_version(secret_client: secretmanager.SecretManagerServiceClient, secret_id: str, payload: str) -> str:
+def add_secret_version(
+    secret_client: secretmanager.SecretManagerServiceClient,
+    secret_id: str,
+    payload: str,
+) -> str:
     """Add a new version to an existing Secret Manager secret.
 
     Secret must already exist (Terraform should have created it). This function
@@ -132,10 +136,9 @@ def _authenticate() -> dict[str, Any]:
         response = http_client.post(AUTH_URL, headers=headers, data=data)
 
     if response.status_code != 200:
-        request_id = (
-            response.headers.get("X-Request-ID")
-            or response.headers.get("X-Correlation-ID")
-        )
+        request_id = response.headers.get(
+            "X-Request-ID"
+        ) or response.headers.get("X-Correlation-ID")
         msg = f"Authentication failed with status {response.status_code}"
         if request_id:
             msg = f"{msg} (request_id={request_id})"

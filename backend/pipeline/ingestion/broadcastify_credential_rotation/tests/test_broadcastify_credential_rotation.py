@@ -34,7 +34,9 @@ class TestAddSecretVersion:
         )
         main.secret_client = secret_client
 
-        result = main.add_secret_version(secret_client, "broadcastify-jwt", "token-123")
+        result = main.add_secret_version(
+            secret_client, "broadcastify-jwt", "token-123"
+        )
 
         assert result == "projects/p/secrets/s/versions/1"
         secret_client.secret_path.assert_called_once_with(
