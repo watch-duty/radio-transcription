@@ -64,7 +64,9 @@ def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
         raise RuntimeError(msg)
     if gcs_client is None:
         gcs_client = storage.Client()
+    if pubsub_client is None:
         pubsub_client = PubSubClient()
+    if feed_store is None:
         feed_store = SyncFeedStore(connect_db)
         logger.info("Echo ingestion initialized (bucket=%s)", CANONICAL_BUCKET)
     _handle(cloud_event)
