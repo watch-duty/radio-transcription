@@ -55,7 +55,7 @@ components:
       properties:
         transcripts:
           items:
-            $ref: "#/components/schemas/Transcript"
+            $ref: '#/components/schemas/Transcript'
           type: array
       required:
         - transcripts
@@ -71,14 +71,14 @@ paths:
     get:
       operationId: ListTranscripts
       responses:
-        "200":
+        '200':
           description: Ok
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ListTranscriptsResponse"
-        "404":
-          description: ""
+                $ref: '#/components/schemas/ListTranscriptsResponse'
+        '404':
+          description: ''
           content:
             application/json:
               schema:

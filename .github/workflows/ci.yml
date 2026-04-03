@@ -85,6 +85,34 @@ jobs:
       - name: Type check
         run: uv run ty check
 
+  code-quality-checks-typescript:
+    needs: [setup]
+    if: needs.setup.outputs.should_run == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 100
+      - name: Install mise, install tools
+        uses: jdx/mise-action@v3
+      - name: Enable Corepack (node package manager)
+        run: corepack enable
+      - name: Install dependencies
+        working-directory: frontend/api
+        run: yarn install --frozen-lockfile --non-interactive
+      - name: Run ESLint
+        working-directory: frontend/api
+        run: yarn lint:check
+      - name: Run Prettier
+        working-directory: frontend/api
+        run: yarn format:check
+      - name: Generate routes
+        working-directory: frontend/api
+        run: yarn generate-routes
+      - name: Type check
+        working-directory: frontend/api
+        run: npx tsc --noEmit
+
   terraform-checks:
     needs: [setup]
     if: needs.setup.outputs.should_run == 'true'
@@ -103,7 +131,7 @@ jobs:
           terraform init -backend=false
           terraform validate
 
-  run-tests:
+  run-backend-tests:
     needs: [setup]
     if: needs.setup.outputs.should_run == 'true'
     runs-on: ubuntu-24.04
@@ -130,6 +158,25 @@ jobs:
         run: mise run generate:protos
       - name: Run tests
         run: uv run python -m pytest backend/ -q
+
+  run-frontend-tests:
+    needs: [setup]
+    if: needs.setup.outputs.should_run == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 100
+      - name: Install mise, install tools
+        uses: jdx/mise-action@v3
+      - name: Enable Corepack (node package manager)
+        run: corepack enable
+      - name: Install system dependencies
+        working-directory: frontend/api
+        run: yarn install --frozen-lockfile --non-interactive
+      - name: Run tests
+        working-directory: frontend/api
+        run: yarn test --watch=false
 
   # Builds each service's Dockerfile and verifies all transitive imports resolve
   # and required environment variables are documented. This catches:
