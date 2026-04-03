@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
-from backend.pipeline.ingestion.router import route_capturer
+from backend.pipeline.ingestion.router import (
+    route_capturer,
+    supported_source_types,
+)
 from backend.pipeline.ingestion.settings import NormalizerSettings
 
 
@@ -14,7 +17,7 @@ def main() -> None:
     blocks until graceful shutdown completes.
     """
     setup_logging()
-    settings = NormalizerSettings()
+    settings = NormalizerSettings(source_types=supported_source_types())
     runtime = NormalizerRuntime(route_capturer, settings)
     runtime.run()
 
