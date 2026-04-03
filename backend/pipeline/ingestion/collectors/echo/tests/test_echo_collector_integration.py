@@ -30,8 +30,8 @@ from testcontainers.core.waiting_utils import wait_for_logs
 from testcontainers.postgres import PostgresContainer
 
 from backend.pipeline.ingestion.collectors.echo import main as echo_main
-from backend.pipeline.storage.sync_connection import connect_db
 from backend.pipeline.storage.settings import AlloyDBSettings
+from backend.pipeline.storage.sync_connection import connect_db
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
 
 _REPO_ROOT = Path(__file__).resolve().parents[6]
