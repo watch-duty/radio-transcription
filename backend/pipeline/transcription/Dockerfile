@@ -29,10 +29,12 @@ COPY pyproject.toml uv.lock ./
 COPY backend/pipeline/transcription/pyproject.toml ./backend/pipeline/transcription/pyproject.toml
 
 # Export the locked dependency graph to a flat requirements file and install
-# into the system Python. --no-emit-project omits the local packages themselves
-# (backend is handled via PYTHONPATH; we only need the third-party deps here).
+# into the system Python. --no-emit-project omits the root package; we also
+# strip workspace-member editable installs (-e lines) since those packages
+# are available at runtime via PYTHONPATH=/app.
 RUN uv export --frozen --no-dev --no-emit-project -o /tmp/requirements.txt && \
-    pip install --no-cache-dir -r /tmp/requirements.txt && \
+    grep -v '^-e ' /tmp/requirements.txt > /tmp/requirements_pinned.txt && \
+    pip install --no-cache-dir -r /tmp/requirements_pinned.txt && \
     pip install --no-cache-dir grpcio-tools
 
 # Copy full source after install — code changes don't bust the dep cache
