@@ -1,0 +1,47 @@
+# Stage 1: Download models
+FROM alpine:latest AS model-downloader
+RUN apk add --no-cache curl
+WORKDIR /models
+RUN curl -sL https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx -o silero_vad.onnx && \
+    curl -sL https://github.com/k2-fsa/sherpa-onnx/releases/download/speech-enhancement-models/gtcrn_simple.onnx -o gtcrn_simple.onnx
+
+# Stage 2: Test environment
+FROM python:3.13-slim
+
+# Install ffmpeg
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
+
+WORKDIR /app
+
+# Copy dependency files
+# Note: Assuming run from repo root
+COPY pyproject.toml ./
+COPY backend/pipeline/transcription/pyproject.toml ./backend/pipeline/transcription/pyproject.toml
+
+# Install dependencies (including dev dependencies for pytest)
+ENV UV_PROJECT_ENVIRONMENT=/app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONPATH="/app"
+
+RUN uv sync
+
+# Apply the symlink fix for libonnxruntime.so
+RUN ln -s $(find /app/.venv/lib/ -name "libonnxruntime.so.*" | head -n 1) $(find /app/.venv/lib/ -path "*/sherpa_onnx/lib" -type d | head -n 1)/libonnxruntime.so
+
+# Copy source code
+COPY backend/ ./backend/
+
+# Copy models from downloader stage to the place expected by the test (scratch/)
+RUN mkdir -p scratch
+COPY --from=model-downloader /models/silero_vad.onnx ./scratch/silero_vad.onnx
+COPY --from=model-downloader /models/gtcrn_simple.onnx ./scratch/gtcrn_simple.onnx
+
+
+# Set entrypoint to run the test
+CMD [".venv/bin/pytest", "backend/pipeline/transcription/tests/test_vad_integration.py", "-s"]

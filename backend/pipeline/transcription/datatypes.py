@@ -11,7 +11,7 @@ from backend.pipeline.common.constants import (
 from backend.pipeline.transcription.constants import (
     DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
 )
-from backend.pipeline.transcription.enums import TranscriberType, VadType
+from backend.pipeline.transcription.enums import TranscriberType
 
 
 @dataclass(frozen=True)
@@ -145,13 +145,13 @@ class StitchAudioConfig:
     """Groups pipeline-level configurations passed to the stateful DoFn."""
 
     project_id: str
-    vad_type: VadType
     vad_config: str
     significant_gap_ms: int
     stale_timeout_ms: int
     max_transmission_duration_ms: int
     vad_pre_roll_ms: int
     vad_post_roll_ms: int
+    vad_cache_size: int = 20
     route_to_dlq: bool = True
 
     def __post_init__(self) -> None:
@@ -177,7 +177,6 @@ class TranscribeAudioConfig:
     project_id: str
     transcriber_type: TranscriberType
     transcriber_config: str
-    vad_type: VadType
     vad_config: str
     route_to_dlq: bool = True
     canonical_audio_bucket: str | None = None
@@ -212,9 +211,10 @@ class DropAction(StateMachineAction):
 
 @dataclass(frozen=True)
 class AppendBufferAction(StateMachineAction):
-    """Signals that the provided audio segment should be appended to the active transmission buffer."""
+    """Signals that a slice of the primary audio chunk should be appended to the active transmission buffer."""
 
-    audio_buffer: AudioSegment
+    start_offset_ms: int
+    end_offset_ms: int
 
 
 @dataclass(frozen=True)

@@ -2,11 +2,15 @@
 # Automatically use uv virtual environment if available
 python.uv_venv_auto = true
 
+[tools]
+uv = "latest"
+
 [env]
 _.file = ".env"
 
 # Set PYTHONPATH to repository root for easier imports
 PYTHONPATH = "."
+
 
 [vars]
 backend_dir = "backend"

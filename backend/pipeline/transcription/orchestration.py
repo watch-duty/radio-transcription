@@ -114,8 +114,7 @@ def get_pipeline(
 
     # Claim-check: Download the raw bytes for ordered chunks currently just passing as URIs
     download_config = StitchAudioConfig(
-        project_id=pipeline_options.view_as(GoogleCloudOptions).project,
-        vad_type=options.vad_type,
+        project_id=options.project_id,
         vad_config=options.vad_config,
         significant_gap_ms=options.significant_gap_ms
         or DEFAULT_SIGNIFICANT_GAP_MS,
@@ -153,7 +152,6 @@ def get_pipeline(
                 project_id=pipeline_options.view_as(GoogleCloudOptions).project,
                 transcriber_type=options.transcriber_type,
                 transcriber_config=options.transcriber_config,
-                vad_type=options.vad_type,
                 vad_config=options.vad_config,
                 route_to_dlq=options.route_to_dlq
                 if options.route_to_dlq is not None

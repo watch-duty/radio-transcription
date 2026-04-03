@@ -15,7 +15,6 @@ from backend.pipeline.transcription.datatypes import (
     TimeRange,
     UpdateStateAction,
 )
-from backend.pipeline.transcription.enums import VadType
 from backend.pipeline.transcription.stitcher_state import (
     AudioStitchingStateMachine,
 )
@@ -31,7 +30,6 @@ def get_test_stitch_config(
     """Helper to generate a rapid-test config."""
     return StitchAudioConfig(
         project_id="test",
-        vad_type=VadType.TEN_VAD,
         vad_config="",
         significant_gap_ms=significant_gap_ms,
         stale_timeout_ms=stale_timeout_ms,

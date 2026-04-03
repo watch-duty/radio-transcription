@@ -161,8 +161,8 @@ class AudioStitchingStateMachine:
 
         for action in raw_actions:
             match action:
-                case AppendBufferAction(audio_buffer=audio):
-                    isolated_audio_buffer.append(audio)
+                case AppendBufferAction(start_offset_ms=start, end_offset_ms=end):
+                    isolated_audio_buffer.append(chunk_data.audio[start:end])
                 case FlushAction():
                     filtered_actions.append(
                         FlushAction(
@@ -250,7 +250,8 @@ class AudioStitchingStateMachine:
                 if append_end > 0:
                     actions.append(
                         AppendBufferAction(
-                            audio_buffer=chunk_data.audio[0:append_end]
+                            start_offset_ms=0,
+                            end_offset_ms=append_end
                         )
                     )
                     ctx.buffer_duration_ms += append_end
@@ -328,7 +329,8 @@ class AudioStitchingStateMachine:
             if append_end > 0:
                 actions.append(
                     AppendBufferAction(
-                        audio_buffer=chunk_data.audio[0:append_end]
+                        start_offset_ms=0,
+                        end_offset_ms=append_end
                     )
                 )
                 ctx.buffer_duration_ms += append_end
@@ -340,9 +342,6 @@ class AudioStitchingStateMachine:
     ) -> list[StateMachineAction]:
         """Evaluates consecutive speech data, updating length counters and triggering mid-stream flushes if gap or duration limits are reached."""
         actions: list[StateMachineAction] = []
-        file_start_ms = chunk_data.start_ms
-        audio_append_cursor_ms: int | None = None
-
         for segment in chunk_data.padded_segments:
             # 1. Check if the gap between the last speech segment and this new one
             # is significant enough to warrant splitting into a new transmission.
@@ -398,9 +397,8 @@ class AudioStitchingStateMachine:
                         if end_offset > start_offset:
                             actions.append(
                                 AppendBufferAction(
-                                    audio_buffer=chunk_data.audio[
-                                        start_offset:end_offset
-                                    ]
+                                    start_offset_ms=start_offset,
+                                    end_offset_ms=end_offset
                                 )
                             )
                             ctx.buffer_duration_ms += end_offset - start_offset
@@ -429,9 +427,13 @@ class AudioStitchingStateMachine:
             else:
                 # For subsequent segments, we normally append from the end of the previous segment
                 # to preserve small gaps naturally.
+                if ctx.last_segment_end_time_ms is None:
+                    msg = "last_segment_end_time_ms is None in subsequent segment"
+                    raise RuntimeError(msg)
                 start_offset = max(
                     0, ctx.last_segment_end_time_ms - chunk_data.start_ms
                 )
+
 
                 # But if there is a flagged noise click in the gap, do NOT fill it!
                 # We check if any noise segment falls between the previous segment and this one.
@@ -454,7 +456,8 @@ class AudioStitchingStateMachine:
             if end_offset > start_offset:
                 actions.append(
                     AppendBufferAction(
-                        audio_buffer=chunk_data.audio[start_offset:end_offset]
+                        start_offset_ms=start_offset,
+                        end_offset_ms=end_offset
                     )
                 )
                 ctx.buffer_duration_ms += end_offset - start_offset
@@ -493,9 +496,8 @@ class AudioStitchingStateMachine:
                 if end_offset > start_offset:
                     actions.append(
                         AppendBufferAction(
-                            audio_buffer=chunk_data.audio[
-                                start_offset:end_offset
-                            ]
+                            start_offset_ms=start_offset,
+                            end_offset_ms=end_offset
                         )
                     )
                     ctx.buffer_duration_ms += end_offset - start_offset

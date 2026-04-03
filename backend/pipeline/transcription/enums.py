@@ -9,13 +9,6 @@ class TranscriberType(enum.StrEnum):
     GOOGLE_CHIRP_V3 = "google_chirp_v3"
 
 
-class VadType(enum.StrEnum):
-    """Supported Voice Activity Detection models."""
-
-    TEN_VAD = "ten_vad"
-<<<<<<< HEAD
-=======
-    SILERO_VAD = "silero_vad"
 
 
 class MetricsExporterType(enum.StrEnum):
@@ -23,4 +16,3 @@ class MetricsExporterType(enum.StrEnum):
 
     NONE = "none"
     GCP = "gcp"
->>>>>>> fd25e6f (Capture retained changes in tracked files)

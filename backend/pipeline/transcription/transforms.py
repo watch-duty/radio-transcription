@@ -1,6 +1,8 @@
 """Apache Beam DoFns for mapping incoming stream messages and downloading audio chunks."""
 
 import logging
+import time
+import uuid
 from collections.abc import Iterator
 from typing import Any, override
 
@@ -34,22 +36,17 @@ from backend.pipeline.schema_types.raw_audio_chunk_pb2 import (
 from backend.pipeline.schema_types.transcribed_audio_pb2 import (
     TranscribedAudio,
 )
-from backend.pipeline.transcription.audio_processor import AudioProcessor
+from backend.pipeline.transcription.audio.audio_processor import AudioProcessor
 from backend.pipeline.transcription.constants import (
     DEAD_LETTER_QUEUE_TAG,
     DEFAULT_FLOAT_TOLERANCE_MS,
 )
 from backend.pipeline.transcription.datatypes import (
-    ChunkMetadata,
-    DownloadedChunkPayload,
-    FlushRequest,
     OrderRestorerConfig,
     StitchAudioConfig,
-    TimeRange,
     TranscriptionResult,
 )
 from backend.pipeline.transcription.sequence_buffer import SequenceBuffer
-from backend.pipeline.transcription.utils import generate_transmission_id
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +82,7 @@ class ParseAndKeyFn(beam.DoFn):
 
 
 @beam.typehints.with_input_types(tuple[str, bytes])
-@beam.typehints.with_output_types(tuple[str, ChunkMetadata])
+@beam.typehints.with_output_types(tuple[str, tuple[str, str]])
 class AddEventTimestamp(beam.DoFn):
     """Extracts the event timestamp directly from the `AudioChunk` protobuf.
 
@@ -96,11 +93,8 @@ class AddEventTimestamp(beam.DoFn):
 
     @override
     def process(
-        self,
-        element: tuple[str, bytes],
-        *args: Any,
-        **kwargs: Any,
-    ) -> Iterator[tuple[str, ChunkMetadata] | beam.pvalue.TaggedOutput]:
+        self, element: tuple[str, bytes], *args: Any, **kwargs: Any
+    ) -> Iterator[tuple[str, str] | beam.pvalue.TaggedOutput]:
         """Extracts the original hardware timestamp and assigns it to Beam's event timeline."""
         feed_id, chunk_data = element
 
@@ -137,14 +131,7 @@ class AddEventTimestamp(beam.DoFn):
                 )
 
                 yield window.TimestampedValue(
-                    (
-                        feed_id,
-                        ChunkMetadata(
-                            chunk_proto.gcs_uri,
-                            chunk_proto.session_id,
-                            chunk_proto.duration_ms,
-                        ),
-                    ),
+                    (feed_id, (chunk_proto.gcs_uri, chunk_proto.session_id)),
                     timestamp_sec,
                 )
 
@@ -162,6 +149,12 @@ class SerializeToPubSubMessageFn(beam.DoFn):
         self, element: TranscriptionResult, *args: Any, **kwargs: Any
     ) -> Iterator[PubsubMessage]:
         """Serializes the final domain result into a wire-ready JSON payload."""
+        # Create a deterministic UUID using uuid5 so that Beam retries produce the exact same ID
+        deterministic_id_string = f"{element.feed_id}_{element.time_range.start_ms}_{element.time_range.end_ms}"
+        deterministic_uuid = uuid.uuid5(
+            uuid.NAMESPACE_OID, deterministic_id_string
+        )
+
         start_offset = None
         if element.start_audio_offset_ms is not None:
             start_offset = Duration(
@@ -181,7 +174,7 @@ class SerializeToPubSubMessageFn(beam.DoFn):
         proto = TranscribedAudio(
             feed_id=element.feed_id,
             source_audio_uris=element.contributing_audio_uris,
-            transmission_id=element.transmission_id,
+            transmission_id=str(deterministic_uuid),
             transcript=element.transcript,
             missing_prior_context=element.missing_prior_context,
             missing_post_context=element.missing_post_context,
@@ -203,49 +196,8 @@ class SerializeToPubSubMessageFn(beam.DoFn):
         )
 
 
-@beam.typehints.with_input_types(tuple[str, DownloadedChunkPayload])
-@beam.typehints.with_output_types(tuple[str, FlushRequest])
-class BypassStitchingFn(beam.DoFn):
-    """Stateless DoFn that directly forwards pre-segmented audio to transcription.
-
-    It bypasses the stateful stitching logic and treats each audio chunk as a complete,
-    independent transmission.
-    """
-
-    @override
-    def process(
-        self,
-        element: tuple[str, DownloadedChunkPayload],
-        *args: Any,
-        **kwargs: Any,
-    ) -> Iterator[tuple[str, FlushRequest]]:
-        """Maps the downloaded audio chunk directly into a FlushRequest."""
-        feed_id, payload = element
-        gcs_path = payload.gcs_uri
-        chunk_data = payload.chunk_data
-
-        start_ms = chunk_data.start_ms
-        duration_ms = len(chunk_data.audio)
-        end_ms = start_ms + duration_ms
-
-        transmission_id = generate_transmission_id(feed_id, start_ms, end_ms)
-
-        yield (
-            feed_id,
-            FlushRequest(
-                buffer=chunk_data.audio,
-                feed_id=feed_id,
-                contributing_audio_uris=[gcs_path],
-                time_range=TimeRange(start_ms=start_ms, end_ms=end_ms),
-                transmission_id=transmission_id,
-                missing_prior_context=False,
-                missing_post_context=False,
-            ),
-        )
-
-
-@beam.typehints.with_input_types(tuple[str, ChunkMetadata])
-@beam.typehints.with_output_types(tuple[str, str])
+@beam.typehints.with_input_types(tuple[str, tuple[str, str]])
+@beam.typehints.with_output_types(tuple[str, tuple[str, str]])
 class RestoreOrderFn(beam.DoFn):
     """A stateful DoFn that buffers out-of-order chunks and emits them in strict chronological order.
 
@@ -255,32 +207,32 @@ class RestoreOrderFn(beam.DoFn):
     SESSION_ID_SPEC = ReadModifyWriteStateSpec(
         "session_id", beam.coders.StrUtf8Coder()
     )
-    SESSION_ID_STATE = beam.DoFn.StateParam(SESSION_ID_SPEC)
+
 
     OUT_OF_ORDER_BUFFER_SPEC = BagStateSpec(
         "out_of_order_buffer",
         beam.coders.PickleCoder(),
     )
     # A bag state holding chunks that have arrived earlier than their expected chronological sequence.
-    OUT_OF_ORDER_BUFFER_STATE = beam.DoFn.StateParam(OUT_OF_ORDER_BUFFER_SPEC)
+
 
     EXPECTED_NEXT_TS_SPEC = ReadModifyWriteStateSpec(
         "expected_next_ts", beam.coders.VarIntCoder()
     )
     # Tracks the exact chronological timestamp (ms) of the next chunk we must receive before emitting anything downstream.
-    EXPECTED_NEXT_TS_STATE = beam.DoFn.StateParam(EXPECTED_NEXT_TS_SPEC)
+
 
     TIMER_ACTIVE_SPEC = ReadModifyWriteStateSpec(
         "timer_active", beam.coders.BooleanCoder()
     )
     # Boolean flag ensuring we only ever have a single active processing-time timer scheduled across the buffer.
-    TIMER_ACTIVE_STATE = beam.DoFn.StateParam(TIMER_ACTIVE_SPEC)
+
 
     OUT_OF_ORDER_TIMER_SPEC = TimerSpec(
-        "out_of_order_timer", TimeDomain.WATERMARK
+        "out_of_order_timer", TimeDomain.REAL_TIME
     )
     # A real-time (processing time) timer that acts as a maximum allowed wait period for missing chunks.
-    OUT_OF_ORDER_TIMER = beam.DoFn.TimerParam(OUT_OF_ORDER_TIMER_SPEC)
+
 
     def __init__(self, config: OrderRestorerConfig) -> None:
         """Binds the OrderRestorerConfig and initializes Beam metrics counters."""
@@ -288,20 +240,20 @@ class RestoreOrderFn(beam.DoFn):
         self.chunks_buffered_out_of_order = Metrics.counter(
             self.__class__, "chunks_buffered_out_of_order"
         )
-        self.data_gaps_detected_counter = Metrics.counter(
-            self.__class__, "data_gaps_detected"
+        self.gaps_encountered_counter = Metrics.counter(
+            self.__class__, "gaps_encountered"
         )
         self.session_resets_counter = Metrics.counter(
             self.__class__, "session_resets"
         )
-        self.chunks_processed_late = Metrics.counter(
-            self.__class__, "chunks_processed_late"
+        self.chunks_dropped_late = Metrics.counter(
+            self.__class__, "chunks_dropped_late"
         )
 
     @override
     def process(  # type: ignore[override]
         self,
-        element: tuple[str, ChunkMetadata],
+        element: tuple[str, tuple[str, str]],
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
         session_id_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
             SESSION_ID_SPEC
@@ -320,10 +272,7 @@ class RestoreOrderFn(beam.DoFn):
         ),
     ) -> Iterator[tuple[str, str]]:
         """Ingests out-of-order chunks and orchestrates chronologically sorted yields."""
-        feed_id, metadata = element
-        gcs_path = metadata.gcs_uri
-        incoming_session_id = metadata.session_id
-        duration_ms = metadata.duration_ms
+        feed_id, (gcs_path, incoming_session_id) = element
         current_ts_ms = int(float(timestamp) * MS_PER_SECOND)
 
         current_session_id = session_id_state.read()
@@ -335,6 +284,7 @@ class RestoreOrderFn(beam.DoFn):
             )
             self.session_resets_counter.inc()
             session_id_state.write(incoming_session_id)
+            current_session_id = incoming_session_id
             expected_next_ts_state.clear()
             expected_next_ts = None
             out_of_order_buffer_state.clear()
@@ -356,11 +306,10 @@ class RestoreOrderFn(beam.DoFn):
             gcs_uri=gcs_path,
             expected_next_ts=expected_next_ts,
             buffer_elements=buffer_elements,
-            chunk_duration_ms=duration_ms,
         )
 
         if was_late:
-            self.chunks_processed_late.inc()
+            self.chunks_dropped_late.inc()
         if was_buffered:
             self.chunks_buffered_out_of_order.inc()
 
@@ -370,14 +319,14 @@ class RestoreOrderFn(beam.DoFn):
             out_of_order_buffer_state.add(chunk)
 
         for gcs_uri in elements_to_emit:
-            yield (feed_id, gcs_uri)
+            yield (feed_id, (gcs_uri, current_session_id))
 
         # Handle Timer for Gap Timeout
         if new_buffer_elements and not timer_active_state.read():
-            deadline = timestamp + (
+            deadline_s = time.time() + (
                 self.config.out_of_order_timeout_ms / float(MS_PER_SECOND)
             )
-            out_of_order_timer.set(deadline)
+            out_of_order_timer.set(Timestamp(deadline_s))
             timer_active_state.write(True)  # noqa: FBT003
         elif not new_buffer_elements and timer_active_state.read():
             out_of_order_timer.clear()
@@ -386,8 +335,11 @@ class RestoreOrderFn(beam.DoFn):
     @on_timer(OUT_OF_ORDER_TIMER_SPEC)
     def handle_gap_timeout(
         self,
-        feed_id: str = beam.DoFn.KeyParam,  # type: ignore
-        expected_next_ts_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
+        feed_id: str = beam.DoFn.KeyParam,  # type: ignore[assignment]
+        session_id_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore[assignment] # noqa: B008
+            SESSION_ID_SPEC
+        ),
+        expected_next_ts_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore[assignment] # noqa: B008
             EXPECTED_NEXT_TS_SPEC
         ),
         out_of_order_buffer_state: BagRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
@@ -396,9 +348,9 @@ class RestoreOrderFn(beam.DoFn):
         timer_active_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
             TIMER_ACTIVE_SPEC
         ),
-    ) -> Iterator[tuple[str, str]]:
+    ) -> Iterator[tuple[str, tuple[str, str]]]:
         """Handles the gap timeout."""
-        self.data_gaps_detected_counter.inc()
+        self.gaps_encountered_counter.inc()
         timer_active_state.clear()
 
         buffer_elements = list(out_of_order_buffer_state.read())
@@ -414,7 +366,7 @@ class RestoreOrderFn(beam.DoFn):
 
             sequence_buffer = SequenceBuffer(self.config)
 
-            new_expected_next_ts, new_buffer_elements, elements_to_emit = (
+            new_expected_next_ts, _new_buffer_elements, elements_to_emit = (
                 sequence_buffer.drain_ready_elements(
                     expected_next_ts=new_expected,
                     buffer_elements=buffer_elements,
@@ -424,15 +376,13 @@ class RestoreOrderFn(beam.DoFn):
 
             expected_next_ts_state.write(new_expected_next_ts)
             out_of_order_buffer_state.clear()
-            for chunk in new_buffer_elements:
-                out_of_order_buffer_state.add(chunk)
-
+            current_session_id = session_id_state.read()
             for gcs_uri in elements_to_emit:
-                yield (feed_id, gcs_uri)
+                yield (feed_id, (gcs_uri, current_session_id))
 
 
-@beam.typehints.with_input_types(tuple[str, str])
-@beam.typehints.with_output_types(tuple[str, DownloadedChunkPayload])
+@beam.typehints.with_input_types(tuple[str, tuple[str, str]])
+@beam.typehints.with_output_types(tuple[str, tuple[str, Any]])
 class DownloadAudioFn(beam.DoFn):
     """A stateless DoFn that downloads audio chunks from GCS based on the provided GCS URI."""
 
@@ -453,22 +403,23 @@ class DownloadAudioFn(beam.DoFn):
 
         self.shared_resources = SHARED_RESOURCE_HANDLE.acquire(SharedResources)
         self.audio_processor = AudioProcessor(
-            self.config.vad_type,
-            self.config.vad_config,
+            vad_config=self.config.vad_config,
             shared_resources=self.shared_resources,
+            pre_roll_ms=self.config.vad_pre_roll_ms,
+            post_roll_ms=self.config.vad_post_roll_ms,
         )
         self.audio_processor.setup()
 
     @override
-    def process(  # type: ignore[override] # pyright: ignore[reportIncompatibleMethodOverride]
+    def process(
         self,
-        element: tuple[str, str],
+        element: tuple[str, tuple[str, str]],
+        *args: Any,
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
-    ) -> Iterator[
-        tuple[str, DownloadedChunkPayload] | beam.pvalue.TaggedOutput
-    ]:
+        **kwargs: Any,
+    ) -> Iterator[tuple[str, tuple[str, Any]] | beam.pvalue.TaggedOutput]:
         """Downloads the raw audio bytes from GCS and passes them to the acoustic processor."""
-        feed_id, gcs_path = element
+        feed_id, (gcs_path, session_id) = element
         if not self.audio_processor:
             msg = "AudioProcessor not initialized. setup() must be called."
             raise RuntimeError(msg)
@@ -477,9 +428,9 @@ class DownloadAudioFn(beam.DoFn):
 
         try:
             chunk_data = self.audio_processor.download_audio_and_detect(
-                gcs_path, start_ms
+                gcs_path, start_ms, session_id
             )
-            yield (feed_id, DownloadedChunkPayload(gcs_path, chunk_data))
+            yield (feed_id, (gcs_path, chunk_data))
         except FileNotFoundError:
             logger.info(
                 "GCS object not found yet. Re-raising to NACK Pub/Sub message."
