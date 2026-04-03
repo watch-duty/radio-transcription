@@ -3,9 +3,9 @@ FROM node:22-slim AS builder
 
 WORKDIR /app
 
-COPY package.json yarn.lock ./
+COPY frontend/api/package.json frontend/api/yarn.lock ./
 RUN yarn install --frozen-lockfile --non-interactive
-COPY . .
+COPY frontend/api/ .
 RUN yarn build
 
 # 2. Run the app
