@@ -2300,7 +2300,7 @@ wheels = [
 [[package]]
 name = "radio-transcription"
 version = "0.0.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
     { name = "asyncpg" },
