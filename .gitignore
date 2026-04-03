@@ -62,3 +62,6 @@ backend/pipeline/ingestion/collectors/.*
 *.egg
 build/
 dist/
+
+# Generated Typescript files
+**/generated/**.ts
