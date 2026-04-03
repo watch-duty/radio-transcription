@@ -13,7 +13,7 @@
     "format:fix": "prettier --write .",
     "test": "vitest",
     "generate-routes": "yarn run tsoa routes",
-    "generate-spec": "yarn run tsoa spec --yaml"
+    "generate-spec": "yarn run tsoa spec --yaml && node scripts/post-process-spec.js"
   },
   "dependencies": {
     "@google-cloud/functions-framework": "^5.0.2",
@@ -31,6 +31,7 @@
     "eslint": "^10.1.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.4.0",
+    "js-yaml": "^4.1.1",
     "prettier": "^3.8.1",
     "typescript": "^6.0.2",
     "typescript-eslint": "^8.58.0",

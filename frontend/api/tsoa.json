@@ -5,7 +5,26 @@
   "spec": {
     "outputDirectory": ".",
     "specFileBaseName": "openapi",
-    "specVersion": 3.0
+    "specVersion": 3.0,
+    "securityDefinitions": {
+      "google_id_token": {
+        "type": "oauth2",
+        "flow": "implicit",
+        "authorizationUrl": "",
+        "scopes": {}
+      }
+    },
+    "spec": {
+      "x-google-api-management": {
+        "backends": {
+          "radio-transcription-api": {
+            "address": "${radio_transcription_api_url}",
+            "path_translation": "APPEND_PATH_TO_ADDRESS",
+            "protocol": "http/1.1"
+          }
+        }
+      }
+    }
   },
   "routes": {
     "routesDir": "src/generated",
