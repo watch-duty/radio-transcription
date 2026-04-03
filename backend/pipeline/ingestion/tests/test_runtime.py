@@ -26,7 +26,7 @@ _FEED = LeasedFeed(
     source_type=SourceType.BCFY_FEEDS,
     last_processed_filename=None,
     fencing_token=1,
-    stream_url="http://stream.example.com/feed",
+    source_feed_id="123",
 )
 
 
@@ -558,15 +558,15 @@ class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.normalizer_runtime.FeedStore",
     )
     @mock.patch(
-        "backend.pipeline.ingestion.normalizer_runtime.create_pool_from_settings",
+        "backend.pipeline.ingestion.normalizer_runtime.create_pool_with_retry",
         new_callable=mock.AsyncMock,
     )
     async def test_heartbeat_pool_uses_create_pool_helper(
         self,
-        mock_create_pool_from_settings: mock.AsyncMock,
+        mock_create_pool_with_retry: mock.AsyncMock,
         mock_feed_store: mock.MagicMock,
     ) -> None:
-        """Heartbeat pool must use create_pool_from_settings helper with min/max_size=1."""
+        """Heartbeat pool must use create_pool_with_retry helper with min/max_size=1."""
         rt = _make_runtime()
 
         with (
@@ -578,8 +578,8 @@ class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
         ):
             await rt._main()
 
-        self.assertEqual(mock_create_pool_from_settings.call_count, 2)
-        heartbeat_call = mock_create_pool_from_settings.call_args_list[1]
+        self.assertEqual(mock_create_pool_with_retry.call_count, 2)
+        heartbeat_call = mock_create_pool_with_retry.call_args_list[1]
         hb_settings = heartbeat_call.args[0]
         self.assertEqual(hb_settings.pool_min_size, 1)
         self.assertEqual(hb_settings.pool_max_size, 1)

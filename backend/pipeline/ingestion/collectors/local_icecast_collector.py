@@ -13,6 +13,7 @@ from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.ingestion.collectors.icecast_collector import (
     capture_icecast_stream,
 )
+from backend.pipeline.ingestion.router import BCFY_FEEDS_URL_BASE
 from backend.pipeline.storage.feed_store import SourceType
 
 if TYPE_CHECKING:
@@ -27,13 +28,13 @@ async def run_local_capture() -> None:
     Does not use the AlloyDB feed claiming or write to pubsub.
 
     Environment variables:
-    - ICECAST_STREAM_URL: Required stream URL. Example: "https://example.com:8000/stream"
+    - ICECAST_SOURCE_FEED_ID: Required source feed ID. Example: "12345"
     - ICECAST_LOCAL_OUTPUT_DIR: Optional output directory for audio chunks.
       Defaults to the current working directory.
     """
-    stream_url = os.getenv("ICECAST_STREAM_URL")
-    if not stream_url:
-        msg = "ICECAST_STREAM_URL must be set"
+    source_feed_id = os.getenv("ICECAST_SOURCE_FEED_ID")
+    if not source_feed_id:
+        msg = "ICECAST_SOURCE_FEED_ID must be set"
         raise ValueError(msg)
 
     output_dir = Path(os.getenv("ICECAST_LOCAL_OUTPUT_DIR") or Path.cwd())
@@ -46,12 +47,14 @@ async def run_local_capture() -> None:
         "source_type": SourceType.BCFY_FEEDS,
         "last_processed_filename": None,
         "fencing_token": 0,
-        "stream_url": stream_url,
+        "source_feed_id": source_feed_id,
     }
     shutdown_event = asyncio.Event()
 
     chunk_count = 0
-    async for audio_data, _ts in capture_icecast_stream(feed, shutdown_event):
+    async for audio_data, start_ts in capture_icecast_stream(
+        feed, shutdown_event, BCFY_FEEDS_URL_BASE
+    ):
         chunk_count += 1
         timestamp = datetime.now(UTC).isoformat(timespec="milliseconds")
         file_timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S_%fZ")
@@ -59,10 +62,11 @@ async def run_local_capture() -> None:
         file_path = output_dir / file_name
         await asyncio.to_thread(file_path.write_bytes, audio_data)
         logger.info(
-            "Local capture chunk %d received (%d bytes) at %s -> %s",
+            "Local capture chunk %d received (%d bytes) at %s (start: %s) -> %s",
             chunk_count,
             len(audio_data),
             timestamp,
+            start_ts.isoformat(timespec="milliseconds"),
             file_path,
         )
 

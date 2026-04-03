@@ -24,7 +24,9 @@ On a high level, this local pipeline runs the following:
 3. Rules Evaluation service (to process transcription events)
 4. Notification service (to send alerts when rules match)
 5. Mock server (to receive and display mock notifications)
-6. Integration tests (runs an automated E2E test on startup)
+6. Frontend API (for rules, transcript, and feed management)
+
+Integration tests run an automated E2E test on startup.
 
 Note that currently the following are missing from the E2E setup:
 * Audio ingestion pipeline and storage
@@ -34,7 +36,13 @@ Note that currently the following are missing from the E2E setup:
 Locally run the full pipeline from E2E
 ```bash
 docker-compose down -v && docker-compose up --build -d &&
-docker-compose logs -f rules-evaluation notification mock-server integration-test
+docker-compose logs -f \
+  transcripts-api\
+  rules-evaluation\
+  rules-management\
+  notification\
+  mock-server\
+  frontend-api
 ```
 
 Send a test payload to the Transcription PubSub (ingested by the Rules Evaluation service) to test the path from the Rules Evaluation service to the Notification service.
@@ -65,7 +73,7 @@ gcloud auth login
 source .venv/bin/activate
 export BROADCASTIFY_USERNAME=<your broadcastify username>
 export BROADCASTIFY_PASSWORD=<your broadcastify pword>
-export ICECAST_STREAM_URL=https://example.com
+export ICECAST_SOURCE_FEED_ID=123
 python backend/pipeline/ingestion/collectors/local_icecast_collector.py
 
 <optional env variable>

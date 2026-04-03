@@ -3,7 +3,7 @@ import logging
 import numpy as np
 from scipy.signal import medfilt
 
-from backend.pipeline.common.constants import AUDIO_SAMPLE_RATE, MS_PER_SECOND
+from backend.pipeline.common.constants import MS_PER_SECOND, SAMPLE_RATE_HZ
 from backend.pipeline.transcription.constants import (
     BACKGROUND_NOISE_PERCENTILE,
     DEFAULT_AGD_DEBOUNCE_WINDOW_SEC,
@@ -75,7 +75,7 @@ class AcousticGateDetector:
         if low_freq_hz <= 0:
             msg = f"low_freq_hz must be > 0, got {low_freq_hz}"
             raise ValueError(msg)
-        nyquist = AUDIO_SAMPLE_RATE / 2.0
+        nyquist = SAMPLE_RATE_HZ / 2.0
         if high_freq_hz > nyquist:
             msg = f"high_freq_hz must be <= {nyquist}, got {high_freq_hz}"
             raise ValueError(msg)
@@ -92,7 +92,7 @@ class AcousticGateDetector:
         self._hop_size = hop_size
 
         # Precompute read-only frequency bin mask for sub-band filtering
-        freqs = np.fft.rfftfreq(fft_size, d=1.0 / AUDIO_SAMPLE_RATE)
+        freqs = np.fft.rfftfreq(fft_size, d=1.0 / SAMPLE_RATE_HZ)
         self._freq_mask = (freqs >= low_freq_hz) & (freqs <= high_freq_hz)
 
         if not np.any(self._freq_mask):
@@ -117,7 +117,7 @@ class AcousticGateDetector:
         )
         flatness_arr = compute_spectral_flatness(
             audio,
-            sample_rate=AUDIO_SAMPLE_RATE,
+            sample_rate=SAMPLE_RATE_HZ,
             n_fft=self._fft_size,
             hop_length=self._hop_size,
             freq_mask=self._freq_mask,
@@ -149,7 +149,7 @@ class AcousticGateDetector:
         )
 
         # 3. Time domain smoothing (Medfilt debounce + hangover)
-        time_per_frame = self._hop_size / AUDIO_SAMPLE_RATE
+        time_per_frame = self._hop_size / SAMPLE_RATE_HZ
         debounce_frames = int(self._debounce_window / time_per_frame)
         if debounce_frames % 2 == 0:
             debounce_frames += 1
@@ -181,7 +181,7 @@ class AcousticGateDetector:
             ends = np.flatnonzero(diffs == -1)
 
             time_per_frame_ms = (
-                self._hop_size / AUDIO_SAMPLE_RATE
+                self._hop_size / SAMPLE_RATE_HZ
             ) * MS_PER_SECOND
             for start_idx, end_idx in zip(starts, ends, strict=True):
                 regions.append(

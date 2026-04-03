@@ -1,6 +1,17 @@
-import asyncpg
+import logging
 
-from .settings import AlloyDBSettings
+import asyncpg
+from tenacity import (
+    RetryCallState,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
+
+from backend.pipeline.storage.settings import AlloyDBSettings
+
+_logger = logging.getLogger(__name__)
 
 
 async def create_pool(
@@ -13,6 +24,7 @@ async def create_pool(
     max_size: int = 5,
     command_timeout: float | None = None,
     timeout: float | None = None,  # noqa: ASYNC109
+    max_inactive_connection_lifetime: float | None = None,
 ) -> asyncpg.Pool:
     """
     Create an asyncpg connection pool to the AlloyDB instance.
@@ -30,6 +42,9 @@ async def create_pool(
         max_size: Maximum number of connections in the pool.
         command_timeout: Query execution timeout in seconds.
         timeout: TCP connection timeout in seconds.
+        max_inactive_connection_lifetime: Seconds before idle connections are
+            closed. Useful for Cloud Run where CPU freezes between requests
+            cause TCP connections to go stale.
 
     Returns:
         An asyncpg connection pool.
@@ -53,6 +68,10 @@ async def create_pool(
         kwargs["command_timeout"] = command_timeout
     if timeout is not None:
         kwargs["timeout"] = timeout
+    if max_inactive_connection_lifetime is not None:
+        kwargs["max_inactive_connection_lifetime"] = (
+            max_inactive_connection_lifetime
+        )
 
     try:
         return await asyncpg.create_pool(**kwargs)
@@ -97,3 +116,36 @@ async def create_pool_from_settings(
         command_timeout=settings.command_timeout_sec,
         timeout=settings.connect_timeout_sec,
     )
+
+
+def _log_retry(retry_state: RetryCallState) -> None:
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    _logger.warning(
+        "AlloyDB connection attempt %d failed (%s). Retrying...",
+        retry_state.attempt_number,
+        exc,
+    )
+
+
+@retry(
+    retry=retry_if_exception_type((TimeoutError, ConnectionError, OSError)),
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=1, min=2, max=30),
+    before_sleep=_log_retry,
+    reraise=True,
+)
+async def create_pool_with_retry(
+    settings: AlloyDBSettings | None = None,
+) -> asyncpg.Pool:
+    """
+    Create an asyncpg connection pool with exponential backoff retry.
+
+    Retries on transient connection failures (up to 5 attempts, starting at 2s
+    and doubling up to 30s). Intended for Cloud Run cold starts where multiple
+    services spinning up simultaneously can briefly saturate the AlloyDB
+    managed connection pooler.
+
+    Args:
+        settings: AlloyDB connection settings. Defaults to env vars.
+    """
+    return await create_pool_from_settings(settings)

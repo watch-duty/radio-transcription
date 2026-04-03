@@ -49,13 +49,9 @@ def publish_test_message() -> None:
     }
 
     pubsub_emulator_host = os.environ["PUBSUB_EMULATOR_HOST"]
-    project_id = os.environ["GOOGLE_CLOUD_PROJECT"]
     input_topic = os.environ["TRANSCRIPTION_TOPIC"]
 
-    url = (
-        f"http://{pubsub_emulator_host}/v1/projects/"
-        f"{project_id}/topics/{input_topic}:publish"
-    )
+    url = f"http://{pubsub_emulator_host}/v1/{input_topic}:publish"
 
     logger.info("====== INPUT ======")
     logger.info(

@@ -1,0 +1,101 @@
+openapi: 3.1.0
+components:
+  examples: {}
+  headers: {}
+  parameters: {}
+  requestBodies: {}
+  responses: {}
+  schemas:
+    Transcript:
+      properties:
+        feedId:
+          type: string
+        transmissionId:
+          type: string
+        transcript:
+          type: string
+        startTimestamp:
+          type: string
+        endTimestamp:
+          type: string
+        missingPriorContext:
+          type: boolean
+        missingPostContext:
+          type: boolean
+        sourceAudioUris:
+          items:
+            type: string
+          type: array
+        canonicalAudioUri:
+          type: string
+        startAudioOffset:
+          type: string
+        endAudioOffset:
+          type: string
+        evaluationDecisions:
+          items:
+            type: string
+          type: array
+      required:
+        - feedId
+        - transmissionId
+        - transcript
+        - startTimestamp
+        - endTimestamp
+        - missingPriorContext
+        - missingPostContext
+        - sourceAudioUris
+        - canonicalAudioUri
+        - startAudioOffset
+        - endAudioOffset
+        - evaluationDecisions
+      type: object
+      additionalProperties: false
+    ListTranscriptsResponse:
+      properties:
+        transcripts:
+          items:
+            $ref: "#/components/schemas/Transcript"
+          type: array
+      required:
+        - transcripts
+      type: object
+      additionalProperties: false
+  securitySchemes: {}
+info:
+  title: radio-transcription-apis
+  version: 1.0.0
+  contact: {}
+paths:
+  /api/v1/transcripts/{feedId}:
+    get:
+      operationId: ListTranscripts
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListTranscriptsResponse"
+        "404":
+          description: ""
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      tags:
+        - Transcripts
+      security: []
+      parameters:
+        - in: path
+          name: feedId
+          required: true
+          schema:
+            type: string
+servers:
+  - url: /

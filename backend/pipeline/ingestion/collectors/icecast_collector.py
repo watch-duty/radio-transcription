@@ -11,6 +11,7 @@ import tempfile
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import urljoin
 
 from backend.pipeline.common.constants import (
     AUDIO_FORMAT,
@@ -52,9 +53,8 @@ def _segment_path(directory: Path, index: int) -> Path:
     return directory / f"chunk_{index:06d}.{AUDIO_FORMAT}"
 
 
-async def capture_icecast_stream(
-    feed: LeasedFeed,
-    shutdown_event: asyncio.Event,
+async def capture_icecast_stream(  # noqa: PLR0915
+    feed: LeasedFeed, shutdown_event: asyncio.Event, url_base: str
 ) -> AsyncIterator[tuple[bytes, datetime.datetime]]:
     """
     Capture audio chunks from an Icecast stream using ffmpeg segment muxing.
@@ -64,8 +64,9 @@ async def capture_icecast_stream(
     decodable file rather than an arbitrary slice of a continuous bytestream.
 
     Args:
-        feed: Leased feed containing stream_url and metadata
+        feed: Leased feed containing source_feed_id and metadata
         shutdown_event: Signals graceful shutdown request
+        url_base: The base URL to prepend to the source_feed_id for stream access
 
     Yields:
         A tuple containing:
@@ -73,16 +74,19 @@ async def capture_icecast_stream(
         - (datetime.datetime) The exact audio start time of the segment window
 
     Raises:
-        ValueError: If stream_url is missing from feed properties
+        ValueError: If source_feed_id is missing from feed properties
         RuntimeError: If ffmpeg exits unexpectedly or stalls
 
     """
-    url = feed.get("stream_url")
+    source_feed_id = feed.get("source_feed_id")
     feed_id = feed.get("id")
     feed_name = feed.get("name")
-    if not url:
-        msg = f"Feed {feed_id} ({feed_name}) missing stream_url in feed_properties_icecast"
+    if not source_feed_id:
+        msg = f"Feed {feed_id} ({feed_name}) missing source_feed_id in feed_properties"
         raise ValueError(msg)
+
+    normalized_url_base = url_base if url_base.endswith("/") else f"{url_base}/"
+    url = urljoin(normalized_url_base, f"{source_feed_id.strip()}.mp3")
 
     with tempfile.TemporaryDirectory(prefix="icecast_segments_") as tmp_dir:
         segment_dir = Path(tmp_dir)

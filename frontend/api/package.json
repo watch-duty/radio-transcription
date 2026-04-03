@@ -1,0 +1,39 @@
+{
+  "name": "radio-transcription-apis",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "yarn run generate-routes && tsc",
+    "start": "functions-framework --target=api",
+    "dev": "yarn build && yarn start",
+    "lint:check": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format:check": "prettier --check .",
+    "format:fix": "prettier --write .",
+    "test": "vitest",
+    "generate-routes": "yarn run tsoa routes",
+    "generate-spec": "yarn run tsoa spec --yaml"
+  },
+  "dependencies": {
+    "@google-cloud/functions-framework": "^5.0.2",
+    "axios": "^1.14.0",
+    "express": "^5.2.1",
+    "google-auth-library": "^10.6.2",
+    "tsoa": "^7.0.0-alpha.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@trivago/prettier-plugin-sort-imports": "^6.0.2",
+    "@tsconfig/node22": "^22.0.5",
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.5.0",
+    "eslint": "^10.1.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.4.0",
+    "prettier": "^3.8.1",
+    "typescript": "^6.0.2",
+    "typescript-eslint": "^8.58.0",
+    "vitest": "^3.0.0"
+  }
+}
