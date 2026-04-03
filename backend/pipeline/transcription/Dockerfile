@@ -20,7 +20,7 @@ WORKDIR /app
 
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
-ENV PYTHONPATH="/app"
+ENV PYTHONPATH="/app:/app/.venv/lib/python3.13/site-packages"
 ENV FLEX_TEMPLATE_PYTHON_PY_FILE="/app/backend/pipeline/transcription/main.py"
 
 # Copy only the dependency manifests first so that uv sync is cached independently
