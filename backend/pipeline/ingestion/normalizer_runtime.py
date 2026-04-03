@@ -151,14 +151,18 @@ class NormalizerRuntime:
         # silently dropping packets hangs connect() for 2+ min (Linux TCP
         # SYN-ACK timeout), starving the pool of connections.
         self._data_pool = await create_pool_from_settings(settings.db)
-        self._store = FeedStore(self._data_pool)
+        self._store = FeedStore(
+            self._data_pool, source_types=settings.source_types
+        )
 
         # Dedicated 1-connection pool ensures heartbeat queries never queue
         # behind 250 bookmark/upload operations on the main pool. Without
         # this, pool contention causes false stall-timeout kills.
         hb_settings = settings.db.replace(pool_min_size=1, pool_max_size=1)
         self._heartbeat_pool = await create_pool_from_settings(hb_settings)
-        self._heartbeat_store = FeedStore(self._heartbeat_pool)
+        self._heartbeat_store = FeedStore(
+            self._heartbeat_pool, source_types=settings.source_types
+        )
 
         self._heartbeat_thread = threading.Thread(
             target=self._heartbeat_loop,
