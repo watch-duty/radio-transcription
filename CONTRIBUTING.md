@@ -7,9 +7,7 @@
 3. Optionally activate mise venv: `eval "$(mise activate zsh)"` (see docs above for other options)
 4. Install Docker: `brew install --cask docker`
 
-## Dev/coding tools and best practices
-
-### Backend tools
+## Backend tools
 
 * Language: Python
 * Package management: `uv`
@@ -17,7 +15,7 @@
 * Type-checking: `ty check`
 * Unit testing: Python `unittest`
 
-### E2E Local Development
+## E2E Local Development
 On a high level, this local pipeline runs the following:
 1. Pub/Sub emulator (manages all PubSub topics for each Pub/Sub instance in the pipeline)
 2. Rules Management service (to manage keywords and evaluation logic)
@@ -52,8 +50,8 @@ Send a test payload to the Transcription PubSub (ingested by the Rules Evaluatio
 docker-compose exec rules-evaluation python /app/test_evaluation_publish.py
 ```
 
-#### Audio Ingestion
-##### Icecast Collector
+### Audio Ingestion
+#### Icecast Collector
 *Installation*
 1. Install ffmpeg
 ```
@@ -104,7 +102,7 @@ docker run -v ~/.config/gcloud:/.config/gcloud \
            -it icecast
 ```
 
-### Integration Tests
+## Integration Tests
 There is a basic set of integration tests that are currently run against the local pipeline.
 These can be found under /integration_tests. Make sure to build and run the pipeline locally
 before running.
@@ -112,7 +110,7 @@ before running.
 docker compose run --rm integration-tests
 ```
 
-### Frontend tools
+## Frontend tools
 
 * Language: Typescript
 * Package management: `yarn` (install with `npm install --global yarn`)
@@ -123,12 +121,12 @@ docker compose run --rm integration-tests
 * (Optional) Install Firebase CLI (https://firebase.google.com/docs/cli) for hosting deployments
 
 
-### Making Changes to Files
+## Making Changes to Files
 * run `mise format`
 * run `mise lint`
 
 
-### Pre-commit Hooks
+## Pre-commit Hooks
 This repository uses `pre-commit` to ensure code quality before pushing.
 To install the pre-commit hook in your local Git repository:
 ```bash
@@ -141,5 +139,12 @@ You can also run the pre-commit hooks manually on all files at any time:
 uv run pre-commit run --all-files
 ```
 
-### Deployments and Local Testing
+## Deployments and Local Testing
 * Docker
+
+## Debugging
+
+### Github Workflows
+If there is a workflow that is failing, and for the life of you, you cannot figure out why, you can open an SSH session into the workflow. Rerun the job by triggering a manual workflow.
+![Manual workflow trigger instructions](manual_workflow_trigger.png)
+Note that this is only available on workflows that have it configured. If you want to configure it for a new workflow, you'll need open a new PR and merge the configuration into main before the option is available for you.
