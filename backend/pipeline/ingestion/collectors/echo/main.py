@@ -22,7 +22,7 @@ from google.cloud import storage
 from backend.pipeline.common.audio import convert_to_flac
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.gcp_helper import publish_audio_chunk_sync
-from backend.pipeline.storage.connection import connect_db
+from backend.pipeline.storage.sync_connection import connect_db
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
 
 if TYPE_CHECKING:
