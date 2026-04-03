@@ -48,7 +48,7 @@ describe('listTranscripts', () => {
     vi.mocked(axios.get).mockResolvedValueOnce({ data: mockData });
 
     const controller = new TranscriptsController();
-    const result = await controller.listTranscripts('test', vi.fn() as any);
+    const result = await controller.listTranscripts('test', vi.fn());
 
     expect(result).toEqual(mockData);
     expect(axios.get).toHaveBeenCalledWith('http://api.example.com', {
@@ -63,7 +63,7 @@ describe('listTranscripts', () => {
     const controller = new TranscriptsController();
 
     await expect(
-      controller.listTranscripts('test', vi.fn() as any)
+      controller.listTranscripts('test', vi.fn())
     ).rejects.toThrow('Error fetching transcript: Network Error');
   });
 });

@@ -29,6 +29,7 @@ export class TranscriptsController extends Controller {
   @Get('{feedId}')
   public async listTranscripts(
     @Path() feedId: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     @Res() notFound: TsoaResponse<404, { message: string }>
   ): Promise<ListTranscriptsResponse> {
     // Get the Authentication token to allow us to call the Cloud Run function.
