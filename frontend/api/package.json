@@ -4,18 +4,21 @@
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "build": "tsc",
+    "build": "yarn run generate-routes && tsc",
     "start": "functions-framework --target=api",
     "dev": "yarn build && yarn start",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "test": "vitest"
+    "test": "vitest",
+    "generate-routes": "yarn run tsoa routes",
+    "generate-spec": "yarn run tsoa spec --yaml"
   },
   "dependencies": {
     "@google-cloud/functions-framework": "^5.0.2",
     "axios": "^1.14.0",
     "express": "^5.2.1",
-    "google-auth-library": "^10.6.2"
+    "google-auth-library": "^10.6.2",
+    "tsoa": "^7.0.0-alpha.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
