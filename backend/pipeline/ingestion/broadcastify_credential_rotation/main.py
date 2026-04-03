@@ -42,25 +42,20 @@ logger = logging.getLogger(__name__)
 secret_client: secretmanager.SecretManagerServiceClient | None = None
 
 
-def add_secret_version(secret_id: str, payload: str) -> str:
+def add_secret_version(secret_client: secretmanager.SecretManagerServiceClient, secret_id: str, payload: str) -> str:
     """Add a new version to an existing Secret Manager secret.
 
     Secret must already exist (Terraform should have created it). This function
     returns the name of the created secret version.
 
     Args:
+        secret_client: Secret Manager client.
         secret_id: Secret Manager secret ID.
         payload: Secret value to store as a new version.
 
     Returns:
         The created secret version resource name.
     """
-    if secret_client is None:
-        msg = (
-            "Secret Manager client not initialized - "
-            "broadcastify_credential_rotation must be called first"
-        )
-        raise RuntimeError(msg)
     if not PROJECT_ID:
         msg = "GOOGLE_CLOUD_PROJECT environment variable is not set"
         raise RuntimeError(msg)
@@ -97,7 +92,7 @@ def _generate_jwt(auth_claims: dict[str, str] | None = None) -> str:
     payload = {
         "iss": BROADCASTIFY_API_APP_ID,
         "iat": now,
-        "exp": now + 2100,  # 35 minutes
+        "exp": now + 2700,  # 45 minutes to give scheduler room for error
     }
     if auth_claims:
         payload.update(auth_claims)
@@ -153,8 +148,16 @@ def _authenticate() -> dict[str, Any]:
     return auth_data
 
 
-def _rotate_credentials() -> None:
-    """Generate and store a new Broadcastify auth JWT."""
+@functions_framework.http
+def broadcastify_credential_rotation(request: flask.Request) -> tuple[str, int]:
+    """HTTP entry point for Broadcastify credential rotation."""
+    del request  # unused for scheduler-triggered requests
+    global secret_client  # noqa: PLW0603
+
+    _require_environment()
+    if secret_client is None:
+        secret_client = secretmanager.SecretManagerServiceClient()
+
     auth_data = _authenticate()
 
     uid = auth_data.get("uid")
@@ -167,19 +170,6 @@ def _rotate_credentials() -> None:
     if not SECRET_JWT:
         msg = "BROADCASTIFY_JWT_SECRET_ID environment variable is not set"
         raise RuntimeError(msg)
-    add_secret_version(SECRET_JWT, auth_jwt_token)
+    add_secret_version(secret_client, SECRET_JWT, auth_jwt_token)
     logger.info("Broadcastify credentials rotated successfully")
-
-
-@functions_framework.http
-def broadcastify_credential_rotation(request: flask.Request) -> tuple[str, int]:
-    """HTTP entry point for Broadcastify credential rotation."""
-    del request  # unused for scheduler-triggered requests
-    global secret_client  # noqa: PLW0603
-
-    _require_environment()
-    if secret_client is None:
-        secret_client = secretmanager.SecretManagerServiceClient()
-
-    _rotate_credentials()
     return "Successfully updated broadcastify credentials", 200

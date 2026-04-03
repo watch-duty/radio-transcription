@@ -34,7 +34,7 @@ class TestAddSecretVersion:
         )
         main.secret_client = secret_client
 
-        result = main.add_secret_version("broadcastify-jwt", "token-123")
+        result = main.add_secret_version(secret_client, "broadcastify-jwt", "token-123")
 
         assert result == "projects/p/secrets/s/versions/1"
         secret_client.secret_path.assert_called_once_with(
@@ -81,7 +81,7 @@ class TestGenerateJwt:
         assert header["kid"] == "test-key-id"
         assert decoded["iss"] == "test-app-id"
         assert decoded["iat"] == 1700000000
-        assert decoded["exp"] == 1700002100
+        assert decoded["exp"] == 1700002700
         assert decoded["sub"] == "uid-1"
         assert decoded["utk"] == "utk-1"
 
@@ -143,7 +143,11 @@ class TestBroadcastifyCredentialRotation:
             "utk": "utk-456",
         }
 
-        mock_add.assert_called_once_with("broadcastify-jwt", "auth-jwt")
+        mock_add.assert_called_once_with(
+            fake_secret_client,
+            "broadcastify-jwt",
+            "auth-jwt",
+        )
 
     def test_rotation_raises_on_auth_http_error(
         self, configured_module: None
