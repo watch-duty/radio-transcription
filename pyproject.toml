@@ -27,17 +27,9 @@ dependencies = [
     "fastapi>=0.110.0",
     "uvicorn>=0.27.0",
     "redis>=7.3.0",
-    "numpy>=2.1.0",
-    "scipy>=1.11.0",
     "urllib3>=2.6.3",
     "transcription-pipeline",
-    "tenacity>=9.1.4",
-    "librosa>=0.11.0",
-    "rvadfast>=0.0.5",
-    "silero-vad>=6.2.1",
-    "onnxruntime==1.23.2",
-    "huggingface-hub>=1.8.0",
-    "sherpa-onnx>=1.12.34",
+
 ]
 
 [tool.uv]

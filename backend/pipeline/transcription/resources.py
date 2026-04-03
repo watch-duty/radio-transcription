@@ -2,13 +2,14 @@
 
 import logging
 import threading
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from apache_beam.utils.shared import Shared
 
-from backend.pipeline.transcription.enums import TranscriberType, VadType
+from backend.pipeline.transcription.enums import TranscriberType
 from backend.pipeline.transcription.transcribers import Transcriber
 
 logger = logging.getLogger(__name__)
@@ -27,10 +28,12 @@ class SharedResources:
     eliminates the latency and CPU overhead of repeatedly initializing heavy resources across bundles.
     """
 
-    vad: Any | None = None
-    denoiser: Any | None = None
+    _vads: OrderedDict[str, Any] = field(default_factory=OrderedDict)
+    _denoisers: OrderedDict[str, Any] = field(default_factory=OrderedDict)
     gcs_client: Any | None = None
     transcriber: Transcriber | None = None
+
+    max_cache_size: int = 20
 
     _vad_lock: threading.Lock = field(default_factory=threading.Lock)
     _denoiser_lock: threading.Lock = field(default_factory=threading.Lock)
@@ -39,27 +42,38 @@ class SharedResources:
 
     def get_vad(
         self,
-        factory: Callable[[VadType, str], Any],
-        vad_type: VadType,
+        session_id: str,
+        factory: Callable[[str], Any],
         config_json: str,
     ) -> Any:
-        """Lazily initialize and return the VAD object."""
-        if self.vad is None:
-            with self._vad_lock:
-                if self.vad is None:
-                    self.vad = factory(vad_type, config_json)
-        return self.vad
+        """Lazily initialize and return the VAD object for a session using LRU cache."""
+        with self._vad_lock:
+            if session_id in self._vads:
+                self._vads.move_to_end(session_id)
+                return self._vads[session_id]
+
+            vad = factory(config_json)
+            self._vads[session_id] = vad
+            if len(self._vads) > self.max_cache_size:
+                self._vads.popitem(last=False)
+            return vad
 
     def get_denoiser(
         self,
+        session_id: str,
         factory: Callable[[], Any],
     ) -> Any:
-        """Lazily initialize and return the Speech Denoiser object."""
-        if self.denoiser is None:
-            with self._denoiser_lock:
-                if self.denoiser is None:
-                    self.denoiser = factory()
-        return self.denoiser
+        """Lazily initialize and return the Speech Denoiser object for a session using LRU cache."""
+        with self._denoiser_lock:
+            if session_id in self._denoisers:
+                self._denoisers.move_to_end(session_id)
+                return self._denoisers[session_id]
+
+            denoiser = factory()
+            self._denoisers[session_id] = denoiser
+            if len(self._denoisers) > self.max_cache_size:
+                self._denoisers.popitem(last=False)
+            return denoiser
 
     def get_gcs(self, factory: Callable[[], Any]) -> Any:
         """Lazily initialize and return the Google Cloud Storage client."""

@@ -29,7 +29,7 @@ from backend.pipeline.transcription.datatypes import (
     TimeRange,
     TranscribeAudioConfig,
 )
-from backend.pipeline.transcription.enums import TranscriberType, VadType
+from backend.pipeline.transcription.enums import TranscriberType
 from backend.pipeline.transcription.stitcher import (
     StitchAudioFn,
     TranscribeAudioFn,
@@ -78,7 +78,7 @@ def get_test_stitch_config(**kwargs: Any) -> StitchAudioConfig:
 
     defaults = {
         "project_id": "fake-proj",
-        "vad_type": VadType.TEN_VAD,
+
         "vad_config": "{}",
         "metrics_exporter_type": "",
         "metrics_config": "{}",
@@ -98,7 +98,7 @@ def get_test_transcribe_config(**kwargs: Any) -> TranscribeAudioConfig:
         "project_id": "fake-proj",
         "transcriber_type": TranscriberType.GOOGLE_CHIRP_V3,
         "transcriber_config": "{}",
-        "vad_type": VadType.TEN_VAD,
+
         "vad_config": "{}",
         "metrics_exporter_type": "",
         "metrics_config": "{}",
@@ -265,9 +265,9 @@ class OrderRestorerTest(unittest.TestCase):
                 restored,
                 equal_to(
                     [
-                        ("feed-1", "gs://b/100-uuid1.flac"),
-                        ("feed-1", "gs://b/115-uuid2.flac"),
-                        ("feed-1", "gs://b/130-uuid3.flac"),
+                        ("feed-1", ("gs://b/100-uuid1.flac", "session-A")),
+                        ("feed-1", ("gs://b/115-uuid2.flac", "session-A")),
+                        ("feed-1", ("gs://b/130-uuid3.flac", "session-A")),
                     ]
                 ),
             )
@@ -342,9 +342,9 @@ class OrderRestorerTest(unittest.TestCase):
                 restored,
                 equal_to(
                     [
-                        ("feed-1", "gs://b/100-11111111.flac"),
-                        ("feed-1", "gs://b/130-33333333.flac"),
-                        ("feed-1", "gs://b/115-22222222.flac"),
+                        ("feed-1", ("gs://b/100-11111111.flac", "session-A")),
+                        ("feed-1", ("gs://b/130-33333333.flac", "session-A")),
+                        ("feed-1", ("gs://b/115-22222222.flac", "session-A")),
                     ]
                 ),
             )
@@ -1137,13 +1137,14 @@ class StitchAudioTest(unittest.TestCase):
 
 class TranscribeAudioTest(unittest.TestCase):
     @patch("backend.pipeline.transcription.stitcher.get_transcriber")
+    @patch("backend.pipeline.transcription.stitcher.verify_speech_segment")
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
     def test_dlq_routing(
-        self, mock_audio_processor: MagicMock, mock_get_transcriber: MagicMock
+        self, mock_audio_processor: MagicMock, mock_verify_speech: MagicMock, mock_get_transcriber: MagicMock
     ) -> None:
         """Verifies that explicit Python exceptions raised randomly within transformations dynamically populate a standardized and resilient Dataflow Dead Letter Queue error."""
         mock_processor_inst = mock_audio_processor.return_value
-        mock_processor_inst.check_vad.return_value = True
+        mock_verify_speech.return_value = True
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
         mock_processor_inst.export_flac.return_value = b"flac_bytes"
         mock_processor_inst.process_buffer.return_value = (

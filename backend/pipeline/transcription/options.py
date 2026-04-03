@@ -15,7 +15,6 @@ from backend.pipeline.transcription.constants import (
 from backend.pipeline.transcription.enums import (
     MetricsExporterType,
     TranscriberType,
-    VadType,
 )
 
 
@@ -62,13 +61,6 @@ class TranscriptionOptions(PipelineOptions):
             type=str,
             default="{}",
             help="JSON string of transcriber-specific configuration.",
-        )
-        parser.add_argument(
-            "--vad_type",
-            type=str,
-            choices=[e.value for e in VadType],
-            default=VadType.TEN_VAD.value,
-            help="Type of VAD model to use.",
         )
         parser.add_argument(
             "--vad_config",
@@ -123,6 +115,12 @@ class TranscriptionOptions(PipelineOptions):
             type=int,
             default=DEFAULT_MAX_TRANSMISSION_DURATION_MS,
             help="Absolute maximum duration of a single continuous transmission.",
+        )
+        parser.add_argument(
+            "--vad_cache_size",
+            type=int,
+            default=20,
+            help="Maximum number of active sessions to cache VAD/Denoiser state for per worker.",
         )
         parser.add_argument(
             "--route_to_dlq",

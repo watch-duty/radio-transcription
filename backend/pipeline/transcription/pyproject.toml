@@ -9,9 +9,13 @@ dependencies = [
     "protobuf>=5.29.6",
     "pydub>=0.25.1",
     "crcmod>=1.7",
-    "ten-vad>=1.0.6.8",
     "audioop-lts>=0.2.1",
-    "onnxruntime>=1.17.0",
+    "librosa>=0.11.0",
+    "silero-vad>=6.2.1",
+    "onnxruntime==1.23.2",
+    "sherpa-onnx>=1.12.34",
+    "numpy>=2.1.0",
+    "scipy>=1.11.0",
 ]
 
 [tool.setuptools]

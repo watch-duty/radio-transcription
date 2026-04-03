@@ -89,7 +89,7 @@ class GcpMonitoringExporter(MetricsExporter):
                 name=project_name, time_series=[series]
             )
         except GoogleAPIError as e:
-            logger.warning(f"Failed to export GCP metric {metric_name}: {e}")
+            logger.warning("Failed to export GCP metric %s: %s", metric_name, e)
 
     def record_transcription_time(
         self, *, feed_id: str, duration_ms: int
