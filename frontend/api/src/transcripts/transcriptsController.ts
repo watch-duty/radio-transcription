@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { GoogleAuth } from 'google-auth-library';
+import { TRANSCRIPTS_API_URL } from '../config.js';
 import { Route, Controller, Tags, Get, Path, TsoaResponse, Res } from 'tsoa';
 
 export interface Transcript {
@@ -29,19 +30,14 @@ export class TranscriptsController extends Controller {
     @Path() feedId: string,
     @Res() notFound: TsoaResponse<404, { message: string }>
   ): Promise<ListTranscriptsResponse> {
-    const apiUrl = process.env.TRANSCRIPTS_API_URL;
-    if (!apiUrl) {
-      throw new Error('TRANSCRIPTS_API_URL environment variable is not set');
-    }
-
     // Get the Authentication token to allow us to call the Cloud Run function.
     const auth = new GoogleAuth();
-    const client = await auth.getIdTokenClient(apiUrl);
+    const client = await auth.getIdTokenClient(TRANSCRIPTS_API_URL!);
     const tokenResponse = await client.getRequestHeaders();
     const token = tokenResponse.get('Authorization');
 
     try {
-      const response = await axios.get(apiUrl, { params: { feedId }, headers: { Authorization: token } });
+      const response = await axios.get(TRANSCRIPTS_API_URL!, { params: { feedId }, headers: { Authorization: token } });
       return response.data;
     } catch (error: unknown) {
       console.error('Error fetching transcript:', error);

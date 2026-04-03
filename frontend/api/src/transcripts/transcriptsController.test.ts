@@ -2,6 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TranscriptsController } from './transcriptsController.js';
 import axios from 'axios';
 
+// Mock the config module to inject the value without touching process.env
+vi.mock('../config.js', () => ({
+  TRANSCRIPTS_API_URL: 'http://api.example.com'
+}));
+
 vi.mock('axios');
 vi.mock('google-auth-library', () => {
   return {
@@ -21,7 +26,6 @@ describe('listTranscripts', () => {
   });
 
   it('should return data on success', async () => {
-    process.env.TRANSCRIPTS_API_URL = 'http://api.example.com';
     const mockData = { transcripts: [{ feedId: 'test', transmissionId: '1', transcript: 'hello', startTimestamp: '1', endTimestamp: '2', missingPriorContext: false, missingPostContext: false, sourceAudioUris: [], canonicalAudioUri: '', startAudioOffset: '0', endAudioOffset: '0', evaluationDecisions: [] }] };
     vi.mocked(axios.get).mockResolvedValueOnce({ data: mockData });
 
@@ -35,16 +39,7 @@ describe('listTranscripts', () => {
     });
   });
 
-  it('should throw error if TRANSCRIPTS_API_URL is missing', async () => {
-    delete process.env.TRANSCRIPTS_API_URL;
-    const controller = new TranscriptsController();
-
-    await expect(controller.listTranscripts('test', vi.fn() as any))
-      .rejects.toThrow('TRANSCRIPTS_API_URL environment variable is not set');
-  });
-
   it('should throw error on API failure with error message', async () => {
-    process.env.TRANSCRIPTS_API_URL = 'http://api.example.com';
     const errorMessage = 'Network Error';
     vi.mocked(axios.get).mockRejectedValueOnce(new Error(errorMessage));
     const controller = new TranscriptsController();
