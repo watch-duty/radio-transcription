@@ -21,7 +21,7 @@ from backend.pipeline.ingestion.retry import (
 from backend.pipeline.ingestion.settings import NormalizerSettings
 from backend.pipeline.storage.connection import (
     close_pool,
-    create_pool_from_settings,
+    create_pool_with_retry,
 )
 from backend.pipeline.storage.feed_store import (
     FeedStore,
@@ -150,7 +150,7 @@ class NormalizerRuntime:
         # timeout (connect): bounds TCP handshake — without it, a VPC subnet
         # silently dropping packets hangs connect() for 2+ min (Linux TCP
         # SYN-ACK timeout), starving the pool of connections.
-        self._data_pool = await create_pool_from_settings(settings.db)
+        self._data_pool = await create_pool_with_retry(settings.db)
         self._store = FeedStore(
             self._data_pool, source_types=settings.source_types
         )
@@ -159,7 +159,7 @@ class NormalizerRuntime:
         # behind 250 bookmark/upload operations on the main pool. Without
         # this, pool contention causes false stall-timeout kills.
         hb_settings = settings.db.replace(pool_min_size=1, pool_max_size=1)
-        self._heartbeat_pool = await create_pool_from_settings(hb_settings)
+        self._heartbeat_pool = await create_pool_with_retry(hb_settings)
         self._heartbeat_store = FeedStore(
             self._heartbeat_pool, source_types=settings.source_types
         )
