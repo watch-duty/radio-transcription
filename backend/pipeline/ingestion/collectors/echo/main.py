@@ -22,6 +22,7 @@ from google.cloud import storage
 from backend.pipeline.common.audio import convert_to_flac
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.gcp_helper import publish_audio_chunk_sync
+from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.storage.sync_connection import connect_db
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
 
@@ -54,6 +55,7 @@ feed_store: SyncFeedStore | None = None
 def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
     """Sync entry point for Eventarc GCS OBJECT_FINALIZE events."""
     global gcs_client, pubsub_client, feed_store  # noqa: PLW0603
+    setup_logging()
     if not CANONICAL_BUCKET:
         msg = "CANONICAL_BUCKET environment variable is not set"
         raise RuntimeError(msg)
@@ -62,10 +64,9 @@ def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
         raise RuntimeError(msg)
     if gcs_client is None:
         gcs_client = storage.Client()
-    if pubsub_client is None:
         pubsub_client = PubSubClient()
-    if feed_store is None:
         feed_store = SyncFeedStore(connect_db)
+        logger.info("Echo ingestion initialized (bucket=%s)", CANONICAL_BUCKET)
     _handle(cloud_event)
 
 
