@@ -1,4 +1,10 @@
+from __future__ import annotations
+
+from typing import Any, cast
+
 import asyncpg
+import psycopg
+from psycopg.rows import dict_row
 
 from .settings import AlloyDBSettings
 
@@ -13,6 +19,7 @@ async def create_pool(
     max_size: int = 5,
     command_timeout: float | None = None,
     timeout: float | None = None,  # noqa: ASYNC109
+    max_inactive_connection_lifetime: float | None = None,
 ) -> asyncpg.Pool:
     """
     Create an asyncpg connection pool to the AlloyDB instance.
@@ -30,6 +37,9 @@ async def create_pool(
         max_size: Maximum number of connections in the pool.
         command_timeout: Query execution timeout in seconds.
         timeout: TCP connection timeout in seconds.
+        max_inactive_connection_lifetime: Seconds before idle connections are
+            closed. Useful for Cloud Run where CPU freezes between requests
+            cause TCP connections to go stale.
 
     Returns:
         An asyncpg connection pool.
@@ -53,6 +63,10 @@ async def create_pool(
         kwargs["command_timeout"] = command_timeout
     if timeout is not None:
         kwargs["timeout"] = timeout
+    if max_inactive_connection_lifetime is not None:
+        kwargs["max_inactive_connection_lifetime"] = (
+            max_inactive_connection_lifetime
+        )
 
     try:
         return await asyncpg.create_pool(**kwargs)
@@ -73,6 +87,34 @@ async def create_pool(
 async def close_pool(pool: asyncpg.Pool) -> None:
     """Close an asyncpg connection pool."""
     await pool.close()
+
+
+def connect_db(
+    settings: AlloyDBSettings | None = None,
+) -> psycopg.Connection[dict[str, Any]]:
+    """Open a sync psycopg connection to AlloyDB via pgBouncer.
+
+    No pool needed when the caller handles at most one request at a time
+    (e.g. Cloud Run with concurrency=1). pgBouncer provides server-side
+    pooling.
+
+    If *settings* is ``None``, an :class:`AlloyDBSettings` is constructed
+    from environment variables.
+    """
+    if settings is None:
+        settings = AlloyDBSettings()
+    return cast(
+        "psycopg.Connection[dict[str, Any]]",
+        psycopg.connect(
+            host=settings.host,
+            port=settings.port,
+            user=settings.user,
+            password=settings.password,
+            dbname=settings.db_name,
+            autocommit=True,
+            row_factory=cast("Any", dict_row),
+        ),
+    )
 
 
 async def create_pool_from_settings(

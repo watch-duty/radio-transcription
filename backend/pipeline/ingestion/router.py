@@ -40,6 +40,11 @@ _COLLECTOR_REGISTRY: dict[SourceType, CollectorEntry] = {
 }
 
 
+def supported_source_types() -> list[str]:
+    """Return source-type slugs that have registered collectors."""
+    return [st.value for st in _COLLECTOR_REGISTRY]
+
+
 def route_capturer(
     feed: LeasedFeed, shutdown_event: asyncio.Event
 ) -> AsyncIterator[tuple[bytes, datetime.datetime]]:

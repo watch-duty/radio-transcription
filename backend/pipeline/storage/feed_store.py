@@ -29,6 +29,7 @@ class SourceType(enum.StrEnum):
 
     BCFY_FEEDS = "bcfy_feeds"
     BCFY_CALLS = "bcfy_calls"
+    ECHO = "echo"
 
 
 _LEASE_FEED_SQL = """\
@@ -41,6 +42,7 @@ WITH available_feed AS (
         OR (status = 'active'::feed_status
             AND last_heartbeat < NOW() - INTERVAL '60 seconds')
     )
+    AND ($2::text[] IS NULL OR source_type = ANY($2::text[]))
     ORDER BY (status = 'unclaimed'::feed_status) DESC,
              retry_after ASC NULLS FIRST,
              last_heartbeat ASC NULLS FIRST
@@ -124,6 +126,7 @@ WITH available_feeds AS (
         OR (status = 'active'::feed_status
             AND last_heartbeat < NOW() - $2::interval)
     )
+    AND ($4::text[] IS NULL OR source_type = ANY($4::text[]))
     ORDER BY (status = 'unclaimed'::feed_status) DESC,
              retry_after ASC NULLS FIRST,
              last_heartbeat ASC NULLS FIRST
@@ -201,11 +204,20 @@ class FeedStore:
 
     Args:
         pool: An asyncpg connection pool to the AlloyDB instance.
+        source_types: Optional list of source-type slugs to filter
+            lease queries.  When set, only feeds whose ``source_type``
+            matches one of the values will be leased.  ``None`` disables
+            filtering (all types are eligible).
 
     """
 
-    def __init__(self, pool: asyncpg.Pool) -> None:
+    def __init__(
+        self,
+        pool: asyncpg.Pool,
+        source_types: list[str] | None = None,
+    ) -> None:
         self._pool = pool
+        self._source_types = source_types
 
     async def lease_feed(self, worker_id: uuid.UUID) -> LeasedFeed | None:
         """
@@ -213,7 +225,7 @@ class FeedStore:
 
         Finds the highest-priority available feed (unclaimed or failing with a
         stale heartbeat), assigns it to the given worker, and returns the feed
-        details including any Icecast-specific properties.
+        details including source-specific properties from ``feed_properties``.
 
         Args:
             worker_id: UUID of the worker requesting the lease.
@@ -223,7 +235,9 @@ class FeedStore:
             feeds are available.
 
         """
-        row = await self._pool.fetchrow(_LEASE_FEED_SQL, worker_id)
+        row = await self._pool.fetchrow(
+            _LEASE_FEED_SQL, worker_id, self._source_types
+        )
         if row is None:
             return None
 
@@ -460,6 +474,7 @@ class FeedStore:
             worker_id,
             datetime.timedelta(seconds=abandonment_window_sec),
             limit,
+            self._source_types,
         )
 
         leased_feeds = []
