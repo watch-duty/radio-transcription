@@ -83,7 +83,7 @@ run = "uv run python -m grpc_tools.protoc --proto_path=protos --python_out=backe
 
 [tasks."test:unit"]
 description = "Run all unit tests"
-run = "uv run python -m unittest discover backend/pipeline"
+run = "uv run pytest backend/pipeline --ignore=backend/pipeline/transcription/tests/integration --ignore=backend/pipeline/ingestion/collectors/echo/tests/test_echo_collector_integration.py --ignore=backend/pipeline/ingestion/collectors/tests/test_icecast_collector_integration.py"
 
 [tasks.test]
 description = "Run all unit tests (alias)"
@@ -100,3 +100,7 @@ run = "uv run pytest integration_tests/storage/test_feed_store_integration.py"
 [tasks."test:integ"]
 description = "Run all storage integration tests"
 run = "uv run pytest integration_tests/storage/"
+
+[tasks."test:transcription:integ"]
+description = "Run transcription integration tests"
+run = "uv run pytest backend/pipeline/transcription/tests/integration/"

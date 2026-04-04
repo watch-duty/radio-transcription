@@ -37,11 +37,11 @@ RUN ln -s $(find /app/.venv/lib/ -name "libonnxruntime.so.*" | head -n 1) $(find
 # Copy source code
 COPY backend/ ./backend/
 
-# Copy models from downloader stage to the place expected by the test (scratch/)
-RUN mkdir -p scratch
-COPY --from=model-downloader /models/silero_vad.onnx ./scratch/silero_vad.onnx
-COPY --from=model-downloader /models/gtcrn_simple.onnx ./scratch/gtcrn_simple.onnx
+# Copy models from downloader stage to the place expected by default
+RUN mkdir -p backend/pipeline/transcription/resources
+COPY --from=model-downloader /models/silero_vad.onnx ./backend/pipeline/transcription/resources/silero_vad.onnx
+COPY --from=model-downloader /models/gtcrn_simple.onnx ./backend/pipeline/transcription/resources/gtcrn_simple.onnx
 
 
 # Set entrypoint to run the test
-CMD [".venv/bin/pytest", "backend/pipeline/transcription/tests/test_vad_integration.py", "-s"]
+CMD [".venv/bin/pytest", "backend/pipeline/transcription/tests/integration/test_vad_integration.py", "-s"]

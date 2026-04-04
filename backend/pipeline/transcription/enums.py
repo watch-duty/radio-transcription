@@ -9,8 +9,6 @@ class TranscriberType(enum.StrEnum):
     GOOGLE_CHIRP_V3 = "google_chirp_v3"
 
 
-
-
 class MetricsExporterType(enum.StrEnum):
     """Supported telemetry and observability destinations."""
 

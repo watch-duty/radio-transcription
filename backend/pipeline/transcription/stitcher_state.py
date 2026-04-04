@@ -146,7 +146,7 @@ class AudioStitchingStateMachine:
             )
             is_chopped_at_end = (
                 last_segment is not None
-                and last_segment.end_ms >= len(chunk_data.audio)
+                and last_segment.end_ms >= chunk_data.duration_ms
             )
             raw_actions.append(
                 self._flush_current_transmission(
@@ -161,8 +161,20 @@ class AudioStitchingStateMachine:
 
         for action in raw_actions:
             match action:
-                case AppendBufferAction(start_offset_ms=start, end_offset_ms=end):
-                    isolated_audio_buffer.append(chunk_data.audio[start:end])
+                case AppendBufferAction(
+                    start_offset_ms=start, end_offset_ms=end
+                ):
+                    start_idx_16k = start * 16
+                    end_idx_16k = end * 16
+                    sliced_16k = chunk_data.audio[start_idx_16k:end_idx_16k]
+
+                    start_idx_orig = int(start * chunk_data.original_sr / 1000)
+                    end_idx_orig = int(end * chunk_data.original_sr / 1000)
+                    sliced_orig = chunk_data.stored_audio[
+                        start_idx_orig:end_idx_orig
+                    ]
+
+                    isolated_audio_buffer.append((sliced_16k, sliced_orig))
                 case FlushAction():
                     filtered_actions.append(
                         FlushAction(
@@ -213,7 +225,7 @@ class AudioStitchingStateMachine:
         is_max_duration_exceeded = (
             ctx.transmission_start_time_ms is not None
             and (
-                (file_start_ms + len(chunk_data.audio))
+                (file_start_ms + chunk_data.duration_ms)
                 - ctx.transmission_start_time_ms
             )
             >= self.config.max_transmission_duration_ms
@@ -250,8 +262,7 @@ class AudioStitchingStateMachine:
                 if append_end > 0:
                     actions.append(
                         AppendBufferAction(
-                            start_offset_ms=0,
-                            end_offset_ms=append_end
+                            start_offset_ms=0, end_offset_ms=append_end
                         )
                     )
                     ctx.buffer_duration_ms += append_end
@@ -297,7 +308,7 @@ class AudioStitchingStateMachine:
         actions.append(UpdateStateAction())
         expected_stale_deadline_ms = (
             ctx.last_segment_end_time_ms
-            or (chunk_data.start_ms + len(chunk_data.audio))
+            or (chunk_data.start_ms + chunk_data.duration_ms)
         ) + self.config.stale_timeout_ms
         actions.append(
             ScheduleStaleTimerAction(deadline_ms=expected_stale_deadline_ms)
@@ -329,8 +340,7 @@ class AudioStitchingStateMachine:
             if append_end > 0:
                 actions.append(
                     AppendBufferAction(
-                        start_offset_ms=0,
-                        end_offset_ms=append_end
+                        start_offset_ms=0, end_offset_ms=append_end
                     )
                 )
                 ctx.buffer_duration_ms += append_end
@@ -390,7 +400,7 @@ class AudioStitchingStateMachine:
                             )
 
                         end_offset = min(
-                            len(chunk_data.audio),
+                            chunk_data.duration_ms,
                             target_end_ms - chunk_data.start_ms,
                         )
 
@@ -398,18 +408,18 @@ class AudioStitchingStateMachine:
                             actions.append(
                                 AppendBufferAction(
                                     start_offset_ms=start_offset,
-                                    end_offset_ms=end_offset
+                                    end_offset_ms=end_offset,
                                 )
                             )
                             ctx.buffer_duration_ms += end_offset - start_offset
 
-                    actions.append(
-                        self._flush_current_transmission(
-                            reason,
-                            ctx,
-                            missing_post_context=is_max_duration_exceeded,
+                        actions.append(
+                            self._flush_current_transmission(
+                                reason,
+                                ctx,
+                                missing_post_context=is_max_duration_exceeded,
+                            )
                         )
-                    )
                     self._reset_transmission_context(ctx)
                     ctx.missing_prior_context = is_max_duration_exceeded
 
@@ -428,12 +438,13 @@ class AudioStitchingStateMachine:
                 # For subsequent segments, we normally append from the end of the previous segment
                 # to preserve small gaps naturally.
                 if ctx.last_segment_end_time_ms is None:
-                    msg = "last_segment_end_time_ms is None in subsequent segment"
+                    msg = (
+                        "last_segment_end_time_ms is None in subsequent segment"
+                    )
                     raise RuntimeError(msg)
                 start_offset = max(
                     0, ctx.last_segment_end_time_ms - chunk_data.start_ms
                 )
-
 
                 # But if there is a flagged noise click in the gap, do NOT fill it!
                 # We check if any noise segment falls between the previous segment and this one.
@@ -449,15 +460,14 @@ class AudioStitchingStateMachine:
                         break
 
             end_offset = min(
-                len(chunk_data.audio),
+                chunk_data.duration_ms,
                 segment.speech_end_ms - chunk_data.start_ms,
             )
 
             if end_offset > start_offset:
                 actions.append(
                     AppendBufferAction(
-                        start_offset_ms=start_offset,
-                        end_offset_ms=end_offset
+                        start_offset_ms=start_offset, end_offset_ms=end_offset
                     )
                 )
                 ctx.buffer_duration_ms += end_offset - start_offset
@@ -489,7 +499,7 @@ class AudioStitchingStateMachine:
                     0, ctx.last_segment_end_time_ms - chunk_data.start_ms
                 )
                 end_offset = min(
-                    len(chunk_data.audio),
+                    chunk_data.duration_ms,
                     needed_post_roll_end - chunk_data.start_ms,
                 )
 
@@ -497,7 +507,7 @@ class AudioStitchingStateMachine:
                     actions.append(
                         AppendBufferAction(
                             start_offset_ms=start_offset,
-                            end_offset_ms=end_offset
+                            end_offset_ms=end_offset,
                         )
                     )
                     ctx.buffer_duration_ms += end_offset - start_offset

@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any, override
 
 import apache_beam as beam
+import numpy as np
 from apache_beam.metrics import Metrics
 from apache_beam.transforms.userstate import (
     BagRuntimeState,
@@ -21,10 +22,16 @@ from apache_beam.utils.timestamp import Timestamp
 
 from backend.pipeline.common.constants import MS_PER_SECOND
 from backend.pipeline.transcription.audio.audio_processor import AudioProcessor
-from backend.pipeline.transcription.audio.silero_vad import verify_speech_segment
+from backend.pipeline.transcription.audio.signal_processing import (
+    verify_speech_segment,
+)
 from backend.pipeline.transcription.constants import (
     DEAD_LETTER_QUEUE_TAG,
 )
+
+# --- Local Constants ---
+SAMPLES_PER_MS_16K = 16
+# -----------------------
 from backend.pipeline.transcription.datatypes import (
     AppendBufferAction,
     AudioChunkData,
@@ -173,22 +180,37 @@ class StitchAudioFn(beam.DoFn):
             transmission_buffer.read()
         )
         if buffered_audio:
-            full_audio = sum(buffered_audio[1:], buffered_audio[0])
-            speech_end_rel_ms = action.speech_time_range.end_ms - action.time_range.start_ms
+            # Separate buffers
+            audio_16k_buffer = [item[0] for item in buffered_audio]
+            audio_orig_buffer = [item[1] for item in buffered_audio]
+
+            full_audio_16k = np.concatenate(audio_16k_buffer)
+            full_audio_orig = np.concatenate(audio_orig_buffer)
+
+            speech_end_rel_ms = (
+                action.speech_time_range.end_ms - action.time_range.start_ms
+            )
             desired_len_ms = speech_end_rel_ms + self.config.vad_post_roll_ms
 
-            if len(full_audio) > desired_len_ms:
+            desired_len_16k = desired_len_ms * SAMPLES_PER_MS_16K
+
+            curr_context = transmission_context.read() or TransmissionContext()
+            original_sr = curr_context.original_sr
+            desired_len_orig = int(desired_len_ms * original_sr / MS_PER_SECOND)
+
+            if len(full_audio_16k) > desired_len_16k:
                 logger.info(
-                    "Truncating trailing silence. Original: %dms, New: %dms",
-                    len(full_audio),
-                    desired_len_ms,
+                    "Truncating trailing silence. Original samples: %d, New samples: %d",
+                    len(full_audio_16k),
+                    desired_len_16k,
                 )
-                full_audio = full_audio[:desired_len_ms]
+                full_audio_16k = full_audio_16k[:desired_len_16k]
+                full_audio_orig = full_audio_orig[:desired_len_orig]
 
             yield (
                 action.feed_id,
                 FlushRequest(
-                    buffer=full_audio,
+                    buffer=full_audio_16k,
                     feed_id=action.feed_id,
                     contributing_audio_uris=action.contributing_audio_uris,
                     time_range=action.time_range,
@@ -196,6 +218,8 @@ class StitchAudioFn(beam.DoFn):
                     missing_post_context=action.missing_post_context,
                     start_audio_offset_ms=action.start_audio_offset_ms,
                     end_audio_offset_ms=action.end_audio_offset_ms,
+                    stored_buffer=full_audio_orig,
+                    original_sr=original_sr,
                 ),
             )
         else:
@@ -224,6 +248,7 @@ class StitchAudioFn(beam.DoFn):
             end_audio_offset_ms=ctx.end_audio_offset_ms,
             buffer_start_time_ms=ctx.buffer_start_time_ms,
             buffer_duration_ms=ctx.buffer_duration_ms,
+            original_sr=ctx.original_sr,
         )
         transmission_context.write(new_context)
 
@@ -234,8 +259,21 @@ class StitchAudioFn(beam.DoFn):
         chunk_data: AudioChunkData,
     ) -> None:
         """Appends a slice of the primary audio chunk directly to the stateful sequence bag."""
-        sliced_audio = chunk_data.audio[action.start_offset_ms:action.end_offset_ms]
-        transmission_buffer.add(sliced_audio)
+        # Convert milliseconds to sample indices
+        start_idx_16k = action.start_offset_ms * SAMPLES_PER_MS_16K
+        end_idx_16k = action.end_offset_ms * SAMPLES_PER_MS_16K
+        sliced_audio_16k = chunk_data.audio[start_idx_16k:end_idx_16k]
+
+        start_idx_orig = int(
+            action.start_offset_ms * chunk_data.original_sr / MS_PER_SECOND
+        )
+        end_idx_orig = int(
+            action.end_offset_ms * chunk_data.original_sr / MS_PER_SECOND
+        )
+        sliced_audio_orig = chunk_data.stored_audio[start_idx_orig:end_idx_orig]
+
+        # Store as tuple (16kHz, original)
+        transmission_buffer.add((sliced_audio_16k, sliced_audio_orig))
 
     def _apply_schedule_stale_timer_action(
         self, action: ScheduleStaleTimerAction, stale_timer: RuntimeTimer
@@ -314,6 +352,7 @@ class StitchAudioFn(beam.DoFn):
             end_audio_offset_ms=curr_context.end_audio_offset_ms,
             buffer_start_time_ms=curr_context.buffer_start_time_ms,
             buffer_duration_ms=curr_context.buffer_duration_ms,
+            original_sr=chunk_data.original_sr,
         )
 
         # Run VAD if it wasn't already processed by the silence gate
@@ -342,6 +381,8 @@ class StitchAudioFn(beam.DoFn):
                 silence_segments=chunk_data.silence_segments,
                 noise_segments=chunk_data.noise_segments,
                 padded_segments=padded_segments,
+                stored_audio=chunk_data.stored_audio,
+                original_sr=chunk_data.original_sr,
             )
 
         pipeline = AudioStitchingStateMachine(self.config)
@@ -427,10 +468,17 @@ class StitchAudioFn(beam.DoFn):
                     f"STALE FLUSH: start={start_time_ms}, end={end_time_ms}, len(uris)={len(processed_uris)}, len(buffer)={len(audio_buffer)}"
                 )
 
+                # Separate buffers
+                audio_16k_buffer = [item[0] for item in audio_buffer]
+                audio_orig_buffer = [item[1] for item in audio_buffer]
+
+                stitched_16k = np.concatenate(audio_16k_buffer)
+                stitched_orig = np.concatenate(audio_orig_buffer)
+
                 yield (
                     key,
                     FlushRequest(
-                        buffer=sum(audio_buffer[1:], audio_buffer[0]),
+                        buffer=stitched_16k,
                         feed_id=key,
                         contributing_audio_uris=processed_uris,
                         time_range=TimeRange(
@@ -443,6 +491,8 @@ class StitchAudioFn(beam.DoFn):
                         missing_post_context=True,  # Flushed by timer cutoff, so we assume the tail is missing context.
                         start_audio_offset_ms=curr_context.start_audio_offset_ms,
                         end_audio_offset_ms=curr_context.end_audio_offset_ms,
+                        stored_buffer=stitched_orig,
+                        original_sr=curr_context.original_sr,
                     ),
                 )
             except Exception as e:
@@ -541,14 +591,6 @@ class TranscribeAudioFn(beam.DoFn):
         )
         self.metrics_exporter.setup()
 
-        if self.audio_processor.gcs_client is None:
-            msg = "GCS client not found in AudioProcessor. must call setup() first."
-            raise RuntimeError(msg)
-
-        self.audio_uploader = GCSAudioUploader(
-            gcs_client=self.audio_processor.gcs_client,
-        )
-
     def _export_and_transcribe(
         self,
         request: FlushRequest,
@@ -564,7 +606,7 @@ class TranscribeAudioFn(beam.DoFn):
             msg = "MetricsExporter not initialized. setup() must be called."
             raise RuntimeError(msg)
 
-        if not request.buffer or len(request.buffer) == 0:
+        if request.buffer.size == 0:
             return None
 
         processed_audio = request.buffer
