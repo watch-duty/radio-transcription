@@ -4,15 +4,12 @@ from __future__ import annotations
 
 import io
 
-from pydub import AudioSegment
+import subprocess
 
 from backend.pipeline.common.constants import (
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
 )
-
-# 16-bit PCM sample width in bytes
-_SAMPLE_WIDTH_16BIT = 2
 
 
 def convert_to_flac(audio_bytes: bytes, input_format: str) -> bytes:
@@ -26,10 +23,26 @@ def convert_to_flac(audio_bytes: bytes, input_format: str) -> bytes:
         FLAC-encoded bytes at the pipeline's canonical sample rate,
         channel count, and bit depth.
     """
-    audio = AudioSegment.from_file(io.BytesIO(audio_bytes), format=input_format)
-    audio = audio.set_frame_rate(SAMPLE_RATE_HZ)
-    audio = audio.set_channels(NUM_AUDIO_CHANNELS)
-    audio = audio.set_sample_width(_SAMPLE_WIDTH_16BIT)
-    buf = io.BytesIO()
-    audio.export(buf, format="flac")
-    return buf.getvalue()
+    process = subprocess.Popen(
+        [
+            "ffmpeg",
+            "-i",
+            "pipe:0",  # Read from stdin
+            "-f",
+            "flac",  # Output format
+            "-ar",
+            str(SAMPLE_RATE_HZ),  # Sample rate
+            "-ac",
+            str(NUM_AUDIO_CHANNELS),  # Channels
+            "-sample_fmt",
+            "s16",  # 16-bit depth
+            "pipe:1",  # Write to stdout
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    stdout, stderr = process.communicate(input=audio_bytes)
+    if process.returncode != 0:
+        raise Exception(f"FFmpeg failed: {stderr.decode()}")
+    return stdout

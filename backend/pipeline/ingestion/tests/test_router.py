@@ -20,7 +20,7 @@ def _make_feed(source_type: SourceType) -> LeasedFeed:
     return LeasedFeed(
         id=uuid.uuid4(),
         name=f"test-{source_type}",
-        source_type=typing.cast("SourceType", source_type),
+        source_type=source_type,
         last_processed_filename=None,
         fencing_token=0,
         source_feed_id="123",

@@ -1,42 +1,36 @@
-"""Stateless acoustic manipulation and Voice Activity Detection (VAD) utilities."""
-
 import io
 import json
 import logging
 import os
+import subprocess
+import tempfile
 import urllib.parse
+import soundfile as sf
 from collections.abc import Callable
 from typing import Any
 
 import numpy as np
-import sherpa_onnx
 from google.cloud import storage
-from pydub import AudioSegment, effects
 
 from backend.pipeline.common.constants import (
-    AUDIO_FORMAT,
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
 )
 from backend.pipeline.transcription.constants import (
-    BYTES_PER_SAMPLE_16BIT,
     DEFAULT_VAD_POST_ROLL_MS,
     DEFAULT_VAD_PRE_ROLL_MS,
-    AUDIO_NORMALIZATION_DENOMINATOR,
-    AUDIO_NORMALIZATION_MULTIPLIER,
-    DRC_RATIO_VAD,
-    DRC_THRESHOLD_VAD,
-    VAD_DEFAULT_MIN_SILENCE_DURATION_SEC,
-    VAD_DEFAULT_MIN_SPEECH_DURATION_SEC,
-    VAD_DEFAULT_THRESHOLD,
-    VAD_GAP_HARD_RESET_MS,
-    VAD_GAP_SOFT_RESET_MS,
-    VAD_HIGHPASS_FREQ,
-    VAD_LOWPASS_FREQ,
     MS_PER_SEC,
-    INT16_SILENCE_THRESHOLD_RMS,
-    PRE_EMPHASIS_COEFF,
 )
+
+# --- Local Constants ---
+VAD_DEFAULT_THRESHOLD = 0.15
+VAD_DEFAULT_MIN_SPEECH_DURATION_SEC = 0.1
+VAD_DEFAULT_MIN_SILENCE_DURATION_SEC = 0.6
+VAD_GAP_SOFT_RESET_MS = 500
+AUDIO_NORMALIZATION_DENOMINATOR = 32768.0
+AUDIO_NORMALIZATION_MULTIPLIER = 32767
+PRE_EMPHASIS_COEFF = 0.97
+# -----------------------
 from backend.pipeline.transcription.datatypes import (
     AudioChunkData,
     PaddedSegment,
@@ -49,18 +43,16 @@ from backend.pipeline.transcription.utils import calculate_padded_ranges
 
 from backend.pipeline.transcription.resources import SharedResources
 
+# --- Audio Configuration Constants ---
+TARGET_SAMPLE_RATE = SAMPLE_RATE_HZ
+# -------------------------------------
+
 logger = logging.getLogger(__name__)
 
 
 def _get_gcs_client() -> storage.Client:
     """Initialize and return a GCS Client. Used natively by the audio processor for isolation."""
     return storage.Client()
-
-
-
-
-
-
 
 
 class AudioProcessor:
@@ -101,21 +93,33 @@ class AudioProcessor:
 
     def _create_sherpa_vad(self, config_json: str) -> Any:
         """Factory for Sherpa-ONNX VAD."""
-        from backend.pipeline.transcription.audio.silero_vad import create_sherpa_vad
-        
+        from backend.pipeline.transcription.audio.silero_vad import (
+            create_sherpa_vad,
+        )
+
         try:
             config = json.loads(config_json)
         except json.JSONDecodeError:
-            logger.warning("Failed to decode VAD config JSON, using defaults in factory")
+            logger.warning(
+                "Failed to decode VAD config JSON, using defaults in factory"
+            )
             config = {}
         threshold = config.get("threshold", VAD_DEFAULT_THRESHOLD)
-        min_silence_duration = config.get("min_silence_duration", VAD_DEFAULT_MIN_SILENCE_DURATION_SEC)
-        min_speech_duration = config.get("min_speech_duration", VAD_DEFAULT_MIN_SPEECH_DURATION_SEC)
+        min_silence_duration = config.get(
+            "min_silence_duration", VAD_DEFAULT_MIN_SILENCE_DURATION_SEC
+        )
+        min_speech_duration = config.get(
+            "min_speech_duration", VAD_DEFAULT_MIN_SPEECH_DURATION_SEC
+        )
 
-        return create_sherpa_vad(threshold, min_silence_duration, min_speech_duration)
+        return create_sherpa_vad(
+            threshold, min_silence_duration, min_speech_duration
+        )
 
     def _create_sherpa_denoiser(self, *args: Any) -> Any:
         """Factory for Sherpa-ONNX Denoiser. Accepts args to ignore unused parameters from SharedResources."""
+        import sherpa_onnx
+
         gtcrn_config = sherpa_onnx.OfflineSpeechDenoiserGtcrnModelConfig(
             model=os.environ.get(
                 "GTCRN_MODEL_PATH",
@@ -148,7 +152,7 @@ class AudioProcessor:
 
     def _calculate_padded_segments(
         self,
-        audio: AudioSegment,
+        audio: np.ndarray,
         speech_segments: list[TimeRange],
         silence_segments: list[TimeRange],
         noise_segments: list[TimeRange],
@@ -158,24 +162,27 @@ class AudioProcessor:
         padded_segments = []
 
         valid_speech_segments = self._remove_invalid_segments(speech_segments)
-
-        padded_ranges = calculate_padded_ranges(
-            audio_duration_ms=len(audio),
-            speech_segments=valid_speech_segments,
-            noise_segments=noise_segments,
-            file_start_ms=file_start_ms,
-            pre_roll_ms=self.pre_roll_ms,
-            post_roll_ms=self.post_roll_ms,
+        logger.debug(
+            "_calculate_padded_segments: valid_speech_segments count=%s",
+            len(valid_speech_segments),
         )
 
-        for i, reg in enumerate(valid_speech_segments):
-            append_start, append_end = padded_ranges[i]
-            if append_end > append_start:
-                padded_audio = audio[append_start:append_end]
+        samples_per_ms = SAMPLE_RATE_HZ // 1000
+        duration_ms = len(audio) // samples_per_ms
+
+        for reg in valid_speech_segments:
+            append_start_ms = max(0, reg.start_ms - file_start_ms)
+            append_end_ms = min(duration_ms, reg.end_ms - file_start_ms)
+
+            if append_end_ms > append_start_ms:
+                append_start_sample = append_start_ms * samples_per_ms
+                append_end_sample = append_end_ms * samples_per_ms
+
+                padded_audio = audio[append_start_sample:append_end_sample]
                 padded_segments.append(
                     PaddedSegment(
                         audio=padded_audio,
-                        start_ms=file_start_ms + append_start,
+                        start_ms=file_start_ms + append_start_ms,
                         speech_start_ms=reg.start_ms,
                         speech_end_ms=reg.end_ms,
                     )
@@ -191,161 +198,158 @@ class AudioProcessor:
     def _detect_speech_and_noise_sherpa(
         self, samples: np.ndarray, start_ms: int
     ) -> tuple[list[TimeRange], list[TimeRange], list[TimeRange]]:
-        """Detects speech segments using Sherpa-ONNX Silero VAD and GTCRN Denoiser.
-        
-        Note: This is a large method that handles gaps, denoising, and VAD.
-        We will delegate the VAD part to silero_vad.py.
-        """
-        from backend.pipeline.transcription.audio.silero_vad import process_vad_streaming
-
-        if getattr(self, "vad_sensitive", None) is None or getattr(self, "vad_strict", None) is None:
-            msg = "VAD instances are not initialized"
-            raise RuntimeError(msg)
+        """Detects speech segments using Sherpa-ONNX, Sliding AGC, and Fast HNR Gate."""
+        if getattr(self, "vad_sensitive", None) is None:
+            raise RuntimeError("VAD instance is not initialized")
         if self.denoiser is None:
-            msg = "Denoiser is not initialized"
-            raise RuntimeError(msg)
+            raise RuntimeError("Denoiser is not initialized")
 
-        speech_segments = []
-
-        # 1. Gap Detection & Two-Stage Reset
+        # 1. Gap Management (Keep the VAD state warm, but reset if stream dropped)
         if self.last_audio_end_ms is not None:
             gap_ms = start_ms - self.last_audio_end_ms
-            logger.info("Audio gap detected: %sms", gap_ms)
-
-            if gap_ms > VAD_GAP_HARD_RESET_MS:
-                logger.info("Gap > %sms: Flushing VAD and resetting states.", VAD_GAP_HARD_RESET_MS)
-                self.vad_sensitive.detector.flush()
-                self.vad_strict.detector.flush()
-                
-                # Drain any Trapped words
-                chunk_data = process_vad_streaming(np.array([], dtype=np.int16), start_ms, self.vad_sensitive)
-                speech_segments.extend(chunk_data.speech_segments)
-
+            if gap_ms > VAD_GAP_SOFT_RESET_MS:
+                logger.info(
+                    "Gap > %sms: Resetting VAD and Denoiser.",
+                    VAD_GAP_SOFT_RESET_MS,
+                )
                 self.vad_sensitive.detector.reset()
-                self.vad_strict.detector.reset()
                 self.denoiser.reset()
 
-            elif gap_ms > VAD_GAP_SOFT_RESET_MS:
-                logger.info("Gap > %sms: Resetting VAD and Denoiser (No flush).", VAD_GAP_SOFT_RESET_MS)
-                self.vad_sensitive.detector.reset()
-                self.vad_strict.detector.reset()
-                self.denoiser.reset()
-            else:
-                logger.info("Gap <= %sms: Keeping stream warm.", VAD_GAP_SOFT_RESET_MS)
-
-        # Update last audio end time
         duration_ms = (len(samples) * MS_PER_SEC) // SAMPLE_RATE_HZ
         self.last_audio_end_ms = start_ms + duration_ms
 
-        # 2. Continuous Denoising via Online Denoiser
-        samples_float = samples.astype(np.float32) / AUDIO_NORMALIZATION_DENOMINATOR
+        # Call the standalone processing pipeline
+        return self._detect_speech_candidates(
+            samples,
+            start_ms,
+            self.vad_sensitive,
+            self.denoiser,
+            self.signal_analyzer,
+        )
 
-        logger.info("Running OnlineSpeechDenoiser...")
-        denoised_audio_obj = self.denoiser.run(
+    def _detect_speech_candidates(
+        self,
+        samples: np.ndarray,
+        start_ms: int,
+        vad_sensitive,
+        denoiser,
+        signal_analyzer,
+    ) -> tuple[list[TimeRange], list[TimeRange], list[TimeRange]]:
+        """Pure audio processing pipeline, isolated from AudioProcessor state."""
+        from backend.pipeline.transcription.audio.silero_vad import (
+            process_vad_streaming,
+        )
+        from backend.pipeline.transcription.audio.signal_processing import (
+            apply_sliding_agc,
+        )
+        from backend.pipeline.transcription.utils import calculate_padded_ranges
+
+        duration_ms = (len(samples) * MS_PER_SEC) // SAMPLE_RATE_HZ
+
+        # ==========================================
+        # PHASE 1: PREPARE (Stateless Signal Cleanup)
+        # ==========================================
+        samples_float = (
+            samples.astype(np.float32) / AUDIO_NORMALIZATION_DENOMINATOR
+        )
+
+        # A. Denoise (Frequency Domain)
+        denoised_audio_obj = denoiser.run(
             samples_float.tolist(), SAMPLE_RATE_HZ
         )
-        denoised_audio = np.array(denoised_audio_obj.samples, dtype=np.float32)
+        denoised_float = np.array(denoised_audio_obj.samples, dtype=np.float32)
 
-        if len(denoised_audio) == 0:
-            logger.warning("No denoised audio generated.")
+        if len(denoised_float) == 0:
             return [], [], []
 
-        # 3. Signal Recovery (Dynamic Range Compression + Pre-Emphasis)
-        denoised_int16 = (denoised_audio * AUDIO_NORMALIZATION_MULTIPLIER).astype(np.int16)
-        
-        # We simulate the recovery pipeline but pass the samples to process_vad_streaming
-        # Wait, process_vad_streaming in silero_vad.py does its own normalization.
-        # It expects int16 samples!
-        # So we pass denoised_int16 to process_vad_streaming!
-        
-        logger.info("Delegating VAD to silero_vad.py...")
-        # Wait, silero_vad.py process_vad_streaming expects raw int16 pcm and does normalization.
-        # It does NOT do DRC or Pre-emphasis yet.
-        # If we want to preserve DRC and Pre-emphasis, we must do them here before passing!
-        
-        denoised_segment = AudioSegment(
-            denoised_int16.tobytes(),
-            frame_rate=SAMPLE_RATE_HZ,
-            sample_width=BYTES_PER_SAMPLE_16BIT,
-            channels=NUM_AUDIO_CHANNELS,
+        # B. Automatic Gain Control (Time Domain - Fixes the 1.0s Masking Bug)
+        leveled_float = apply_sliding_agc(
+            denoised_float, sample_rate=SAMPLE_RATE_HZ
         )
 
-        audio_compressed = effects.compress_dynamic_range(
-            denoised_segment, threshold=DRC_THRESHOLD_VAD, ratio=DRC_RATIO_VAD
+        # C. Pre-Emphasis
+        leveled_int16 = (leveled_float * AUDIO_NORMALIZATION_MULTIPLIER).astype(
+            np.int16
         )
+        samples_rec = self._apply_pre_emphasis(leveled_int16)
 
-        samples_rec = np.array(
-            audio_compressed.get_array_of_samples(), dtype=np.int16
-        )
-        samples_rec = self._apply_pre_emphasis(samples_rec)
+        # ==========================================
+        # PHASE 2: DETECT (The Single VAD Pass)
+        # ==========================================
+        vad_result = process_vad_streaming(samples_rec, start_ms, vad_sensitive)
 
-        # Two-Pass VAD Architecture Rationale:
-        # We use a two-pass approach to balance precision and recall when isolating transmissions.
-        # 
-        # Pass 1: Sensitive detection (High Recall)
-        # Uses a low threshold and long silence duration to capture all potential speech candidates.
-        # This ensures we don't miss quiet words at the beginning/end of transmissions, but it is
-        # prone to merging independent transmissions separated by short pauses.
-        vad_result1 = process_vad_streaming(samples_rec, start_ms, self.vad_sensitive)
-        coarse_segments = vad_result1.speech_segments
-        logger.info("Pass 1 (Coarse) segments: %s", coarse_segments)
-        
-        final_speech_segments = []
-        
-        # Pass 2: Refinement/Splitting (High Precision for Segmentation)
-        # Processes Pass 1 candidates with a higher threshold and shorter silence duration.
-        # This accurately splits merged transmissions into independent utterances, fulfilling
-        # the requirement to not merge transmissions, at the cost of accepting some noise within candidates.
-        for seg in coarse_segments:
-            logger.info("Refining segment: [%s, %s]", seg.start_ms, seg.end_ms)
-            start_idx = int(((seg.start_ms - start_ms) * SAMPLE_RATE_HZ) / MS_PER_SEC)
-            end_idx = int(((seg.end_ms - start_ms) * SAMPLE_RATE_HZ) / MS_PER_SEC)
-            
+        raw_speech = []
+        known_noise = []
+
+        # ==========================================
+        # PHASE 3: GATE (Sort Energy into Human vs. Machine)
+        # ==========================================
+        for seg in vad_result.speech_segments:
+            start_idx = int(
+                ((seg.start_ms - start_ms) * SAMPLE_RATE_HZ) / MS_PER_SEC
+            )
+            end_idx = int(
+                ((seg.end_ms - start_ms) * SAMPLE_RATE_HZ) / MS_PER_SEC
+            )
+
             start_idx = max(0, start_idx)
-            end_idx = min(len(samples_rec), end_idx)
-            
-            segment_samples = samples_rec[start_idx:end_idx]
-            
-            if len(segment_samples) == 0:
-                logger.info("  Empty segment samples, skipping.")
-                continue
-                
-            vad_result2 = process_vad_streaming(segment_samples, seg.start_ms, self.vad_strict)
-            logger.info("  Pass 2 split: %s", vad_result2.speech_segments)
-            final_speech_segments.extend(vad_result2.speech_segments)
+            end_idx = min(len(leveled_float), end_idx)
 
-        # Post-VAD Gate: Filter out horns/sirens from detected segments
-        filtered_speech = []
-        for seg in final_speech_segments:
-            start_idx = int(((seg.start_ms - start_ms) * SAMPLE_RATE_HZ) / MS_PER_SEC)
-            end_idx = int(((seg.end_ms - start_ms) * SAMPLE_RATE_HZ) / MS_PER_SEC)
-            
-            start_idx = max(0, start_idx)
-            end_idx = min(len(denoised_audio), end_idx)
-            
-            if end_idx > start_idx:
-                seg_audio = denoised_audio[start_idx:end_idx]
-                
-                # Minimum duration for HNR check (e.g., 0.5s)
-                if len(seg_audio) > (SAMPLE_RATE_HZ * VAD_DEFAULT_MIN_SPEECH_DURATION_SEC):
-                    result = self.signal_analyzer.characterize(seg_audio)
-                    logger.info(
-                        "Post-VAD Gate: Segment %s-%s characterized as %s (confidence: %.2f)",
-                        seg.start_ms, seg.end_ms, result.label, result.confidence
+            gate_audio = leveled_float[start_idx:end_idx]
+
+            seg_duration_ms = seg.end_ms - seg.start_ms
+            logger.debug(
+                "Gate check: VAD segment %sms - %sms, duration: %sms",
+                seg.start_ms,
+                seg.end_ms,
+                seg_duration_ms,
+            )
+
+            # Minimum duration check to run HNR/pYIN (e.g., 50ms)
+            if len(gate_audio) > (SAMPLE_RATE_HZ * 0.05):
+                result = signal_analyzer.characterize(gate_audio)
+
+                if result.is_transcribable:
+                    raw_speech.append(seg)
+                else:
+                    logger.debug(
+                        "Gate flagged segment as %s at %sms. Using as noise bumper.",
+                        result.label,
+                        seg.start_ms,
                     )
-                    
-                    if (
-                        result.label == "deterministic_linear"
-                        and result.confidence > SIGNAL_ANALYZER_VOICED_PROB_HIGH_THRESHOLD
-                    ):
-                        logger.info("Post-VAD Gate: Dropping deterministic segment (Horn/Siren).")
-                        continue
-                        
-            filtered_speech.append(seg)
+                    known_noise.append(seg)
 
-        speech_segments.extend(filtered_speech)
+        # ==========================================
+        # PHASE 4: PAD (Dynamic Context Expansion)
+        # ==========================================
+        # Safely expands boundaries by default pre/post roll unless it hits a known_noise bumper
+        padded_ranges = calculate_padded_ranges(
+            audio_duration_ms=duration_ms,
+            speech_segments=raw_speech,
+            noise_segments=known_noise,
+            file_start_ms=start_ms,
+            pre_roll_ms=DEFAULT_VAD_PRE_ROLL_MS,
+            post_roll_ms=DEFAULT_VAD_POST_ROLL_MS,
+        )
 
-        return speech_segments, [], []
+        # Map back to TimeRange objects
+        final_speech_segments = []
+        for append_start, append_end in padded_ranges:
+            final_speech_segments.append(
+                TimeRange(
+                    start_ms=start_ms + append_start,
+                    end_ms=start_ms + append_end,
+                )
+            )
+
+        logger.debug(
+            "_detect_speech_candidates: returning %s speech segments",
+            len(final_speech_segments),
+        )
+        for seg in final_speech_segments:
+            logger.debug("  -> Segment: %sms - %sms", seg.start_ms, seg.end_ms)
+
+        return final_speech_segments, [], known_noise
 
     def download_audio_and_detect(
         self, gcs_path: str, start_ms: int, session_id: str
@@ -353,18 +357,22 @@ class AudioProcessor:
         """Downloads FLAC bytes from GCS and runs the spectral flatness detector natively."""
         session_sensitive = session_id + "_sensitive"
         session_strict = session_id + "_strict"
-        
-        config_sensitive = json.dumps({
-            "threshold": 0.15,
-            "min_silence_duration": 0.6,
-            "min_speech_duration": 0.25
-        })
-        
-        config_strict = json.dumps({
-            "threshold": 0.25,
-            "min_silence_duration": 0.25,
-            "min_speech_duration": 0.05
-        })
+
+        config_sensitive = json.dumps(
+            {
+                "threshold": 0.15,
+                "min_silence_duration": 0.6,
+                "min_speech_duration": 0.05,
+            }
+        )
+
+        config_strict = json.dumps(
+            {
+                "threshold": 0.25,
+                "min_silence_duration": 0.25,
+                "min_speech_duration": 0.05,
+            }
+        )
 
         if self.shared_resources is not None:
             self.vad_sensitive = self.shared_resources.get_vad(
@@ -377,7 +385,10 @@ class AudioProcessor:
                 session_id, self._create_sherpa_denoiser
             )
         else:
-            if getattr(self, "vad_sensitive", None) is None or getattr(self, "current_session_id", None) != session_id:
+            if (
+                getattr(self, "vad_sensitive", None) is None
+                or getattr(self, "current_session_id", None) != session_id
+            ):
                 self.vad_sensitive = self._create_sherpa_vad(config_sensitive)
                 self.vad_strict = self._create_sherpa_vad(config_strict)
                 self.denoiser = self._create_sherpa_denoiser()
@@ -401,26 +412,72 @@ class AudioProcessor:
         blob.download_to_file(in_mem_file)
         in_mem_file.seek(0)
 
-        full_audio_segment = AudioSegment.from_file(
-            in_mem_file, format=AUDIO_FORMAT
-        )
+        data = in_mem_file.getvalue()
+        # Skip ICY metadata or HTTP headers by searching for FLAC magic number
+        idx = data.find(b"fLaC")
+        if idx != -1:
+            data = data[idx:]
 
-        # Ensure audio is 16kHz mono 16-bit PCM for the detector
-        audio_16k = (
-            full_audio_segment.set_frame_rate(SAMPLE_RATE_HZ)
-            .set_channels(NUM_AUDIO_CHANNELS)
-            .set_sample_width(BYTES_PER_SAMPLE_16BIT)
-        )
+        # Use ffmpeg to sanitize and decode to WAV in one go to handle dirty files
+        ffmpeg_cmd = [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "flac",  # Force input format to FLAC to skip garbage
+            "-i",
+            "-",
+            "-ac",
+            "1",  # Force mono
+            "-f",
+            "wav",
+            "-",
+        ]
+        try:
+            ffmpeg_proc = subprocess.run(
+                ffmpeg_cmd,
+                input=data,
+                capture_output=True,
+                check=True,
+            )
+            import soundfile as sf
 
+            samples_orig, sample_rate = sf.read(
+                io.BytesIO(ffmpeg_proc.stdout), dtype="int16"
+            )
+        except subprocess.CalledProcessError as e:
+            logger.error(
+                f"FFmpeg failed to sanitize/decode audio. Return Code: {e.returncode}\nFFmpeg STDERR:\n{e.stderr.decode()}"
+            )
+            raise RuntimeError("Failed to sanitize/decode audio.") from e
+        except Exception as e:
+            logger.error(f"Failed to read WAV from FFmpeg output: {e}")
+            raise RuntimeError("Failed to read decoded audio.") from e
 
+        # Create 16kHz copy for VAD and models
+        import librosa
 
-        # VAD detection is moved to the Stitcher for context!
-        # Here we just return the raw audio and empty segments.
+        # librosa expects float32 in range [-1, 1]
+        samples_float = samples_orig.astype(np.float32) / 32767.0
+        if sample_rate != TARGET_SAMPLE_RATE:
+            samples_16k = librosa.resample(
+                samples_float,
+                orig_sr=sample_rate,
+                target_sr=TARGET_SAMPLE_RATE,
+            )
+        else:
+            samples_16k = samples_float
+
+        # Convert back to int16
+        samples_16k = (samples_16k * 32767).astype(np.int16)
+
         return AudioChunkData(
             start_ms=start_ms,
-            audio=full_audio_segment,
+            audio=samples_16k,
             speech_segments=[],
             gcs_uri=gcs_path,
+            stored_audio=samples_orig,
+            original_sr=sample_rate,
             silence_segments=[],
             noise_segments=[],
             padded_segments=[],
@@ -428,23 +485,20 @@ class AudioProcessor:
 
     def detect_vad(
         self,
-        chunk_audio: AudioSegment,
+        chunk_audio: np.ndarray,
         start_ms: int,
     ) -> list[PaddedSegment]:
         """Runs VAD on chunk_audio."""
-        # 1. Convert to 16kHz mono 16-bit PCM
-        audio_16k = (
-            chunk_audio.set_frame_rate(SAMPLE_RATE_HZ)
-            .set_channels(NUM_AUDIO_CHANNELS)
-            .set_sample_width(BYTES_PER_SAMPLE_16BIT)
-        )
-
-        pcm_bytes = audio_16k.raw_data
-        samples = np.frombuffer(pcm_bytes, dtype=np.int16)
+        # chunk_audio is already assumed to be 16kHz mono int16 numpy array
+        samples = chunk_audio
 
         # 2. Run VAD
         speech_segments, noise_segments, silence_segments = (
             self._detect_speech_and_noise(samples, start_ms)
+        )
+        logger.debug(
+            "detect_vad: _detect_speech_and_noise returned %s segments",
+            len(speech_segments),
         )
 
         # 3. Calculate padded segments
@@ -470,12 +524,35 @@ class AudioProcessor:
         )
         return emphasized.astype(np.int16)
 
-
-
-
-
-    def export_flac(self, audio_buffer: AudioSegment) -> bytes:
-        """Exports an AudioSegment to FLAC bytes."""
+    def export_flac(
+        self, audio_buffer: np.ndarray, sample_rate: int = 16000
+    ) -> bytes:
+        """Exports a NumPy array to FLAC bytes."""
         buf = io.BytesIO()
-        audio_buffer.export(buf, format=AUDIO_FORMAT)
+        sf.write(buf, audio_buffer, sample_rate, format="FLAC")
         return buf.getvalue()
+
+    def export_m4a(
+        self, audio_buffer: np.ndarray, sample_rate: int = 16000
+    ) -> bytes:
+        """Exports a NumPy array to M4A bytes using ffmpeg."""
+        with tempfile.NamedTemporaryFile(
+            suffix=".wav", delete=False
+        ) as wav_file:
+            wav_path = wav_file.name
+            sf.write(wav_path, audio_buffer, sample_rate)
+
+        m4a_path = wav_path.replace(".wav", ".m4a")
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", wav_path, "-c:a", "aac", m4a_path],
+                check=True,
+                capture_output=True,
+            )
+            with open(m4a_path, "rb") as f:
+                return f.read()
+        finally:
+            if os.path.exists(wav_path):
+                os.remove(wav_path)
+            if os.path.exists(m4a_path):
+                os.remove(m4a_path)

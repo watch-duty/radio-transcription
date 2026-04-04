@@ -208,7 +208,7 @@ class TestTranscribers(unittest.TestCase):
 
     def test_chirp_keywords_json_valid(self) -> None:
         """Verifies that the default chirp_keywords.json file is valid JSON and non-empty."""
-        p = pathlib.Path(__file__).parent.parent / "chirp_keywords.json"
+        p = pathlib.Path(__file__).parent.parent.parent / "chirp_keywords.json"
 
         self.assertTrue(p.exists(), f"Keywords file {p} does not exist")
         with p.open("r") as f:
@@ -230,7 +230,10 @@ class TestTranscribers(unittest.TestCase):
             mock_speech_client_cls.return_value = mock_client_instance
 
             transcriber = GoogleChirpV3Transcriber(
-                "test-project", ChirpConfig(keywords_file_path="/path/to/nonexistent/file.json")
+                "test-project",
+                ChirpConfig(
+                    keywords_file_path="/path/to/nonexistent/file.json"
+                ),
             )
             with self.assertRaises(FileNotFoundError):
                 transcriber.setup()
@@ -265,5 +268,7 @@ class TestTranscribers(unittest.TestCase):
         )
         with self.assertRaises(RuntimeError):
             transcriber.transcribe(audio_data=b"\x00")
+
+
 if __name__ == "__main__":
     unittest.main()

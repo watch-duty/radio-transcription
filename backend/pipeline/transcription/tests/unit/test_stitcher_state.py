@@ -1,6 +1,6 @@
 import unittest
 
-from pydub import AudioSegment
+import numpy as np
 
 from backend.pipeline.transcription.datatypes import (
     AppendBufferAction,
@@ -88,7 +88,7 @@ def mock_audio_chunk(
 
         padded_segments.append(
             PaddedSegment(
-                audio=AudioSegment.silent(duration=duration),
+                audio=np.zeros(int(duration * 16), dtype=np.int16),
                 start_ms=pad_start,
                 speech_start_ms=abs_s_ms,
                 speech_end_ms=abs_e_ms,
@@ -97,11 +97,13 @@ def mock_audio_chunk(
 
     return AudioChunkData(
         start_ms=start_ms,
-        audio=AudioSegment.silent(duration=duration_ms),
+        audio=np.zeros(int(duration_ms * 16), dtype=np.int16),
         speech_segments=speech_ranges,
         silence_segments=silence_ranges,
         gcs_uri=gcs_uri,
         padded_segments=padded_segments,
+        stored_audio=np.zeros(int(duration_ms * 16), dtype=np.int16),
+        original_sr=16000,
     )
 
 

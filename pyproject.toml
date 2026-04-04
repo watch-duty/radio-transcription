@@ -220,12 +220,10 @@ members = [
 transcription-pipeline = { workspace = true }
 
 [tool.pytest.ini_options]
+norecursedirs = ["backend/pipeline/transcription/tests/fixtures"]
 filterwarnings = [
     # httplib2 uses deprecated pyparsing methods under the hood which trickle up from GCP auth plugins
     "ignore::DeprecationWarning:httplib2.*",
-    # pydub depends on the 'audioop' standard library module which is deprecated in Python 3.11/3.12 and slated for removal in Python 3.13 (PEP 594).
-    # We ignore it here to keep output clean on 3.12, but this will break if upgrading to Python 3.13 unless pydub updates.
-    "ignore::DeprecationWarning:pydub.*",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

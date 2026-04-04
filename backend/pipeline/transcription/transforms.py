@@ -208,31 +208,26 @@ class RestoreOrderFn(beam.DoFn):
         "session_id", beam.coders.StrUtf8Coder()
     )
 
-
     OUT_OF_ORDER_BUFFER_SPEC = BagStateSpec(
         "out_of_order_buffer",
         beam.coders.PickleCoder(),
     )
     # A bag state holding chunks that have arrived earlier than their expected chronological sequence.
 
-
     EXPECTED_NEXT_TS_SPEC = ReadModifyWriteStateSpec(
         "expected_next_ts", beam.coders.VarIntCoder()
     )
     # Tracks the exact chronological timestamp (ms) of the next chunk we must receive before emitting anything downstream.
-
 
     TIMER_ACTIVE_SPEC = ReadModifyWriteStateSpec(
         "timer_active", beam.coders.BooleanCoder()
     )
     # Boolean flag ensuring we only ever have a single active processing-time timer scheduled across the buffer.
 
-
     OUT_OF_ORDER_TIMER_SPEC = TimerSpec(
         "out_of_order_timer", TimeDomain.REAL_TIME
     )
     # A real-time (processing time) timer that acts as a maximum allowed wait period for missing chunks.
-
 
     def __init__(self, config: OrderRestorerConfig) -> None:
         """Binds the OrderRestorerConfig and initializes Beam metrics counters."""

@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 
-from pydub import AudioSegment
+import numpy as np
 
 from backend.pipeline.common.constants import (
     CHUNK_DURATION_SECONDS,
@@ -27,6 +27,12 @@ class TimeRange:
         return self.end_ms - self.start_ms
 
 
+@dataclass
+class VadResult:
+    speech_segments: list[TimeRange]
+    silence_segments: list[TimeRange]
+
+
 @dataclass(frozen=True, order=True)
 class BufferedChunk:
     """Represents a chronologically sorted audio payload held in the jitter buffer."""
@@ -39,7 +45,7 @@ class BufferedChunk:
 class PaddedSegment:
     """A speech segment that has been padded and verified to be clean."""
 
-    audio: AudioSegment
+    audio: np.ndarray
     start_ms: int  # Absolute start time of the padded segment
     speech_start_ms: int  # Absolute start time of the speech within it
     speech_end_ms: int  # Absolute end time of the speech within it
@@ -50,12 +56,21 @@ class AudioChunkData:
     """A domain model representing a single decoded audio chunk and its VAD metadata."""
 
     start_ms: int
-    audio: AudioSegment
+    audio: np.ndarray
     speech_segments: list[TimeRange]
     gcs_uri: str
+    stored_audio: np.ndarray = field(
+        default_factory=lambda: np.array([], dtype=np.int16)
+    )
+    original_sr: int = 16000
     silence_segments: list[TimeRange] = field(default_factory=list)
     noise_segments: list[TimeRange] = field(default_factory=list)
     padded_segments: list[PaddedSegment] = field(default_factory=list)
+
+    @property
+    def duration_ms(self) -> int:
+        """Returns the duration of the audio in milliseconds, assuming 16kHz."""
+        return int(self.audio.size / 16)
 
 
 @dataclass(frozen=True)
@@ -91,6 +106,7 @@ class TransmissionContext:
     expected_next_chunk_start_ms: int | None = None
     start_audio_offset_ms: int | None = None
     end_audio_offset_ms: int | None = None
+    original_sr: int = 16000
     buffer_duration_ms: int = 0
 
 
@@ -112,6 +128,7 @@ class StitcherContext:
     start_audio_offset_ms: int | None = None
     end_audio_offset_ms: int | None = None
     buffer_duration_ms: int = 0
+    original_sr: int = 16000
 
 
 @dataclass(frozen=True)
@@ -172,10 +189,14 @@ class TranscribeAudioConfig:
 class FlushRequest:
     """Encapsulates the data required to flush an audio buffer to the transcription API."""
 
-    buffer: AudioSegment
+    buffer: np.ndarray
     feed_id: str
     contributing_audio_uris: list[str]
     time_range: TimeRange
+    stored_buffer: np.ndarray = field(
+        default_factory=lambda: np.array([], dtype=np.int16)
+    )
+    original_sr: int = 16000
     missing_prior_context: bool = False
     missing_post_context: bool = False
     start_audio_offset_ms: int | None = None
@@ -216,7 +237,7 @@ class FlushAction(StateMachineAction):
     start_audio_offset_ms: int | None
     end_audio_offset_ms: int | None
     clear_state: bool = True
-    isolated_audio_buffer: list[AudioSegment] | None = None
+    isolated_audio_buffer: list[tuple[np.ndarray, np.ndarray]] | None = None
 
 
 @dataclass(frozen=True)

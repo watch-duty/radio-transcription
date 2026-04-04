@@ -142,16 +142,14 @@ jobs:
       - name: Cache APT packages
         uses: awalsh128/cache-apt-pkgs-action@v1
         with:
-          packages: ffmpeg libomp5-18
-      - name: Install system dependencies (ffmpeg for pydub, libomp5 for TenVAD)
+          packages: ffmpeg libc++1 libc++abi1
+      - name: Install system dependencies (ffmpeg for audio processing)
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg libomp5 libc++1 libc++abi1
+          sudo apt-get install -y ffmpeg libc++1 libc++abi1
       - name: Install mise, install tools
         # mise installs uv and other project-specific tools. see: .tool-versions
         uses: jdx/mise-action@v3
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - name: Install dependencies
         run: uv sync
       - name: Generate Protobuf Python files
@@ -247,5 +245,5 @@ jobs:
 
       - name: Build and Run VAD Integration Tests
         run: |
-          docker build -t vad-test -f backend/pipeline/transcription/tests/Dockerfile.test .
+          docker build -t vad-test -f backend/pipeline/transcription/tests/integration/Dockerfile.test .
           docker run --rm vad-test

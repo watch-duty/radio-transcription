@@ -9,10 +9,10 @@ import numpy as np
 from scipy.signal import stft
 from scipy.stats import gmean
 
-from backend.pipeline.transcription.constants import (
-    DEFAULT_SED_FFT_SIZE,
-    DEFAULT_SED_HOP_SIZE,
-)
+# --- Local Constants ---
+DEFAULT_SED_FFT_SIZE = 2048
+DEFAULT_SED_HOP_SIZE = 512
+# -----------------------
 
 
 def compute_rms_energy(

@@ -16,7 +16,7 @@ from apache_beam.testing.test_pipeline import TestPipeline as BeamTestPipeline
 from apache_beam.testing.test_stream import TestStream as BeamTestStream
 from apache_beam.testing.util import assert_that, equal_to
 from apache_beam.transforms.window import TimestampedValue
-from pydub import AudioSegment
+import numpy as np
 
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.transcription.constants import DEAD_LETTER_QUEUE_TAG
@@ -78,7 +78,6 @@ def get_test_stitch_config(**kwargs: Any) -> StitchAudioConfig:
 
     defaults = {
         "project_id": "fake-proj",
-
         "vad_config": "{}",
         "metrics_exporter_type": "",
         "metrics_config": "{}",
@@ -98,7 +97,6 @@ def get_test_transcribe_config(**kwargs: Any) -> TranscribeAudioConfig:
         "project_id": "fake-proj",
         "transcriber_type": TranscriberType.GOOGLE_CHIRP_V3,
         "transcriber_config": "{}",
-
         "vad_config": "{}",
         "metrics_exporter_type": "",
         "metrics_config": "{}",
@@ -421,7 +419,7 @@ class StitchAudioTest(unittest.TestCase):
 
                 padded_segments.append(
                     PaddedSegment(
-                        audio=AudioSegment.silent(duration=duration),
+                        audio=np.zeros(int(duration * 16), dtype=np.int16),
                         start_ms=pad_start,
                         speech_start_ms=abs_s_ms,
                         speech_end_ms=abs_e_ms,
@@ -430,10 +428,12 @@ class StitchAudioTest(unittest.TestCase):
 
             return AudioChunkData(
                 start_ms=chunk_start_ms,
-                audio=AudioSegment.silent(duration=duration_ms),
+                audio=np.zeros(int(duration_ms * 16), dtype=np.int16),
                 speech_segments=speech_ranges,
                 gcs_uri=path,
                 padded_segments=padded_segments,
+                stored_audio=np.zeros(int(duration_ms * 16), dtype=np.int16),
+                original_sr=16000,
             )
 
         mock_processor_inst.download_audio_and_detect.side_effect = (
@@ -672,7 +672,7 @@ class StitchAudioTest(unittest.TestCase):
 
                 padded_segments.append(
                     PaddedSegment(
-                        audio=AudioSegment.silent(duration=duration),
+                        audio=np.zeros(int(duration * 16), dtype=np.int16),
                         start_ms=pad_start,
                         speech_start_ms=abs_s_ms,
                         speech_end_ms=abs_e_ms,
@@ -681,10 +681,12 @@ class StitchAudioTest(unittest.TestCase):
 
             return AudioChunkData(
                 start_ms=chunk_start_ms,
-                audio=AudioSegment.silent(duration=duration_ms),
+                audio=np.zeros(int(duration_ms * 16), dtype=np.int16),
                 speech_segments=speech_ranges,
                 gcs_uri=path,
                 padded_segments=padded_segments,
+                stored_audio=np.zeros(int(duration_ms * 16), dtype=np.int16),
+                original_sr=16000,
             )
 
         mock_processor_inst.download_audio_and_detect.side_effect = (
@@ -854,7 +856,7 @@ class StitchAudioTest(unittest.TestCase):
 
                 padded_segments.append(
                     PaddedSegment(
-                        audio=AudioSegment.silent(duration=duration),
+                        audio=np.zeros(int(duration * 16), dtype=np.int16),
                         start_ms=pad_start,
                         speech_start_ms=abs_s_ms,
                         speech_end_ms=abs_e_ms,
@@ -863,10 +865,12 @@ class StitchAudioTest(unittest.TestCase):
 
             return AudioChunkData(
                 start_ms=chunk_start_ms,
-                audio=AudioSegment.silent(duration=duration_ms),
+                audio=np.zeros(int(duration_ms * 16), dtype=np.int16),
                 speech_segments=speech_ranges,
                 gcs_uri=path,
                 padded_segments=padded_segments,
+                stored_audio=np.zeros(int(duration_ms * 16), dtype=np.int16),
+                original_sr=16000,
             )
 
         mock_processor_inst.download_audio_and_detect.side_effect = (
@@ -1030,7 +1034,9 @@ class StitchAudioTest(unittest.TestCase):
         mock_processor_inst.export_flac.return_value = b"flac_bytes"
         mock_processor_inst.download_audio_and_detect.return_value = AudioChunkData(
             start_ms=101000,
-            audio=AudioSegment.silent(duration=20000),
+            audio=np.zeros(20000 * 16, dtype=np.int16),
+            stored_audio=np.zeros(20000 * 16, dtype=np.int16),
+            original_sr=16000,
             speech_segments=[TimeRange(12500, 15000)],
             gcs_uri="gs://fake-bucket/ab12/feed-123/2026-03-06/101-11111111-1111-1111-1111-111111111111.flac",
         )
@@ -1140,18 +1146,16 @@ class TranscribeAudioTest(unittest.TestCase):
     @patch("backend.pipeline.transcription.stitcher.verify_speech_segment")
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
     def test_dlq_routing(
-        self, mock_audio_processor: MagicMock, mock_verify_speech: MagicMock, mock_get_transcriber: MagicMock
+        self,
+        mock_audio_processor: MagicMock,
+        mock_verify_speech: MagicMock,
+        mock_get_transcriber: MagicMock,
     ) -> None:
         """Verifies that explicit Python exceptions raised randomly within transformations dynamically populate a standardized and resilient Dataflow Dead Letter Queue error."""
         mock_processor_inst = mock_audio_processor.return_value
         mock_verify_speech.return_value = True
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
         mock_processor_inst.export_flac.return_value = b"flac_bytes"
-        mock_processor_inst.process_buffer.return_value = (
-            True,
-            b"flac_bytes",
-            AudioSegment.silent(duration=500),
-        )
 
         config = get_test_transcribe_config(route_to_dlq=True)
 
@@ -1165,11 +1169,15 @@ class TranscribeAudioTest(unittest.TestCase):
                         "feed-123",
                         FlushRequest(
                             feed_id="feed-123",
-                            buffer=AudioSegment.silent(duration=500),
+                            buffer=np.zeros(int(500 * 16), dtype=np.int16),
                             contributing_audio_uris=["gs://f/11111111.flac"],
                             time_range=TimeRange(
                                 start_ms=101000, end_ms=101500
                             ),
+                            stored_buffer=np.zeros(
+                                int(500 * 16), dtype=np.int16
+                            ),
+                            original_sr=16000,
                         ),
                     )
                 ]
@@ -1243,7 +1251,7 @@ class TranscribeAudioTest(unittest.TestCase):
 
             padded_segments = [
                 PaddedSegment(
-                    audio=AudioSegment.silent(duration=1000),
+                    audio=np.zeros(int(1000 * 16), dtype=np.int16),
                     start_ms=chunk_start_ms,
                     speech_start_ms=chunk_start_ms,
                     speech_end_ms=chunk_start_ms + 1000,
@@ -1252,10 +1260,12 @@ class TranscribeAudioTest(unittest.TestCase):
 
             return AudioChunkData(
                 start_ms=chunk_start_ms,
-                audio=AudioSegment.silent(duration=duration_ms),
+                audio=np.zeros(int(duration_ms * 16), dtype=np.int16),
                 speech_segments=speech_ranges,
                 gcs_uri=path,
                 padded_segments=padded_segments,
+                stored_audio=np.zeros(int(duration_ms * 16), dtype=np.int16),
+                original_sr=16000,
             )
 
         mock_processor_inst.download_audio_and_detect.side_effect = (
@@ -1276,13 +1286,17 @@ class TranscribeAudioTest(unittest.TestCase):
                 [
                     FlushRequest(
                         feed_id="feed-123",
-                        buffer=AudioSegment.silent(duration=500),
+                        buffer=np.zeros(int(500 * 16), dtype=np.int16),
+                        stored_buffer=np.zeros(int(500 * 16), dtype=np.int16),
+                        original_sr=16000,
                         contributing_audio_uris=["gs://bbbbbbbb.flac"],
                         time_range=TimeRange(start_ms=0, end_ms=500),
                     ),
                     FlushRequest(
                         feed_id="feed-123",
-                        buffer=AudioSegment.silent(duration=500),
+                        buffer=np.zeros(int(500 * 16), dtype=np.int16),
+                        stored_buffer=np.zeros(int(500 * 16), dtype=np.int16),
+                        original_sr=16000,
                         contributing_audio_uris=["gs://cccccccc.flac"],
                         time_range=TimeRange(start_ms=5000, end_ms=5500),
                     ),
