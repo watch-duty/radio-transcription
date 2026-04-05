@@ -12,9 +12,11 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import functions_framework
-import httpx
+import requests
 import jwt
 from google.cloud import secretmanager
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from backend.pipeline.common.logging import setup_logging
 
@@ -132,8 +134,19 @@ def _authenticate() -> dict[str, Any]:
         "password": BROADCASTIFY_PASSWORD,
     }
 
-    with httpx.Client(timeout=30.0) as http_client:
-        response = http_client.post(AUTH_URL, headers=headers, data=data)
+    retries = Retry(
+        total=3,
+        backoff_factor=1.0,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["POST"],
+    )
+    adapter = HTTPAdapter(max_retries=retries)
+
+    with requests.Session() as http_client:
+        http_client.mount("https://", adapter)
+        response = http_client.post(
+            AUTH_URL, headers=headers, data=data, timeout=30.0
+        )
 
     if response.status_code != 200:
         request_id = response.headers.get(

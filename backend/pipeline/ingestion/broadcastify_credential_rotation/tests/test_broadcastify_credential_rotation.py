@@ -109,7 +109,7 @@ class TestBroadcastifyCredentialRotation:
 
         with (
             mock.patch.object(
-                main.httpx, "Client", return_value=mock_http_context
+                main.requests, "Session", return_value=mock_http_context
             ),
             mock.patch.object(
                 main,
@@ -137,6 +137,7 @@ class TestBroadcastifyCredentialRotation:
             "https://api.bcfy.io/common/v1/auth",
             headers={"Authorization": "Bearer unauth-jwt"},
             data={"username": "test-user", "password": "test-pass"},
+            timeout=30.0,
         )
 
         assert mock_generate.call_count == 2
@@ -166,7 +167,7 @@ class TestBroadcastifyCredentialRotation:
 
         with (
             mock.patch.object(
-                main.httpx, "Client", return_value=mock_http_context
+                main.requests, "Session", return_value=mock_http_context
             ),
             mock.patch.object(main, "_generate_jwt", return_value="unauth-jwt"),
             mock.patch.object(main.secretmanager, "SecretManagerServiceClient"),
@@ -193,7 +194,7 @@ class TestBroadcastifyCredentialRotation:
 
         with (
             mock.patch.object(
-                main.httpx, "Client", return_value=mock_http_context
+                main.requests, "Session", return_value=mock_http_context
             ),
             mock.patch.object(
                 main, "_generate_jwt", return_value="unauth-jwt"
@@ -209,3 +210,76 @@ class TestBroadcastifyCredentialRotation:
 
         mock_generate.assert_called_once_with()
         mock_add.assert_not_called()
+
+    def test_rotation_configures_retries(self, configured_module: None) -> None:
+        del configured_module
+        mock_response = mock.MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "uid": "uid-123",
+            "token": "utk-456",
+        }
+
+        mock_http_client = mock.MagicMock()
+        mock_http_client.post.return_value = mock_response
+        mock_http_context = mock.MagicMock()
+        mock_http_context.__enter__.return_value = mock_http_client
+
+        with (
+            mock.patch.object(
+                main.requests, "Session", return_value=mock_http_context
+            ),
+            mock.patch.object(main, "_generate_jwt", return_value="unauth-jwt"),
+            mock.patch.object(main, "add_secret_version"),
+            mock.patch.object(main.secretmanager, "SecretManagerServiceClient"),
+            mock.patch.object(main, "Retry") as mock_retry,
+            mock.patch.object(main, "HTTPAdapter") as mock_adapter,
+        ):
+            mock_retry.return_value = "mock_retry_instance"
+            mock_adapter.return_value = "mock_adapter_instance"
+
+            main.broadcastify_credential_rotation(mock.MagicMock())
+
+        mock_retry.assert_called_once_with(
+            total=3,
+            backoff_factor=1.0,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["POST"],
+        )
+        mock_adapter.assert_called_once_with(max_retries="mock_retry_instance")
+        mock_http_client.mount.assert_called_once_with(
+            "https://", "mock_adapter_instance"
+        )
+
+    def test_rotation_actually_retries_and_backs_off(
+        self, configured_module: None
+    ) -> None:
+        del configured_module
+
+        mock_http_response = mock.MagicMock()
+        mock_http_response.status = 500
+        mock_http_response.length = 0
+        mock_http_response.read.return_value = b""
+        mock_http_response.isclosed.return_value = False
+        mock_http_response.getheaders.return_value = []
+        mock_http_response.msg = mock.MagicMock()
+
+        with (
+            mock.patch(
+                "urllib3.connectionpool.HTTPSConnectionPool._make_request",
+                return_value=mock_http_response,
+            ) as mock_make_request,
+            mock.patch("time.sleep") as mock_sleep,
+            mock.patch.object(main, "_generate_jwt", return_value="unauth-jwt"),
+            mock.patch.object(main.secretmanager, "SecretManagerServiceClient"),
+        ):
+            # Exceeding the max retries raises a RetryError
+            with pytest.raises(main.requests.exceptions.RetryError):
+                main.broadcastify_credential_rotation(mock.MagicMock())
+
+            # 1 initial request + 3 retries = 4 total attempts
+            assert mock_make_request.call_count == 4
+
+            # backoff_factor=1.0 generates sleep times of 0s, 2s, 4s for the 3 retries.
+            # (urllib3 skips calling time.sleep() if sleep_time <= 0, so we check for 2.0 and 4.0)
+            mock_sleep.assert_has_calls([mock.call(2.0), mock.call(4.0)])
