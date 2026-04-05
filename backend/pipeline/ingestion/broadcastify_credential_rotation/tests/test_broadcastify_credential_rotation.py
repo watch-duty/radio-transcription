@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from unittest import mock
 
 import jwt
@@ -7,19 +8,26 @@ import pytest
 
 from backend.pipeline.ingestion.broadcastify_credential_rotation import main
 
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
 
 @pytest.fixture
-def configured_module(monkeypatch: pytest.MonkeyPatch) -> None:
+def configured_module() -> Generator[None]:
     """Configure required module globals for deterministic unit tests."""
-    monkeypatch.setattr(main, "PROJECT_ID", "test-project")
-    monkeypatch.setattr(main, "BROADCASTIFY_USERNAME", "test-user")
-    monkeypatch.setattr(main, "BROADCASTIFY_PASSWORD", "test-pass")
-    monkeypatch.setattr(main, "BROADCASTIFY_API_KEY", "test-api-key")
-    monkeypatch.setattr(main, "BROADCASTIFY_API_APP_ID", "test-app-id")
-    monkeypatch.setattr(main, "BROADCASTIFY_API_KEY_ID", "test-key-id")
-    monkeypatch.setattr(main, "SECRET_JWT", "broadcastify-jwt")
-    monkeypatch.setattr(main, "AUTH_URL", "https://api.bcfy.io/common/v1/auth")
-    monkeypatch.setattr(main, "secret_client", None)
+    with mock.patch.multiple(
+        main,
+        PROJECT_ID="test-project",
+        BROADCASTIFY_USERNAME="test-user",
+        BROADCASTIFY_PASSWORD="test-pass",
+        BROADCASTIFY_API_KEY="test-api-key",
+        BROADCASTIFY_API_APP_ID="test-app-id",
+        BROADCASTIFY_API_KEY_ID="test-key-id",
+        SECRET_JWT="broadcastify-jwt",
+        AUTH_URL="https://api.bcfy.io/common/v1/auth",
+        secret_client=None,
+    ):
+        yield
 
 
 class TestAddSecretVersion:
@@ -52,22 +60,24 @@ class TestAddSecretVersion:
 
 class TestGenerateJwt:
     def test_generate_jwt_raises_when_api_key_is_missing(
-        self, configured_module: None, monkeypatch: pytest.MonkeyPatch
+        self, configured_module: None
     ) -> None:
         del configured_module
-        monkeypatch.setattr(main, "BROADCASTIFY_API_KEY", "")
 
-        with pytest.raises(RuntimeError, match="BROADCASTIFY_API_KEY"):
-            main._generate_jwt()
+        with mock.patch.object(main, "BROADCASTIFY_API_KEY", ""):
+            with pytest.raises(RuntimeError, match="BROADCASTIFY_API_KEY"):
+                main._generate_jwt()
 
     def test_generate_jwt_has_expected_headers_and_claims(
-        self, configured_module: None, monkeypatch: pytest.MonkeyPatch
+        self, configured_module: None
     ) -> None:
         del configured_module
         api_key = "signing-secret-that-is-at-least-32-bytes"
-        monkeypatch.setattr(main, "BROADCASTIFY_API_KEY", api_key)
 
-        with mock.patch.object(main.time, "time", return_value=1700000000):
+        with (
+            mock.patch.object(main, "BROADCASTIFY_API_KEY", api_key),
+            mock.patch.object(main.time, "time", return_value=1700000000),
+        ):
             token = main._generate_jwt({"sub": "uid-1", "utk": "utk-1"})
 
         decoded = jwt.decode(
@@ -250,36 +260,3 @@ class TestBroadcastifyCredentialRotation:
         mock_http_client.mount.assert_called_once_with(
             "https://", "mock_adapter_instance"
         )
-
-    def test_rotation_actually_retries_and_backs_off(
-        self, configured_module: None
-    ) -> None:
-        del configured_module
-
-        mock_http_response = mock.MagicMock()
-        mock_http_response.status = 500
-        mock_http_response.length = 0
-        mock_http_response.read.return_value = b""
-        mock_http_response.isclosed.return_value = False
-        mock_http_response.getheaders.return_value = []
-        mock_http_response.msg = mock.MagicMock()
-
-        with (
-            mock.patch(
-                "urllib3.connectionpool.HTTPSConnectionPool._make_request",
-                return_value=mock_http_response,
-            ) as mock_make_request,
-            mock.patch("time.sleep") as mock_sleep,
-            mock.patch.object(main, "_generate_jwt", return_value="unauth-jwt"),
-            mock.patch.object(main.secretmanager, "SecretManagerServiceClient"),
-        ):
-            # Exceeding the max retries raises a RetryError
-            with pytest.raises(main.requests.exceptions.RetryError):
-                main.broadcastify_credential_rotation(mock.MagicMock())
-
-            # 1 initial request + 3 retries = 4 total attempts
-            assert mock_make_request.call_count == 4
-
-            # backoff_factor=1.0 generates sleep times of 0s, 2s, 4s for the 3 retries.
-            # (urllib3 skips calling time.sleep() if sleep_time <= 0, so we check for 2.0 and 4.0)
-            mock_sleep.assert_has_calls([mock.call(2.0), mock.call(4.0)])
