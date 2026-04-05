@@ -1,8 +1,17 @@
-import express from 'express';
-import { listTranscripts } from './transcripts/listTranscripts.js';
+import express, { json, urlencoded } from 'express';
+
+import { RegisterRoutes } from './generated/routes.js';
 
 const app = express();
 
-app.get('/api/v1/transcripts/:feedId', listTranscripts);
+app.use(
+  urlencoded({
+    extended: true,
+  })
+);
+
+app.use(json());
+
+RegisterRoutes(app);
 
 export const api = app;

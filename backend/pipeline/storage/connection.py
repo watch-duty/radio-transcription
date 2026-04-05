@@ -1,12 +1,17 @@
-from __future__ import annotations
-
-from typing import Any, cast
+import logging
 
 import asyncpg
-import psycopg
-from psycopg.rows import dict_row
+from tenacity import (
+    RetryCallState,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
-from .settings import AlloyDBSettings
+from backend.pipeline.storage.settings import AlloyDBSettings
+
+_logger = logging.getLogger(__name__)
 
 
 async def create_pool(
@@ -89,34 +94,6 @@ async def close_pool(pool: asyncpg.Pool) -> None:
     await pool.close()
 
 
-def connect_db(
-    settings: AlloyDBSettings | None = None,
-) -> psycopg.Connection[dict[str, Any]]:
-    """Open a sync psycopg connection to AlloyDB via pgBouncer.
-
-    No pool needed when the caller handles at most one request at a time
-    (e.g. Cloud Run with concurrency=1). pgBouncer provides server-side
-    pooling.
-
-    If *settings* is ``None``, an :class:`AlloyDBSettings` is constructed
-    from environment variables.
-    """
-    if settings is None:
-        settings = AlloyDBSettings()
-    return cast(
-        "psycopg.Connection[dict[str, Any]]",
-        psycopg.connect(
-            host=settings.host,
-            port=settings.port,
-            user=settings.user,
-            password=settings.password,
-            dbname=settings.db_name,
-            autocommit=True,
-            row_factory=cast("Any", dict_row),
-        ),
-    )
-
-
 async def create_pool_from_settings(
     settings: AlloyDBSettings | None = None,
 ) -> asyncpg.Pool:
@@ -139,3 +116,36 @@ async def create_pool_from_settings(
         command_timeout=settings.command_timeout_sec,
         timeout=settings.connect_timeout_sec,
     )
+
+
+def _log_retry(retry_state: RetryCallState) -> None:
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    _logger.warning(
+        "AlloyDB connection attempt %d failed (%s). Retrying...",
+        retry_state.attempt_number,
+        exc,
+    )
+
+
+@retry(
+    retry=retry_if_exception_type((TimeoutError, ConnectionError, OSError)),
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=1, min=2, max=30),
+    before_sleep=_log_retry,
+    reraise=True,
+)
+async def create_pool_with_retry(
+    settings: AlloyDBSettings | None = None,
+) -> asyncpg.Pool:
+    """
+    Create an asyncpg connection pool with exponential backoff retry.
+
+    Retries on transient connection failures (up to 5 attempts, starting at 2s
+    and doubling up to 30s). Intended for Cloud Run cold starts where multiple
+    services spinning up simultaneously can briefly saturate the AlloyDB
+    managed connection pooler.
+
+    Args:
+        settings: AlloyDB connection settings. Defaults to env vars.
+    """
+    return await create_pool_from_settings(settings)

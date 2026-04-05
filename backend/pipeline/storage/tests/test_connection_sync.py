@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from backend.pipeline.storage.connection import connect_db
 from backend.pipeline.storage.settings import AlloyDBSettings
+from backend.pipeline.storage.sync_connection import connect_db
 
 
 class TestConnectDb:
@@ -18,7 +18,7 @@ class TestConnectDb:
             db_name="testdb",
         )
         with patch(
-            "backend.pipeline.storage.connection.psycopg"
+            "backend.pipeline.storage.sync_connection.psycopg"
         ) as mock_psycopg:
             mock_psycopg.connect.return_value = MagicMock()
             connect_db(settings)
@@ -35,10 +35,10 @@ class TestConnectDb:
     def test_defaults_to_alloydb_settings(self) -> None:
         with (
             patch(
-                "backend.pipeline.storage.connection.psycopg"
+                "backend.pipeline.storage.sync_connection.psycopg"
             ) as mock_psycopg,
             patch(
-                "backend.pipeline.storage.connection.AlloyDBSettings"
+                "backend.pipeline.storage.sync_connection.AlloyDBSettings"
             ) as mock_settings_cls,
         ):
             mock_settings = MagicMock()
