@@ -83,7 +83,7 @@ class TestGenerateJwt:
         assert header["kid"] == "test-key-id"
         assert decoded["iss"] == "test-app-id"
         assert decoded["iat"] == 1700000000
-        assert decoded["exp"] == 1700002700
+        assert decoded["exp"] == 1700003600
         assert decoded["sub"] == "uid-1"
         assert decoded["utk"] == "utk-1"
 

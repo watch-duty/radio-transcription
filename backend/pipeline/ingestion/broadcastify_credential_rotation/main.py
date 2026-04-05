@@ -96,7 +96,7 @@ def _generate_jwt(auth_claims: dict[str, str] | None = None) -> str:
     payload = {
         "iss": BROADCASTIFY_API_APP_ID,
         "iat": now,
-        "exp": now + 2700,  # 45 minutes to give scheduler room for error
+        "exp": now + 3600,  # 1 hour to give scheduler room for error
     }
     if auth_claims:
         payload.update(auth_claims)
