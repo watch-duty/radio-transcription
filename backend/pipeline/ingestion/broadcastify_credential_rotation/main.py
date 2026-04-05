@@ -109,13 +109,14 @@ def _generate_jwt(auth_claims: dict[str, str] | None = None) -> str:
 
 
 def _require_environment() -> None:
-    """Validate required environment variables at invocation time. SECRET_JWT could be non-existent initially."""
+    """Validate required environment variables at invocation time."""
     required = {
         "BROADCASTIFY_USERNAME": BROADCASTIFY_USERNAME,
         "BROADCASTIFY_PASSWORD": BROADCASTIFY_PASSWORD,
         "BROADCASTIFY_API_KEY": BROADCASTIFY_API_KEY,
         "BROADCASTIFY_API_APP_ID": BROADCASTIFY_API_APP_ID,
         "BROADCASTIFY_API_KEY_ID": BROADCASTIFY_API_KEY_ID,
+        "BROADCASTIFY_JWT_SECRET_ID": SECRET_JWT,
         "GOOGLE_CLOUD_PROJECT": PROJECT_ID,
     }
     missing = [name for name, value in required.items() if not value]
@@ -196,6 +197,9 @@ def broadcastify_credential_rotation(request: flask.Request) -> tuple[str, int]:
         raise RuntimeError(msg)
 
     auth_jwt_token = _generate_jwt({"sub": uid, "utk": token})
+    if not SECRET_JWT:
+        msg = "BROADCASTIFY_JWT_SECRET_ID environment variable is not set"
+        raise RuntimeError(msg)
     add_secret_version(secret_client, SECRET_JWT, auth_jwt_token)
     logger.info("Broadcastify credentials rotated successfully")
     return "Successfully updated broadcastify credentials", 200
