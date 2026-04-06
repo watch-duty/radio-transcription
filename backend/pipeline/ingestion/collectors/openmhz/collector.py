@@ -143,8 +143,8 @@ async def openmhz_collector(
                             continue
 
                         try:
-                            flac_bytes = convert_to_flac(
-                                m4a_bytes, "m4a"
+                            flac_bytes = await asyncio.to_thread(
+                                convert_to_flac, m4a_bytes, "m4a"
                             )
                         except Exception:
                             logger.warning(
