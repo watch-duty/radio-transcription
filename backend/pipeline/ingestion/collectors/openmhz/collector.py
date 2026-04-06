@@ -34,7 +34,7 @@ _RECONNECT_BACKOFF_CAP_SEC = 30.0
 def _get_transport(name: str) -> TransportFactory:
     """Resolve transport by name. Reads module attributes at call time."""
     if name == "websocket":
-        return websocket_transport  # type: ignore[return-value]
+        return websocket_transport
     msg = f"Unknown OPENMHZ_TRANSPORT: {name!r}"
     raise ValueError(msg)
 
