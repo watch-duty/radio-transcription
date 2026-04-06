@@ -7,6 +7,10 @@ resource "google_storage_bucket" "this" {
   force_destroy               = var.force_destroy
   labels                      = var.labels
 
+  soft_delete_policy {
+    retention_duration_seconds = var.enable_soft_delete ? 7 * 24 * 60 * 60 : 0
+  }
+
   dynamic "lifecycle_rule" {
     for_each = var.lifecycle_rules
     content {
