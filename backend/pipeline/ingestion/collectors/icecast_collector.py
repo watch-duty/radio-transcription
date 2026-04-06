@@ -120,6 +120,7 @@ async def capture_icecast_stream(  # noqa: PLR0915
         segment_pattern = str(segment_dir / f"chunk_%06d.{AUDIO_FORMAT}")
 
         process = await _create_ffmpeg_process(url, segment_pattern)
+        assert process.stderr is not None  # guaranteed by stderr=PIPE
         stderr_tail: collections.deque[str] = collections.deque(
             maxlen=STDERR_TAIL_LINES
         )
