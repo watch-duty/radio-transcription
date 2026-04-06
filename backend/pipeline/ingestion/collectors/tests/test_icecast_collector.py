@@ -7,7 +7,7 @@ from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
-from backend.pipeline.ingestion.normalizer_runtime import CapturedChunk
+from backend.pipeline.ingestion.models import CapturedChunk
 from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 
 MOCK_ENV_VARS = {
