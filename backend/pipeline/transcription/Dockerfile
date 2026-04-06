@@ -1,10 +1,34 @@
-FROM gcr.io/dataflow-templates-base/python313-template-launcher-base:latest AS launcher
+# --- Stage 1: The Builder ---
+FROM python:3.13-slim AS builder
 
+# Copy uv from the official image
+COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
+
+WORKDIR /app
+
+# Copy lockfiles and manifests
+COPY pyproject.toml uv.lock ./
+COPY backend/pipeline/transcription/pyproject.toml ./backend/pipeline/transcription/pyproject.toml
+
+# Use uv to export and then install into the system site-packages of the builder.
+# We keep your logic to strip editable installs (-e) for workspace members.
+RUN uv export --frozen --no-dev --no-emit-project -o /tmp/requirements.txt && \
+    grep -v '^-e ' /tmp/requirements.txt > /tmp/requirements_pinned.txt && \
+    uv pip install --system --no-cache -r /tmp/requirements_pinned.txt && \
+    uv pip install --system --no-cache grpcio-tools
+
+# --- Stage 2: The Dataflow Worker ---
 FROM apache/beam_python3.13_sdk:2.70.0
 
-COPY --from=launcher /opt/google/dataflow/python_template_launcher /opt/google/dataflow/python_template_launcher
+# Copy the launcher from the google-provided base
+COPY --from=gcr.io/dataflow-templates-base/python313-template-launcher-base:latest \
+     /opt/google/dataflow/python_template_launcher /opt/google/dataflow/python_template_launcher
 
-# Install OS dependencies
+# Copy the installed packages from the builder stage
+COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Install OS dependencies needed at runtime
 USER root
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -14,30 +38,13 @@ RUN apt-get update && \
         libc++abi1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
 WORKDIR /app
 
 ENV FLEX_TEMPLATE_PYTHON_PY_FILE="/app/backend/pipeline/transcription/main.py"
-# PYTHONPATH makes `backend.*` importable for both the launcher and Dataflow workers.
-# Workers use the base image's system Python (/usr/local/bin/python3), so all deps
-# must be installed there — not in a virtual env.
 ENV PYTHONPATH="/app"
+ENV PYTHONUNBUFFERED=1
 
-# Copy only dependency manifests first so this layer is cached independently of
-# source changes. Only pyproject.toml/uv.lock changes bust the install step.
-COPY pyproject.toml uv.lock ./
-COPY backend/pipeline/transcription/pyproject.toml ./backend/pipeline/transcription/pyproject.toml
-
-# Export the locked dependency graph to a flat requirements file and install
-# into the system Python. --no-emit-project omits the root package; we also
-# strip workspace-member editable installs (-e lines) since those packages
-# are available at runtime via PYTHONPATH=/app.
-RUN uv export --frozen --no-dev --no-emit-project -o /tmp/requirements.txt && \
-    grep -v '^-e ' /tmp/requirements.txt > /tmp/requirements_pinned.txt && \
-    pip install --no-cache-dir -r /tmp/requirements_pinned.txt && \
-    pip install --no-cache-dir grpcio-tools
-
-# Copy full source after install — code changes don't bust the dep cache
+# Copy full source
 COPY backend/ ./backend/
 COPY protos/ ./protos
 
