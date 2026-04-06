@@ -5,7 +5,7 @@ set -e
 # If we see that flag, we know we are running as a worker.
 if [[ "$*" == *"--logging_endpoint"* ]]; then
     echo "Running as Dataflow Worker..."
-    exec /opt/google/dataflow/boot "$@"
+    exec /opt/apache/beam/boot "$@"
 else
     echo "Running as Flex Template Launcher..."
     exec /opt/google/dataflow/python_template_launcher "$@"
