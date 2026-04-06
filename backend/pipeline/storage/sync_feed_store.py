@@ -9,7 +9,10 @@ with ``concurrency=1`` behind pgBouncer).
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     import uuid
@@ -128,4 +131,8 @@ class SyncFeedStore:
                     self._base_backoff_sec,
                     feed_id,
                 ),
+            )
+            logger.warning(
+                "Feed failure recorded",
+                extra={"feed_id": str(feed_id)},
             )

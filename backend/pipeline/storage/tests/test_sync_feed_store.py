@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
 
@@ -110,3 +110,17 @@ class TestRecordFailure:
 
         params = conn.execute.call_args[0][1]
         assert params == (10, 10, 1200, 30, feed_id)
+
+    def test_always_logs_failure(self) -> None:
+        conn = _make_mock_conn()
+        store = _make_store(conn)
+        feed_id = uuid.uuid4()
+
+        with patch(
+            "backend.pipeline.storage.sync_feed_store.logger"
+        ) as mock_logger:
+            store.record_failure(feed_id)
+
+        mock_logger.warning.assert_called_once()
+        extra = mock_logger.warning.call_args[1]["extra"]
+        assert extra["feed_id"] == str(feed_id)
