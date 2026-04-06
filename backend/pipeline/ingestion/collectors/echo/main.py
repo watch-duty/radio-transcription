@@ -29,6 +29,7 @@ from backend.pipeline.storage.sync_feed_store import SyncFeedStore
 if TYPE_CHECKING:
     from cloudevents.http import event as cloudevent
 
+setup_logging()
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -55,7 +56,6 @@ feed_store: SyncFeedStore | None = None
 def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
     """Sync entry point for Eventarc GCS OBJECT_FINALIZE events."""
     global gcs_client, pubsub_client, feed_store  # noqa: PLW0603
-    setup_logging()
     if not CANONICAL_BUCKET:
         msg = "CANONICAL_BUCKET environment variable is not set"
         raise RuntimeError(msg)
