@@ -1,26 +1,12 @@
-import sys
-from unittest.mock import MagicMock
-
-# Save original if exists
-original_sherpa = sys.modules.get("sherpa_onnx")
-
-# Mock sherpa_onnx before importing anything that might use it
-mock_sherpa = MagicMock()
-sys.modules["sherpa_onnx"] = mock_sherpa
-
 import io
 import logging
 import shutil
 import unittest
 from unittest.mock import MagicMock, patch
 
-from backend.pipeline.transcription.audio.audio_processor import AudioProcessor
-
-
-import pytest
 import numpy as np
+import soundfile as sf
 
-from backend.pipeline.common.constants import AUDIO_FORMAT
 from backend.pipeline.transcription.audio.audio_processor import AudioProcessor
 from backend.pipeline.transcription.datatypes import (
     AudioChunkData,
@@ -102,7 +88,6 @@ class AudioProcessorTest(unittest.TestCase):
         # Create a valid clean FLAC in memory
         clean_flac = io.BytesIO()
         dummy_audio = np.zeros(16000, dtype=np.int16)  # 1 second of silence
-        import soundfile as sf
 
         sf.write(clean_flac, dummy_audio, 16000, format="FLAC")
         clean_flac.seek(0)
@@ -115,7 +100,6 @@ class AudioProcessorTest(unittest.TestCase):
         # Mock blob.download_to_file to write dirty content
         def mock_download(fileobj):
             fileobj.write(dirty_content)
-            return None
 
         mock_blob.download_to_file.side_effect = mock_download
 
@@ -168,7 +152,7 @@ class AudioProcessorTest(unittest.TestCase):
 
         # Mock denoiser to return something
         mock_denoised = MagicMock()
-        mock_denoised.samples = [0.1] * 16000  # 1 second at 16kHz
+        mock_denoised.samples = [0.0] * 16000  # 1 second at 16kHz
         processor.denoiser.run.return_value = mock_denoised
 
         # Mock VAD results
@@ -176,12 +160,12 @@ class AudioProcessorTest(unittest.TestCase):
         mock_process_vad.side_effect = [
             VadResult(
                 speech_segments=[TimeRange(start_ms=100, end_ms=900)],
-                silence_segments=[],
+                silence_segments=[TimeRange(start_ms=0, end_ms=100)],
             ),
             # Pass 2 returns refined segment
             VadResult(
                 speech_segments=[TimeRange(start_ms=200, end_ms=800)],
-                silence_segments=[],
+                silence_segments=[TimeRange(start_ms=0, end_ms=200)],
             ),
         ]
 
@@ -192,10 +176,10 @@ class AudioProcessorTest(unittest.TestCase):
         processor.signal_analyzer.characterize.return_value = mock_char
 
         samples = np.zeros(16000, dtype=np.int16)
-        speech, noise, silence = processor._detect_speech_and_noise(samples, 0)
+        speech, _silence = processor._detect_speech_and_noise(samples, 0)
         self.assertEqual(len(speech), 1)
         self.assertEqual(speech[0].start_ms, 0)
-        self.assertEqual(speech[0].end_ms, 900)
+        self.assertEqual(speech[0].end_ms, 1000)
 
     @patch(
         "backend.pipeline.transcription.audio.silero_vad.process_vad_streaming"
@@ -212,13 +196,13 @@ class AudioProcessorTest(unittest.TestCase):
 
         # Mock denoiser
         mock_denoised = MagicMock()
-        mock_denoised.samples = [0.1] * 16000  # 1 second
+        mock_denoised.samples = [0.0] * 16000  # 1 second
         mock_denoiser.run.return_value = mock_denoised
 
         # Mock VAD
         mock_process_vad.return_value = VadResult(
             speech_segments=[TimeRange(start_ms=100, end_ms=500)],
-            silence_segments=[],
+            silence_segments=[TimeRange(start_ms=0, end_ms=100)],
         )
 
         # Mock signal analyzer
@@ -230,7 +214,7 @@ class AudioProcessorTest(unittest.TestCase):
         samples = np.zeros(16000, dtype=np.int16)
         start_ms = 0
 
-        speech, _, noise = processor._detect_speech_candidates(
+        speech, silence = processor._detect_speech_candidates(
             samples,
             start_ms,
             mock_vad_sensitive,
@@ -239,7 +223,8 @@ class AudioProcessorTest(unittest.TestCase):
         )
 
         self.assertEqual(len(speech), 1)
-        # With default padding (pre=200, post=0), clipped to duration (1000ms)
-        # [100, 500] -> [0, 500]
+        self.assertEqual(len(silence), 1)
+        # With default padding (pre=200, post=200), clipped to duration (1000ms)
+        # [100, 500] -> [0, 700]
         self.assertEqual(speech[0].start_ms, 0)
-        self.assertEqual(speech[0].end_ms, 500)
+        self.assertEqual(speech[0].end_ms, 700)

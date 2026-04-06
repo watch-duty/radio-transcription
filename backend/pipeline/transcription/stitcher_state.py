@@ -10,15 +10,18 @@ from backend.pipeline.common.constants import (
 logger = logging.getLogger(__name__)
 from backend.pipeline.transcription.datatypes import (
     AppendBufferAction,
+    AppendIsolatedBufferAction,
     AudioChunkData,
     DropAction,
     FlushAction,
+    PaddedSegment,
     ScheduleStaleTimerAction,
     StateMachineAction,
     StitchAudioConfig,
     StitcherContext,
     TimeRange,
     UpdateStateAction,
+    VadResult,
 )
 
 
@@ -37,7 +40,7 @@ class AudioStitchingStateMachine:
         self.config = config
 
     def process_chunk(
-        self, chunk_data: AudioChunkData, ctx: StitcherContext
+        self, chunk_data: AudioChunkData, ctx: StitcherContext, padded_segments: list[PaddedSegment], vad_result: VadResult
     ) -> list[StateMachineAction]:
         """Evaluates an incoming chunk against the state machine to produce imperative actions."""
         # 0. Detect if this is an out-of-order LATE chunk
@@ -47,16 +50,16 @@ class AudioStitchingStateMachine:
         )
 
         if is_late_chunk:
-            return self._process_late_chunk_independently(chunk_data, ctx)
+            return self._process_late_chunk_independently(chunk_data, ctx, padded_segments, vad_result)
 
         chunk_duration_ms = int(CHUNK_DURATION_SECONDS * MS_PER_SECOND)
         actions: list[StateMachineAction] = []
 
         # 2. Proceed with normal evaluation
-        if not chunk_data.speech_segments:
-            new_actions = self._process_silent_chunk(chunk_data, ctx)
+        if not vad_result.speech_segments:
+            new_actions = self._process_silent_chunk(chunk_data, ctx, vad_result)
         else:
-            new_actions = self._process_speech_segments(chunk_data, ctx)
+            new_actions = self._process_speech_segments(chunk_data, ctx, padded_segments, vad_result)
 
         actions.extend(new_actions)
 
@@ -115,7 +118,7 @@ class AudioStitchingStateMachine:
         )
 
     def _process_late_chunk_independently(
-        self, chunk_data: AudioChunkData, ctx: StitcherContext
+        self, chunk_data: AudioChunkData, ctx: StitcherContext, padded_segments: list[PaddedSegment], vad_result: VadResult
     ) -> list[StateMachineAction]:
         """Flushes a late-arriving chunk immediately as an independent short transmission."""
         # Create a detached context to prevent state corruption of the leading edge
@@ -129,19 +132,19 @@ class AudioStitchingStateMachine:
         )
 
         raw_actions: list[StateMachineAction] = []
-        if not chunk_data.speech_segments:
-            raw_actions.extend(self._process_silent_chunk(chunk_data, temp_ctx))
+        if not vad_result.speech_segments:
+            raw_actions.extend(self._process_silent_chunk(chunk_data, temp_ctx, vad_result))
         else:
             raw_actions.extend(
-                self._process_speech_segments(chunk_data, temp_ctx)
+                self._process_speech_segments(chunk_data, temp_ctx, padded_segments, vad_result)
             )
 
         # Force flush whatever remaining audio was appended via actions
         if temp_ctx.transmission_start_time_ms is not None:
             # We must determine if the trailing audio was chopped by the late chunk's boundary.
             last_segment = (
-                chunk_data.speech_segments[-1]
-                if chunk_data.speech_segments
+                vad_result.speech_segments[-1]
+                if vad_result.speech_segments
                 else None
             )
             is_chopped_at_end = (
@@ -157,42 +160,16 @@ class AudioStitchingStateMachine:
             )
 
         filtered_actions: list[StateMachineAction] = []
-        isolated_audio_buffer = []
-
         for action in raw_actions:
-            match action:
-                case AppendBufferAction(
-                    start_offset_ms=start, end_offset_ms=end
-                ):
-                    start_idx_16k = start * 16
-                    end_idx_16k = end * 16
-                    sliced_16k = chunk_data.audio[start_idx_16k:end_idx_16k]
-
-                    start_idx_orig = int(start * chunk_data.original_sr / 1000)
-                    end_idx_orig = int(end * chunk_data.original_sr / 1000)
-                    sliced_orig = chunk_data.stored_audio[
-                        start_idx_orig:end_idx_orig
-                    ]
-
-                    isolated_audio_buffer.append((sliced_16k, sliced_orig))
-                case FlushAction():
-                    filtered_actions.append(
-                        FlushAction(
-                            reason=action.reason,
-                            feed_id=action.feed_id,
-                            time_range=action.time_range,
-                            speech_time_range=action.speech_time_range,
-                            contributing_audio_uris=action.contributing_audio_uris,
-                            missing_prior_context=action.missing_prior_context,
-                            missing_post_context=action.missing_post_context,
-                            start_audio_offset_ms=action.start_audio_offset_ms,
-                            end_audio_offset_ms=action.end_audio_offset_ms,
-                            clear_state=False,
-                            isolated_audio_buffer=isolated_audio_buffer.copy(),
-                        )
+            if isinstance(action, AppendBufferAction):
+                filtered_actions.append(
+                    AppendIsolatedBufferAction(
+                        start_offset_ms=action.start_offset_ms,
+                        end_offset_ms=action.end_offset_ms,
                     )
-                case DropAction():
-                    filtered_actions.append(action)
+                )
+            else:
+                filtered_actions.append(action)
 
         return filtered_actions
 
@@ -205,7 +182,7 @@ class AudioStitchingStateMachine:
         ctx.buffer_duration_ms = 0
 
     def _process_silent_chunk(
-        self, chunk_data: AudioChunkData, ctx: StitcherContext
+        self, chunk_data: AudioChunkData, ctx: StitcherContext, vad_result: VadResult
     ) -> list[StateMachineAction]:
         """Handles VAD silence events, updating trailing statistics without extending speech logic."""
         actions: list[StateMachineAction] = []
@@ -249,7 +226,7 @@ class AudioStitchingStateMachine:
                 # Option 2: Find the silence region that starts at this segment's end!
                 matching_silence = [
                     s
-                    for s in chunk_data.silence_segments
+                    for s in vad_result.silence_segments
                     if s.start_ms == ctx.last_segment_end_time_ms
                 ]
                 if matching_silence:
@@ -260,8 +237,12 @@ class AudioStitchingStateMachine:
                     append_end = 0
 
                 if append_end > 0:
+                    start_idx = 0
+                    end_idx = append_end * 16
+                    raw_slice = chunk_data.audio[start_idx:end_idx]
                     actions.append(
                         AppendBufferAction(
+                            raw_audio=raw_slice, denoised_audio=raw_slice,
                             start_offset_ms=0, end_offset_ms=append_end
                         )
                     )
@@ -326,7 +307,7 @@ class AudioStitchingStateMachine:
             # Option 2: Find the silence region that starts at this segment's end!
             matching_silence = [
                 s
-                for s in chunk_data.silence_segments
+                for s in vad_result.silence_segments
                 if s.start_ms == ctx.last_segment_end_time_ms
             ]
             if matching_silence:
@@ -338,8 +319,12 @@ class AudioStitchingStateMachine:
                 # If no silence region borders the speech, we fallback to no post-roll!
                 append_end = 0
             if append_end > 0:
+                start_idx = 0
+                end_idx = append_end * 16
+                raw_slice = chunk_data.audio[start_idx:end_idx]
                 actions.append(
                     AppendBufferAction(
+                        raw_audio=raw_slice, denoised_audio=raw_slice,
                         start_offset_ms=0, end_offset_ms=append_end
                     )
                 )
@@ -348,11 +333,11 @@ class AudioStitchingStateMachine:
         return actions
 
     def _process_speech_segments(
-        self, chunk_data: AudioChunkData, ctx: StitcherContext
+        self, chunk_data: AudioChunkData, ctx: StitcherContext, padded_segments: list[PaddedSegment], vad_result: VadResult
     ) -> list[StateMachineAction]:
         """Evaluates consecutive speech data, updating length counters and triggering mid-stream flushes if gap or duration limits are reached."""
         actions: list[StateMachineAction] = []
-        for segment in chunk_data.padded_segments:
+        for segment in padded_segments:
             # 1. Check if the gap between the last speech segment and this new one
             # is significant enough to warrant splitting into a new transmission.
             is_significant_gap = (
@@ -391,7 +376,7 @@ class AudioStitchingStateMachine:
                         # Find matching silence region to limit padding
                         matching_silence = [
                             s
-                            for s in chunk_data.silence_segments
+                            for s in vad_result.silence_segments
                             if s.start_ms == ctx.last_segment_end_time_ms
                         ]
                         if matching_silence:
@@ -405,10 +390,13 @@ class AudioStitchingStateMachine:
                         )
 
                         if end_offset > start_offset:
+                            start_idx = start_offset * 16
+                            end_idx = end_offset * 16
+                            raw_slice = chunk_data.audio[start_idx:end_idx]
                             actions.append(
                                 AppendBufferAction(
-                                    start_offset_ms=start_offset,
-                                    end_offset_ms=end_offset,
+                                    raw_audio=raw_slice, denoised_audio=raw_slice,
+                                    start_offset_ms=start_offset, end_offset_ms=end_offset
                                 )
                             )
                             ctx.buffer_duration_ms += end_offset - start_offset
@@ -442,35 +430,40 @@ class AudioStitchingStateMachine:
                         "last_segment_end_time_ms is None in subsequent segment"
                     )
                     raise RuntimeError(msg)
-                start_offset = max(
-                    0, ctx.last_segment_end_time_ms - chunk_data.start_ms
-                )
-
-                # But if there is a flagged noise click in the gap, do NOT fill it!
-                # We check if any noise segment falls between the previous segment and this one.
-                for noise in chunk_data.noise_segments:
-                    if (
-                        noise.start_ms >= ctx.last_segment_end_time_ms
-                        and noise.end_ms <= segment.speech_start_ms
-                    ):
-                        # Skip appending the gap, only append the current speech segment!
-                        start_offset = max(
-                            0, segment.speech_start_ms - chunk_data.start_ms
-                        )
-                        break
-
-            end_offset = min(
-                chunk_data.duration_ms,
-                segment.speech_end_ms - chunk_data.start_ms,
-            )
-
-            if end_offset > start_offset:
+            # Calculate where to start in the segment to avoid overlap
+            actual_start_ms = segment.start_ms
+            if ctx.last_segment_end_time_ms is not None:
+                actual_start_ms = max(actual_start_ms, ctx.last_segment_end_time_ms)
+                
+            # Only fill the gap if it is fully covered by verified silence!
+            gap_covered_by_silence = False
+            for silence in vad_result.silence_segments:
+                if (
+                    silence.start_ms <= ctx.last_segment_end_time_ms
+                    and silence.end_ms >= segment.speech_start_ms
+                ):
+                    gap_covered_by_silence = True
+                    break
+                    
+            if not gap_covered_by_silence:
+                # Skip appending the gap, only append the current speech segment!
+                actual_start_ms = max(actual_start_ms, segment.speech_start_ms)
+                
+            seg_start_idx = max(0, (actual_start_ms - segment.start_ms) * 16)
+            seg_end_idx = len(segment.raw_audio) # Take everything that was padded
+            
+            if seg_end_idx > seg_start_idx:
+                start_offset_ms = actual_start_ms - chunk_data.start_ms
+                end_offset_ms = start_offset_ms + (seg_end_idx - seg_start_idx) // 16
                 actions.append(
                     AppendBufferAction(
-                        start_offset_ms=start_offset, end_offset_ms=end_offset
+                        raw_audio=segment.raw_audio[seg_start_idx:seg_end_idx],
+                        denoised_audio=segment.denoised_audio[seg_start_idx:seg_end_idx],
+                        start_offset_ms=start_offset_ms,
+                        end_offset_ms=end_offset_ms
                     )
                 )
-                ctx.buffer_duration_ms += end_offset - start_offset
+                ctx.buffer_duration_ms += (seg_end_idx - seg_start_idx) // 16
 
             ctx.last_segment_end_time_ms = segment.speech_end_ms
 
@@ -483,16 +476,21 @@ class AudioStitchingStateMachine:
                 ctx.last_segment_end_time_ms + self.config.vad_post_roll_ms
             )
 
-            # Check for overlapping noise segments (clicks) to avoid padding over them
-            valid_noises = [
-                n.start_ms
-                for n in chunk_data.noise_segments
-                if n.start_ms > ctx.last_segment_end_time_ms
-            ]
-            if valid_noises:
-                needed_post_roll_end = min(
-                    needed_post_roll_end, min(valid_noises)
-                )
+            silence_end = None
+            for silence in vad_result.silence_segments:
+                if (
+                    silence.start_ms <= ctx.last_segment_end_time_ms
+                    and silence.end_ms > ctx.last_segment_end_time_ms
+                ):
+                    silence_end = silence.end_ms
+                    break
+
+            if silence_end is not None:
+                needed_post_roll_end = min(needed_post_roll_end, silence_end)
+            else:
+                # If the end of speech is not in silence, we cannot pad into silence!
+                # We cap it at the end of speech itself.
+                needed_post_roll_end = ctx.last_segment_end_time_ms
 
             if chunk_data.start_ms < needed_post_roll_end:
                 start_offset = max(
@@ -504,10 +502,13 @@ class AudioStitchingStateMachine:
                 )
 
                 if end_offset > start_offset:
+                    start_idx = start_offset * 16
+                    end_idx = end_offset * 16
+                    raw_slice = chunk_data.audio[start_idx:end_idx]
                     actions.append(
                         AppendBufferAction(
-                            start_offset_ms=start_offset,
-                            end_offset_ms=end_offset,
+                            raw_audio=raw_slice, denoised_audio=raw_slice,
+                            start_offset_ms=start_offset, end_offset_ms=end_offset
                         )
                     )
                     ctx.buffer_duration_ms += end_offset - start_offset

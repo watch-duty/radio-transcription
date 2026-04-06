@@ -1,3 +1,4 @@
+import dataclasses
 import unittest
 
 import numpy as np
@@ -242,3 +243,28 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         )
         self.assertTrue(flush_action.missing_prior_context)
         self.assertFalse(flush_action.missing_post_context)
+
+    def test_internal_gap_without_silence_not_filled(self) -> None:
+        """Verifies that internal gaps lacking verified silence are NOT filled."""
+        chunk = mock_audio_chunk(0, 15000, [(1.0, 5.0), (7.0, 10.0)])
+        # Remove silence segments to simulate noise filling the gap
+        chunk = dataclasses.replace(chunk, silence_segments=[])
+
+        actions = self._process(chunk)
+        append_actions = [a for a in actions if isinstance(a, AppendBufferAction)]
+
+        self.assertEqual(len(append_actions), 2)
+        # Should start at speech start (7000), skipping the gap
+        self.assertEqual(append_actions[1].start_offset_ms, 7000)
+
+    def test_internal_gap_with_silence_filled(self) -> None:
+        """Verifies that internal gaps covered by verified silence ARE filled."""
+        chunk = mock_audio_chunk(0, 15000, [(1.0, 5.0), (7.0, 10.0)])
+        # mock_audio_chunk automatically adds silence in the gap!
+
+        actions = self._process(chunk)
+        append_actions = [a for a in actions if isinstance(a, AppendBufferAction)]
+
+        self.assertEqual(len(append_actions), 3)
+        # Should start at previous end (5000), filling the gap
+        self.assertEqual(append_actions[1].start_offset_ms, 5000)
