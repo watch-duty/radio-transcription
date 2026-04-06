@@ -14,6 +14,7 @@ import asyncpg
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
+from backend.pipeline.ingestion.collectors import CapturedChunk
 from backend.pipeline.ingestion.retry import (
     LeaseExpiredError,
     retry_with_lease_check,
@@ -31,7 +32,7 @@ from backend.pipeline.storage.feed_store import (
 
 FeedID = uuid.UUID
 CaptureFn = Callable[
-    [LeasedFeed, asyncio.Event], AsyncIterator[tuple[bytes, datetime.datetime]]
+    [LeasedFeed, asyncio.Event], AsyncIterator[CapturedChunk]
 ]
 logger = logging.getLogger(__name__)
 
@@ -321,14 +322,14 @@ class NormalizerRuntime:
         session_id = str(uuid.uuid4())
 
         try:
-            async for audio_chunk, chunk_start_time in self._capture_fn(
+            async for captured_chunk in self._capture_fn(
                 feed,
                 self._shutdown,
             ):
                 gcs_uri = await retry_with_lease_check(
                     gcp_helper.upload_staged_audio,
                     self._gcs_client,
-                    audio_chunk,
+                    captured_chunk.audio_bytes,
                     feed,
                     settings.audio_staging_bucket,
                     chunk_seq,
@@ -350,7 +351,7 @@ class NormalizerRuntime:
                     self._normalizer_settings.pubsub_topic_path,
                     str(feed["id"]),
                     gcs_uri,
-                    start_timestamp=chunk_start_time,
+                    start_timestamp=captured_chunk.chunk_start_time,
                     session_id=session_id,
                 )
                 logger.info(
@@ -364,7 +365,7 @@ class NormalizerRuntime:
                     worker_id,
                     gcs_uri,
                     fencing_token,
-                    chunk_start_time,
+                    captured_chunk.chunk_end_time,
                     lease_lost=self._lease_lost,
                     shutdown=self._shutdown,
                     max_retries=settings.bookmark_max_retries,
