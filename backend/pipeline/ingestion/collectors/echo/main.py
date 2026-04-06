@@ -22,12 +22,14 @@ from google.cloud import storage
 from backend.pipeline.common.audio import convert_to_flac
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.gcp_helper import publish_audio_chunk_sync
+from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.storage.sync_connection import connect_db
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
 
 if TYPE_CHECKING:
     from cloudevents.http import event as cloudevent
 
+setup_logging()
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -62,6 +64,7 @@ def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
         raise RuntimeError(msg)
     if gcs_client is None:
         gcs_client = storage.Client()
+        logger.info("Echo ingestion initialized (bucket=%s)", CANONICAL_BUCKET)
     if pubsub_client is None:
         pubsub_client = PubSubClient()
     if feed_store is None:
