@@ -5,8 +5,11 @@ import contextlib
 import datetime
 import unittest
 import uuid
-from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 from backend.pipeline.ingestion.collectors.openmhz._types import CallEvent
 from backend.pipeline.ingestion.collectors.openmhz.collector import (

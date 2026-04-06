@@ -6,6 +6,8 @@ import os
 import random
 from typing import TYPE_CHECKING
 
+from curl_cffi.requests import AsyncSession
+
 from backend.pipeline.common.audio import convert_to_flac
 from backend.pipeline.ingestion.collectors.openmhz._ws_transport import (
     websocket_transport,
@@ -42,9 +44,10 @@ async def _sleep_or_shutdown(
     """Sleep for *seconds*, returning ``True`` if interrupted by shutdown."""
     try:
         await asyncio.wait_for(shutdown.wait(), timeout=seconds)
-        return True
     except TimeoutError:
         return False
+    else:
+        return True
 
 
 async def _download_m4a(url: str) -> bytes | None:
@@ -52,8 +55,6 @@ async def _download_m4a(url: str) -> bytes | None:
 
     Returns audio bytes on success, ``None`` on failure.
     """
-    from curl_cffi.requests import AsyncSession
-
     for attempt in range(_DOWNLOAD_MAX_RETRIES):
         try:
             async with AsyncSession() as session:
@@ -179,7 +180,7 @@ async def openmhz_collector(
         backoff = min(
             _RECONNECT_BACKOFF_CAP_SEC,
             _RECONNECT_BACKOFF_BASE_SEC * (2**consecutive_ws_failures),
-        ) + random.uniform(0, 1)
+        ) + random.uniform(0, 1)  # noqa: S311 -- jitter, not crypto
         logger.info(
             "Reconnecting: short_name=%s attempt=%d backoff_sec=%.1f",
             short_name,

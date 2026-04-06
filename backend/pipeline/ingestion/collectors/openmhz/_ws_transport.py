@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import asyncio
+import contextlib
 import datetime
 import json
 import logging
@@ -14,6 +14,7 @@ from curl_cffi.requests.websockets import WebSocketTimeout
 from backend.pipeline.ingestion.collectors.openmhz._types import CallEvent
 
 if TYPE_CHECKING:
+    import asyncio
     from collections.abc import AsyncIterator
 
 logger = logging.getLogger(__name__)
@@ -115,14 +116,10 @@ async def websocket_transport(
         )
     finally:
         if ws is not None:
-            try:
+            with contextlib.suppress(Exception):
                 await ws.send_str("1")  # best-effort EIO close
-            except Exception:
-                pass
-            try:
+            with contextlib.suppress(Exception):
                 await ws.close()
-            except Exception:
-                pass
         await session.close()
 
 

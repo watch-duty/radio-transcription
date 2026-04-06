@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-import datetime
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import datetime
 
 
 @dataclass(frozen=True, slots=True)

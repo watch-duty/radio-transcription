@@ -77,13 +77,13 @@ class _MockWebSocket:
         self.sent: list[str] = []
         self._closed = False
 
-    async def recv_str(self, *, timeout: float | None = None) -> str:
+    async def recv_str(self, **_kwargs: object) -> str:
         try:
             frame = next(self._frames)
         except StopIteration:
-            raise WebSocketClosed("connection closed")
+            raise WebSocketClosed("closed")  # noqa: EM101
         if frame is None:
-            raise WebSocketTimeout("recv timeout")
+            raise WebSocketTimeout("timeout")  # noqa: EM101
         return frame
 
     async def send_str(self, payload: str) -> None:
