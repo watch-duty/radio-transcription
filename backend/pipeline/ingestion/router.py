@@ -7,9 +7,9 @@ from backend.pipeline.storage.feed_store import SourceType
 
 if TYPE_CHECKING:
     import asyncio
-    import datetime
     from collections.abc import AsyncIterator
 
+    from backend.pipeline.ingestion.collectors import CapturedChunk
     from backend.pipeline.storage.feed_store import LeasedFeed
 
 BCFY_FEEDS_URL_BASE = "https://partner.broadcastify.com/"
@@ -47,7 +47,7 @@ def supported_source_types() -> list[str]:
 
 def route_capturer(
     feed: LeasedFeed, shutdown_event: asyncio.Event
-) -> AsyncIterator[tuple[bytes, datetime.datetime]]:
+) -> AsyncIterator[CapturedChunk]:
     """Routes the feed to the appropriate capture function.
 
     Looks up the collector in ``_COLLECTOR_REGISTRY`` by source_type,
