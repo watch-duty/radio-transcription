@@ -5,6 +5,7 @@ import functions_framework
 from cloudevents.http import event as cloudevent
 
 from backend.pipeline.common.clients import pubsub_client
+from backend.pipeline.common.clients.transcripts_client import TranscriptsClient
 from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.evaluation import service
 from backend.pipeline.evaluation.processor import EvaluationEventProcessor
@@ -21,6 +22,12 @@ if OUTPUT_TOPIC_PATH is None:
     msg = "RULES_EVALUATION_RESULTS_TOPIC environment variable is not set."
     raise ValueError(msg)
 
+TRANSCRIPTS_API_URL = os.environ.get("TRANSCRIPTS_API_URL")
+if TRANSCRIPTS_API_URL is None:
+    msg = "TRANSCRIPTS_API_URL environment variable is not set."
+    raise ValueError(msg)
+transcripts_client = TranscriptsClient(api_url=TRANSCRIPTS_API_URL)
+
 # 3. Initialize Evaluator
 RULES_API_URL = os.environ.get("RULES_API_URL")
 if RULES_API_URL:
@@ -36,6 +43,7 @@ evaluation_service = service.EvaluationService(
 
 processor = EvaluationEventProcessor(
     evaluation_service=evaluation_service,
+    transcripts_client=transcripts_client,
     publisher=pubsub_client_instance,
     output_topic_path=OUTPUT_TOPIC_PATH,
 )

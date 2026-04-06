@@ -15,6 +15,7 @@ from backend.pipeline.schema_types import (
 class TestEvaluationEventProcessor(unittest.TestCase):
     def setUp(self) -> None:
         self.mock_service = MagicMock()
+        self.mock_transcripts_client = MagicMock()
         self.mock_publisher = MagicMock(spec=PubSubClient)
         self.mock_raw_publisher = MagicMock()
         self.mock_publisher.get_publisher.return_value = self.mock_raw_publisher
@@ -22,6 +23,7 @@ class TestEvaluationEventProcessor(unittest.TestCase):
 
         self.processor = EvaluationEventProcessor(
             evaluation_service=self.mock_service,
+            transcripts_client=self.mock_transcripts_client,
             publisher=self.mock_publisher,
             output_topic_path=self.output_topic_path,
         )
@@ -66,6 +68,9 @@ class TestEvaluationEventProcessor(unittest.TestCase):
 
         # Verify
         self.mock_service.evaluate.assert_called_once()
+        self.mock_transcripts_client.create_transcript.assert_called_once_with(
+            self.evaluated_payload
+        )
         self.mock_raw_publisher.publish.assert_called_once_with(
             self.output_topic_path,
             self.evaluated_payload.SerializeToString(),
@@ -89,6 +94,9 @@ class TestEvaluationEventProcessor(unittest.TestCase):
 
         # Verify
         self.mock_service.evaluate.assert_called_once()
+        self.mock_transcripts_client.create_transcript.assert_called_once_with(
+            self.evaluated_payload
+        )
         self.mock_raw_publisher.publish.assert_not_called()
 
     def test_process_event_has_errors_publishes(self) -> None:

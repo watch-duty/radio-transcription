@@ -53,9 +53,8 @@ services:
     depends_on:
       - pubsub-emulator
       - rules-management
+      - transcripts-api
       - postgres
-      # This dependency is for the rules evaluation to create transcripts
-      - transcripts-api 
 
   postgres:
     image: postgres:15-alpine
