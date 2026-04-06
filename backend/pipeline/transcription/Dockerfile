@@ -1,10 +1,11 @@
-FROM gcr.io/dataflow-templates-base/python313-template-launcher-base:latest AS launcher
-
+# Use Apache Beam Python SDK as the base image
 FROM apache/beam_python3.13_sdk:2.70.0
 
-COPY --from=launcher /opt/google/dataflow/python_template_launcher /opt/google/dataflow/python_template_launcher
+# Copy the launcher from the google-provided base
+COPY --from=gcr.io/dataflow-templates-base/python313-template-launcher-base:latest \
+     /opt/google/dataflow/python_template_launcher /opt/google/dataflow/python_template_launcher
 
-# Install OS dependencies
+# Install OS dependencies needed at runtime
 USER root
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -14,32 +15,36 @@ RUN apt-get update && \
         libc++abi1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies via uv
+# Copy uv from the official image
 COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
+
 WORKDIR /app
 
-ENV UV_PROJECT_ENVIRONMENT=/app/.venv
-ENV PATH="/app/.venv/bin:$PATH"
-ENV PYTHONPATH="/app"
-ENV FLEX_TEMPLATE_PYTHON_PY_FILE="/app/backend/pipeline/transcription/main.py"
-
-# Copy only the dependency manifests first so that uv sync is cached independently
-# of source code changes. Only pyproject.toml/uv.lock changes bust this layer.
-# The workspace member pyproject.toml must also be present for uv to resolve local deps.
+# Copy lockfiles and manifests
 COPY pyproject.toml uv.lock ./
 COPY backend/pipeline/transcription/pyproject.toml ./backend/pipeline/transcription/pyproject.toml
-RUN uv sync --frozen --no-dev && uv pip install grpcio-tools
 
-# Copy full source after install — code changes no longer bust the dep cache
+# Set environment variables for uv to use system python
+ENV UV_PROJECT_ENVIRONMENT="/usr/local/"
+ENV UV_SYSTEM_PYTHON=1
+ENV UV_COMPILE_BYTECODE=1
+ENV UV_NO_CACHE=1
+
+# Install dependencies using uv sync directly into system python
+RUN uv sync --frozen --no-dev --no-install-workspace --package transcription-pipeline && \
+    uv pip install grpcio-tools
+
+ENV FLEX_TEMPLATE_PYTHON_PY_FILE="/app/backend/pipeline/transcription/main.py"
+ENV PYTHONPATH="/app"
+ENV PYTHONUNBUFFERED=1
+
+# Copy full source
 COPY backend/ ./backend/
 COPY protos/ ./protos
 
 # Generate protobuf bindings
-RUN mkdir -p ./backend/pipeline/schema_types
-RUN touch ./backend/pipeline/schema_types/__init__.py
-RUN python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto
+RUN mkdir -p ./backend/pipeline/schema_types && \
+    touch ./backend/pipeline/schema_types/__init__.py && \
+    python3 -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto
 
-# The python_template_launcher reads FLEX_TEMPLATE_PYTHON_PY_FILE and configures
-# Dataflow workers to use this same container image. No wrapper script needed.
 ENTRYPOINT ["/opt/google/dataflow/python_template_launcher"]
-
