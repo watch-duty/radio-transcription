@@ -73,7 +73,7 @@ async def _drain_stderr(
     except asyncio.CancelledError:
         raise
     except Exception:
-        logger.debug("stderr drain failed", exc_info=True)
+        logger.warning("stderr drain failed", exc_info=True)
 
 
 def _segment_path(directory: Path, index: int) -> Path:
