@@ -160,6 +160,17 @@ LEFT JOIN feed_properties fp ON f.id = fp.feed_id
 ORDER BY f.created_at DESC
 """
 
+# There is a foreign key constraint on feed_properties from feeds, so we don't need to explicitly delete it.
 DELETE_FEED_SQL = """\
 DELETE FROM feeds WHERE id = $1
+"""
+
+UPDATE_FEED_SQL = """\
+UPDATE feeds
+SET
+    name = COALESCE($2, name),
+    source_type = COALESCE($3, source_type),
+    status = COALESCE($4::feed_status, status)
+WHERE id = $1
+RETURNING *
 """

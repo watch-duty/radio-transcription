@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import enum
 import logging
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, TypedDict
+
+from pydantic import BaseModel
 
 from . import feed_queries
 
 if TYPE_CHECKING:
+    import datetime
     import uuid
 
     import asyncpg
@@ -52,6 +55,30 @@ class HeartbeatResult(TypedDict):
     current_worker: uuid.UUID | None
     current_status: str
     renewed: bool
+
+
+class FeedUpdate(BaseModel):
+    """Editable fields for a given feed."""
+
+    name: str | None = None
+    source_type: SourceType | None = None
+    status: str | None = None
+
+
+class Feed(BaseModel):
+    """Complete feed record, including its properties."""
+
+    id: uuid.UUID
+    name: str
+    source_type: SourceType
+    status: str
+    failure_count: int
+    created_at: datetime.datetime
+    source_feed_id: str
+    external_id: str
+    worker_id: uuid.UUID | None = None
+    last_heartbeat: datetime.datetime | None = None
+    last_processed_filename: str | None = None
 
 
 class FeedStore:
@@ -360,13 +387,15 @@ class FeedStore:
             )
         return leased_feeds
 
+    # ==================== Basic CRUD operations ====================
+
     async def create_feed(
         self,
         name: str,
         source_type: str,
-        source_feed_id: str | None = None,
-        external_id: str | None = None,
-    ) -> dict:
+        source_feed_id: str,
+        external_id: str,
+    ) -> Feed:
         """Create a new feed record."""
         row = await self._pool.fetchrow(
             feed_queries.CREATE_FEED_SQL,
@@ -378,42 +407,38 @@ class FeedStore:
         if row is None:
             msg = f"Failed to create feed {name}"
             raise ValueError(msg)
-        return dict(row)
+        return Feed(**row)
 
-    async def get_feed(self, feed_id: uuid.UUID) -> dict | None:
+    async def get_feed(self, feed_id: uuid.UUID) -> Feed | None:
         """Fetch a specific feed by ID."""
         row = await self._pool.fetchrow(feed_queries.GET_FEED_SQL, feed_id)
         if row is None:
             return None
-        return dict(row)
+        return Feed(**row)
 
-    async def list_feeds(self) -> list[dict]:
-        """List all feeds."""
+    async def list_feeds(self) -> list[Feed]:
+        """
+        List all feeds.
+
+        TODO: Add pagination.
+        """
         rows = await self._pool.fetch(feed_queries.LIST_FEEDS_SQL)
-        return [dict(row) for row in rows]
+        return [Feed(**row) for row in rows]
 
     async def update_feed(
-        self, feed_id: uuid.UUID, update_data: dict
-    ) -> dict | None:
+        self, feed_id: uuid.UUID, update_data: FeedUpdate
+    ) -> Feed | None:
         """Partially update an existing feed."""
         if not update_data:
             return await self.get_feed(feed_id)
 
-        set_clauses = []
-        values: list[Any] = [feed_id]
-        arg_idx = 2
-
-        for key, value in update_data.items():
-            if key in {"name", "source_type", "status"}:
-                set_clauses.append(f"{key} = ${arg_idx}")
-                values.append(value)
-                arg_idx += 1
-
-        if not set_clauses:
-            return await self.get_feed(feed_id)
-
-        query = f"UPDATE feeds SET {', '.join(set_clauses)} WHERE id = $1 RETURNING *"
-        row = await self._pool.fetchrow(query, *values)
+        row = await self._pool.fetchrow(
+            feed_queries.UPDATE_FEED_SQL,
+            feed_id,
+            update_data.name,
+            update_data.source_type,
+            update_data.status,
+        )
         if row is None:
             return None
 
