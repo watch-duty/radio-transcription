@@ -1,5 +1,4 @@
 import asyncio
-import datetime
 import os
 import unittest
 import uuid
@@ -405,7 +404,10 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         # chunk_end_time should be exactly CHUNK_DURATION_SECONDS after chunk_start_time
         for captured_chunk in results:
             self.assertEqual(
-                (captured_chunk.chunk_end_time - captured_chunk.chunk_start_time).total_seconds(),
+                (
+                    captured_chunk.chunk_end_time
+                    - captured_chunk.chunk_start_time
+                ).total_seconds(),
                 CHUNK_DURATION_SECONDS,
             )
 

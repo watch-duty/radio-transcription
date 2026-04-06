@@ -61,7 +61,9 @@ async def run_local_capture() -> None:
         file_timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S_%fZ")
         file_name = f"chunk_{chunk_count:06d}_{file_timestamp}.{AUDIO_FORMAT}"
         file_path = output_dir / file_name
-        await asyncio.to_thread(file_path.write_bytes, captured_chunk.audio_bytes)
+        await asyncio.to_thread(
+            file_path.write_bytes, captured_chunk.audio_bytes
+        )
         logger.info(
             "Local capture chunk %d received (%d bytes) at %s (start: %s) -> %s",
             chunk_count,

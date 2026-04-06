@@ -9,6 +9,7 @@ from unittest import mock
 import aiohttp
 import asyncpg
 
+from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
 from backend.pipeline.ingestion.collectors import CapturedChunk
 from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
 from backend.pipeline.storage.feed_store import (
@@ -28,8 +29,9 @@ def _make_captured_chunk(audio_bytes: bytes) -> CapturedChunk:
     return CapturedChunk(
         audio_bytes=audio_bytes,
         chunk_start_time=now,
-        chunk_end_time=now + datetime.timedelta(seconds=15),
+        chunk_end_time=now + datetime.timedelta(seconds=CHUNK_DURATION_SECONDS),
     )
+
 
 _FEED = LeasedFeed(
     id=_FEED_ID,
