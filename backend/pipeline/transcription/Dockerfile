@@ -1,32 +1,9 @@
-# --- Stage 1: The Builder ---
-FROM python:3.13-slim AS builder
-
-# Copy uv from the official image
-COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
-
-WORKDIR /app
-
-# Copy lockfiles and manifests
-COPY pyproject.toml uv.lock ./
-COPY backend/pipeline/transcription/pyproject.toml ./backend/pipeline/transcription/pyproject.toml
-
-# Use uv to export and then install into the system site-packages of the builder.
-# We keep your logic to strip editable installs (-e) for workspace members.
-RUN uv export --frozen --no-dev --no-emit-project -o /tmp/requirements.txt && \
-    grep -v '^-e ' /tmp/requirements.txt > /tmp/requirements_pinned.txt && \
-    uv pip install --system --no-cache -r /tmp/requirements_pinned.txt && \
-    uv pip install --system --no-cache grpcio-tools
-
-# --- Stage 2: The Dataflow Worker ---
+# Use Apache Beam Python SDK as the base image
 FROM apache/beam_python3.13_sdk:2.70.0
 
 # Copy the launcher from the google-provided base
 COPY --from=gcr.io/dataflow-templates-base/python313-template-launcher-base:latest \
      /opt/google/dataflow/python_template_launcher /opt/google/dataflow/python_template_launcher
-
-# Copy the installed packages from the builder stage
-COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Install OS dependencies needed at runtime
 USER root
@@ -38,7 +15,24 @@ RUN apt-get update && \
         libc++abi1 \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy uv from the official image
+COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
+
 WORKDIR /app
+
+# Copy lockfiles and manifests
+COPY pyproject.toml uv.lock ./
+COPY backend/pipeline/transcription/pyproject.toml ./backend/pipeline/transcription/pyproject.toml
+
+# Set environment variables for uv to use system python
+ENV UV_PROJECT_ENVIRONMENT="/usr/local/"
+ENV UV_SYSTEM_PYTHON=1
+ENV UV_COMPILE_BYTECODE=1
+ENV UV_NO_CACHE=1
+
+# Install dependencies using uv sync directly into system python
+RUN uv sync --frozen --no-dev --no-install-workspace --package transcription-pipeline && \
+    uv pip install grpcio-tools
 
 ENV FLEX_TEMPLATE_PYTHON_PY_FILE="/app/backend/pipeline/transcription/main.py"
 ENV PYTHONPATH="/app"
