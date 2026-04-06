@@ -7,6 +7,7 @@ from cloudevents.http import event as cloudevent
 from backend.pipeline.common.clients import pubsub_client
 from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.evaluation import service
+from backend.pipeline.evaluation.processor import EvaluationEventProcessor
 from backend.pipeline.evaluation.rules_evaluation import evaluator
 
 # 1. Setup Logging
@@ -15,8 +16,10 @@ logger = logging.getLogger(__name__)
 
 # 2. Global Initialization (for performance on warm starts)
 pubsub_client_instance = pubsub_client.PubSubClient()
-publisher = pubsub_client_instance.get_publisher()
 OUTPUT_TOPIC_PATH = os.environ.get("RULES_EVALUATION_RESULTS_TOPIC")
+if OUTPUT_TOPIC_PATH is None:
+    msg = "RULES_EVALUATION_RESULTS_TOPIC environment variable is not set."
+    raise ValueError(msg)
 
 # 3. Initialize Evaluator
 RULES_API_URL = os.environ.get("RULES_API_URL")
@@ -28,9 +31,13 @@ else:
     text_evaluator = evaluator.StaticTextEvaluator()
 
 evaluation_service = service.EvaluationService(
-    publisher=publisher,
-    output_topic_path=OUTPUT_TOPIC_PATH,
     text_evaluator=text_evaluator,
+)
+
+processor = EvaluationEventProcessor(
+    evaluation_service=evaluation_service,
+    publisher=pubsub_client_instance,
+    output_topic_path=OUTPUT_TOPIC_PATH,
 )
 
 
@@ -44,4 +51,4 @@ def evaluate_transcribed_audio_segment(
     Args:
         cloud_event: The CloudEvent triggered by Pub/Sub.
     """
-    evaluation_service.handle_event(cloud_event)
+    processor.process_event(cloud_event)
