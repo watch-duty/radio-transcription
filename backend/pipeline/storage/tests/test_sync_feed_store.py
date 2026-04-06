@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
 
@@ -112,8 +112,6 @@ class TestRecordFailure:
         assert params == (10, 10, 1200, 30, feed_id)
 
     def test_error_reason_logged_when_provided(self) -> None:
-        from unittest.mock import patch
-
         conn = _make_mock_conn()
         store = _make_store(conn)
         feed_id = uuid.uuid4()
@@ -129,8 +127,6 @@ class TestRecordFailure:
         assert extra["feed_id"] == str(feed_id)
 
     def test_no_log_when_error_reason_is_none(self) -> None:
-        from unittest.mock import patch
-
         conn = _make_mock_conn()
         store = _make_store(conn)
         feed_id = uuid.uuid4()

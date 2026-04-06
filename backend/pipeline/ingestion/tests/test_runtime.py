@@ -800,8 +800,9 @@ class TestProcessFeedErrorReason(unittest.IsolatedAsyncioTestCase):
         """When capture_fn raises, the exception str is passed as error_reason."""
 
         async def _failing_capture(feed, shutdown):
-            raise RuntimeError("ffmpeg exited with code 8\nstderr: HTTP 403")
-            yield  # noqa: RET503 — make this an async generator
+            msg = "ffmpeg exited with code 8\nstderr: HTTP 403"
+            raise RuntimeError(msg)
+            yield  # make this an async generator
 
         rt = NormalizerRuntime(
             capture_fn=_failing_capture, settings=_make_settings()

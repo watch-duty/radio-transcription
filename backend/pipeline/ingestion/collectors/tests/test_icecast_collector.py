@@ -135,11 +135,11 @@ class TestCreateFfmpegProcess(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     async def test_stderr_is_pipe(self, mock_exec: AsyncMock) -> None:
-        """stderr must be PIPE so the drain task can capture error context."""
+        """Stderr must be PIPE so the drain task can capture error context."""
         mock_exec.return_value = AsyncMock()
 
         await icecast_collector._create_ffmpeg_process(
-            "http://example.com/stream.mp3", "/tmp/chunk_%06d.flac"
+            "http://example.com/stream.mp3", "/tmp/chunk_%06d.flac"  # noqa: S108
         )
 
         _, kwargs = mock_exec.call_args
