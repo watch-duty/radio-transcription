@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import enum
 import logging
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
+
+from . import feed_queries
 
 if TYPE_CHECKING:
     import uuid
@@ -30,146 +32,6 @@ class SourceType(enum.StrEnum):
     BCFY_FEEDS = "bcfy_feeds"
     BCFY_CALLS = "bcfy_calls"
     ECHO = "echo"
-
-
-_LEASE_FEED_SQL = """\
-WITH available_feed AS (
-    SELECT id
-    FROM feeds
-    WHERE (
-        status = 'unclaimed'::feed_status
-        OR (status = 'failing'::feed_status AND (retry_after IS NULL OR retry_after <= NOW()))
-        OR (status = 'active'::feed_status
-            AND last_heartbeat < NOW() - INTERVAL '60 seconds')
-    )
-    AND ($2::text[] IS NULL OR source_type = ANY($2::text[]))
-    ORDER BY (status = 'unclaimed'::feed_status) DESC,
-             retry_after ASC NULLS FIRST,
-             last_heartbeat ASC NULLS FIRST
-    LIMIT 1
-    FOR UPDATE SKIP LOCKED
-),
-leased AS (
-    UPDATE feeds
-    SET worker_id = $1,
-        status = 'active'::feed_status,
-        retry_after = NULL,
-        last_heartbeat = NOW(),
-        fencing_token = fencing_token + 1
-    FROM available_feed
-    WHERE feeds.id = available_feed.id
-    RETURNING feeds.id, feeds.name, feeds.source_type,
-              feeds.last_processed_filename, feeds.fencing_token
-)
-SELECT leased.id, leased.name, leased.source_type,
-       leased.last_processed_filename, leased.fencing_token, fpi.source_feed_id
-FROM leased
-LEFT JOIN feed_properties fpi ON fpi.feed_id = leased.id
-"""
-
-_UPDATE_PROGRESS_SQL = """\
-UPDATE feeds
-SET last_processed_filename = $1,
-    last_heartbeat = NOW(),
-    failure_count = 0
-WHERE id = $2 AND worker_id = $3 AND fencing_token = $4
-"""
-
-# Heartbeat renewal deliberately does NOT check fencing_token.  The token is
-# constant for the lifetime of a lease (only incremented on acquisition), so
-# worker_id alone is sufficient here.  Adding per-feed tokens would require
-# passing parallel arrays, adding complexity with no safety benefit.
-_RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL = """\
-WITH current_state AS (
-    SELECT id, worker_id, status
-    FROM feeds WHERE id = ANY($1::uuid[])
-    FOR UPDATE
-),
-do_update AS (
-    UPDATE feeds SET last_heartbeat = NOW()
-    FROM current_state
-    WHERE feeds.id = current_state.id AND current_state.worker_id = $2
-    RETURNING feeds.id
-)
-SELECT
-    current_state.id,
-    current_state.worker_id AS current_worker,
-    current_state.status::text AS current_status,
-    (do_update.id IS NOT NULL) AS renewed
-FROM current_state
-LEFT JOIN do_update ON current_state.id = do_update.id;
-"""
-
-_RELEASE_FEED_SQL = """\
-UPDATE feeds
-SET worker_id = NULL,
-    status = 'unclaimed'::feed_status,
-    last_heartbeat = NOW()
-WHERE id = $1 AND worker_id = $2 AND fencing_token = $3
-"""
-
-_RELEASE_FEEDS_BATCH_SQL = """\
-UPDATE feeds
-SET worker_id = NULL,
-    status = 'unclaimed'::feed_status,
-    last_heartbeat = NOW()
-WHERE worker_id = $1 AND status = 'active'::feed_status
-"""
-
-_ACQUIRE_FEEDS_BATCH_SQL = """\
-WITH available_feeds AS (
-    SELECT id
-    FROM feeds
-    WHERE (
-        status = 'unclaimed'::feed_status
-        OR (status = 'failing'::feed_status AND (retry_after IS NULL OR retry_after <= NOW()))
-        OR (status = 'active'::feed_status
-            AND last_heartbeat < NOW() - $2::interval)
-    )
-    AND ($4::text[] IS NULL OR source_type = ANY($4::text[]))
-    ORDER BY (status = 'unclaimed'::feed_status) DESC,
-             retry_after ASC NULLS FIRST,
-             last_heartbeat ASC NULLS FIRST
-    LIMIT $3
-    FOR UPDATE SKIP LOCKED
-),
-leased AS (
-    UPDATE feeds
-    SET worker_id = $1,
-        status = 'active'::feed_status,
-        retry_after = NULL,
-        last_heartbeat = NOW(),
-        fencing_token = fencing_token + 1
-    FROM available_feeds
-    WHERE feeds.id = available_feeds.id
-    RETURNING feeds.id, feeds.name, feeds.source_type,
-              feeds.last_processed_filename, feeds.fencing_token
-)
-SELECT leased.id, leased.name, leased.source_type,
-       leased.last_processed_filename, leased.fencing_token, fpi.source_feed_id
-FROM leased
-LEFT JOIN feed_properties fpi ON fpi.feed_id = leased.id
-"""
-
-# NOTE: $3 = failure_threshold, $4 = fencing_token,
-#       $5 = backoff_max_sec, $6 = backoff_base_sec.
-# Backoff formula: base * 2^(failure_count), capped at max, plus 0-10s jitter.
-_REPORT_FAILURE_SQL = """\
-UPDATE feeds
-SET status = CASE WHEN failure_count + 1 >= $3
-                  THEN 'quarantined'::feed_status
-                  ELSE 'failing'::feed_status END,
-    failure_count = failure_count + 1,
-    worker_id = NULL,
-    last_heartbeat = NOW(),
-    retry_after = CASE WHEN failure_count + 1 < $3
-                       THEN NOW() + LEAST($5 * INTERVAL '1 second',
-                            $6 * INTERVAL '1 second' * POWER(2, failure_count))
-                            + (RANDOM() * INTERVAL '10 seconds')
-                       ELSE NULL END
-WHERE id = $1 AND worker_id = $2 AND fencing_token = $4
-RETURNING status::text, failure_count, retry_after
-"""
 
 
 class LeasedFeed(TypedDict):
@@ -236,7 +98,7 @@ class FeedStore:
 
         """
         row = await self._pool.fetchrow(
-            _LEASE_FEED_SQL, worker_id, self._source_types
+            feed_queries.LEASE_FEED_SQL, worker_id, self._source_types
         )
         if row is None:
             return None
@@ -283,7 +145,7 @@ class FeedStore:
 
         """
         result = await self._pool.execute(
-            _UPDATE_PROGRESS_SQL,
+            feed_queries.UPDATE_PROGRESS_SQL,
             new_gcs_path,
             feed_id,
             worker_id,
@@ -315,7 +177,7 @@ class FeedStore:
         if not feed_ids:
             return []
         rows = await self._pool.fetch(
-            _RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
+            feed_queries.RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
             feed_ids,
             worker_id,
         )
@@ -365,7 +227,7 @@ class FeedStore:
 
         """
         row = await self._pool.fetchrow(
-            _REPORT_FAILURE_SQL,
+            feed_queries.REPORT_FAILURE_SQL,
             feed_id,
             worker_id,
             failure_threshold,
@@ -422,7 +284,7 @@ class FeedStore:
 
         """
         result = await self._pool.execute(
-            _RELEASE_FEED_SQL,
+            feed_queries.RELEASE_FEED_SQL,
             feed_id,
             worker_id,
             fencing_token,
@@ -442,7 +304,9 @@ class FeedStore:
         Returns:
             The number of feeds released.
         """
-        result = await self._pool.execute(_RELEASE_FEEDS_BATCH_SQL, worker_id)
+        result = await self._pool.execute(
+            feed_queries.RELEASE_FEEDS_BATCH_SQL, worker_id
+        )
         if result.startswith("UPDATE "):
             return int(result.split()[1])
         return 0
@@ -470,7 +334,7 @@ class FeedStore:
         import datetime  # noqa: PLC0415
 
         rows = await self._pool.fetch(
-            _ACQUIRE_FEEDS_BATCH_SQL,
+            feed_queries.ACQUIRE_FEEDS_BATCH_SQL,
             worker_id,
             datetime.timedelta(seconds=abandonment_window_sec),
             limit,
@@ -495,3 +359,67 @@ class FeedStore:
                 )
             )
         return leased_feeds
+
+    async def create_feed(
+        self,
+        name: str,
+        source_type: str,
+        source_feed_id: str | None = None,
+        external_id: str | None = None,
+    ) -> dict:
+        """Create a new feed record."""
+        row = await self._pool.fetchrow(
+            feed_queries.CREATE_FEED_SQL,
+            name,
+            source_type,
+            source_feed_id,
+            external_id,
+        )
+        if row is None:
+            msg = f"Failed to create feed {name}"
+            raise ValueError(msg)
+        return dict(row)
+
+    async def get_feed(self, feed_id: uuid.UUID) -> dict | None:
+        """Fetch a specific feed by ID."""
+        row = await self._pool.fetchrow(feed_queries.GET_FEED_SQL, feed_id)
+        if row is None:
+            return None
+        return dict(row)
+
+    async def list_feeds(self) -> list[dict]:
+        """List all feeds."""
+        rows = await self._pool.fetch(feed_queries.LIST_FEEDS_SQL)
+        return [dict(row) for row in rows]
+
+    async def update_feed(
+        self, feed_id: uuid.UUID, update_data: dict
+    ) -> dict | None:
+        """Partially update an existing feed."""
+        if not update_data:
+            return await self.get_feed(feed_id)
+
+        set_clauses = []
+        values: list[Any] = [feed_id]
+        arg_idx = 2
+
+        for key, value in update_data.items():
+            if key in {"name", "source_type", "status"}:
+                set_clauses.append(f"{key} = ${arg_idx}")
+                values.append(value)
+                arg_idx += 1
+
+        if not set_clauses:
+            return await self.get_feed(feed_id)
+
+        query = f"UPDATE feeds SET {', '.join(set_clauses)} WHERE id = $1 RETURNING *"
+        row = await self._pool.fetchrow(query, *values)
+        if row is None:
+            return None
+
+        return await self.get_feed(feed_id)
+
+    async def delete_feed(self, feed_id: uuid.UUID) -> bool:
+        """Delete a feed."""
+        result = await self._pool.execute(feed_queries.DELETE_FEED_SQL, feed_id)
+        return result == "DELETE 1"
