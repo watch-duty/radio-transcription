@@ -58,7 +58,7 @@ class EvaluationEventProcessor:
         # TODO (https://linear.app/watchduty/issue/GOO-245/): Handle parse failure.
         new_audio = self._parse_cloud_event(cloud_event)
         if new_audio is None:
-            logger.warning(
+            logger.error(
                 "Transcribed audio could not be parsed for cloud event %s. Skipping.",
                 cloud_event,
             )
@@ -68,7 +68,7 @@ class EvaluationEventProcessor:
         # TODO (https://linear.app/watchduty/issue/GOO-245/): Handle evaluation failure.
         evaluated_payload = self.evaluation_service.evaluate(new_audio)
         if not evaluated_payload:
-            logger.warning(
+            logger.error(
                 "Evaluation returned no payload for feed %s and transmission %s. Skipping.",
                 new_audio.feed_id,
                 new_audio.transmission_id,
@@ -114,7 +114,7 @@ class EvaluationEventProcessor:
         transcribed_audio = transcribed_pb2.TranscribedAudio()
         raw_data = pubsub_message.get("data", "")
         if not raw_data:
-            logger.warning("No data provided in CloudEvent")
+            logger.error("No data provided in CloudEvent")
             return None
         decoded_data = base64.b64decode(raw_data)
         transcribed_audio.ParseFromString(decoded_data)
