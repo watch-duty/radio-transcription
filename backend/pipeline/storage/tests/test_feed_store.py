@@ -490,6 +490,99 @@ class TestBackoffFormula(unittest.TestCase):
         assert min(15 * (2**9), 600) == 600
 
 
+class TestReportFeedFailureErrorReason(unittest.IsolatedAsyncioTestCase):
+    """Tests for error_reason propagation in report_feed_failure logs."""
+
+    async def test_quarantine_log_includes_error_reason(self) -> None:
+        """CRITICAL quarantine log must include error_reason in extra."""
+        pool = _make_pool(
+            fetchrow_result={
+                "status": "quarantined",
+                "failure_count": 5,
+                "retry_after": None,
+            },
+        )
+        store = FeedStore(pool)
+
+        with mock.patch("backend.pipeline.storage.feed_store.logger") as mock_logger:
+            await store.report_feed_failure(
+                _FEED_ID,
+                _WORKER_ID,
+                1,
+                error_reason="ffmpeg exited with code 8\nstderr: HTTP 403",
+            )
+
+            mock_logger.critical.assert_called_once()
+            extra = mock_logger.critical.call_args[1]["extra"]
+            self.assertEqual(extra["feed_id"], str(_FEED_ID))
+            self.assertEqual(extra["failure_count"], 5)
+            self.assertIn("403", extra["error_reason"])
+
+    async def test_failing_log_includes_error_reason(self) -> None:
+        """INFO failure log must include error_reason in extra."""
+        pool = _make_pool(
+            fetchrow_result={
+                "status": "failing",
+                "failure_count": 2,
+                "retry_after": datetime.datetime.now(datetime.UTC),
+            },
+        )
+        store = FeedStore(pool)
+
+        with mock.patch("backend.pipeline.storage.feed_store.logger") as mock_logger:
+            await store.report_feed_failure(
+                _FEED_ID,
+                _WORKER_ID,
+                1,
+                error_reason="connection refused",
+            )
+
+            mock_logger.info.assert_called_once()
+            extra = mock_logger.info.call_args[1]["extra"]
+            self.assertEqual(extra["error_reason"], "connection refused")
+
+    async def test_error_reason_truncated_to_500_chars(self) -> None:
+        """Long error_reason is truncated to prevent oversized log entries."""
+        pool = _make_pool(
+            fetchrow_result={
+                "status": "quarantined",
+                "failure_count": 5,
+                "retry_after": None,
+            },
+        )
+        store = FeedStore(pool)
+
+        long_reason = "x" * 1000
+
+        with mock.patch("backend.pipeline.storage.feed_store.logger") as mock_logger:
+            await store.report_feed_failure(
+                _FEED_ID,
+                _WORKER_ID,
+                1,
+                error_reason=long_reason,
+            )
+
+            extra = mock_logger.critical.call_args[1]["extra"]
+            self.assertEqual(len(extra["error_reason"]), 500)
+
+    async def test_none_error_reason_is_none_in_extra(self) -> None:
+        """When no error_reason is given, extra field is None."""
+        pool = _make_pool(
+            fetchrow_result={
+                "status": "failing",
+                "failure_count": 1,
+                "retry_after": None,
+            },
+        )
+        store = FeedStore(pool)
+
+        with mock.patch("backend.pipeline.storage.feed_store.logger") as mock_logger:
+            await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
+
+            extra = mock_logger.info.call_args[1]["extra"]
+            self.assertIsNone(extra["error_reason"])
+
+
 class TestReleaseFeedsBatch(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.release_feeds_batch."""
 

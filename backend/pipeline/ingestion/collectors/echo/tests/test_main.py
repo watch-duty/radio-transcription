@@ -272,7 +272,9 @@ class TestHandle:
         with pytest.raises(Exception, match="GCS error"):
             _handle(self._make_event())
 
-        mock_store.record_failure.assert_called_once_with(feed_id)
+        mock_store.record_failure.assert_called_once_with(
+            feed_id, error_reason="GCS error"
+        )
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_failure_recording_db_error_preserves_original(
@@ -359,4 +361,6 @@ class TestHandle:
         with pytest.raises(Exception, match="Pub/Sub error"):
             _handle(self._make_event())
 
-        mock_store.record_failure.assert_called_once_with(feed_id)
+        mock_store.record_failure.assert_called_once_with(
+            feed_id, error_reason="Pub/Sub error"
+        )

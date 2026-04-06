@@ -174,9 +174,9 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
         # Unconditional heartbeat — also resets failure_count if recovering.
         feed_store.record_heartbeat(feed["id"])
 
-    except Exception:
+    except Exception as exc:
         try:
-            feed_store.record_failure(feed["id"])
+            feed_store.record_failure(feed["id"], error_reason=str(exc))
         except Exception:
             logger.exception("Failed to record failure for feed %s", feed["id"])
         raise

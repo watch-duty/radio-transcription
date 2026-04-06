@@ -110,3 +110,34 @@ class TestRecordFailure:
 
         params = conn.execute.call_args[0][1]
         assert params == (10, 10, 1200, 30, feed_id)
+
+    def test_error_reason_logged_when_provided(self) -> None:
+        from unittest.mock import patch
+
+        conn = _make_mock_conn()
+        store = _make_store(conn)
+        feed_id = uuid.uuid4()
+
+        with patch(
+            "backend.pipeline.storage.sync_feed_store.logger"
+        ) as mock_logger:
+            store.record_failure(feed_id, error_reason="ffmpeg exit 8")
+
+        mock_logger.warning.assert_called_once()
+        extra = mock_logger.warning.call_args[1]["extra"]
+        assert extra["error_reason"] == "ffmpeg exit 8"
+        assert extra["feed_id"] == str(feed_id)
+
+    def test_no_log_when_error_reason_is_none(self) -> None:
+        from unittest.mock import patch
+
+        conn = _make_mock_conn()
+        store = _make_store(conn)
+        feed_id = uuid.uuid4()
+
+        with patch(
+            "backend.pipeline.storage.sync_feed_store.logger"
+        ) as mock_logger:
+            store.record_failure(feed_id)
+
+        mock_logger.warning.assert_not_called()

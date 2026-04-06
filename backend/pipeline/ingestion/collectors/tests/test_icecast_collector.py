@@ -36,6 +36,15 @@ def _make_feed(name: str, source_feed_id: str | None) -> LeasedFeed:
     )
 
 
+def _make_stderr_reader(lines: list[bytes] | None = None) -> asyncio.StreamReader:
+    """Build a StreamReader pre-loaded with *lines* for mock stderr."""
+    reader = asyncio.StreamReader()
+    for line in lines or []:
+        reader.feed_data(line)
+    reader.feed_eof()
+    return reader
+
+
 def _make_process_factory(
     *,
     pid: int,
@@ -43,6 +52,7 @@ def _make_process_factory(
     wait_delay: float = 0.1,
     wait_result: int = 0,
     wait_exception: Exception | None = None,
+    stderr_lines: list[bytes] | None = None,
 ):
     """Build a side-effect factory for _create_ffmpeg_process mocks."""
 
@@ -54,6 +64,7 @@ def _make_process_factory(
         mock_proc.pid = pid
         mock_proc.returncode = None
         mock_proc.terminate = MagicMock()
+        mock_proc.stderr = _make_stderr_reader(stderr_lines)
 
         for index, segment in enumerate(segments or []):
             (segment_dir / f"chunk_{index:06d}.flac").write_bytes(segment)
@@ -114,6 +125,29 @@ async def _collect_chunks_with_timestamps(
     except TimeoutError:
         pass
     return results
+
+
+class TestCreateFfmpegProcess(unittest.IsolatedAsyncioTestCase):
+    """Guard against accidentally discarding ffmpeg diagnostic output."""
+
+    @patch(
+        "asyncio.create_subprocess_exec",
+        new_callable=AsyncMock,
+    )
+    async def test_stderr_is_pipe(self, mock_exec: AsyncMock) -> None:
+        """stderr must be PIPE so the drain task can capture error context."""
+        mock_exec.return_value = AsyncMock()
+
+        await icecast_collector._create_ffmpeg_process(
+            "http://example.com/stream.mp3", "/tmp/chunk_%06d.flac"
+        )
+
+        _, kwargs = mock_exec.call_args
+        self.assertEqual(
+            kwargs["stderr"],
+            asyncio.subprocess.PIPE,
+            "stderr must be PIPE, not DEVNULL — ffmpeg error context is lost otherwise",
+        )
 
 
 class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
@@ -280,20 +314,20 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
-    async def test_ffmpeg_error_exit_code_raises_runtime_error(
+    async def test_ffmpeg_error_exit_code_includes_stderr(
         self, mock_create_ffmpeg: AsyncMock
     ) -> None:
-        """Test invalid case: ffmpeg exits with non-zero code raises RuntimeError."""
+        """Test: ffmpeg non-zero exit includes stderr tail in RuntimeError."""
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=7777,
             wait_delay=0.0,
             wait_result=1,
+            stderr_lines=[b"HTTP error 403 Forbidden\n"],
         )
 
         feed = _make_feed("error-exit-feed", "http://example.com/stream")
         shutdown_event = asyncio.Event()
 
-        # Act & Assert
         gen = icecast_collector.capture_icecast_stream(
             feed, shutdown_event, url_base="https://mock.example.com/"
         )
@@ -303,6 +337,34 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ffmpeg exited with code 1", str(context.exception))
         self.assertIn(str(TEST_FEED_ID), str(context.exception))
         self.assertIn("error-exit-feed", str(context.exception))
+        self.assertIn("403 Forbidden", str(context.exception))
+        self.assertIn("stderr tail:", str(context.exception))
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_ffmpeg_error_exit_code_no_stderr(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Test: ffmpeg non-zero exit with empty stderr shows fallback text."""
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=7778,
+            wait_delay=0.0,
+            wait_result=8,
+        )
+
+        feed = _make_feed("no-stderr-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed, shutdown_event, url_base="https://mock.example.com/"
+        )
+        with self.assertRaises(RuntimeError) as context:
+            await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+
+        self.assertIn("ffmpeg exited with code 8", str(context.exception))
+        self.assertIn("(no stderr captured)", str(context.exception))
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
@@ -328,6 +390,37 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(gen.__anext__(), timeout=1.0)
 
         # Cleanup runs in finally; the key behavior is that the error is propagated.
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast_collector.READ_TIMEOUT_SEC",
+        0.1,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_read_timeout_includes_stderr(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Test: read timeout error includes stderr tail."""
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=8888,
+            wait_delay=1.0,  # longer than READ_TIMEOUT_SEC (0.1s) but short enough for cleanup
+            wait_result=0,
+            stderr_lines=[b"Connection timed out\n"],
+        )
+
+        feed = _make_feed("timeout-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed, shutdown_event, url_base="https://mock.example.com/"
+        )
+        with self.assertRaises(RuntimeError) as context:
+            await asyncio.wait_for(gen.__anext__(), timeout=2.0)
+
+        self.assertIn("no finalized segment within", str(context.exception))
+        self.assertIn("Connection timed out", str(context.exception))
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",

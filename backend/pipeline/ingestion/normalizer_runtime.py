@@ -422,7 +422,7 @@ class NormalizerRuntime:
             )
             return
 
-        except Exception:
+        except Exception as exc:
             logger.exception("Error processing feed %s", feed["name"])
             # SAFETY: _releasing_feeds invariant — add BEFORE the first await
             # that drops the lease (report_feed_failure sets worker_id=NULL).
@@ -433,6 +433,7 @@ class NormalizerRuntime:
                     worker_id,
                     fencing_token,
                     self._normalizer_settings.feed_failure_threshold,
+                    error_reason=str(exc),
                 )
             except Exception:
                 # 60s abandonment window is the safety net if this fails.

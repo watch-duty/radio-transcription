@@ -9,7 +9,10 @@ with ``concurrency=1`` behind pgBouncer).
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     import uuid
@@ -110,7 +113,9 @@ class SyncFeedStore:
         with self._connect_db() as conn:
             conn.execute(_HEARTBEAT_SQL, (feed_id,))
 
-    def record_failure(self, feed_id: uuid.UUID) -> None:
+    def record_failure(
+        self, feed_id: uuid.UUID, *, error_reason: str | None = None
+    ) -> None:
         """Record a processing failure with exponential backoff.
 
         Increments ``failure_count`` and sets ``retry_after`` using the
@@ -128,4 +133,12 @@ class SyncFeedStore:
                     self._base_backoff_sec,
                     feed_id,
                 ),
+            )
+        if error_reason:
+            logger.warning(
+                "Feed failure recorded",
+                extra={
+                    "feed_id": str(feed_id),
+                    "error_reason": error_reason[:500],
+                },
             )

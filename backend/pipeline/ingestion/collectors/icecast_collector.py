@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import collections
 import contextlib
 import datetime
 import logging
@@ -32,6 +33,7 @@ SAMPLE_FORMAT = "s16"  # 16-bit signed integer
 
 READ_TIMEOUT_SEC = 30
 POLL_INTERVAL_SEC = 0.25
+STDERR_TAIL_LINES = 30
 
 # Authentication for Icecast/Broadcastify streams
 USER = os.getenv("BROADCASTIFY_USERNAME")
@@ -47,6 +49,23 @@ if not USER or not PASS:
 credentials = f"{USER}:{PASS}"
 encoded_credentials = base64.b64encode(credentials.encode()).decode()
 auth_header = f"Authorization: Basic {encoded_credentials}\r\n"
+
+
+async def _drain_stderr(
+    stderr: asyncio.StreamReader,
+    tail: collections.deque[str],
+) -> None:
+    """Read stderr line-by-line, keeping only the last *STDERR_TAIL_LINES* in *tail*.
+
+    Draining prevents the OS pipe buffer from filling, which would deadlock
+    ffmpeg on long-running streams.  The tail buffer provides error context
+    when the process exits with a non-zero code.
+    """
+    while True:
+        line = await stderr.readline()
+        if not line:  # EOF — process closed stderr
+            break
+        tail.append(line.decode("utf-8", errors="replace").rstrip())
 
 
 def _segment_path(directory: Path, index: int) -> Path:
@@ -93,6 +112,12 @@ async def capture_icecast_stream(  # noqa: PLR0915
         segment_pattern = str(segment_dir / f"chunk_%06d.{AUDIO_FORMAT}")
 
         process = await _create_ffmpeg_process(url, segment_pattern)
+        stderr_tail: collections.deque[str] = collections.deque(
+            maxlen=STDERR_TAIL_LINES
+        )
+        drain_task = asyncio.create_task(
+            _drain_stderr(process.stderr, stderr_tail)
+        )
         logger.info(
             "Feed %s (%s): Started ffmpeg segmenter (PID: %s)",
             feed_id,
@@ -153,9 +178,15 @@ async def capture_icecast_stream(  # noqa: PLR0915
                 if process_done and not current_segment.exists():
                     exit_code = wait_task.result()
                     if exit_code != 0:
+                        stderr_snippet = (
+                            "\n".join(stderr_tail)
+                            if stderr_tail
+                            else "(no stderr captured)"
+                        )
                         msg = (
                             f"Feed {feed_id} ({feed_name}): "
-                            f"ffmpeg exited with code {exit_code}"
+                            f"ffmpeg exited with code {exit_code}\n"
+                            f"stderr tail:\n{stderr_snippet}"
                         )
                         raise RuntimeError(msg)
                     logger.info(
@@ -166,15 +197,24 @@ async def capture_icecast_stream(  # noqa: PLR0915
                     return
 
                 if time.monotonic() - last_activity_time > READ_TIMEOUT_SEC:
+                    stderr_snippet = (
+                        "\n".join(stderr_tail)
+                        if stderr_tail
+                        else "(no stderr captured)"
+                    )
                     msg = (
                         f"Feed {feed_id} ({feed_name}): no finalized segment within "
-                        f"{READ_TIMEOUT_SEC}s"
+                        f"{READ_TIMEOUT_SEC}s\n"
+                        f"stderr tail:\n{stderr_snippet}"
                     )
                     raise RuntimeError(msg)
 
                 await asyncio.sleep(POLL_INTERVAL_SEC)
 
         finally:
+            drain_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await drain_task
             if not wait_task.done():
                 wait_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -232,7 +272,7 @@ async def _create_ffmpeg_process(
         "-segment_start_number", "0",
         segment_pattern,
         stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
     )  # fmt: skip
 
 
