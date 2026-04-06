@@ -1,0 +1,190 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import random
+from typing import TYPE_CHECKING
+
+from backend.pipeline.common.audio import convert_to_flac
+from backend.pipeline.ingestion.collectors.openmhz._ws_transport import (
+    websocket_transport,
+)
+
+if TYPE_CHECKING:
+    import datetime
+    from collections.abc import AsyncIterator
+
+    from backend.pipeline.ingestion.collectors.openmhz._types import (
+        TransportFactory,
+    )
+    from backend.pipeline.storage.feed_store import LeasedFeed
+
+logger = logging.getLogger(__name__)
+
+MAX_RECONNECT_FAILURES = 10
+_DOWNLOAD_MAX_RETRIES = 3
+_DOWNLOAD_BACKOFF_BASE_SEC = 1.0
+_RECONNECT_BACKOFF_BASE_SEC = 1.0
+_RECONNECT_BACKOFF_CAP_SEC = 30.0
+
+def _get_transport(name: str) -> TransportFactory:
+    """Resolve transport by name. Reads module attributes at call time."""
+    if name == "websocket":
+        return websocket_transport  # type: ignore[return-value]
+    msg = f"Unknown OPENMHZ_TRANSPORT: {name!r}"
+    raise ValueError(msg)
+
+
+async def _sleep_or_shutdown(
+    shutdown: asyncio.Event, seconds: float
+) -> bool:
+    """Sleep for *seconds*, returning ``True`` if interrupted by shutdown."""
+    try:
+        await asyncio.wait_for(shutdown.wait(), timeout=seconds)
+        return True
+    except TimeoutError:
+        return False
+
+
+async def _download_m4a(url: str) -> bytes | None:
+    """Download m4a from Wasabi S3 with retries.
+
+    Returns audio bytes on success, ``None`` on failure.
+    """
+    from curl_cffi.requests import AsyncSession
+
+    for attempt in range(_DOWNLOAD_MAX_RETRIES):
+        try:
+            async with AsyncSession() as session:
+                resp = await session.get(url, timeout=30.0)
+                if resp.status_code == 200:
+                    return resp.content
+                if 400 <= resp.status_code < 500:
+                    logger.warning(
+                        "Download non-retryable %d: url=%s",
+                        resp.status_code,
+                        url,
+                    )
+                    return None
+                logger.warning(
+                    "Download %d (attempt %d/%d): url=%s",
+                    resp.status_code,
+                    attempt + 1,
+                    _DOWNLOAD_MAX_RETRIES,
+                    url,
+                )
+        except Exception:
+            logger.warning(
+                "Download error (attempt %d/%d): url=%s",
+                attempt + 1,
+                _DOWNLOAD_MAX_RETRIES,
+                url,
+                exc_info=True,
+            )
+        if attempt < _DOWNLOAD_MAX_RETRIES - 1:
+            await asyncio.sleep(
+                _DOWNLOAD_BACKOFF_BASE_SEC * (2**attempt)
+            )
+
+    logger.warning("Download failed after retries: url=%s", url)
+    return None
+
+
+async def openmhz_collector(
+    feed: LeasedFeed,
+    shutdown_event: asyncio.Event,
+    url_base: str,
+) -> AsyncIterator[tuple[bytes, datetime.datetime]]:
+    """Capture OpenMHZ call recordings via WebSocket.
+
+    Yields ``(flac_bytes, call_time)`` for each call received.
+
+    Raises:
+        ValueError: If ``source_feed_id`` is missing from the feed.
+        RuntimeError: After ``MAX_RECONNECT_FAILURES`` consecutive
+            transport failures.
+    """
+    source_feed_id = feed.get("source_feed_id")
+    if not source_feed_id:
+        msg = (
+            f"Feed {feed['id']} ({feed['name']}) missing source_feed_id"
+        )
+        raise ValueError(msg)
+
+    short_name = source_feed_id.strip()
+    transport_name = os.getenv("OPENMHZ_TRANSPORT", "websocket")
+    transport_factory = _get_transport(transport_name)
+
+    consecutive_ws_failures = 0
+
+    while not shutdown_event.is_set():
+        try:
+            async with transport_factory(
+                short_name, url_base, shutdown_event
+            ) as events:
+                async for call in events:
+                    consecutive_ws_failures = 0
+
+                    if call.length_sec == 0:
+                        continue
+
+                    m4a_bytes = await _download_m4a(call.url)
+                    if m4a_bytes is None:
+                        continue
+
+                    try:
+                        flac_bytes = convert_to_flac(m4a_bytes, "m4a")
+                    except Exception:
+                        logger.warning(
+                            "FLAC conversion failed: short_name=%s "
+                            "call_id=%s",
+                            short_name,
+                            call.id,
+                        )
+                        continue
+
+                    logger.debug(
+                        "Audio downloaded: short_name=%s call_id=%s "
+                        "size_bytes=%d",
+                        short_name,
+                        call.id,
+                        len(flac_bytes),
+                    )
+                    yield flac_bytes, call.time
+        except Exception:
+            logger.warning(
+                "Transport error: short_name=%s",
+                short_name,
+                exc_info=True,
+            )
+
+        if shutdown_event.is_set():
+            return
+
+        consecutive_ws_failures += 1
+        if consecutive_ws_failures >= MAX_RECONNECT_FAILURES:
+            msg = (
+                f"WebSocket failed {consecutive_ws_failures} times "
+                f"consecutively for {short_name}"
+            )
+            logger.error(
+                "Escalating to runtime: short_name=%s "
+                "consecutive_failures=%d",
+                short_name,
+                consecutive_ws_failures,
+            )
+            raise RuntimeError(msg)
+
+        backoff = min(
+            _RECONNECT_BACKOFF_CAP_SEC,
+            _RECONNECT_BACKOFF_BASE_SEC * (2**consecutive_ws_failures),
+        ) + random.uniform(0, 1)
+        logger.info(
+            "Reconnecting: short_name=%s attempt=%d backoff_sec=%.1f",
+            short_name,
+            consecutive_ws_failures,
+            backoff,
+        )
+        if await _sleep_or_shutdown(shutdown_event, backoff):
+            return
