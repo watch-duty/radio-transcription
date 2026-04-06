@@ -152,9 +152,7 @@ async def _stream_frames(
         except WebSocketTimeout:
             continue
         except WebSocketClosed:
-            logger.warning(
-                "WebSocket closed: short_name=%s", short_name
-            )
+            logger.warning("WebSocket closed: short_name=%s", short_name)
             return
 
         if frame.startswith("2"):
@@ -171,9 +169,7 @@ async def _stream_frames(
                 )
                 yield call
         elif frame.startswith("41"):
-            logger.warning(
-                "Server disconnect (41): short_name=%s", short_name
-            )
+            logger.warning("Server disconnect (41): short_name=%s", short_name)
             return
         elif frame.startswith("44"):
             logger.warning(

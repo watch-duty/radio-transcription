@@ -73,9 +73,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         mock_transport: MagicMock,
     ) -> None:
         call = _make_call(call_id="c1", length_sec=5)
-        mock_transport.side_effect = lambda *a, **kw: _mock_transport(
-            [call]
-        )
+        mock_transport.side_effect = lambda *a, **kw: _mock_transport([call])
         mock_download.return_value = b"fake-m4a-bytes"
         mock_convert.return_value = b"fake-flac-bytes"
 
@@ -105,9 +103,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             _make_call(call_id="zero", length_sec=0),
             _make_call(call_id="normal", length_sec=5),
         ]
-        mock_transport.side_effect = lambda *a, **kw: _mock_transport(
-            calls
-        )
+        mock_transport.side_effect = lambda *a, **kw: _mock_transport(calls)
         mock_download.return_value = b"m4a"
         mock_convert.return_value = b"flac"
 
@@ -135,9 +131,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             _make_call(call_id="bad-url"),
             _make_call(call_id="good"),
         ]
-        mock_transport.side_effect = lambda *a, **kw: _mock_transport(
-            calls
-        )
+        mock_transport.side_effect = lambda *a, **kw: _mock_transport(calls)
         mock_download.side_effect = [None, b"m4a"]
         mock_convert.return_value = b"flac"
 
@@ -165,9 +159,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         mock_transport: MagicMock,
     ) -> None:
         call = _make_call(call_id="corrupt")
-        mock_transport.side_effect = lambda *a, **kw: _mock_transport(
-            [call]
-        )
+        mock_transport.side_effect = lambda *a, **kw: _mock_transport([call])
         mock_download.return_value = b"corrupt-m4a"
         mock_convert.side_effect = Exception("pydub decode error")
         mock_sleep.return_value = True  # exit on first reconnect attempt
@@ -210,9 +202,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         mock_transport.return_value.__aenter__ = AsyncMock(
             side_effect=ConnectionError("refused")
         )
-        mock_transport.return_value.__aexit__ = AsyncMock(
-            return_value=False
-        )
+        mock_transport.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_sleep.return_value = False
 
         shutdown = asyncio.Event()
@@ -223,6 +213,4 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
                 pass
 
         # The Nth failure raises before sleeping, so N-1 sleeps
-        self.assertEqual(
-            mock_sleep.call_count, MAX_RECONNECT_FAILURES - 1
-        )
+        self.assertEqual(mock_sleep.call_count, MAX_RECONNECT_FAILURES - 1)

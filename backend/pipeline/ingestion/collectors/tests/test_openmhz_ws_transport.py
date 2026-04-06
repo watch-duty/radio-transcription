@@ -43,7 +43,7 @@ class TestParseSioEvent(unittest.TestCase):
 
     def test_parses_new_message_event(self) -> None:
         inner_json = json.dumps(self.CALL_DICT)
-        frame = f'42{json.dumps(["new message", inner_json])}'
+        frame = f"42{json.dumps(['new message', inner_json])}"
         result = _parse_sio_event(frame)
         self.assertIsNotNone(result)
         self.assertEqual(result.id, "69cef458302a9885edbce107")
@@ -68,6 +68,7 @@ class TestParseSioEvent(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Transport context-manager tests
 # ---------------------------------------------------------------------------
+
 
 class _MockWebSocket:
     """Simulates a curl_cffi AsyncWebSocket returning scripted frames."""
@@ -130,7 +131,7 @@ def _make_call_frame(
         "shortName": short_name,
         "emergency": False,
     }
-    return f'42{json.dumps(["new message", json.dumps(call_dict)])}'
+    return f"42{json.dumps(['new message', json.dumps(call_dict)])}"
 
 
 _WS_MOD = "backend.pipeline.ingestion.collectors.openmhz._ws_transport"
@@ -272,9 +273,7 @@ class TestWebsocketTransport(unittest.IsolatedAsyncioTestCase):
         self, mock_time: MagicMock, mock_session_cls: MagicMock
     ) -> None:
         frames = [
-            *_make_handshake_frames(
-                ping_interval=1000, ping_timeout=1000
-            ),
+            *_make_handshake_frames(ping_interval=1000, ping_timeout=1000),
             None,  # recv timeout
         ]
         mock_ws = _MockWebSocket(frames)
@@ -283,9 +282,7 @@ class TestWebsocketTransport(unittest.IsolatedAsyncioTestCase):
         mock_session_cls.return_value = mock_session
 
         # 4 calls: init, 1st check, 2nd check (triggers), log message
-        mock_time.monotonic = MagicMock(
-            side_effect=[0.0, 0.0, 3.0, 3.0]
-        )
+        mock_time.monotonic = MagicMock(side_effect=[0.0, 0.0, 3.0, 3.0])
 
         shutdown = asyncio.Event()
         calls = []

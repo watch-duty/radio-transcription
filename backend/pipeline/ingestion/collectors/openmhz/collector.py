@@ -30,6 +30,7 @@ _DOWNLOAD_BACKOFF_BASE_SEC = 1.0
 _RECONNECT_BACKOFF_BASE_SEC = 1.0
 _RECONNECT_BACKOFF_CAP_SEC = 30.0
 
+
 def _get_transport(name: str) -> TransportFactory:
     """Resolve transport by name. Reads module attributes at call time."""
     if name == "websocket":
@@ -38,9 +39,7 @@ def _get_transport(name: str) -> TransportFactory:
     raise ValueError(msg)
 
 
-async def _sleep_or_shutdown(
-    shutdown: asyncio.Event, seconds: float
-) -> bool:
+async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
     """Sleep for *seconds*, returning ``True`` if interrupted by shutdown."""
     try:
         await asyncio.wait_for(shutdown.wait(), timeout=seconds)
@@ -112,9 +111,7 @@ async def openmhz_collector(
     """
     source_feed_id = feed.get("source_feed_id")
     if not source_feed_id:
-        msg = (
-            f"Feed {feed['id']} ({feed['name']}) missing source_feed_id"
-        )
+        msg = f"Feed {feed['id']} ({feed['name']}) missing source_feed_id"
         raise ValueError(msg)
 
     short_name = source_feed_id.strip()
@@ -190,12 +187,10 @@ async def openmhz_collector(
 
             backoff = min(
                 _RECONNECT_BACKOFF_CAP_SEC,
-                _RECONNECT_BACKOFF_BASE_SEC
-                * (2**consecutive_ws_failures),
+                _RECONNECT_BACKOFF_BASE_SEC * (2**consecutive_ws_failures),
             ) + random.uniform(0, 1)  # noqa: S311 -- jitter, not crypto
             logger.info(
-                "Reconnecting: short_name=%s attempt=%d "
-                "backoff_sec=%.1f",
+                "Reconnecting: short_name=%s attempt=%d backoff_sec=%.1f",
                 short_name,
                 consecutive_ws_failures,
                 backoff,
