@@ -11,6 +11,11 @@ dependencies = [
     "crcmod>=1.7",
     "ten-vad>=1.0.6.8",
     "audioop-lts>=0.2.1",
+    "numpy>=2.1.0",
+    "scipy>=1.11.0",
+    "pydantic>=2.10.6",
+    "google-cloud-storage>=2.18.2",
+    "google-cloud-monitoring>=2.29.1",
 ]
 
 [tool.setuptools]
