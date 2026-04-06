@@ -126,7 +126,7 @@ class TestRecordFailure:
         assert extra["error_reason"] == "ffmpeg exit 8"
         assert extra["feed_id"] == str(feed_id)
 
-    def test_no_log_when_error_reason_is_none(self) -> None:
+    def test_logs_with_none_error_reason(self) -> None:
         conn = _make_mock_conn()
         store = _make_store(conn)
         feed_id = uuid.uuid4()
@@ -136,4 +136,6 @@ class TestRecordFailure:
         ) as mock_logger:
             store.record_failure(feed_id)
 
-        mock_logger.warning.assert_not_called()
+        mock_logger.warning.assert_called_once()
+        extra = mock_logger.warning.call_args[1]["extra"]
+        assert extra["error_reason"] is None

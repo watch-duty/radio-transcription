@@ -140,11 +140,13 @@ class SyncFeedStore:
                     feed_id,
                 ),
             )
-            if truncated_reason:
-                logger.warning(
-                    "Feed failure recorded",
-                    extra={
-                        "feed_id": str(feed_id),
-                        "error_reason": truncated_reason,
-                    },
-                )
+            # NOTE: Unlike the async FeedStore, the sync SQL lacks a
+            # RETURNING clause so we cannot distinguish quarantine from
+            # regular failure here.  All failures log at WARNING.
+            logger.warning(
+                "Feed failure recorded",
+                extra={
+                    "feed_id": str(feed_id),
+                    "error_reason": truncated_reason,
+                },
+            )
