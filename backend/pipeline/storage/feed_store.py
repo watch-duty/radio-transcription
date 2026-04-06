@@ -337,7 +337,6 @@ class FeedStore:
         failure_threshold: int = 5,
         backoff_base_sec: int = 15,
         backoff_max_sec: int = 600,
-        error_reason: str | None = None,
     ) -> bool:
         """Report a feed failure with exponential backoff.
 
@@ -359,8 +358,6 @@ class FeedStore:
                 quarantine.
             backoff_base_sec: Base delay in seconds for the first retry.
             backoff_max_sec: Maximum backoff cap in seconds.
-            error_reason: Optional human-readable error context
-                (truncated to 500 chars) included in the structured log.
 
         Returns:
             ``True`` if the failure was recorded, ``False`` if the lease was
@@ -379,14 +376,12 @@ class FeedStore:
         if row is None:
             return False
 
-        truncated_reason = error_reason[:500] if error_reason else None
         if row["status"] == "quarantined":
             logger.critical(
                 "Feed quarantined",
                 extra={
                     "feed_id": str(feed_id),
                     "failure_count": row["failure_count"],
-                    "error_reason": truncated_reason,
                 },
             )
         else:
@@ -396,7 +391,6 @@ class FeedStore:
                     "feed_id": str(feed_id),
                     "failure_count": row["failure_count"],
                     "retry_after": str(row["retry_after"]),
-                    "error_reason": truncated_reason,
                 },
             )
         return True

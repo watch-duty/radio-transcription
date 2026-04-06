@@ -793,33 +793,5 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         rt._store.report_feed_failure.assert_not_awaited()
 
 
-class TestProcessFeedErrorReason(unittest.IsolatedAsyncioTestCase):
-    """Tests that error_reason is passed through to report_feed_failure."""
-
-    async def test_capture_exception_passes_error_reason(self) -> None:
-        """When capture_fn raises, the exception str is passed as error_reason."""
-
-        async def _failing_capture(feed, shutdown):
-            msg = "ffmpeg exited with code 8\nstderr: HTTP 403"
-            raise RuntimeError(msg)
-            yield  # make this an async generator
-
-        rt = NormalizerRuntime(
-            capture_fn=_failing_capture, settings=_make_settings()
-        )
-        rt._shutdown = asyncio.Event()
-        rt._lease_lost = asyncio.Event()
-        rt._store = mock.AsyncMock()
-        rt._store.report_feed_failure.return_value = True
-        rt._releasing_feeds = set()
-
-        await rt._process_feed(_FEED)
-
-        rt._store.report_feed_failure.assert_awaited_once()
-        call_kwargs = rt._store.report_feed_failure.call_args[1]
-        self.assertIn("ffmpeg exited with code 8", call_kwargs["error_reason"])
-        self.assertIn("HTTP 403", call_kwargs["error_reason"])
-
-
 if __name__ == "__main__":
     unittest.main()

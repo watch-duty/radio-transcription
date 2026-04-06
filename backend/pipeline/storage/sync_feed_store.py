@@ -113,22 +113,14 @@ class SyncFeedStore:
         with self._connect_db() as conn:
             conn.execute(_HEARTBEAT_SQL, (feed_id,))
 
-    def record_failure(
-        self, feed_id: uuid.UUID, *, error_reason: str | None = None
-    ) -> None:
+    def record_failure(self, feed_id: uuid.UUID) -> None:
         """Record a processing failure with exponential backoff.
 
         Increments ``failure_count`` and sets ``retry_after`` using the
         formula ``base * 2^failure_count`` (capped at ``max_backoff_sec``,
         plus 0-10 s jitter).  Quarantines the feed when the threshold is
         reached.
-
-        Args:
-            feed_id: UUID of the feed that failed.
-            error_reason: Optional human-readable error context
-                (truncated to 500 chars) included in the structured log.
         """
-        truncated_reason = error_reason[:500] if error_reason else None
         with self._connect_db() as conn:
             conn.execute(
                 _RECORD_FAILURE_SQL,
@@ -140,13 +132,7 @@ class SyncFeedStore:
                     feed_id,
                 ),
             )
-            # NOTE: Unlike the async FeedStore, the sync SQL lacks a
-            # RETURNING clause so we cannot distinguish quarantine from
-            # regular failure here.  All failures log at WARNING.
             logger.warning(
                 "Feed failure recorded",
-                extra={
-                    "feed_id": str(feed_id),
-                    "error_reason": truncated_reason,
-                },
+                extra={"feed_id": str(feed_id)},
             )
