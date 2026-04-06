@@ -1,9 +1,6 @@
 # Use Apache Beam Python SDK as the base image
 FROM apache/beam_python3.13_sdk:2.70.0
 
-# Copy the launcher from the google-provided base
-COPY --from=gcr.io/dataflow-templates-base/python313-template-launcher-base:latest \
-     /opt/google/dataflow/python_template_launcher /opt/google/dataflow/python_template_launcher
 
 # Install OS dependencies needed at runtime
 USER root
@@ -17,6 +14,9 @@ RUN apt-get update && \
 
 # Copy uv from the official image
 COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
+
+# Copy the Flex Template Launcher from Google's base image
+COPY --from=gcr.io/dataflow-templates-base/python313-template-launcher-base:latest /opt/google/dataflow/python_template_launcher /opt/google/dataflow/python_template_launcher
 
 WORKDIR /app
 
@@ -47,4 +47,8 @@ RUN mkdir -p ./backend/pipeline/schema_types && \
     touch ./backend/pipeline/schema_types/__init__.py && \
     python3 -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto
 
-ENTRYPOINT ["/opt/google/dataflow/python_template_launcher"]
+# Copy and set the entrypoint script
+COPY backend/pipeline/transcription/entrypoint.sh /opt/google/dataflow/entrypoint.sh
+RUN chmod +x /opt/google/dataflow/entrypoint.sh
+
+ENTRYPOINT ["/opt/google/dataflow/entrypoint.sh"]
