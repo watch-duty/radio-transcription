@@ -359,6 +359,8 @@ class FeedStore:
                 quarantine.
             backoff_base_sec: Base delay in seconds for the first retry.
             backoff_max_sec: Maximum backoff cap in seconds.
+            error_reason: Optional human-readable error context
+                (truncated to 500 chars) included in the structured log.
 
         Returns:
             ``True`` if the failure was recorded, ``False`` if the lease was
