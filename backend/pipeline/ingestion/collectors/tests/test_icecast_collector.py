@@ -36,7 +36,9 @@ def _make_feed(name: str, source_feed_id: str | None) -> LeasedFeed:
     )
 
 
-def _make_stderr_reader(lines: list[bytes] | None = None) -> asyncio.StreamReader:
+def _make_stderr_reader(
+    lines: list[bytes] | None = None,
+) -> asyncio.StreamReader:
     """Build a StreamReader pre-loaded with *lines* for mock stderr."""
     reader = asyncio.StreamReader()
     for line in lines or []:
@@ -139,7 +141,8 @@ class TestCreateFfmpegProcess(unittest.IsolatedAsyncioTestCase):
         mock_exec.return_value = AsyncMock()
 
         await icecast_collector._create_ffmpeg_process(
-            "http://example.com/stream.mp3", "/tmp/chunk_%06d.flac"  # noqa: S108
+            "http://example.com/stream.mp3",
+            "/tmp/chunk_%06d.flac",  # noqa: S108
         )
 
         _, kwargs = mock_exec.call_args
