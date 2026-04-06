@@ -6,9 +6,9 @@ import unittest
 import uuid
 from unittest import mock
 
+from backend.pipeline.ingestion.models import CollectorEntry
 from backend.pipeline.ingestion.router import (
     _COLLECTOR_REGISTRY,
-    CollectorEntry,
     route_capturer,
     supported_source_types,
 )

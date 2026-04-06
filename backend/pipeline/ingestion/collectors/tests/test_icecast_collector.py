@@ -1,5 +1,4 @@
 import asyncio
-import datetime
 import os
 import unittest
 import uuid
@@ -8,6 +7,7 @@ from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
+from backend.pipeline.ingestion.models import CapturedChunk
 from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 
 MOCK_ENV_VARS = {
@@ -83,10 +83,10 @@ async def _collect_chunks(
         async with asyncio.timeout(total_timeout):
             while True:
                 try:
-                    chunk, _ts = await asyncio.wait_for(
+                    captured_chunk = await asyncio.wait_for(
                         gen.__anext__(), timeout=per_chunk_timeout
                     )
-                    chunks.append(chunk)
+                    chunks.append(captured_chunk.audio_bytes)
                 except StopAsyncIteration:
                     break
     except TimeoutError:
@@ -99,17 +99,19 @@ async def _collect_chunks_with_timestamps(
     *,
     total_timeout: float = 2.0,
     per_chunk_timeout: float = 0.5,
-) -> list[tuple[bytes, datetime.datetime]]:
-    """Collect chunks and timestamps from an async generator until it finishes or times out."""
+) -> list[CapturedChunk]:
+    """Collect CapturedChunk objects from an async generator until it
+    finishes or times out.
+    """
     results = []
     try:
         async with asyncio.timeout(total_timeout):
             while True:
                 try:
-                    chunk, ts = await asyncio.wait_for(
+                    captured_chunk = await asyncio.wait_for(
                         gen.__anext__(), timeout=per_chunk_timeout
                     )
-                    results.append((chunk, ts))
+                    results.append(captured_chunk)
                 except StopAsyncIteration:
                     break
     except TimeoutError:
@@ -394,12 +396,22 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(results), 3)
 
-        ts0 = results[0][1]
-        ts1 = results[1][1]
-        ts2 = results[2][1]
+        ts0 = results[0].chunk_start_time
+        ts1 = results[1].chunk_start_time
+        ts2 = results[2].chunk_start_time
 
         self.assertEqual((ts1 - ts0).total_seconds(), CHUNK_DURATION_SECONDS)
         self.assertEqual((ts2 - ts1).total_seconds(), CHUNK_DURATION_SECONDS)
+
+        # chunk_end_time should be exactly CHUNK_DURATION_SECONDS after chunk_start_time
+        for captured_chunk in results:
+            self.assertEqual(
+                (
+                    captured_chunk.chunk_end_time
+                    - captured_chunk.chunk_start_time
+                ).total_seconds(),
+                CHUNK_DURATION_SECONDS,
+            )
 
 
 if __name__ == "__main__":

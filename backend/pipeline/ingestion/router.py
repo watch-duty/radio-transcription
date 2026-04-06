@@ -1,32 +1,19 @@
 from __future__ import annotations
 
 import importlib
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 
+from backend.pipeline.ingestion.models import CollectorEntry
 from backend.pipeline.storage.feed_store import SourceType
 
 if TYPE_CHECKING:
     import asyncio
-    import datetime
     from collections.abc import AsyncIterator
 
+    from backend.pipeline.ingestion.models import CapturedChunk
     from backend.pipeline.storage.feed_store import LeasedFeed
 
 BCFY_FEEDS_URL_BASE = "https://partner.broadcastify.com/"
-
-
-class CollectorEntry(NamedTuple):
-    """Registry entry describing how to locate and invoke a collector.
-
-    Attributes:
-        module_path: Fully-qualified Python module path of the collector.
-        func_name: Name of the capture function within that module.
-        url_base: Base URL passed to the capture function.
-    """
-
-    module_path: str
-    func_name: str
-    url_base: str
 
 
 # Maps source_type -> CollectorEntry.
@@ -47,7 +34,7 @@ def supported_source_types() -> list[str]:
 
 def route_capturer(
     feed: LeasedFeed, shutdown_event: asyncio.Event
-) -> AsyncIterator[tuple[bytes, datetime.datetime]]:
+) -> AsyncIterator[CapturedChunk]:
     """Routes the feed to the appropriate capture function.
 
     Looks up the collector in ``_COLLECTOR_REGISTRY`` by source_type,
