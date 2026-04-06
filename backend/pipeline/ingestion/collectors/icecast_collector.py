@@ -60,12 +60,20 @@ async def _drain_stderr(
     Draining prevents the OS pipe buffer from filling, which would deadlock
     ffmpeg on long-running streams.  The tail buffer provides error context
     when the process exits with a non-zero code.
+
+    Exceptions are caught and logged so they cannot mask exceptions from
+    the caller's ``try`` block when this task is awaited in ``finally``.
     """
-    while True:
-        line = await stderr.readline()
-        if not line:  # EOF — process closed stderr
-            break
-        tail.append(line.decode("utf-8", errors="replace").rstrip())
+    try:
+        while True:
+            line = await stderr.readline()
+            if not line:  # EOF — process closed stderr
+                break
+            tail.append(line.decode("utf-8", errors="replace").rstrip())
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.debug("stderr drain failed", exc_info=True)
 
 
 def _segment_path(directory: Path, index: int) -> Path:
