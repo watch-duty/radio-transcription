@@ -31,9 +31,9 @@ logger = logging.getLogger(__name__)
 # Audio processing constants
 SAMPLE_FORMAT = "s16"  # 16-bit signed integer
 
-READ_TIMEOUT_SEC = 30
-POLL_INTERVAL_SEC = 0.25
-STDERR_TAIL_LINES = 30
+READ_TIMEOUT_SEC = 30  # Max seconds without a finalized segment before timeout
+POLL_INTERVAL_SEC = 0.25  # Polling interval for segment file checks
+STDERR_TAIL_LINES = 30  # Ring buffer size for ffmpeg stderr diagnostics
 
 # Authentication for Icecast/Broadcastify streams
 USER = os.getenv("BROADCASTIFY_USERNAME")
