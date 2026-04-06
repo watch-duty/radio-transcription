@@ -12,9 +12,6 @@ if TYPE_CHECKING:
     from cloudevents.http import event as cloudevent
 
     from backend.pipeline.common.clients.pubsub_client import PubSubClient
-    from backend.pipeline.common.clients.transcripts_client import (
-        TranscriptsClient,
-    )
     from backend.pipeline.evaluation.service import EvaluationService
 
 logger = logging.getLogger(__name__)
@@ -29,7 +26,6 @@ class EvaluationEventProcessor:
     def __init__(
         self,
         evaluation_service: EvaluationService,
-        transcripts_client: TranscriptsClient,
         publisher: PubSubClient,
         output_topic_path: str,
     ) -> None:
@@ -38,12 +34,10 @@ class EvaluationEventProcessor:
 
         Args:
             evaluation_service: The service to perform evaluations.
-            transcripts_client: Client to write to Transcripts API.
             publisher: Pub/Sub publisher client.
             output_topic_path: Topic path to publish alerts to.
         """
         self.evaluation_service = evaluation_service
-        self.transcripts_client = transcripts_client
         self.publisher = publisher
         self.output_topic_path = output_topic_path
 
