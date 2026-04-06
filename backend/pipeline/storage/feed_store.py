@@ -502,7 +502,7 @@ class FeedStore:
                     source_type=source_type,
                     last_processed_filename=row["last_processed_filename"],
                     last_bookmark_time=row["last_bookmark_time"],
-                fencing_token=row["fencing_token"],
+                    fencing_token=row["fencing_token"],
                     source_feed_id=row["source_feed_id"],
                 )
             )
