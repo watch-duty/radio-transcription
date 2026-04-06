@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 from curl_cffi.requests import AsyncSession
-from curl_cffi.requests.websockets import WebSocketTimeout
+from curl_cffi.requests.websockets import WebSocketClosed, WebSocketTimeout
 
 from backend.pipeline.ingestion.collectors.openmhz._types import CallEvent
 
@@ -151,6 +151,11 @@ async def _stream_frames(
             frame = await ws.recv_str(timeout=ping_interval_sec)
         except WebSocketTimeout:
             continue
+        except WebSocketClosed:
+            logger.warning(
+                "WebSocket closed: short_name=%s", short_name
+            )
+            return
 
         if frame.startswith("2"):
             await ws.send_str("3")
