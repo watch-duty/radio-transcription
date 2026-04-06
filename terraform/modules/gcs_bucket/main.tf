@@ -8,7 +8,7 @@ resource "google_storage_bucket" "this" {
   labels                      = var.labels
 
   soft_delete_policy {
-    retention_duration_seconds = var.enable_soft_delete ? 604800 : 0
+    retention_duration_seconds = var.enable_soft_delete ? 7 * 24 * 60 * 60 : 0
   }
 
   dynamic "lifecycle_rule" {
