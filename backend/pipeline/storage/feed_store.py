@@ -396,7 +396,20 @@ class FeedStore:
         source_feed_id: str,
         external_id: str,
     ) -> Feed:
-        """Create a new feed record."""
+        """Create a new feed record.
+
+        Atomically creates a new feed in the `feeds` table and its corresponding
+        properties in the `feed_properties` table.
+
+        Args:
+            name: The unique name of the feed.
+            source_type: The source type slug (e.g., 'bcfy_feeds').
+            source_feed_id: The ID of the feed at the source.
+            external_id: The ID used for mapping feed ID to the external system.
+
+        Returns:
+            The created `Feed` object.
+        """
         row = await self._pool.fetchrow(
             feed_queries.CREATE_FEED_SQL,
             name,
@@ -410,17 +423,30 @@ class FeedStore:
         return Feed(**row)
 
     async def get_feed(self, feed_id: uuid.UUID) -> Feed | None:
-        """Fetch a specific feed by ID."""
+        """Fetch a specific feed by ID.
+
+        Retrieves feed details including properties from `feed_properties`.
+
+        Args:
+            feed_id: UUID of the feed to fetch.
+
+        Returns:
+            A `Feed` object if found, or `None`.
+        """
         row = await self._pool.fetchrow(feed_queries.GET_FEED_SQL, feed_id)
         if row is None:
             return None
         return Feed(**row)
 
     async def list_feeds(self) -> list[Feed]:
-        """
-        List all feeds.
+        """List all feeds.
+
+        Retrieves all feeds ordered by creation time descending.
 
         TODO: Add pagination.
+
+        Returns:
+            A list of `Feed` objects.
         """
         rows = await self._pool.fetch(feed_queries.LIST_FEEDS_SQL)
         return [Feed(**row) for row in rows]
@@ -428,7 +454,17 @@ class FeedStore:
     async def update_feed(
         self, feed_id: uuid.UUID, update_data: FeedUpdate
     ) -> Feed | None:
-        """Partially update an existing feed."""
+        """Partially update an existing feed.
+
+        Updates fields in the `feeds` table based on the provided `FeedUpdate` model.
+
+        Args:
+            feed_id: UUID of the feed to update.
+            update_data: `FeedUpdate` object containing fields to update.
+
+        Returns:
+            The updated `Feed` object if successful, or `None` if the feed was not found.
+        """
         if not update_data:
             return await self.get_feed(feed_id)
 
@@ -445,6 +481,16 @@ class FeedStore:
         return await self.get_feed(feed_id)
 
     async def delete_feed(self, feed_id: uuid.UUID) -> bool:
-        """Delete a feed."""
+        """Delete a feed.
+
+        Deletes a feed record from the `feeds` table. Cascading deletes will
+        remove corresponding rows in `feed_properties`.
+
+        Args:
+            feed_id: UUID of the feed to delete.
+
+        Returns:
+            `True` if the feed was deleted, `False` if not found.
+        """
         result = await self._pool.execute(feed_queries.DELETE_FEED_SQL, feed_id)
         return result == "DELETE 1"
