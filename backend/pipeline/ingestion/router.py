@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     import asyncio
     from collections.abc import AsyncIterator
 
-    from backend.pipeline.ingestion.collectors import CapturedChunk
+    from backend.pipeline.ingestion.normalizer_runtime import CapturedChunk
     from backend.pipeline.storage.feed_store import LeasedFeed
 
 BCFY_FEEDS_URL_BASE = "https://partner.broadcastify.com/"

@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 from anyio import Path as AsyncPath
 
-from backend.pipeline.ingestion.collectors import CapturedChunk
+from backend.pipeline.ingestion.normalizer_runtime import CapturedChunk
 
 MOCK_ENV_VARS = {
     "BROADCASTIFY_USERNAME": "test_user",
@@ -54,13 +54,13 @@ class TestLocalIcecastCollector(unittest.IsolatedAsyncioTestCase):
         ):
             yield CapturedChunk(
                 audio_bytes=b"first-bytes",
-                chunk_start_time=datetime.datetime.now(),
-                chunk_end_time=datetime.datetime.now(),
+                chunk_start_time=datetime.datetime.now(datetime.UTC),
+                chunk_end_time=datetime.datetime.now(datetime.UTC),
             )
             yield CapturedChunk(
                 audio_bytes=b"second-bytes",
-                chunk_start_time=datetime.datetime.now(),
-                chunk_end_time=datetime.datetime.now(),
+                chunk_start_time=datetime.datetime.now(datetime.UTC),
+                chunk_end_time=datetime.datetime.now(datetime.UTC),
             )
 
         fixed_feed_id = uuid.UUID("12345678-1234-5678-1234-567812345678")

@@ -1,5 +1,7 @@
 import asyncio
 import concurrent.futures
+import dataclasses
+import datetime
 import logging
 import os
 import signal
@@ -13,7 +15,6 @@ import asyncpg
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
-from backend.pipeline.ingestion.collectors import CapturedChunk
 from backend.pipeline.ingestion.retry import (
     LeaseExpiredError,
     retry_with_lease_check,
@@ -28,6 +29,22 @@ from backend.pipeline.storage.feed_store import (
     HeartbeatResult,
     LeasedFeed,
 )
+
+
+@dataclasses.dataclass(frozen=True)
+class CapturedChunk:
+    """A single captured audio chunk yielded by a capture function.
+
+    Attributes:
+        audio_bytes: The raw audio file bytes for this segment.
+        chunk_start_time: The UTC timestamp of the beginning of the audio window.
+        chunk_end_time: The UTC timestamp of the end of the audio window.
+    """
+
+    audio_bytes: bytes
+    chunk_start_time: datetime.datetime
+    chunk_end_time: datetime.datetime
+
 
 FeedID = uuid.UUID
 CaptureFn = Callable[[LeasedFeed, asyncio.Event], AsyncIterator[CapturedChunk]]

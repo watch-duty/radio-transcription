@@ -245,12 +245,12 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         chunks_uploaded = []
         last_chunk_ts = None
-        async for captureChunk in icecast_collector.capture_icecast_stream(
+        async for capture_chunk in icecast_collector.capture_icecast_stream(
             feed, shutdown, url_base="https://mock.example.com/"
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client,
-                captureChunk.audio_bytes,
+                capture_chunk.audio_bytes,
                 feed,
                 _TEST_BUCKET,
                 len(chunks_uploaded),
@@ -260,11 +260,11 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 self.worker_id,
                 gcs_path,
                 feed["fencing_token"],
-                captureChunk.chunk_end_time,
+                capture_chunk.chunk_end_time,
             )
             self.assertTrue(ok)
-            last_chunk_ts = captureChunk.chunk_end_time
-            chunks_uploaded.append((captureChunk.audio_bytes, gcs_path))
+            last_chunk_ts = capture_chunk.chunk_end_time
+            chunks_uploaded.append((capture_chunk.audio_bytes, gcs_path))
 
         # Assert: exactly 1 chunk uploaded
         self.assertEqual(len(chunks_uploaded), 1)
@@ -309,12 +309,12 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         gcs_paths = []
         chunk_timestamps = []
         seq = 0
-        async for captureChunk in icecast_collector.capture_icecast_stream(
+        async for capture_chunk in icecast_collector.capture_icecast_stream(
             feed, shutdown, url_base="https://mock.example.com/"
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client,
-                captureChunk.audio_bytes,
+                capture_chunk.audio_bytes,
                 feed,
                 _TEST_BUCKET,
                 seq,
@@ -324,10 +324,10 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 self.worker_id,
                 gcs_path,
                 feed["fencing_token"],
-                captureChunk.chunk_end_time,
+                capture_chunk.chunk_end_time,
             )
             gcs_paths.append(gcs_path)
-            chunk_timestamps.append(captureChunk.chunk_end_time)
+            chunk_timestamps.append(capture_chunk.chunk_end_time)
             seq += 1
 
         # Assert: 3 distinct uploads
@@ -372,12 +372,12 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         gcs_paths = []
         last_chunk_ts = None
         seq = 0
-        async for captureChunk in icecast_collector.capture_icecast_stream(
+        async for capture_chunk in icecast_collector.capture_icecast_stream(
             feed, shutdown, url_base="https://mock.example.com/"
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client,
-                captureChunk.audio_bytes,
+                capture_chunk.audio_bytes,
                 feed,
                 _TEST_BUCKET,
                 seq,
@@ -387,10 +387,10 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 self.worker_id,
                 gcs_path,
                 feed["fencing_token"],
-                captureChunk.chunk_end_time,
+                capture_chunk.chunk_end_time,
             )
             gcs_paths.append(gcs_path)
-            last_chunk_ts = captureChunk.chunk_end_time
+            last_chunk_ts = capture_chunk.chunk_end_time
             seq += 1
             # Signal shutdown after first chunk
             shutdown.set()
@@ -467,12 +467,12 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
         shutdown = asyncio.Event()
         gcs_path = None
-        async for captureChunk in icecast_collector.capture_icecast_stream(
+        async for capture_chunk in icecast_collector.capture_icecast_stream(
             feed, shutdown, url_base="https://mock.example.com/"
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client,
-                captureChunk.audio_bytes,
+                capture_chunk.audio_bytes,
                 feed,
                 _TEST_BUCKET,
                 0,

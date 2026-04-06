@@ -10,8 +10,10 @@ import aiohttp
 import asyncpg
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
-from backend.pipeline.ingestion.collectors import CapturedChunk
-from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
+from backend.pipeline.ingestion.normalizer_runtime import (
+    CapturedChunk,
+    NormalizerRuntime,
+)
 from backend.pipeline.storage.feed_store import (
     HeartbeatResult,
     LeasedFeed,

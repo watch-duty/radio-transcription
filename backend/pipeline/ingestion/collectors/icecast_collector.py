@@ -19,7 +19,7 @@ from backend.pipeline.common.constants import (
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
 )
-from backend.pipeline.ingestion.collectors import CapturedChunk
+from backend.pipeline.ingestion.normalizer_runtime import CapturedChunk
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
