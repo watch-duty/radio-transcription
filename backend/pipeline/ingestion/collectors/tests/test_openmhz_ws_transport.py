@@ -4,7 +4,11 @@ import asyncio
 import datetime
 import json
 import unittest
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 from curl_cffi.requests.websockets import WebSocketClosed, WebSocketTimeout
 
@@ -45,7 +49,7 @@ class TestParseSioEvent(unittest.TestCase):
         inner_json = json.dumps(self.CALL_DICT)
         frame = f"42{json.dumps(['new message', inner_json])}"
         result = _parse_sio_event(frame)
-        self.assertIsNotNone(result)
+        assert result is not None
         self.assertEqual(result.id, "69cef458302a9885edbce107")
         self.assertEqual(result.talkgroup_num, 32816)
         self.assertEqual(result.length_sec, 4)
@@ -73,7 +77,7 @@ class TestParseSioEvent(unittest.TestCase):
 class _MockWebSocket:
     """Simulates a curl_cffi AsyncWebSocket returning scripted frames."""
 
-    def __init__(self, frames: list[str | None]) -> None:
+    def __init__(self, frames: Sequence[str | None]) -> None:
         self._frames = iter(frames)
         self.sent: list[str] = []
         self._closed = False

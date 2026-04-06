@@ -16,12 +16,12 @@ from backend.pipeline.ingestion.collectors.openmhz.collector import (
     MAX_RECONNECT_FAILURES,
     openmhz_collector,
 )
-from backend.pipeline.storage.feed_store import LeasedFeed
+from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 
 _TEST_FEED = LeasedFeed(
     id=uuid.UUID("12345678-1234-5678-1234-567812345678"),
     name="test-openmhz-wmata",
-    source_type="openmhz",
+    source_type=SourceType.OPENMHZ,
     last_processed_filename=None,
     fencing_token=1,
     source_feed_id="wmata",
@@ -179,7 +179,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         feed = LeasedFeed(
             id=uuid.uuid4(),
             name="no-id",
-            source_type="openmhz",
+            source_type=SourceType.OPENMHZ,
             last_processed_filename=None,
             fencing_token=1,
             source_feed_id=None,
