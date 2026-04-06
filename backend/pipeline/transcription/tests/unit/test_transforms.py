@@ -7,6 +7,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import apache_beam as beam
+import numpy as np
 from apache_beam.io.gcp.pubsub import PubsubMessage
 from apache_beam.options.pipeline_options import (
     PipelineOptions,
@@ -16,7 +17,6 @@ from apache_beam.testing.test_pipeline import TestPipeline as BeamTestPipeline
 from apache_beam.testing.test_stream import TestStream as BeamTestStream
 from apache_beam.testing.util import assert_that, equal_to
 from apache_beam.transforms.window import TimestampedValue
-import numpy as np
 
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.transcription.constants import DEAD_LETTER_QUEUE_TAG
@@ -28,6 +28,7 @@ from backend.pipeline.transcription.datatypes import (
     StitchAudioConfig,
     TimeRange,
     TranscribeAudioConfig,
+    VadResult,
 )
 from backend.pipeline.transcription.enums import TranscriberType
 from backend.pipeline.transcription.stitcher import (
@@ -375,6 +376,8 @@ class StitchAudioTest(unittest.TestCase):
             "190-66666666-6666-6666-6666-666666666666.flac": [(0.0, 2.0)],
         }
 
+        vad_results_map = {}
+
         def mock_download(path: str, start_ms: int = 0) -> AudioChunkData:
 
             filename = path.rsplit("/", maxsplit=1)[-1]
@@ -426,19 +429,43 @@ class StitchAudioTest(unittest.TestCase):
                     )
                 )
 
+            silence_ranges = []
+            last_end = 0
+            for s_range in speech_ranges:
+                s_ms = s_range.start_ms
+                if s_ms > last_end:
+                    silence_ranges.append(
+                        TimeRange(start_ms=last_end, end_ms=s_ms)
+                    )
+                last_end = s_range.end_ms
+
+            if last_end < duration_ms:
+                silence_ranges.append(
+                    TimeRange(start_ms=last_end, end_ms=duration_ms)
+                )
+
+            # Store for detect_vad
+            vad_results_map[chunk_start_ms] = (
+                padded_segments,
+                VadResult(speech_segments=speech_ranges, silence_segments=silence_ranges),
+            )
+
             return AudioChunkData(
                 start_ms=chunk_start_ms,
                 audio=np.zeros(int(duration_ms * 16), dtype=np.int16),
-                speech_segments=speech_ranges,
                 gcs_uri=path,
-                padded_segments=padded_segments,
                 stored_audio=np.zeros(int(duration_ms * 16), dtype=np.int16),
                 original_sr=16000,
+                is_pure_silence=not speech_ranges,
             )
+
+        def mock_detect_vad(chunk_audio: np.ndarray, start_ms: int):
+            return vad_results_map.get(start_ms, ([], VadResult([], [])))
 
         mock_processor_inst.download_audio_and_detect.side_effect = (
             mock_download
         )
+        mock_processor_inst.detect_vad.side_effect = mock_detect_vad
 
         options = PipelineOptions(
             flags=["--input_topic=a", "--output_topic=b", "--project=c"]
@@ -821,6 +848,8 @@ class StitchAudioTest(unittest.TestCase):
             "160-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac": [(0.0, 2.0)],
         }
 
+        vad_results_map = {}
+
         def mock_download(path: str, start_ms: int = 0) -> AudioChunkData:
 
             filename = path.rsplit("/", maxsplit=1)[-1]
@@ -863,19 +892,41 @@ class StitchAudioTest(unittest.TestCase):
                     )
                 )
 
+            # For this test, we assume silence is whatever is not speech
+            silence_ranges = []
+            last_end = 0
+            for s_range in speech_ranges:
+                s_ms = s_range.start_ms
+                if s_ms > last_end:
+                    silence_ranges.append(
+                        TimeRange(start_ms=last_end, end_ms=s_ms)
+                    )
+                last_end = s_range.end_ms
+            if last_end < duration_ms:
+                silence_ranges.append(
+                    TimeRange(start_ms=last_end, end_ms=duration_ms)
+                )
+
+            vad_results_map[chunk_start_ms] = (
+                padded_segments,
+                VadResult(speech_segments=speech_ranges, silence_segments=silence_ranges),
+            )
+
             return AudioChunkData(
                 start_ms=chunk_start_ms,
                 audio=np.zeros(int(duration_ms * 16), dtype=np.int16),
-                speech_segments=speech_ranges,
                 gcs_uri=path,
-                padded_segments=padded_segments,
                 stored_audio=np.zeros(int(duration_ms * 16), dtype=np.int16),
                 original_sr=16000,
             )
 
+        def mock_detect_vad(chunk_audio: np.ndarray, start_ms: int):
+            return vad_results_map.get(start_ms, ([], VadResult([], [])))
+
         mock_processor_inst.download_audio_and_detect.side_effect = (
             mock_download
         )
+        mock_processor_inst.detect_vad.side_effect = mock_detect_vad
 
         options = PipelineOptions(
             flags=["--input_topic=a", "--output_topic=b", "--project=c"]
@@ -1169,13 +1220,13 @@ class TranscribeAudioTest(unittest.TestCase):
                         "feed-123",
                         FlushRequest(
                             feed_id="feed-123",
-                            buffer=np.zeros(int(500 * 16), dtype=np.int16),
+                            buffer=np.zeros((500 * 16), dtype=np.int16),
                             contributing_audio_uris=["gs://f/11111111.flac"],
                             time_range=TimeRange(
                                 start_ms=101000, end_ms=101500
                             ),
                             stored_buffer=np.zeros(
-                                int(500 * 16), dtype=np.int16
+                                (500 * 16), dtype=np.int16
                             ),
                             original_sr=16000,
                         ),
@@ -1251,7 +1302,7 @@ class TranscribeAudioTest(unittest.TestCase):
 
             padded_segments = [
                 PaddedSegment(
-                    audio=np.zeros(int(1000 * 16), dtype=np.int16),
+                    audio=np.zeros((1000 * 16), dtype=np.int16),
                     start_ms=chunk_start_ms,
                     speech_start_ms=chunk_start_ms,
                     speech_end_ms=chunk_start_ms + 1000,
@@ -1286,16 +1337,16 @@ class TranscribeAudioTest(unittest.TestCase):
                 [
                     FlushRequest(
                         feed_id="feed-123",
-                        buffer=np.zeros(int(500 * 16), dtype=np.int16),
-                        stored_buffer=np.zeros(int(500 * 16), dtype=np.int16),
+                        buffer=np.zeros((500 * 16), dtype=np.int16),
+                        stored_buffer=np.zeros((500 * 16), dtype=np.int16),
                         original_sr=16000,
                         contributing_audio_uris=["gs://bbbbbbbb.flac"],
                         time_range=TimeRange(start_ms=0, end_ms=500),
                     ),
                     FlushRequest(
                         feed_id="feed-123",
-                        buffer=np.zeros(int(500 * 16), dtype=np.int16),
-                        stored_buffer=np.zeros(int(500 * 16), dtype=np.int16),
+                        buffer=np.zeros((500 * 16), dtype=np.int16),
+                        stored_buffer=np.zeros((500 * 16), dtype=np.int16),
                         original_sr=16000,
                         contributing_audio_uris=["gs://cccccccc.flac"],
                         time_range=TimeRange(start_ms=5000, end_ms=5500),

@@ -17,6 +17,7 @@ from google.cloud import speech_v2 as cloud_speech
 from google.cloud.speech_v2 import SpeechClient
 
 from backend.pipeline.common.constants import BYTES_PER_SECOND_16KHZ_MONO
+from backend.pipeline.transcription.config import ConfigBase
 from backend.pipeline.transcription.constants import (
     DEFAULT_CHIRP_LANGUAGE_CODES,
     DEFAULT_CHIRP_LOCATION,
@@ -28,7 +29,6 @@ from backend.pipeline.transcription.constants import (
     DEFAULT_RETRY_MAX_SECONDS,
 )
 from backend.pipeline.transcription.enums import TranscriberType
-from backend.pipeline.transcription.utils import ConfigBase
 
 logger = logging.getLogger(__name__)
 

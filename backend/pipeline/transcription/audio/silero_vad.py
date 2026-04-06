@@ -1,20 +1,18 @@
+from __future__ import annotations
+
 import logging
-from dataclasses import dataclass
 import os
+from typing import Any
+
 import numpy as np
-import sherpa_onnx
 
 from backend.pipeline.common.constants import SAMPLE_RATE_HZ
 from backend.pipeline.transcription.constants import (
     MS_PER_SEC,
 )
 from backend.pipeline.transcription.datatypes import (
-    AudioChunkData,
     TimeRange,
     VadResult,
-)
-from backend.pipeline.transcription.audio.signal_processing import (
-    RadioSignalAnalyzer,
 )
 
 logger = logging.getLogger(__name__)
@@ -34,6 +32,8 @@ def create_sherpa_vad(
     min_speech_duration: float = 0.5,
 ) -> VadWrapper:
     """Factory for Sherpa-ONNX VoiceActivityDetector."""
+    # Import here to avoid loading the sherpa-onnx .so library during unit tests.
+    import sherpa_onnx
     vad_config = sherpa_onnx.VadModelConfig(
         silero_vad=sherpa_onnx.SileroVadModelConfig(
             model=os.environ.get(
@@ -54,22 +54,19 @@ def create_sherpa_vad(
 
 
 def process_vad_streaming(
-    samples: np.ndarray, start_ms: int, vad: VadWrapper
+    samples_float: np.ndarray, start_ms: int, vad: VadWrapper
 ) -> VadResult:
     """Feeds audio to Sherpa VAD and drains detected segments.
 
     Args:
-        samples: int16 numpy array.
+        samples_float: float32 numpy array in range [-1, 1].
         start_ms: Absolute timeline offset of this chunk.
         vad: VadWrapper instance containing Sherpa VAD and state.
     """
-    if len(samples) == 0:
+    if len(samples_float) == 0:
         return VadResult(speech_segments=[], silence_segments=[])
 
-    # Online VAD accepts float32 in range [-1, 1]
-    samples_float = samples.astype(np.float32) / 32768.0
-
-    window_size = 512  # SIGNAL_ANALYZER_HOP_LENGTH
+    window_size = 1536  # Silero VAD is tuned for 1536 samples (96ms)
     chunk_start_vad_samples = vad.processed_samples
 
     # Process in chunks of window_size
@@ -106,3 +103,20 @@ def process_vad_streaming(
         speech_segments=speech_segments,
         silence_segments=silence_segments,
     )
+
+
+def create_sherpa_denoiser() -> Any:
+    """Factory for Sherpa-ONNX Denoiser."""
+    import sherpa_onnx
+
+    gtcrn_config = sherpa_onnx.OfflineSpeechDenoiserGtcrnModelConfig(
+        model=os.environ.get(
+            "GTCRN_MODEL_PATH",
+            "backend/pipeline/transcription/resources/gtcrn_simple.onnx",
+        )
+    )
+    model_config = sherpa_onnx.OfflineSpeechDenoiserModelConfig(
+        gtcrn=gtcrn_config, num_threads=1, provider="cpu"
+    )
+    config = sherpa_onnx.OnlineSpeechDenoiserConfig(model=model_config)
+    return sherpa_onnx.OnlineSpeechDenoiser(config)

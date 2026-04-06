@@ -1,5 +1,6 @@
 import unittest
 from unittest.mock import MagicMock
+import numpy as np
 
 from backend.pipeline.common.storage.gcs_uploader import GCSAudioUploader
 
@@ -43,7 +44,7 @@ class GCSAudioUploaderTest(unittest.TestCase):
 
         uploader = GCSAudioUploader(gcs_client=mock_gcs)
 
-        processed_audio = MagicMock()
+        processed_audio = np.zeros(16000, dtype=np.int16)
         flac_bytes = b"flac-bytes"
 
         canonical_uri, playback_uri = uploader.upload_audio_derivatives(

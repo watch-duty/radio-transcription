@@ -15,9 +15,9 @@ SIGNAL_ANALYZER_FMIN = 100
 SIGNAL_ANALYZER_FMAX = 1500
 SIGNAL_ANALYZER_HOP_LENGTH = 512
 SIGNAL_ANALYZER_VOICED_PROB_THRESHOLD = 0.2
-SIGNAL_ANALYZER_VOICED_PROB_HIGH_THRESHOLD = 0.6
+SIGNAL_ANALYZER_VOICED_PROB_HIGH_THRESHOLD = 0.4
 SIGNAL_ANALYZER_SLOPE_VARIANCE_THRESHOLD = 5.0
-SIGNAL_ANALYZER_MIN_FRAMES = 10
+SIGNAL_ANALYZER_MIN_FRAMES = 3
 SIGNAL_ANALYZER_DEFAULT_VARIANCE = 100.0
 VAD_HIGHPASS_FREQ = 300
 
@@ -100,6 +100,15 @@ class RadioSignalAnalyzer:
         r_safe = np.clip(r_max, HNR_SIGMA_MIN, HNR_SIGMA_MAX)
         return DB_SCALE_FACTOR * np.log10(r_safe / (1 - r_safe))
 
+    def _calculate_spectral_flatness(self, audio_data: np.ndarray) -> float:
+        """Measures tonality vs. noise. 0.0 = Pure Tone/Speech, 1.0 = White Noise."""
+        # Use a small epsilon to avoid log(0)
+        spec = np.abs(np.fft.rfft(audio_data)) + 1e-10
+        # Geometric Mean / Arithmetic Mean
+        gmean = np.exp(np.mean(np.log(spec)))
+        amean = np.mean(spec)
+        return float(gmean / amean)
+
     def characterize(self, audio_data) -> AudioCharacterization:
         """Characterizes the audio segment using pYIN, HNR, and Spectral Flatness.
 
@@ -109,6 +118,15 @@ class RadioSignalAnalyzer:
         Returns:
             AudioCharacterization object with label and confidence.
         """
+        # Fast reject for high-flatness signals (pure noise/squelch)
+        flatness = self._calculate_spectral_flatness(audio_data)
+        if flatness > 0.85:
+            logger.info(
+                f"RadioSignalAnalyzer: High spectral flatness ({flatness:.2f}). Rejecting as VOID."
+            )
+            return AudioCharacterization(
+                SignalLabel.VOID, False, 0.0, hnr=0.0, trimmed_duration_ms=0
+            )
 
         # Pre-filter to remove noise above speech range
         clean_audio = self._apply_filter(audio_data)
@@ -152,9 +170,23 @@ class RadioSignalAnalyzer:
             else SIGNAL_ANALYZER_DEFAULT_VARIANCE
         )
 
+        logger.info(f"RadioSignalAnalyzer: valid_f0 len={len(valid_f0)}, slope_variance={slope_variance:.2f}")
+        
+        # Pure Tone Detection: High HNR but pyin failed to find pitch
+        if hnr > 5.0 and len(valid_f0) == 0:
+            logger.info(f"RadioSignalAnalyzer: High HNR ({hnr:.1f}) but no pitch. Classifying as DETERMINISTIC_LINEAR.")
+            return AudioCharacterization(
+                SignalLabel.DETERMINISTIC_LINEAR,
+                False,
+                mean_prob,
+                hnr,
+                trimmed_duration_ms,
+            )
+
         if (
-            len(valid_f0) >= SIGNAL_ANALYZER_MIN_FRAMES
+            len(valid_f0) >= 2
             and slope_variance < SIGNAL_ANALYZER_SLOPE_VARIANCE_THRESHOLD
+            and hnr > 5.0
         ):
             return AudioCharacterization(
                 SignalLabel.DETERMINISTIC_LINEAR,
@@ -175,6 +207,7 @@ def apply_sliding_agc(
     target_rms: float = DEFAULT_AGC_TARGET_RMS,
     max_gain: float = DEFAULT_AGC_MAX_GAIN,
     window_ms: int = DEFAULT_AGC_WINDOW_MS,
+    silence_segments: list = None,
 ) -> np.ndarray:
     """Applies a fast, stateless sliding-window AGC to level audio volume.
     Operates entirely in float32 space [-1.0, 1.0].
@@ -205,6 +238,16 @@ def apply_sliding_agc(
 
     # Clamp to max_gain
     chunk_gains = np.clip(chunk_gains, 0.0, max_gain)
+
+    # Dynamic Noise Gate: If chunk falls inside a known silence segment, force gain to 1.0
+    if silence_segments:
+        for i in range(num_chunks):
+            chunk_start_ms = i * window_ms
+            chunk_end_ms = (i + 1) * window_ms
+            for silence in silence_segments:
+                if not (chunk_end_ms <= silence.start_ms or chunk_start_ms >= silence.end_ms):
+                    chunk_gains[i] = 1.0
+                    break
 
     # 4. Smooth the gain envelope
     smoothed_gains = gaussian_filter1d(chunk_gains, sigma=2.0)

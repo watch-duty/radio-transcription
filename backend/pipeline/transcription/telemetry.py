@@ -9,13 +9,13 @@ from google.api_core.exceptions import GoogleAPIError
 from google.cloud import monitoring_v3
 
 from backend.pipeline.common.constants import NANOS_PER_SECOND
+from backend.pipeline.transcription.config import ConfigBase
 from backend.pipeline.transcription.constants import (
     GCP_DURATION_METRIC_NAME,
     GCP_METRIC_PREFIX,
     GCP_STITCHING_METRIC_NAME,
 )
 from backend.pipeline.transcription.enums import MetricsExporterType
-from backend.pipeline.transcription.utils import ConfigBase
 
 logger = logging.getLogger(__name__)
 

@@ -45,7 +45,8 @@ class BufferedChunk:
 class PaddedSegment:
     """A speech segment that has been padded and verified to be clean."""
 
-    audio: np.ndarray
+    raw_audio: np.ndarray
+    denoised_audio: np.ndarray
     start_ms: int  # Absolute start time of the padded segment
     speech_start_ms: int  # Absolute start time of the speech within it
     speech_end_ms: int  # Absolute end time of the speech within it
@@ -57,15 +58,12 @@ class AudioChunkData:
 
     start_ms: int
     audio: np.ndarray
-    speech_segments: list[TimeRange]
     gcs_uri: str
     stored_audio: np.ndarray = field(
         default_factory=lambda: np.array([], dtype=np.int16)
     )
     original_sr: int = 16000
-    silence_segments: list[TimeRange] = field(default_factory=list)
-    noise_segments: list[TimeRange] = field(default_factory=list)
-    padded_segments: list[PaddedSegment] = field(default_factory=list)
+    is_pure_silence: bool = False
 
     @property
     def duration_ms(self) -> int:
@@ -217,7 +215,17 @@ class DropAction(StateMachineAction):
 
 @dataclass(frozen=True)
 class AppendBufferAction(StateMachineAction):
-    """Signals that a slice of the primary audio chunk should be appended to the active transmission buffer."""
+    """Signals that audio should be appended to the active transmission buffer."""
+
+    raw_audio: np.ndarray
+    denoised_audio: np.ndarray
+    start_offset_ms: int
+    end_offset_ms: int
+
+
+@dataclass(frozen=True)
+class AppendIsolatedBufferAction(StateMachineAction):
+    """Signals that a slice of the primary audio chunk should be appended to an isolated temporary buffer."""
 
     start_offset_ms: int
     end_offset_ms: int
