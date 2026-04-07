@@ -268,6 +268,7 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 self.worker_id,
                 gcs_path,
                 feed["fencing_token"],
+                chunk_ts,
             )
             self.assertTrue(ok)
             chunks_uploaded.append((flac_chunk, gcs_path))
@@ -319,6 +320,7 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 self.worker_id,
                 gcs_path,
                 feed["fencing_token"],
+                chunk_ts,
             )
             gcs_paths.append(gcs_path)
             seq += 1
@@ -378,6 +380,7 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 self.worker_id,
                 gcs_path,
                 feed["fencing_token"],
+                chunk_ts,
             )
             gcs_paths.append(gcs_path)
             seq += 1

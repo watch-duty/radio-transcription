@@ -23,6 +23,7 @@ _TEST_FEED = LeasedFeed(
     name="test-openmhz-wmata",
     source_type=SourceType.OPENMHZ,
     last_processed_filename=None,
+    last_bookmark_time=None,
     fencing_token=1,
     source_feed_id="wmata",
 )
@@ -181,6 +182,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             name="no-id",
             source_type=SourceType.OPENMHZ,
             last_processed_filename=None,
+            last_bookmark_time=None,
             fencing_token=1,
             source_feed_id=None,
         )
