@@ -21,7 +21,6 @@ class SourceType(enum.StrEnum):
     .. important::
         This enum **must** be kept in sync with the following SQL files:
 
-        - ``terraform/modules/alloydb/sql/ingestion/002_source_types.sql``
         - ``terraform/modules/alloydb/sql/ingestion/006_seed_source_types.sql``
 
         When adding or renaming a source type, update both this enum and the
@@ -30,7 +29,7 @@ class SourceType(enum.StrEnum):
 
     BCFY_FEEDS = "bcfy_feeds"
     BCFY_CALLS = "bcfy_calls"
-    ECHO = "echo"
+    ECHO = "echo"  # Echo uses a separate cloud function for ingestion, not using VMs
     OPENMHZ = "openmhz"
 
 
