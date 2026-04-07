@@ -253,12 +253,12 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
         shutdown = asyncio.Event()
         chunks_uploaded = []
-        async for flac_chunk, chunk_ts in openmhz_collector(
+        async for chunk in openmhz_collector(
             feed, shutdown, "https://api.openmhz.com/"
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client,
-                flac_chunk,
+                chunk.audio_bytes,
                 feed,
                 _TEST_BUCKET,
                 len(chunks_uploaded),
@@ -268,10 +268,10 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 self.worker_id,
                 gcs_path,
                 feed["fencing_token"],
-                chunk_ts,
+                chunk.chunk_start_time,
             )
             self.assertTrue(ok)
-            chunks_uploaded.append((flac_chunk, gcs_path))
+            chunks_uploaded.append((chunk.audio_bytes, gcs_path))
             shutdown.set()
 
         # Assert: exactly 1 chunk uploaded
@@ -309,18 +309,18 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         gcs_paths = []
         seq = 0
-        async for flac_chunk, chunk_ts in openmhz_collector(
+        async for chunk in openmhz_collector(
             feed, shutdown, "https://api.openmhz.com/"
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
-                self.gcs_client, flac_chunk, feed, _TEST_BUCKET, seq
+                self.gcs_client, chunk.audio_bytes, feed, _TEST_BUCKET, seq
             )
             await self.store.update_feed_progress(
                 feed["id"],
                 self.worker_id,
                 gcs_path,
                 feed["fencing_token"],
-                chunk_ts,
+                chunk.chunk_start_time,
             )
             gcs_paths.append(gcs_path)
             seq += 1
@@ -369,18 +369,18 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         gcs_paths = []
         seq = 0
-        async for flac_chunk, chunk_ts in openmhz_collector(
+        async for chunk in openmhz_collector(
             feed, shutdown, "https://api.openmhz.com/"
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
-                self.gcs_client, flac_chunk, feed, _TEST_BUCKET, seq
+                self.gcs_client, chunk.audio_bytes, feed, _TEST_BUCKET, seq
             )
             await self.store.update_feed_progress(
                 feed["id"],
                 self.worker_id,
                 gcs_path,
                 feed["fencing_token"],
-                chunk_ts,
+                chunk.chunk_start_time,
             )
             gcs_paths.append(gcs_path)
             seq += 1
@@ -410,11 +410,11 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
         shutdown = asyncio.Event()
         gcs_paths = []
-        async for flac_chunk, chunk_ts in openmhz_collector(
+        async for chunk in openmhz_collector(
             feed, shutdown, "https://api.openmhz.com/"
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
-                self.gcs_client, flac_chunk, feed, _TEST_BUCKET, 0
+                self.gcs_client, chunk.audio_bytes, feed, _TEST_BUCKET, 0
             )
             gcs_paths.append(gcs_path)
             shutdown.set()

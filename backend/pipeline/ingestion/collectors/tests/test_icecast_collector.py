@@ -8,6 +8,7 @@ from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
+from backend.pipeline.ingestion.collectors import icecast_collector
 from backend.pipeline.ingestion.models import CapturedChunk
 from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 
@@ -15,12 +16,6 @@ MOCK_ENV_VARS = {
     "BROADCASTIFY_USERNAME": "test_user",
     "BROADCASTIFY_PASSWORD": "test_pass",
 }
-
-with (
-    patch.dict(os.environ, MOCK_ENV_VARS, clear=False),
-    patch("google.cloud.pubsub_v1.PublisherClient"),
-):
-    from backend.pipeline.ingestion.collectors import icecast_collector
 
 # Static UUID for consistent test assertions
 TEST_FEED_ID = uuid.UUID("12345678-1234-5678-1234-567812345678")
@@ -60,8 +55,10 @@ def _make_process_factory(
 ):
     """Build a side-effect factory for _create_ffmpeg_process mocks."""
 
-    async def _factory(url: str, segment_pattern: str) -> AsyncMock:
-        del url
+    async def _factory(
+        url: str, segment_pattern: str, auth_header: str = ""
+    ) -> AsyncMock:
+        del url, auth_header
         segment_dir = Path(segment_pattern).parent
 
         mock_proc = AsyncMock()
@@ -147,6 +144,7 @@ class TestCreateFfmpegProcess(unittest.IsolatedAsyncioTestCase):
         await icecast_collector._create_ffmpeg_process(
             "http://example.com/stream.mp3",
             "/tmp/chunk_%06d.flac",  # noqa: S108
+            "Authorization: Basic dGVzdDp0ZXN0\r\n",
         )
 
         _, kwargs = mock_exec.call_args
@@ -164,6 +162,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.mock_logger = MagicMock()
         self.patchers = [
             patch.object(icecast_collector, "logger", self.mock_logger),
+            patch.dict(os.environ, MOCK_ENV_VARS),
         ]
         for p in self.patchers:
             p.start()

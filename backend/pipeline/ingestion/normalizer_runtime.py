@@ -30,6 +30,8 @@ from backend.pipeline.storage.feed_store import (
 )
 
 FeedID = uuid.UUID
+# 2-arg interface: route_capturer binds url_base internally.
+# See CollectorFn in models.py for the 3-arg raw collector signature.
 CaptureFn = Callable[[LeasedFeed, asyncio.Event], AsyncIterator[CapturedChunk]]
 logger = logging.getLogger(__name__)
 
@@ -323,6 +325,13 @@ class NormalizerRuntime:
                 feed,
                 self._shutdown,
             ):
+                if not isinstance(captured_chunk, CapturedChunk):
+                    msg = (
+                        f"Collector yielded "
+                        f"{type(captured_chunk).__name__}, "
+                        f"expected CapturedChunk"
+                    )
+                    raise TypeError(msg)  # noqa: TRY301
                 gcs_uri = await retry_with_lease_check(
                     gcp_helper.upload_staged_audio,
                     self._gcs_client,
