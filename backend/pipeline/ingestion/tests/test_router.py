@@ -44,9 +44,7 @@ class TestRouteCapturerRegistered(unittest.TestCase):
                 ):
                     result = route_capturer(feed, shutdown_event)
 
-                mock_fn.assert_called_once_with(
-                    feed, shutdown_event, url_base
-                )
+                mock_fn.assert_called_once_with(feed, shutdown_event, url_base)
                 self.assertIs(result, sentinel)
 
 

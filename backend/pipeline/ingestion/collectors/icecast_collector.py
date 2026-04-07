@@ -35,6 +35,7 @@ READ_TIMEOUT_SEC = 30  # Max seconds without a finalized segment before timeout
 POLL_INTERVAL_SEC = 0.25  # Polling interval for segment file checks
 STDERR_TAIL_LINES = 30  # Ring buffer size for ffmpeg stderr diagnostics
 
+
 def _build_auth_header() -> str:
     """Build Basic Auth header from env vars, raising if missing."""
     user = os.getenv("BROADCASTIFY_USERNAME")

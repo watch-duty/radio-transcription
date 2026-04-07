@@ -165,9 +165,7 @@ async def openmhz_collector(
                             audio_bytes=flac_bytes,
                             chunk_start_time=call.time,
                             chunk_end_time=call.time
-                            + datetime.timedelta(
-                                seconds=call.length_sec
-                            ),
+                            + datetime.timedelta(seconds=call.length_sec),
                         )
             except Exception:
                 logger.warning(
