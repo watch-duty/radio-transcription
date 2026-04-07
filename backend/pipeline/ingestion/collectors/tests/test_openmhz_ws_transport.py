@@ -299,6 +299,62 @@ class TestWebsocketTransport(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(calls), 0)
 
     @patch(f"{_WS_MOD}.AsyncSession")
+    async def test_connects_with_wss_scheme(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        """Verify https:// base_url is converted to wss:// for ws_connect.
+
+        libcurl requires the wss:// scheme to perform the WebSocket upgrade.
+        With https://, it opens a plain TLS connection and curl_ws_recv()
+        fails with error 43.
+        """
+        frames = [*_make_handshake_frames()]
+        mock_ws = _MockWebSocket(frames)
+        mock_session = AsyncMock()
+        mock_session.ws_connect = AsyncMock(return_value=mock_ws)
+        mock_session_cls.return_value = mock_session
+
+        shutdown = asyncio.Event()
+        shutdown.set()
+        async with websocket_transport(
+            "wmata", "https://api.openmhz.com/", shutdown
+        ) as events:
+            async for _ in events:
+                pass
+
+        ws_url = mock_session.ws_connect.call_args[0][0]
+        self.assertTrue(
+            ws_url.startswith("wss://"),
+            f"Expected wss:// scheme, got: {ws_url}",
+        )
+        self.assertIn("socket.io/?EIO=4&transport=websocket", ws_url)
+
+    @patch(f"{_WS_MOD}.AsyncSession")
+    async def test_connects_with_ws_scheme_for_http(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        """Verify http:// base_url is converted to ws:// (for local testing)."""
+        frames = [*_make_handshake_frames()]
+        mock_ws = _MockWebSocket(frames)
+        mock_session = AsyncMock()
+        mock_session.ws_connect = AsyncMock(return_value=mock_ws)
+        mock_session_cls.return_value = mock_session
+
+        shutdown = asyncio.Event()
+        shutdown.set()
+        async with websocket_transport(
+            "wmata", "http://localhost:8080/", shutdown
+        ) as events:
+            async for _ in events:
+                pass
+
+        ws_url = mock_session.ws_connect.call_args[0][0]
+        self.assertTrue(
+            ws_url.startswith("ws://"),
+            f"Expected ws:// scheme, got: {ws_url}",
+        )
+
+    @patch(f"{_WS_MOD}.AsyncSession")
     async def test_closes_session_on_exit(
         self, mock_session_cls: MagicMock
     ) -> None:

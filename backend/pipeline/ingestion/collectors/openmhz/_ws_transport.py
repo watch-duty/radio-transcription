@@ -78,6 +78,12 @@ async def websocket_transport(
     """
     normalized = base_url if base_url.endswith("/") else f"{base_url}/"
     ws_url = f"{normalized}socket.io/?EIO=4&transport=websocket"
+    # libcurl requires wss:// (not https://) to perform the WebSocket
+    # upgrade handshake.  With https:// it opens a plain TLS connection
+    # and curl_ws_recv() fails with error 43.
+    ws_url = ws_url.replace("https://", "wss://", 1).replace(
+        "http://", "ws://", 1
+    )
 
     session = AsyncSession(impersonate="chrome")
     ws = None
