@@ -543,7 +543,6 @@ class TranscribeAudioFn(beam.DoFn):
             dt = datetime.fromtimestamp(
                 request.time_range.start_ms / 1000.0, tz=UTC
             )
-            timestamp_str = dt.strftime("%Y%m%dT%H%M%SZ")
 
             flac_path = f"stitched/lossless/{request.feed_id}/{dt:%Y/%m/%d}/{request.transmission_uuid}.flac"
             m4a_path = f"stitched/playback/{request.feed_id}/{dt:%Y/%m/%d}/{request.transmission_uuid}.m4a"
