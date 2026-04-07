@@ -24,11 +24,10 @@ dependencies = [
     "aiohttp>=3.13.3",
     "gcloud-aio-storage>=9.6.4",
     "pydantic>=2.10.6",
+    "pydantic-settings>=2.0.0",
     "fastapi>=0.110.0",
     "uvicorn>=0.27.0",
     "redis>=7.3.0",
-    "numpy>=2.1.0",
-    "scipy>=1.11.0",
     "urllib3>=2.6.3",
     "transcription-pipeline",
     "tenacity>=9.1.4",
@@ -45,9 +44,7 @@ url = "https://pypi.org/simple"
 default = true
 
 [dependency-groups]
-build = [
-  "grpcio-tools>=1.65.5",
-]
+build = ["grpcio-tools>=1.65.5"]
 dev = [
   "ruff>=0.14.14",
   "ty>=0.0.21",
@@ -66,7 +63,12 @@ dev = [
 
 [tool.ruff]
 target-version = "py313"
-extend-exclude = ["model/colabs", "backend/pipeline/schema_types", "**/*_pb2.py", "**/*_pb2.pyi"]
+extend-exclude = [
+  "model/colabs",
+  "backend/pipeline/schema_types",
+  "**/*_pb2.py",
+  "**/*_pb2.pyi",
+]
 line-length = 80
 
 [tool.ruff.lint]
@@ -216,23 +218,18 @@ exclude = ["model/"]
 pythonVersion = "3.13"
 
 [tool.uv.workspace]
-members = [
-    "backend/pipeline/transcription",
-]
+members = ["backend/pipeline/transcription"]
 
 [tool.uv.sources]
 transcription-pipeline = { workspace = true }
 
 [tool.pytest.ini_options]
 filterwarnings = [
-    # httplib2 uses deprecated pyparsing methods under the hood which trickle up from GCP auth plugins
-    "ignore::DeprecationWarning:httplib2.*",
-    # pydub depends on the 'audioop' standard library module which is deprecated in Python 3.11/3.12 and slated for removal in Python 3.13 (PEP 594).
-    # We ignore it here to keep output clean on 3.12, but this will break if upgrading to Python 3.13 unless pydub updates.
-    "ignore::DeprecationWarning:pydub.*",
+  # httplib2 uses deprecated pyparsing methods under the hood which trickle up from GCP auth plugins
+  "ignore::DeprecationWarning:httplib2.*",
+  # pydub depends on the 'audioop' standard library module which is deprecated in Python 3.11/3.12 and slated for removal in Python 3.13 (PEP 594).
+  # We ignore it here to keep output clean on 3.12, but this will break if upgrading to Python 3.13 unless pydub updates.
+  "ignore::DeprecationWarning:pydub.*",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-
-
-

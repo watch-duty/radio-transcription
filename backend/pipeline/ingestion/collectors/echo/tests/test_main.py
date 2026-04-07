@@ -221,7 +221,6 @@ class TestHandle:
         pub.publish.assert_called_once()
         call_kwargs = pub.publish.call_args.kwargs
         assert call_kwargs["feed_id"] == str(feed_id)
-        assert call_kwargs["ordering_key"] == str(feed_id)
         assert call_kwargs["source_type"] == "echo"
 
         # Verify heartbeat recorded

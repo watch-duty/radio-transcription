@@ -10,8 +10,6 @@ import aiohttp
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 
 if TYPE_CHECKING:
-    import concurrent.futures
-
     from google.cloud import pubsub_v1
 
     from backend.pipeline.common.clients.gcs_client import GcsClient
@@ -226,18 +224,8 @@ def publish_audio_chunk_sync(
     future = publisher.publish(
         topic_path,
         audio_chunk_msg.SerializeToString(),
-        ordering_key=feed_id,
         **attrs,
     )
-
-    # Done-callback runs on Pub/Sub's background thread, so it fires
-    # even if the calling thread/coroutine is terminated.  Without
-    # this, a failed publish permanently pauses the ordering key.
-    def _resume_on_err(f: concurrent.futures.Future) -> None:
-        if f.exception() is not None:
-            publisher.resume_publish(topic_path, feed_id)
-
-    future.add_done_callback(_resume_on_err)
     return future.result()
 
 

@@ -399,7 +399,6 @@ class TestPublishAudioChunkSync(unittest.TestCase):
         publish_args, publish_kwargs = mock_publisher.publish.call_args
         self.assertEqual(publish_args[0], "projects/test/topics/audio")
         self.assertEqual(publish_kwargs["feed_id"], "feed-42")
-        self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
         self.assertEqual(publish_kwargs["source_type"], "echo")
 
         chunk = AudioChunk()
@@ -429,36 +428,6 @@ class TestPublishAudioChunkSync(unittest.TestCase):
 
         publish_kwargs = mock_publisher.publish.call_args.kwargs
         self.assertNotIn("source_type", publish_kwargs)
-
-    def test_resume_on_err_callback_resumes_ordering_key(self) -> None:
-        mock_future = MagicMock()
-        mock_future.result.return_value = "msg-1"
-        _, mock_publisher = _make_pubsub_client()
-        mock_publisher.publish.return_value = mock_future
-
-        gcp_helper.publish_audio_chunk_sync(
-            mock_publisher,
-            topic_path="projects/test/topics/audio",
-            feed_id="feed-42",
-            gcs_uri="gs://bucket/audio.flac",
-            session_id="sess-1",
-            start_timestamp=datetime.datetime(
-                2026, 3, 5, 12, 0, tzinfo=datetime.UTC
-            ),
-        )
-
-        # Verify a done-callback was registered
-        mock_future.add_done_callback.assert_called_once()
-        callback = mock_future.add_done_callback.call_args[0][0]
-
-        # Simulate a failed future
-        failed_future = MagicMock()
-        failed_future.exception.return_value = Exception("publish failed")
-        callback(failed_future)
-
-        mock_publisher.resume_publish.assert_called_once_with(
-            "projects/test/topics/audio", "feed-42"
-        )
 
 
 class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):

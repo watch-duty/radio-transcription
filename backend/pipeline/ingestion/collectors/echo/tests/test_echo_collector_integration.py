@@ -251,7 +251,6 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         self.mock_publisher.publish.assert_called_once()
         call_kwargs = self.mock_publisher.publish.call_args.kwargs
         self.assertEqual(call_kwargs["feed_id"], str(feed_id))
-        self.assertEqual(call_kwargs["ordering_key"], str(feed_id))
         self.assertEqual(call_kwargs["source_type"], "echo")
 
     def test_unknown_channel_skips_silently(self) -> None:
