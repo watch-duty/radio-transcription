@@ -301,8 +301,11 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
 
         mock_fetch.assert_called_once()
         params = mock_fetch.call_args[0][3]
+        last_bookmark_time = cast(
+            "datetime.datetime", self.feed["last_bookmark_time"]
+        )
         self.assertEqual(
-            params["pos"], int(self.feed["last_bookmark_time"].timestamp())
+            params["pos"], int(last_bookmark_time.timestamp())
         )
 
     @patch(
