@@ -36,6 +36,7 @@ from backend.pipeline.transcription.stitcher import (
 from backend.pipeline.transcription.transcribers import Transcriber
 from backend.pipeline.transcription.transforms import (
     AddEventTimestamp,
+    DownloadAudioFn,
     ParseAndKeyFn,
     RestoreOrderFn,
 )
@@ -1195,8 +1196,6 @@ class DownloadAudioTest(unittest.TestCase):
         self, mock_audio_processor: MagicMock
     ) -> None:
         """Verifies that DownloadAudioFn can be processed natively by Apache Beam without _DoFnParam injection errors."""
-        from backend.pipeline.transcription.transforms import DownloadAudioFn
-
         mock_inst = mock_audio_processor.return_value
         mock_inst.download_audio_and_detect.return_value = AudioChunkData(
             start_ms=100000,
