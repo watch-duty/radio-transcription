@@ -1066,6 +1066,7 @@ class TranscribeAudioTest(unittest.TestCase):
                             time_range=TimeRange(
                                 start_ms=101000, end_ms=101500
                             ),
+                            transmission_uuid="test-uuid",
                         ),
                     )
                 ]

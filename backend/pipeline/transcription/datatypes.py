@@ -165,11 +165,11 @@ class FlushRequest:
     feed_id: str
     contributing_audio_uris: list[str]
     time_range: TimeRange
+    transmission_uuid: str
     missing_prior_context: bool = False
     missing_post_context: bool = False
     start_audio_offset_ms: int | None = None
     end_audio_offset_ms: int | None = None
-    transmission_uuid: str = field(default_factory=lambda: str(uuid.uuid4()))
 
 @dataclass(frozen=True)
 class StateMachineAction:
