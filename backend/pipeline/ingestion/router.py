@@ -8,14 +8,13 @@ from backend.pipeline.ingestion.collectors.icecast_collector import (
 from backend.pipeline.ingestion.collectors.openmhz.collector import (
     openmhz_collector,
 )
-from backend.pipeline.ingestion.models import CollectorFn
 from backend.pipeline.storage.feed_store import SourceType
 
 if TYPE_CHECKING:
     import asyncio
     from collections.abc import AsyncIterator
 
-    from backend.pipeline.ingestion.models import CapturedChunk
+    from backend.pipeline.ingestion.models import CapturedChunk, CollectorFn
     from backend.pipeline.storage.feed_store import LeasedFeed
 
 BCFY_FEEDS_URL_BASE = "https://partner.broadcastify.com/"
