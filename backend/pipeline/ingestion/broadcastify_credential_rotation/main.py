@@ -69,13 +69,6 @@ def cleanup_old_versions(
         ]:
             continue
 
-        # Don't destroy the very latest version regardless of age
-        # (Safety check in case the function hasn't run in a while)
-        if (
-            "versions/1" in version.name
-        ):  # Keep the initial version if desired, or skip
-            pass
-
         if datetime.fromtimestamp(version.create_time.seconds, tz=UTC) < cutoff:
             logger.info(f"Destroying old secret version: {version.name}")
             secret_client.destroy_secret_version(request={"name": version.name})
