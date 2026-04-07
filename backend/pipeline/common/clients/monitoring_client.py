@@ -8,7 +8,12 @@ _NANOS_PER_SECOND = 1_000_000_000
 
 
 class MonitoringClient:
-    """Lazily initialized async Google Cloud Monitoring client."""
+    """Lazily initialized async Google Cloud Monitoring client.
+
+    Thread safety: ``_get_client`` is not thread-safe.  This is fine
+    because all callers run on the single-threaded asyncio event loop.
+    Do not call from the OS heartbeat thread.
+    """
 
     def __init__(self, project_id: str) -> None:
         self._project_id = project_id
@@ -30,6 +35,8 @@ class MonitoringClient:
         series = monitoring_v3.TimeSeries()
         series.metric.type = metric_type
         series.metric.labels.update(labels)
+        # "global" tracks the feed state regardless of which worker instance
+        # recorded it.  Use "gce_instance" if per-worker attribution is needed.
         series.resource.type = "global"
 
         now = time.time()

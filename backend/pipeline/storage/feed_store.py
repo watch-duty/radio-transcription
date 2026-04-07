@@ -174,7 +174,7 @@ SET status = CASE WHEN failure_count + 1 >= $3
                             + (RANDOM() * INTERVAL '10 seconds')
                        ELSE NULL END
 WHERE id = $1 AND worker_id = $2 AND fencing_token = $4
-RETURNING status::text, failure_count, retry_after, name, source_type
+RETURNING status::text, failure_count, retry_after
 """
 
 
@@ -348,7 +348,7 @@ class FeedStore:
         failure_threshold: int = 5,
         backoff_base_sec: int = 15,
         backoff_max_sec: int = 600,
-    ) -> bool:
+    ) -> str | None:
         """Report a feed failure with exponential backoff.
 
         Atomically increments ``failure_count``, computes ``retry_after``
@@ -371,7 +371,8 @@ class FeedStore:
             backoff_max_sec: Maximum backoff cap in seconds.
 
         Returns:
-            ``True`` if the failure was recorded, ``False`` if the lease was
+            The new feed status (``'failing'`` or ``'quarantined'``) if
+            the failure was recorded, or ``None`` if the lease was
             already lost.
 
         """
@@ -385,24 +386,16 @@ class FeedStore:
             backoff_base_sec,
         )
         if row is None:
-            return False
+            return None
 
-        if row["status"] == "quarantined":
+        status: str = row["status"]
+        if status == "quarantined":
             logger.critical(
                 "Feed quarantined",
                 extra={
                     "feed_id": str(feed_id),
                     "failure_count": row["failure_count"],
                 },
-            )
-            from backend.pipeline.ingestion import (  # noqa: PLC0415
-                quarantine_telemetry,
-            )
-
-            await quarantine_telemetry.emit_quarantine_event(
-                feed_id=str(feed_id),
-                feed_name=row["name"],
-                source_type=row["source_type"],
             )
         else:
             logger.info(
@@ -413,7 +406,7 @@ class FeedStore:
                     "retry_after": str(row["retry_after"]),
                 },
             )
-        return True
+        return status
 
     async def release_feed(
         self,

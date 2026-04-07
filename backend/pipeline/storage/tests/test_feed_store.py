@@ -294,31 +294,44 @@ class TestRenewHeartbeatsBatchDiagnostic(unittest.IsolatedAsyncioTestCase):
 class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.report_feed_failure."""
 
-    async def test_returns_true_when_lease_held(self) -> None:
-        """True is returned when the RETURNING row is present."""
+    async def test_returns_status_when_lease_held(self) -> None:
+        """Status string is returned when the RETURNING row is present."""
         pool = _make_pool(
             fetchrow_result={
                 "status": "failing",
                 "failure_count": 1,
                 "retry_after": None,
-                "name": "My Feed",
-                "source_type": "bcfy_feeds",
             },
         )
         store = FeedStore(pool)
 
         result = await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
 
-        self.assertTrue(result)
+        self.assertEqual(result, "failing")
 
-    async def test_returns_false_when_lease_lost(self) -> None:
-        """False is returned when RETURNING yields no row."""
+    async def test_returns_none_when_lease_lost(self) -> None:
+        """None is returned when RETURNING yields no row."""
         pool = _make_pool(fetchrow_result=None)
         store = FeedStore(pool)
 
         result = await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
 
-        self.assertFalse(result)
+        self.assertIsNone(result)
+
+    async def test_returns_quarantined_status(self) -> None:
+        """Quarantined status string is returned at threshold."""
+        pool = _make_pool(
+            fetchrow_result={
+                "status": "quarantined",
+                "failure_count": 5,
+                "retry_after": None,
+            },
+        )
+        store = FeedStore(pool)
+
+        result = await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
+
+        self.assertEqual(result, "quarantined")
 
     async def test_passes_correct_parameters(self) -> None:
         """Parameters are passed in the correct order to the atomic SQL."""
@@ -327,8 +340,6 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
                 "status": "failing",
                 "failure_count": 1,
                 "retry_after": None,
-                "name": "My Feed",
-                "source_type": "bcfy_feeds",
             },
         )
         store = FeedStore(pool)
@@ -344,58 +355,6 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[4], 1)  # fencing_token
         self.assertEqual(args[5], 600)  # default backoff_max_sec
         self.assertEqual(args[6], 15)  # default backoff_base_sec
-
-    @mock.patch(
-        "backend.pipeline.ingestion.quarantine_telemetry.emit_quarantine_event",
-        new_callable=mock.AsyncMock,
-    )
-    async def test_quarantine_calls_telemetry(
-        self,
-        mock_emit: mock.AsyncMock,
-    ) -> None:
-        """Quarantine status triggers emit_quarantine_event."""
-        pool = _make_pool(
-            fetchrow_result={
-                "status": "quarantined",
-                "failure_count": 5,
-                "retry_after": None,
-                "name": "My Feed",
-                "source_type": "bcfy_feeds",
-            },
-        )
-        store = FeedStore(pool)
-
-        await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
-
-        mock_emit.assert_awaited_once_with(
-            feed_id=str(_FEED_ID),
-            feed_name="My Feed",
-            source_type="bcfy_feeds",
-        )
-
-    @mock.patch(
-        "backend.pipeline.ingestion.quarantine_telemetry.emit_quarantine_event",
-        new_callable=mock.AsyncMock,
-    )
-    async def test_failing_does_not_call_telemetry(
-        self,
-        mock_emit: mock.AsyncMock,
-    ) -> None:
-        """Non-quarantine status does not trigger telemetry."""
-        pool = _make_pool(
-            fetchrow_result={
-                "status": "failing",
-                "failure_count": 1,
-                "retry_after": None,
-                "name": "My Feed",
-                "source_type": "bcfy_feeds",
-            },
-        )
-        store = FeedStore(pool)
-
-        await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
-
-        mock_emit.assert_not_awaited()
 
 
 class TestReleaseFeed(unittest.IsolatedAsyncioTestCase):
@@ -528,8 +487,6 @@ class TestReportFeedFailureWithThreshold(unittest.IsolatedAsyncioTestCase):
                 "status": "failing",
                 "failure_count": 1,
                 "retry_after": None,
-                "name": "My Feed",
-                "source_type": "bcfy_feeds",
             },
         )
         store = FeedStore(pool)
@@ -548,8 +505,6 @@ class TestReportFeedFailureWithThreshold(unittest.IsolatedAsyncioTestCase):
                 "status": "failing",
                 "failure_count": 1,
                 "retry_after": None,
-                "name": "My Feed",
-                "source_type": "bcfy_feeds",
             },
         )
         store = FeedStore(pool)
