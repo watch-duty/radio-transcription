@@ -224,6 +224,7 @@ def publish_audio_chunk_sync(
     future = publisher.publish(
         topic_path,
         audio_chunk_msg.SerializeToString(),
+        ordering_key=feed_id,
         **attrs,
     )
     return future.result()
@@ -238,15 +239,27 @@ async def publish_audio_chunk(
     start_timestamp: datetime.datetime,
     source_type: str | None = None,
 ) -> str:
-    """Async wrapper around :func:`publish_audio_chunk_sync`."""
+    """Asynchronously publish an AudioChunk to Pub/Sub using ordering keys.
+
+    Leverages asyncio.wrap_future to await the background gRPC thread pool
+    non-blockingly, ensuring other asyncio tasks remain responsive.
+    """
     publisher = pubsub_client.get_publisher()
-    return await asyncio.to_thread(
-        publish_audio_chunk_sync,
-        publisher,
+    audio_chunk_msg = AudioChunk(gcs_uri=gcs_uri)
+    audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
+    audio_chunk_msg.session_id = session_id
+
+    attrs: dict[str, str] = {
+        "feed_id": feed_id,
+        "chunk_uri": gcs_uri,
+    }
+    if source_type is not None:
+        attrs["source_type"] = source_type
+
+    future = publisher.publish(
         topic_path,
-        feed_id,
-        gcs_uri,
-        session_id,
-        start_timestamp,
-        source_type,
+        audio_chunk_msg.SerializeToString(),
+        ordering_key=feed_id,
+        **attrs,
     )
+    return await asyncio.wrap_future(future)
