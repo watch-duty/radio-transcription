@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import argparse
 
-from google.api_core.exceptions import AlreadyExists
 from google.api import label_pb2, metric_pb2
+from google.api_core.exceptions import AlreadyExists
 from google.cloud import monitoring_v3
 
 _METRIC_TYPE = "custom.googleapis.com/feeds/quarantine_events"
@@ -65,9 +65,9 @@ def main() -> None:
             name=project_name,
             metric_descriptor=descriptor,
         )
-        print(f"Created metric descriptor: {_METRIC_TYPE}")
+        print(f"Created metric descriptor: {_METRIC_TYPE}")  # noqa: T201
     except AlreadyExists:
-        print(f"Metric descriptor already exists: {_METRIC_TYPE}")
+        print(f"Metric descriptor already exists: {_METRIC_TYPE}")  # noqa: T201
 
 
 if __name__ == "__main__":

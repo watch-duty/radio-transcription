@@ -69,5 +69,5 @@ async def emit_quarantine_event(
     except Exception:
         try:
             logger.warning("Failed to emit quarantine metric", exc_info=True)
-        except Exception:
+        except Exception:  # noqa: S110
             pass

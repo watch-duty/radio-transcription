@@ -169,7 +169,9 @@ class NormalizerRuntime:
         )
         self._heartbeat_thread.start()
 
-        from backend.pipeline.ingestion import quarantine_telemetry  # noqa: PLC0415
+        from backend.pipeline.ingestion import (  # noqa: PLC0415
+            quarantine_telemetry,
+        )
 
         quarantine_telemetry.configure(settings.gcp_project_id)
 

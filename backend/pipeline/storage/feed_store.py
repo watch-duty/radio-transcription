@@ -395,7 +395,9 @@ class FeedStore:
                     "failure_count": row["failure_count"],
                 },
             )
-            from backend.pipeline.ingestion import quarantine_telemetry  # noqa: PLC0415
+            from backend.pipeline.ingestion import (  # noqa: PLC0415
+                quarantine_telemetry,
+            )
 
             await quarantine_telemetry.emit_quarantine_event(
                 feed_id=str(feed_id),
