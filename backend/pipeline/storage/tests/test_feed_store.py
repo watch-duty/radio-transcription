@@ -350,7 +350,8 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         new_callable=mock.AsyncMock,
     )
     async def test_quarantine_calls_telemetry(
-        self, mock_emit: mock.AsyncMock,
+        self,
+        mock_emit: mock.AsyncMock,
     ) -> None:
         """Quarantine status triggers emit_quarantine_event."""
         pool = _make_pool(
@@ -377,7 +378,8 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         new_callable=mock.AsyncMock,
     )
     async def test_failing_does_not_call_telemetry(
-        self, mock_emit: mock.AsyncMock,
+        self,
+        mock_emit: mock.AsyncMock,
     ) -> None:
         """Non-quarantine status does not trigger telemetry."""
         pool = _make_pool(

@@ -63,7 +63,9 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
 
         # Should not raise and should not attempt any GCP call.
         await quarantine_telemetry.emit_quarantine_event(
-            feed_id="abc", feed_name="F", source_type="s",
+            feed_id="abc",
+            feed_name="F",
+            source_type="s",
         )
 
         self.assertIsNone(quarantine_telemetry._client)
@@ -77,7 +79,9 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
 
         # Must not raise.
         await quarantine_telemetry.emit_quarantine_event(
-            feed_id="abc", feed_name="F", source_type="s",
+            feed_id="abc",
+            feed_name="F",
+            source_type="s",
         )
 
     async def test_never_raises_even_if_logging_fails(self) -> None:
@@ -91,7 +95,9 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
         ):
             # Must not raise.
             await quarantine_telemetry.emit_quarantine_event(
-                feed_id="abc", feed_name="F", source_type="s",
+                feed_id="abc",
+                feed_name="F",
+                source_type="s",
             )
 
     async def test_log_emitted_even_when_metric_fails(self) -> None:
@@ -106,7 +112,9 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
             level=logging.ERROR,
         ) as cm:
             await quarantine_telemetry.emit_quarantine_event(
-                feed_id="abc", feed_name="F", source_type="s",
+                feed_id="abc",
+                feed_name="F",
+                source_type="s",
             )
 
         # The ERROR log was emitted before the metric call failed.
@@ -124,7 +132,8 @@ class TestConfigure(unittest.TestCase):
         "backend.pipeline.ingestion.quarantine_telemetry.MonitoringClient"
     )
     def test_creates_client_with_project_id(
-        self, mock_cls: mock.MagicMock,
+        self,
+        mock_cls: mock.MagicMock,
     ) -> None:
         """configure() creates a MonitoringClient when project ID is set."""
         quarantine_telemetry.configure("my-project")
