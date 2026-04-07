@@ -457,6 +457,29 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
         _, publish_kwargs = mock_publisher.publish.call_args
         self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
 
+    async def test_resumes_publish_on_failure_callback(self) -> None:
+        """Verifies that the done-callback explicitly invokes resume_publish upon failure."""
+        mock_pubsub_client, mock_publisher = _make_pubsub_client()
+        mock_now = datetime.datetime(2026, 3, 5, 12, 0, tzinfo=datetime.UTC)
+
+        fut = concurrent.futures.Future()
+        fut.set_exception(RuntimeError("Transient publish failure"))
+        mock_publisher.publish.return_value = fut
+
+        with self.assertRaises(RuntimeError):
+            await gcp_helper.publish_audio_chunk(
+                mock_pubsub_client,
+                topic_path="projects/test/topics/audio",
+                feed_id="feed-blocked",
+                gcs_uri="gs://bucket/audio.flac",
+                session_id="test-session-1",
+                start_timestamp=mock_now,
+            )
+
+        mock_publisher.resume_publish.assert_called_once_with(
+            "projects/test/topics/audio", "feed-blocked"
+        )
+
 
 class TestParseGcsUri(unittest.TestCase):
     """Tests for the parse_gcs_uri function."""
