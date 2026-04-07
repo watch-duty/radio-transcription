@@ -20,7 +20,6 @@ if TYPE_CHECKING:
     from backend.pipeline.storage.feed_store import LeasedFeed
 
 logger = logging.getLogger(__name__)
-client = secretmanager.SecretManagerServiceClient()
 
 _MAX_5XX_RETRIES = 3
 _POLL_INTERVAL_SEC = 10.0
@@ -43,6 +42,7 @@ def _get_jwt_token() -> str:
         msg = "GOOGLE_CLOUD_PROJECT and BROADCASTIFY_JWT_SECRET_ID must be set"
         raise RuntimeError(msg)
 
+    client = secretmanager.SecretManagerServiceClient()
     name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
     try:
         response = client.access_secret_version(request={"name": name})
