@@ -30,6 +30,8 @@ from backend.pipeline.storage.feed_store import (
 )
 
 FeedID = uuid.UUID
+# 2-arg interface: route_capturer binds url_base internally.
+# See CollectorFn in models.py for the 3-arg raw collector signature.
 CaptureFn = Callable[[LeasedFeed, asyncio.Event], AsyncIterator[CapturedChunk]]
 logger = logging.getLogger(__name__)
 
