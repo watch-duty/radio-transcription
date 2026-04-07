@@ -53,10 +53,13 @@ async def emit_quarantine_event(
                 "source_type": source_type,
             },
         )
+    except Exception:  # noqa: S110
+        pass
 
-        if _client is None:
-            return
+    if _client is None:
+        return
 
+    try:
         await _client.write_time_series(
             metric_type=_METRIC_TYPE,
             labels={

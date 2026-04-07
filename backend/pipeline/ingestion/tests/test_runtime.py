@@ -810,5 +810,67 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         rt._store.report_feed_failure.assert_not_awaited()
 
 
+class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
+    """Tests for _process_feed quarantine telemetry emission."""
+
+    async def test_quarantine_emits_telemetry(self) -> None:
+        """When report_feed_failure returns 'quarantined', telemetry fires."""
+
+        async def _failing_capture(feed, shutdown):
+            yield _make_captured_chunk(b"audio")
+            msg = "capture failed"
+            raise RuntimeError(msg)
+
+        rt = NormalizerRuntime(
+            capture_fn=_failing_capture, settings=_make_settings()
+        )
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress.return_value = True
+        rt._store.report_feed_failure.return_value = "quarantined"
+        rt._releasing_feeds = set()
+
+        with mock.patch(
+            "backend.pipeline.ingestion.normalizer_runtime.quarantine_telemetry"
+        ) as mock_telemetry:
+            mock_telemetry.emit_quarantine_event = mock.AsyncMock()
+            await rt._process_feed(_FEED)
+
+        mock_telemetry.emit_quarantine_event.assert_awaited_once_with(
+            feed_id=str(_FEED_ID),
+            feed_name="Test Feed",
+            source_type="bcfy_feeds",
+        )
+        # _releasing_feeds cleaned up
+        self.assertEqual(rt._releasing_feeds, set())
+
+    async def test_failing_status_does_not_emit_telemetry(self) -> None:
+        """When report_feed_failure returns 'failing', no telemetry fires."""
+
+        async def _failing_capture(feed, shutdown):
+            yield _make_captured_chunk(b"audio")
+            msg = "capture failed"
+            raise RuntimeError(msg)
+
+        rt = NormalizerRuntime(
+            capture_fn=_failing_capture, settings=_make_settings()
+        )
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress.return_value = True
+        rt._store.report_feed_failure.return_value = "failing"
+        rt._releasing_feeds = set()
+
+        with mock.patch(
+            "backend.pipeline.ingestion.normalizer_runtime.quarantine_telemetry"
+        ) as mock_telemetry:
+            mock_telemetry.emit_quarantine_event = mock.AsyncMock()
+            await rt._process_feed(_FEED)
+
+        mock_telemetry.emit_quarantine_event.assert_not_awaited()
+
+
 if __name__ == "__main__":
     unittest.main()

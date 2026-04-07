@@ -391,7 +391,7 @@ class FeedStore:
         status: str = row["status"]
         if status == "quarantined":
             logger.critical(
-                "Feed quarantined",
+                "Feed failure threshold reached — status set to quarantined",
                 extra={
                     "feed_id": str(feed_id),
                     "failure_count": row["failure_count"],
