@@ -1012,7 +1012,11 @@ class StitchAudioTest(unittest.TestCase):
 
         with self.assertRaises(Exception):
             options = PipelineOptions(
-                flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+                flags=[
+                    "--input_subscription=a",
+                    "--output_topic=b",
+                    "--project=c",
+                ]
             )
             with BeamTestPipeline(options=options) as p:
                 input_elements = [

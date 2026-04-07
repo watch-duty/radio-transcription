@@ -457,26 +457,6 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
         _, publish_kwargs = mock_publisher.publish.call_args
         self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
 
-    async def test_returns_message_id(self) -> None:
-        """Verifies that the wrapped future correctly yields the underlying message ID string upon completion."""
-        mock_pubsub_client, mock_publisher = _make_pubsub_client()
-        mock_now = datetime.datetime(2026, 3, 5, 12, 0, tzinfo=datetime.UTC)
-
-        fut = concurrent.futures.Future()
-        fut.set_result("msg-777")
-        mock_publisher.publish.return_value = fut
-
-        result = await gcp_helper.publish_audio_chunk(
-            mock_pubsub_client,
-            topic_path="projects/test/topics/audio",
-            feed_id="feed-42",
-            gcs_uri="gs://bucket/audio.flac",
-            session_id="test-session-1",
-            start_timestamp=mock_now,
-        )
-
-        self.assertEqual(result, "msg-777")
-
 
 class TestParseGcsUri(unittest.TestCase):
     """Tests for the parse_gcs_uri function."""

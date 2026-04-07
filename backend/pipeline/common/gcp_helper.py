@@ -227,6 +227,18 @@ def publish_audio_chunk_sync(
         ordering_key=feed_id,
         **attrs,
     )
+
+    def _resume_on_error(f: Any) -> None:
+        try:
+            f.result()
+        except Exception:
+            logger.warning(
+                "Publish failed for ordering key %s. Resuming publish to prevent permanent blocking.",
+                feed_id,
+            )
+            publisher.resume_publish(topic_path, feed_id)
+
+    future.add_done_callback(_resume_on_error)
     return future.result()
 
 
@@ -262,4 +274,16 @@ async def publish_audio_chunk(
         ordering_key=feed_id,
         **attrs,
     )
+
+    def _resume_on_error(f: Any) -> None:
+        try:
+            f.result()
+        except Exception:
+            logger.warning(
+                "Publish failed for ordering key %s. Resuming publish to prevent permanent blocking.",
+                feed_id,
+            )
+            publisher.resume_publish(topic_path, feed_id)
+
+    future.add_done_callback(_resume_on_error)
     return await asyncio.wrap_future(future)
