@@ -262,6 +262,7 @@ async def _create_ffmpeg_process(
     Args:
         url: The stream URL to connect to
         segment_pattern: Segment filename pattern for ffmpeg
+        auth_header: HTTP Authorization header for the stream
 
     Returns:
         The subprocess process object

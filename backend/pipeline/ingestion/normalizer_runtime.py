@@ -329,7 +329,7 @@ class NormalizerRuntime:
                         f"{type(captured_chunk).__name__}, "
                         f"expected CapturedChunk"
                     )
-                    raise TypeError(msg)
+                    raise TypeError(msg)  # noqa: TRY301
                 gcs_uri = await retry_with_lease_check(
                     gcp_helper.upload_staged_audio,
                     self._gcs_client,

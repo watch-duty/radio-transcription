@@ -14,22 +14,15 @@ from testcontainers.core.container import DockerContainer
 from testcontainers.core.waiting_utils import wait_for_logs
 from testcontainers.postgres import PostgresContainer
 
+from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client
+from backend.pipeline.ingestion.collectors import icecast_collector
 from backend.pipeline.storage.feed_store import FeedStore
 
-# Must patch env vars BEFORE importing icecast_collector (module-level sys.exit guard)
 MOCK_ENV_VARS = {
     "BROADCASTIFY_USERNAME": "test_user",
     "BROADCASTIFY_PASSWORD": "test_pass",
 }
-
-with (
-    patch.dict(os.environ, MOCK_ENV_VARS, clear=False),
-    patch("google.cloud.pubsub_v1.PublisherClient"),
-):
-    from backend.pipeline.ingestion.collectors import icecast_collector
-
-from backend.pipeline.common import gcp_helper  # noqa: E402
 
 _REPO_ROOT = Path(__file__).resolve().parents[5]
 _SQL_DIR = (
@@ -129,6 +122,8 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.store = FeedStore(self.pool)
         self.worker_id = uuid.uuid4()
 
+        # Broadcastify env vars for _build_auth_header()
+        os.environ.update(MOCK_ENV_VARS)
         # Point Storage at fake-gcs-server via emulator host and use an explicit
         # client instance, since gcp_helper no longer exposes singleton helpers.
         os.environ["STORAGE_EMULATOR_HOST"] = self._gcs_url
@@ -138,6 +133,8 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         """Close GCS client, remove env var, and close pool."""
         await self.gcs_client.close()
         os.environ.pop("STORAGE_EMULATOR_HOST", None)
+        for key in MOCK_ENV_VARS:
+            os.environ.pop(key, None)
         await self.pool.close()
 
     # -- Helpers ----------------------------------------------------------
@@ -189,7 +186,9 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
     ):
         """Create side effect for _create_ffmpeg_process that writes segment files."""
 
-        async def _factory(_url: str, segment_pattern: str) -> AsyncMock:
+        async def _factory(
+            _url: str, segment_pattern: str, _auth: str = ""
+        ) -> AsyncMock:
             segment_dir = Path(segment_pattern).parent
             for index, segment in enumerate(segments):
                 (segment_dir / f"chunk_{index:06d}.flac").write_bytes(segment)

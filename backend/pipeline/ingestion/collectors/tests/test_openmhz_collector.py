@@ -167,10 +167,10 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
 
         shutdown = asyncio.Event()
         results = []
-        async for flac, ts in openmhz_collector(
+        async for chunk in openmhz_collector(
             _TEST_FEED, shutdown, "https://api.openmhz.com/"
         ):
-            results.append(flac)
+            results.append(chunk)
 
         self.assertEqual(len(results), 0)
 

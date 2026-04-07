@@ -2,14 +2,15 @@
 from __future__ import annotations
 
 import dataclasses
-import datetime
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import asyncio
+    import datetime
     from collections.abc import AsyncIterator, Callable
 
     from backend.pipeline.storage.feed_store import LeasedFeed
+
 
 @dataclasses.dataclass(frozen=True)
 class CapturedChunk:
@@ -24,20 +25,6 @@ class CapturedChunk:
     audio_bytes: bytes
     chunk_start_time: datetime.datetime
     chunk_end_time: datetime.datetime
-
-
-class CollectorEntry(NamedTuple):
-    """Registry entry describing how to locate and invoke a collector.
-
-    Attributes:
-        module_path: Fully-qualified Python module path of the collector.
-        func_name: Name of the capture function within that module.
-        url_base: Base URL passed to the capture function.
-    """
-
-    module_path: str
-    func_name: str
-    url_base: str
 
 
 if TYPE_CHECKING:
