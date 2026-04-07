@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import functions_framework
@@ -44,6 +45,38 @@ logger = logging.getLogger(__name__)
 secret_client: secretmanager.SecretManagerServiceClient | None = None
 
 
+def cleanup_old_versions(
+    secret_client: secretmanager.SecretManagerServiceClient,
+    secret_id: str,
+    hours_to_keep: int = 24,
+) -> None:
+    """
+    Destroys secret versions older than the specified number of hours.
+    Only 'ENABLED' or 'DISABLED' versions can be destroyed.
+    """
+    parent = secret_client.secret_path(PROJECT_ID, secret_id)
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(hours=hours_to_keep)
+
+    # List all versions for the secret
+    for version in secret_client.list_secret_versions(request={"parent": parent}):
+        # Ignore versions already destroyed or scheduled for destruction
+        if version.state not in [
+            secretmanager.SecretVersion.State.ENABLED,
+            secretmanager.SecretVersion.State.DISABLED,
+        ]:
+            continue
+
+        # Don't destroy the very latest version regardless of age
+        # (Safety check in case the function hasn't run in a while)
+        if "versions/1" in version.name: # Keep the initial version if desired, or skip
+            pass
+
+        if datetime.fromtimestamp(version.create_time.seconds, tz=UTC) < cutoff:
+            logger.info(f"Destroying old secret version: {version.name}")
+            secret_client.destroy_secret_version(request={"name": version.name})
+
+
 def add_secret_version(
     secret_client: secretmanager.SecretManagerServiceClient,
     secret_id: str,
@@ -70,6 +103,15 @@ def add_secret_version(
     response = secret_client.add_secret_version(
         request={"parent": parent, "payload": {"data": payload.encode()}}
     )
+
+    # Trigger cleanup after successfully adding a new version
+    try:
+        cleanup_old_versions(secret_client, secret_id)
+    except Exception as e:
+        # We log and continue so the rotation itself isn't considered a failure
+        # if the cleanup fails (e.g., due to permission issues).
+        logger.warning(f"Failed to cleanup old secret versions: {e}")
+
     return response.name
 
 
