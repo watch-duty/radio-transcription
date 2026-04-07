@@ -80,15 +80,15 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
 
         shutdown = asyncio.Event()
         results = []
-        async for flac, ts in openmhz_collector(
+        async for chunk in openmhz_collector(
             _TEST_FEED, shutdown, "https://api.openmhz.com/"
         ):
-            results.append((flac, ts))
+            results.append(chunk)
             shutdown.set()
 
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0][0], b"fake-flac-bytes")
-        self.assertEqual(results[0][1], call.time)
+        self.assertEqual(results[0].audio_bytes, b"fake-flac-bytes")
+        self.assertEqual(results[0].chunk_start_time, call.time)
         mock_convert.assert_called_once_with(b"fake-m4a-bytes", "m4a")
 
     @patch(f"{_COL_MOD}.websocket_transport")
@@ -110,10 +110,10 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
 
         shutdown = asyncio.Event()
         results = []
-        async for flac, ts in openmhz_collector(
+        async for chunk in openmhz_collector(
             _TEST_FEED, shutdown, "https://api.openmhz.com/"
         ):
-            results.append(flac)
+            results.append(chunk)
             shutdown.set()
 
         self.assertEqual(len(results), 1)
@@ -138,10 +138,10 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
 
         shutdown = asyncio.Event()
         results = []
-        async for flac, ts in openmhz_collector(
+        async for chunk in openmhz_collector(
             _TEST_FEED, shutdown, "https://api.openmhz.com/"
         ):
-            results.append(flac)
+            results.append(chunk)
             shutdown.set()
 
         self.assertEqual(len(results), 1)
