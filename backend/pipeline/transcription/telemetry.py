@@ -43,8 +43,6 @@ class GcpMonitoringConfig(ConfigBase):
     stitching_metric_name: str = GCP_STITCHING_METRIC_NAME
 
 
-
-
 class GcpMonitoringExporter(MetricsExporter):
     """Exports metrics using Apache Beam's native built-in Distribution Metrics API."""
 

@@ -50,7 +50,6 @@ class TestMetricsExporters(unittest.TestCase):
         )
         mock_dist_inst.update.assert_any_call(20)
 
-
     def test_multi_exporter(self) -> None:
         """Verifies that MultiExporter successfully and uniformly delegates method execution across all configured internal component metrics exporters."""
         mock_exp1 = MagicMock()
