@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector import (
+    capture_bcfy_calls,
+)
 from backend.pipeline.ingestion.collectors.icecast_collector import (
     capture_icecast_stream,
 )
@@ -18,12 +21,14 @@ if TYPE_CHECKING:
     from backend.pipeline.storage.feed_store import LeasedFeed
 
 BCFY_FEEDS_URL_BASE = "https://partner.broadcastify.com/"
+BCFY_CALLS_URL_BASE = "https://api.bcfy.io/calls/v1/live/"
 OPENMHZ_URL_BASE = "https://api.openmhz.com/"
 
 # Typed registry: ty/mypy checks each value matches CollectorFn.
 # Adding a new collector = 1 import + 1 dict entry.
 _COLLECTORS: dict[SourceType, tuple[CollectorFn, str]] = {
     SourceType.BCFY_FEEDS: (capture_icecast_stream, BCFY_FEEDS_URL_BASE),
+    SourceType.BCFY_CALLS: (capture_bcfy_calls, BCFY_CALLS_URL_BASE),
     SourceType.OPENMHZ: (openmhz_collector, OPENMHZ_URL_BASE),
 }
 
