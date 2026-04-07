@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import functools
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -10,6 +11,8 @@ import aiohttp
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 
 if TYPE_CHECKING:
+    import concurrent.futures
+
     from google.cloud import pubsub_v1
 
     from backend.pipeline.common.clients.gcs_client import GcsClient
@@ -193,6 +196,23 @@ async def download_audio(gcs_client: GcsClient, gcs_uri: str) -> bytes:
 # -----------------------------------------------------------------------------
 
 
+def _resume_ordering_key_on_failure(
+    future: concurrent.futures.Future[str],
+    publisher: pubsub_v1.PublisherClient,
+    topic_path: str,
+    feed_id: str,
+) -> None:
+    """Done-callback that resumes the ordering key upon a publish failure."""
+    try:
+        future.result()
+    except Exception:
+        logger.warning(
+            "Publish failed for ordering key %s. Resuming publish to prevent permanent blocking.",
+            feed_id,
+        )
+        publisher.resume_publish(topic_path, feed_id)
+
+
 def publish_audio_chunk_sync(
     publisher: pubsub_v1.PublisherClient,
     topic_path: str,
@@ -224,7 +244,16 @@ def publish_audio_chunk_sync(
     future = publisher.publish(
         topic_path,
         audio_chunk_msg.SerializeToString(),
+        ordering_key=feed_id,
         **attrs,
+    )
+    future.add_done_callback(
+        functools.partial(
+            _resume_ordering_key_on_failure,
+            publisher=publisher,
+            topic_path=topic_path,
+            feed_id=feed_id,
+        )
     )
     return future.result()
 
@@ -238,15 +267,36 @@ async def publish_audio_chunk(
     start_timestamp: datetime.datetime,
     source_type: str | None = None,
 ) -> str:
-    """Async wrapper around :func:`publish_audio_chunk_sync`."""
+    """Asynchronously publish an AudioChunk to Pub/Sub using ordering keys.
+
+    Leverages asyncio.wrap_future to await the background gRPC thread pool
+    non-blockingly, ensuring other asyncio tasks remain responsive.
+    """
     publisher = pubsub_client.get_publisher()
-    return await asyncio.to_thread(
-        publish_audio_chunk_sync,
-        publisher,
+    audio_chunk_msg = AudioChunk(gcs_uri=gcs_uri)
+    audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
+    audio_chunk_msg.session_id = session_id
+
+    attrs: dict[str, str] = {
+        "feed_id": feed_id,
+        "chunk_uri": gcs_uri,
+    }
+    if source_type is not None:
+        attrs["source_type"] = source_type
+
+    future = publisher.publish(
         topic_path,
-        feed_id,
-        gcs_uri,
-        session_id,
-        start_timestamp,
-        source_type,
+        audio_chunk_msg.SerializeToString(),
+        ordering_key=feed_id,
+        **attrs,
     )
+
+    future.add_done_callback(
+        functools.partial(
+            _resume_ordering_key_on_failure,
+            publisher=publisher,
+            topic_path=topic_path,
+            feed_id=feed_id,
+        )
+    )
+    return await asyncio.wrap_future(future)

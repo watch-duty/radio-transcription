@@ -117,7 +117,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             {"feed_id": "test-feed"},
         )
         options = PipelineOptions(
-            flags=["--input_topic=a", "--output_topic=b", "--project=c"]
+            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
         )
         with BeamTestPipeline(options=options) as p:
             messages = p | beam.Create([mock_msg])
@@ -143,7 +143,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             {},  # Missing feed_id
         )
         options = PipelineOptions(
-            flags=["--input_topic=a", "--output_topic=b", "--project=c"]
+            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
         )
         with BeamTestPipeline(options=options) as p:
             messages = p | beam.Create([mock_msg])
@@ -210,7 +210,7 @@ class OrderRestorerTest(unittest.TestCase):
         config = OrderRestorerConfig(out_of_order_timeout_ms=5000)
 
         options = PipelineOptions(
-            flags=["--input_topic=a", "--output_topic=b", "--project=c"]
+            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
         )
         with BeamTestPipeline(options=options) as p:
             # Emit chunk 1, then chunk 3. Chunk 3 should be buffered.
@@ -277,7 +277,7 @@ class OrderRestorerTest(unittest.TestCase):
         config = OrderRestorerConfig(out_of_order_timeout_ms=5000)
 
         options = PipelineOptions(
-            flags=["--input_topic=a", "--output_topic=b", "--project=c"]
+            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
         )
         with BeamTestPipeline(options=options) as p:
             test_stream = (
@@ -407,7 +407,7 @@ class StitchAudioTest(unittest.TestCase):
         )
 
         options = PipelineOptions(
-            flags=["--input_topic=a", "--output_topic=b", "--project=c"]
+            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
         )
         options.view_as(StandardOptions).streaming = True
 
@@ -622,7 +622,7 @@ class StitchAudioTest(unittest.TestCase):
             mock_download
         )
         options = PipelineOptions(
-            flags=["--input_topic=a", "--output_topic=b", "--project=c"]
+            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
         )
         options.view_as(StandardOptions).streaming = True
         config = get_test_stitch_config(significant_gap_ms=3000)
@@ -771,7 +771,7 @@ class StitchAudioTest(unittest.TestCase):
         )
 
         options = PipelineOptions(
-            flags=["--input_topic=a", "--output_topic=b", "--project=c"]
+            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
         )
         options.view_as(StandardOptions).streaming = True
 
@@ -933,7 +933,7 @@ class StitchAudioTest(unittest.TestCase):
         )
 
         options = PipelineOptions(
-            flags=["--input_topic=a", "--output_topic=b", "--project=c"]
+            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
         )
         options.view_as(StandardOptions).streaming = True
 
@@ -1012,7 +1012,11 @@ class StitchAudioTest(unittest.TestCase):
 
         with self.assertRaises(Exception):
             options = PipelineOptions(
-                flags=["--input_topic=a", "--output_topic=b", "--project=c"]
+                flags=[
+                    "--input_subscription=a",
+                    "--output_topic=b",
+                    "--project=c",
+                ]
             )
             with BeamTestPipeline(options=options) as p:
                 input_elements = [
@@ -1052,7 +1056,7 @@ class TranscribeAudioTest(unittest.TestCase):
         config = get_test_transcribe_config(route_to_dlq=True)
 
         options = PipelineOptions(
-            flags=["--input_topic=a", "--output_topic=b", "--project=c"]
+            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
         )
         with BeamTestPipeline(options=options) as p:
             elements = p | beam.Create(
@@ -1148,7 +1152,7 @@ class TranscribeAudioTest(unittest.TestCase):
         main_thread_name = threading.current_thread().name
 
         options = PipelineOptions(
-            flags=["--input_topic=a", "--output_topic=b", "--project=c"]
+            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
         )
         options.view_as(StandardOptions).streaming = True
 
@@ -1206,7 +1210,7 @@ class DownloadAudioTest(unittest.TestCase):
 
         config = get_test_stitch_config()
         options = PipelineOptions(
-            flags=["--input_topic=a", "--output_topic=b", "--project=c"]
+            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
         )
 
         with BeamTestPipeline(options=options) as p:

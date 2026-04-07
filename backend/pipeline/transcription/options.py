@@ -26,10 +26,10 @@ class TranscriptionOptions(PipelineOptions):
     def _add_argparse_args(cls, parser: argparse.ArgumentParser) -> None:
         """Registers pipeline CLI parameters to enable interactive flag passing via Dataflow."""
         parser.add_argument(
-            "--input_topic",
+            "--input_subscription",
             type=str,
             required=True,
-            help="Pub/Sub topic to read from",
+            help="Pub/Sub ordered subscription to read from",
         )
         parser.add_argument(
             "--output_topic",

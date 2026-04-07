@@ -23,7 +23,7 @@ def main() -> None:
 
     logger.info(
         "Starting pipeline: input=%s, output=%s",
-        options.input_topic,
+        options.input_subscription,
         options.output_topic,
     )
 
