@@ -173,6 +173,11 @@ class StitchAudioFn(beam.DoFn):
             transmission_buffer.read()
         )
         if buffered_audio:
+            deterministic_id = f"{action.feed_id}_{action.time_range.start_ms}_{action.time_range.end_ms}"
+            transmission_id = str(
+                uuid.uuid5(uuid.NAMESPACE_OID, deterministic_id)
+            )
+
             yield (
                 action.feed_id,
                 FlushRequest(
@@ -184,7 +189,7 @@ class StitchAudioFn(beam.DoFn):
                     missing_post_context=action.missing_post_context,
                     start_audio_offset_ms=action.start_audio_offset_ms,
                     end_audio_offset_ms=action.end_audio_offset_ms,
-                    transmission_id=str(uuid.uuid5(uuid.NAMESPACE_OID, f"{action.feed_id}_{action.time_range.start_ms}_{action.time_range.end_ms}")),
+                    transmission_id=transmission_id,
                 ),
             )
         else:
@@ -384,6 +389,13 @@ class StitchAudioFn(beam.DoFn):
                     f"STALE FLUSH: start={start_time_ms}, end={end_time_ms}, len(uris)={len(processed_uris)}, len(buffer)={len(audio_buffer)}"
                 )
 
+                deterministic_id = (
+                    f"{key}_{int(start_time_ms)}_{int(end_time_ms)}"
+                )
+                transmission_id = str(
+                    uuid.uuid5(uuid.NAMESPACE_OID, deterministic_id)
+                )
+
                 yield (
                     key,
                     FlushRequest(
@@ -400,7 +412,7 @@ class StitchAudioFn(beam.DoFn):
                         missing_post_context=True,  # Flushed by timer cutoff, so we assume the tail is missing context.
                         start_audio_offset_ms=curr_context.start_audio_offset_ms,
                         end_audio_offset_ms=curr_context.end_audio_offset_ms,
-                        transmission_id=str(uuid.uuid5(uuid.NAMESPACE_OID, f"{key}_{int(start_time_ms)}_{int(end_time_ms)}")),
+                        transmission_id=transmission_id,
                     ),
                 )
             except Exception as e:

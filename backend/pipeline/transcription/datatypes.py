@@ -171,6 +171,7 @@ class FlushRequest:
     start_audio_offset_ms: int | None = None
     end_audio_offset_ms: int | None = None
 
+
 @dataclass(frozen=True)
 class StateMachineAction:
     """Base class for all actions emitted by the AudioStitchingStateMachine."""
