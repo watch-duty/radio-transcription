@@ -9,7 +9,10 @@ from backend.pipeline.storage.connection import (
     close_pool,
     create_pool_with_retry,
 )
-from backend.pipeline.storage.transcript_store import TranscriptStore
+from backend.pipeline.storage.transcript_store import (
+    AlreadyExistsError,
+    TranscriptStore,
+)
 
 from .models import Transcript
 from .service import TranscriptService
@@ -52,6 +55,11 @@ async def create_transcript(
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except AlreadyExistsError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
             detail=str(e),
         )
 

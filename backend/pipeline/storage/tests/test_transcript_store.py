@@ -5,10 +5,15 @@ import unittest
 import uuid
 from unittest import mock
 
+import asyncpg.exceptions
+
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
-from backend.pipeline.storage.transcript_store import TranscriptStore
+from backend.pipeline.storage.transcript_store import (
+    AlreadyExistsError,
+    TranscriptStore,
+)
 
 _TRANSMISSION_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 _FEED_ID = uuid.UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
@@ -125,6 +130,21 @@ class TestCreateTranscript(BaseTranscriptStoreTest):
             await self.store.create_transcript(msg)
 
         self.assertIn("Invalid feed_id UUID", str(cm.exception))
+
+    async def test_raises_already_exists_error_on_duplicate(self) -> None:
+        """Verifies it raises AlreadyExistsError for duplicate transmission_id."""
+        self.pool.fetchrow.side_effect = (
+            asyncpg.exceptions.UniqueViolationError()
+        )
+
+        msg = EvaluatedTranscribedAudio()
+        msg.transmission_id = str(_TRANSMISSION_ID)
+        msg.feed_id = str(_FEED_ID)
+
+        with self.assertRaises(AlreadyExistsError) as cm:
+            await self.store.create_transcript(msg)
+
+        self.assertIn("already exists", str(cm.exception))
 
 
 class TestGetTranscript(BaseTranscriptStoreTest):

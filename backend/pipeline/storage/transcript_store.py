@@ -1,16 +1,24 @@
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING
+
+import asyncpg
+import asyncpg.exceptions
 
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
 
-if TYPE_CHECKING:
-    import asyncpg
-
 from . import transcript_queries
+
+
+class AlreadyExistsError(Exception):
+    """Raised when a transcript with the same transmission ID already exists."""
+
+    def __init__(self, transmission_id: str) -> None:
+        super().__init__(
+            f"Transcript for transmission {transmission_id} already exists"
+        )
 
 
 class TranscriptStore:
@@ -87,21 +95,24 @@ class TranscriptStore:
         if transcript.HasField("end_audio_offset"):
             end_offset = transcript.end_audio_offset.ToTimedelta()
 
-        row = await self._pool.fetchrow(
-            transcript_queries.CREATE_TRANSCRIPT_SQL,
-            transmission_id,
-            feed_id,
-            transcript.transcript,
-            start_ts,
-            end_ts,
-            transcript.missing_prior_context,
-            transcript.missing_post_context,
-            list(transcript.source_audio_uris),
-            transcript.canonical_audio_uri or None,
-            start_offset,
-            end_offset,
-            list(transcript.evaluation_decisions),
-        )
+        try:
+            row = await self._pool.fetchrow(
+                transcript_queries.CREATE_TRANSCRIPT_SQL,
+                transmission_id,
+                feed_id,
+                transcript.transcript,
+                start_ts,
+                end_ts,
+                transcript.missing_prior_context,
+                transcript.missing_post_context,
+                list(transcript.source_audio_uris),
+                transcript.canonical_audio_uri or None,
+                start_offset,
+                end_offset,
+                list(transcript.evaluation_decisions),
+            )
+        except asyncpg.exceptions.UniqueViolationError as e:
+            raise AlreadyExistsError(str(transmission_id)) from e
 
         if row is None:
             msg = f"Unable to create transcript for transmission {transmission_id}."
