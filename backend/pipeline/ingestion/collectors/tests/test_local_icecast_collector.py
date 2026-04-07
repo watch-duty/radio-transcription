@@ -8,6 +8,8 @@ from unittest.mock import MagicMock, patch
 
 from anyio import Path as AsyncPath
 
+from backend.pipeline.ingestion.models import CapturedChunk
+
 MOCK_ENV_VARS = {
     "BROADCASTIFY_USERNAME": "test_user",
     "BROADCASTIFY_PASSWORD": "test_pass",
@@ -50,8 +52,16 @@ class TestLocalIcecastCollector(unittest.IsolatedAsyncioTestCase):
         async def _fake_capture(
             _feed: dict[str, Any], _shutdown_event: Any, _url_base: str
         ):
-            yield b"first-bytes", datetime.datetime.now()
-            yield b"second-bytes", datetime.datetime.now()
+            yield CapturedChunk(
+                audio_bytes=b"first-bytes",
+                chunk_start_time=datetime.datetime.now(datetime.UTC),
+                chunk_end_time=datetime.datetime.now(datetime.UTC),
+            )
+            yield CapturedChunk(
+                audio_bytes=b"second-bytes",
+                chunk_start_time=datetime.datetime.now(datetime.UTC),
+                chunk_end_time=datetime.datetime.now(datetime.UTC),
+            )
 
         fixed_feed_id = uuid.UUID("12345678-1234-5678-1234-567812345678")
         capture_mock = MagicMock(side_effect=_fake_capture)
@@ -117,7 +127,11 @@ class TestLocalIcecastCollector(unittest.IsolatedAsyncioTestCase):
         async def _fake_capture(
             _feed: dict[str, Any], _shutdown_event: Any, _url_base: str
         ):
-            yield b"cwd-bytes", datetime.datetime.now()
+            yield CapturedChunk(
+                audio_bytes=b"cwd-bytes",
+                chunk_start_time=datetime.datetime.now(datetime.UTC),
+                chunk_end_time=datetime.datetime.now(datetime.UTC),
+            )
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = local_icecast_collector.Path(tmp_dir)

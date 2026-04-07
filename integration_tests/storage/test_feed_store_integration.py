@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import uuid
 from typing import TYPE_CHECKING
 
@@ -202,6 +203,7 @@ async def test_progress_update_succeeds_with_correct_worker(
         worker,
         "gs://bucket/path/file.ogg",
         0,
+        None,
     )
 
     assert result is True
@@ -227,6 +229,7 @@ async def test_progress_update_fails_with_wrong_worker(
         uuid.uuid4(),
         "gs://bucket/path/file.ogg",
         0,
+        None,
     )
 
     assert result is False
@@ -372,6 +375,7 @@ async def test_successful_processing_resets_failure_count(
         new_worker,
         "chunk_001.flac",
         result["fencing_token"],
+        None,
     )
     row = await db_pool.fetchrow(
         "SELECT failure_count FROM feeds WHERE id = $1",
@@ -563,6 +567,7 @@ async def test_progress_update_fails_with_wrong_fencing_token(
         worker,
         "gs://bucket/path/file.ogg",
         999,  # wrong fencing_token
+        None,
     )
 
     assert result is False
@@ -606,3 +611,38 @@ async def test_report_feed_failure_fails_with_wrong_fencing_token(
     row = await _get_feed_status(db_pool, feed_id)
     assert row["status"] == "active"
     assert row["failure_count"] == 0
+
+
+# -- Tests: last_bookmark_time ------------------------------------------------
+
+
+async def test_last_bookmark_time_round_trips_through_lease(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """Bookmark set via update_feed_progress survives release and re-lease."""
+    worker = uuid.uuid4()
+    await _insert_feed(db_pool, "Bookmark Feed")
+
+    # Lease the feed.
+    result1 = await store.lease_feed(worker)
+    assert result1 is not None
+    assert result1["last_bookmark_time"] is None
+
+    # Record a bookmark.
+    bookmark = datetime.datetime(2026, 3, 30, 12, 0, 0, tzinfo=datetime.UTC)
+    ok = await store.update_feed_progress(
+        result1["id"],
+        worker,
+        "chunk_001.flac",
+        result1["fencing_token"],
+        bookmark,
+    )
+    assert ok is True
+
+    # Release and re-lease.
+    await store.release_feed(result1["id"], worker, result1["fencing_token"])
+    result2 = await store.lease_feed(uuid.uuid4())
+
+    assert result2 is not None
+    assert result2["id"] == result1["id"]
+    assert result2["last_bookmark_time"] == bookmark

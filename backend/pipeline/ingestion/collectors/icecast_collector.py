@@ -20,6 +20,7 @@ from backend.pipeline.common.constants import (
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
 )
+from backend.pipeline.ingestion.models import CapturedChunk
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -49,6 +50,10 @@ if not USER or not PASS:
 credentials = f"{USER}:{PASS}"
 encoded_credentials = base64.b64encode(credentials.encode()).decode()
 auth_header = f"Authorization: Basic {encoded_credentials}\r\n"
+
+
+def _now_utc() -> datetime.datetime:
+    return datetime.datetime.now(tz=datetime.UTC)
 
 
 async def _drain_stderr(
@@ -82,7 +87,7 @@ def _segment_path(directory: Path, index: int) -> Path:
 
 async def capture_icecast_stream(  # noqa: PLR0915
     feed: LeasedFeed, shutdown_event: asyncio.Event, url_base: str
-) -> AsyncIterator[tuple[bytes, datetime.datetime]]:
+) -> AsyncIterator[CapturedChunk]:
     """
     Capture audio chunks from an Icecast stream using ffmpeg segment muxing.
 
@@ -96,9 +101,10 @@ async def capture_icecast_stream(  # noqa: PLR0915
         url_base: The base URL to prepend to the source_feed_id for stream access
 
     Yields:
-        A tuple containing:
-        - (bytes) Complete audio file bytes for the segment
-        - (datetime.datetime) The exact audio start time of the segment window
+        A CapturedChunk containing:
+        - audio_bytes: Complete audio file bytes for the segment
+        - chunk_start_time: The exact audio start time of the segment window
+        - chunk_end_time: The exact audio end time of the segment window
 
     Raises:
         ValueError: If source_feed_id is missing from feed properties
@@ -143,7 +149,7 @@ async def capture_icecast_stream(  # noqa: PLR0915
         wait_task = asyncio.create_task(process.wait())
 
         # Anchor the stream timeline to the exact moment ffmpeg starts
-        stream_anchor_time = datetime.datetime.now(tz=datetime.UTC)
+        stream_anchor_time = _now_utc()
 
         try:
             while True:
@@ -170,14 +176,23 @@ async def capture_icecast_stream(  # noqa: PLR0915
                         current_segment.read_bytes
                     )
                     if segment_bytes:
-                        # Calculate the start time of this specific chunk's window
+                        # Calculate the start and end times of this specific chunk's window
                         chunk_start_time = (
                             stream_anchor_time
                             + datetime.timedelta(
                                 seconds=next_index * CHUNK_DURATION_SECONDS
                             )
                         )
-                        yield segment_bytes, chunk_start_time
+                        chunk_end_time = chunk_start_time + datetime.timedelta(
+                            seconds=CHUNK_DURATION_SECONDS
+                        )
+                        if process_done:
+                            chunk_end_time = min(chunk_end_time, _now_utc())
+                        yield CapturedChunk(
+                            audio_bytes=segment_bytes,
+                            chunk_start_time=chunk_start_time,
+                            chunk_end_time=chunk_end_time,
+                        )
 
                         last_activity_time = time.monotonic()
                     await asyncio.to_thread(

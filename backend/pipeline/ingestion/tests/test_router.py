@@ -5,9 +5,9 @@ import unittest
 import uuid
 from unittest import mock
 
+from backend.pipeline.ingestion.models import CollectorEntry
 from backend.pipeline.ingestion.router import (
     _COLLECTOR_REGISTRY,
-    CollectorEntry,
     route_capturer,
     supported_source_types,
 )
@@ -21,6 +21,7 @@ def _make_feed(source_type: SourceType) -> LeasedFeed:
         name=f"test-{source_type}",
         source_type=source_type,
         last_processed_filename=None,
+        last_bookmark_time=None,
         fencing_token=0,
         source_feed_id="123",
     )

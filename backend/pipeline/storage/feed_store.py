@@ -5,6 +5,7 @@ import logging
 from typing import TYPE_CHECKING, TypedDict
 
 if TYPE_CHECKING:
+    import datetime
     import uuid
 
     import asyncpg
@@ -59,10 +60,12 @@ leased AS (
     FROM available_feed
     WHERE feeds.id = available_feed.id
     RETURNING feeds.id, feeds.name, feeds.source_type,
-              feeds.last_processed_filename, feeds.fencing_token
+              feeds.last_processed_filename, feeds.last_bookmark_time,
+              feeds.fencing_token
 )
 SELECT leased.id, leased.name, leased.source_type,
-       leased.last_processed_filename, leased.fencing_token, fpi.source_feed_id
+       leased.last_processed_filename, leased.last_bookmark_time,
+       leased.fencing_token, fpi.source_feed_id
 FROM leased
 LEFT JOIN feed_properties fpi ON fpi.feed_id = leased.id
 """
@@ -70,6 +73,7 @@ LEFT JOIN feed_properties fpi ON fpi.feed_id = leased.id
 _UPDATE_PROGRESS_SQL = """\
 UPDATE feeds
 SET last_processed_filename = $1,
+    last_bookmark_time = COALESCE($5, last_bookmark_time),
     last_heartbeat = NOW(),
     failure_count = 0
 WHERE id = $2 AND worker_id = $3 AND fencing_token = $4
@@ -143,10 +147,12 @@ leased AS (
     FROM available_feeds
     WHERE feeds.id = available_feeds.id
     RETURNING feeds.id, feeds.name, feeds.source_type,
-              feeds.last_processed_filename, feeds.fencing_token
+              feeds.last_processed_filename, feeds.last_bookmark_time,
+              feeds.fencing_token
 )
 SELECT leased.id, leased.name, leased.source_type,
-       leased.last_processed_filename, leased.fencing_token, fpi.source_feed_id
+       leased.last_processed_filename, leased.last_bookmark_time,
+       leased.fencing_token, fpi.source_feed_id
 FROM leased
 LEFT JOIN feed_properties fpi ON fpi.feed_id = leased.id
 """
@@ -179,6 +185,7 @@ class LeasedFeed(TypedDict):
     name: str
     source_type: SourceType
     last_processed_filename: str | None
+    last_bookmark_time: datetime.datetime | None
     fencing_token: int
     source_feed_id: str | None
 
@@ -252,6 +259,7 @@ class FeedStore:
             name=row["name"],
             source_type=source_type,
             last_processed_filename=row["last_processed_filename"],
+            last_bookmark_time=row["last_bookmark_time"],
             fencing_token=row["fencing_token"],
             source_feed_id=row["source_feed_id"],
         )
@@ -262,6 +270,7 @@ class FeedStore:
         worker_id: uuid.UUID,
         new_gcs_path: str,
         fencing_token: int,
+        last_bookmark_time: datetime.datetime | None,
     ) -> bool:
         """
         Update the feed's bookmark and heartbeat after a successful write.
@@ -276,6 +285,7 @@ class FeedStore:
             worker_id: UUID of the worker holding the lease.
             new_gcs_path: The GCS object path of the last successfully written file.
             fencing_token: The fencing token received at lease acquisition.
+            last_bookmark_time: Timestamp bookmark for the last processed audio.
 
         Returns:
             ``True`` if the update succeeded (lease still held), ``False`` if the
@@ -288,6 +298,7 @@ class FeedStore:
             feed_id,
             worker_id,
             fencing_token,
+            last_bookmark_time,
         )
         return result == "UPDATE 1"
 
@@ -490,6 +501,7 @@ class FeedStore:
                     name=row["name"],
                     source_type=source_type,
                     last_processed_filename=row["last_processed_filename"],
+                    last_bookmark_time=row["last_bookmark_time"],
                     fencing_token=row["fencing_token"],
                     source_feed_id=row["source_feed_id"],
                 )

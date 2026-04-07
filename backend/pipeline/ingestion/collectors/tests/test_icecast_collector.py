@@ -8,6 +8,7 @@ from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
+from backend.pipeline.ingestion.models import CapturedChunk
 from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 
 MOCK_ENV_VARS = {
@@ -31,6 +32,7 @@ def _make_feed(name: str, source_feed_id: str | None) -> LeasedFeed:
         name=name,
         source_type=SourceType.BCFY_FEEDS,
         last_processed_filename=None,
+        last_bookmark_time=None,
         fencing_token=1,
         source_feed_id=source_feed_id,
     )
@@ -95,10 +97,10 @@ async def _collect_chunks(
         async with asyncio.timeout(total_timeout):
             while True:
                 try:
-                    chunk, _ts = await asyncio.wait_for(
+                    captured_chunk = await asyncio.wait_for(
                         gen.__anext__(), timeout=per_chunk_timeout
                     )
-                    chunks.append(chunk)
+                    chunks.append(captured_chunk.audio_bytes)
                 except StopAsyncIteration:
                     break
     except TimeoutError:
@@ -111,17 +113,19 @@ async def _collect_chunks_with_timestamps(
     *,
     total_timeout: float = 2.0,
     per_chunk_timeout: float = 0.5,
-) -> list[tuple[bytes, datetime.datetime]]:
-    """Collect chunks and timestamps from an async generator until it finishes or times out."""
+) -> list[CapturedChunk]:
+    """Collect CapturedChunk objects from an async generator until it
+    finishes or times out.
+    """
     results = []
     try:
         async with asyncio.timeout(total_timeout):
             while True:
                 try:
-                    chunk, ts = await asyncio.wait_for(
+                    captured_chunk = await asyncio.wait_for(
                         gen.__anext__(), timeout=per_chunk_timeout
                     )
-                    results.append((chunk, ts))
+                    results.append(captured_chunk)
                 except StopAsyncIteration:
                     break
     except TimeoutError:
@@ -237,6 +241,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
                 "name": "incomplete-feed",
                 "source_type": "icecast",
                 "last_processed_filename": None,
+                "last_bookmark_time": None,
             },
         )
         shutdown_event = asyncio.Event()
@@ -460,13 +465,26 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(b"FLAC_SEGMENT" in chunk or b"FLAC" in chunk)
 
     @patch(
+        "backend.pipeline.ingestion.collectors.icecast_collector._now_utc",
+    )
+    @patch(
         "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_timestamps_advance_by_chunk_duration(
-        self, mock_create_ffmpeg: AsyncMock
+        self, mock_create_ffmpeg: AsyncMock, mock_now_utc: MagicMock
     ) -> None:
-        """Test timestamp math: Each chunk advances strictly by CHUNK_DURATION_SECONDS."""
+        """Test timestamp math: chunks advance by CHUNK_DURATION_SECONDS when
+        _now_utc() is far future so min() picks chunk_end_time (unclamped path).
+        """
+        fixed_anchor = datetime.datetime(
+            2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC
+        )
+        # First call sets stream_anchor_time; subsequent calls (the clamp) return a
+        # time far beyond any chunk_end_time so min() always returns chunk_end_time.
+        far_future = fixed_anchor + datetime.timedelta(hours=1)
+        mock_now_utc.side_effect = [fixed_anchor] + [far_future] * 10
+
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=3333,
             segments=[
@@ -488,12 +506,68 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(results), 3)
 
-        ts0 = results[0][1]
-        ts1 = results[1][1]
-        ts2 = results[2][1]
+        ts0 = results[0].chunk_start_time
+        ts1 = results[1].chunk_start_time
+        ts2 = results[2].chunk_start_time
 
         self.assertEqual((ts1 - ts0).total_seconds(), CHUNK_DURATION_SECONDS)
         self.assertEqual((ts2 - ts1).total_seconds(), CHUNK_DURATION_SECONDS)
+
+        # chunk_end_time should be exactly CHUNK_DURATION_SECONDS after chunk_start_time
+        for captured_chunk in results:
+            self.assertEqual(
+                (
+                    captured_chunk.chunk_end_time
+                    - captured_chunk.chunk_start_time
+                ).total_seconds(),
+                CHUNK_DURATION_SECONDS,
+            )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast_collector._now_utc",
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_last_chunk_end_time_clamped_to_current_time(
+        self, mock_create_ffmpeg: AsyncMock, mock_now_utc: MagicMock
+    ) -> None:
+        """Test timestamp math: last chunk end_time is clamped to _now_utc()
+        when _now_utc() < chunk_end_time so min() picks _now_utc() (clamped path).
+
+        A single segment guarantees _now_utc() is called exactly twice: once
+        to set stream_anchor_time, and once for the min() clamp when the process
+        is done and the only chunk is finalized.
+        """
+        fixed_anchor = datetime.datetime(
+            2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC
+        )
+        # clamp_time is before anchor + CHUNK_DURATION_SECONDS (the natural end),
+        # so min() picks clamp_time instead of chunk_end_time.
+        clamp_time = fixed_anchor + datetime.timedelta(
+            seconds=CHUNK_DURATION_SECONDS - 5
+        )
+        mock_now_utc.side_effect = [fixed_anchor, clamp_time]
+
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=4444,
+            segments=[b"FLAC_SEGMENT_0"],
+            wait_delay=0.1,
+            wait_result=0,
+        )
+
+        feed = _make_feed("clamp-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed, shutdown_event, url_base="https://mock.example.com/"
+        )
+        results = await _collect_chunks_with_timestamps(gen)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].chunk_start_time, fixed_anchor)
+        self.assertEqual(results[0].chunk_end_time, clamp_time)
 
 
 if __name__ == "__main__":
