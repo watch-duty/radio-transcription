@@ -7,7 +7,6 @@ import contextlib
 import datetime
 import logging
 import os
-import sys
 import tempfile
 import time
 from pathlib import Path
@@ -36,20 +35,19 @@ READ_TIMEOUT_SEC = 30  # Max seconds without a finalized segment before timeout
 POLL_INTERVAL_SEC = 0.25  # Polling interval for segment file checks
 STDERR_TAIL_LINES = 30  # Ring buffer size for ffmpeg stderr diagnostics
 
-# Authentication for Icecast/Broadcastify streams
-USER = os.getenv("BROADCASTIFY_USERNAME")
-PASS = os.getenv("BROADCASTIFY_PASSWORD")
-
-if not USER or not PASS:
-    logger.critical(
-        "BROADCASTIFY_USERNAME and BROADCASTIFY_PASSWORD env vars must be set."
-    )
-    sys.exit(1)
-
-# Create the Basic Auth header value for ffmpeg
-credentials = f"{USER}:{PASS}"
-encoded_credentials = base64.b64encode(credentials.encode()).decode()
-auth_header = f"Authorization: Basic {encoded_credentials}\r\n"
+def _build_auth_header() -> str:
+    """Build Basic Auth header from env vars, raising if missing."""
+    user = os.getenv("BROADCASTIFY_USERNAME")
+    password = os.getenv("BROADCASTIFY_PASSWORD")
+    if not user or not password:
+        msg = (
+            "BROADCASTIFY_USERNAME and BROADCASTIFY_PASSWORD "
+            "env vars must be set"
+        )
+        raise ValueError(msg)
+    credentials = f"{user}:{password}"
+    encoded = base64.b64encode(credentials.encode()).decode()
+    return f"Authorization: Basic {encoded}\r\n"
 
 
 def _now_utc() -> datetime.datetime:
@@ -118,6 +116,7 @@ async def capture_icecast_stream(  # noqa: PLR0915
         msg = f"Feed {feed_id} ({feed_name}) missing source_feed_id in feed_properties"
         raise ValueError(msg)
 
+    auth_header = _build_auth_header()
     normalized_url_base = url_base if url_base.endswith("/") else f"{url_base}/"
     url = urljoin(normalized_url_base, f"{source_feed_id.strip()}.mp3")
 
@@ -125,7 +124,9 @@ async def capture_icecast_stream(  # noqa: PLR0915
         segment_dir = Path(tmp_dir)
         segment_pattern = str(segment_dir / f"chunk_%06d.{AUDIO_FORMAT}")
 
-        process = await _create_ffmpeg_process(url, segment_pattern)
+        process = await _create_ffmpeg_process(
+            url, segment_pattern, auth_header
+        )
         if (
             process.stderr is None
         ):  # pragma: no cover — guaranteed by stderr=PIPE
@@ -253,6 +254,7 @@ async def capture_icecast_stream(  # noqa: PLR0915
 async def _create_ffmpeg_process(
     url: str,
     segment_pattern: str,
+    auth_header: str,
 ) -> asyncio.subprocess.Process:
     """
     Create and launch ffmpeg subprocess configured for segmented audio output.
