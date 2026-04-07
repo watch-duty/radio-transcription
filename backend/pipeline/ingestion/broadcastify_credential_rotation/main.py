@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import functions_framework
@@ -44,6 +45,48 @@ logger = logging.getLogger(__name__)
 secret_client: secretmanager.SecretManagerServiceClient | None = None
 
 
+def cleanup_old_versions(
+    secret_client: secretmanager.SecretManagerServiceClient,
+    secret_id: str,
+    hours_to_keep: int = 24,
+) -> None:
+    """Destroys old Secret Manager versions for the given secret.
+
+    Args:
+        secret_client: Secret Manager client used to list and destroy
+            secret versions.
+        secret_id: Secret Manager secret ID whose old versions should be
+            cleaned up.
+        hours_to_keep: Number of hours of secret versions to retain. Versions
+            older than this cutoff are eligible for destruction.
+
+    Returns:
+        None.
+
+    Only versions in the `ENABLED` or `DISABLED` state can be destroyed.
+    Versions that are already destroyed or scheduled for destruction are
+    skipped.
+    """
+    parent = secret_client.secret_path(PROJECT_ID, secret_id)
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(hours=hours_to_keep)
+
+    # List all versions for the secret
+    for version in secret_client.list_secret_versions(
+        request={"parent": parent}
+    ):
+        # Ignore versions already destroyed or scheduled for destruction
+        if version.state not in [
+            secretmanager.SecretVersion.State.ENABLED,
+            secretmanager.SecretVersion.State.DISABLED,
+        ]:
+            continue
+
+        if datetime.fromtimestamp(version.create_time.seconds, tz=UTC) < cutoff:
+            logger.info(f"Destroying old secret version: {version.name}")
+            secret_client.destroy_secret_version(request={"name": version.name})
+
+
 def add_secret_version(
     secret_client: secretmanager.SecretManagerServiceClient,
     secret_id: str,
@@ -70,6 +113,21 @@ def add_secret_version(
     response = secret_client.add_secret_version(
         request={"parent": parent, "payload": {"data": payload.encode()}}
     )
+
+    # Trigger cleanup after successfully adding a new version
+    try:
+        cleanup_old_versions(secret_client, secret_id)
+    except Exception:
+        # We log and continue so the rotation itself isn't considered a failure
+        # if the cleanup fails (e.g., due to permission issues).
+        logger.warning(
+            "Failed to clean up old secret versions for secret_id=%s "
+            "hours_to_keep=%s",
+            secret_id,
+            24,
+            exc_info=True,
+        )
+
     return response.name
 
 
