@@ -4,7 +4,6 @@
 node_modules
 .pnp
 .pnp.js
-package-lock.json
 .idea
 venv/
 .venv/
@@ -65,3 +64,13 @@ dist/
 
 # Generated Typescript files
 **/generated/**.ts
+
+# Jujutsu
+.jj/
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# Python Tools
+.pytest_cache/
+.ruff_cache/
