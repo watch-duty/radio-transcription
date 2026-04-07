@@ -304,9 +304,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         last_bookmark_time = cast(
             "datetime.datetime", self.feed["last_bookmark_time"]
         )
-        self.assertEqual(
-            params["pos"], int(last_bookmark_time.timestamp())
-        )
+        self.assertEqual(params["pos"], int(last_bookmark_time.timestamp()))
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
