@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import logging
 import os
 import random
@@ -12,9 +13,9 @@ from backend.pipeline.common.audio import convert_to_flac
 from backend.pipeline.ingestion.collectors.openmhz._ws_transport import (
     websocket_transport,
 )
+from backend.pipeline.ingestion.models import CapturedChunk
 
 if TYPE_CHECKING:
-    import datetime
     from collections.abc import AsyncIterator
 
     from backend.pipeline.ingestion.collectors.openmhz._types import (
@@ -99,10 +100,10 @@ async def openmhz_collector(
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
     url_base: str,
-) -> AsyncIterator[tuple[bytes, datetime.datetime]]:
+) -> AsyncIterator[CapturedChunk]:
     """Capture OpenMHZ call recordings via WebSocket.
 
-    Yields ``(flac_bytes, call_time)`` for each call received.
+    Yields :class:`CapturedChunk` for each call received.
 
     Raises:
         ValueError: If ``source_feed_id`` is missing from the feed.
@@ -160,7 +161,12 @@ async def openmhz_collector(
                             len(m4a_bytes),
                             len(flac_bytes),
                         )
-                        yield flac_bytes, call.time
+                        yield CapturedChunk(
+                            audio_bytes=flac_bytes,
+                            chunk_start_time=call.time,
+                            chunk_end_time=call.time
+                            + datetime.timedelta(seconds=call.length_sec),
+                        )
             except Exception:
                 logger.warning(
                     "Transport error: short_name=%s",
