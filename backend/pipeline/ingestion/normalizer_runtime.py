@@ -323,6 +323,13 @@ class NormalizerRuntime:
                 feed,
                 self._shutdown,
             ):
+                if not isinstance(captured_chunk, CapturedChunk):
+                    msg = (
+                        f"Collector yielded "
+                        f"{type(captured_chunk).__name__}, "
+                        f"expected CapturedChunk"
+                    )
+                    raise TypeError(msg)
                 gcs_uri = await retry_with_lease_check(
                     gcp_helper.upload_staged_audio,
                     self._gcs_client,
