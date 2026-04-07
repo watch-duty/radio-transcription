@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import datetime
+import functools
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -194,6 +195,23 @@ async def download_audio(gcs_client: GcsClient, gcs_uri: str) -> bytes:
 # -----------------------------------------------------------------------------
 
 
+def _resume_ordering_key_on_failure(
+    future: concurrent.futures.Future[str],
+    publisher: pubsub_v1.PublisherClient,
+    topic_path: str,
+    feed_id: str,
+) -> None:
+    """Done-callback that resumes the ordering key upon a publish failure."""
+    try:
+        future.result()
+    except Exception:
+        logger.warning(
+            "Publish failed for ordering key %s. Resuming publish to prevent permanent blocking.",
+            feed_id,
+        )
+        publisher.resume_publish(topic_path, feed_id)
+
+
 def publish_audio_chunk_sync(
     publisher: pubsub_v1.PublisherClient,
     topic_path: str,
@@ -228,18 +246,14 @@ def publish_audio_chunk_sync(
         ordering_key=feed_id,
         **attrs,
     )
-
-    def _resume_on_error(f: concurrent.futures.Future[str]) -> None:
-        try:
-            f.result()
-        except Exception:
-            logger.warning(
-                "Publish failed for ordering key %s. Resuming publish to prevent permanent blocking.",
-                feed_id,
-            )
-            publisher.resume_publish(topic_path, feed_id)
-
-    future.add_done_callback(_resume_on_error)
+    future.add_done_callback(
+        functools.partial(
+            _resume_ordering_key_on_failure,
+            publisher=publisher,
+            topic_path=topic_path,
+            feed_id=feed_id,
+        )
+    )
     return future.result()
 
 
@@ -276,15 +290,12 @@ async def publish_audio_chunk(
         **attrs,
     )
 
-    def _resume_on_error(f: concurrent.futures.Future[str]) -> None:
-        try:
-            f.result()
-        except Exception:
-            logger.warning(
-                "Publish failed for ordering key %s. Resuming publish to prevent permanent blocking.",
-                feed_id,
-            )
-            publisher.resume_publish(topic_path, feed_id)
-
-    future.add_done_callback(_resume_on_error)
+    future.add_done_callback(
+        functools.partial(
+            _resume_ordering_key_on_failure,
+            publisher=publisher,
+            topic_path=topic_path,
+            feed_id=feed_id,
+        )
+    )
     return await asyncio.wrap_future(future)
