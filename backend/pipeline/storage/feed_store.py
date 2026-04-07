@@ -174,7 +174,7 @@ SET status = CASE WHEN failure_count + 1 >= $3
                             + (RANDOM() * INTERVAL '10 seconds')
                        ELSE NULL END
 WHERE id = $1 AND worker_id = $2 AND fencing_token = $4
-RETURNING status::text, failure_count, retry_after
+RETURNING status::text, failure_count, retry_after, name, source_type
 """
 
 
@@ -394,6 +394,13 @@ class FeedStore:
                     "feed_id": str(feed_id),
                     "failure_count": row["failure_count"],
                 },
+            )
+            from backend.pipeline.ingestion import quarantine_telemetry  # noqa: PLC0415
+
+            await quarantine_telemetry.emit_quarantine_event(
+                feed_id=str(feed_id),
+                feed_name=row["name"],
+                source_type=row["source_type"],
             )
         else:
             logger.info(

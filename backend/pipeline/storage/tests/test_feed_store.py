@@ -301,6 +301,8 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
                 "status": "failing",
                 "failure_count": 1,
                 "retry_after": None,
+                "name": "My Feed",
+                "source_type": "bcfy_feeds",
             },
         )
         store = FeedStore(pool)
@@ -325,6 +327,8 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
                 "status": "failing",
                 "failure_count": 1,
                 "retry_after": None,
+                "name": "My Feed",
+                "source_type": "bcfy_feeds",
             },
         )
         store = FeedStore(pool)
@@ -340,6 +344,56 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[4], 1)  # fencing_token
         self.assertEqual(args[5], 600)  # default backoff_max_sec
         self.assertEqual(args[6], 15)  # default backoff_base_sec
+
+    @mock.patch(
+        "backend.pipeline.ingestion.quarantine_telemetry.emit_quarantine_event",
+        new_callable=mock.AsyncMock,
+    )
+    async def test_quarantine_calls_telemetry(
+        self, mock_emit: mock.AsyncMock,
+    ) -> None:
+        """Quarantine status triggers emit_quarantine_event."""
+        pool = _make_pool(
+            fetchrow_result={
+                "status": "quarantined",
+                "failure_count": 5,
+                "retry_after": None,
+                "name": "My Feed",
+                "source_type": "bcfy_feeds",
+            },
+        )
+        store = FeedStore(pool)
+
+        await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
+
+        mock_emit.assert_awaited_once_with(
+            feed_id=str(_FEED_ID),
+            feed_name="My Feed",
+            source_type="bcfy_feeds",
+        )
+
+    @mock.patch(
+        "backend.pipeline.ingestion.quarantine_telemetry.emit_quarantine_event",
+        new_callable=mock.AsyncMock,
+    )
+    async def test_failing_does_not_call_telemetry(
+        self, mock_emit: mock.AsyncMock,
+    ) -> None:
+        """Non-quarantine status does not trigger telemetry."""
+        pool = _make_pool(
+            fetchrow_result={
+                "status": "failing",
+                "failure_count": 1,
+                "retry_after": None,
+                "name": "My Feed",
+                "source_type": "bcfy_feeds",
+            },
+        )
+        store = FeedStore(pool)
+
+        await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
+
+        mock_emit.assert_not_awaited()
 
 
 class TestReleaseFeed(unittest.IsolatedAsyncioTestCase):
@@ -472,6 +526,8 @@ class TestReportFeedFailureWithThreshold(unittest.IsolatedAsyncioTestCase):
                 "status": "failing",
                 "failure_count": 1,
                 "retry_after": None,
+                "name": "My Feed",
+                "source_type": "bcfy_feeds",
             },
         )
         store = FeedStore(pool)
@@ -490,6 +546,8 @@ class TestReportFeedFailureWithThreshold(unittest.IsolatedAsyncioTestCase):
                 "status": "failing",
                 "failure_count": 1,
                 "retry_after": None,
+                "name": "My Feed",
+                "source_type": "bcfy_feeds",
             },
         )
         store = FeedStore(pool)

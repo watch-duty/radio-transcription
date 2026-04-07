@@ -86,6 +86,7 @@ def _make_settings(**overrides) -> mock.MagicMock:
             command_timeout_sec=30.0,
             connect_timeout_sec=10.0,
         ),
+        "gcp_project_id": None,
         "feed_failure_threshold": 3,
         "abandonment_window_sec": 60.0,
         # Retry settings — must be real numbers so min()/random.uniform()
