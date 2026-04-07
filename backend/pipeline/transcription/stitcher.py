@@ -545,8 +545,8 @@ class TranscribeAudioFn(beam.DoFn):
             )
             timestamp_str = dt.strftime("%Y%m%dT%H%M%SZ")
 
-            flac_path = f"stitched/lossless/{request.feed_id}/{dt:%Y/%m/%d}/{timestamp_str}.flac"
-            m4a_path = f"stitched/playback/{request.feed_id}/{dt:%Y/%m/%d}/{timestamp_str}.m4a"
+            flac_path = f"stitched/lossless/{request.feed_id}/{dt:%Y/%m/%d}/{request.transmission_uuid}.flac"
+            m4a_path = f"stitched/playback/{request.feed_id}/{dt:%Y/%m/%d}/{request.transmission_uuid}.m4a"
 
             canonical_audio_uri, playback_audio_uri = (
                 self.audio_uploader.upload_audio_derivatives(
