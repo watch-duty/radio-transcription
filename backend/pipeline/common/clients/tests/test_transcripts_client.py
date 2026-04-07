@@ -1,7 +1,10 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
+import requests
+
 from backend.pipeline.common.clients.transcripts_client import TranscriptsClient
+from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.schema_types import (
     evaluated_transcribed_audio_pb2 as evaluated_pb2,
 )
@@ -62,6 +65,21 @@ class TestTranscriptsClient(unittest.TestCase):
         # Execute & Verify
         with self.assertRaises(Exception):
             self.client.create_transcript(self.payload)
+
+    def test_create_transcript_raises_already_exists(self) -> None:
+        # Setup
+        mock_response = MagicMock()
+        mock_response.status_code = 409
+        mock_response.raise_for_status.side_effect = (
+            requests.exceptions.HTTPError(response=mock_response)
+        )
+        self.mock_session.post.return_value = mock_response
+
+        # Execute & Verify
+        with self.assertRaises(AlreadyExistsError) as cm:
+            self.client.create_transcript(self.payload)
+
+        self.assertEqual(cm.exception.transmission_id, "12345")
 
 
 if __name__ == "__main__":

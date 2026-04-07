@@ -8,6 +8,7 @@ from google.protobuf import json_format
 
 from backend.pipeline.common.auth import get_id_token
 from backend.pipeline.common.env import is_gcp_env
+from backend.pipeline.common.exceptions import AlreadyExistsError
 
 if TYPE_CHECKING:
     from backend.pipeline.schema_types import (
@@ -57,4 +58,9 @@ class TranscriptsClient:
             json=data,
             timeout=10,
         )
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            if response.status_code == 409:
+                raise AlreadyExistsError(payload.transmission_id) from e
+            raise
