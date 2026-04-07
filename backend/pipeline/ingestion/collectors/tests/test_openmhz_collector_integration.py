@@ -25,7 +25,7 @@ from backend.pipeline.ingestion.collectors.openmhz._types import CallEvent
 from backend.pipeline.ingestion.collectors.openmhz.collector import (
     openmhz_collector,
 )
-from backend.pipeline.storage.feed_store import FeedStore
+from backend.pipeline.storage.feed_store import FeedStore, LeasedFeed
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -134,9 +134,7 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         wait_for_logs(cls.gcs_container, "server started at")
 
         cls._gcs_host = cls.gcs_container.get_container_host_ip()
-        cls._gcs_port = int(
-            cls.gcs_container.get_exposed_port(_FAKE_GCS_PORT)
-        )
+        cls._gcs_port = int(cls.gcs_container.get_exposed_port(_FAKE_GCS_PORT))
         cls._gcs_url = f"http://{cls._gcs_host}:{cls._gcs_port}"
 
         # Create test bucket
@@ -228,7 +226,7 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             resp.raise_for_status()
             return await resp.read()
 
-    async def _lease_feed(self, name: str) -> dict:
+    async def _lease_feed(self, name: str) -> LeasedFeed:
         """Insert, lease, and return the feed."""
         await self._insert_feed(name)
         feed = await self.store.lease_feed(self.worker_id)
@@ -250,9 +248,7 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         feed = await self._lease_feed("integration-feed")
 
         call = _make_call(call_id="c1", length_sec=5)
-        mock_transport.side_effect = lambda *a, **kw: _mock_transport(
-            [call]
-        )
+        mock_transport.side_effect = lambda *a, **kw: _mock_transport([call])
         mock_download.return_value = _make_m4a_bytes()
 
         shutdown = asyncio.Event()
@@ -358,10 +354,12 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             session_num += 1
             if session_num == 1:
                 return _mock_transport([_make_call(call_id="c1")])
-            return _mock_transport([
-                _make_call(call_id="c2"),
-                _make_call(call_id="c3"),
-            ])
+            return _mock_transport(
+                [
+                    _make_call(call_id="c2"),
+                    _make_call(call_id="c3"),
+                ]
+            )
 
         mock_transport.side_effect = _transport_factory
         mock_download.return_value = _make_m4a_bytes()
