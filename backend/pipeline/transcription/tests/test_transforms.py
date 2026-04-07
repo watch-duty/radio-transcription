@@ -36,6 +36,7 @@ from backend.pipeline.transcription.stitcher import (
 from backend.pipeline.transcription.transcribers import Transcriber
 from backend.pipeline.transcription.transforms import (
     AddEventTimestamp,
+    DownloadAudioFn,
     ParseAndKeyFn,
     RestoreOrderFn,
 )
@@ -1187,3 +1188,49 @@ class TranscribeAudioTest(unittest.TestCase):
             main_thread_name in execution_threads,
             f"Transcription executed on MainThread ({main_thread_name}) instead of a background thread pool!",
         )
+
+
+class DownloadAudioTest(unittest.TestCase):
+    @patch("backend.pipeline.transcription.transforms.AudioProcessor")
+    def test_download_audio_timestamp_injection(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that DownloadAudioFn can be processed natively by Apache Beam without _DoFnParam injection errors."""
+        mock_inst = mock_audio_processor.return_value
+        mock_inst.download_audio_and_detect.return_value = AudioChunkData(
+            start_ms=100000,
+            audio=AudioSegment.silent(duration=1000),
+            speech_segments=[],
+            gcs_uri="gs://fake-bucket/100-11111111.flac",
+        )
+
+        config = get_test_stitch_config()
+        options = PipelineOptions(
+            flags=["--input_topic=a", "--output_topic=b", "--project=c"]
+        )
+
+        with BeamTestPipeline(options=options) as p:
+            elements = (
+                p
+                | beam.Create(
+                    [("feed-123", "gs://fake-bucket/100-11111111.flac")]
+                ).with_output_types(tuple[str, str])
+                | beam.Map(lambda x: TimestampedValue(x, 100))
+            )
+
+            results = elements | beam.ParDo(DownloadAudioFn(config))
+
+            assert_that(
+                results,
+                equal_to(
+                    [
+                        (
+                            "feed-123",
+                            (
+                                "gs://fake-bucket/100-11111111.flac",
+                                mock_inst.download_audio_and_detect.return_value,
+                            ),
+                        )
+                    ]
+                ),
+            )
