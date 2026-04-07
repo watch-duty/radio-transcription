@@ -279,6 +279,38 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         self.assertNotIn("feed_a_rule", result_other["triggered_rules"])
         self.assertNotIn("feed_b_rule", result_other["triggered_rules"])
 
+    @patch("backend.pipeline.evaluation.rules_evaluation.evaluator.is_gcp_env")
+    @patch("requests.Session.get")
+    def test_evaluate_caches_rules(self, mock_get, mock_is_gcp) -> None:
+        """Test that RemoteTextEvaluator caches rules and does not refetch within TTL."""
+        mock_is_gcp.return_value = False
+        mock_rule = {
+            "rule_id": "test_rule_1",
+            "rule_name": "Test Rule 1",
+            "is_active": True,
+            "scope": {"level": "GLOBAL", "target_feeds": []},
+            "conditions": {
+                "evaluation_type": "KEYWORD_MATCH",
+                "operator": "ANY",
+                "keywords": ["test"],
+                "case_sensitive": False,
+            },
+        }
+        mock_get.return_value.json.return_value = [mock_rule]
+        mock_get.return_value.status_code = 200
+
+        text = "This is a test message."
+
+        # First call should fetch
+        result1 = self.remote_evaluator.evaluate(text, feed_id="test_feed")
+        self.assertTrue(result1["is_flagged"])
+        self.assertEqual(mock_get.call_count, 1)
+
+        # Second call should use cache
+        result2 = self.remote_evaluator.evaluate(text, feed_id="test_feed")
+        self.assertTrue(result2["is_flagged"])
+        self.assertEqual(mock_get.call_count, 1)  # Still 1
+
     def test_evaluate_missing_feed_id(self) -> None:
         """Test that missing feed_id returns ERROR_FEED_ID_MISSING rule."""
         result = self.remote_evaluator.evaluate("Some text", feed_id="")

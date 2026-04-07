@@ -3,6 +3,7 @@ import re
 from abc import ABC, abstractmethod
 from typing import TypedDict
 
+import cachetools
 import requests
 
 from backend.pipeline.common.auth import get_id_token
@@ -170,6 +171,7 @@ class RemoteTextEvaluator(BaseTextEvaluator):
         """
         self.api_url = api_url.rstrip("/")
         self.session = requests.Session()
+        self._cache = cachetools.TTLCache(maxsize=1, ttl=60)
 
     def evaluate(self, text: str, feed_id: str) -> EvaluationResult:
         """
@@ -211,6 +213,9 @@ class RemoteTextEvaluator(BaseTextEvaluator):
         Returns:
             A list of Rule objects.
         """
+        if "rules" in self._cache:
+            return self._cache["rules"]
+
         # When running on Cloud Run, use the metadata server to get an ID token
         if is_gcp_env():
             token = get_id_token(self.api_url)
@@ -223,4 +228,6 @@ class RemoteTextEvaluator(BaseTextEvaluator):
         response.raise_for_status()
 
         rules_data = response.json()
-        return [models.Rule.model_validate(rule) for rule in rules_data]
+        rules = [models.Rule.model_validate(rule) for rule in rules_data]
+        self._cache["rules"] = rules
+        return rules

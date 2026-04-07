@@ -34,6 +34,7 @@ dependencies = [
     "pyjwt>=2.12.0",
     "google-cloud-secret-manager>=2.26.0",
     "curl-cffi>=0.9.1",
+    "cachetools>=5.5.0",
 ]
 
 [tool.uv]
