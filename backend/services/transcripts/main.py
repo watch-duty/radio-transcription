@@ -5,14 +5,12 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 
 from backend.pipeline.common.auth import verify_oidc_token
+from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.storage.connection import (
     close_pool,
     create_pool_with_retry,
 )
-from backend.pipeline.storage.transcript_store import (
-    AlreadyExistsError,
-    TranscriptStore,
-)
+from backend.pipeline.storage.transcript_store import TranscriptStore
 
 from .models import Transcript
 from .service import TranscriptService

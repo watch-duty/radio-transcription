@@ -6,10 +6,10 @@ from fastapi import status
 from fastapi.testclient import TestClient
 
 from backend.pipeline.common.auth import verify_oidc_token
+from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
-from backend.pipeline.storage.transcript_store import AlreadyExistsError
 from backend.services.transcripts.main import app
 from backend.services.transcripts.service import TranscriptService
 

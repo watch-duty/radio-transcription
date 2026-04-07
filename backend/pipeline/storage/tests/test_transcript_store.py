@@ -7,13 +7,11 @@ from unittest import mock
 
 import asyncpg.exceptions
 
+from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
-from backend.pipeline.storage.transcript_store import (
-    AlreadyExistsError,
-    TranscriptStore,
-)
+from backend.pipeline.storage.transcript_store import TranscriptStore
 
 _TRANSMISSION_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 _FEED_ID = uuid.UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")

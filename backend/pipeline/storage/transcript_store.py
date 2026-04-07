@@ -5,20 +5,12 @@ import uuid
 import asyncpg
 import asyncpg.exceptions
 
+from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
 
 from . import transcript_queries
-
-
-class AlreadyExistsError(Exception):
-    """Raised when a transcript with the same transmission ID already exists."""
-
-    def __init__(self, transmission_id: str) -> None:
-        super().__init__(
-            f"Transcript for transmission {transmission_id} already exists"
-        )
 
 
 class TranscriptStore:
