@@ -301,8 +301,6 @@ class TestRemoteTextEvaluator(unittest.TestCase):
 
         text = "This is a test message."
 
-
-
         # First call should fetch
         result1 = self.remote_evaluator.evaluate(text, feed_id="test_feed")
         self.assertTrue(result1["is_flagged"])
@@ -312,7 +310,6 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         result2 = self.remote_evaluator.evaluate(text, feed_id="test_feed")
         self.assertTrue(result2["is_flagged"])
         self.assertEqual(mock_get.call_count, 1)  # Still 1
-
 
     def test_evaluate_missing_feed_id(self) -> None:
         """Test that missing feed_id returns ERROR_FEED_ID_MISSING rule."""
