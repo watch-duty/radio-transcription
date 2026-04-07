@@ -59,7 +59,9 @@ def cleanup_old_versions(
     cutoff = now - timedelta(hours=hours_to_keep)
 
     # List all versions for the secret
-    for version in secret_client.list_secret_versions(request={"parent": parent}):
+    for version in secret_client.list_secret_versions(
+        request={"parent": parent}
+    ):
         # Ignore versions already destroyed or scheduled for destruction
         if version.state not in [
             secretmanager.SecretVersion.State.ENABLED,
@@ -69,7 +71,9 @@ def cleanup_old_versions(
 
         # Don't destroy the very latest version regardless of age
         # (Safety check in case the function hasn't run in a while)
-        if "versions/1" in version.name: # Keep the initial version if desired, or skip
+        if (
+            "versions/1" in version.name
+        ):  # Keep the initial version if desired, or skip
             pass
 
         if datetime.fromtimestamp(version.create_time.seconds, tz=UTC) < cutoff:
