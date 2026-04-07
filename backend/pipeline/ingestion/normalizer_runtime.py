@@ -440,7 +440,7 @@ class NormalizerRuntime:
                     await quarantine_telemetry.emit_quarantine_event(
                         feed_id=str(feed["id"]),
                         feed_name=feed["name"],
-                        source_type=feed["source_type"],
+                        source_type=str(feed["source_type"]),
                     )
             except Exception:
                 # 60s abandonment window is the safety net if this fails.
