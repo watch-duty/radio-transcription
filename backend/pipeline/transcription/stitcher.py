@@ -587,6 +587,7 @@ class TranscribeAudioFn(beam.DoFn):
             contributing_audio_uris=request.contributing_audio_uris,
             transcript=transcript,
             time_range=request.time_range,
+            transmission_id=request.transmission_id,
             missing_prior_context=request.missing_prior_context,
             missing_post_context=request.missing_post_context,
             start_audio_offset_ms=request.start_audio_offset_ms,
