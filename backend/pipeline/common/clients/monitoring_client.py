@@ -38,6 +38,7 @@ class MonitoringClient:
         # "global" tracks the feed state regardless of which worker instance
         # recorded it.  Use "gce_instance" if per-worker attribution is needed.
         series.resource.type = "global"
+        series.resource.labels["project_id"] = self._project_id
 
         now = time.time()
         point = monitoring_v3.Point()
