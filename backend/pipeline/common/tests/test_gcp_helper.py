@@ -1,3 +1,4 @@
+import concurrent.futures
 import datetime
 import unittest
 import uuid
@@ -435,8 +436,6 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
 
     async def test_delegates_to_publish_with_ordering_key(self) -> None:
         """Async wrapper directly calls publisher.publish and uses wrap_future."""
-        import concurrent.futures
-
         mock_pubsub_client, mock_publisher = _make_pubsub_client()
         mock_now = datetime.datetime(2026, 3, 5, 12, 0, tzinfo=datetime.UTC)
 
