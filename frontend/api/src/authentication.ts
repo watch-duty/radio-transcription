@@ -1,10 +1,20 @@
 import * as express from "express";
 import * as jwt from "jsonwebtoken";
 
+export interface GoogleUser {
+  email: string;
+  email_verified: boolean;
+  sub: string; // The user's unique Google ID
+  aud: string; // The client ID or audience
+  iss: string; // The issuer (e.g., https://accounts.google.com)
+}
+
 export function expressAuthentication(
   request: express.Request,
-  securityName: string
-): Promise<any> {
+  securityName: string,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  scopes?: string[]
+): Promise<GoogleUser> {
   // Match the name defined in tsoa.json and @Security decorators
   if (securityName === "google_id_token") {
     const authHeader = request.headers.authorization;
@@ -25,7 +35,7 @@ export function expressAuthentication(
     }
 
     // The resolved value is what gets injected into your controllers
-    return Promise.resolve(decoded);
+    return Promise.resolve(decoded as GoogleUser);
   }
   
   return Promise.reject(new Error(`Unknown security name: ${securityName}`));
