@@ -408,10 +408,12 @@ class DownloadAudioFn(beam.DoFn):
         self.audio_processor.setup()
 
     @override
-    def process(  # type: ignore[override]
+    def process(
         self,
         element: tuple[str, str],
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
+        *args: Any,
+        **kwargs: Any,
     ) -> Iterator[tuple[str, tuple[str, Any]] | beam.pvalue.TaggedOutput]:
         """Downloads the raw audio bytes from GCS and passes them to the acoustic processor."""
         feed_id, gcs_path = element
