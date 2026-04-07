@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import datetime
 import logging
 from typing import TYPE_CHECKING, Any
@@ -228,7 +229,7 @@ def publish_audio_chunk_sync(
         **attrs,
     )
 
-    def _resume_on_error(f: Any) -> None:
+    def _resume_on_error(f: concurrent.futures.Future[str]) -> None:
         try:
             f.result()
         except Exception:
@@ -275,7 +276,7 @@ async def publish_audio_chunk(
         **attrs,
     )
 
-    def _resume_on_error(f: Any) -> None:
+    def _resume_on_error(f: concurrent.futures.Future[str]) -> None:
         try:
             f.result()
         except Exception:
