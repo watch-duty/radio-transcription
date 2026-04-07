@@ -1163,12 +1163,14 @@ class TranscribeAudioTest(unittest.TestCase):
                         buffer=AudioSegment.silent(duration=500),
                         contributing_audio_uris=["gs://bbbbbbbb.flac"],
                         time_range=TimeRange(start_ms=0, end_ms=500),
+                        transmission_id="test-uuid-1",
                     ),
                     FlushRequest(
                         feed_id="feed-123",
                         buffer=AudioSegment.silent(duration=500),
                         contributing_audio_uris=["gs://cccccccc.flac"],
                         time_range=TimeRange(start_ms=5000, end_ms=5500),
+                        transmission_id="test-uuid-2",
                     ),
                 ]
             )
