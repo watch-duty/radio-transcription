@@ -55,6 +55,7 @@ auth_header = f"Authorization: Basic {encoded_credentials}\r\n"
 def _now_utc() -> datetime.datetime:
     return datetime.datetime.now(tz=datetime.UTC)
 
+
 async def _drain_stderr(
     stderr: asyncio.StreamReader,
     tail: collections.deque[str],
