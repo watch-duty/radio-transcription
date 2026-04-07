@@ -28,6 +28,7 @@
   },
   "routes": {
     "routesDir": "src/generated",
-    "esm": true
+    "esm": true,
+    "authenticationModule": "src/authentication.ts"
   }
 }
