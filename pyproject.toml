@@ -211,8 +211,6 @@ known-first-party = ["backend", "local_dev"]
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
-[tool.ty.rules]
-invalid-method-override = "ignore"
 
 [tool.ty.src]
 exclude = ["model/"]
