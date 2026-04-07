@@ -50,9 +50,22 @@ def cleanup_old_versions(
     secret_id: str,
     hours_to_keep: int = 24,
 ) -> None:
-    """
-    Destroys secret versions older than the specified number of hours.
-    Only 'ENABLED' or 'DISABLED' versions can be destroyed.
+    """Destroys old Secret Manager versions for the given secret.
+
+    Args:
+        secret_client: Secret Manager client used to list and destroy
+            secret versions.
+        secret_id: Secret Manager secret ID whose old versions should be
+            cleaned up.
+        hours_to_keep: Number of hours of secret versions to retain. Versions
+            older than this cutoff are eligible for destruction.
+
+    Returns:
+        None.
+
+    Only versions in the `ENABLED` or `DISABLED` state can be destroyed.
+    Versions that are already destroyed or scheduled for destruction are
+    skipped.
     """
     parent = secret_client.secret_path(PROJECT_ID, secret_id)
     now = datetime.now(UTC)
@@ -104,10 +117,16 @@ def add_secret_version(
     # Trigger cleanup after successfully adding a new version
     try:
         cleanup_old_versions(secret_client, secret_id)
-    except Exception as e:
+    except Exception:
         # We log and continue so the rotation itself isn't considered a failure
         # if the cleanup fails (e.g., due to permission issues).
-        logger.warning(f"Failed to cleanup old secret versions: {e}")
+        logger.warning(
+            "Failed to clean up old secret versions for secret_id=%s "
+            "hours_to_keep=%s",
+            secret_id,
+            24,
+            exc_info=True,
+        )
 
     return response.name
 
