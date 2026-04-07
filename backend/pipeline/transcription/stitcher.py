@@ -2,6 +2,7 @@
 
 import logging
 import time
+import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any, override
@@ -183,6 +184,7 @@ class StitchAudioFn(beam.DoFn):
                     missing_post_context=action.missing_post_context,
                     start_audio_offset_ms=action.start_audio_offset_ms,
                     end_audio_offset_ms=action.end_audio_offset_ms,
+                    transmission_uuid=str(uuid.uuid4()),
                 ),
             )
         else:
@@ -398,6 +400,7 @@ class StitchAudioFn(beam.DoFn):
                         missing_post_context=True,  # Flushed by timer cutoff, so we assume the tail is missing context.
                         start_audio_offset_ms=curr_context.start_audio_offset_ms,
                         end_audio_offset_ms=curr_context.end_audio_offset_ms,
+                        transmission_uuid=str(uuid.uuid4()),
                     ),
                 )
             except Exception as e:

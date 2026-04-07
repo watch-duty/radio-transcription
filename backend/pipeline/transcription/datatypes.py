@@ -1,5 +1,6 @@
 """Domain objects and strongly-typed dataclasses for the transcription pipeline."""
 
+import uuid
 from dataclasses import dataclass, field
 
 from pydub import AudioSegment
@@ -168,7 +169,7 @@ class FlushRequest:
     missing_post_context: bool = False
     start_audio_offset_ms: int | None = None
     end_audio_offset_ms: int | None = None
-
+    transmission_uuid: str = field(default_factory=lambda: str(uuid.uuid4()))
 
 @dataclass(frozen=True)
 class StateMachineAction:
