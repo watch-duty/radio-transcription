@@ -184,7 +184,7 @@ class StitchAudioFn(beam.DoFn):
                     missing_post_context=action.missing_post_context,
                     start_audio_offset_ms=action.start_audio_offset_ms,
                     end_audio_offset_ms=action.end_audio_offset_ms,
-                    transmission_uuid=str(uuid.uuid4()),
+                    transmission_id=str(uuid.uuid5(uuid.NAMESPACE_OID, f"{action.feed_id}_{action.time_range.start_ms}_{action.time_range.end_ms}")),
                 ),
             )
         else:
@@ -400,7 +400,7 @@ class StitchAudioFn(beam.DoFn):
                         missing_post_context=True,  # Flushed by timer cutoff, so we assume the tail is missing context.
                         start_audio_offset_ms=curr_context.start_audio_offset_ms,
                         end_audio_offset_ms=curr_context.end_audio_offset_ms,
-                        transmission_uuid=str(uuid.uuid4()),
+                        transmission_id=str(uuid.uuid5(uuid.NAMESPACE_OID, f"{key}_{int(start_time_ms)}_{int(end_time_ms)}")),
                     ),
                 )
             except Exception as e:
@@ -547,8 +547,8 @@ class TranscribeAudioFn(beam.DoFn):
                 request.time_range.start_ms / 1000.0, tz=UTC
             )
 
-            flac_path = f"stitched/lossless/{request.feed_id}/{dt:%Y/%m/%d}/{request.transmission_uuid}.flac"
-            m4a_path = f"stitched/playback/{request.feed_id}/{dt:%Y/%m/%d}/{request.transmission_uuid}.m4a"
+            flac_path = f"stitched/lossless/{request.feed_id}/{dt:%Y/%m/%d}/{request.transmission_id}.flac"
+            m4a_path = f"stitched/playback/{request.feed_id}/{dt:%Y/%m/%d}/{request.transmission_id}.m4a"
 
             canonical_audio_uri, playback_audio_uri = (
                 self.audio_uploader.upload_audio_derivatives(

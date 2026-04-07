@@ -1,6 +1,5 @@
 """Domain objects and strongly-typed dataclasses for the transcription pipeline."""
 
-import uuid
 from dataclasses import dataclass, field
 
 from pydub import AudioSegment
@@ -165,7 +164,7 @@ class FlushRequest:
     feed_id: str
     contributing_audio_uris: list[str]
     time_range: TimeRange
-    transmission_uuid: str
+    transmission_id: str
     missing_prior_context: bool = False
     missing_post_context: bool = False
     start_audio_offset_ms: int | None = None
