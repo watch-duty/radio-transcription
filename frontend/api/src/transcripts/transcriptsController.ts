@@ -1,6 +1,17 @@
 import axios from 'axios';
 import { GoogleAuth } from 'google-auth-library';
-import { Controller, Get, Path, Res, Route, Tags, TsoaResponse } from 'tsoa';
+import {
+  Controller,
+  Extension,
+  Get,
+  Path,
+  Res,
+  Response,
+  Route,
+  Security,
+  Tags,
+  TsoaResponse,
+} from 'tsoa';
 
 import { TRANSCRIPTS_API_URL } from '../config.js';
 
@@ -25,8 +36,11 @@ export interface ListTranscriptsResponse {
 
 @Route('api/v1/transcripts')
 @Tags('Transcripts')
+@Response(401, 'Unauthorized')
 export class TranscriptsController extends Controller {
   @Get('{feedId}')
+  @Security('google_id_token')
+  @Extension('x-google-backend', 'radio-transcription-api')
   public async listTranscripts(
     @Path() feedId: string,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars

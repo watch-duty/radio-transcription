@@ -61,7 +61,18 @@ components:
         - transcripts
       type: object
       additionalProperties: false
-  securitySchemes: {}
+  securitySchemes:
+    google_id_token:
+      type: oauth2
+      flows:
+        implicit:
+          authorizationUrl: ""
+          scopes: {}
+      x-google-auth:
+        issuer: https://accounts.google.com
+        jwksUri: https://www.googleapis.com/oauth2/v3/certs
+        audiences:
+          - ${google_auth_client_id}
 info:
   title: radio-transcription-api
   version: 1.0.0
@@ -77,6 +88,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ListTranscriptsResponse"
+        "401":
+          description: Unauthorized
         "404":
           description: ""
           content:
@@ -90,12 +103,20 @@ paths:
                 type: object
       tags:
         - Transcripts
-      security: []
+      security:
+        - google_id_token: []
       parameters:
         - in: path
           name: feedId
           required: true
           schema:
             type: string
+      x-google-backend: radio-transcription-api
 servers:
   - url: /
+x-google-api-management:
+  backends:
+    radio-transcription-api:
+      address: ${radio_transcription_api_url}
+      path_translation: APPEND_PATH_TO_ADDRESS
+      protocol: http/1.1
