@@ -58,7 +58,7 @@ class NormalizerRuntime:
     SIGTERM for prompt graceful shutdown.
 
     Args:
-        capture_fn: Async generator factory ``(feed, shutdown_event) -> AsyncIterator[bytes]``.
+        capture_fn: Async generator factory ``(feed, shutdown_event) -> AsyncIterator[CapturedChunk]``.
         settings: Runtime configuration. Defaults to ``NormalizerSettings()``.
 
     """

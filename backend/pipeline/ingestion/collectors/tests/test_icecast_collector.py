@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import os
 import unittest
 import uuid
@@ -368,13 +369,26 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(b"FLAC_SEGMENT" in chunk or b"FLAC" in chunk)
 
     @patch(
+        "backend.pipeline.ingestion.collectors.icecast_collector._now_utc",
+    )
+    @patch(
         "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_timestamps_advance_by_chunk_duration(
-        self, mock_create_ffmpeg: AsyncMock
+        self, mock_create_ffmpeg: AsyncMock, mock_now_utc: MagicMock
     ) -> None:
-        """Test timestamp math: Each chunk advances strictly by CHUNK_DURATION_SECONDS."""
+        """Test timestamp math: chunks advance by CHUNK_DURATION_SECONDS when
+        _now_utc() is far future so min() picks chunk_end_time (unclamped path).
+        """
+        fixed_anchor = datetime.datetime(
+            2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC
+        )
+        # First call sets stream_anchor_time; subsequent calls (the clamp) return a
+        # time far beyond any chunk_end_time so min() always returns chunk_end_time.
+        far_future = fixed_anchor + datetime.timedelta(hours=1)
+        mock_now_utc.side_effect = [fixed_anchor] + [far_future] * 10
+
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=3333,
             segments=[
@@ -412,6 +426,52 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
                 ).total_seconds(),
                 CHUNK_DURATION_SECONDS,
             )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast_collector._now_utc",
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_last_chunk_end_time_clamped_to_current_time(
+        self, mock_create_ffmpeg: AsyncMock, mock_now_utc: MagicMock
+    ) -> None:
+        """Test timestamp math: last chunk end_time is clamped to _now_utc()
+        when _now_utc() < chunk_end_time so min() picks _now_utc() (clamped path).
+
+        A single segment guarantees _now_utc() is called exactly twice: once
+        to set stream_anchor_time, and once for the min() clamp when the process
+        is done and the only chunk is finalized.
+        """
+        fixed_anchor = datetime.datetime(
+            2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC
+        )
+        # clamp_time is before anchor + CHUNK_DURATION_SECONDS (the natural end),
+        # so min() picks clamp_time instead of chunk_end_time.
+        clamp_time = fixed_anchor + datetime.timedelta(
+            seconds=CHUNK_DURATION_SECONDS - 5
+        )
+        mock_now_utc.side_effect = [fixed_anchor, clamp_time]
+
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=4444,
+            segments=[b"FLAC_SEGMENT_0"],
+            wait_delay=0.1,
+            wait_result=0,
+        )
+
+        feed = _make_feed("clamp-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed, shutdown_event, url_base="https://mock.example.com/"
+        )
+        results = await _collect_chunks_with_timestamps(gen)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].chunk_start_time, fixed_anchor)
+        self.assertEqual(results[0].chunk_end_time, clamp_time)
 
 
 if __name__ == "__main__":

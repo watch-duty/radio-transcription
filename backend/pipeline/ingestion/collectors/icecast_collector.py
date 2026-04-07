@@ -50,6 +50,10 @@ encoded_credentials = base64.b64encode(credentials.encode()).decode()
 auth_header = f"Authorization: Basic {encoded_credentials}\r\n"
 
 
+def _now_utc() -> datetime.datetime:
+    return datetime.datetime.now(tz=datetime.UTC)
+
+
 def _segment_path(directory: Path, index: int) -> Path:
     return directory / f"chunk_{index:06d}.{AUDIO_FORMAT}"
 
@@ -107,7 +111,7 @@ async def capture_icecast_stream(  # noqa: PLR0915
         wait_task = asyncio.create_task(process.wait())
 
         # Anchor the stream timeline to the exact moment ffmpeg starts
-        stream_anchor_time = datetime.datetime.now(tz=datetime.UTC)
+        stream_anchor_time = _now_utc()
 
         try:
             while True:
@@ -144,6 +148,8 @@ async def capture_icecast_stream(  # noqa: PLR0915
                         chunk_end_time = chunk_start_time + datetime.timedelta(
                             seconds=CHUNK_DURATION_SECONDS
                         )
+                        if process_done:
+                            chunk_end_time = min(chunk_end_time, _now_utc())
                         yield CapturedChunk(
                             audio_bytes=segment_bytes,
                             chunk_start_time=chunk_start_time,
