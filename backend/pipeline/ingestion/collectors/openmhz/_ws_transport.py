@@ -1,0 +1,182 @@
+from __future__ import annotations
+
+import contextlib
+import datetime
+import json
+import logging
+import time
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, Any
+
+from curl_cffi.requests import AsyncSession
+from curl_cffi.requests.websockets import WebSocketClosed, WebSocketTimeout
+
+from backend.pipeline.ingestion.collectors.openmhz._types import CallEvent
+
+if TYPE_CHECKING:
+    import asyncio
+    from collections.abc import AsyncIterator
+
+logger = logging.getLogger(__name__)
+
+_START_PAYLOAD_TEMPLATE: dict[str, object] = {
+    "filterCode": "",
+    "filterType": "all",
+    "filterName": "OpenMHz",
+    "filterStarred": False,
+}
+
+
+def _parse_eio_open(frame: str) -> dict[str, Any]:
+    """Parse Engine.IO v4 open packet ``0{...}``."""
+    if not frame.startswith("0"):
+        msg = f"Expected EIO open packet (0{{...}}), got: {frame[:60]}"
+        raise ValueError(msg)
+    return json.loads(frame[1:])
+
+
+def _parse_sio_event(frame: str) -> CallEvent | None:
+    """Parse Socket.IO v4 event ``42["new message","<json>"]``.
+
+    Returns ``None`` for non-event frames or unknown event names.
+    Double-parses: outer JSON array, then inner JSON string.
+    """
+    if not frame.startswith("42"):
+        return None
+    array = json.loads(frame[2:])
+    if not isinstance(array, list) or len(array) < 2:
+        return None
+    if array[0] != "new message":
+        return None
+    call: dict[str, Any] = json.loads(array[1])
+    return CallEvent(
+        id=call["_id"],
+        talkgroup_num=call["talkgroupNum"],
+        url=call["url"],
+        time=datetime.datetime.fromisoformat(call["time"]),
+        length_sec=call["len"],
+        freq=call["freq"],
+        src_list=call.get("srcList", []),
+        short_name=call.get("shortName", ""),
+        emergency=call.get("emergency", False),
+    )
+
+
+@asynccontextmanager
+async def websocket_transport(
+    short_name: str,
+    base_url: str,
+    shutdown: asyncio.Event,
+) -> AsyncIterator[AsyncIterator[CallEvent]]:
+    """Single-session WebSocket transport for OpenMHZ.
+
+    Connects via curl_cffi with browser TLS impersonation, performs
+    the EIO/SIO v4 handshake, subscribes to *short_name*, and yields
+    an async iterator of :class:`CallEvent` objects.
+
+    Does **not** reconnect internally -- that is the collector's job.
+    """
+    normalized = base_url if base_url.endswith("/") else f"{base_url}/"
+    ws_url = f"{normalized}socket.io/?EIO=4&transport=websocket"
+
+    session = AsyncSession(impersonate="chrome")
+    ws = None
+    try:
+        ws = await session.ws_connect(ws_url)
+
+        # --- EIO handshake ---
+        open_frame = await ws.recv_str(timeout=10.0)
+        open_data = _parse_eio_open(open_frame)
+        sid = open_data["sid"]
+        ping_interval_sec: float = open_data["pingInterval"] / 1000
+        ping_timeout_sec: float = open_data["pingTimeout"] / 1000
+
+        logger.info(
+            "WebSocket connected: short_name=%s sid=%s",
+            short_name,
+            sid,
+        )
+
+        # --- SIO connect ---
+        await ws.send_str("40")
+        ack = await ws.recv_str(timeout=10.0)
+        if not ack.startswith("40"):
+            msg = f"Expected SIO connect ack (40...), got: {ack[:60]}"
+            raise ValueError(msg)
+
+        # --- Subscribe ---
+        start_payload = json.dumps(
+            ["start", {**_START_PAYLOAD_TEMPLATE, "shortName": short_name}]
+        )
+        await ws.send_str(f"42{start_payload}")
+        logger.info("Subscribed to system: short_name=%s", short_name)
+
+        yield _stream_frames(
+            ws, shutdown, short_name, ping_interval_sec, ping_timeout_sec
+        )
+    finally:
+        if ws is not None:
+            with contextlib.suppress(Exception):
+                await ws.send_str("1")  # best-effort EIO close
+            with contextlib.suppress(Exception):
+                await ws.close()
+        await session.close()
+
+
+async def _stream_frames(
+    ws: Any,
+    shutdown: asyncio.Event,
+    short_name: str,
+    ping_interval_sec: float,
+    ping_timeout_sec: float,
+) -> AsyncIterator[CallEvent]:
+    """Yield :class:`CallEvent` objects from the WebSocket frame stream."""
+    deadline_sec = ping_interval_sec + ping_timeout_sec
+    last_ping_time = time.monotonic()
+
+    while True:
+        if shutdown.is_set():
+            logger.info("Shutdown requested: short_name=%s", short_name)
+            return
+
+        if time.monotonic() - last_ping_time > deadline_sec:
+            logger.warning(
+                "Ping timeout: short_name=%s elapsed_sec=%.1f",
+                short_name,
+                time.monotonic() - last_ping_time,
+            )
+            return
+
+        try:
+            frame = await ws.recv_str(timeout=ping_interval_sec)
+        except WebSocketTimeout:
+            continue
+        except WebSocketClosed:
+            logger.warning("WebSocket closed: short_name=%s", short_name)
+            return
+
+        if frame.startswith("2"):
+            await ws.send_str("3")
+            last_ping_time = time.monotonic()
+        elif frame.startswith("42"):
+            call = _parse_sio_event(frame)
+            if call is not None:
+                logger.debug(
+                    "Call received: short_name=%s call_id=%s talkgroup=%d",
+                    short_name,
+                    call.id,
+                    call.talkgroup_num,
+                )
+                yield call
+        elif frame.startswith("41"):
+            logger.warning("Server disconnect (41): short_name=%s", short_name)
+            return
+        elif frame.startswith("44"):
+            logger.warning(
+                "Connect error (44): short_name=%s message=%s",
+                short_name,
+                frame[2:],
+            )
+            return
+        else:
+            logger.debug("Ignoring frame: %s", frame[:50])

@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from backend.pipeline.storage.feed_store import LeasedFeed
 
 BCFY_FEEDS_URL_BASE = "https://partner.broadcastify.com/"
+OPENMHZ_URL_BASE = "https://api.openmhz.com/"
 
 
 # Maps source_type -> CollectorEntry.
@@ -23,6 +24,11 @@ _COLLECTOR_REGISTRY: dict[SourceType, CollectorEntry] = {
         module_path="backend.pipeline.ingestion.collectors.icecast_collector",
         func_name="capture_icecast_stream",
         url_base=BCFY_FEEDS_URL_BASE,
+    ),
+    SourceType.OPENMHZ: CollectorEntry(
+        module_path="backend.pipeline.ingestion.collectors.openmhz.collector",
+        func_name="openmhz_collector",
+        url_base=OPENMHZ_URL_BASE,
     ),
 }
 
