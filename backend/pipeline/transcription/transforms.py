@@ -408,7 +408,7 @@ class DownloadAudioFn(beam.DoFn):
         self.audio_processor.setup()
 
     @override
-    def process(
+    def process(  # type: ignore[override]
         self,
         element: tuple[str, str],
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
