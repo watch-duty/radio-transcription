@@ -81,7 +81,7 @@ class ParseAndKeyFn(beam.DoFn):
 
 
 @beam.typehints.with_input_types(tuple[str, bytes])
-@beam.typehints.with_output_types(tuple[str, tuple[str, str]])
+@beam.typehints.with_output_types(tuple[str, str])
 class AddEventTimestamp(beam.DoFn):
     """Extracts the event timestamp directly from the `AudioChunk` protobuf.
 
@@ -130,7 +130,7 @@ class AddEventTimestamp(beam.DoFn):
                 )
 
                 yield window.TimestampedValue(
-                    (feed_id, (chunk_proto.gcs_uri, chunk_proto.session_id)),
+                    (feed_id, chunk_proto.gcs_uri),
                     timestamp_sec,
                 )
 

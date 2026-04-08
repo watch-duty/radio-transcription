@@ -586,8 +586,6 @@ class StitchAudioTest(unittest.TestCase):
                 label="CheckMainFlushRequests",
             )
 
-
-
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
     def test_max_transmission_duration_flush(
         self, mock_audio_processor: MagicMock
