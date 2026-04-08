@@ -29,7 +29,9 @@ class ConfigBase(pydantic.BaseModel):
             raise ValueError(msg) from e
 
 
-def generate_transmission_id(feed_id: str, contributing_audio_uris: list[str]) -> str:
+def generate_transmission_id(
+    feed_id: str, contributing_audio_uris: list[str]
+) -> str:
     """Creates a deterministic UUID from the feed and its contributing source audio URIs.
 
     Anchored on the actual GCS URIs rather than derived timing values, making the ID
