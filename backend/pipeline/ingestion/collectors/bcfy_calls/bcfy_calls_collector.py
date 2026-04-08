@@ -27,6 +27,10 @@ _API_TIMEOUT_SEC = 10.0
 _AUDIO_TIMEOUT_SEC = 60.0
 
 
+class AuthError(Exception):
+    """Raised when Broadcastify Calls API returns 401 or 403."""
+
+
 async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
     """Sleep for *seconds*, returning ``True`` if interrupted by shutdown."""
     try:
@@ -58,7 +62,7 @@ def _get_jwt_token() -> str:
 def _raise_for_fatal_status(
     status: int, feed_id: object, source_feed_id: str
 ) -> None:
-    """Raise RuntimeError for HTTP status codes that are not retryable."""
+    """Raise RuntimeError or AuthError for HTTP status codes that are not retryable."""
     if status == 429:
         msg = f"Rate limited by Broadcastify Calls API (feed {feed_id})"
         raise RuntimeError(msg)
@@ -67,7 +71,7 @@ def _raise_for_fatal_status(
             f"Auth failure {status} from Broadcastify Calls API"
             f" (feed {feed_id}): credentials are invalid"
         )
-        raise RuntimeError(msg)
+        raise AuthError(msg)
     if status == 404:
         msg = (
             f"Feed not found (404) from Broadcastify Calls API"
@@ -156,7 +160,7 @@ async def _download_and_convert_audio(
     return await asyncio.to_thread(convert_to_flac, audio_bytes, "mp3")
 
 
-async def capture_bcfy_calls(
+async def capture_bcfy_calls( # noqa: PLR0915, PLR0912
     feed: LeasedFeed, shutdown_event: asyncio.Event, url_base: str
 ) -> AsyncIterator[CapturedChunk]:
     """Capture audio chunks from Broadcastify Calls API.
@@ -261,6 +265,17 @@ async def capture_bcfy_calls(
                 # Wait before polling again, gracefully interruptible by shutdown
                 await _sleep_or_shutdown(shutdown_event, _POLL_INTERVAL_SEC)
 
+            except AuthError:
+                logger.warning(
+                    "Auth failure (401/403) for feed %s, refreshing token.",
+                    feed_id,
+                )
+                try:
+                    jwt_token = await asyncio.to_thread(_get_jwt_token)
+                    headers["Authorization"] = f"Bearer {jwt_token}"
+                except Exception as e:
+                    logger.exception("Failed to refresh JWT token: %s", e)
+                await _sleep_or_shutdown(shutdown_event, _POLL_INTERVAL_SEC)
             except RuntimeError:
                 raise
             except Exception as e:

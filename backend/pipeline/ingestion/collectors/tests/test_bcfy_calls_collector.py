@@ -77,9 +77,13 @@ class TestRaiseForFatalStatus(unittest.TestCase):
     def test_fatal_statuses(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "Rate limited"):
             bcfy_calls_collector._raise_for_fatal_status(429, "fid", "sid")
-        with self.assertRaisesRegex(RuntimeError, "Auth failure"):
+        with self.assertRaisesRegex(
+            bcfy_calls_collector.AuthError, "Auth failure"
+        ):
             bcfy_calls_collector._raise_for_fatal_status(401, "fid", "sid")
-        with self.assertRaisesRegex(RuntimeError, "Auth failure"):
+        with self.assertRaisesRegex(
+            bcfy_calls_collector.AuthError, "Auth failure"
+        ):
             bcfy_calls_collector._raise_for_fatal_status(403, "fid", "sid")
         with self.assertRaisesRegex(RuntimeError, "Feed not found"):
             bcfy_calls_collector._raise_for_fatal_status(404, "fid", "sid")
@@ -517,6 +521,53 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(chunks), 0)
         mock_sleep.assert_called_once()
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_auth_error_refreshes_token(
+        self, mock_sleep: AsyncMock, mock_fetch: AsyncMock, mock_jwt: MagicMock
+    ) -> None:
+        mock_jwt.side_effect = ["old_token", "new_token"]
+        mock_fetch.side_effect = [
+            bcfy_calls_collector.AuthError("Auth failure"),
+            {"calls": []},
+        ]
+
+        sleep_calls = 0
+
+        async def sleep_side_effect(*args, **kwargs) -> bool:
+            nonlocal sleep_calls
+            sleep_calls += 1
+            if sleep_calls == 1:
+                return False
+            self.shutdown.set()
+            return True
+
+        mock_sleep.side_effect = sleep_side_effect
+
+        chunks = [
+            c
+            async for c in bcfy_calls_collector.capture_bcfy_calls(
+                self.leased_feed, self.shutdown, self.url_base
+            )
+        ]
+
+        self.assertEqual(len(chunks), 0)
+        self.assertEqual(mock_jwt.call_count, 2)
+        self.assertEqual(mock_fetch.call_count, 2)
+
+        second_fetch_args = mock_fetch.call_args_list[1]
+        headers = second_fetch_args[0][2]
+        self.assertEqual(headers["Authorization"], "Bearer new_token")
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
