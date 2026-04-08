@@ -135,9 +135,7 @@ class TestCleanupOldVersions:
             v_old_destroyed,
         ]
 
-        main.cleanup_old_versions(
-            secret_client, "my-secret", hours_to_keep=24
-        )
+        main.cleanup_old_versions(secret_client, "my-secret", hours_to_keep=24)
 
         secret_client.secret_path.assert_called_once_with(
             "test-project", "my-secret"
