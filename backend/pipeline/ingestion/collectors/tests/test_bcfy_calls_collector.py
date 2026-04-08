@@ -298,20 +298,26 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         mock_jwt.return_value = "token"
         mock_dl.return_value = b"flac"
-        mock_fetch.return_value = [
-            {
-                "url": "http://1",
-                "start_ts": 1000,
-                "end_ts": 2000,
-                "lastPos": 9999,
-            }
-        ]
 
-        async def sleep_side_effect(*args, **kwargs) -> bool:
+        fetch_calls = 0
+
+        async def fetch_side_effect(*args, **kwargs):
+            nonlocal fetch_calls
+            fetch_calls += 1
+            if fetch_calls == 1:
+                return [
+                    {
+                        "url": "http://1",
+                        "start_ts": 1000,
+                        "end_ts": 2000,
+                        "lastPos": 9999,
+                    }
+                ]
             self.shutdown.set()
-            return True
+            return []
 
-        mock_sleep.side_effect = sleep_side_effect
+        mock_fetch.side_effect = fetch_side_effect
+        mock_sleep.return_value = False
 
         chunks = [
             c
@@ -326,12 +332,16 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chunk.chunk_start_time.timestamp(), 1000)
         self.assertEqual(chunk.chunk_end_time.timestamp(), 2000)
 
-        mock_fetch.assert_called_once()
-        params = mock_fetch.call_args[0][3]
+        self.assertEqual(mock_fetch.call_count, 2)
+        first_params = mock_fetch.call_args_list[0][0][3]
+        second_params = mock_fetch.call_args_list[1][0][3]
         last_bookmark_time = cast(
             "datetime.datetime", self.feed["last_bookmark_time"]
         )
-        self.assertEqual(params["pos"], int(last_bookmark_time.timestamp()))
+        self.assertEqual(
+            first_params["pos"], int(last_bookmark_time.timestamp())
+        )
+        self.assertEqual(second_params["pos"], 9999)
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
