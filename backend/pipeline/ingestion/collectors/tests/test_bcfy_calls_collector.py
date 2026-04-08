@@ -216,6 +216,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
 class TestDownloadAndConvertAudio(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.session = MagicMock()
+        self.shutdown = asyncio.Event()
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector.asyncio.to_thread",
@@ -231,7 +232,7 @@ class TestDownloadAndConvertAudio(unittest.IsolatedAsyncioTestCase):
         mock_to_thread.return_value = b"flac"
 
         res = await bcfy_calls_collector._download_and_convert_audio(
-            self.session, "http://mp3"
+            self.session, "http://mp3", self.shutdown
         )
         self.assertEqual(res, b"flac")
         mock_to_thread.assert_called_once_with(
@@ -246,7 +247,7 @@ class TestDownloadAndConvertAudio(unittest.IsolatedAsyncioTestCase):
         self.session.get.return_value = cm
 
         res = await bcfy_calls_collector._download_and_convert_audio(
-            self.session, "http://mp3"
+            self.session, "http://mp3", self.shutdown
         )
         self.assertIsNone(res)
 
@@ -254,9 +255,103 @@ class TestDownloadAndConvertAudio(unittest.IsolatedAsyncioTestCase):
         self.session.get.side_effect = aiohttp.ClientError()
 
         res = await bcfy_calls_collector._download_and_convert_audio(
-            self.session, "http://mp3"
+            self.session, "http://mp3", self.shutdown
         )
         self.assertIsNone(res)
+
+    async def test_429_raises(self) -> None:
+        resp = AsyncMock(status=429)
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=resp)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        self.session.get.return_value = cm
+
+        with self.assertRaisesRegex(RuntimeError, "rate limit"):
+            await bcfy_calls_collector._download_and_convert_audio(
+                self.session, "http://mp3", self.shutdown
+            )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_5xx_retry_success(self, mock_sleep: AsyncMock) -> None:
+        mock_sleep.return_value = False
+        resp500 = AsyncMock(status=500)
+        resp200 = AsyncMock(status=200)
+        resp200.read.return_value = b"mp3"
+
+        self.session.get.side_effect = [
+            MagicMock(
+                __aenter__=AsyncMock(return_value=resp500),
+                __aexit__=AsyncMock(return_value=False),
+            ),
+            MagicMock(
+                __aenter__=AsyncMock(return_value=resp200),
+                __aexit__=AsyncMock(return_value=False),
+            ),
+        ]
+
+        with patch(
+            "backend.pipeline.ingestion.collectors.bcfy_calls"
+            ".bcfy_calls_collector.asyncio.to_thread",
+            new_callable=AsyncMock,
+        ) as mock_to_thread:
+            mock_to_thread.return_value = b"flac"
+            res = await bcfy_calls_collector._download_and_convert_audio(
+                self.session, "http://mp3", self.shutdown
+            )
+
+        self.assertEqual(res, b"flac")
+        self.assertEqual(self.session.get.call_count, 2)
+        mock_sleep.assert_called_once()
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_5xx_max_retries_returns_none(
+        self, mock_sleep: AsyncMock
+    ) -> None:
+        mock_sleep.return_value = False
+        resp503 = AsyncMock(status=503)
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=resp503)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        self.session.get.return_value = cm
+
+        res = await bcfy_calls_collector._download_and_convert_audio(
+            self.session, "http://mp3", self.shutdown
+        )
+        self.assertIsNone(res)
+        self.assertEqual(
+            self.session.get.call_count,
+            bcfy_calls_collector._MP3_DOWNLOAD_MAX_RETRIES + 1,
+        )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_5xx_retry_interrupted_by_shutdown(
+        self, mock_sleep: AsyncMock
+    ) -> None:
+        mock_sleep.return_value = True
+        resp502 = AsyncMock(status=502)
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=resp502)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        self.session.get.return_value = cm
+
+        res = await bcfy_calls_collector._download_and_convert_audio(
+            self.session, "http://mp3", self.shutdown
+        )
+        self.assertIsNone(res)
+        self.assertEqual(self.session.get.call_count, 1)
+        mock_sleep.assert_called_once()
 
 
 class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
@@ -596,7 +691,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             "calls": [{"url": "http://1"}, {"url": "http://2"}]
         }
 
-        async def dl_side_effect(session, url) -> bytes:
+        async def dl_side_effect(session, url, shutdown) -> bytes:
             self.shutdown.set()
             return b"flac"
 

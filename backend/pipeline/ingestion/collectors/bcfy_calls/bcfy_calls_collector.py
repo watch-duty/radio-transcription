@@ -25,6 +25,8 @@ _MAX_5XX_RETRIES = 3
 _POLL_INTERVAL_SEC = 10.0
 _API_TIMEOUT_SEC = 10.0
 _AUDIO_TIMEOUT_SEC = 60.0
+_MP3_DOWNLOAD_MAX_RETRIES = 3
+_MP3_DOWNLOAD_BACKOFF_BASE_SEC = 1.0
 
 
 class AuthError(Exception):
@@ -138,29 +140,71 @@ async def _fetch_calls(
     return None
 
 
+def _raise_if_429(status: int, mp3_url: str) -> None:
+    """Raise RuntimeError if status is 429."""
+    if status == 429:
+        msg = f"CDN rate limit (429) downloading MP3: {mp3_url}"
+        raise RuntimeError(msg)
+
+
 async def _download_and_convert_audio(
-    session: aiohttp.ClientSession, mp3_url: str
+    session: aiohttp.ClientSession,
+    mp3_url: str,
+    shutdown_event: asyncio.Event,
 ) -> bytes | None:
     """Download MP3 audio and convert it to FLAC bytes on a separate thread."""
     timeout = aiohttp.ClientTimeout(total=_AUDIO_TIMEOUT_SEC)
-    try:
-        async with session.get(mp3_url, timeout=timeout) as audio_resp:
-            if audio_resp.status != 200:
-                logger.error(
-                    "Failed to download audio from %s (status %d)",
-                    mp3_url,
-                    audio_resp.status,
+    for attempt in range(_MP3_DOWNLOAD_MAX_RETRIES + 1):
+        try:
+            async with session.get(mp3_url, timeout=timeout) as audio_resp:
+                _raise_if_429(audio_resp.status, mp3_url)
+
+                if 500 <= audio_resp.status <= 599:
+                    if attempt < _MP3_DOWNLOAD_MAX_RETRIES:
+                        delay = _MP3_DOWNLOAD_BACKOFF_BASE_SEC * (2**attempt)
+                        logger.warning(
+                            "5XX %s downloading audio"
+                            " (attempt %d/%d, retry in %.1fs): %s",
+                            audio_resp.status,
+                            attempt + 1,
+                            _MP3_DOWNLOAD_MAX_RETRIES,
+                            delay,
+                            mp3_url,
+                        )
+                        if await _sleep_or_shutdown(shutdown_event, delay):
+                            return None
+                        continue
+
+                    logger.error(
+                        "5XX %s downloading audio after %d retries,"
+                        " skipping: %s",
+                        audio_resp.status,
+                        _MP3_DOWNLOAD_MAX_RETRIES,
+                        mp3_url,
+                    )
+                    return None
+
+                if audio_resp.status != 200:
+                    logger.error(
+                        "Failed to download audio from %s (status %d)",
+                        mp3_url,
+                        audio_resp.status,
+                    )
+                    return None
+
+                audio_bytes = await audio_resp.read()
+                return await asyncio.to_thread(
+                    convert_to_flac, audio_bytes, "mp3"
                 )
-                return None
-            audio_bytes = await audio_resp.read()
-    except Exception:
-        logger.exception("Error downloading audio from %s", mp3_url)
-        return None
+        except RuntimeError:
+            raise
+        except Exception:
+            logger.exception("Error downloading audio from %s", mp3_url)
+            return None
+    return None
 
-    return await asyncio.to_thread(convert_to_flac, audio_bytes, "mp3")
 
-
-async def capture_bcfy_calls( # noqa: PLR0915, PLR0912
+async def capture_bcfy_calls(  # noqa: PLR0915, PLR0912
     feed: LeasedFeed, shutdown_event: asyncio.Event, url_base: str
 ) -> AsyncIterator[CapturedChunk]:
     """Capture audio chunks from Broadcastify Calls API.
@@ -220,7 +264,7 @@ async def capture_bcfy_calls( # noqa: PLR0915, PLR0912
 
                         try:
                             flac_bytes = await _download_and_convert_audio(
-                                session, mp3_url
+                                session, mp3_url, shutdown_event
                             )
                         except Exception as e:
                             logger.exception(
