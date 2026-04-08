@@ -186,7 +186,7 @@ async def openmhz_collector(
                     f"WebSocket failed {consecutive_ws_failures} "
                     f"times consecutively for {short_name}"
                 )
-                logger.exception(
+                logger.error(
                     "Escalating to runtime: short_name=%s "
                     "consecutive_failures=%d",
                     short_name,
