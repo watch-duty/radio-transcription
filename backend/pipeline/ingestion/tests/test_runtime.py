@@ -872,5 +872,87 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         mock_telemetry.emit_quarantine_event.assert_not_awaited()
 
 
+class TestProcessFeedPublishAttributes(unittest.IsolatedAsyncioTestCase):
+    """Contract tests: publish_audio_chunk must receive session_id and source_type."""
+
+    async def test_uses_chunk_session_id(self) -> None:
+        """Runtime publishes with the session_id from CapturedChunk."""
+        chunk_session_id = "chunk-supplied-session-id"
+
+        async def _one_chunk(feed, shutdown):
+            now = datetime.datetime.now(datetime.UTC)
+            yield CapturedChunk(
+                audio_bytes=b"audio",
+                chunk_start_time=now,
+                chunk_end_time=now + datetime.timedelta(seconds=15),
+                session_id=chunk_session_id,
+            )
+
+        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress.return_value = True
+        rt._releasing_feeds = set()
+
+        with _mock_upload_audio(), _mock_pubsub_publish() as mock_publish:
+            await rt._process_feed(_FEED)
+
+        mock_publish.assert_called_once()
+        _, _, kwargs = mock_publish.mock_calls[0]
+        self.assertEqual(kwargs["session_id"], chunk_session_id)
+
+    async def test_fallback_session_id_when_none(self) -> None:
+        """Runtime generates a fallback UUID and warns when session_id is None."""
+
+        async def _one_chunk(feed, shutdown):
+            yield _make_captured_chunk(b"audio")  # session_id=None
+
+        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress.return_value = True
+        rt._releasing_feeds = set()
+
+        with (
+            _mock_upload_audio(),
+            _mock_pubsub_publish() as mock_publish,
+            self.assertLogs(
+                "backend.pipeline.ingestion.normalizer_runtime",
+                level="WARNING",
+            ) as log_cm,
+        ):
+            await rt._process_feed(_FEED)
+
+        mock_publish.assert_called_once()
+        _, _, kwargs = mock_publish.mock_calls[0]
+        self.assertIsNotNone(kwargs["session_id"])
+        self.assertTrue(len(kwargs["session_id"]) > 0)
+        self.assertTrue(
+            any("fallback" in msg for msg in log_cm.output),
+        )
+
+    async def test_source_type_passed(self) -> None:
+        """publish_audio_chunk receives source_type matching the feed."""
+
+        async def _one_chunk(feed, shutdown):
+            yield _make_captured_chunk(b"audio")
+
+        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress.return_value = True
+        rt._releasing_feeds = set()
+
+        with _mock_upload_audio(), _mock_pubsub_publish() as mock_publish:
+            await rt._process_feed(_FEED)
+
+        mock_publish.assert_called_once()
+        _, _, kwargs = mock_publish.mock_calls[0]
+        self.assertEqual(kwargs["source_type"], _FEED["source_type"])
+
+
 if __name__ == "__main__":
     unittest.main()
