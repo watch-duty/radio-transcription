@@ -105,24 +105,24 @@ class TestCleanupOldVersions:
         v_old_enabled = mock.MagicMock()
         v_old_enabled.name = "v_old_enabled"
         v_old_enabled.state = main.secretmanager.SecretVersion.State.ENABLED
-        v_old_enabled.create_time.seconds = 1000000000
+        v_old_enabled.create_time.second = 1000000000
 
         v_old_disabled = mock.MagicMock()
         v_old_disabled.name = "v_old_disabled"
         v_old_disabled.state = main.secretmanager.SecretVersion.State.DISABLED
-        v_old_disabled.create_time.seconds = 1000000000
+        v_old_disabled.create_time.second = 1000000000
 
         # This version is new and should not be destroyed
         v_new_enabled = mock.MagicMock()
         v_new_enabled.name = "v_new_enabled"
         v_new_enabled.state = main.secretmanager.SecretVersion.State.ENABLED
-        v_new_enabled.create_time.seconds = 2000000000
+        v_new_enabled.create_time.second = 2000000000
 
         # This version is old but already destroyed, so it should be skipped
         v_old_destroyed = mock.MagicMock()
         v_old_destroyed.name = "v_old_destroyed"
         v_old_destroyed.state = main.secretmanager.SecretVersion.State.DESTROYED
-        v_old_destroyed.create_time.seconds = 1000000000
+        v_old_destroyed.create_time.second = 1000000000
 
         secret_client.list_secret_versions.return_value = [
             v_old_enabled,
