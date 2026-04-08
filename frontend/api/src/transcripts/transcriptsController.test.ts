@@ -1,4 +1,3 @@
-import axios from 'axios';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TranscriptsController } from './transcriptsController.js';
@@ -8,14 +7,14 @@ vi.mock('../config.js', () => ({
   TRANSCRIPTS_API_URL: 'http://api.example.com',
 }));
 
-vi.mock('axios');
+// Variables prefixed with 'mock' can be used in vi.mock
+const mockRequest = vi.fn();
+
 vi.mock('google-auth-library', () => {
   return {
     GoogleAuth: vi.fn().mockImplementation(() => ({
       getIdTokenClient: vi.fn().mockResolvedValue({
-        getRequestHeaders: vi.fn().mockResolvedValue({
-          get: vi.fn().mockReturnValue('Bearer mock-token'),
-        }),
+        request: mockRequest,
       }),
     })),
   };
@@ -26,8 +25,25 @@ describe('listTranscripts', () => {
     vi.clearAllMocks();
   });
 
-  it('should return data on success', async () => {
-    const mockData = {
+  it('should return converted data on success', async () => {
+    const mockBackendResponse = [
+      {
+        feed_id: 'test',
+        transmission_id: '1',
+        transcript: 'hello',
+        start_timestamp: '1',
+        end_timestamp: '2',
+        missing_prior_context: false,
+        missing_post_context: false,
+        source_audio_uris: [],
+        canonical_audio_uri: '',
+        start_audio_offset: '0',
+        end_audio_offset: '0',
+        evaluation_decisions: [],
+      },
+    ];
+
+    const expectedResult = {
       transcripts: [
         {
           feedId: 'test',
@@ -45,21 +61,22 @@ describe('listTranscripts', () => {
         },
       ],
     };
-    vi.mocked(axios.get).mockResolvedValueOnce({ data: mockData });
+
+    mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
 
     const controller = new TranscriptsController();
     const result = await controller.listTranscripts('test', vi.fn());
 
-    expect(result).toEqual(mockData);
-    expect(axios.get).toHaveBeenCalledWith('http://api.example.com', {
-      params: { feedId: 'test' },
-      headers: { Authorization: 'Bearer mock-token' },
+    expect(result).toEqual(expectedResult);
+    expect(mockRequest).toHaveBeenCalledWith({
+      url: 'http://api.example.com?feedId=test',
+      method: 'GET',
     });
   });
 
   it('should throw error on API failure with error message', async () => {
     const errorMessage = 'Network Error';
-    vi.mocked(axios.get).mockRejectedValueOnce(new Error(errorMessage));
+    mockRequest.mockRejectedValueOnce(new Error(errorMessage));
     const controller = new TranscriptsController();
 
     await expect(controller.listTranscripts('test', vi.fn())).rejects.toThrow(

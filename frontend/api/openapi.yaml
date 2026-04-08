@@ -61,6 +61,162 @@ components:
         - transcripts
       type: object
       additionalProperties: false
+    ScopeLevel:
+      type: string
+      enum:
+        - FEED_SPECIFIC
+        - GLOBAL
+    Scope:
+      properties:
+        level:
+          $ref: "#/components/schemas/ScopeLevel"
+        targetFeeds:
+          items:
+            type: string
+          type: array
+      required:
+        - level
+        - targetFeeds
+      type: object
+      additionalProperties: false
+    LogicalOperator:
+      type: string
+      enum:
+        - ANY
+        - ALL
+    KeywordConditions:
+      properties:
+        evaluationType:
+          type: string
+          enum:
+            - KEYWORD_MATCH
+          nullable: false
+        operator:
+          $ref: "#/components/schemas/LogicalOperator"
+        keywords:
+          items:
+            type: string
+          type: array
+        caseSensitive:
+          type: boolean
+      required:
+        - evaluationType
+        - operator
+        - keywords
+        - caseSensitive
+      type: object
+      additionalProperties: false
+    RegexConditions:
+      properties:
+        evaluationType:
+          type: string
+          enum:
+            - REGEX_MATCH
+          nullable: false
+        expression:
+          type: string
+        flags:
+          type: string
+      required:
+        - evaluationType
+        - expression
+        - flags
+      type: object
+      additionalProperties: false
+    GroupConditions:
+      properties:
+        evaluationType:
+          type: string
+          enum:
+            - RULE_GROUP
+          nullable: false
+        operator:
+          $ref: "#/components/schemas/LogicalOperator"
+        childRuleIds:
+          items:
+            type: string
+          type: array
+      required:
+        - evaluationType
+        - operator
+        - childRuleIds
+      type: object
+      additionalProperties: false
+    RuleConditions:
+      anyOf:
+        - $ref: "#/components/schemas/KeywordConditions"
+        - $ref: "#/components/schemas/RegexConditions"
+        - $ref: "#/components/schemas/GroupConditions"
+    RuleMetadata:
+      properties:
+        createdBy:
+          type: string
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required:
+        - createdAt
+        - updatedAt
+      type: object
+      additionalProperties: false
+    Rule:
+      properties:
+        ruleId:
+          type: string
+        ruleName:
+          type: string
+        description:
+          type: string
+        isActive:
+          type: boolean
+        scope:
+          $ref: "#/components/schemas/Scope"
+        conditions:
+          $ref: "#/components/schemas/RuleConditions"
+        metadata:
+          $ref: "#/components/schemas/RuleMetadata"
+      required:
+        - ruleId
+        - ruleName
+        - isActive
+        - scope
+        - conditions
+        - metadata
+      type: object
+      additionalProperties: false
+    RuleCreate:
+      properties:
+        ruleName:
+          type: string
+        description:
+          type: string
+        isActive:
+          type: boolean
+        scope:
+          $ref: "#/components/schemas/Scope"
+        conditions:
+          $ref: "#/components/schemas/RuleConditions"
+      required:
+        - ruleName
+        - scope
+        - conditions
+      type: object
+      additionalProperties: false
+    RuleUpdate:
+      properties:
+        ruleName:
+          type: string
+        description:
+          type: string
+        isActive:
+          type: boolean
+        scope:
+          $ref: "#/components/schemas/Scope"
+        conditions:
+          $ref: "#/components/schemas/RuleConditions"
+      type: object
+      additionalProperties: false
   securitySchemes:
     google_id_token:
       type: oauth2
@@ -108,6 +264,151 @@ paths:
       parameters:
         - in: path
           name: feedId
+          required: true
+          schema:
+            type: string
+      x-google-backend: radio-transcription-api
+  /api/v1/rules:
+    get:
+      operationId: ListRules
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/Rule"
+                type: array
+        "401":
+          description: Unauthorized
+      tags:
+        - Rules
+      security:
+        - google_id_token: []
+      parameters: []
+      x-google-backend: radio-transcription-api
+    post:
+      operationId: CreateRule
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Rule"
+        "401":
+          description: Unauthorized
+      tags:
+        - Rules
+      security:
+        - google_id_token: []
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RuleCreate"
+      x-google-backend: radio-transcription-api
+  /api/v1/rules/{ruleId}:
+    get:
+      operationId: GetRule
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Rule"
+        "401":
+          description: Unauthorized
+        "404":
+          description: ""
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      tags:
+        - Rules
+      security:
+        - google_id_token: []
+      parameters:
+        - in: path
+          name: ruleId
+          required: true
+          schema:
+            type: string
+      x-google-backend: radio-transcription-api
+    put:
+      operationId: UpdateRule
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Rule"
+        "401":
+          description: Unauthorized
+        "404":
+          description: ""
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      tags:
+        - Rules
+      security:
+        - google_id_token: []
+      parameters:
+        - in: path
+          name: ruleId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RuleUpdate"
+      x-google-backend: radio-transcription-api
+    delete:
+      operationId: DeleteRule
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+        "404":
+          description: ""
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      tags:
+        - Rules
+      security:
+        - google_id_token: []
+      parameters:
+        - in: path
+          name: ruleId
           required: true
           schema:
             type: string

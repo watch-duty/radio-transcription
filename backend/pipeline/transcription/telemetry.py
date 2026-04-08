@@ -2,13 +2,10 @@
 
 import abc
 import logging
-import time
 from collections.abc import Sequence
 
-from google.api_core.exceptions import GoogleAPIError
-from google.cloud import monitoring_v3
+from apache_beam.metrics import Metrics
 
-from backend.pipeline.common.constants import NANOS_PER_SECOND
 from backend.pipeline.transcription.constants import (
     GCP_DURATION_METRIC_NAME,
     GCP_METRIC_PREFIX,
@@ -47,65 +44,33 @@ class GcpMonitoringConfig(ConfigBase):
 
 
 class GcpMonitoringExporter(MetricsExporter):
-    """Exports metrics to Google Cloud Monitoring (Stackdriver)."""
+    """Exports metrics using Apache Beam's native built-in Distribution Metrics API."""
 
     def __init__(self, project_id: str, config_json: str) -> None:
-        """Binds the GCP Project ID and logging configuration JSON."""
+        """Initializes the exporter with the configuration JSON."""
         self.project_id = project_id
         self.config_json = config_json
-        self.client: monitoring_v3.MetricServiceClient | None = None
         self.config: GcpMonitoringConfig | None = None
 
     def setup(self) -> None:
-        """Instantiates the Cloud Monitoring gRPC client lazily on the executing worker."""
-        self.client = monitoring_v3.MetricServiceClient()
+        """Parses configuration lazily on the executing worker."""
         self.config = GcpMonitoringConfig.from_json(self.config_json)
-
-    def _record_custom_metric(
-        self, metric_name: str, feed_id: str, duration_ms: int
-    ) -> None:
-        """Publishes latency distribution metrics to Stackdriver / Cloud Monitoring."""
-        if not self.client or not self.config:
-            return
-
-        project_name = f"projects/{self.project_id}"
-        series = monitoring_v3.TimeSeries()
-        series.metric.type = f"{self.config.metric_prefix}/{metric_name}"
-        series.metric.labels["feed_id"] = feed_id
-
-        point = monitoring_v3.Point()
-        point.value.int64_value = duration_ms
-        now = time.time()
-        point.interval = monitoring_v3.TimeInterval(
-            end_time={
-                "seconds": int(now),
-                "nanos": int((now - int(now)) * NANOS_PER_SECOND),
-            }
-        )
-
-        series.points = [point]
-        try:
-            self.client.create_time_series(
-                name=project_name, time_series=[series]
-            )
-        except GoogleAPIError as e:
-            logger.warning(f"Failed to export GCP metric {metric_name}: {e}")
 
     def record_transcription_time(
         self, *, feed_id: str, duration_ms: int
     ) -> None:
-        """Records the transcription time telemetry."""
+        """Records the transcription time telemetry as a distribution."""
         if self.config:
-            self._record_custom_metric(
-                self.config.duration_metric_name, feed_id, duration_ms
-            )
+            Metrics.distribution(
+                self.config.metric_prefix, self.config.duration_metric_name
+            ).update(duration_ms)
 
     def record_stitching_time(self, *, feed_id: str, duration_ms: int) -> None:
-        """Records the stitching time telemetry."""
+        """Records the stitching time telemetry as a distribution."""
         if self.config:
-            self._record_custom_metric(
-                self.config.stitching_metric_name, feed_id, duration_ms
-            )
+            Metrics.distribution(
+                self.config.metric_prefix, self.config.stitching_metric_name
+            ).update(duration_ms)
 
 
 class MultiExporter(MetricsExporter):

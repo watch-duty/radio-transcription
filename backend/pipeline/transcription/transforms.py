@@ -1,7 +1,6 @@
 """Apache Beam DoFns for mapping incoming stream messages and downloading audio chunks."""
 
 import logging
-import time
 from collections.abc import Iterator
 from typing import Any, override
 
@@ -222,7 +221,7 @@ class RestoreOrderFn(beam.DoFn):
     TIMER_ACTIVE_STATE = beam.DoFn.StateParam(TIMER_ACTIVE_SPEC)
 
     OUT_OF_ORDER_TIMER_SPEC = TimerSpec(
-        "out_of_order_timer", TimeDomain.REAL_TIME
+        "out_of_order_timer", TimeDomain.WATERMARK
     )
     # A real-time (processing time) timer that acts as a maximum allowed wait period for missing chunks.
     OUT_OF_ORDER_TIMER = beam.DoFn.TimerParam(OUT_OF_ORDER_TIMER_SPEC)
@@ -315,10 +314,10 @@ class RestoreOrderFn(beam.DoFn):
 
         # Handle Timer for Gap Timeout
         if new_buffer_elements and not timer_active_state.read():
-            deadline_s = time.time() + (
+            deadline = timestamp + (
                 self.config.out_of_order_timeout_ms / float(MS_PER_SECOND)
             )
-            out_of_order_timer.set(Timestamp(deadline_s))
+            out_of_order_timer.set(deadline)
             timer_active_state.write(True)  # noqa: FBT003
         elif not new_buffer_elements and timer_active_state.read():
             out_of_order_timer.clear()
