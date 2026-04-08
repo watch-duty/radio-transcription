@@ -116,7 +116,15 @@ async def _fetch_calls_batch(
                 return None
 
             if resp.status != 200:
-                logger.error("API call failed with status %s", resp.status)
+                logger.error(
+                    "API call failed with status %s for feed %s "
+                    "(source_feed_id=%s, url=%s, params=%s)",
+                    resp.status,
+                    feed_id,
+                    source_feed_id,
+                    url,
+                    params,
+                )
                 return None
 
             data = await resp.json()
@@ -154,7 +162,9 @@ async def capture_bcfy_calls(
     Args:
         feed: Leased feed containing source_feed_id.
         shutdown_event: Signals graceful shutdown request.
-        url_base: The base URL to prepend (not used directly if URLs are full).
+        url_base: Full Broadcastify Calls API live endpoint URL to query.
+            The function uses this URL directly after normalizing a
+            trailing slash.
     """
     source_feed_id = feed.get("source_feed_id")
     feed_id = feed.get("id")
@@ -177,7 +187,7 @@ async def capture_bcfy_calls(
     async with aiohttp.ClientSession() as session:
         while not shutdown_event.is_set():
             params: dict[str, Any] = {"groups": source_feed_id}
-            if last_bookmark_time_unix:
+            if last_bookmark_time_unix is not None:
                 params["pos"] = last_bookmark_time_unix
 
             try:
@@ -226,14 +236,14 @@ async def capture_bcfy_calls(
                             datetime.datetime.fromtimestamp(
                                 start_ts, datetime.UTC
                             )
-                            if start_ts
+                            if start_ts is not None
                             else datetime.datetime.now(datetime.UTC)
                         )
                         chunk_end_time = (
                             datetime.datetime.fromtimestamp(
                                 end_ts, datetime.UTC
                             )
-                            if end_ts
+                            if end_ts is not None
                             else datetime.datetime.now(datetime.UTC)
                         )
 

@@ -21,6 +21,7 @@ class SourceType(enum.StrEnum):
     .. important::
         This enum **must** be kept in sync with the following SQL files:
 
+        - ``terraform/modules/alloydb/sql/ingestion/002_source_types.sql``
         - ``terraform/modules/alloydb/sql/ingestion/006_seed_source_types.sql``
 
         When adding or renaming a source type, update both this enum and the
