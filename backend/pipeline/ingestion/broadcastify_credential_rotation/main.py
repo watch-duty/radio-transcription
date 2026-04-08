@@ -82,7 +82,21 @@ def cleanup_old_versions(
         ]:
             continue
 
-        if datetime.fromtimestamp(version.create_time.seconds, tz=UTC) < cutoff:
+        create_time = version.create_time
+        if isinstance(create_time, datetime):
+            if create_time.tzinfo is None:
+                version_create_time = create_time.replace(tzinfo=UTC)
+            else:
+                version_create_time = create_time.astimezone(UTC)
+        else:
+            version_create_time = datetime.fromtimestamp(
+                create_time.seconds,
+                tz=UTC,
+            )
+        logger.debug(
+            f"Version {version.name} created at {version_create_time.isoformat()}, cutoff is {cutoff.isoformat()}"
+        )
+        if version_create_time < cutoff:
             logger.info(f"Destroying old secret version: {version.name}")
             secret_client.destroy_secret_version(request={"name": version.name})
 
