@@ -23,7 +23,8 @@ logger = logging.getLogger(__name__)
 
 _MAX_5XX_RETRIES = 3
 _POLL_INTERVAL_SEC = 10.0
-_REQUEST_TIMEOUT_SEC = 30.0
+_API_TIMEOUT_SEC = 10.0
+_AUDIO_TIMEOUT_SEC = 60.0
 
 
 async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
@@ -138,8 +139,9 @@ async def _download_and_convert_audio(
     session: aiohttp.ClientSession, mp3_url: str
 ) -> bytes | None:
     """Download MP3 audio and convert it to FLAC bytes on a separate thread."""
+    timeout = aiohttp.ClientTimeout(total=_AUDIO_TIMEOUT_SEC)
     try:
-        async with session.get(mp3_url) as audio_resp:
+        async with session.get(mp3_url, timeout=timeout) as audio_resp:
             if audio_resp.status != 200:
                 logger.error(
                     "Failed to download audio from %s (status %d)",
@@ -186,7 +188,7 @@ async def capture_bcfy_calls(
     seen_urls = collections.deque(maxlen=1000)
 
     async with aiohttp.ClientSession(
-        timeout=aiohttp.ClientTimeout(total=_REQUEST_TIMEOUT_SEC)
+        timeout=aiohttp.ClientTimeout(total=_API_TIMEOUT_SEC)
     ) as session:
         while not shutdown_event.is_set():
             params: dict[str, Any] = {"groups": source_feed_id}
@@ -225,10 +227,6 @@ async def capture_bcfy_calls(
                         if not flac_bytes:
                             continue
 
-                        # Only mark as seen after a successful download so
-                        # transient failures can be retried on the next poll.
-                        seen_urls.append(mp3_url)
-
                         start_ts = result.get("start_ts")
                         end_ts = result.get("end_ts")
                         now = datetime.datetime.now(datetime.UTC)
@@ -253,6 +251,10 @@ async def capture_bcfy_calls(
                             chunk_start_time=chunk_start_time,
                             chunk_end_time=chunk_end_time,
                         )
+
+                        # Only mark as seen and update pagination after a successful
+                        # yield, confirming the chunk was handed off to the pipeline.
+                        seen_urls.append(mp3_url)
                         # Update local last_bookmark_time_unix for pagination after yielding a successfully processed chunk
                         last_bookmark_time_unix = result.get(
                             "lastPos", last_bookmark_time_unix
