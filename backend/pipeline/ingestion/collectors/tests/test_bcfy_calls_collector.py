@@ -68,12 +68,8 @@ class TestGetJwtToken(unittest.TestCase):
     def test_gcp_error(self, mock_smc: MagicMock) -> None:
         mock_client = MagicMock()
         mock_smc.return_value = mock_client
-        mock_client.access_secret_version.side_effect = Exception(
-            "API error"
-        )
-        with self.assertRaisesRegex(
-            RuntimeError, "Failed to access secret"
-        ):
+        mock_client.access_secret_version.side_effect = Exception("API error")
+        with self.assertRaisesRegex(RuntimeError, "Failed to access secret"):
             bcfy_calls_collector._get_jwt_token()
 
 
