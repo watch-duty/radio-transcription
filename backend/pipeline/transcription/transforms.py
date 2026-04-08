@@ -1,7 +1,6 @@
 """Apache Beam DoFns for mapping incoming stream messages and downloading audio chunks."""
 
 import logging
-import time
 from collections.abc import Iterator
 from typing import Any, override
 
@@ -9,16 +8,6 @@ import apache_beam as beam
 from apache_beam.io.gcp.pubsub import PubsubMessage
 from apache_beam.metrics import Metrics
 from apache_beam.transforms import window
-from apache_beam.transforms.timeutil import TimeDomain
-from apache_beam.transforms.userstate import (
-    BagRuntimeState,
-    BagStateSpec,
-    ReadModifyWriteRuntimeState,
-    ReadModifyWriteStateSpec,
-    RuntimeTimer,
-    TimerSpec,
-    on_timer,
-)
 from apache_beam.utils.timestamp import Timestamp
 from google.protobuf.duration_pb2 import Duration  # type: ignore
 from google.protobuf.message import DecodeError
@@ -38,14 +27,11 @@ from backend.pipeline.schema_types.transcribed_audio_pb2 import (
 from backend.pipeline.transcription.audio_processor import AudioProcessor
 from backend.pipeline.transcription.constants import (
     DEAD_LETTER_QUEUE_TAG,
-    DEFAULT_FLOAT_TOLERANCE_MS,
 )
 from backend.pipeline.transcription.datatypes import (
-    OrderRestorerConfig,
     StitchAudioConfig,
     TranscriptionResult,
 )
-from backend.pipeline.transcription.sequence_buffer import SequenceBuffer
 
 logger = logging.getLogger(__name__)
 
@@ -187,189 +173,6 @@ class SerializeToPubSubMessageFn(beam.DoFn):
             attributes={},
             ordering_key=element.feed_id,
         )
-
-
-@beam.typehints.with_input_types(tuple[str, tuple[str, str]])
-@beam.typehints.with_output_types(tuple[str, str])
-class RestoreOrderFn(beam.DoFn):
-    """A stateful DoFn that buffers out-of-order chunks and emits them in strict chronological order.
-
-    It acts as a thin wrapper around the SequenceBuffer framework-agnostic domain class.
-    """
-
-    SESSION_ID_SPEC = ReadModifyWriteStateSpec(
-        "session_id", beam.coders.StrUtf8Coder()
-    )
-    SESSION_ID_STATE = beam.DoFn.StateParam(SESSION_ID_SPEC)
-
-    OUT_OF_ORDER_BUFFER_SPEC = BagStateSpec(
-        "out_of_order_buffer",
-        beam.coders.PickleCoder(),
-    )
-    # A bag state holding chunks that have arrived earlier than their expected chronological sequence.
-    OUT_OF_ORDER_BUFFER_STATE = beam.DoFn.StateParam(OUT_OF_ORDER_BUFFER_SPEC)
-
-    EXPECTED_NEXT_TS_SPEC = ReadModifyWriteStateSpec(
-        "expected_next_ts", beam.coders.VarIntCoder()
-    )
-    # Tracks the exact chronological timestamp (ms) of the next chunk we must receive before emitting anything downstream.
-    EXPECTED_NEXT_TS_STATE = beam.DoFn.StateParam(EXPECTED_NEXT_TS_SPEC)
-
-    TIMER_ACTIVE_SPEC = ReadModifyWriteStateSpec(
-        "timer_active", beam.coders.BooleanCoder()
-    )
-    # Boolean flag ensuring we only ever have a single active processing-time timer scheduled across the buffer.
-    TIMER_ACTIVE_STATE = beam.DoFn.StateParam(TIMER_ACTIVE_SPEC)
-
-    OUT_OF_ORDER_TIMER_SPEC = TimerSpec(
-        "out_of_order_timer", TimeDomain.REAL_TIME
-    )
-    # A real-time (processing time) timer that acts as a maximum allowed wait period for missing chunks.
-    OUT_OF_ORDER_TIMER = beam.DoFn.TimerParam(OUT_OF_ORDER_TIMER_SPEC)
-
-    def __init__(self, config: OrderRestorerConfig) -> None:
-        """Binds the OrderRestorerConfig and initializes Beam metrics counters."""
-        self.config = config
-        self.chunks_buffered_out_of_order = Metrics.counter(
-            self.__class__, "chunks_buffered_out_of_order"
-        )
-        self.gaps_encountered_counter = Metrics.counter(
-            self.__class__, "gaps_encountered"
-        )
-        self.session_resets_counter = Metrics.counter(
-            self.__class__, "session_resets"
-        )
-        self.chunks_dropped_late = Metrics.counter(
-            self.__class__, "chunks_dropped_late"
-        )
-
-    @override
-    def process(  # type: ignore[override]
-        self,
-        element: tuple[str, tuple[str, str]],
-        timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
-        session_id_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            SESSION_ID_SPEC
-        ),
-        expected_next_ts_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            EXPECTED_NEXT_TS_SPEC
-        ),
-        out_of_order_buffer_state: BagRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            OUT_OF_ORDER_BUFFER_SPEC
-        ),
-        timer_active_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            TIMER_ACTIVE_SPEC
-        ),
-        out_of_order_timer: RuntimeTimer = beam.DoFn.TimerParam(  # type: ignore # noqa: B008
-            OUT_OF_ORDER_TIMER_SPEC
-        ),
-    ) -> Iterator[tuple[str, str]]:
-        """Ingests out-of-order chunks and orchestrates chronologically sorted yields."""
-        feed_id, (gcs_path, incoming_session_id) = element
-        current_ts_ms = int(float(timestamp) * MS_PER_SECOND)
-
-        current_session_id = session_id_state.read()
-        expected_next_ts = expected_next_ts_state.read()
-
-        if current_session_id != incoming_session_id:
-            logger.info(
-                f"[{feed_id}] Session ID changed from {current_session_id} to {incoming_session_id}. Resetting state."
-            )
-            self.session_resets_counter.inc()
-            session_id_state.write(incoming_session_id)
-            expected_next_ts_state.clear()
-            expected_next_ts = None
-            out_of_order_buffer_state.clear()
-            if timer_active_state.read():
-                out_of_order_timer.clear()
-            timer_active_state.clear()
-
-        sequence_buffer = SequenceBuffer(self.config)
-        buffer_elements = list(out_of_order_buffer_state.read())
-
-        (
-            new_expected_next_ts,
-            new_buffer_elements,
-            elements_to_emit,
-            was_late,
-            was_buffered,
-        ) = sequence_buffer.process_chunk(
-            current_ts_ms=current_ts_ms,
-            gcs_uri=gcs_path,
-            expected_next_ts=expected_next_ts,
-            buffer_elements=buffer_elements,
-        )
-
-        if was_late:
-            self.chunks_dropped_late.inc()
-        if was_buffered:
-            self.chunks_buffered_out_of_order.inc()
-
-        expected_next_ts_state.write(new_expected_next_ts)
-        out_of_order_buffer_state.clear()
-        for chunk in new_buffer_elements:
-            out_of_order_buffer_state.add(chunk)
-
-        for gcs_uri in elements_to_emit:
-            yield (feed_id, gcs_uri)
-
-        # Handle Timer for Gap Timeout
-        if new_buffer_elements and not timer_active_state.read():
-            deadline_s = time.time() + (
-                self.config.out_of_order_timeout_ms / float(MS_PER_SECOND)
-            )
-            out_of_order_timer.set(Timestamp(deadline_s))
-            timer_active_state.write(True)  # noqa: FBT003
-        elif not new_buffer_elements and timer_active_state.read():
-            out_of_order_timer.clear()
-            timer_active_state.clear()
-
-    @on_timer(OUT_OF_ORDER_TIMER_SPEC)
-    def handle_gap_timeout(
-        self,
-        feed_id: str = beam.DoFn.KeyParam,  # type: ignore
-        expected_next_ts_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            EXPECTED_NEXT_TS_SPEC
-        ),
-        out_of_order_buffer_state: BagRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            OUT_OF_ORDER_BUFFER_SPEC
-        ),
-        timer_active_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            TIMER_ACTIVE_SPEC
-        ),
-    ) -> Iterator[tuple[str, str]]:
-        """Handles the gap timeout."""
-        self.gaps_encountered_counter.inc()
-        timer_active_state.clear()
-
-        buffer_elements = list(out_of_order_buffer_state.read())
-        if buffer_elements:
-            sorted_elements = sorted(buffer_elements)
-            new_expected = sorted_elements[0].timestamp_ms
-
-            logger.warning(
-                f"[{feed_id}] Gap timeout! Advancing expected from {expected_next_ts_state.read()} to {new_expected}."
-            )
-
-            expected_next_ts_state.write(new_expected)
-
-            sequence_buffer = SequenceBuffer(self.config)
-
-            new_expected_next_ts, new_buffer_elements, elements_to_emit = (
-                sequence_buffer.drain_ready_elements(
-                    expected_next_ts=new_expected,
-                    buffer_elements=buffer_elements,
-                    epsilon_ms=DEFAULT_FLOAT_TOLERANCE_MS,
-                )
-            )
-
-            expected_next_ts_state.write(new_expected_next_ts)
-            out_of_order_buffer_state.clear()
-            for chunk in new_buffer_elements:
-                out_of_order_buffer_state.add(chunk)
-
-            for gcs_uri in elements_to_emit:
-                yield (feed_id, gcs_uri)
 
 
 @beam.typehints.with_input_types(tuple[str, str])

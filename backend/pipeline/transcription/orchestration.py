@@ -30,7 +30,6 @@ from backend.pipeline.transcription.constants import (
     MAIN_TAG,
 )
 from backend.pipeline.transcription.datatypes import (
-    OrderRestorerConfig,
     StitchAudioConfig,
     TranscribeAudioConfig,
 )
@@ -43,7 +42,6 @@ from backend.pipeline.transcription.transforms import (
     AddEventTimestamp,
     DownloadAudioFn,
     ParseAndKeyFn,
-    RestoreOrderFn,
     SerializeToPubSubMessageFn,
 )
 
