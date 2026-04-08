@@ -103,7 +103,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
 
     async def test_success_list(self) -> None:
         resp = AsyncMock(status=200)
-        resp.json.return_value = [{"call": 1}]
+        resp.json.return_value = {"calls": [{"call": 1}]}
         cm = MagicMock()
         cm.__aenter__ = AsyncMock(return_value=resp)
         cm.__aexit__ = AsyncMock(return_value=False)
@@ -112,7 +112,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         res = await bcfy_calls_collector._fetch_calls(
             self.session, "url", {}, {}, "fid", "sid", self.shutdown
         )
-        self.assertEqual(res, [{"call": 1}])
+        self.assertEqual(res, {"calls": [{"call": 1}]})
 
     async def test_success_dict(self) -> None:
         resp = AsyncMock(status=200)
@@ -125,7 +125,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         res = await bcfy_calls_collector._fetch_calls(
             self.session, "url", {}, {}, "fid", "sid", self.shutdown
         )
-        self.assertEqual(res, [{"call": 1}])
+        self.assertEqual(res, {"call": 1})
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
@@ -135,7 +135,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         mock_sleep.return_value = False
         resp500 = AsyncMock(status=500)
         resp200 = AsyncMock(status=200)
-        resp200.json.return_value = [{"call": 1}]
+        resp200.json.return_value = {"calls": [{"call": 1}]}
 
         self.session.get.side_effect = [
             MagicMock(
@@ -151,7 +151,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         res = await bcfy_calls_collector._fetch_calls(
             self.session, "url", {}, {}, "fid", "sid", self.shutdown
         )
-        self.assertEqual(res, [{"call": 1}])
+        self.assertEqual(res, {"calls": [{"call": 1}]})
         self.assertEqual(self.session.get.call_count, 2)
         mock_sleep.assert_called_once()
 
@@ -311,16 +311,18 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             nonlocal fetch_calls
             fetch_calls += 1
             if fetch_calls == 1:
-                return [
-                    {
-                        "url": "http://1",
-                        "start_ts": 1000,
-                        "end_ts": 2000,
-                        "lastPos": 9999,
-                    }
-                ]
+                return {
+                    "calls": [
+                        {
+                            "url": "http://1",
+                            "start_ts": 1000,
+                            "end_ts": 2000,
+                        }
+                    ],
+                    "lastPos": 9999,
+                }
             self.shutdown.set()
-            return []
+            return {"calls": []}
 
         mock_fetch.side_effect = fetch_side_effect
         mock_sleep.return_value = False
@@ -375,10 +377,12 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         mock_dl.return_value = b"flac"
 
         mock_fetch.side_effect = [
-            [
-                {"url": "http://dup", "start_ts": None, "end_ts": None},
-                {"url": "http://dup", "start_ts": 1, "end_ts": 2},
-            ]
+            {
+                "calls": [
+                    {"url": "http://dup", "start_ts": None, "end_ts": None},
+                    {"url": "http://dup", "start_ts": 1, "end_ts": 2},
+                ]
+            }
         ]
 
         async def sleep_side_effect(*args, **kwargs) -> bool:
@@ -431,11 +435,13 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         mock_jwt.return_value = "token"
 
-        mock_fetch.return_value = [
-            {"url": "http://1"},
-            {"url": "http://2"},
-            {"url": "http://3", "start_ts": 10},
-        ]
+        mock_fetch.return_value = {
+            "calls": [
+                {"url": "http://1"},
+                {"url": "http://2"},
+                {"url": "http://3", "start_ts": 10},
+            ]
+        }
 
         mock_dl.side_effect = [Exception("error"), None, b"flac"]
 
@@ -535,7 +541,9 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         mock_jwt: MagicMock,
     ) -> None:
         mock_jwt.return_value = "token"
-        mock_fetch.return_value = [{"url": "http://1"}, {"url": "http://2"}]
+        mock_fetch.return_value = {
+            "calls": [{"url": "http://1"}, {"url": "http://2"}]
+        }
 
         async def dl_side_effect(session, url) -> bytes:
             self.shutdown.set()

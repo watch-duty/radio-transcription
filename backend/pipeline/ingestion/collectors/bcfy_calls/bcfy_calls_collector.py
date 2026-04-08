@@ -85,7 +85,7 @@ async def _fetch_calls(
     feed_id: object,
     source_feed_id: str,
     shutdown_event: asyncio.Event,
-) -> list[dict[str, Any]] | None:
+) -> dict[str, Any] | None:
     """Fetch audio calls from Broadcastify, handling retries for 5XX errors."""
     for attempt in range(_MAX_5XX_RETRIES + 1):
         if shutdown_event.is_set():
@@ -129,8 +129,7 @@ async def _fetch_calls(
                 )
                 return None
 
-            data = await resp.json()
-            return data if isinstance(data, list) else [data]
+            return await resp.json()
 
     return None
 
@@ -206,8 +205,8 @@ async def capture_bcfy_calls(
                     shutdown_event,
                 )
 
-                if bcfy_calls:
-                    for result in bcfy_calls:
+                if bcfy_calls and bcfy_calls["calls"]:
+                    for result in bcfy_calls["calls"]:
                         if shutdown_event.is_set():
                             break
 
@@ -256,9 +255,8 @@ async def capture_bcfy_calls(
                         # yield, confirming the chunk was handed off to the pipeline.
                         seen_urls.append(mp3_url)
                         # Update local last_bookmark_time_unix for pagination after yielding a successfully processed chunk
-                        last_bookmark_time_unix = result.get(
-                            "lastPos", last_bookmark_time_unix
-                        )
+                        if bcfy_calls and "lastPos" in bcfy_calls:
+                            last_bookmark_time_unix = bcfy_calls["lastPos"]
 
                 # Wait before polling again, gracefully interruptible by shutdown
                 await _sleep_or_shutdown(shutdown_event, _POLL_INTERVAL_SEC)
