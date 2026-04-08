@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, call, patch
 
-from google.api_core.exceptions import GoogleAPIError
+from google.api_core.retry import Retry
 
 from backend.pipeline.common.constants import BYTES_PER_SECOND_16KHZ_MONO
 from backend.pipeline.transcription.enums import TranscriberType
@@ -77,7 +77,6 @@ class TestTranscribers(unittest.TestCase):
 
     def test_google_chirp_transcriber_passes_retry_policy(self) -> None:
         """Verifies that the GoogleChirpV3Transcriber passes a native Retry policy to the SpeechClient."""
-        from google.api_core.retry import Retry
         with patch(
             "backend.pipeline.transcription.transcribers.SpeechClient"
         ) as mock_speech_client_cls:

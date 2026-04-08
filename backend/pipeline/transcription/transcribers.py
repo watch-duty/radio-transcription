@@ -11,7 +11,6 @@ import pathlib
 
 import pydantic
 from google.api_core import client_options
-from google.api_core.exceptions import GoogleAPIError, RetryError
 from google.api_core.retry import Retry
 from google.cloud import speech_v2 as cloud_speech
 from google.cloud.speech_v2 import SpeechClient
