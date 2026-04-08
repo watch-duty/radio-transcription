@@ -89,14 +89,14 @@ class TestRaiseForFatalStatus(unittest.TestCase):
         bcfy_calls_collector._raise_for_fatal_status(500, "fid", "sid")
 
 
-class TestFetchCallsBatch(unittest.IsolatedAsyncioTestCase):
+class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.session = MagicMock()
         self.shutdown = asyncio.Event()
 
     async def test_shutdown_is_set(self) -> None:
         self.shutdown.set()
-        res = await bcfy_calls_collector._fetch_calls_batch(
+        res = await bcfy_calls_collector._fetch_calls(
             self.session, "url", {}, {}, "fid", "sid", self.shutdown
         )
         self.assertIsNone(res)
@@ -109,7 +109,7 @@ class TestFetchCallsBatch(unittest.IsolatedAsyncioTestCase):
         cm.__aexit__ = AsyncMock(return_value=False)
         self.session.get.return_value = cm
 
-        res = await bcfy_calls_collector._fetch_calls_batch(
+        res = await bcfy_calls_collector._fetch_calls(
             self.session, "url", {}, {}, "fid", "sid", self.shutdown
         )
         self.assertEqual(res, [{"call": 1}])
@@ -122,7 +122,7 @@ class TestFetchCallsBatch(unittest.IsolatedAsyncioTestCase):
         cm.__aexit__ = AsyncMock(return_value=False)
         self.session.get.return_value = cm
 
-        res = await bcfy_calls_collector._fetch_calls_batch(
+        res = await bcfy_calls_collector._fetch_calls(
             self.session, "url", {}, {}, "fid", "sid", self.shutdown
         )
         self.assertEqual(res, [{"call": 1}])
@@ -148,7 +148,7 @@ class TestFetchCallsBatch(unittest.IsolatedAsyncioTestCase):
             ),
         ]
 
-        res = await bcfy_calls_collector._fetch_calls_batch(
+        res = await bcfy_calls_collector._fetch_calls(
             self.session, "url", {}, {}, "fid", "sid", self.shutdown
         )
         self.assertEqual(res, [{"call": 1}])
@@ -167,7 +167,7 @@ class TestFetchCallsBatch(unittest.IsolatedAsyncioTestCase):
         cm.__aexit__ = AsyncMock(return_value=False)
         self.session.get.return_value = cm
 
-        res = await bcfy_calls_collector._fetch_calls_batch(
+        res = await bcfy_calls_collector._fetch_calls(
             self.session, "url", {}, {}, "fid", "sid", self.shutdown
         )
         self.assertIsNone(res)
@@ -190,7 +190,7 @@ class TestFetchCallsBatch(unittest.IsolatedAsyncioTestCase):
         cm.__aexit__ = AsyncMock(return_value=False)
         self.session.get.return_value = cm
 
-        res = await bcfy_calls_collector._fetch_calls_batch(
+        res = await bcfy_calls_collector._fetch_calls(
             self.session, "url", {}, {}, "fid", "sid", self.shutdown
         )
         self.assertIsNone(res)
@@ -203,7 +203,7 @@ class TestFetchCallsBatch(unittest.IsolatedAsyncioTestCase):
         cm.__aexit__ = AsyncMock(return_value=False)
         self.session.get.return_value = cm
 
-        res = await bcfy_calls_collector._fetch_calls_batch(
+        res = await bcfy_calls_collector._fetch_calls(
             self.session, "url", {}, {}, "fid", "sid", self.shutdown
         )
         self.assertIsNone(res)
@@ -284,7 +284,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
     )
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls_batch",
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
         new_callable=AsyncMock,
     )
     @patch(
@@ -353,7 +353,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
     )
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls_batch",
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
         new_callable=AsyncMock,
     )
     @patch(
@@ -411,7 +411,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
     )
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls_batch",
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
         new_callable=AsyncMock,
     )
     @patch(
@@ -460,7 +460,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
     )
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls_batch",
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
         new_callable=AsyncMock,
     )
     @patch(
@@ -483,7 +483,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
     )
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls_batch",
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
         new_callable=AsyncMock,
     )
     @patch(
@@ -516,7 +516,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
     )
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls_batch",
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
         new_callable=AsyncMock,
     )
     @patch(

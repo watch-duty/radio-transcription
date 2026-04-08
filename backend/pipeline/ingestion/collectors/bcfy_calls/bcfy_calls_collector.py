@@ -76,7 +76,7 @@ def _raise_for_fatal_status(
         raise RuntimeError(msg)
 
 
-async def _fetch_calls_batch(
+async def _fetch_calls(
     session: aiohttp.ClientSession,
     url: str,
     headers: dict[str, str],
@@ -85,7 +85,7 @@ async def _fetch_calls_batch(
     source_feed_id: str,
     shutdown_event: asyncio.Event,
 ) -> list[dict[str, Any]] | None:
-    """Fetch a batch of calls from Broadcastify, handling retries for 5XX errors."""
+    """Fetch audio calls from Broadcastify, handling retries for 5XX errors."""
     for attempt in range(_MAX_5XX_RETRIES + 1):
         if shutdown_event.is_set():
             return None
@@ -109,7 +109,7 @@ async def _fetch_calls_batch(
                     continue
 
                 logger.error(
-                    "5XX %s (feed %s) after %d retries, giving up on this batch",
+                    "5XX %s (feed %s) after %d retries, giving up on this call",
                     resp.status,
                     feed_id,
                     _MAX_5XX_RETRIES,
@@ -194,7 +194,7 @@ async def capture_bcfy_calls(
                 params["pos"] = last_bookmark_time_unix
 
             try:
-                calls_batch = await _fetch_calls_batch(
+                bcfy_calls = await _fetch_calls(
                     session,
                     normalized_url_base,
                     headers,
@@ -204,15 +204,10 @@ async def capture_bcfy_calls(
                     shutdown_event,
                 )
 
-                if calls_batch:
-                    for result in calls_batch:
+                if bcfy_calls:
+                    for result in bcfy_calls:
                         if shutdown_event.is_set():
                             break
-
-                        # Update local last_bookmark_time_unix for pagination
-                        last_bookmark_time_unix = result.get(
-                            "lastPos", last_bookmark_time_unix
-                        )
 
                         mp3_url = result.get("url")
                         if not mp3_url or mp3_url in seen_urls:
@@ -257,6 +252,10 @@ async def capture_bcfy_calls(
                             audio_bytes=flac_bytes,
                             chunk_start_time=chunk_start_time,
                             chunk_end_time=chunk_end_time,
+                        )
+                        # Update local last_bookmark_time_unix for pagination after yielding a successfully processed chunk
+                        last_bookmark_time_unix = result.get(
+                            "lastPos", last_bookmark_time_unix
                         )
 
                 # Wait before polling again, gracefully interruptible by shutdown
