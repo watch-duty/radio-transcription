@@ -88,7 +88,7 @@ def get_pipeline(
     # Note: DirectRunner's dummy PubSub emulator natively rejects id_label.
     # To run locally, explicitly pass --id_label "" to bypass exact-once deduplication.
     messages = pipeline | "ReadFromPubSub" >> ReadFromPubSub(
-        topic=options.input_topic,
+        subscription=options.input_subscription,
         id_label=options.id_label or None,
         with_attributes=True,
     )

@@ -3,9 +3,9 @@
   "description": "Flex Template for the Audio Transcription Pipeline (Dataflow).",
   "parameters": [
     {
-      "name": "input_topic",
-      "label": "Input Topic",
-      "helpText": "Full path of the Pub/Sub topic to read from (e.g. projects/your-project/topics/raw-audio-topic).",
+      "name": "input_subscription",
+      "label": "Input Subscription",
+      "helpText": "Full path of the ordered Pub/Sub subscription to read from (e.g. projects/your-project/subscriptions/raw-audio-sub).",
       "isOptional": false
     },
     {

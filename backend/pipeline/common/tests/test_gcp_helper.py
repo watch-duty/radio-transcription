@@ -1,3 +1,4 @@
+import concurrent.futures
 import datetime
 import unittest
 import uuid
@@ -433,18 +434,14 @@ class TestPublishAudioChunkSync(unittest.TestCase):
 class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
     """Test suite for the async publish_audio_chunk wrapper."""
 
-    @patch(
-        "backend.pipeline.common.gcp_helper.asyncio.to_thread",
-        new_callable=AsyncMock,
-    )
-    async def test_delegates_to_sync_via_to_thread(
-        self,
-        mock_to_thread: AsyncMock,
-    ) -> None:
-        """Async wrapper delegates to publish_audio_chunk_sync via to_thread."""
-        mock_to_thread.return_value = "message-123"
+    async def test_delegates_to_publish_with_ordering_key(self) -> None:
+        """Async wrapper directly calls publisher.publish and uses wrap_future."""
         mock_pubsub_client, mock_publisher = _make_pubsub_client()
         mock_now = datetime.datetime(2026, 3, 5, 12, 0, tzinfo=datetime.UTC)
+
+        fut = concurrent.futures.Future()
+        fut.set_result("message-123")
+        mock_publisher.publish.return_value = fut
 
         result = await gcp_helper.publish_audio_chunk(
             mock_pubsub_client,
@@ -456,52 +453,32 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result, "message-123")
-        mock_to_thread.assert_awaited_once_with(
-            gcp_helper.publish_audio_chunk_sync,
-            mock_publisher,
-            "projects/test/topics/audio",
-            "feed-42",
-            "gs://bucket/audio.flac",
-            "test-session-1",
-            mock_now,
-            None,
-        )
+        mock_publisher.publish.assert_called_once()
+        _, publish_kwargs = mock_publisher.publish.call_args
+        self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
 
-    @patch(
-        "backend.pipeline.common.gcp_helper.asyncio.to_thread",
-        new_callable=AsyncMock,
-    )
-    async def test_returns_message_id(
-        self,
-        mock_to_thread: AsyncMock,
-    ) -> None:
-        """publish_audio_chunk returns the message ID."""
-        mock_pubsub_client, _ = _make_pubsub_client()
-        mock_to_thread.side_effect = ["message-1", "message-2"]
+    async def test_resumes_publish_on_failure_callback(self) -> None:
+        """Verifies that the done-callback explicitly invokes resume_publish upon failure."""
+        mock_pubsub_client, mock_publisher = _make_pubsub_client()
+        mock_now = datetime.datetime(2026, 3, 5, 12, 0, tzinfo=datetime.UTC)
 
-        first = await gcp_helper.publish_audio_chunk(
-            mock_pubsub_client,
-            topic_path="projects/test/topics/audio",
-            feed_id="feed-1",
-            gcs_uri="gs://bucket/one.flac",
-            session_id="test-session-1",
-            start_timestamp=datetime.datetime(
-                2026, 3, 5, 12, 0, tzinfo=datetime.UTC
-            ),
-        )
-        second = await gcp_helper.publish_audio_chunk(
-            mock_pubsub_client,
-            topic_path="projects/test/topics/audio",
-            feed_id="feed-2",
-            gcs_uri="gs://bucket/two.flac",
-            session_id="test-session-2",
-            start_timestamp=datetime.datetime(
-                2026, 3, 5, 12, 0, tzinfo=datetime.UTC
-            ),
-        )
+        fut = concurrent.futures.Future()
+        fut.set_exception(RuntimeError("Transient publish failure"))
+        mock_publisher.publish.return_value = fut
 
-        self.assertEqual(first, "message-1")
-        self.assertEqual(second, "message-2")
+        with self.assertRaises(RuntimeError):
+            await gcp_helper.publish_audio_chunk(
+                mock_pubsub_client,
+                topic_path="projects/test/topics/audio",
+                feed_id="feed-blocked",
+                gcs_uri="gs://bucket/audio.flac",
+                session_id="test-session-1",
+                start_timestamp=mock_now,
+            )
+
+        mock_publisher.resume_publish.assert_called_once_with(
+            "projects/test/topics/audio", "feed-blocked"
+        )
 
 
 class TestParseGcsUri(unittest.TestCase):

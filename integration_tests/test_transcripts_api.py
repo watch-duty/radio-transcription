@@ -98,3 +98,34 @@ async def test_transcripts_api(
     assert response.status_code == 404, (
         f"Expected 404 after delete, got {response.status_code}"
     )
+
+
+@pytest.mark.asyncio
+async def test_transcripts_api_duplicate_conflict(
+    api_client: httpx.AsyncClient, test_feed: str
+) -> None:
+    """Verify that creating a transcript with a duplicate transmission_id returns 409."""
+    transmission_id = str(uuid.uuid4())
+    transcript_text = "Hello integration test for duplicate conflict"
+
+    payload = {
+        "feed_id": test_feed,
+        "transmission_id": transmission_id,
+        "transcript": transcript_text,
+    }
+
+    # 1. Create transcript
+    response = await api_client.post("/transcripts", json=payload, timeout=10.0)
+    assert response.status_code == 201, f"Failed to create: {response.text}"
+
+    # 2. Attempt to create duplicate
+    response = await api_client.post("/transcripts", json=payload, timeout=10.0)
+    assert response.status_code == 409, (
+        f"Expected 409 Conflict, got {response.status_code}: {response.text}"
+    )
+
+    # 3. Cleanup
+    response = await api_client.delete(
+        f"/transcripts/{transmission_id}", timeout=10.0
+    )
+    assert response.status_code == 204, f"Failed to delete: {response.text}"

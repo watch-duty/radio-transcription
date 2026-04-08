@@ -56,6 +56,7 @@ from backend.pipeline.transcription.transcribers import (
     Transcriber,
     get_transcriber,
 )
+from backend.pipeline.transcription.utils import generate_transmission_id
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +173,13 @@ class StitchAudioFn(beam.DoFn):
             transmission_buffer.read()
         )
         if buffered_audio:
+            # Create a deterministic UUID using our shared helper so that Beam retries produce the exact same ID
+            transmission_id = generate_transmission_id(
+                action.feed_id,
+                action.time_range.start_ms,
+                action.time_range.end_ms,
+            )
+
             yield (
                 action.feed_id,
                 FlushRequest(
@@ -183,6 +191,7 @@ class StitchAudioFn(beam.DoFn):
                     missing_post_context=action.missing_post_context,
                     start_audio_offset_ms=action.start_audio_offset_ms,
                     end_audio_offset_ms=action.end_audio_offset_ms,
+                    transmission_id=transmission_id,
                 ),
             )
         else:
@@ -382,6 +391,11 @@ class StitchAudioFn(beam.DoFn):
                     f"STALE FLUSH: start={start_time_ms}, end={end_time_ms}, len(uris)={len(processed_uris)}, len(buffer)={len(audio_buffer)}"
                 )
 
+                # Create a deterministic UUID using our shared helper so that Beam retries produce the exact same ID
+                transmission_id = generate_transmission_id(
+                    key, int(start_time_ms), int(end_time_ms)
+                )
+
                 yield (
                     key,
                     FlushRequest(
@@ -398,6 +412,7 @@ class StitchAudioFn(beam.DoFn):
                         missing_post_context=True,  # Flushed by timer cutoff, so we assume the tail is missing context.
                         start_audio_offset_ms=curr_context.start_audio_offset_ms,
                         end_audio_offset_ms=curr_context.end_audio_offset_ms,
+                        transmission_id=transmission_id,
                     ),
                 )
             except Exception as e:
@@ -543,10 +558,9 @@ class TranscribeAudioFn(beam.DoFn):
             dt = datetime.fromtimestamp(
                 request.time_range.start_ms / 1000.0, tz=UTC
             )
-            timestamp_str = dt.strftime("%Y%m%dT%H%M%SZ")
 
-            flac_path = f"stitched/lossless/{request.feed_id}/{dt:%Y/%m/%d}/{timestamp_str}.flac"
-            m4a_path = f"stitched/playback/{request.feed_id}/{dt:%Y/%m/%d}/{timestamp_str}.m4a"
+            flac_path = f"stitched/lossless/{request.feed_id}/{dt:%Y/%m/%d}/{request.transmission_id}.flac"
+            m4a_path = f"stitched/playback/{request.feed_id}/{dt:%Y/%m/%d}/{request.transmission_id}.m4a"
 
             canonical_audio_uri, playback_audio_uri = (
                 self.audio_uploader.upload_audio_derivatives(
@@ -585,6 +599,7 @@ class TranscribeAudioFn(beam.DoFn):
             contributing_audio_uris=request.contributing_audio_uris,
             transcript=transcript,
             time_range=request.time_range,
+            transmission_id=request.transmission_id,
             missing_prior_context=request.missing_prior_context,
             missing_post_context=request.missing_post_context,
             start_audio_offset_ms=request.start_audio_offset_ms,

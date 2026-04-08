@@ -53,6 +53,7 @@ class TranscriptionResult:
     contributing_audio_uris: list[str]
     transcript: str
     time_range: TimeRange
+    transmission_id: str
     missing_prior_context: bool = False
     missing_post_context: bool = False
     start_audio_offset_ms: int | None = None
@@ -164,6 +165,7 @@ class FlushRequest:
     feed_id: str
     contributing_audio_uris: list[str]
     time_range: TimeRange
+    transmission_id: str
     missing_prior_context: bool = False
     missing_post_context: bool = False
     start_audio_offset_ms: int | None = None
