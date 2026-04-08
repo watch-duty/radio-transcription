@@ -188,8 +188,6 @@ class GoogleChirpV3Transcriber(Transcriber):
         response = self.client.recognize(request=request, retry=retry_policy)
         return self._parse_response(response)
 
-
-
     def _parse_response(
         self,
         response: cloud_speech.RecognizeResponse,
@@ -219,8 +217,6 @@ class GoogleChirpV3Transcriber(Transcriber):
                 "Transcription returned [BACKGROUND] only or was completely empty (no discernable speech)."
             )
             return None
-
-
 
         return transcript
 

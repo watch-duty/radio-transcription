@@ -198,5 +198,7 @@ class TestTranscribers(unittest.TestCase):
             transcriber = GoogleChirpV3Transcriber("test-project", config)
             with self.assertRaises(FileNotFoundError):
                 transcriber.setup()
+
+
 if __name__ == "__main__":
     unittest.main()
