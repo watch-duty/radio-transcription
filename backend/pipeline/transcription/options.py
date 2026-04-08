@@ -47,7 +47,7 @@ class TranscriptionOptions(PipelineOptions):
             "--id_label",
             type=str,
             required=False,
-            default="chunk_uri",
+            default="gcs_uri",
             help="Pub/Sub attribute to use for strictly exactly-once deduplication.",
         )
         parser.add_argument(
