@@ -2,6 +2,9 @@ import unittest
 from unittest.mock import patch
 
 from backend.pipeline.evaluation.rules_evaluation import evaluator
+from backend.pipeline.schema_types import (
+    evaluated_transcribed_audio_pb2 as evaluated_pb2,
+)
 
 
 class TestTextEvaluator(unittest.TestCase):
@@ -333,6 +336,173 @@ class TestRemoteTextEvaluator(unittest.TestCase):
             evaluator.evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_RULES_FETCH_FAILED,
             result["errors"],
         )
+
+    @patch("requests.Session.get")
+    def test_evaluate_condition_scope_ignored_at_top_level(
+        self, mock_get
+    ) -> None:
+        """Test that rules with CONDITION scope are not evaluated at top level."""
+        mock_rule = {
+            "rule_id": "cond_rule",
+            "rule_name": "Condition Rule",
+            "is_active": True,
+            "scope": {"level": "CONDITION", "target_feeds": []},
+            "conditions": {
+                "evaluation_type": "KEYWORD_MATCH",
+                "operator": "ANY",
+                "keywords": ["test"],
+                "case_sensitive": False,
+            },
+        }
+        mock_get.return_value.json.return_value = [mock_rule]
+        mock_get.return_value.status_code = 200
+
+        text = "This is a test message."
+        result = self.remote_evaluator.evaluate(text, feed_id="test_feed")
+        self.assertFalse(result["is_flagged"])
+        self.assertEqual(result["triggered_rules"], [])
+
+    @patch("requests.Session.get")
+    def test_evaluate_rule_group(self, mock_get) -> None:
+        """Test that Rule Groups work correctly."""
+        rules_data = [
+            {
+                "rule_id": "fire_rule",
+                "rule_name": "Fire Rule",
+                "is_active": True,
+                "scope": {"level": "CONDITION", "target_feeds": []},
+                "conditions": {
+                    "evaluation_type": "KEYWORD_MATCH",
+                    "operator": "ANY",
+                    "keywords": ["fire", "burn"],
+                    "case_sensitive": False,
+                },
+            },
+            {
+                "rule_id": "smoke_rule",
+                "rule_name": "Smoke Rule",
+                "is_active": True,
+                "scope": {"level": "CONDITION", "target_feeds": []},
+                "conditions": {
+                    "evaluation_type": "KEYWORD_MATCH",
+                    "operator": "ANY",
+                    "keywords": ["smoke", "haze"],
+                    "case_sensitive": False,
+                },
+            },
+            {
+                "rule_id": "group_rule",
+                "rule_name": "Group Rule",
+                "is_active": True,
+                "scope": {"level": "GLOBAL", "target_feeds": []},
+                "conditions": {
+                    "evaluation_type": "RULE_GROUP",
+                    "operator": "ALL",
+                    "child_rule_ids": ["fire_rule", "smoke_rule"],
+                },
+            },
+        ]
+        mock_get.return_value.json.return_value = rules_data
+        mock_get.return_value.status_code = 200
+
+        # Text with both "fire" and "smoke" -> should trigger group_rule
+        text1 = "There is a fire with heavy smoke."
+        result1 = self.remote_evaluator.evaluate(text1, feed_id="test_feed")
+        self.assertTrue(result1["is_flagged"])
+        self.assertIn("group_rule", result1["triggered_rules"])
+        self.assertNotIn("fire_rule", result1["triggered_rules"])
+        self.assertNotIn("smoke_rule", result1["triggered_rules"])
+
+        # Text with only "fire" -> should NOT trigger group_rule (since operator is ALL)
+        text2 = "There is a fire."
+        result2 = self.remote_evaluator.evaluate(text2, feed_id="test_feed")
+        self.assertFalse(result2["is_flagged"])
+
+        # Text with neither -> should NOT trigger group_rule
+        text3 = "Just a normal day."
+        result3 = self.remote_evaluator.evaluate(text3, feed_id="test_feed")
+        self.assertFalse(result3["is_flagged"])
+
+    @patch("requests.Session.get")
+    def test_evaluate_invalid_child_rule_scope(self, mock_get) -> None:
+        """Test that an error is reported when a child rule has conflicting scope."""
+        rules_data = [
+            {
+                "rule_id": "child_rule",
+                "rule_name": "Child Rule",
+                "is_active": True,
+                "scope": {
+                    "level": "FEED_SPECIFIC",
+                    "target_feeds": ["other_feed"],
+                },
+                "conditions": {
+                    "evaluation_type": "KEYWORD_MATCH",
+                    "operator": "ANY",
+                    "keywords": ["test"],
+                    "case_sensitive": False,
+                },
+            },
+            {
+                "rule_id": "group_rule",
+                "rule_name": "Group Rule",
+                "is_active": True,
+                "scope": {"level": "GLOBAL", "target_feeds": []},
+                "conditions": {
+                    "evaluation_type": "RULE_GROUP",
+                    "operator": "ANY",
+                    "child_rule_ids": ["child_rule"],
+                },
+            },
+        ]
+        mock_get.return_value.json.return_value = rules_data
+        mock_get.return_value.status_code = 200
+
+        text = "This is a test message."
+        result = self.remote_evaluator.evaluate(text, feed_id="test_feed")
+
+        self.assertFalse(result["is_flagged"])
+        self.assertEqual(result["triggered_rules"], [])
+
+        expected_error = evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_INVALID_RULES_CONFIGURATION
+        self.assertIn(expected_error, result["errors"])
+
+    @patch("requests.Session.get")
+    def test_evaluate_valid_matching_child_rule_scope(self, mock_get) -> None:
+        """Test that no error is reported when a child rule has matching scope as parent."""
+        rules_data = [
+            {
+                "rule_id": "child_rule",
+                "rule_name": "Child Rule",
+                "is_active": True,
+                "scope": {"level": "GLOBAL", "target_feeds": []},
+                "conditions": {
+                    "evaluation_type": "KEYWORD_MATCH",
+                    "operator": "ANY",
+                    "keywords": ["test"],
+                    "case_sensitive": False,
+                },
+            },
+            {
+                "rule_id": "group_rule",
+                "rule_name": "Group Rule",
+                "is_active": True,
+                "scope": {"level": "GLOBAL", "target_feeds": []},
+                "conditions": {
+                    "evaluation_type": "RULE_GROUP",
+                    "operator": "ANY",
+                    "child_rule_ids": ["child_rule"],
+                },
+            },
+        ]
+        mock_get.return_value.json.return_value = rules_data
+        mock_get.return_value.status_code = 200
+
+        text = "This is a test message."
+        result = self.remote_evaluator.evaluate(text, feed_id="test_feed")
+
+        self.assertTrue(result["is_flagged"])
+        self.assertIn("group_rule", result["triggered_rules"])
+        self.assertEqual(result["errors"], [])
 
 
 if __name__ == "__main__":

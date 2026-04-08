@@ -1,6 +1,7 @@
 import logging
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from typing import TypedDict
 
 import cachetools
@@ -14,6 +15,10 @@ from backend.pipeline.schema_types import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class InvalidRuleConfigError(Exception):
+    """Raised when a rule configuration is invalid."""
 
 
 class EvaluationResult(TypedDict):
@@ -46,13 +51,31 @@ class BaseTextEvaluator(ABC):
             An EvaluationResult containing flagging status and triggered rules.
         """
 
-    def _evaluate_rule(self, rule: models.Rule, text: str) -> bool:
+    def _apply_operator(
+        self, operator: models.LogicalOperator, results: Iterable[bool]
+    ) -> bool:
+        """
+        Applies the logical operator to the results.
+        """
+        if operator == models.LogicalOperator.ANY:
+            return any(results)
+        if operator == models.LogicalOperator.ALL:
+            return all(results)
+        return False
+
+    def _evaluate_rule(
+        self,
+        rule: models.Rule,
+        text: str,
+        rules_by_id: dict[str, models.Rule],
+    ) -> bool:
         """
         Evaluates a single rule against the text.
 
         Args:
             rule: The rule to evaluate.
             text: The text to evaluate against.
+            rules_by_id: A mapping of rule IDs to rules for lookup.
 
         Returns:
             True if the rule triggers, False otherwise.
@@ -65,18 +88,40 @@ class BaseTextEvaluator(ABC):
 
         if isinstance(conditions, models.KeywordConditions):
             flags = 0 if conditions.case_sensitive else re.IGNORECASE
-            if conditions.operator == models.LogicalOperator.ANY:
-                return any(
-                    re.search(re.escape(k), text, flags)
-                    for k in conditions.keywords
-                )
-            if conditions.operator == models.LogicalOperator.ALL:
-                return all(
-                    re.search(re.escape(k), text, flags)
-                    for k in conditions.keywords
-                )
+            results = (
+                bool(re.search(re.escape(k), text, flags))
+                for k in conditions.keywords
+            )
+            return self._apply_operator(conditions.operator, results)
 
-        # For now, we skip GroupConditions as it requires a rule lookup
+        if isinstance(conditions, models.GroupConditions):
+
+            def get_child_results() -> Iterable[bool]:
+                for child_id in conditions.child_rule_ids:
+                    if child_id in rules_by_id:
+                        child_rule = rules_by_id[child_id]
+                        if (
+                            child_rule.scope.level
+                            != models.ScopeLevel.CONDITION
+                            and child_rule.scope != rule.scope
+                        ):
+                            logger.warning(
+                                f"Child rule {child_id} in group {rule.rule_id} "
+                                f"has scope {child_rule.scope.level}, expected CONDITION or match with parent"
+                            )
+                            msg = f"Child rule {child_id} in group {rule.rule_id} has invalid scope"
+                            raise InvalidRuleConfigError(msg)
+                        yield self._evaluate_rule(child_rule, text, rules_by_id)
+                    else:
+                        logger.warning(
+                            f"Child rule {child_id} not found in rules_by_id"
+                        )
+                        yield False
+
+            return self._apply_operator(
+                conditions.operator, get_child_results()
+            )
+
         return False
 
     def _organize_rules(self, rules: list[models.Rule]) -> OrganizedRules:
@@ -92,6 +137,9 @@ class BaseTextEvaluator(ABC):
                     if feed_id not in organized_rules.feed_specific_rules:
                         organized_rules.feed_specific_rules[feed_id] = []
                     organized_rules.feed_specific_rules[feed_id].append(rule)
+            elif rule.scope.level == models.ScopeLevel.CONDITION:
+                # Conditions are only evaluated as part of a group, not at top level
+                continue
         return organized_rules
 
     def _get_applicable_rules(
@@ -110,11 +158,21 @@ class BaseTextEvaluator(ABC):
 
         organized_rules = self._organize_rules(rules)
         rules_to_evaluate = self._get_applicable_rules(organized_rules, feed_id)
+        rules_by_id = {rule.rule_id: rule for rule in rules}
 
         matches = []
-        for rule in rules_to_evaluate:
-            if self._evaluate_rule(rule, text):
-                matches.append(rule.rule_id)
+        try:
+            for rule in rules_to_evaluate:
+                if self._evaluate_rule(rule, text, rules_by_id):
+                    matches.append(rule.rule_id)
+        except InvalidRuleConfigError:
+            return {
+                "is_flagged": False,
+                "triggered_rules": [],
+                "errors": [
+                    evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_INVALID_RULES_CONFIGURATION
+                ],
+            }
 
         unique_matches = list(dict.fromkeys(matches))
         return {

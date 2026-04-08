@@ -8,10 +8,16 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ScopeLevel(StrEnum):
-    """Defines the scope of a rule, whether it's global or feed-specific."""
+    """Defines the scope of a rule, whether it's global, feed-specific, or a condition."""
 
+    # Used for rules that are evaluated for a specific feed
     FEED_SPECIFIC = "FEED_SPECIFIC"
+
+    # Used for rules that are evaluated across all feeds
     GLOBAL = "GLOBAL"
+
+    # Used for rules that are only evaluated as part of a group
+    CONDITION = "CONDITION"
 
 
 class EvaluationType(StrEnum):
