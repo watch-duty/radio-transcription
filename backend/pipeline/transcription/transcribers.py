@@ -10,9 +10,9 @@ import logging
 import pathlib
 
 import pydantic
-import tenacity
 from google.api_core import client_options
 from google.api_core.exceptions import GoogleAPIError, RetryError
+from google.api_core.retry import Retry
 from google.cloud import speech_v2 as cloud_speech
 from google.cloud.speech_v2 import SpeechClient
 
@@ -146,14 +146,6 @@ class GoogleChirpV3Transcriber(Transcriber):
             ]
         )
 
-    @tenacity.retry(
-        wait=tenacity.wait_exponential(
-            multiplier=1, max=DEFAULT_RETRY_MAX_SECONDS
-        ),
-        stop=tenacity.stop_after_attempt(DEFAULT_MAX_RETRIES),
-        retry=tenacity.retry_if_exception_type((GoogleAPIError, RetryError)),
-        reraise=True,
-    )
     def transcribe(
         self,
         *,
@@ -188,8 +180,16 @@ class GoogleChirpV3Transcriber(Transcriber):
             content=audio_data,
         )
 
-        response = self.client.recognize(request=request)
+        retry_policy = Retry(
+            initial=1.0,
+            maximum=float(DEFAULT_RETRY_MAX_SECONDS),
+            multiplier=2.0,
+            deadline=float(DEFAULT_RETRY_MAX_SECONDS * DEFAULT_MAX_RETRIES),
+        )
+        response = self.client.recognize(request=request, retry=retry_policy)
         return self._parse_response(response)
+
+
 
     def _parse_response(
         self,
@@ -220,6 +220,8 @@ class GoogleChirpV3Transcriber(Transcriber):
                 "Transcription returned [BACKGROUND] only or was completely empty (no discernable speech)."
             )
             return None
+
+
 
         return transcript
 
