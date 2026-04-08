@@ -68,6 +68,18 @@ def get_pipeline(
     standard_options.streaming = True
     options = pipeline_options.view_as(TranscriptionOptions)
 
+    # Validate logical pipeline timeout configuration rules
+    ooo_timeout = (
+        options.out_of_order_timeout_ms or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS
+    )
+    stale_timeout = options.stale_timeout_ms or DEFAULT_STALE_TIMEOUT_MS
+
+    if ooo_timeout >= stale_timeout:
+        err_msg = (
+            f"Invalid pipeline configuration: stale_timeout_ms ({stale_timeout}) must be strictly "
+            f"greater than out_of_order_timeout_ms ({ooo_timeout}) to prevent fragmented audio stitching."
+        )
+        raise ValueError(err_msg)
 
     pipeline = beam.Pipeline(options=pipeline_options)
 
@@ -75,6 +87,7 @@ def get_pipeline(
     # To run locally, explicitly pass --id_label "" to bypass exact-once deduplication.
     messages = pipeline | "ReadFromPubSub" >> ReadFromPubSub(
         subscription=options.input_subscription or None,
+        topic=None if options.input_subscription else options.input_topic,
         id_label=options.id_label or None,
         with_attributes=True,
     )
