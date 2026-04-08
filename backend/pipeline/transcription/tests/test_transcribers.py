@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, call, patch
 
-from google.api_core.exceptions import GoogleAPIError
+from google.api_core.retry import Retry
 
 from backend.pipeline.common.constants import BYTES_PER_SECOND_16KHZ_MONO
 from backend.pipeline.transcription.enums import TranscriberType
@@ -75,8 +75,8 @@ class TestTranscribers(unittest.TestCase):
 
             self.assertIsNone(transcript)
 
-    def test_google_chirp_transcriber_retry_on_google_api_error(self) -> None:
-        """Verifies that transient external dependencies generating 503 GoogleAPIErrors trigger a retry mechanism that subsequently fulfills the initial recognize request."""
+    def test_google_chirp_transcriber_passes_retry_policy(self) -> None:
+        """Verifies that the GoogleChirpV3Transcriber passes a native Retry policy to the SpeechClient."""
         with patch(
             "backend.pipeline.transcription.transcribers.SpeechClient"
         ) as mock_speech_client_cls:
@@ -85,15 +85,9 @@ class TestTranscribers(unittest.TestCase):
 
             mock_response = MagicMock()
             mock_result = MagicMock()
-            mock_result.alternatives = [
-                MagicMock(transcript="Success after retry")
-            ]
+            mock_result.alternatives = [MagicMock(transcript="Success")]
             mock_response.results = [mock_result]
-
-            mock_client_instance.recognize.side_effect = [
-                GoogleAPIError("Transient 503 Service Unavailable"),
-                mock_response,
-            ]
+            mock_client_instance.recognize.return_value = mock_response
 
             transcriber = GoogleChirpV3Transcriber(
                 "test-project", ChirpConfig(keywords_file_path=None)
@@ -101,12 +95,12 @@ class TestTranscribers(unittest.TestCase):
             transcriber.setup()
 
             dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
+            transcriber.transcribe(audio_data=dummy_audio)
 
-            with patch("time.sleep"):
-                transcript = transcriber.transcribe(audio_data=dummy_audio)
-
-            self.assertEqual(transcript, "Success after retry")
-            self.assertEqual(mock_client_instance.recognize.call_count, 2)
+            mock_client_instance.recognize.assert_called_once()
+            _, kwargs = mock_client_instance.recognize.call_args
+            self.assertIn("retry", kwargs)
+            self.assertIsInstance(kwargs["retry"], Retry)
 
     def test_google_chirp_transcriber_no_keywords_omits_adaptation(
         self,
