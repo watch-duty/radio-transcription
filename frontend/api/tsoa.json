@@ -21,11 +21,6 @@
             "address": "${radio_transcription_api_url}",
             "path_translation": "APPEND_PATH_TO_ADDRESS",
             "protocol": "http/1.1"
-          },
-          "rules_management_api": {
-            "address": "${rules_management_api_url}",
-            "path_translation": "APPEND_PATH_TO_ADDRESS",
-            "protocol": "http/1.1"
           }
         }
       }

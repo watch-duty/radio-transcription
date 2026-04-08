@@ -287,12 +287,12 @@ paths:
       security:
         - google_id_token: []
       parameters: []
-      x-google-backend: rules_management_api
+      x-google-backend: radio-transcription-api
     post:
       operationId: CreateRule
       responses:
-        "200":
-          description: Ok
+        "201":
+          description: Created
           content:
             application/json:
               schema:
@@ -310,7 +310,7 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/RuleCreate"
-      x-google-backend: rules_management_api
+      x-google-backend: radio-transcription-api
   /api/v1/rules/{ruleId}:
     get:
       operationId: GetRule
@@ -344,7 +344,7 @@ paths:
           required: true
           schema:
             type: string
-      x-google-backend: rules_management_api
+      x-google-backend: radio-transcription-api
     put:
       operationId: UpdateRule
       responses:
@@ -383,12 +383,12 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/RuleUpdate"
-      x-google-backend: rules_management_api
+      x-google-backend: radio-transcription-api
     delete:
       operationId: DeleteRule
       responses:
         "204":
-          description: No content
+          description: No Content
         "401":
           description: Unauthorized
         "404":
@@ -412,16 +412,12 @@ paths:
           required: true
           schema:
             type: string
-      x-google-backend: rules_management_api
+      x-google-backend: radio-transcription-api
 servers:
   - url: /
 x-google-api-management:
   backends:
     radio-transcription-api:
       address: ${radio_transcription_api_url}
-      path_translation: APPEND_PATH_TO_ADDRESS
-      protocol: http/1.1
-    rules_management_api:
-      address: ${rules_management_api_url}
       path_translation: APPEND_PATH_TO_ADDRESS
       protocol: http/1.1

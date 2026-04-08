@@ -166,11 +166,7 @@ describe('RulesController', () => {
 
       const controller = new RulesController();
       const payload = { ruleName: 'Updated Name' };
-      const result = await controller.updateRule(
-        'rule_123',
-        payload,
-        vi.fn()
-      );
+      const result = await controller.updateRule('rule_123', payload, vi.fn());
 
       expect(result).toEqual(expectedFrontendRule);
       expect(mockRequest).toHaveBeenCalledWith({

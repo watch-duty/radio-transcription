@@ -12,11 +12,13 @@ import {
   Response,
   Route,
   Security,
+  SuccessResponse,
   Tags,
   TsoaResponse,
 } from 'tsoa';
 
 import { RULES_API_URL } from '../config.js';
+import { isAxiosError } from '../utils.js';
 
 // Types for Frontend (CamelCase)
 export type ScopeLevel = 'FEED_SPECIFIC' | 'GLOBAL';
@@ -140,9 +142,7 @@ interface RuleCreateBackend {
 
 type RuleUpdateBackend = Partial<RuleCreateBackend>;
 
-function convertConditions(
-  conditions: RuleConditionsResponse
-): RuleConditions {
+function convertConditions(conditions: RuleConditionsResponse): RuleConditions {
   switch (conditions.evaluation_type) {
     case 'KEYWORD_MATCH':
       return {
@@ -227,8 +227,7 @@ function convertRuleCreate(create: RuleCreate): RuleCreateBackend {
 function convertRuleUpdate(update: RuleUpdate): RuleUpdateBackend {
   const result: RuleUpdateBackend = {};
   if (update.ruleName !== undefined) result.rule_name = update.ruleName;
-  if (update.description !== undefined)
-    result.description = update.description;
+  if (update.description !== undefined) result.description = update.description;
   if (update.isActive !== undefined) result.is_active = update.isActive;
   if (update.scope !== undefined) {
     result.scope = {
@@ -278,7 +277,7 @@ export class RulesController extends Controller {
 
   @Get('')
   @Security('google_id_token')
-  @Extension('x-google-backend', 'rules_management_api')
+  @Extension('x-google-backend', 'radio-transcription-api')
   public async listRules(): Promise<Rule[]> {
     const client = await this.getClient();
     try {
@@ -296,7 +295,8 @@ export class RulesController extends Controller {
 
   @Get('{ruleId}')
   @Security('google_id_token')
-  @Extension('x-google-backend', 'rules_management_api')
+  @Response<{ message: string }>(404, 'Not Found')
+  @Extension('x-google-backend', 'radio-transcription-api')
   public async getRule(
     @Path() ruleId: string,
     @Res() notFound: TsoaResponse<404, { message: string }>
@@ -309,7 +309,7 @@ export class RulesController extends Controller {
       });
       return convertRuleResponse(response.data as RuleResponse);
     } catch (error: unknown) {
-      if (this.isAxiosError(error) && error.response?.status === 404) {
+      if (isAxiosError(error) && error.response?.status === 404) {
         return notFound(404, { message: `Rule ${ruleId} not found` });
       }
       console.error(`Error fetching rule ${ruleId}:`, error);
@@ -319,7 +319,8 @@ export class RulesController extends Controller {
 
   @Post('')
   @Security('google_id_token')
-  @Extension('x-google-backend', 'rules_management_api')
+  @SuccessResponse('201', 'Created')
+  @Extension('x-google-backend', 'radio-transcription-api')
   public async createRule(@Body() requestBody: RuleCreate): Promise<Rule> {
     const client = await this.getClient();
     try {
@@ -328,7 +329,6 @@ export class RulesController extends Controller {
         method: 'POST',
         data: convertRuleCreate(requestBody),
       });
-      this.setStatus(201);
       return convertRuleResponse(response.data as RuleResponse);
     } catch (error: unknown) {
       console.error('Error creating rule:', error);
@@ -338,7 +338,8 @@ export class RulesController extends Controller {
 
   @Put('{ruleId}')
   @Security('google_id_token')
-  @Extension('x-google-backend', 'rules_management_api')
+  @Response<{ message: string }>(404, 'Not Found')
+  @Extension('x-google-backend', 'radio-transcription-api')
   public async updateRule(
     @Path() ruleId: string,
     @Body() requestBody: RuleUpdate,
@@ -353,7 +354,7 @@ export class RulesController extends Controller {
       });
       return convertRuleResponse(response.data as RuleResponse);
     } catch (error: unknown) {
-      if (this.isAxiosError(error) && error.response?.status === 404) {
+      if (isAxiosError(error) && error.response?.status === 404) {
         return notFound(404, { message: `Rule ${ruleId} not found` });
       }
       console.error(`Error updating rule ${ruleId}:`, error);
@@ -363,7 +364,9 @@ export class RulesController extends Controller {
 
   @Delete('{ruleId}')
   @Security('google_id_token')
-  @Extension('x-google-backend', 'rules_management_api')
+  @SuccessResponse('204', 'No Content')
+  @Response<{ message: string }>(404, 'Not Found')
+  @Extension('x-google-backend', 'radio-transcription-api')
   public async deleteRule(
     @Path() ruleId: string,
     @Res() notFound: TsoaResponse<404, { message: string }>
@@ -374,31 +377,12 @@ export class RulesController extends Controller {
         url: `${RULES_API_URL}/${ruleId}`,
         method: 'DELETE',
       });
-      this.setStatus(204);
     } catch (error: unknown) {
-      if (this.isAxiosError(error) && error.response?.status === 404) {
+      if (isAxiosError(error) && error.response?.status === 404) {
         return notFound(404, { message: `Rule ${ruleId} not found` });
       }
       console.error(`Error deleting rule ${ruleId}:`, error);
       throw new Error(`Error deleting rule ${ruleId}`, { cause: error });
     }
-  }
-
-  private isAxiosError(
-    error: unknown
-  ): error is { response?: { status: number } } {
-    if (typeof error !== 'object' || error === null) {
-      return false;
-    }
-    const err = error as Record<string, unknown>;
-    if (!('response' in err)) {
-      return false;
-    }
-    const response = err.response as Record<string, unknown>;
-    return (
-      typeof response === 'object' &&
-      response !== null &&
-      'status' in response
-    );
   }
 }
