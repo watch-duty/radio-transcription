@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import datetime
-import functools
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -11,7 +10,6 @@ import aiohttp
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 
 if TYPE_CHECKING:
-    import concurrent.futures
 
     from google.cloud import pubsub_v1
 
