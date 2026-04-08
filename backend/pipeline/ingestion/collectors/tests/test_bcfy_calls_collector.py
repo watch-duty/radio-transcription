@@ -138,8 +138,14 @@ class TestFetchCallsBatch(unittest.IsolatedAsyncioTestCase):
         resp200.json.return_value = [{"call": 1}]
 
         self.session.get.side_effect = [
-            MagicMock(__aenter__=AsyncMock(return_value=resp500)),
-            MagicMock(__aenter__=AsyncMock(return_value=resp200)),
+            MagicMock(
+                __aenter__=AsyncMock(return_value=resp500),
+                __aexit__=AsyncMock(return_value=False),
+            ),
+            MagicMock(
+                __aenter__=AsyncMock(return_value=resp200),
+                __aexit__=AsyncMock(return_value=False),
+            ),
         ]
 
         res = await bcfy_calls_collector._fetch_calls_batch(
@@ -381,23 +387,25 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
 
         mock_sleep.side_effect = sleep_side_effect
 
-        chunks = [
-            c
-            async for c in bcfy_calls_collector.capture_bcfy_calls(
-                self.leased_feed, self.shutdown, self.url_base
-            )
-        ]
+        fixed_now = datetime.datetime(2024, 1, 1, 0, 0, 0, tzinfo=datetime.UTC)
+
+        with patch(
+            "backend.pipeline.ingestion.collectors.bcfy_calls"
+            ".bcfy_calls_collector.datetime.datetime",
+            wraps=datetime.datetime,
+        ) as mock_datetime:
+            mock_datetime.now.return_value = fixed_now
+            chunks = [
+                c
+                async for c in bcfy_calls_collector.capture_bcfy_calls(
+                    self.leased_feed, self.shutdown, self.url_base
+                )
+            ]
 
         self.assertEqual(len(chunks), 1)
         self.assertEqual(mock_dl.call_count, 1)
-
-        now = datetime.datetime.now(datetime.UTC).timestamp()
-        self.assertAlmostEqual(
-            chunks[0].chunk_start_time.timestamp(), now, places=1
-        )
-        self.assertAlmostEqual(
-            chunks[0].chunk_end_time.timestamp(), now, places=1
-        )
+        self.assertEqual(chunks[0].chunk_start_time, fixed_now)
+        self.assertEqual(chunks[0].chunk_end_time, fixed_now)
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"

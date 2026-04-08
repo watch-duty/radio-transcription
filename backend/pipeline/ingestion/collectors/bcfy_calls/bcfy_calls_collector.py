@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 _MAX_5XX_RETRIES = 3
 _POLL_INTERVAL_SEC = 10.0
+_REQUEST_TIMEOUT_SEC = 30.0
 
 
 async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
@@ -184,7 +185,9 @@ async def capture_bcfy_calls(
 
     seen_urls = collections.deque(maxlen=1000)
 
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=_REQUEST_TIMEOUT_SEC)
+    ) as session:
         while not shutdown_event.is_set():
             params: dict[str, Any] = {"groups": source_feed_id}
             if last_bookmark_time_unix is not None:
@@ -215,8 +218,6 @@ async def capture_bcfy_calls(
                         if not mp3_url or mp3_url in seen_urls:
                             continue
 
-                        seen_urls.append(mp3_url)
-
                         try:
                             flac_bytes = await _download_and_convert_audio(
                                 session, mp3_url
@@ -229,22 +230,27 @@ async def capture_bcfy_calls(
                         if not flac_bytes:
                             continue
 
+                        # Only mark as seen after a successful download so
+                        # transient failures can be retried on the next poll.
+                        seen_urls.append(mp3_url)
+
                         start_ts = result.get("start_ts")
                         end_ts = result.get("end_ts")
+                        now = datetime.datetime.now(datetime.UTC)
 
                         chunk_start_time = (
                             datetime.datetime.fromtimestamp(
                                 start_ts, datetime.UTC
                             )
                             if start_ts is not None
-                            else datetime.datetime.now(datetime.UTC)
+                            else now
                         )
                         chunk_end_time = (
                             datetime.datetime.fromtimestamp(
                                 end_ts, datetime.UTC
                             )
                             if end_ts is not None
-                            else datetime.datetime.now(datetime.UTC)
+                            else now
                         )
 
                         yield CapturedChunk(
