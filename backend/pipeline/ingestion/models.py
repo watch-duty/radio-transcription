@@ -1,4 +1,88 @@
-# Python file defining data models for the ingestion pipeline.
+"""Data models and contract for the ingestion pipeline.
+
+Runtime / Capture Contract
+==========================
+
+The ``yield`` statement is the contract boundary. Everything before
+``yield`` is the capture function's domain. Everything after ``yield``
+is the runtime's domain.
+
+**Runtime responsibilities** (capture must never do these):
+
+- GCS upload, Pub/Sub publish, fenced bookmark writes
+- Failure counting and quarantine (``report_feed_failure``)
+- Heartbeat renewal, lease release
+- Chunk/silence timeouts
+
+**Capture function responsibilities:**
+
+- Connection lifecycle and reconnection (the runtime never sees
+  transport disconnections — the capture appears as an infinite
+  async generator)
+- Transient source errors: retry internally (3 attempts for
+  requests, unlimited for connections). The runtime should never
+  see a transient error.
+- Permanent source errors (401, 403, 404 on the API endpoint):
+  raise immediately so the runtime can ``record_failure``.
+- Individual item failures (one file 404, corrupt audio): skip
+  the item, log a warning, continue to the next.
+- Rate limiting (429): handle internally, never propagate.
+- Data validation (zero-length, bad timestamps): filter silently.
+- Shutdown coordination: check ``shutdown.is_set()`` between items
+  and before long operations. Use ``_shutdown_sleep`` for all sleeps.
+
+Error Handling Decision Tree
+----------------------------
+
+For any error inside a capture function, ask:
+
+1. Configuration error (wrong URL, bad creds, feed doesn't exist)?
+   → Raise immediately. Runtime will ``record_failure`` / quarantine.
+
+2. Rate limit (429)?
+   → Back off internally. Never propagate.
+
+3. Transient source error (500, timeout, connection drop)?
+   → Retry internally (3 attempts per request, unlimited for
+   connections up to ``MAX_TRANSPORT_FAILURES``).
+   → Single item exhausted: skip, continue.
+   → Connection exhausted: raise to runtime.
+
+4. Individual item failure (one file 404, corrupt response)?
+   → Skip, log, continue. Track if ALL items in a batch fail
+   with the same error → raise (systemic issue).
+
+5. Data quality issue (zero-length, bad timestamp)?
+   → Filter silently, continue.
+
+6. Unexpected / unknown error?
+   → Let it propagate. The runtime's ``except Exception`` handler
+   will ``record_failure`` and release the lease.
+
+Session ID Guidelines
+---------------------
+
+The capture function **always** generates ``session_id``. The runtime
+never generates, interprets, or modifies it.
+
+- **Continuous stream** (Icecast): one UUID per connection lifetime.
+- **Discrete calls** (OpenMHZ): one UUID per (talkgroup, connection).
+- **File-based** (Echo): one UUID per file.
+
+Hard Rules
+----------
+
+The capture function must **never**:
+
+1. Call ``record_failure``, ``release_feed``, or ``bookmark_progress``.
+2. Call ``os._exit(1)``.
+3. Catch ``CancelledError`` and suppress it.
+4. Use ``asyncio.sleep()`` — use shutdown-interruptible sleep instead.
+5. Block the event loop (no sync HTTP, no ``time.sleep``).
+6. Hold unbounded state (bound all dedup sets / caches).
+7. Yield chunks after ``shutdown.is_set()`` — return immediately.
+"""
+
 from __future__ import annotations
 
 import dataclasses
