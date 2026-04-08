@@ -213,7 +213,7 @@ def publish_audio_chunk_sync(
 
     attrs: dict[str, str] = {
         "feed_id": feed_id,
-        "chunk_uri": gcs_uri,
+        "gcs_uri": gcs_uri,
     }
     if source_type is not None:
         attrs["source_type"] = source_type
@@ -247,7 +247,7 @@ async def publish_audio_chunk(
 
     attrs: dict[str, str] = {
         "feed_id": feed_id,
-        "chunk_uri": gcs_uri,
+        "gcs_uri": gcs_uri,
     }
     if source_type is not None:
         attrs["source_type"] = source_type
