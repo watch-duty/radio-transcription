@@ -29,7 +29,14 @@ class ConfigBase(pydantic.BaseModel):
             raise ValueError(msg) from e
 
 
-def generate_transmission_id(feed_id: str, start_ms: int, end_ms: int) -> str:
-    """Creates a deterministic UUID string using uuid5 to ensure pipeline retries produce the exact same ID."""
-    deterministic_id = f"{feed_id}_{start_ms}_{end_ms}"
+def generate_transmission_id(feed_id: str, contributing_audio_uris: list[str]) -> str:
+    """Creates a deterministic UUID from the feed and its contributing source audio URIs.
+
+    Anchored on the actual GCS URIs rather than derived timing values, making the ID
+    stable across VAD configuration changes, pre-roll tuning, and pipeline replays
+    with consistent stitcher state. Sorting ensures the result is independent of
+    URI accumulation order for multi-chunk transmissions.
+    """
+    sorted_uris = sorted(contributing_audio_uris)
+    deterministic_id = f"{feed_id}_{'|'.join(sorted_uris)}"
     return str(uuid.uuid5(uuid.NAMESPACE_OID, deterministic_id))
