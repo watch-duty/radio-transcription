@@ -8,6 +8,6 @@ def patch_sys_argv() -> None:
     """Globally injects required topic parameters into sys.argv so argparse doesn't crash the test suite when initializing PipelineOptions."""
     sys.argv = [
         "pytest",
-        "--input_topic=projects/test/topics/in",
+        "--input_subscription=projects/test/subscriptions/in",
         "--output_topic=projects/test/topics/out",
     ]
