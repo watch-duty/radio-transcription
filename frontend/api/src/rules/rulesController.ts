@@ -130,6 +130,16 @@ interface RuleResponse {
   metadata: RuleMetadataResponse;
 }
 
+interface RuleCreateBackend {
+  rule_name: string;
+  description?: string;
+  is_active?: boolean;
+  scope: ScopeResponse;
+  conditions: RuleConditionsResponse;
+}
+
+type RuleUpdateBackend = Partial<RuleCreateBackend>;
+
 function convertConditions(
   conditions: RuleConditionsResponse
 ): RuleConditions {
@@ -175,20 +185,31 @@ function convertRuleResponse(response: RuleResponse): Rule {
   };
 }
 
-function convertRuleCreate(create: RuleCreate): any {
-  const conditions: any = {
-    evaluation_type: create.conditions.evaluationType,
-  };
-  if (create.conditions.evaluationType === 'KEYWORD_MATCH') {
-    conditions.operator = create.conditions.operator;
-    conditions.keywords = create.conditions.keywords;
-    conditions.case_sensitive = create.conditions.caseSensitive;
-  } else if (create.conditions.evaluationType === 'REGEX_MATCH') {
-    conditions.expression = create.conditions.expression;
-    conditions.flags = create.conditions.flags;
-  } else if (create.conditions.evaluationType === 'RULE_GROUP') {
-    conditions.operator = create.conditions.operator;
-    conditions.child_rule_ids = create.conditions.childRuleIds;
+function convertRuleCreate(create: RuleCreate): RuleCreateBackend {
+  let conditions: RuleConditionsResponse;
+  switch (create.conditions.evaluationType) {
+    case 'KEYWORD_MATCH':
+      conditions = {
+        evaluation_type: 'KEYWORD_MATCH',
+        operator: create.conditions.operator,
+        keywords: create.conditions.keywords,
+        case_sensitive: create.conditions.caseSensitive,
+      };
+      break;
+    case 'REGEX_MATCH':
+      conditions = {
+        evaluation_type: 'REGEX_MATCH',
+        expression: create.conditions.expression,
+        flags: create.conditions.flags,
+      };
+      break;
+    case 'RULE_GROUP':
+      conditions = {
+        evaluation_type: 'RULE_GROUP',
+        operator: create.conditions.operator,
+        child_rule_ids: create.conditions.childRuleIds,
+      };
+      break;
   }
 
   return {
@@ -203,8 +224,8 @@ function convertRuleCreate(create: RuleCreate): any {
   };
 }
 
-function convertRuleUpdate(update: RuleUpdate): any {
-  const result: any = {};
+function convertRuleUpdate(update: RuleUpdate): RuleUpdateBackend {
+  const result: RuleUpdateBackend = {};
   if (update.ruleName !== undefined) result.rule_name = update.ruleName;
   if (update.description !== undefined)
     result.description = update.description;
@@ -216,19 +237,30 @@ function convertRuleUpdate(update: RuleUpdate): any {
     };
   }
   if (update.conditions !== undefined) {
-    const conditions: any = {
-      evaluation_type: update.conditions.evaluationType,
-    };
-    if (update.conditions.evaluationType === 'KEYWORD_MATCH') {
-      conditions.operator = update.conditions.operator;
-      conditions.keywords = update.conditions.keywords;
-      conditions.case_sensitive = update.conditions.caseSensitive;
-    } else if (update.conditions.evaluationType === 'REGEX_MATCH') {
-      conditions.expression = update.conditions.expression;
-      conditions.flags = update.conditions.flags;
-    } else if (update.conditions.evaluationType === 'RULE_GROUP') {
-      conditions.operator = update.conditions.operator;
-      conditions.child_rule_ids = update.conditions.childRuleIds;
+    let conditions: RuleConditionsResponse;
+    switch (update.conditions.evaluationType) {
+      case 'KEYWORD_MATCH':
+        conditions = {
+          evaluation_type: 'KEYWORD_MATCH',
+          operator: update.conditions.operator,
+          keywords: update.conditions.keywords,
+          case_sensitive: update.conditions.caseSensitive,
+        };
+        break;
+      case 'REGEX_MATCH':
+        conditions = {
+          evaluation_type: 'REGEX_MATCH',
+          expression: update.conditions.expression,
+          flags: update.conditions.flags,
+        };
+        break;
+      case 'RULE_GROUP':
+        conditions = {
+          evaluation_type: 'RULE_GROUP',
+          operator: update.conditions.operator,
+          child_rule_ids: update.conditions.childRuleIds,
+        };
+        break;
     }
     result.conditions = conditions;
   }
@@ -353,8 +385,20 @@ export class RulesController extends Controller {
   }
 
   private isAxiosError(
-    error: any
+    error: unknown
   ): error is { response?: { status: number } } {
-    return error && typeof error === 'object' && 'response' in error;
+    if (typeof error !== 'object' || error === null) {
+      return false;
+    }
+    const err = error as Record<string, unknown>;
+    if (!('response' in err)) {
+      return false;
+    }
+    const response = err.response as Record<string, unknown>;
+    return (
+      typeof response === 'object' &&
+      response !== null &&
+      'status' in response
+    );
   }
 }

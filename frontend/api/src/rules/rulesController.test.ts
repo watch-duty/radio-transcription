@@ -108,7 +108,9 @@ describe('RulesController', () => {
 
     it('should call notFound on 404', async () => {
       const mockNotFound = vi.fn();
-      const error = new Error('Not Found') as any;
+      const error = new Error('Not Found') as Error & {
+        response?: { status: number };
+      };
       error.response = { status: 404 };
       mockRequest.mockRejectedValueOnce(error);
 
@@ -180,7 +182,9 @@ describe('RulesController', () => {
 
     it('should call notFound on 404', async () => {
       const mockNotFound = vi.fn();
-      const error = new Error('Not Found') as any;
+      const error = new Error('Not Found') as Error & {
+        response?: { status: number };
+      };
       error.response = { status: 404 };
       mockRequest.mockRejectedValueOnce(error);
 
@@ -208,7 +212,9 @@ describe('RulesController', () => {
 
     it('should call notFound on 404', async () => {
       const mockNotFound = vi.fn();
-      const error = new Error('Not Found') as any;
+      const error = new Error('Not Found') as Error & {
+        response?: { status: number };
+      };
       error.response = { status: 404 };
       mockRequest.mockRejectedValueOnce(error);
 
