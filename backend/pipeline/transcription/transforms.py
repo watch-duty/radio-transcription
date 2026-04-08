@@ -2,7 +2,6 @@
 
 import logging
 import time
-import uuid
 from collections.abc import Iterator
 from typing import Any, override
 
@@ -149,12 +148,6 @@ class SerializeToPubSubMessageFn(beam.DoFn):
         self, element: TranscriptionResult, *args: Any, **kwargs: Any
     ) -> Iterator[PubsubMessage]:
         """Serializes the final domain result into a wire-ready JSON payload."""
-        # Create a deterministic UUID using uuid5 so that Beam retries produce the exact same ID
-        deterministic_id_string = f"{element.feed_id}_{element.time_range.start_ms}_{element.time_range.end_ms}"
-        deterministic_uuid = uuid.uuid5(
-            uuid.NAMESPACE_OID, deterministic_id_string
-        )
-
         start_offset = None
         if element.start_audio_offset_ms is not None:
             start_offset = Duration(
@@ -174,7 +167,7 @@ class SerializeToPubSubMessageFn(beam.DoFn):
         proto = TranscribedAudio(
             feed_id=element.feed_id,
             source_audio_uris=element.contributing_audio_uris,
-            transmission_id=str(deterministic_uuid),
+            transmission_id=element.transmission_id,
             transcript=element.transcript,
             missing_prior_context=element.missing_prior_context,
             missing_post_context=element.missing_post_context,
