@@ -34,9 +34,9 @@ def generate_transmission_id(feed_id: str, contributing_audio_uris: list[str]) -
 
     Anchored on the actual GCS URIs rather than derived timing values, making the ID
     stable across VAD configuration changes, pre-roll tuning, and pipeline replays
-    with consistent stitcher state. Sorting ensures the result is independent of
-    URI accumulation order for multi-chunk transmissions.
+    with consistent stitcher state. URIs are kept in their natural chronological
+    order (guaranteed upstream by RestoreOrderFn) so the ID reflects the actual
+    audio sequence.
     """
-    sorted_uris = sorted(contributing_audio_uris)
-    deterministic_id = f"{feed_id}_{'|'.join(sorted_uris)}"
+    deterministic_id = f"{feed_id}_{'|'.join(contributing_audio_uris)}"
     return str(uuid.uuid5(uuid.NAMESPACE_OID, deterministic_id))
