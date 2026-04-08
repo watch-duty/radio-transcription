@@ -102,9 +102,6 @@ def get_pipeline(
         AddEventTimestamp()
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
-    # Bypassing redundant out-of-order buffering completely in favor of strict Pub/Sub subscription ordering
-    restored = timestamped.main
-
     # Claim-check: Download the raw bytes for ordered chunks currently just passing as URIs
     download_config = StitchAudioConfig(
         project_id=pipeline_options.view_as(GoogleCloudOptions).project,
@@ -123,7 +120,7 @@ def get_pipeline(
         if options.route_to_dlq is not None
         else True,
     )
-    downloaded_chunks = restored | "DownloadAudio" >> beam.ParDo(
+    downloaded_chunks = timestamped.main | "DownloadAudio" >> beam.ParDo(
         DownloadAudioFn(config=download_config)
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
