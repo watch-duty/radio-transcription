@@ -1,6 +1,7 @@
 """Utility functions for the radio transcription pipeline."""
 
 import logging
+import uuid
 from typing import Self
 
 import pydantic
@@ -26,3 +27,9 @@ class ConfigBase(pydantic.BaseModel):
             )
             msg = f"Invalid config JSON for {cls.__name__}: {e}"
             raise ValueError(msg) from e
+
+
+def generate_transmission_id(feed_id: str, start_ms: int, end_ms: int) -> str:
+    """Creates a deterministic UUID string using uuid5 to ensure pipeline retries produce the exact same ID."""
+    deterministic_id = f"{feed_id}_{start_ms}_{end_ms}"
+    return str(uuid.uuid5(uuid.NAMESPACE_OID, deterministic_id))

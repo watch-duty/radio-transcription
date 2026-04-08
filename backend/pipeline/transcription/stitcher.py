@@ -2,7 +2,6 @@
 
 import logging
 import time
-import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any, override
@@ -57,6 +56,7 @@ from backend.pipeline.transcription.transcribers import (
     Transcriber,
     get_transcriber,
 )
+from backend.pipeline.transcription.utils import generate_transmission_id
 
 logger = logging.getLogger(__name__)
 
@@ -173,10 +173,11 @@ class StitchAudioFn(beam.DoFn):
             transmission_buffer.read()
         )
         if buffered_audio:
-            # Create a deterministic UUID using uuid5 so that Beam retries produce the exact same ID
-            deterministic_id = f"{action.feed_id}_{action.time_range.start_ms}_{action.time_range.end_ms}"
-            transmission_id = str(
-                uuid.uuid5(uuid.NAMESPACE_OID, deterministic_id)
+            # Create a deterministic UUID using our shared helper so that Beam retries produce the exact same ID
+            transmission_id = generate_transmission_id(
+                action.feed_id,
+                action.time_range.start_ms,
+                action.time_range.end_ms,
             )
 
             yield (
@@ -390,12 +391,9 @@ class StitchAudioFn(beam.DoFn):
                     f"STALE FLUSH: start={start_time_ms}, end={end_time_ms}, len(uris)={len(processed_uris)}, len(buffer)={len(audio_buffer)}"
                 )
 
-                # Create a deterministic UUID using uuid5 so that Beam retries produce the exact same ID
-                deterministic_id = (
-                    f"{key}_{int(start_time_ms)}_{int(end_time_ms)}"
-                )
-                transmission_id = str(
-                    uuid.uuid5(uuid.NAMESPACE_OID, deterministic_id)
+                # Create a deterministic UUID using our shared helper so that Beam retries produce the exact same ID
+                transmission_id = generate_transmission_id(
+                    key, int(start_time_ms), int(end_time_ms)
                 )
 
                 yield (
