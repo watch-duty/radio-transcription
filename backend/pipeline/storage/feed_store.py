@@ -349,7 +349,7 @@ class FeedStore:
         failure_threshold: int = 5,
         backoff_base_sec: int = 15,
         backoff_max_sec: int = 600,
-    ) -> bool:
+    ) -> str | None:
         """Report a feed failure with exponential backoff.
 
         Atomically increments ``failure_count``, computes ``retry_after``
@@ -372,7 +372,8 @@ class FeedStore:
             backoff_max_sec: Maximum backoff cap in seconds.
 
         Returns:
-            ``True`` if the failure was recorded, ``False`` if the lease was
+            The new feed status (``'failing'`` or ``'quarantined'``) if
+            the failure was recorded, or ``None`` if the lease was
             already lost.
 
         """
@@ -386,11 +387,12 @@ class FeedStore:
             backoff_base_sec,
         )
         if row is None:
-            return False
+            return None
 
-        if row["status"] == "quarantined":
+        status: str = row["status"]
+        if status == "quarantined":
             logger.critical(
-                "Feed quarantined",
+                "Feed failure threshold reached — status set to quarantined",
                 extra={
                     "feed_id": str(feed_id),
                     "failure_count": row["failure_count"],
@@ -405,7 +407,7 @@ class FeedStore:
                     "retry_after": str(row["retry_after"]),
                 },
             )
-        return True
+        return status
 
     async def release_feed(
         self,

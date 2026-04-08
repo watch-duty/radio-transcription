@@ -13,6 +13,7 @@ import asyncpg
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
+from backend.pipeline.ingestion import quarantine_telemetry
 from backend.pipeline.ingestion.models import CapturedChunk
 from backend.pipeline.ingestion.retry import (
     LeaseExpiredError,
@@ -170,6 +171,8 @@ class NormalizerRuntime:
             name="heartbeat",
         )
         self._heartbeat_thread.start()
+
+        quarantine_telemetry.configure(settings.gcp_project_id)
 
         try:
             await self._leasing_loop()
@@ -436,12 +439,18 @@ class NormalizerRuntime:
             # that drops the lease (report_feed_failure sets worker_id=NULL).
             self._releasing_feeds.add(feed["id"])
             try:
-                await self._store.report_feed_failure(
+                status = await self._store.report_feed_failure(
                     feed["id"],
                     worker_id,
                     fencing_token,
                     self._normalizer_settings.feed_failure_threshold,
                 )
+                if status == "quarantined":
+                    await quarantine_telemetry.emit_quarantine_event(
+                        feed_id=str(feed["id"]),
+                        feed_name=feed["name"],
+                        source_type=str(feed["source_type"]),
+                    )
             except Exception:
                 # 60s abandonment window is the safety net if this fails.
                 logger.exception(
