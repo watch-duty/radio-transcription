@@ -82,7 +82,7 @@ def cleanup_old_versions(
         ]:
             continue
 
-        if datetime.fromtimestamp(version.create_time.seconds, tz=UTC) < cutoff:
+        if datetime.fromtimestamp(version.create_time.second, tz=UTC) < cutoff:
             logger.info(f"Destroying old secret version: {version.name}")
             secret_client.destroy_secret_version(request={"name": version.name})
 
