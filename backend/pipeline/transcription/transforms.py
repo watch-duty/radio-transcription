@@ -1,7 +1,6 @@
 """Apache Beam DoFns for mapping incoming stream messages and downloading audio chunks."""
 
 import logging
-import time
 from collections.abc import Iterator
 from typing import Any, override
 
