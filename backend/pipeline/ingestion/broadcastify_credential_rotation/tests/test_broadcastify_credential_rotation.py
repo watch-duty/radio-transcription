@@ -101,28 +101,32 @@ class TestCleanupOldVersions:
             "projects/test-project/secrets/my-secret"
         )
 
+        now = datetime.datetime.now(tz=datetime.UTC)
+        old_time = now - datetime.timedelta(hours=48)
+        new_time = now - datetime.timedelta(hours=1)
+
         # Create mock versions in various states to test filtering logic
         v_old_enabled = mock.MagicMock()
         v_old_enabled.name = "v_old_enabled"
         v_old_enabled.state = main.secretmanager.SecretVersion.State.ENABLED
-        v_old_enabled.create_time.second = 1000000000
+        v_old_enabled.create_time = old_time
 
         v_old_disabled = mock.MagicMock()
         v_old_disabled.name = "v_old_disabled"
         v_old_disabled.state = main.secretmanager.SecretVersion.State.DISABLED
-        v_old_disabled.create_time.second = 1000000000
+        v_old_disabled.create_time = old_time
 
         # This version is new and should not be destroyed
         v_new_enabled = mock.MagicMock()
         v_new_enabled.name = "v_new_enabled"
         v_new_enabled.state = main.secretmanager.SecretVersion.State.ENABLED
-        v_new_enabled.create_time.second = 2000000000
+        v_new_enabled.create_time = new_time
 
         # This version is old but already destroyed, so it should be skipped
         v_old_destroyed = mock.MagicMock()
         v_old_destroyed.name = "v_old_destroyed"
         v_old_destroyed.state = main.secretmanager.SecretVersion.State.DESTROYED
-        v_old_destroyed.create_time.second = 1000000000
+        v_old_destroyed.create_time = old_time
 
         secret_client.list_secret_versions.return_value = [
             v_old_enabled,
@@ -131,16 +135,9 @@ class TestCleanupOldVersions:
             v_old_destroyed,
         ]
 
-        # Mock current time to be 25 hours after the old versions were created
-        with mock.patch.object(main, "datetime") as mock_dt:
-            mock_dt.now.return_value = datetime.datetime.fromtimestamp(
-                1000000000 + (25 * 3600), tz=datetime.UTC
-            )
-            mock_dt.fromtimestamp.side_effect = datetime.datetime.fromtimestamp
-
-            main.cleanup_old_versions(
-                secret_client, "my-secret", hours_to_keep=24
-            )
+        main.cleanup_old_versions(
+            secret_client, "my-secret", hours_to_keep=24
+        )
 
         secret_client.secret_path.assert_called_once_with(
             "test-project", "my-secret"
