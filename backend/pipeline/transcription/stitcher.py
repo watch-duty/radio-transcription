@@ -41,9 +41,7 @@ from backend.pipeline.transcription.datatypes import (
     TransmissionContext,
     UpdateStateAction,
 )
-from backend.pipeline.transcription.enums import (
-    MetricsExporterType,
-)
+
 from backend.pipeline.transcription.resources import (
     SHARED_RESOURCE_HANDLE,
     SharedResources,
@@ -51,7 +49,7 @@ from backend.pipeline.transcription.resources import (
 from backend.pipeline.transcription.stitcher_state import (
     AudioStitchingStateMachine,
 )
-from backend.pipeline.transcription.telemetry import get_metrics_exporter
+
 from backend.pipeline.transcription.transcribers import (
     Transcriber,
     get_transcriber,
@@ -101,7 +99,7 @@ class StitchAudioFn(beam.DoFn):
         self.config = config
 
         self.audio_processor: AudioProcessor | None = None
-        self.metrics_exporter: Any | None = None
+
 
         # Pipeline Telemetry (Beam Metrics)
         self.stale_flush_count = Metrics.counter(
@@ -135,25 +133,7 @@ class StitchAudioFn(beam.DoFn):
         )
         self.audio_processor.setup()
 
-        parsed_exporters = []
-        if self.config.metrics_exporter_type:
-            types = [
-                t.strip() for t in self.config.metrics_exporter_type.split(",")
-            ]
-            for t in types:
-                if not t:
-                    continue
-                try:
-                    parsed_exporters.append(MetricsExporterType(t))
-                except ValueError:
-                    logger.warning("Unknown metrics exporter type: %s", t)
 
-        self.metrics_exporter = get_metrics_exporter(
-            parsed_exporters,
-            self.config.project_id,
-            self.config.metrics_config,
-        )
-        self.metrics_exporter.setup()
 
     def _apply_flush_action(
         self,
@@ -315,10 +295,7 @@ class StitchAudioFn(beam.DoFn):
         actions = pipeline.process_chunk(chunk_data, ctx)
         stitching_duration = int((time.time() - start_time) * MS_PER_SECOND)
         self.stitching_time_ms.update(stitching_duration)
-        if self.metrics_exporter:
-            self.metrics_exporter.record_stitching_time(
-                feed_id=feed_id, duration_ms=stitching_duration
-            )
+
 
         yield from self._apply_state_actions(
             actions=actions,
@@ -449,7 +426,7 @@ class TranscribeAudioFn(beam.DoFn):
 
         self.audio_processor: AudioProcessor | None = None
         self.transcriber: Transcriber | None = None
-        self.metrics_exporter: Any | None = None
+
 
         self.vad_speech_count = Metrics.counter(
             "TranscribeAudioFn", "vad_speech_count"
@@ -492,25 +469,7 @@ class TranscribeAudioFn(beam.DoFn):
             config_json=self.config.transcriber_config,
         )
 
-        parsed_exporters = []
-        if self.config.metrics_exporter_type:
-            types = [
-                t.strip() for t in self.config.metrics_exporter_type.split(",")
-            ]
-            for t in types:
-                if not t:
-                    continue
-                try:
-                    parsed_exporters.append(MetricsExporterType(t))
-                except ValueError:
-                    logger.warning("Unknown metrics exporter type: %s", t)
 
-        self.metrics_exporter = get_metrics_exporter(
-            parsed_exporters,
-            self.config.project_id,
-            self.config.metrics_config,
-        )
-        self.metrics_exporter.setup()
 
         if self.audio_processor.gcs_client is None:
             msg = "GCS client not found in AudioProcessor. must call setup() first."
@@ -531,9 +490,7 @@ class TranscribeAudioFn(beam.DoFn):
         if self.transcriber is None:
             msg = "Transcriber not initialized. setup() must be called."
             raise RuntimeError(msg)
-        if self.metrics_exporter is None:
-            msg = "MetricsExporter not initialized. setup() must be called."
-            raise RuntimeError(msg)
+
 
         if not request.buffer or len(request.buffer) == 0:
             return None
@@ -588,9 +545,7 @@ class TranscribeAudioFn(beam.DoFn):
             return None
         duration_ms = int((time.time() - transcribe_start) * MS_PER_SECOND)
         self.transcription_time_ms.update(duration_ms)
-        self.metrics_exporter.record_transcription_time(
-            feed_id=request.feed_id, duration_ms=duration_ms
-        )
+
 
         logger.info(f"TRANSCRIPT [{request.feed_id}]: {transcript}")
 
