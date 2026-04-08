@@ -11,8 +11,8 @@ def test_pipeline_topology_typehints() -> None:
             flags=[
                 "--project",
                 "test-project",
-                "--input_topic",
-                "projects/test-project/topics/in",
+                "--input_subscription",
+                "projects/test-project/subscriptions/in",
                 "--output_topic",
                 "projects/test-project/topics/out",
                 "--dlq_topic",
