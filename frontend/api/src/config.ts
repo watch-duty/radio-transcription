@@ -4,7 +4,12 @@
  */
 
 export const TRANSCRIPTS_API_URL = process.env.TRANSCRIPTS_API_URL;
+export const WEB_URL = process.env.WEB_URL;
 
 if (!TRANSCRIPTS_API_URL) {
   throw new Error('TRANSCRIPTS_API_URL environment variable is not set');
+}
+
+if (!WEB_URL) {
+  throw new Error('WEB_URL environment variable is not set');
 }
