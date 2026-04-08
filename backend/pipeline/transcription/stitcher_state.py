@@ -36,15 +36,6 @@ class AudioStitchingStateMachine:
         self, chunk_data: AudioChunkData, ctx: StitcherContext
     ) -> list[StateMachineAction]:
         """Evaluates an incoming chunk against the state machine to produce imperative actions."""
-        # 0. Detect if this is an out-of-order LATE chunk
-        is_late_chunk = (
-            ctx.expected_next_chunk_start_ms is not None
-            and chunk_data.start_ms < ctx.expected_next_chunk_start_ms
-        )
-
-        if is_late_chunk:
-            return self._process_late_chunk_independently(chunk_data, ctx)
-
         chunk_duration_ms = int(CHUNK_DURATION_SECONDS * MS_PER_SECOND)
         actions: list[StateMachineAction] = []
 
@@ -130,77 +121,6 @@ class AudioStitchingStateMachine:
             start_audio_offset_ms=ctx.start_audio_offset_ms,
             end_audio_offset_ms=None,
         )
-
-    def _process_late_chunk_independently(
-        self, chunk_data: AudioChunkData, ctx: StitcherContext
-    ) -> list[StateMachineAction]:
-        """Flushes a late-arriving chunk immediately as an independent short transmission."""
-        # Create a detached context to prevent state corruption of the leading edge
-
-        temp_ctx = StitcherContext(
-            feed_id=ctx.feed_id,
-            current_gcs_uri=ctx.current_gcs_uri,
-            contributing_audio_uris=[],
-            file_start_ms=chunk_data.start_ms,
-            missing_prior_context=True,
-        )
-
-        raw_actions: list[StateMachineAction] = []
-        if not chunk_data.speech_segments:
-            raw_actions.extend(self._process_silent_chunk(chunk_data, temp_ctx))
-        else:
-            raw_actions.extend(
-                self._process_speech_segments(chunk_data, temp_ctx)
-            )
-
-        # Force flush whatever remaining audio was appended via actions
-        if temp_ctx.transmission_start_time_ms is not None:
-            # We must determine if the trailing audio was chopped by the late chunk's boundary.
-            last_segment = (
-                chunk_data.speech_segments[-1]
-                if chunk_data.speech_segments
-                else None
-            )
-            is_chopped_at_end = (
-                last_segment is not None
-                and last_segment.end_ms
-                >= int(CHUNK_DURATION_SECONDS * MS_PER_SECOND)
-            )
-            raw_actions.append(
-                self._flush_current_transmission(
-                    "Flushing isolated late-arriving audio chunk",
-                    temp_ctx,
-                    missing_post_context=is_chopped_at_end,
-                )
-            )
-
-        filtered_actions: list[StateMachineAction] = []
-        isolated_audio_buffer = []
-
-        for action in raw_actions:
-            match action:
-                case AppendBufferAction(audio_buffer=audio):
-                    isolated_audio_buffer.append(audio)
-                case FlushAction():
-                    filtered_actions.append(
-                        FlushAction(
-                            reason=action.reason,
-                            feed_id=action.feed_id,
-                            time_range=action.time_range,
-                            speech_time_range=action.speech_time_range,
-                            contributing_audio_uris=action.contributing_audio_uris,
-                            missing_prior_context=action.missing_prior_context,
-                            missing_post_context=action.missing_post_context,
-                            start_audio_offset_ms=action.start_audio_offset_ms,
-                            end_audio_offset_ms=action.end_audio_offset_ms,
-                            clear_state=False,
-                            isolated_audio_buffer=isolated_audio_buffer.copy(),
-                        )
-                    )
-                case DropAction():
-                    filtered_actions.append(action)
-
-        return filtered_actions
 
     def _reset_transmission_context(self, ctx: StitcherContext) -> None:
         """Resets the ongoing state metrics (timers, timestamps) to begin a fresh transmission window."""

@@ -173,25 +173,3 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
 
         # And because it was severed arbitrarily, the NEXT queued segment inherits a severed head (missing prior context)
         self.assertTrue(self.ctx.missing_prior_context)
-
-    def test_late_chunk_isolated_discard(self) -> None:
-        """Verifies severely misordered messages falling outside chronological bounds are skipped over and isolated securely without corrupting native timeline context."""
-        # Formal timeline moved sequentially forward to 30.0s
-        self.ctx.expected_next_chunk_start_ms = 30000
-
-        # Received a ghost echo from 15.0s!
-        chunk_late = mock_audio_chunk(15000, 15000, [(0.0, 5.0)])
-        actions = self._process(chunk_late)
-
-        # It must eject via FlushAction purely to isolate Traversing the backend independently
-        flush_action = next(
-            (a for a in actions if isinstance(a, FlushAction)), None
-        )
-        self.assertIsNotNone(flush_action)
-        assert flush_action is not None
-
-        self.assertEqual(
-            flush_action.reason, "Flushing isolated late-arriving audio chunk"
-        )
-        self.assertTrue(flush_action.missing_prior_context)
-        self.assertFalse(flush_action.missing_post_context)
