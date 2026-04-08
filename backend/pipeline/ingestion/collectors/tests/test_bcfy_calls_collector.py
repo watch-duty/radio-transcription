@@ -34,18 +34,23 @@ class TestGetJwtToken(unittest.TestCase):
         os.environ,
         {"GOOGLE_CLOUD_PROJECT": "proj", "BROADCASTIFY_JWT_SECRET_ID": "sec"},
     )
-    def test_success(self) -> None:
-        with patch.object(bcfy_calls_collector, "client") as mock_client:
-            mock_resp = MagicMock()
-            mock_resp.payload.data.decode.return_value = " mytoken  "
-            mock_client.access_secret_version.return_value = mock_resp
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector.secretmanager.SecretManagerServiceClient"
+    )
+    def test_success(self, mock_smc: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_smc.return_value = mock_client
+        mock_resp = MagicMock()
+        mock_resp.payload.data.decode.return_value = " mytoken  "
+        mock_client.access_secret_version.return_value = mock_resp
 
-            token = bcfy_calls_collector._get_jwt_token()
+        token = bcfy_calls_collector._get_jwt_token()
 
-            self.assertEqual(token, "mytoken")
-            mock_client.access_secret_version.assert_called_once_with(
-                request={"name": "projects/proj/secrets/sec/versions/latest"}
-            )
+        self.assertEqual(token, "mytoken")
+        mock_client.access_secret_version.assert_called_once_with(
+            request={"name": "projects/proj/secrets/sec/versions/latest"}
+        )
 
     @patch.dict(os.environ, {}, clear=True)
     def test_missing_env(self) -> None:
@@ -56,15 +61,20 @@ class TestGetJwtToken(unittest.TestCase):
         os.environ,
         {"GOOGLE_CLOUD_PROJECT": "proj", "BROADCASTIFY_JWT_SECRET_ID": "sec"},
     )
-    def test_gcp_error(self) -> None:
-        with patch.object(bcfy_calls_collector, "client") as mock_client:
-            mock_client.access_secret_version.side_effect = Exception(
-                "API error"
-            )
-            with self.assertRaisesRegex(
-                RuntimeError, "Failed to access secret"
-            ):
-                bcfy_calls_collector._get_jwt_token()
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector.secretmanager.SecretManagerServiceClient"
+    )
+    def test_gcp_error(self, mock_smc: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_smc.return_value = mock_client
+        mock_client.access_secret_version.side_effect = Exception(
+            "API error"
+        )
+        with self.assertRaisesRegex(
+            RuntimeError, "Failed to access secret"
+        ):
+            bcfy_calls_collector._get_jwt_token()
 
 
 class TestRaiseForFatalStatus(unittest.TestCase):
@@ -98,7 +108,10 @@ class TestFetchCallsBatch(unittest.IsolatedAsyncioTestCase):
     async def test_success_list(self) -> None:
         resp = AsyncMock(status=200)
         resp.json.return_value = [{"call": 1}]
-        self.session.get.return_value.__aenter__.return_value = resp
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=resp)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        self.session.get.return_value = cm
 
         res = await bcfy_calls_collector._fetch_calls_batch(
             self.session, "url", {}, {}, "fid", "sid", self.shutdown
@@ -108,7 +121,10 @@ class TestFetchCallsBatch(unittest.IsolatedAsyncioTestCase):
     async def test_success_dict(self) -> None:
         resp = AsyncMock(status=200)
         resp.json.return_value = {"call": 1}
-        self.session.get.return_value.__aenter__.return_value = resp
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=resp)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        self.session.get.return_value = cm
 
         res = await bcfy_calls_collector._fetch_calls_batch(
             self.session, "url", {}, {}, "fid", "sid", self.shutdown
@@ -144,7 +160,10 @@ class TestFetchCallsBatch(unittest.IsolatedAsyncioTestCase):
     async def test_5xx_max_retries_fail(self, mock_sleep: AsyncMock) -> None:
         mock_sleep.return_value = False
         resp500 = AsyncMock(status=500)
-        self.session.get.return_value.__aenter__.return_value = resp500
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=resp500)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        self.session.get.return_value = cm
 
         res = await bcfy_calls_collector._fetch_calls_batch(
             self.session, "url", {}, {}, "fid", "sid", self.shutdown
@@ -164,7 +183,10 @@ class TestFetchCallsBatch(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         mock_sleep.return_value = True
         resp500 = AsyncMock(status=500)
-        self.session.get.return_value.__aenter__.return_value = resp500
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=resp500)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        self.session.get.return_value = cm
 
         res = await bcfy_calls_collector._fetch_calls_batch(
             self.session, "url", {}, {}, "fid", "sid", self.shutdown
@@ -174,7 +196,10 @@ class TestFetchCallsBatch(unittest.IsolatedAsyncioTestCase):
 
     async def test_other_non_200_status(self) -> None:
         resp = AsyncMock(status=400)
-        self.session.get.return_value.__aenter__.return_value = resp
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=resp)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        self.session.get.return_value = cm
 
         res = await bcfy_calls_collector._fetch_calls_batch(
             self.session, "url", {}, {}, "fid", "sid", self.shutdown
@@ -193,7 +218,10 @@ class TestDownloadAndConvertAudio(unittest.IsolatedAsyncioTestCase):
     async def test_success(self, mock_to_thread: AsyncMock) -> None:
         resp = AsyncMock(status=200)
         resp.read.return_value = b"mp3"
-        self.session.get.return_value.__aenter__.return_value = resp
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=resp)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        self.session.get.return_value = cm
         mock_to_thread.return_value = b"flac"
 
         res = await bcfy_calls_collector._download_and_convert_audio(
@@ -206,7 +234,10 @@ class TestDownloadAndConvertAudio(unittest.IsolatedAsyncioTestCase):
 
     async def test_non_200_status(self) -> None:
         resp = AsyncMock(status=404)
-        self.session.get.return_value.__aenter__.return_value = resp
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=resp)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        self.session.get.return_value = cm
 
         res = await bcfy_calls_collector._download_and_convert_audio(
             self.session, "http://mp3"
