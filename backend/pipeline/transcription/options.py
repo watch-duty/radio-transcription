@@ -28,13 +28,19 @@ class TranscriptionOptions(PipelineOptions):
         parser.add_argument(
             "--input_topic",
             type=str,
-            required=True,
+            required=False,
             help="Pub/Sub topic to read from",
+        )
+        parser.add_argument(
+            "--input_subscription",
+            type=str,
+            required=False,
+            help="Pub/Sub subscription to read from (preferred for strict ordering)",
         )
         parser.add_argument(
             "--output_topic",
             type=str,
-            required=True,
+            required=False,
             help="Pub/Sub topic to write to",
         )
         parser.add_argument(

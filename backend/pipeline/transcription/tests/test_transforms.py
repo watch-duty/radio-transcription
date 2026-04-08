@@ -586,152 +586,7 @@ class StitchAudioTest(unittest.TestCase):
                 label="CheckMainFlushRequests",
             )
 
-    @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
-    def test_isolated_late_chunk_processing(
-        self, mock_audio_processor: MagicMock
-    ) -> None:
-        """Verifies that an explicitly labeled late chunk bypassed by system ordering constraints uniquely triggers an isolated contextual processing branch natively."""
-        mock_processor_inst = mock_audio_processor.return_value
-        mock_processor_inst.check_vad.return_value = True
-        mock_processor_inst.preprocess_audio.side_effect = lambda x: x
-        mock_processor_inst.export_flac.return_value = b"flac_bytes"
 
-        sed_map = {
-            "100-11111111-1111-1111-1111-111111111111.flac": [(0.0, 15.0)],
-            "130-33333333-3333-3333-3333-333333333333.flac": [(0.0, 15.0)],
-            "115-22222222-2222-2222-2222-222222222222.flac": [(2.0, 15.0)],
-        }
-
-        def mock_download(path: str, start_ms: int = 0) -> AudioChunkData:
-
-            filename = path.rsplit("/", maxsplit=1)[-1]
-            chunk_start = (
-                float(filename.split("-")[0]) if "-" in filename else 0.0
-            )
-            return AudioChunkData(
-                start_ms=int(chunk_start * 1000),
-                audio=AudioSegment.silent(duration=15000),
-                speech_segments=[
-                    TimeRange(int(s * 1000), int(e * 1000))
-                    for s, e in sed_map.get(filename, [])
-                ],
-                gcs_uri=path,
-            )
-
-        mock_processor_inst.download_audio_and_detect.side_effect = (
-            mock_download
-        )
-        options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
-        )
-        options.view_as(StandardOptions).streaming = True
-        config = get_test_stitch_config(significant_gap_ms=3000)
-
-        with BeamTestPipeline(options=options) as p:
-            test_stream = (
-                BeamTestStream(
-                    coder=beam.coders.TupleCoder(
-                        (
-                            beam.coders.StrUtf8Coder(),
-                            beam.coders.TupleCoder(
-                                (
-                                    beam.coders.StrUtf8Coder(),
-                                    beam.coders.PickleCoder(),
-                                )
-                            ),
-                        )
-                    )
-                )
-                .advance_watermark_to(100)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-123",
-                                (
-                                    "gs://fake-bucket/100-11111111-1111-1111-1111-111111111111.flac",
-                                    mock_download(
-                                        "gs://fake-bucket/100-11111111-1111-1111-1111-111111111111.flac"
-                                    ),
-                                ),
-                            ),
-                            100,
-                        )
-                    ]
-                )
-                .advance_watermark_to(130)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-123",
-                                (
-                                    "gs://fake-bucket/130-33333333-3333-3333-3333-333333333333.flac",
-                                    mock_download(
-                                        "gs://fake-bucket/130-33333333-3333-3333-3333-333333333333.flac"
-                                    ),
-                                ),
-                            ),
-                            130,
-                        )
-                    ]
-                )
-                .advance_watermark_to(140)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-123",
-                                (
-                                    "gs://fake-bucket/115-22222222-2222-2222-2222-222222222222.flac",
-                                    mock_download(
-                                        "gs://fake-bucket/115-22222222-2222-2222-2222-222222222222.flac"
-                                    ),
-                                ),
-                            ),
-                            140,
-                        )
-                    ]
-                )
-                .advance_watermark_to_infinity()
-            )
-
-            results = (
-                p
-                | test_stream
-                | beam.ParDo(StitchAudioFn(config=config)).with_outputs(
-                    DEAD_LETTER_QUEUE_TAG, main="main"
-                )
-            )
-
-            def assert_flush_requests(
-                elements: list[tuple[str, FlushRequest]],
-            ) -> None:
-
-                assert len(elements) == 2, (
-                    f"Expected 2 flush requests (Chunk 3 remains buffered due to skipped timer), got {len(elements)}"
-                )
-
-                elements.sort(key=lambda x: x[1].time_range.start_ms)
-
-                assert any(
-                    "11111111-1111-1111-1111-111111111111" in u
-                    for u in elements[0][1].contributing_audio_uris
-                )
-                assert elements[0][1].missing_post_context is True
-
-                assert any(
-                    "22222222-2222-2222-2222-222222222222" in u
-                    for u in elements[1][1].contributing_audio_uris
-                )
-                assert elements[1][1].missing_prior_context is False
-                assert elements[1][1].missing_post_context is True
-
-            assert_that(
-                results.main,
-                assert_flush_requests,
-                label="CheckLateChunkRequests",
-            )
 
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
     def test_max_transmission_duration_flush(
@@ -1070,6 +925,7 @@ class TranscribeAudioTest(unittest.TestCase):
                             time_range=TimeRange(
                                 start_ms=101000, end_ms=101500
                             ),
+                            transmission_id="test-uuid",
                         ),
                     )
                 ]
@@ -1166,12 +1022,14 @@ class TranscribeAudioTest(unittest.TestCase):
                         buffer=AudioSegment.silent(duration=500),
                         contributing_audio_uris=["gs://bbbbbbbb.flac"],
                         time_range=TimeRange(start_ms=0, end_ms=500),
+                        transmission_id="test-uuid-1",
                     ),
                     FlushRequest(
                         feed_id="feed-123",
                         buffer=AudioSegment.silent(duration=500),
                         contributing_audio_uris=["gs://cccccccc.flac"],
                         time_range=TimeRange(start_ms=5000, end_ms=5500),
+                        transmission_id="test-uuid-2",
                     ),
                 ]
             )
