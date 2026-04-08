@@ -10,7 +10,6 @@ import aiohttp
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 
 if TYPE_CHECKING:
-
     from google.cloud import pubsub_v1
 
     from backend.pipeline.common.clients.gcs_client import GcsClient

@@ -456,7 +456,6 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
         mock_publisher.publish.assert_called_once()
 
 
-
 class TestParseGcsUri(unittest.TestCase):
     """Tests for the parse_gcs_uri function."""
 
