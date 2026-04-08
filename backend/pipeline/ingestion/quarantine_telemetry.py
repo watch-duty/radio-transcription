@@ -4,7 +4,7 @@ Emits a structured log and an optional Cloud Monitoring custom metric
 each time a feed transitions to ``quarantined`` status.
 
 Call :func:`configure` once at runtime startup to enable metric
-emission.  When *gcp_project_id* is ``None`` (the default), only the
+emission.  When *google_cloud_project* is ``None`` (the default), only the
 structured log is emitted — no GCP API calls are made.
 """
 
@@ -21,7 +21,7 @@ _METRIC_TYPE = "custom.googleapis.com/feeds/quarantine_events"
 _client: MonitoringClient | None = None
 
 
-def configure(gcp_project_id: str | None) -> None:
+def configure(google_cloud_project: str | None) -> None:
     """Set the GCP project for metric emission.
 
     Pass ``None`` to disable metric emission (structured log is still
@@ -29,7 +29,9 @@ def configure(gcp_project_id: str | None) -> None:
     but the gRPC channel is not opened until the first metric write.
     """
     global _client  # noqa: PLW0603
-    _client = MonitoringClient(gcp_project_id) if gcp_project_id else None
+    _client = (
+        MonitoringClient(google_cloud_project) if google_cloud_project else None
+    )
 
 
 async def emit_quarantine_event(

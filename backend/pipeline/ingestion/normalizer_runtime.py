@@ -172,7 +172,7 @@ class NormalizerRuntime:
         )
         self._heartbeat_thread.start()
 
-        quarantine_telemetry.configure(settings.gcp_project_id)
+        quarantine_telemetry.configure(settings.google_cloud_project)
 
         try:
             await self._leasing_loop()

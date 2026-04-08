@@ -42,7 +42,7 @@ class TestNormalizerSettings(unittest.TestCase):
             "BOOKMARK_MAX_RETRIES": "4",
             "BOOKMARK_RETRY_BASE_DELAY_SEC": "0.25",
             "BOOKMARK_RETRY_MAX_DELAY_SEC": "2.0",
-            "GCP_PROJECT_ID": "test-project",
+            "GOOGLE_CLOUD_PROJECT": "test-project",
         }
 
         with patch.dict("os.environ", env, clear=True):
@@ -72,7 +72,7 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.bookmark_max_retries, 4)
         self.assertEqual(settings.bookmark_retry_base_delay_sec, 0.25)
         self.assertEqual(settings.bookmark_retry_max_delay_sec, 2.0)
-        self.assertEqual(settings.gcp_project_id, "test-project")
+        self.assertEqual(settings.google_cloud_project, "test-project")
 
     def test_edge_case_uses_defaults_and_generates_worker_id(self) -> None:
         """Uses defaults for optional settings when only required vars are set."""
@@ -99,7 +99,7 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.bookmark_max_retries, 2)
         self.assertEqual(settings.bookmark_retry_base_delay_sec, 0.5)
         self.assertEqual(settings.bookmark_retry_max_delay_sec, 4.0)
-        self.assertIsNone(settings.gcp_project_id)
+        self.assertIsNone(settings.google_cloud_project)
 
     def test_edge_case_zero_and_negative_numeric_values_parse(self) -> None:
         """Allows zero/negative values because parsing does not enforce ranges."""
