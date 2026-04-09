@@ -366,6 +366,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                             connection_session_id,
                         )
                         if not chunk:
+                            connection_session_id = str(uuid.uuid4())
                             continue
 
                         yield chunk
@@ -395,6 +396,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                 consecutive_failures = await _handle_loop_failure(
                     feed_id, consecutive_failures, shutdown_event
                 )
+                connection_session_id = str(uuid.uuid4())
             except RuntimeError:
                 raise
             except Exception as e:
@@ -402,3 +404,4 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                 consecutive_failures = await _handle_loop_failure(
                     feed_id, consecutive_failures, shutdown_event
                 )
+                connection_session_id = str(uuid.uuid4())

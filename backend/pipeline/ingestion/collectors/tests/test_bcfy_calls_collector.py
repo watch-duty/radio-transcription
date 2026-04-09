@@ -1038,3 +1038,133 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         for chunk in chunks:
             self.assertIsNotNone(chunk.session_id)
         self.assertEqual(chunks[0].session_id, chunks[1].session_id)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._download_and_convert_audio",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_session_id_changes_after_fetch_failure(
+        self,
+        mock_sleep: AsyncMock,
+        mock_dl: AsyncMock,
+        mock_fetch: AsyncMock,
+        mock_jwt: MagicMock,
+    ) -> None:
+        """After a fetch error and recovery, chunks get a new session_id."""
+        mock_jwt.return_value = "token"
+        mock_dl.return_value = b"flac"
+
+        fetch_calls = 0
+
+        async def fetch_side_effect(*args, **kwargs):
+            nonlocal fetch_calls
+            fetch_calls += 1
+            if fetch_calls == 1:
+                return {
+                    "calls": [
+                        {"url": "http://1", "start_ts": 1000, "end_ts": 2000},
+                    ],
+                    "lastPos": 9999,
+                }
+            if fetch_calls == 2:
+                msg = "API error"
+                raise Exception(msg)  # noqa: TRY002
+            if fetch_calls == 3:
+                return {
+                    "calls": [
+                        {"url": "http://2", "start_ts": 3000, "end_ts": 4000},
+                    ],
+                    "lastPos": 10000,
+                }
+            self.shutdown.set()
+            return {"calls": []}
+
+        mock_fetch.side_effect = fetch_side_effect
+        mock_sleep.return_value = False
+
+        chunks = [
+            c
+            async for c in bcfy_calls_collector.capture_bcfy_calls(
+                self.leased_feed, self.shutdown, self.url_base
+            )
+        ]
+
+        self.assertEqual(len(chunks), 2)
+        self.assertNotEqual(chunks[0].session_id, chunks[1].session_id)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._download_and_convert_audio",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_session_id_changes_after_skipped_download(
+        self,
+        mock_sleep: AsyncMock,
+        mock_dl: AsyncMock,
+        mock_fetch: AsyncMock,
+        mock_jwt: MagicMock,
+    ) -> None:
+        """After a failed audio download, subsequent chunks get a new session_id."""
+        mock_jwt.return_value = "token"
+
+        fetch_calls = 0
+
+        async def fetch_side_effect(*args, **kwargs):
+            nonlocal fetch_calls
+            fetch_calls += 1
+            if fetch_calls == 1:
+                return {
+                    "calls": [
+                        {
+                            "url": "http://good",
+                            "start_ts": 1000,
+                            "end_ts": 2000,
+                        },
+                        {"url": "http://bad", "start_ts": 2000, "end_ts": 3000},
+                        {
+                            "url": "http://after",
+                            "start_ts": 3000,
+                            "end_ts": 4000,
+                        },
+                    ],
+                    "lastPos": 9999,
+                }
+            self.shutdown.set()
+            return {"calls": []}
+
+        mock_fetch.side_effect = fetch_side_effect
+        # First download succeeds, second fails (returns None), third succeeds
+        mock_dl.side_effect = [b"flac", None, b"flac"]
+        mock_sleep.return_value = False
+
+        chunks = [
+            c
+            async for c in bcfy_calls_collector.capture_bcfy_calls(
+                self.leased_feed, self.shutdown, self.url_base
+            )
+        ]
+
+        self.assertEqual(len(chunks), 2)
+        # The skipped download between chunk 0 and chunk 1 triggers a new session
+        self.assertNotEqual(chunks[0].session_id, chunks[1].session_id)
