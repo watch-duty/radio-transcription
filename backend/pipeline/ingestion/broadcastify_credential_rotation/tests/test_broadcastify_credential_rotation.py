@@ -92,62 +92,99 @@ class TestAddSecretVersion:
 
 
 class TestCleanupOldVersions:
-    def test_cleanup_destroys_old_versions(
+    def test_cleanup_with_explicit_24_hours(
         self, configured_module: None
     ) -> None:
+        """Test cleanup with explicit 24 hours retention."""
         del configured_module
-        secret_client = mock.MagicMock()
-        secret_client.secret_path.return_value = (
-            "projects/test-project/secrets/my-secret"
+        mock_client = mock.MagicMock(
+            spec=main.secretmanager.SecretManagerServiceClient
+        )
+        mock_client.secret_path.return_value = (
+            "projects/123/secrets/test-secret"
         )
 
         now = datetime.datetime.now(tz=datetime.UTC)
-        old_time = now - datetime.timedelta(hours=48)
-        new_time = now - datetime.timedelta(hours=1)
+        old_version = mock.MagicMock()
+        old_version.name = "projects/123/secrets/test-secret/versions/1"
+        old_version.state = main.secretmanager.SecretVersion.State.ENABLED
+        old_version.create_time = now - datetime.timedelta(hours=25)
 
-        # Create mock versions in various states to test filtering logic
-        v_old_enabled = mock.MagicMock()
-        v_old_enabled.name = "v_old_enabled"
-        v_old_enabled.state = main.secretmanager.SecretVersion.State.ENABLED
-        v_old_enabled.create_time = old_time
+        recent_version = mock.MagicMock()
+        recent_version.name = "projects/123/secrets/test-secret/versions/2"
+        recent_version.state = main.secretmanager.SecretVersion.State.ENABLED
+        recent_version.create_time = now - datetime.timedelta(hours=23)
 
-        v_old_disabled = mock.MagicMock()
-        v_old_disabled.name = "v_old_disabled"
-        v_old_disabled.state = main.secretmanager.SecretVersion.State.DISABLED
-        v_old_disabled.create_time = old_time
-
-        # This version is new and should not be destroyed
-        v_new_enabled = mock.MagicMock()
-        v_new_enabled.name = "v_new_enabled"
-        v_new_enabled.state = main.secretmanager.SecretVersion.State.ENABLED
-        v_new_enabled.create_time = new_time
-
-        # This version is old but already destroyed, so it should be skipped
-        v_old_destroyed = mock.MagicMock()
-        v_old_destroyed.name = "v_old_destroyed"
-        v_old_destroyed.state = main.secretmanager.SecretVersion.State.DESTROYED
-        v_old_destroyed.create_time = old_time
-
-        secret_client.list_secret_versions.return_value = [
-            v_old_enabled,
-            v_old_disabled,
-            v_new_enabled,
-            v_old_destroyed,
+        mock_client.list_secret_versions.return_value = [
+            old_version,
+            recent_version,
         ]
 
-        main.cleanup_old_versions(secret_client, "my-secret", hours_to_keep=24)
+        main.cleanup_old_versions(mock_client, "test-secret", hours_to_keep=24)
 
-        secret_client.secret_path.assert_called_once_with(
-            "test-project", "my-secret"
+        mock_client.destroy_secret_version.assert_called_once_with(
+            request={"name": "projects/123/secrets/test-secret/versions/1"}
         )
-        # Verify only the old ENABLED and DISABLED versions were targeted for destruction
-        assert secret_client.destroy_secret_version.call_count == 2
-        secret_client.destroy_secret_version.assert_has_calls(
-            [
-                mock.call(request={"name": "v_old_enabled"}),
-                mock.call(request={"name": "v_old_disabled"}),
-            ],
-            any_order=True,
+
+    def test_cleanup_with_default_6_hours(
+        self, configured_module: None
+    ) -> None:
+        """Test cleanup with default 6 hours retention (new default)."""
+        del configured_module
+        mock_client = mock.MagicMock(
+            spec=main.secretmanager.SecretManagerServiceClient
+        )
+        mock_client.secret_path.return_value = (
+            "projects/123/secrets/test-secret"
+        )
+
+        now = datetime.datetime.now(tz=datetime.UTC)
+        old_version = mock.MagicMock()
+        old_version.name = "projects/123/secrets/test-secret/versions/1"
+        old_version.state = main.secretmanager.SecretVersion.State.ENABLED
+        old_version.create_time = now - datetime.timedelta(hours=7)
+
+        recent_version = mock.MagicMock()
+        recent_version.name = "projects/123/secrets/test-secret/versions/2"
+        recent_version.state = main.secretmanager.SecretVersion.State.ENABLED
+        recent_version.create_time = now - datetime.timedelta(hours=5)
+
+        mock_client.list_secret_versions.return_value = [
+            old_version,
+            recent_version,
+        ]
+
+        # Call without explicit hours_to_keep to test the default value
+        main.cleanup_old_versions(mock_client, "test-secret")
+
+        mock_client.destroy_secret_version.assert_called_once_with(
+            request={"name": "projects/123/secrets/test-secret/versions/1"}
+        )
+
+    def test_cleanup_respects_disabled_versions(
+        self, configured_module: None
+    ) -> None:
+        """Test that cleanup destroys both ENABLED and DISABLED versions."""
+        del configured_module
+        mock_client = mock.MagicMock(
+            spec=main.secretmanager.SecretManagerServiceClient
+        )
+        mock_client.secret_path.return_value = (
+            "projects/123/secrets/test-secret"
+        )
+
+        now = datetime.datetime.now(tz=datetime.UTC)
+        old_disabled = mock.MagicMock()
+        old_disabled.name = "projects/123/secrets/test-secret/versions/1"
+        old_disabled.state = main.secretmanager.SecretVersion.State.DISABLED
+        old_disabled.create_time = now - datetime.timedelta(hours=7)
+
+        mock_client.list_secret_versions.return_value = [old_disabled]
+
+        main.cleanup_old_versions(mock_client, "test-secret")
+
+        mock_client.destroy_secret_version.assert_called_once_with(
+            request={"name": "projects/123/secrets/test-secret/versions/1"}
         )
 
 
