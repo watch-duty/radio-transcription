@@ -30,6 +30,7 @@ from backend.pipeline.storage.feed_store import (
     FeedStore,
     HeartbeatResult,
     LeasedFeed,
+    SourceType,
 )
 
 FeedID = uuid.UUID
@@ -337,6 +338,17 @@ class NormalizerRuntime:
         settings = self._normalizer_settings
         _fallback_session_id: str | None = None
 
+        if feed["source_type"] == SourceType.BCFY_FEEDS:
+            topic_path = settings.pubsub_topic_path
+        else:
+            topic_path = settings.segmented_pubsub_topic_path
+            if not topic_path:
+                msg = (
+                    f"Segmented Pub/Sub topic path not configured for feed "
+                    f"{feed['name']} of type {feed['source_type']}"
+                )
+                raise ValueError(msg)
+
         try:
             async for captured_chunk in self._capture_fn(
                 feed,
@@ -384,7 +396,7 @@ class NormalizerRuntime:
                 )
                 message_id = await gcp_helper.publish_audio_chunk(
                     self._pubsub_client,
-                    self._normalizer_settings.pubsub_topic_path,
+                    topic_path,
                     str(feed["id"]),
                     gcs_uri,
                     start_timestamp=captured_chunk.chunk_start_time,

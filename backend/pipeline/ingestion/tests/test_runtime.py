@@ -394,6 +394,93 @@ class TestProcessFeedSessionId(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(kwargs1["session_id"], kwargs2["session_id"])
 
 
+class TestProcessFeedTopicRouting(unittest.IsolatedAsyncioTestCase):
+    """Tests for _process_feed topic routing based on SourceType."""
+
+    async def test_routes_continuous_feed_to_default_topic(self) -> None:
+        """Continuous feeds (BCFY_FEEDS) go to pubsub_topic_path."""
+
+        async def _one_chunk(feed, shutdown):
+            yield _make_captured_chunk(b"audio")
+
+        rt = _make_runtime(pubsub_topic_path="projects/p/topics/continuous")
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress.return_value = True
+        rt._releasing_feeds = set()
+
+        with _mock_upload_audio(), _mock_pubsub_publish() as mock_publish:
+            await rt._process_feed(_FEED)  # _FEED is BCFY_FEEDS
+
+            mock_publish.assert_called_once()
+            _, args, _ = mock_publish.mock_calls[0]
+            self.assertEqual(args[1], "projects/p/topics/continuous")
+
+    async def test_routes_segmented_feed_to_segmented_topic(self) -> None:
+        """Segmented feeds (not BCFY_FEEDS) go to segmented_pubsub_topic_path."""
+
+        async def _one_chunk(feed, shutdown):
+            yield _make_captured_chunk(b"audio")
+
+        rt = _make_runtime(
+            pubsub_topic_path="projects/p/topics/continuous",
+            segmented_pubsub_topic_path="projects/p/topics/segmented",
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress.return_value = True
+        rt._releasing_feeds = set()
+
+        segmented_feed = LeasedFeed(
+            id=_FEED_ID,
+            name="Test Feed",
+            source_type=SourceType.OPENMHZ,  # Not BCFY_FEEDS
+            last_processed_filename=None,
+            last_bookmark_time=None,
+            fencing_token=1,
+            source_feed_id="123",
+        )
+
+        with _mock_upload_audio(), _mock_pubsub_publish() as mock_publish:
+            await rt._process_feed(segmented_feed)
+
+            mock_publish.assert_called_once()
+            _, args, _ = mock_publish.mock_calls[0]
+            self.assertEqual(args[1], "projects/p/topics/segmented")
+
+    async def test_raises_if_segmented_topic_missing(self) -> None:
+        """Raises ValueError if segmented feed processed but segmented topic missing."""
+
+        async def _one_chunk(feed, shutdown):
+            yield _make_captured_chunk(b"audio")
+
+        rt = _make_runtime(
+            pubsub_topic_path="projects/p/topics/continuous",
+            segmented_pubsub_topic_path=None,  # Missing
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+
+        segmented_feed = LeasedFeed(
+            id=_FEED_ID,
+            name="Test Feed",
+            source_type=SourceType.OPENMHZ,
+            last_processed_filename=None,
+            last_bookmark_time=None,
+            fencing_token=1,
+            source_feed_id="123",
+        )
+
+        with _mock_upload_audio(), _mock_pubsub_publish():
+            with self.assertRaises(ValueError) as context:
+                await rt._process_feed(segmented_feed)
+            self.assertIn(
+                "Segmented Pub/Sub topic path not configured",
+                str(context.exception),
+            )
+
+
 class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
     """Tests for _heartbeat_cycle."""
 
@@ -939,9 +1026,13 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         rt._store.report_feed_failure.return_value = "quarantined"
         rt._releasing_feeds = set()
 
-        with mock.patch(
-            "backend.pipeline.ingestion.normalizer_runtime.quarantine_telemetry"
-        ) as mock_telemetry:
+        with (
+            _mock_upload_audio(),
+            _mock_pubsub_publish(),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.quarantine_telemetry"
+            ) as mock_telemetry,
+        ):
             mock_telemetry.emit_quarantine_event = mock.AsyncMock()
             await rt._process_feed(_FEED)
 
@@ -971,9 +1062,13 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         rt._store.report_feed_failure.return_value = "failing"
         rt._releasing_feeds = set()
 
-        with mock.patch(
-            "backend.pipeline.ingestion.normalizer_runtime.quarantine_telemetry"
-        ) as mock_telemetry:
+        with (
+            _mock_upload_audio(),
+            _mock_pubsub_publish(),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.quarantine_telemetry"
+            ) as mock_telemetry,
+        ):
             mock_telemetry.emit_quarantine_event = mock.AsyncMock()
             await rt._process_feed(_FEED)
 
