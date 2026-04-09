@@ -119,7 +119,9 @@ async def capture_icecast_stream(  # noqa: PLR0915
 
     auth_header = _build_auth_header()
     normalized_url_base = url_base if url_base.endswith("/") else f"{url_base}/"
-    params = urlencode({"burst": 0})  # Disable burst-on-connect behavior
+    # Disable burst-on-connect behavior to prevent sputtering during initial ffmpeg streaming.
+    # Note: Some Icecast servers may not support this parameter.
+    params = urlencode({"burst": 0})
     url = urljoin(normalized_url_base, f"{source_feed_id.strip()}.mp3?{params}")
 
     with tempfile.TemporaryDirectory(prefix="icecast_segments_") as tmp_dir:
