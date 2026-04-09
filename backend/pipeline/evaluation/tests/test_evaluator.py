@@ -30,14 +30,15 @@ class TestTextEvaluator(unittest.TestCase):
         result = self.static_evaluator.evaluate(text, feed_id="test_feed")
         self.assertTrue(result["is_flagged"])
         self.assertEqual(len(result["triggered_rules"]), 1)
-        self.assertEqual(result["triggered_rules"][0], "basic_fire_terms")
+        # Expect group ID now
+        self.assertEqual(result["triggered_rules"][0], "basic_fire_group")
 
     def test_basic_match_evacuation(self) -> None:
         """Test that 'evacuation' triggers the rule."""
-        text = "We nmeed to start evacuation procedures."
+        text = "We need to start evacuation procedures."
         result = self.static_evaluator.evaluate(text, feed_id="test_feed")
         self.assertTrue(result["is_flagged"])
-        self.assertEqual(result["triggered_rules"][0], "basic_fire_terms")
+        self.assertEqual(result["triggered_rules"][0], "basic_fire_group")
 
     def test_case_insensitivity(self) -> None:
         """Test that capitalization does not affect matching."""
@@ -105,35 +106,42 @@ class TestRemoteTextEvaluator(unittest.TestCase):
     def test_evaluate_success(
         self, mock_get, mock_is_gcp, mock_get_id_token
     ) -> None:
-        """Test that RemoteTextEvaluator successfully fetches and evaluates rules."""
-        # Force GCP environment for this test
+        """Test that RemoteTextEvaluator successfully fetches and evaluates resolved groups."""
         mock_is_gcp.return_value = True
-        # Mock token
         mock_get_id_token.return_value = "mock_token"
-        # Mock rule from API
-        mock_rule = {
-            "rule_id": "test_rule_1",
-            "rule_name": "Test Rule 1",
+
+        mock_group = {
+            "rule_id": "test_group_1",
+            "rule_name": "Test Group 1",
             "is_active": True,
             "scope": {"level": "GLOBAL", "target_feeds": []},
-            "conditions": {
-                "evaluation_type": "KEYWORD_MATCH",
-                "operator": "ANY",
-                "keywords": ["test"],
-                "case_sensitive": False,
-            },
+            "operator": "ANY",
+            "child_rule_ids": ["test_rule_1"],
+            "child_rules": [
+                {
+                    "rule_id": "test_rule_1",
+                    "rule_name": "Test Rule 1",
+                    "conditions": {
+                        "evaluation_type": "KEYWORD_MATCH",
+                        "operator": "ANY",
+                        "keywords": ["test"],
+                        "case_sensitive": False,
+                    },
+                }
+            ],
         }
-        mock_get.return_value.json.return_value = [mock_rule]
+        mock_get.return_value.json.return_value = [mock_group]
         mock_get.return_value.status_code = 200
 
         text = "This is a test message."
         result = self.remote_evaluator.evaluate(text, feed_id="test_feed")
 
         self.assertTrue(result["is_flagged"])
-        self.assertIn("test_rule_1", result["triggered_rules"])
-        mock_get.assert_called_with(f"{self.api_url}/v1/rules", timeout=10)
+        self.assertIn("test_group_1", result["triggered_rules"])
+        mock_get.assert_called_with(
+            f"{self.api_url}/v1/groups/resolved", timeout=10
+        )
 
-        # Verify Authorization header was set
         self.assertEqual(
             self.remote_evaluator.session.headers.get("Authorization"),
             "Bearer mock_token",
@@ -149,22 +157,29 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         self, mock_get, mock_is_gcp, mock_get_id_token
     ) -> None:
         """Test that RemoteTextEvaluator skips authentication when not in GCP."""
-        # Force non-GCP environment for this test
         mock_is_gcp.return_value = False
-        # Mock rule from API
-        mock_rule = {
-            "rule_id": "test_rule_1",
-            "rule_name": "Test Rule 1",
+
+        mock_group = {
+            "rule_id": "test_group_1",
+            "rule_name": "Test Group 1",
             "is_active": True,
             "scope": {"level": "GLOBAL", "target_feeds": []},
-            "conditions": {
-                "evaluation_type": "KEYWORD_MATCH",
-                "operator": "ANY",
-                "keywords": ["test"],
-                "case_sensitive": False,
-            },
+            "operator": "ANY",
+            "child_rule_ids": ["test_rule_1"],
+            "child_rules": [
+                {
+                    "rule_id": "test_rule_1",
+                    "rule_name": "Test Rule 1",
+                    "conditions": {
+                        "evaluation_type": "KEYWORD_MATCH",
+                        "operator": "ANY",
+                        "keywords": ["test"],
+                        "case_sensitive": False,
+                    },
+                }
+            ],
         }
-        mock_get.return_value.json.return_value = [mock_rule]
+        mock_get.return_value.json.return_value = [mock_group]
         mock_get.return_value.status_code = 200
 
         text = "This is a test message."
@@ -181,21 +196,29 @@ class TestRemoteTextEvaluator(unittest.TestCase):
     )
     @patch("requests.Session.get")
     def test_evaluate_inactive_rule(self, mock_get, mock_get_id_token) -> None:
-        """Test that inactive rules are ignored."""
+        """Test that inactive groups are ignored."""
         mock_get_id_token.return_value = "mock_token"
-        mock_rule = {
-            "rule_id": "inactive_rule",
-            "rule_name": "Inactive Rule",
+        mock_group = {
+            "rule_id": "inactive_group",
+            "rule_name": "Inactive Group",
             "is_active": False,
             "scope": {"level": "GLOBAL", "target_feeds": []},
-            "conditions": {
-                "evaluation_type": "KEYWORD_MATCH",
-                "operator": "ANY",
-                "keywords": ["test"],
-                "case_sensitive": False,
-            },
+            "operator": "ANY",
+            "child_rule_ids": ["test_rule_1"],
+            "child_rules": [
+                {
+                    "rule_id": "test_rule_1",
+                    "rule_name": "Test Rule 1",
+                    "conditions": {
+                        "evaluation_type": "KEYWORD_MATCH",
+                        "operator": "ANY",
+                        "keywords": ["test"],
+                        "case_sensitive": False,
+                    },
+                }
+            ],
         }
-        mock_get.return_value.json.return_value = [mock_rule]
+        mock_get.return_value.json.return_value = [mock_group]
         mock_get.return_value.status_code = 200
 
         result = self.remote_evaluator.evaluate(
@@ -210,48 +233,52 @@ class TestRemoteTextEvaluator(unittest.TestCase):
     def test_evaluate_feed_specific_rules(
         self, mock_get, mock_get_id_token
     ) -> None:
-        """Test that global and feed-specific rules are correctly applied."""
+        """Test that global and feed-specific groups are correctly applied."""
         mock_get_id_token.return_value = "mock_token"
 
-        rules_data = [
+        groups_data = [
             {
-                "rule_id": "global_rule",
-                "rule_name": "Global Rule",
+                "rule_id": "global_group",
+                "rule_name": "Global Group",
                 "is_active": True,
                 "scope": {"level": "GLOBAL", "target_feeds": []},
-                "conditions": {
-                    "evaluation_type": "KEYWORD_MATCH",
-                    "operator": "ANY",
-                    "keywords": ["global"],
-                    "case_sensitive": False,
-                },
+                "operator": "ANY",
+                "child_rule_ids": ["rule1"],
+                "child_rules": [
+                    {
+                        "rule_id": "rule1",
+                        "rule_name": "Rule 1",
+                        "conditions": {
+                            "evaluation_type": "KEYWORD_MATCH",
+                            "operator": "ANY",
+                            "keywords": ["global"],
+                            "case_sensitive": False,
+                        },
+                    }
+                ],
             },
             {
-                "rule_id": "feed_a_rule",
-                "rule_name": "Feed A Rule",
+                "rule_id": "feed_a_group",
+                "rule_name": "Feed A Group",
                 "is_active": True,
                 "scope": {"level": "FEED_SPECIFIC", "target_feeds": ["feed_A"]},
-                "conditions": {
-                    "evaluation_type": "KEYWORD_MATCH",
-                    "operator": "ANY",
-                    "keywords": ["specific"],
-                    "case_sensitive": False,
-                },
-            },
-            {
-                "rule_id": "feed_b_rule",
-                "rule_name": "Feed B Rule",
-                "is_active": True,
-                "scope": {"level": "FEED_SPECIFIC", "target_feeds": ["feed_B"]},
-                "conditions": {
-                    "evaluation_type": "KEYWORD_MATCH",
-                    "operator": "ANY",
-                    "keywords": ["specific"],
-                    "case_sensitive": False,
-                },
+                "operator": "ANY",
+                "child_rule_ids": ["rule2"],
+                "child_rules": [
+                    {
+                        "rule_id": "rule2",
+                        "rule_name": "Rule 2",
+                        "conditions": {
+                            "evaluation_type": "KEYWORD_MATCH",
+                            "operator": "ANY",
+                            "keywords": ["specific"],
+                            "case_sensitive": False,
+                        },
+                    }
+                ],
             },
         ]
-        mock_get.return_value.json.return_value = rules_data
+        mock_get.return_value.json.return_value = groups_data
         mock_get.return_value.status_code = 200
 
         text = "This matches global and specific words."
@@ -259,44 +286,43 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         # Test Feed A
         result_a = self.remote_evaluator.evaluate(text, feed_id="feed_A")
         self.assertTrue(result_a["is_flagged"])
-        self.assertIn("global_rule", result_a["triggered_rules"])
-        self.assertIn("feed_a_rule", result_a["triggered_rules"])
-        self.assertNotIn("feed_b_rule", result_a["triggered_rules"])
-
-        # Test Feed B
-        result_b = self.remote_evaluator.evaluate(text, feed_id="feed_B")
-        self.assertTrue(result_b["is_flagged"])
-        self.assertIn("global_rule", result_b["triggered_rules"])
-        self.assertIn("feed_b_rule", result_b["triggered_rules"])
-        self.assertNotIn("feed_a_rule", result_b["triggered_rules"])
+        self.assertIn("global_group", result_a["triggered_rules"])
+        self.assertIn("feed_a_group", result_a["triggered_rules"])
 
         # Test Other Feed (only global should match)
         result_other = self.remote_evaluator.evaluate(
             text, feed_id="other_feed"
         )
         self.assertTrue(result_other["is_flagged"])
-        self.assertIn("global_rule", result_other["triggered_rules"])
-        self.assertNotIn("feed_a_rule", result_other["triggered_rules"])
-        self.assertNotIn("feed_b_rule", result_other["triggered_rules"])
+        self.assertIn("global_group", result_other["triggered_rules"])
+        self.assertNotIn("feed_a_group", result_other["triggered_rules"])
 
     @patch("backend.pipeline.evaluation.rules_evaluation.evaluator.is_gcp_env")
     @patch("requests.Session.get")
     def test_evaluate_caches_rules(self, mock_get, mock_is_gcp) -> None:
-        """Test that RemoteTextEvaluator caches rules and does not refetch within TTL."""
+        """Test that RemoteTextEvaluator caches groups and does not refetch within TTL."""
         mock_is_gcp.return_value = False
-        mock_rule = {
-            "rule_id": "test_rule_1",
-            "rule_name": "Test Rule 1",
+        mock_group = {
+            "rule_id": "test_group_1",
+            "rule_name": "Test Group 1",
             "is_active": True,
             "scope": {"level": "GLOBAL", "target_feeds": []},
-            "conditions": {
-                "evaluation_type": "KEYWORD_MATCH",
-                "operator": "ANY",
-                "keywords": ["test"],
-                "case_sensitive": False,
-            },
+            "operator": "ANY",
+            "child_rule_ids": ["test_rule_1"],
+            "child_rules": [
+                {
+                    "rule_id": "test_rule_1",
+                    "rule_name": "Test Rule 1",
+                    "conditions": {
+                        "evaluation_type": "KEYWORD_MATCH",
+                        "operator": "ANY",
+                        "keywords": ["test"],
+                        "case_sensitive": False,
+                    },
+                }
+            ],
         }
-        mock_get.return_value.json.return_value = [mock_rule]
+        mock_get.return_value.json.return_value = [mock_group]
         mock_get.return_value.status_code = 200
 
         text = "This is a test message."
@@ -309,7 +335,7 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         # Second call should use cache
         result2 = self.remote_evaluator.evaluate(text, feed_id="test_feed")
         self.assertTrue(result2["is_flagged"])
-        self.assertEqual(mock_get.call_count, 1)  # Still 1
+        self.assertEqual(mock_get.call_count, 1)
 
     def test_evaluate_missing_feed_id(self) -> None:
         """Test that missing feed_id returns ERROR_FEED_ID_MISSING rule."""

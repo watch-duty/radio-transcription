@@ -10,8 +10,6 @@ from backend.pipeline.common.rules.models import (
     KeywordConditions,
     Rule,
     RuleMetadata,
-    Scope,
-    ScopeLevel,
 )
 
 from ..main import app, get_rules_service
@@ -38,8 +36,6 @@ class TestRulesAPI(unittest.TestCase):
         """Test creating a rule successfully."""
         payload = {
             "rule_name": "Test Rule",
-            "is_active": True,
-            "scope": {"level": "GLOBAL"},
             "conditions": {
                 "evaluation_type": "KEYWORD_MATCH",
                 "keywords": ["test"],
@@ -48,8 +44,6 @@ class TestRulesAPI(unittest.TestCase):
         mock_rule = Rule(
             rule_id="rule_123",
             rule_name="Test Rule",
-            is_active=True,
-            scope=Scope(level=ScopeLevel.GLOBAL),
             conditions=KeywordConditions(
                 evaluation_type=EvaluationType.KEYWORD_MATCH, keywords=["test"]
             ),
@@ -70,8 +64,6 @@ class TestRulesAPI(unittest.TestCase):
         mock_rule = Rule(
             rule_id=rule_id,
             rule_name="Existing Rule",
-            is_active=True,
-            scope=Scope(level=ScopeLevel.GLOBAL),
             conditions=KeywordConditions(
                 evaluation_type=EvaluationType.KEYWORD_MATCH, keywords=["test"]
             ),
@@ -104,8 +96,6 @@ class TestRulesAPI(unittest.TestCase):
         mock_rule = Rule(
             rule_id=rule_id,
             rule_name="Updated Name",
-            is_active=True,
-            scope=Scope(level=ScopeLevel.GLOBAL),
             conditions=KeywordConditions(
                 evaluation_type=EvaluationType.KEYWORD_MATCH, keywords=["test"]
             ),

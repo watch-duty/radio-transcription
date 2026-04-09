@@ -26,26 +26,40 @@ TRANSCRIPTS_API_HOST = os.environ.get("TRANSCRIPTS_API_HOST", "localhost:8087")
 
 
 def create_test_rule(test_keyword: str) -> None:
-    """Creates a temporary rule for testing with a specific keyword."""
+    """Creates a temporary rule and group for testing."""
+    # 1. Create Rule
     rule_payload = {
         "rule_name": f"Integration Test Rule - {test_keyword}",
         "description": f"Triggers on {test_keyword} mentions.",
-        "is_active": True,
-        "scope": {"level": "GLOBAL"},
         "conditions": {
             "evaluation_type": "KEYWORD_MATCH",
             "operator": "ANY",
             "keywords": [test_keyword],
             "case_sensitive": False,
         },
+        "metadata": {},
     }
 
     url = f"http://{RULES_API_HOST}/v1/rules"
     response = requests.post(url, json=rule_payload, timeout=10)
     response.raise_for_status()
-
     rule_id = response.json().get("rule_id", "")
     assert rule_id != "", "Rule ID not returned by API"
+
+    # 2. Create Group referencing the rule
+    group_payload = {
+        "rule_name": f"Integration Test Group - {test_keyword}",
+        "description": f"Group for {test_keyword} rule.",
+        "is_active": True,
+        "scope": {"level": "GLOBAL"},
+        "operator": "ANY",
+        "child_rule_ids": [rule_id],
+        "metadata": {},
+    }
+
+    group_url = f"http://{RULES_API_HOST}/v1/groups"
+    response = requests.post(group_url, json=group_payload, timeout=10)
+    response.raise_for_status()
 
 
 @pytest.fixture(name="test_feed")

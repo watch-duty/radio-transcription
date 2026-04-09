@@ -15,8 +15,6 @@ from backend.pipeline.common.rules.models import (
     RuleCreate,
     RuleMetadata,
     RuleUpdate,
-    Scope,
-    ScopeLevel,
 )
 from backend.pipeline.storage.rules_store import RulesStore
 
@@ -32,8 +30,6 @@ def _create_sample_rule_in(name: str = "Test Rule") -> RuleCreate:
     return RuleCreate(
         rule_name=name,
         description="A test rule",
-        is_active=True,
-        scope=Scope(level=ScopeLevel.FEED_SPECIFIC, target_feeds=["feed-1"]),
         conditions=KeywordConditions(
             evaluation_type=EvaluationType.KEYWORD_MATCH,
             keywords=["fire", "smoke"],
@@ -59,7 +55,6 @@ async def test_create_and_get_rule(store: RulesStore) -> None:
     assert fetched is not None
     assert fetched.rule_id == created.rule_id
     assert fetched.rule_name == "Fire Alert"
-    assert fetched.scope.target_feeds == ["feed-1"]
     assert isinstance(fetched.conditions, KeywordConditions)
     assert fetched.conditions.keywords == ["fire", "smoke"]
 
@@ -82,7 +77,6 @@ async def test_update_rule(store: RulesStore) -> None:
 
     update_in = RuleUpdate(
         rule_name="New Name",
-        is_active=False,
         conditions=KeywordConditions(
             evaluation_type=EvaluationType.KEYWORD_MATCH, keywords=["water"]
         ),
@@ -91,12 +85,8 @@ async def test_update_rule(store: RulesStore) -> None:
     updated = await store.update_rule(created.rule_id, update_in)
     assert updated is not None
     assert updated.rule_name == "New Name"
-    assert not updated.is_active
     assert isinstance(updated.conditions, KeywordConditions)
     assert updated.conditions.keywords == ["water"]
-
-    # Scope should remain unchanged (COALESCE logic)
-    assert updated.scope.target_feeds == ["feed-1"]
 
 
 async def test_delete_rule(store: RulesStore) -> None:

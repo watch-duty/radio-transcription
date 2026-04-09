@@ -18,14 +18,16 @@ logger = logging.getLogger(__name__)
 
 class EvaluationResult(TypedDict):
     is_flagged: bool
-    triggered_rules: list[str]
+    triggered_rules: list[str]  # Will contain triggered group IDs
     errors: list[int]  # Using proto enum integer values
 
 
-class OrganizedRules:
+class OrganizedGroups:
     def __init__(self) -> None:
-        self.global_rules: list[models.Rule] = []
-        self.feed_specific_rules: dict[str, list[models.Rule]] = {}
+        self.global_groups: list[models.ResolvedRuleGroup] = []
+        self.feed_specific_groups: dict[
+            str, list[models.ResolvedRuleGroup]
+        ] = {}
 
 
 class BaseTextEvaluator(ABC):
@@ -49,13 +51,6 @@ class BaseTextEvaluator(ABC):
     def _evaluate_rule(self, rule: models.Rule, text: str) -> bool:
         """
         Evaluates a single rule against the text.
-
-        Args:
-            rule: The rule to evaluate.
-            text: The text to evaluate against.
-
-        Returns:
-            True if the rule triggers, False otherwise.
         """
         conditions = rule.conditions
 
@@ -76,45 +71,67 @@ class BaseTextEvaluator(ABC):
                     for k in conditions.keywords
                 )
 
-        # For now, we skip GroupConditions as it requires a rule lookup
         return False
 
-    def _organize_rules(self, rules: list[models.Rule]) -> OrganizedRules:
-        organized_rules = OrganizedRules()
-        for rule in rules:
-            if not rule.is_active:
+    def _evaluate_group(
+        self, group: models.ResolvedRuleGroup, text: str
+    ) -> bool:
+        """
+        Evaluates a rule group by evaluating its child rules.
+        """
+        if not group.is_active:
+            return False
+
+        if group.operator == models.LogicalOperator.ANY:
+            for rule in group.child_rules:
+                if self._evaluate_rule(rule, text):
+                    return True
+            return False
+
+        if group.operator == models.LogicalOperator.ALL:
+            for rule in group.child_rules:
+                if not self._evaluate_rule(rule, text):
+                    return False
+            return True
+        return False
+
+    def _organize_groups(
+        self, groups: list[models.ResolvedRuleGroup]
+    ) -> OrganizedGroups:
+        organized = OrganizedGroups()
+        for group in groups:
+            if not group.is_active:
                 continue
 
-            if rule.scope.level == models.ScopeLevel.GLOBAL:
-                organized_rules.global_rules.append(rule)
-            elif rule.scope.level == models.ScopeLevel.FEED_SPECIFIC:
-                for feed_id in rule.scope.target_feeds:
-                    if feed_id not in organized_rules.feed_specific_rules:
-                        organized_rules.feed_specific_rules[feed_id] = []
-                    organized_rules.feed_specific_rules[feed_id].append(rule)
-        return organized_rules
+            if group.scope.level == models.ScopeLevel.GLOBAL:
+                organized.global_groups.append(group)
+            elif group.scope.level == models.ScopeLevel.FEED_SPECIFIC:
+                for feed_id in group.scope.target_feeds:
+                    if feed_id not in organized.feed_specific_groups:
+                        organized.feed_specific_groups[feed_id] = []
+                    organized.feed_specific_groups[feed_id].append(group)
+        return organized
 
-    def _get_applicable_rules(
-        self, organized_rules: OrganizedRules, feed_id: str
-    ) -> list[models.Rule]:
-        return (
-            organized_rules.global_rules
-            + organized_rules.feed_specific_rules.get(feed_id, [])
+    def _get_applicable_groups(
+        self, organized: OrganizedGroups, feed_id: str
+    ) -> list[models.ResolvedRuleGroup]:
+        return organized.global_groups + organized.feed_specific_groups.get(
+            feed_id, []
         )
 
-    def _evaluate_ruleset(
-        self, rules: list[models.Rule], text: str, feed_id: str
+    def _evaluate_groupset(
+        self, groups: list[models.ResolvedRuleGroup], text: str, feed_id: str
     ) -> EvaluationResult:
         if not text:
             return {"is_flagged": False, "triggered_rules": [], "errors": []}
 
-        organized_rules = self._organize_rules(rules)
-        rules_to_evaluate = self._get_applicable_rules(organized_rules, feed_id)
+        organized = self._organize_groups(groups)
+        groups_to_evaluate = self._get_applicable_groups(organized, feed_id)
 
         matches = []
-        for rule in rules_to_evaluate:
-            if self._evaluate_rule(rule, text):
-                matches.append(rule.rule_id)
+        for group in groups_to_evaluate:
+            if self._evaluate_group(group, text):
+                matches.append(group.rule_id)
 
         unique_matches = list(dict.fromkeys(matches))
         return {
@@ -126,64 +143,45 @@ class BaseTextEvaluator(ABC):
 
 class StaticTextEvaluator(BaseTextEvaluator):
     """
-    Static implementation of text evaluation using the common Rule model.
-    Can be used as a fallback if the remote API is unavailable.
+    Static implementation of text evaluation using hardcoded groups and rules.
     """
 
-    _RULES: list[models.Rule] = [
-        models.Rule(
-            rule_id="basic_fire_terms",
-            rule_name="Basic Fire Terms",
+    _GROUPS: list[models.ResolvedRuleGroup] = [
+        models.ResolvedRuleGroup(
+            rule_id="basic_fire_group",
+            rule_name="Basic Fire Group",
             scope=models.Scope(level=models.ScopeLevel.GLOBAL),
-            conditions=models.RegexConditions(
-                evaluation_type=models.EvaluationType.REGEX_MATCH,
-                expression=r"\b(fire|burn|evacuation|spreading)\b",
-                flags="i",
-            ),
+            operator=models.LogicalOperator.ANY,
+            child_rule_ids=["basic_fire_terms"],
+            child_rules=[
+                models.Rule(
+                    rule_id="basic_fire_terms",
+                    rule_name="Basic Fire Terms",
+                    conditions=models.RegexConditions(
+                        evaluation_type=models.EvaluationType.REGEX_MATCH,
+                        expression=r"\b(fire|burn|evacuation|spreading)\b",
+                        flags="i",
+                    ),
+                )
+            ],
         ),
     ]
 
     def evaluate(self, text: str, feed_id: str) -> EvaluationResult:
-        """
-        Evaluates text using class-level rules.
-
-        Args:
-            text: The text to evaluate.
-            feed_id: The ID of the feed associated with the text.
-
-        Returns:
-            An EvaluationResult containing flagging status and triggered rules.
-        """
-        return self._evaluate_ruleset(self._RULES, text, feed_id)
+        return self._evaluate_groupset(self._GROUPS, text, feed_id)
 
 
 class RemoteTextEvaluator(BaseTextEvaluator):
     """
-    Implementation of text evaluation that fetches rules from a remote API.
+    Implementation of text evaluation that fetches resolved groups from a remote API.
     """
 
     def __init__(self, api_url: str) -> None:
-        """
-        Initializes the RemoteTextEvaluator.
-
-        Args:
-            api_url: The URL of the rules management service API.
-        """
         self.api_url = api_url.rstrip("/")
         self.session = requests.Session()
         self._cache = cachetools.TTLCache(maxsize=1, ttl=60)
 
     def evaluate(self, text: str, feed_id: str) -> EvaluationResult:
-        """
-        Evaluates the given text by fetching rules from the API.
-
-        Args:
-            text: The text to evaluate.
-            feed_id: The ID of the feed associated with the text.
-
-        Returns:
-            An EvaluationResult containing flagging status and triggered rules.
-        """
         if not feed_id:
             return {
                 "is_flagged": False,
@@ -193,9 +191,9 @@ class RemoteTextEvaluator(BaseTextEvaluator):
                 ],
             }
         try:
-            rules = self._fetch_rules()
+            groups = self._fetch_resolved_groups()
         except Exception:
-            logger.exception("Failed to fetch rules from API")
+            logger.exception("Failed to fetch resolved groups from API")
             return {
                 "is_flagged": False,
                 "triggered_rules": [],
@@ -204,30 +202,25 @@ class RemoteTextEvaluator(BaseTextEvaluator):
                 ],
             }
 
-        return self._evaluate_ruleset(rules, text, feed_id)
+        return self._evaluate_groupset(groups, text, feed_id)
 
-    def _fetch_rules(self) -> list[models.Rule]:
-        """
-        Fetches rules from the rules management service API.
+    def _fetch_resolved_groups(self) -> list[models.ResolvedRuleGroup]:
+        if "groups" in self._cache:
+            return self._cache["groups"]
 
-        Returns:
-            A list of Rule objects.
-        """
-        if "rules" in self._cache:
-            return self._cache["rules"]
-
-        # When running on Cloud Run, use the metadata server to get an ID token
         if is_gcp_env():
             token = get_id_token(self.api_url)
             self.session.headers.update({"Authorization": f"Bearer {token}"})
 
         response = self.session.get(
-            f"{self.api_url}/v1/rules",
+            f"{self.api_url}/v1/groups/resolved",
             timeout=10,
         )
         response.raise_for_status()
 
-        rules_data = response.json()
-        rules = [models.Rule.model_validate(rule) for rule in rules_data]
-        self._cache["rules"] = rules
-        return rules
+        groups_data = response.json()
+        groups = [
+            models.ResolvedRuleGroup.model_validate(g) for g in groups_data
+        ]
+        self._cache["groups"] = groups
+        return groups

@@ -19,7 +19,6 @@ class EvaluationType(StrEnum):
 
     KEYWORD_MATCH = "KEYWORD_MATCH"
     REGEX_MATCH = "REGEX_MATCH"
-    RULE_GROUP = "RULE_GROUP"
 
 
 class LogicalOperator(StrEnum):
@@ -57,18 +56,8 @@ class RegexConditions(BaseModel):
     flags: str = "i"
 
 
-class GroupConditions(BaseModel):
-    """Defines the conditions for a rule group."""
-
-    evaluation_type: Literal[EvaluationType.RULE_GROUP] = (
-        EvaluationType.RULE_GROUP
-    )
-    operator: LogicalOperator = LogicalOperator.ANY
-    child_rule_ids: list[str]
-
-
 RuleConditions = Annotated[
-    Union[KeywordConditions, RegexConditions, GroupConditions],
+    Union[KeywordConditions, RegexConditions],
     Field(discriminator="evaluation_type"),
 ]
 
@@ -82,12 +71,10 @@ class RuleMetadata(BaseModel):
 
 
 class RuleBase(BaseModel):
-    """The base model for a rule, containing common fields."""
+    """Base model for a rule."""
 
     rule_name: str
     description: str | None = None
-    is_active: bool = True
-    scope: Scope
     conditions: RuleConditions
     metadata: RuleMetadata = Field(default_factory=RuleMetadata)
 
@@ -97,19 +84,57 @@ class RuleCreate(RuleBase):
 
 
 class RuleUpdate(BaseModel):
-    """Model for updating an existing rule with optional fields."""
+    """Model for updating an existing rule."""
+
+    rule_name: str | None = None
+    description: str | None = None
+    conditions: RuleConditions | None = None
+
+
+class Rule(RuleBase):
+    """Represents a rule as stored in the database."""
+
+    rule_id: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RuleGroupBase(BaseModel):
+    """Base model for a rule group."""
+
+    rule_name: str
+    description: str | None = None
+    is_active: bool = True
+    scope: Scope
+    operator: LogicalOperator = LogicalOperator.ANY
+    child_rule_ids: list[str]
+    metadata: RuleMetadata = Field(default_factory=RuleMetadata)
+
+
+class RuleGroupCreate(RuleGroupBase):
+    """Model for creating a new rule group."""
+
+
+class RuleGroupUpdate(BaseModel):
+    """Model for updating an existing rule group."""
 
     rule_name: str | None = None
     description: str | None = None
     is_active: bool | None = None
     scope: Scope | None = None
-    conditions: RuleConditions | None = None
-    metadata: RuleMetadata | None = None
+    operator: LogicalOperator | None = None
+    child_rule_ids: list[str] | None = None
 
 
-class Rule(RuleBase):
-    """Represents a rule as stored in the database, including its ID."""
+class RuleGroup(RuleGroupBase):
+    """Represents a rule group as stored in the database."""
 
     rule_id: str
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ResolvedRuleGroup(RuleGroup):
+    """Represents a rule group with its child rules fully resolved."""
+
+    child_rules: list[Rule]
