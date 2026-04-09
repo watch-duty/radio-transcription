@@ -124,6 +124,12 @@ class TranscriptionOptions(PipelineOptions):
             required=False,
             help="GCS bucket name for storing clean, stitched audio. If omitted, audio is not persisted to GCS.",
         )
+        parser.add_argument(
+            "--bypass_stitching",
+            action=argparse.BooleanOptionalAction,
+            default=False,
+            help="If true, bypasses stateful stitching and treats each audio chunk as a complete transmission.",
+        )
 
 
 class DataflowSystemOptions(PipelineOptions):
