@@ -22,6 +22,8 @@ from apache_beam.utils.timestamp import Timestamp
 from backend.pipeline.common.constants import MS_PER_SECOND
 from backend.pipeline.common.storage.gcs_uploader import GCSAudioUploader
 from backend.pipeline.transcription.audio_processor import AudioProcessor
+# Force Dataflow workers to load TranscriptionOptions so it recognizes custom flags
+from backend.pipeline.transcription.options import TranscriptionOptions  # noqa: F401
 from backend.pipeline.transcription.constants import (
     DEAD_LETTER_QUEUE_TAG,
 )
