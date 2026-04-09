@@ -176,7 +176,8 @@ class StitchAudioFn(beam.DoFn):
             # Create a deterministic UUID using our shared helper so that Beam retries produce the exact same ID
             transmission_id = generate_transmission_id(
                 action.feed_id,
-                action.contributing_audio_uris,
+                action.speech_time_range.start_ms,
+                action.speech_time_range.end_ms,
             )
 
             yield (
@@ -393,7 +394,8 @@ class StitchAudioFn(beam.DoFn):
                 # Create a deterministic UUID using our shared helper so that Beam retries produce the exact same ID
                 transmission_id = generate_transmission_id(
                     key,
-                    processed_uris,
+                    int(start_time_ms),
+                    int(end_time_ms),
                 )
 
                 yield (
