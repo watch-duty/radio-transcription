@@ -135,10 +135,8 @@ def add_secret_version(
         # We log and continue so the rotation itself isn't considered a failure
         # if the cleanup fails (e.g., due to permission issues).
         logger.warning(
-            "Failed to clean up old secret versions for secret_id=%s "
-            "hours_to_keep=%s",
+            "Failed to clean up old secret versions for secret_id=%s",
             secret_id,
-            24,
             exc_info=True,
         )
 
