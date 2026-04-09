@@ -253,8 +253,14 @@ async def capture_bcfy_calls(  # noqa: PLR0915, PLR0912
                     shutdown_event,
                 )
 
-                if bcfy_calls and bcfy_calls["calls"]:
-                    for result in bcfy_calls["calls"]:
+                calls = []
+                if isinstance(bcfy_calls, dict):
+                    response_calls = bcfy_calls.get("calls")
+                    if isinstance(response_calls, list):
+                        calls = response_calls
+
+                if calls:
+                    for result in calls:
                         if shutdown_event.is_set():
                             break
 

@@ -30,7 +30,8 @@ class SourceType(enum.StrEnum):
 
     BCFY_FEEDS = "bcfy_feeds"
     BCFY_CALLS = "bcfy_calls"
-    ECHO = "echo"  # Echo uses a separate cloud function for ingestion, not using VMs
+    # Echo uses a separate cloud function for ingestion instead of VMs.
+    ECHO = "echo"
     OPENMHZ = "openmhz"
 
 
