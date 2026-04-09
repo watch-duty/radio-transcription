@@ -421,3 +421,7 @@ x-google-api-management:
       address: ${radio_transcription_api_url}
       path_translation: APPEND_PATH_TO_ADDRESS
       protocol: http/1.1
+host: ${radio_transcription_api_service_name}
+x-google-endpoint:
+  - name: ${radio_transcription_api_service_name}
+    allowCors: true
