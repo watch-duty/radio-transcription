@@ -41,7 +41,6 @@ from backend.pipeline.transcription.datatypes import (
     TransmissionContext,
     UpdateStateAction,
 )
-
 from backend.pipeline.transcription.resources import (
     SHARED_RESOURCE_HANDLE,
     SharedResources,
@@ -49,7 +48,6 @@ from backend.pipeline.transcription.resources import (
 from backend.pipeline.transcription.stitcher_state import (
     AudioStitchingStateMachine,
 )
-
 from backend.pipeline.transcription.transcribers import (
     Transcriber,
     get_transcriber,
