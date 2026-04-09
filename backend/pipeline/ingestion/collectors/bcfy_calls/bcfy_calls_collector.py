@@ -308,9 +308,9 @@ async def capture_bcfy_calls(  # noqa: PLR0915, PLR0912
                         # Only mark as seen and update pagination after a successful
                         # yield, confirming the chunk was handed off to the pipeline.
                         seen_urls.append(mp3_url)
-                        # Update local last_bookmark_time_unix for pagination after yielding a successfully processed chunk
-                        if bcfy_calls and "lastPos" in bcfy_calls:
-                            last_bookmark_time_unix = bcfy_calls["lastPos"]
+                    # Update local last_bookmark_time_unix for pagination after processing all calls in the response, ensuring we don't skip any calls if an error occurs mid-page.
+                    if bcfy_calls and "lastPos" in bcfy_calls:
+                        last_bookmark_time_unix = bcfy_calls["lastPos"]
 
                 # Wait before polling again, gracefully interruptible by shutdown
                 await _sleep_or_shutdown(shutdown_event, _POLL_INTERVAL_SEC)
