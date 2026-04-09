@@ -148,7 +148,7 @@ def _raise_if_429(status: int, mp3_url: str) -> None:
         raise RuntimeError(msg)
 
 
-async def _download_and_convert_audio(
+async def _download_and_convert_audio(  # noqa: PLR0911
     session: aiohttp.ClientSession,
     mp3_url: str,
     shutdown_event: asyncio.Event,
@@ -199,8 +199,27 @@ async def _download_and_convert_audio(
                 )
         except RuntimeError:
             raise
-        except Exception:
-            logger.exception("Error downloading audio from %s", mp3_url)
+        except Exception as e:
+            if attempt < _MP3_DOWNLOAD_MAX_RETRIES:
+                delay = _MP3_DOWNLOAD_BACKOFF_BASE_SEC * (2**attempt)
+                logger.warning(
+                    "Network error downloading audio"
+                    " (attempt %d/%d, retry in %.1fs): %s",
+                    attempt + 1,
+                    _MP3_DOWNLOAD_MAX_RETRIES,
+                    delay,
+                    mp3_url,
+                    exc_info=e,
+                )
+                if await _sleep_or_shutdown(shutdown_event, delay):
+                    return None
+                continue
+            logger.exception(
+                "Network error downloading audio after %d retries,"
+                " skipping: %s",
+                _MP3_DOWNLOAD_MAX_RETRIES,
+                mp3_url,
+            )
             return None
     return None
 
@@ -348,9 +367,9 @@ async def capture_bcfy_calls(  # noqa: PLR0912
                         seen_urls.append(mp3_url)
                         # Reset consecutive failures on successful yield
                         consecutive_failures = 0
-                    # Update local last_bookmark_time_unix for pagination after processing all calls in the response, ensuring we don't skip any calls if an error occurs mid-page.
-                    if bcfy_calls and "lastPos" in bcfy_calls:
-                        last_bookmark_time_unix = bcfy_calls["lastPos"]
+                # Update local last_bookmark_time_unix for pagination after processing all calls in the response, ensuring we don't skip any calls if an error occurs mid-page.
+                if bcfy_calls and "lastPos" in bcfy_calls:
+                    last_bookmark_time_unix = bcfy_calls["lastPos"]
 
                 # Wait before polling again, gracefully interruptible by shutdown
                 await _sleep_or_shutdown(shutdown_event, _POLL_INTERVAL_SEC)
