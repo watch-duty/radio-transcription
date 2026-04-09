@@ -5,6 +5,7 @@ import datetime
 import logging
 import os
 import random
+import uuid
 from typing import TYPE_CHECKING
 
 from curl_cffi.requests import AsyncSession
@@ -124,6 +125,7 @@ async def openmhz_collector(
 
     try:
         while not shutdown_event.is_set():
+            connection_session_id = str(uuid.uuid4())
             try:
                 async with transport_factory(
                     short_name, url_base, shutdown_event
@@ -166,6 +168,7 @@ async def openmhz_collector(
                             chunk_start_time=call.time,
                             chunk_end_time=call.time
                             + datetime.timedelta(seconds=call.length_sec),
+                            session_id=connection_session_id,
                         )
             except Exception:
                 logger.warning(
@@ -183,7 +186,7 @@ async def openmhz_collector(
                     f"WebSocket failed {consecutive_ws_failures} "
                     f"times consecutively for {short_name}"
                 )
-                logger.exception(
+                logger.error(
                     "Escalating to runtime: short_name=%s "
                     "consecutive_failures=%d",
                     short_name,
