@@ -205,7 +205,76 @@ async def _download_and_convert_audio(
     return None
 
 
-async def capture_bcfy_calls(  # noqa: PLR0915, PLR0912
+def _extract_calls_from_response(
+    bcfy_calls: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Safely extract the calls list from the API response."""
+    if not isinstance(bcfy_calls, dict):
+        return []
+    response_calls = bcfy_calls.get("calls")
+    return response_calls if isinstance(response_calls, list) else []
+
+
+async def _create_chunk_from_call(
+    session: aiohttp.ClientSession,
+    result: dict[str, Any],
+    mp3_url: str,
+    shutdown_event: asyncio.Event,
+) -> CapturedChunk | None:
+    """Download audio for a single call and wrap it in a CapturedChunk."""
+    try:
+        flac_bytes = await _download_and_convert_audio(
+            session, mp3_url, shutdown_event
+        )
+    except RuntimeError:
+        raise
+    except Exception as e:
+        logger.exception("Failed to process audio for %s: %s", mp3_url, e)
+        return None
+
+    if not flac_bytes:
+        return None
+
+    start_ts = result.get("start_ts")
+    end_ts = result.get("end_ts")
+    now = datetime.datetime.now(datetime.UTC)
+
+    chunk_start_time = (
+        datetime.datetime.fromtimestamp(start_ts, datetime.UTC)
+        if start_ts is not None
+        else now
+    )
+    chunk_end_time = (
+        datetime.datetime.fromtimestamp(end_ts, datetime.UTC)
+        if end_ts is not None
+        else now
+    )
+
+    return CapturedChunk(
+        audio_bytes=flac_bytes,
+        chunk_start_time=chunk_start_time,
+        chunk_end_time=chunk_end_time,
+    )
+
+
+async def _handle_loop_failure(
+    feed_id: object,
+    consecutive_failures: int,
+    shutdown_event: asyncio.Event,
+) -> int:
+    """Increment failure count, raise if exceeded, and sleep."""
+    consecutive_failures += 1
+    if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+        msg = (
+            f"Feed {feed_id} exceeded {_MAX_CONSECUTIVE_FAILURES} "
+            "consecutive failures; marking as unhealthy"
+        )
+        raise RuntimeError(msg)
+    await _sleep_or_shutdown(shutdown_event, _POLL_INTERVAL_SEC)
+    return consecutive_failures
+
+
+async def capture_bcfy_calls(  # noqa: PLR0912
     feed: LeasedFeed, shutdown_event: asyncio.Event, url_base: str
 ) -> AsyncIterator[CapturedChunk]:
     """Capture audio chunks from Broadcastify Calls API.
@@ -255,11 +324,7 @@ async def capture_bcfy_calls(  # noqa: PLR0915, PLR0912
                     shutdown_event,
                 )
 
-                calls = []
-                if isinstance(bcfy_calls, dict):
-                    response_calls = bcfy_calls.get("calls")
-                    if isinstance(response_calls, list):
-                        calls = response_calls
+                calls = _extract_calls_from_response(bcfy_calls)
 
                 if calls:
                     for result in calls:
@@ -270,44 +335,13 @@ async def capture_bcfy_calls(  # noqa: PLR0915, PLR0912
                         if not mp3_url or mp3_url in seen_urls:
                             continue
 
-                        try:
-                            flac_bytes = await _download_and_convert_audio(
-                                session, mp3_url, shutdown_event
-                            )
-                        except RuntimeError:
-                            raise
-                        except Exception as e:
-                            logger.exception(
-                                "Failed to process audio for %s: %s", mp3_url, e
-                            )
-                            continue
-                        if not flac_bytes:
+                        chunk = await _create_chunk_from_call(
+                            session, result, mp3_url, shutdown_event
+                        )
+                        if not chunk:
                             continue
 
-                        start_ts = result.get("start_ts")
-                        end_ts = result.get("end_ts")
-                        now = datetime.datetime.now(datetime.UTC)
-
-                        chunk_start_time = (
-                            datetime.datetime.fromtimestamp(
-                                start_ts, datetime.UTC
-                            )
-                            if start_ts is not None
-                            else now
-                        )
-                        chunk_end_time = (
-                            datetime.datetime.fromtimestamp(
-                                end_ts, datetime.UTC
-                            )
-                            if end_ts is not None
-                            else now
-                        )
-
-                        yield CapturedChunk(
-                            audio_bytes=flac_bytes,
-                            chunk_start_time=chunk_start_time,
-                            chunk_end_time=chunk_end_time,
-                        )
+                        yield chunk
 
                         # Only mark as seen and update pagination after a successful
                         # yield, confirming the chunk was handed off to the pipeline.
@@ -331,23 +365,13 @@ async def capture_bcfy_calls(  # noqa: PLR0915, PLR0912
                     headers["Authorization"] = f"Bearer {jwt_token}"
                 except Exception as e:
                     logger.exception("Failed to refresh JWT token: %s", e)
-                consecutive_failures += 1
-                if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
-                    msg = (
-                        f"Feed {feed_id} exceeded {_MAX_CONSECUTIVE_FAILURES} "
-                        "consecutive failures; marking as unhealthy"
-                    )
-                    raise RuntimeError(msg)
-                await _sleep_or_shutdown(shutdown_event, _POLL_INTERVAL_SEC)
+                consecutive_failures = await _handle_loop_failure(
+                    feed_id, consecutive_failures, shutdown_event
+                )
             except RuntimeError:
                 raise
             except Exception as e:
                 logger.exception("Error in capture_bcfy_calls loop: %s", e)
-                consecutive_failures += 1
-                if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
-                    msg = (
-                        f"Feed {feed_id} exceeded {_MAX_CONSECUTIVE_FAILURES} "
-                        "consecutive failures; marking as unhealthy"
-                    )
-                    raise RuntimeError(msg)
-                await _sleep_or_shutdown(shutdown_event, _POLL_INTERVAL_SEC)
+                consecutive_failures = await _handle_loop_failure(
+                    feed_id, consecutive_failures, shutdown_event
+                )

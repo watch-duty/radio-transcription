@@ -354,6 +354,193 @@ class TestDownloadAndConvertAudio(unittest.IsolatedAsyncioTestCase):
         mock_sleep.assert_called_once()
 
 
+class TestExtractCallsFromResponse(unittest.TestCase):
+    def test_none_input(self) -> None:
+        res = bcfy_calls_collector._extract_calls_from_response(None)
+        self.assertEqual(res, [])
+
+    def test_non_dict_input(self) -> None:
+        res = bcfy_calls_collector._extract_calls_from_response(
+            [{"url": "http://1"}]  # type: ignore[arg-type]
+        )
+        self.assertEqual(res, [])
+
+    def test_missing_calls_key(self) -> None:
+        res = bcfy_calls_collector._extract_calls_from_response(
+            {"lastPos": 123}
+        )
+        self.assertEqual(res, [])
+
+    def test_calls_value_is_not_list(self) -> None:
+        res = bcfy_calls_collector._extract_calls_from_response(
+            {"calls": "not-a-list"}
+        )
+        self.assertEqual(res, [])
+
+    def test_empty_calls_list(self) -> None:
+        res = bcfy_calls_collector._extract_calls_from_response({"calls": []})
+        self.assertEqual(res, [])
+
+    def test_valid_calls_list(self) -> None:
+        calls = [{"url": "http://1"}, {"url": "http://2"}]
+        res = bcfy_calls_collector._extract_calls_from_response(
+            {"calls": calls}
+        )
+        self.assertEqual(res, calls)
+
+
+class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.session = MagicMock()
+        self.shutdown = asyncio.Event()
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._download_and_convert_audio",
+        new_callable=AsyncMock,
+    )
+    async def test_success_with_timestamps(self, mock_dl: AsyncMock) -> None:
+        mock_dl.return_value = b"flac"
+        result = {"url": "http://1", "start_ts": 1000, "end_ts": 2000}
+
+        chunk = await bcfy_calls_collector._create_chunk_from_call(
+            self.session, result, "http://1", self.shutdown
+        )
+
+        self.assertIsNotNone(chunk)
+        self.assertEqual(chunk.audio_bytes, b"flac")
+        self.assertEqual(chunk.chunk_start_time.timestamp(), 1000)
+        self.assertEqual(chunk.chunk_end_time.timestamp(), 2000)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._download_and_convert_audio",
+        new_callable=AsyncMock,
+    )
+    async def test_success_missing_timestamps_uses_now(
+        self, mock_dl: AsyncMock
+    ) -> None:
+        mock_dl.return_value = b"flac"
+        result = {"url": "http://1"}
+        fixed_now = datetime.datetime(2026, 4, 9, 0, 0, 0, tzinfo=datetime.UTC)
+
+        with patch(
+            "backend.pipeline.ingestion.collectors.bcfy_calls"
+            ".bcfy_calls_collector.datetime.datetime",
+            wraps=datetime.datetime,
+        ) as mock_datetime:
+            mock_datetime.now.return_value = fixed_now
+            chunk = await bcfy_calls_collector._create_chunk_from_call(
+                self.session, result, "http://1", self.shutdown
+            )
+
+        self.assertIsNotNone(chunk)
+        self.assertEqual(chunk.chunk_start_time, fixed_now)
+        self.assertEqual(chunk.chunk_end_time, fixed_now)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._download_and_convert_audio",
+        new_callable=AsyncMock,
+    )
+    async def test_download_returns_none_returns_none(
+        self, mock_dl: AsyncMock
+    ) -> None:
+        mock_dl.return_value = None
+        result = {"url": "http://1", "start_ts": 1000, "end_ts": 2000}
+
+        chunk = await bcfy_calls_collector._create_chunk_from_call(
+            self.session, result, "http://1", self.shutdown
+        )
+
+        self.assertIsNone(chunk)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._download_and_convert_audio",
+        new_callable=AsyncMock,
+    )
+    async def test_runtime_error_reraised(self, mock_dl: AsyncMock) -> None:
+        mock_dl.side_effect = RuntimeError("CDN rate limit")
+        result = {"url": "http://1"}
+
+        with self.assertRaisesRegex(RuntimeError, "CDN rate limit"):
+            await bcfy_calls_collector._create_chunk_from_call(
+                self.session, result, "http://1", self.shutdown
+            )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._download_and_convert_audio",
+        new_callable=AsyncMock,
+    )
+    async def test_unexpected_exception_returns_none(
+        self, mock_dl: AsyncMock
+    ) -> None:
+        mock_dl.side_effect = ValueError("unexpected")
+        result = {"url": "http://1"}
+
+        chunk = await bcfy_calls_collector._create_chunk_from_call(
+            self.session, result, "http://1", self.shutdown
+        )
+
+        self.assertIsNone(chunk)
+
+
+class TestHandleLoopFailure(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.shutdown = asyncio.Event()
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_increments_failure_count(
+        self, mock_sleep: AsyncMock
+    ) -> None:
+        mock_sleep.return_value = False
+        result = await bcfy_calls_collector._handle_loop_failure(
+            "fid", 0, self.shutdown
+        )
+        self.assertEqual(result, 1)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_sleeps_with_poll_interval(
+        self, mock_sleep: AsyncMock
+    ) -> None:
+        mock_sleep.return_value = False
+        await bcfy_calls_collector._handle_loop_failure("fid", 0, self.shutdown)
+        mock_sleep.assert_called_once_with(
+            self.shutdown, bcfy_calls_collector._POLL_INTERVAL_SEC
+        )
+
+    async def test_raises_on_max_consecutive_failures(self) -> None:
+        threshold = bcfy_calls_collector._MAX_CONSECUTIVE_FAILURES
+        with self.assertRaisesRegex(RuntimeError, "consecutive failures"):
+            await bcfy_calls_collector._handle_loop_failure(
+                "fid", threshold - 1, self.shutdown
+            )
+
+    async def test_does_not_raise_below_max(self) -> None:
+        threshold = bcfy_calls_collector._MAX_CONSECUTIVE_FAILURES
+        # threshold - 2 increments to threshold - 1, which is still below max
+        with patch(
+            "backend.pipeline.ingestion.collectors.bcfy_calls"
+            ".bcfy_calls_collector._sleep_or_shutdown",
+            new_callable=AsyncMock,
+        ) as mock_sleep:
+            mock_sleep.return_value = False
+            result = await bcfy_calls_collector._handle_loop_failure(
+                "fid", threshold - 2, self.shutdown
+            )
+        self.assertEqual(result, threshold - 1)
+
+
 class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.shutdown = asyncio.Event()
