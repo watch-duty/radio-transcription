@@ -3,32 +3,33 @@
 Runtime / Capture Contract
 ==========================
 
-The ``yield`` is the contract boundary. Before yield = capture's
-domain. After yield = runtime's domain.
+The ``yield`` is the contract boundary.
 
-**Runtime owns:** GCS upload, Pub/Sub publish, bookmarks, failure
-counting, quarantine, heartbeats, lease release, timeouts.
+**Runtime owns** (capture must never do these):
+GCS upload, Pub/Sub publish, bookmarks, failure counting,
+quarantine, heartbeats, lease release, timeouts.
 
-**Capture owns:** connections, reconnection, retries, rate limits,
-data validation, shutdown checks, session_id generation.
-
-The capture function must appear as an infinite async generator.
-Transport disconnections are internal — the runtime never sees them.
+**Capture owns:**
+Connections, reconnection, retries, rate limits, data validation,
+shutdown checks, session_id generation. The capture function must
+appear as an infinite async generator — transport disconnections
+are internal events the runtime never sees.
 
 Error Handling
 --------------
 
-For any error inside a capture function:
+For any error inside a capture function, follow this priority:
 
-- **Configuration error** (bad creds, wrong URL): raise immediately.
-- **Rate limit** (429): back off internally, never propagate.
-- **Transient error** (500, timeout, disconnect): retry internally.
-  If a single item is exhausted, skip it. If the connection fails
-  persistently, raise to the runtime.
-- **Item failure** (one file 404, corrupt data): skip, log, continue.
-  If ALL items fail with the same error class, raise (systemic).
-- **Data quality** (zero-length, bad timestamp): filter silently.
-- **Unknown**: let it propagate naturally.
+1. **Configuration** (bad creds, wrong URL): raise immediately.
+2. **Rate limit** (429): back off internally, never propagate.
+3. **Transient** (500, timeout, disconnect): retry internally.
+   Skip the item if retries exhaust. Raise if the connection
+   fails persistently (e.g. 10 consecutive transport failures).
+4. **Item failure** (one download 404, corrupt data): skip, log,
+   continue. Raise if ALL items in a batch fail (systemic).
+5. **Data quality** (zero-length, bad timestamp): filter silently.
+6. **Unknown**: let it propagate — the runtime will record the
+   failure and release the lease.
 
 Session ID
 ----------
@@ -36,8 +37,13 @@ Session ID
 The capture function always generates ``session_id``. The runtime
 treats it as opaque — stores but never generates or interprets it.
 
-- **Continuous stream** (Icecast): one UUID per connection.
-- **Discrete calls** (OpenMHZ): one UUID per (talkgroup, connection).
+Choose a model based on your source type:
+
+- **Continuous stream** (Icecast): one UUID per connection lifetime.
+- **Discrete calls, persistent connection** (OpenMHZ): one UUID
+  per (talkgroup, connection). New connection = new session.
+- **Discrete calls, polling** (Broadcastify Calls): one UUID per
+  collector function call. The function's lifetime = the session.
 - **File-based** (Echo): one UUID per file.
 
 Hard Rules
@@ -45,8 +51,8 @@ Hard Rules
 
 The capture function must **never**:
 
-1. Write to the database (bookmarks, failure counts, lease release).
-2. Catch ``CancelledError`` and suppress it.
+1. Write to the database.
+2. Catch ``CancelledError`` and suppress it (use ``try/finally``).
 3. Use ``asyncio.sleep()`` — use shutdown-interruptible sleep.
 4. Block the event loop (no sync I/O).
 5. Hold unbounded state.
