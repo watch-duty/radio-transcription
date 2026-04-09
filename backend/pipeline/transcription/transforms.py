@@ -35,7 +35,6 @@ from backend.pipeline.schema_types.transcribed_audio_pb2 import (
     TranscribedAudio,
 )
 from backend.pipeline.transcription.audio_processor import AudioProcessor
-from backend.pipeline.transcription.utils import generate_transmission_id
 from backend.pipeline.transcription.constants import (
     DEAD_LETTER_QUEUE_TAG,
     DEFAULT_FLOAT_TOLERANCE_MS,
@@ -49,6 +48,7 @@ from backend.pipeline.transcription.datatypes import (
     TranscriptionResult,
 )
 from backend.pipeline.transcription.sequence_buffer import SequenceBuffer
+from backend.pipeline.transcription.utils import generate_transmission_id
 
 logger = logging.getLogger(__name__)
 

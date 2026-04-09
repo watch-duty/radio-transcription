@@ -325,6 +325,21 @@ class NormalizerRuntime:
 
     # -- Per-feed pipeline ------------------------------------------------
 
+    def _get_pubsub_topic_path(self, feed: LeasedFeed) -> str:
+        """Determines the Pub/Sub topic path based on the feed source type."""
+        settings = self._normalizer_settings
+        if feed["source_type"] == SourceType.BCFY_FEEDS:
+            return settings.pubsub_topic_path
+
+        topic_path = settings.segmented_pubsub_topic_path
+        if not topic_path:
+            msg = (
+                f"Segmented Pub/Sub topic path not configured for feed "
+                f"{feed['name']} of type {feed['source_type']}"
+            )
+            raise ValueError(msg)
+        return topic_path
+
     async def _process_feed(self, feed: LeasedFeed) -> None:  # noqa: PLR0912, PLR0915
         """
         Run the capture-upload-bookmark pipeline for a single feed.
@@ -338,16 +353,7 @@ class NormalizerRuntime:
         settings = self._normalizer_settings
         _fallback_session_id: str | None = None
 
-        if feed["source_type"] == SourceType.BCFY_FEEDS:
-            topic_path = settings.pubsub_topic_path
-        else:
-            topic_path = settings.segmented_pubsub_topic_path
-            if not topic_path:
-                msg = (
-                    f"Segmented Pub/Sub topic path not configured for feed "
-                    f"{feed['name']} of type {feed['source_type']}"
-                )
-                raise ValueError(msg)
+        topic_path = self._get_pubsub_topic_path(feed)
 
         try:
             async for captured_chunk in self._capture_fn(

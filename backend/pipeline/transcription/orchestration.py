@@ -141,9 +141,13 @@ def get_pipeline(
             BypassStitchingFn()
         )
     else:
-        stitching_results = downloaded_chunks.main | "StitchAudio" >> beam.ParDo(
-            StitchAudioFn(config=download_config)
-        ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+        stitching_results = (
+            downloaded_chunks.main
+            | "StitchAudio"
+            >> beam.ParDo(StitchAudioFn(config=download_config)).with_outputs(
+                DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG
+            )
+        )
         stitching_main = stitching_results.main
 
     transcripts = stitching_main | "TranscribeAudio" >> beam.ParDo(
