@@ -14,6 +14,7 @@
         "scopes": {}
       }
     },
+    "servers": ["${radio_transcription_api_service_name}"],
     "spec": {
       "x-google-api-management": {
         "backends": {
@@ -23,14 +24,7 @@
             "protocol": "http/1.1"
           }
         }
-      },
-      "host": "${radio_transcription_api_service_name}",
-      "x-google-endpoint": [
-        {
-          "name": "${radio_transcription_api_service_name}",
-          "allowCors": true
-        }
-      ]
+      }
     }
   },
   "routes": {
