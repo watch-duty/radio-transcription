@@ -132,8 +132,6 @@ class StitchAudioFn(beam.DoFn):
         )
         self.audio_processor.setup()
 
-
-
     def _apply_flush_action(
         self,
         action: FlushAction,
@@ -294,7 +292,6 @@ class StitchAudioFn(beam.DoFn):
         actions = pipeline.process_chunk(chunk_data, ctx)
         stitching_duration = int((time.time() - start_time) * MS_PER_SECOND)
         self.stitching_time_ms.update(stitching_duration)
-
 
         yield from self._apply_state_actions(
             actions=actions,
@@ -469,8 +466,6 @@ class TranscribeAudioFn(beam.DoFn):
             config_json=self.config.transcriber_config,
         )
 
-
-
         if self.audio_processor.gcs_client is None:
             msg = "GCS client not found in AudioProcessor. must call setup() first."
             raise RuntimeError(msg)
@@ -490,7 +485,6 @@ class TranscribeAudioFn(beam.DoFn):
         if self.transcriber is None:
             msg = "Transcriber not initialized. setup() must be called."
             raise RuntimeError(msg)
-
 
         if not request.buffer or len(request.buffer) == 0:
             return None
@@ -545,7 +539,6 @@ class TranscribeAudioFn(beam.DoFn):
             return None
         duration_ms = int((time.time() - transcribe_start) * MS_PER_SECOND)
         self.transcription_time_ms.update(duration_ms)
-
 
         logger.info(f"TRANSCRIPT [{request.feed_id}]: {transcript}")
 

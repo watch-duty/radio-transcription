@@ -13,6 +13,3 @@ class VadType(enum.StrEnum):
     """Supported Voice Activity Detection models."""
 
     TEN_VAD = "ten_vad"
-
-
-
