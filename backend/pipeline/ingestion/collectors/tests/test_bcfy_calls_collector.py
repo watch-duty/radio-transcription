@@ -407,6 +407,7 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
             self.session, result, "http://1", self.shutdown
         )
 
+        assert chunk is not None
         self.assertIsNotNone(chunk)
         self.assertEqual(chunk.audio_bytes, b"flac")
         self.assertEqual(chunk.chunk_start_time.timestamp(), 1000)
@@ -434,6 +435,7 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
                 self.session, result, "http://1", self.shutdown
             )
 
+        assert chunk is not None
         self.assertIsNotNone(chunk)
         self.assertEqual(chunk.chunk_start_time, fixed_now)
         self.assertEqual(chunk.chunk_end_time, fixed_now)
