@@ -6,6 +6,7 @@ import datetime
 import logging
 import os
 import random
+import uuid
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
@@ -239,6 +240,7 @@ async def _create_chunk_from_call(
     result: dict[str, Any],
     mp3_url: str,
     shutdown_event: asyncio.Event,
+    session_id: str,
 ) -> CapturedChunk | None:
     """Download audio for a single call and wrap it in a CapturedChunk."""
     try:
@@ -273,6 +275,7 @@ async def _create_chunk_from_call(
         audio_bytes=flac_bytes,
         chunk_start_time=chunk_start_time,
         chunk_end_time=chunk_end_time,
+        session_id=session_id,
     )
 
 
@@ -293,7 +296,7 @@ async def _handle_loop_failure(
     return consecutive_failures
 
 
-async def capture_bcfy_calls(  # noqa: PLR0912
+async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
     feed: LeasedFeed, shutdown_event: asyncio.Event, url_base: str
 ) -> AsyncIterator[CapturedChunk]:
     """Capture audio chunks from Broadcastify Calls API.
@@ -305,6 +308,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912
             The function uses this URL directly after normalizing a
             trailing slash.
     """
+    connection_session_id = str(uuid.uuid4())
     source_feed_id = feed.get("source_feed_id")
     feed_id = feed.get("id")
     last_bookmark_time = feed.get("last_bookmark_time")
@@ -355,7 +359,11 @@ async def capture_bcfy_calls(  # noqa: PLR0912
                             continue
 
                         chunk = await _create_chunk_from_call(
-                            session, result, mp3_url, shutdown_event
+                            session,
+                            result,
+                            mp3_url,
+                            shutdown_event,
+                            connection_session_id,
                         )
                         if not chunk:
                             continue
