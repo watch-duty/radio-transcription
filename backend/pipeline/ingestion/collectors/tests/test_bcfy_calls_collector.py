@@ -1038,4 +1038,3 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         for chunk in chunks:
             self.assertIsNotNone(chunk.session_id)
         self.assertEqual(chunks[0].session_id, chunks[1].session_id)
-
