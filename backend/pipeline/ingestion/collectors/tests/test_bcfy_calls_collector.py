@@ -706,3 +706,89 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(chunks), 1)
         self.assertEqual(mock_dl.call_count, 1)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_max_consecutive_failures_generic_exception(
+        self, mock_sleep: AsyncMock, mock_fetch: AsyncMock, mock_jwt: MagicMock
+    ) -> None:
+        mock_jwt.return_value = "token"
+        mock_fetch.side_effect = ValueError("Persistent network glitch")
+        mock_sleep.return_value = (
+            False  # Simulate sleeping normally without shutdown
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError, "exceeded 10 consecutive failures"
+        ):
+            async for _ in bcfy_calls_collector.capture_bcfy_calls(
+                self.leased_feed, self.shutdown, self.url_base
+            ):
+                pass
+
+        self.assertEqual(mock_fetch.call_count, 10)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_max_consecutive_failures_auth_error(
+        self, mock_sleep: AsyncMock, mock_fetch: AsyncMock, mock_jwt: MagicMock
+    ) -> None:
+        mock_jwt.return_value = "token"
+        mock_fetch.side_effect = bcfy_calls_collector.AuthError("Auth failure")
+        mock_sleep.return_value = (
+            False  # Simulate sleeping normally without shutdown
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError, "exceeded 10 consecutive failures"
+        ):
+            async for _ in bcfy_calls_collector.capture_bcfy_calls(
+                self.leased_feed, self.shutdown, self.url_base
+            ):
+                pass
+
+        self.assertEqual(mock_fetch.call_count, 10)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._download_and_convert_audio",
+        new_callable=AsyncMock,
+    )
+    async def test_download_audio_runtime_error_reraised(
+        self, mock_dl: AsyncMock, mock_fetch: AsyncMock, mock_jwt: MagicMock
+    ) -> None:
+        mock_jwt.return_value = "token"
+        mock_fetch.return_value = {"calls": [{"url": "http://1"}]}
+        mock_dl.side_effect = RuntimeError("CDN rate limit")
+
+        with self.assertRaisesRegex(RuntimeError, "CDN rate limit"):
+            async for _ in bcfy_calls_collector.capture_bcfy_calls(
+                self.leased_feed, self.shutdown, self.url_base
+            ):
+                pass
+
+        self.assertEqual(mock_dl.call_count, 1)

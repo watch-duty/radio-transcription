@@ -27,6 +27,7 @@ _API_TIMEOUT_SEC = 10.0
 _AUDIO_TIMEOUT_SEC = 60.0
 _MP3_DOWNLOAD_MAX_RETRIES = 3
 _MP3_DOWNLOAD_BACKOFF_BASE_SEC = 1.0
+_MAX_CONSECUTIVE_FAILURES = 10
 
 
 class AuthError(Exception):
@@ -233,6 +234,7 @@ async def capture_bcfy_calls(  # noqa: PLR0915, PLR0912
     headers = {"Authorization": f"Bearer {jwt_token}"}
 
     seen_urls = collections.deque(maxlen=1000)
+    consecutive_failures = 0
 
     async with aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(total=_API_TIMEOUT_SEC)
@@ -272,6 +274,8 @@ async def capture_bcfy_calls(  # noqa: PLR0915, PLR0912
                             flac_bytes = await _download_and_convert_audio(
                                 session, mp3_url, shutdown_event
                             )
+                        except RuntimeError:
+                            raise
                         except Exception as e:
                             logger.exception(
                                 "Failed to process audio for %s: %s", mp3_url, e
@@ -308,6 +312,8 @@ async def capture_bcfy_calls(  # noqa: PLR0915, PLR0912
                         # Only mark as seen and update pagination after a successful
                         # yield, confirming the chunk was handed off to the pipeline.
                         seen_urls.append(mp3_url)
+                        # Reset consecutive failures on successful yield
+                        consecutive_failures = 0
                     # Update local last_bookmark_time_unix for pagination after processing all calls in the response, ensuring we don't skip any calls if an error occurs mid-page.
                     if bcfy_calls and "lastPos" in bcfy_calls:
                         last_bookmark_time_unix = bcfy_calls["lastPos"]
@@ -325,9 +331,23 @@ async def capture_bcfy_calls(  # noqa: PLR0915, PLR0912
                     headers["Authorization"] = f"Bearer {jwt_token}"
                 except Exception as e:
                     logger.exception("Failed to refresh JWT token: %s", e)
+                consecutive_failures += 1
+                if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+                    msg = (
+                        f"Feed {feed_id} exceeded {_MAX_CONSECUTIVE_FAILURES} "
+                        "consecutive failures; marking as unhealthy"
+                    )
+                    raise RuntimeError(msg)
                 await _sleep_or_shutdown(shutdown_event, _POLL_INTERVAL_SEC)
             except RuntimeError:
                 raise
             except Exception as e:
                 logger.exception("Error in capture_bcfy_calls loop: %s", e)
+                consecutive_failures += 1
+                if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+                    msg = (
+                        f"Feed {feed_id} exceeded {_MAX_CONSECUTIVE_FAILURES} "
+                        "consecutive failures; marking as unhealthy"
+                    )
+                    raise RuntimeError(msg)
                 await _sleep_or_shutdown(shutdown_event, _POLL_INTERVAL_SEC)
