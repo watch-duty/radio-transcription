@@ -414,14 +414,12 @@ paths:
             type: string
       x-google-backend: radio-transcription-api
 servers:
-  - url: /
+  - url: https://${radio_transcription_api_service_name}/
+    x-google-endpoint:
+      allowCors: true
 x-google-api-management:
   backends:
     radio-transcription-api:
       address: ${radio_transcription_api_url}
       path_translation: APPEND_PATH_TO_ADDRESS
       protocol: http/1.1
-host: ${radio_transcription_api_service_name}
-x-google-endpoint:
-  - name: ${radio_transcription_api_service_name}
-    allowCors: true

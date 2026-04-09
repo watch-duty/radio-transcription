@@ -31,21 +31,28 @@ try {
   const openapiStr = fs.readFileSync(openapiPath, 'utf8');
   const openapi = yaml.load(openapiStr);
 
-  // Inject
+  // Inject x-google-auth
   if (openapi.components?.securitySchemes?.google_id_token) {
     openapi.components.securitySchemes.google_id_token['x-google-auth'] =
       googleAuth;
-
-    // Write back
-    fs.writeFileSync(
-      openapiPath,
-      yaml.dump(openapi, { noRefs: true, lineWidth: -1, quotingType: '"' })
-    );
-    console.log('Successfully injected x-google-auth into openapi.yaml');
   } else {
     console.error('Could not find google_id_token flows in openapi.yaml');
     process.exit(1);
   }
+
+  // Inject x-google-endpoint into servers
+  if (openapi.servers && openapi.servers.length > 0) {
+    openapi.servers[0]['x-google-endpoint'] = { allowCors: true };
+  } else {
+    console.warn('No servers found in openapi.yaml to update');
+  }
+
+  // Write back
+  fs.writeFileSync(
+    openapiPath,
+    yaml.dump(openapi, { noRefs: true, lineWidth: -1, quotingType: '"' })
+  );
+  console.log('Successfully post-processed openapi.yaml');
 } catch (error) {
   console.error('Error during post-processing:', error);
   process.exit(1);
