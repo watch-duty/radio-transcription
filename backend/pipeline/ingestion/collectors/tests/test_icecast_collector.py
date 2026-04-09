@@ -195,6 +195,10 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         chunks = await _collect_chunks(gen)
 
         # Assert - segments should be yielded without modification
+        mock_create_ffmpeg.assert_called_once()
+        args, _ = mock_create_ffmpeg.call_args
+        self.assertIn("burst=0", args[0])
+        self.assertTrue(args[0].endswith(".mp3?burst=0"))
         self.assertEqual(len(chunks), 2)
         for chunk in chunks:
             self.assertIsInstance(chunk, bytes)
