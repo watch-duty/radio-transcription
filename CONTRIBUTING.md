@@ -121,6 +121,32 @@ docker compose run --rm integration-tests
 * (Optional) Install Firebase CLI (https://firebase.google.com/docs/cli) for hosting deployments
 
 
+## Frontend Development
+
+### Proxy API Development
+
+1. In the `frontend/api` directory, copy the .env.example file to a file named `.env.local`
+   - Fill out the environment variables using by referencing the deploy Cloud Run Service URLs in GCP
+      - This would look like `https://name.region.run.app` for the backend services
+      - Alternatively, you can use the local URLs from Docker
+   - ALLOWED_ORIGIN should be http://localhost:5173 (or whatever port is running the frontend)
+2. If you configured the environment variables using GCP, you will need to impersonate the service account which has permissions to call them
+   - Ensure the account which you are using has permissions to impersonate the service account (add `Service Account Token Creator` role to the IAM permissions)
+   - Ensure you're using the correct project: `gcloud config set project PROJECT_ID`
+   - Login using: `gcloud auth application-default login --impersonate-service-account=SA_EMAIL@PROJECT_ID.iam.gserviceaccount.com`
+3. In your terminal, inside the `frontend/api` directory, run: `yarn local` to start the development server.
+4. Confirm the the API is running on http://localhost:8080/
+
+### Frontend Development
+
+1. In the `frontend/transcription-ui` directory, copy the .env.example file to a file named `.env.local`
+   - VITE_GOOGLE_AUTH_CLIENT_ID should be the Google OAuth 2.0 Client ID for your project, found under Google Auth Platform
+   - VITE_API_BASE_URL should be left empty as this will ensure the Vite proxy will talk to the API running on `http://localhost:8080`
+      - Alternatively, you can set this to the URL of the API running in GCP as long as it has CORS configured to allow `http://localhost:5173`
+2. In your terminal, inside the `frontend/transcription-ui` directory, run: `yarn local` to start the development server.
+3. Confirm the the UI is running on http://localhost:5173/
+
+
 ## Making Changes to Files
 * run `mise format`
 * run `mise lint`
