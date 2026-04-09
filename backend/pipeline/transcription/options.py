@@ -136,3 +136,30 @@ class TranscriptionOptions(PipelineOptions):
             required=False,
             help="GCS bucket name for storing clean, stitched audio. If omitted, audio is not persisted to GCS.",
         )
+
+
+class DataflowSystemOptions(PipelineOptions):
+    """Dummy options class to absorb Dataflow-injected camelCase arguments and quiet warnings.
+
+    Dataflow often passes internal system flags to workers in camelCase (e.g., --autoscalingAlgorithm),
+    while the Python SDK expects snake_case. This class registers them so the parser recognizes them
+    and stops logging 'Discarding unparseable args' warnings.
+    """
+
+    @classmethod
+    def _add_argparse_args(cls, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("--autoscalingAlgorithm", type=str, required=False)
+        parser.add_argument("--dataflowJobId", type=str, required=False)
+        parser.add_argument("--jobId", type=str, required=False)
+        parser.add_argument("--numWorkers", type=str, required=False)
+        parser.add_argument("--maxNumWorkers", type=str, required=False)
+        parser.add_argument("--pipelineUrl", type=str, required=False)
+        parser.add_argument("--gcpTempLocation", type=str, required=False)
+        parser.add_argument(
+            "--direct_runner_use_stacked_bundle",
+            action="store_true",
+            required=False,
+        )
+        parser.add_argument(
+            "--pipeline_type_check", action="store_true", required=False
+        )
