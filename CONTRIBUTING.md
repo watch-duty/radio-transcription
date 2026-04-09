@@ -137,6 +137,13 @@ docker compose run --rm integration-tests
 3. In your terminal, inside the `frontend/api` directory, run: `yarn local` to start the development server.
 4. Confirm the the API is running on http://localhost:8080/
 
+```bash
+gcloud config set project PROJECT_ID
+gcloud auth application-default login --impersonate-service-account=SA_EMAIL@PROJECT_ID.iam.gserviceaccount.com
+cd frontend/api
+yarn local
+```
+
 ### Frontend Development
 
 1. In the `frontend/transcription-ui` directory, copy the .env.example file to a file named `.env.local`
@@ -145,6 +152,11 @@ docker compose run --rm integration-tests
       - Alternatively, you can set this to the URL of the API running in GCP as long as it has CORS configured to allow `http://localhost:5173`
 2. In your terminal, inside the `frontend/transcription-ui` directory, run: `yarn local` to start the development server.
 3. Confirm the the UI is running on http://localhost:5173/
+
+```bash
+cd frontend/transcription-ui
+yarn local
+```
 
 
 ## Making Changes to Files
