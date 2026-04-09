@@ -48,7 +48,7 @@ secret_client: secretmanager.SecretManagerServiceClient | None = None
 def cleanup_old_versions(
     secret_client: secretmanager.SecretManagerServiceClient,
     secret_id: str,
-    hours_to_keep: int = 24,
+    hours_to_keep: int = 6,
 ) -> None:
     """Destroys old Secret Manager versions for the given secret.
 
@@ -135,10 +135,8 @@ def add_secret_version(
         # We log and continue so the rotation itself isn't considered a failure
         # if the cleanup fails (e.g., due to permission issues).
         logger.warning(
-            "Failed to clean up old secret versions for secret_id=%s "
-            "hours_to_keep=%s",
+            "Failed to clean up old secret versions for secret_id=%s",
             secret_id,
-            24,
             exc_info=True,
         )
 
