@@ -9,6 +9,7 @@ import logging
 import os
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlencode, urljoin
@@ -110,6 +111,7 @@ async def capture_icecast_stream(  # noqa: PLR0915
         RuntimeError: If ffmpeg exits unexpectedly or stalls
 
     """
+    session_id = str(uuid.uuid4())
     source_feed_id = feed.get("source_feed_id")
     feed_id = feed.get("id")
     feed_name = feed.get("name")
@@ -197,6 +199,7 @@ async def capture_icecast_stream(  # noqa: PLR0915
                             audio_bytes=segment_bytes,
                             chunk_start_time=chunk_start_time,
                             chunk_end_time=chunk_end_time,
+                            session_id=session_id,
                         )
 
                         last_activity_time = time.monotonic()

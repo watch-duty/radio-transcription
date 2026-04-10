@@ -310,7 +310,7 @@ class NormalizerRuntime:
 
     # -- Per-feed pipeline ------------------------------------------------
 
-    async def _process_feed(self, feed: LeasedFeed) -> None:
+    async def _process_feed(self, feed: LeasedFeed) -> None:  # noqa: PLR0912, PLR0915
         """
         Run the capture-upload-bookmark pipeline for a single feed.
 
@@ -321,7 +321,7 @@ class NormalizerRuntime:
         worker_id = self._normalizer_settings.worker_id
         fencing_token = feed["fencing_token"]
         settings = self._normalizer_settings
-        session_id = str(uuid.uuid4())
+        _fallback_session_id: str | None = None
 
         try:
             async for captured_chunk in self._capture_fn(
@@ -335,6 +335,19 @@ class NormalizerRuntime:
                         f"expected CapturedChunk"
                     )
                     raise TypeError(msg)  # noqa: TRY301
+                # session_id is owned by the capture function. Fall back
+                # to a runtime-generated UUID during the transition period
+                # for collectors that haven't been updated yet.
+                session_id = captured_chunk.session_id
+                if session_id is None:
+                    if _fallback_session_id is None:
+                        _fallback_session_id = str(uuid.uuid4())
+                        logger.warning(
+                            "Collector for feed %s did not set session_id"
+                            " on CapturedChunk — using fallback",
+                            feed["name"],
+                        )
+                    session_id = _fallback_session_id
                 gcs_uri = await retry_with_lease_check(
                     gcp_helper.upload_staged_audio,
                     self._gcs_client,
@@ -362,6 +375,7 @@ class NormalizerRuntime:
                     gcs_uri,
                     start_timestamp=captured_chunk.chunk_start_time,
                     session_id=session_id,
+                    source_type=feed["source_type"],
                 )
                 logger.info(
                     "Published message %s for feed %s", message_id, feed["name"]

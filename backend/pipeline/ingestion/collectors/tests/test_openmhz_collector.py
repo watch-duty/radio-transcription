@@ -216,3 +216,82 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
 
         # The Nth failure raises before sleeping, so N-1 sleeps
         self.assertEqual(mock_sleep.call_count, MAX_RECONNECT_FAILURES - 1)
+
+    @patch(f"{_COL_MOD}.websocket_transport")
+    @patch(f"{_COL_MOD}._download_m4a")
+    @patch(f"{_COL_MOD}.convert_to_flac")
+    async def test_session_id_consistent_within_connection(
+        self,
+        mock_convert: MagicMock,
+        mock_download: AsyncMock,
+        mock_transport: MagicMock,
+    ) -> None:
+        """All chunks within one connection share the same session_id."""
+        calls = [_make_call(call_id="c1"), _make_call(call_id="c2")]
+        mock_transport.side_effect = lambda *a, **kw: _mock_transport(calls)
+        mock_download.return_value = b"m4a"
+        mock_convert.return_value = b"flac"
+
+        shutdown = asyncio.Event()
+        results = []
+        async for chunk in openmhz_collector(
+            _TEST_FEED, shutdown, "https://api.openmhz.com/"
+        ):
+            results.append(chunk)
+            if len(results) == 2:
+                shutdown.set()
+
+        self.assertEqual(len(results), 2)
+        self.assertIsNotNone(results[0].session_id)
+        self.assertTrue(len(results[0].session_id) > 0)
+        self.assertEqual(results[0].session_id, results[1].session_id)
+
+    @patch(f"{_COL_MOD}.websocket_transport")
+    @patch(f"{_COL_MOD}._download_m4a")
+    @patch(f"{_COL_MOD}.convert_to_flac")
+    @patch(f"{_COL_MOD}._sleep_or_shutdown", new_callable=AsyncMock)
+    async def test_session_id_changes_on_reconnect(
+        self,
+        mock_sleep: AsyncMock,
+        mock_convert: MagicMock,
+        mock_download: AsyncMock,
+        mock_transport: MagicMock,
+    ) -> None:
+        """After reconnection, chunks get a different session_id."""
+        call = _make_call()
+        call_count = 0
+
+        def _transport_factory(*a, **kw):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First connection: yield one call then raise
+                @contextlib.asynccontextmanager
+                async def _failing():
+                    async def _events():
+                        yield call
+                        msg = "transport error"
+                        raise ConnectionError(msg)
+
+                    yield _events()
+
+                return _failing()
+            # Second connection: yield one call
+            return _mock_transport([call])
+
+        mock_transport.side_effect = _transport_factory
+        mock_download.return_value = b"m4a"
+        mock_convert.return_value = b"flac"
+        mock_sleep.return_value = False
+
+        shutdown = asyncio.Event()
+        results = []
+        async for chunk in openmhz_collector(
+            _TEST_FEED, shutdown, "https://api.openmhz.com/"
+        ):
+            results.append(chunk)
+            if len(results) == 2:
+                shutdown.set()
+
+        self.assertEqual(len(results), 2)
+        self.assertNotEqual(results[0].session_id, results[1].session_id)

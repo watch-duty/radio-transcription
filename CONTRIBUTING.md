@@ -126,26 +126,96 @@ docker compose run --rm integration-tests
 
 ### Proxy API Development
 
-1. In the `frontend/api` directory, copy the .env.example file to a file named `.env.local`
-   - Fill out the environment variables using by referencing the deploy Cloud Run Service URLs in GCP
-      - This would look like `https://name.region.run.app` for the backend services
-      - Alternatively, you can use the local URLs from Docker
-   - ALLOWED_ORIGIN should be http://localhost:5173 (or whatever port is running the frontend)
-2. If you configured the environment variables using GCP, you will need to impersonate the service account which has permissions to call them
-   - Ensure the account which you are using has permissions to impersonate the service account (add `Service Account Token Creator` role to the IAM permissions)
-   - Ensure you're using the correct project: `gcloud config set project PROJECT_ID`
-   - Login using: `gcloud auth application-default login --impersonate-service-account=SA_EMAIL@PROJECT_ID.iam.gserviceaccount.com`
-3. In your terminal, inside the `frontend/api` directory, run: `yarn local` to start the development server.
-4. Confirm the the API is running on http://localhost:8080/
+_Installation_
 
-### Frontend Development
+1. Install the gcloud cli tool https://docs.cloud.google.com/sdk/docs/install-sdk
+```
+gcloud init
+```
 
-1. In the `frontend/transcription-ui` directory, copy the .env.example file to a file named `.env.local`
-   - VITE_GOOGLE_AUTH_CLIENT_ID should be the Google OAuth 2.0 Client ID for your project, found under Google Auth Platform
-   - VITE_API_BASE_URL should be left empty as this will ensure the Vite proxy will talk to the API running on `http://localhost:8080`
-      - Alternatively, you can set this to the URL of the API running in GCP as long as it has CORS configured to allow `http://localhost:5173`
-2. In your terminal, inside the `frontend/transcription-ui` directory, run: `yarn local` to start the development server.
-3. Confirm the the UI is running on http://localhost:5173/
+_Prerequisites_
+
+This is assuming that you want the local proxy API to make calls to the Google Cloud services in your GCP project (as opposed to the backend services running locally in Docker).
+
+1. Grant yourself the "Service Account Token Creator" role on the service account associated with the proxy API
+```bash
+# Run this command if you are running this for the first time.
+export SA_NAME=<your service account name for the API>
+export PROJECT_ID=$(gcloud config get-value project)
+export USER_EMAIL=$(gcloud config get-value account)
+gcloud iam service-accounts add-iam-policy-binding \
+    $SA_NAME@$PROJECT_ID.iam.gserviceaccount.com \
+    --member="user:$USER_EMAIL" \
+    --role="roles/iam.serviceAccountTokenCreator"
+```
+
+2. Impersonate the service account
+```bash
+# Run this command if you have not impersonated the service account or authenticated with your default account
+export SA_NAME=<your service account name for the API>
+export PROJECT_ID=$(gcloud config get-value project)
+gcloud auth application-default login --impersonate-service-account=$SA_NAME@$PROJECT_ID.iam.gserviceaccount.com
+```
+
+Note that when you are done you can switch back to your default account by running:
+```bash
+gcloud auth application-default login
+```
+
+_Building & Running Locally_
+
+1. The proxy API uses `dotenv` to configure the environment, which looks for the file `.env.local` in the `frontend/api` directory. Either copy `.env.example` to `.env.local`, or create it from scratch using the below command:
+
+```bash
+# Assuming you're running from the top level of the root dir.
+# Run this command if you are running this for the first time.
+cat <<EOF > frontend/api/.env.local
+ALLOWED_ORIGIN=http://localhost:5173
+TRANSCRIPTS_API_URL=<your URL for transcripts API>
+RULES_API_URL=<your URL for rules API>
+EOF
+```
+
+2. Install the package dependencies
+```bash
+# Assuming you're running from the top level of the root dir.
+yarn --cwd frontend/api install
+```
+
+3. Run the API locally
+```bash
+# Assuming you're running from the top level of the root dir.
+yarn --cwd frontend/api local
+```
+
+### UI Development
+
+_Building & Running Locally_
+
+1. The frontend UI uses `dotenv` to configure the environment, which looks for the file `.env.local` in the `frontend/transcription-ui` directory. Either copy `.env.example` to `.env.local`, or create it from scratch using the below command:
+
+```bash
+# Assuming you're running from the top level of the root dir.
+# Run this command if you are running this for the first time.
+cat <<EOF > frontend/transcription-ui/.env.local
+VITE_GOOGLE_AUTH_CLIENT_ID=<your Google OAuth 2.0 Client ID for your project, found under Google Auth Platform>
+VITE_API_BASE_URL=<your URL for the API, leave empty to use the local proxy>
+EOF
+```
+
+2. Install the package dependencies
+```bash
+# Assuming you're running from the top level of the root dir.
+yarn --cwd frontend/transcription-ui install
+```
+
+3. Run the UI locally
+```bash
+# Assuming you're running from the top level of the root dir.
+yarn --cwd frontend/transcription-ui local
+```
+
+4. Open up a web browser and navigate to http://localhost:5173/
 
 
 ## Making Changes to Files

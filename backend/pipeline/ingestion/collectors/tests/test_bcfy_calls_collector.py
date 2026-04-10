@@ -404,7 +404,7 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
         result = {"url": "http://1", "start_ts": 1000, "end_ts": 2000}
 
         chunk = await bcfy_calls_collector._create_chunk_from_call(
-            self.session, result, "http://1", self.shutdown
+            self.session, result, "http://1", self.shutdown, "test-session"
         )
 
         assert chunk is not None
@@ -432,7 +432,7 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
         ) as mock_datetime:
             mock_datetime.now.return_value = fixed_now
             chunk = await bcfy_calls_collector._create_chunk_from_call(
-                self.session, result, "http://1", self.shutdown
+                self.session, result, "http://1", self.shutdown, "test-session"
             )
 
         assert chunk is not None
@@ -452,7 +452,7 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
         result = {"url": "http://1", "start_ts": 1000, "end_ts": 2000}
 
         chunk = await bcfy_calls_collector._create_chunk_from_call(
-            self.session, result, "http://1", self.shutdown
+            self.session, result, "http://1", self.shutdown, "test-session"
         )
 
         self.assertIsNone(chunk)
@@ -468,7 +468,7 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(RuntimeError, "CDN rate limit"):
             await bcfy_calls_collector._create_chunk_from_call(
-                self.session, result, "http://1", self.shutdown
+                self.session, result, "http://1", self.shutdown, "test-session"
             )
 
     @patch(
@@ -483,7 +483,7 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
         result = {"url": "http://1"}
 
         chunk = await bcfy_calls_collector._create_chunk_from_call(
-            self.session, result, "http://1", self.shutdown
+            self.session, result, "http://1", self.shutdown, "test-session"
         )
 
         self.assertIsNone(chunk)
@@ -981,3 +981,60 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
                 pass
 
         self.assertEqual(mock_dl.call_count, 1)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._download_and_convert_audio",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_session_id_set_and_consistent(
+        self,
+        mock_sleep: AsyncMock,
+        mock_dl: AsyncMock,
+        mock_fetch: AsyncMock,
+        mock_jwt: MagicMock,
+    ) -> None:
+        """All chunks from one capture_bcfy_calls call share the same session_id."""
+        mock_jwt.return_value = "token"
+        mock_dl.return_value = b"flac"
+
+        fetch_calls = 0
+
+        async def fetch_side_effect(*args, **kwargs):
+            nonlocal fetch_calls
+            fetch_calls += 1
+            if fetch_calls == 1:
+                return {
+                    "calls": [
+                        {"url": "http://1", "start_ts": 1000, "end_ts": 2000},
+                        {"url": "http://2", "start_ts": 3000, "end_ts": 4000},
+                    ],
+                    "lastPos": 9999,
+                }
+            self.shutdown.set()
+            return {"calls": []}
+
+        mock_fetch.side_effect = fetch_side_effect
+        mock_sleep.return_value = False
+
+        chunks = [
+            c
+            async for c in bcfy_calls_collector.capture_bcfy_calls(
+                self.leased_feed, self.shutdown, self.url_base
+            )
+        ]
+
+        self.assertEqual(len(chunks), 2)
+        for chunk in chunks:
+            self.assertIsNotNone(chunk.session_id)
+        self.assertEqual(chunks[0].session_id, chunks[1].session_id)
