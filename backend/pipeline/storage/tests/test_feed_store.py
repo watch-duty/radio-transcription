@@ -5,6 +5,7 @@ import unittest
 import uuid
 from unittest import mock
 
+from backend.pipeline.storage import feed_queries
 from backend.pipeline.storage.feed_store import (
     FeedStore,
     HeartbeatResult,
@@ -607,6 +608,20 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await store.create_feed("New Feed", "bcfy_feeds", "123", "ext_123")
 
+    async def test_create_feed_invalid_source_type(self) -> None:
+        """ValueError is raised when an invalid source type is passed."""
+        pool = _make_pool()
+        store = FeedStore(pool)
+
+        with self.assertRaises(ValueError) as cm:
+            await store.create_feed(
+                name="Test Feed",
+                source_type="invalid_type",
+                source_feed_id="src_123",
+                external_id="ext_123",
+            )
+        self.assertIn("Invalid source type", str(cm.exception))
+
 
 class TestGetFeed(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.get_feed."""
@@ -695,6 +710,31 @@ class TestListFeeds(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result[0]["id"], _FEED_ID)
         self.assertEqual(result[1]["id"], _FEED_ID_B)
         self.assertEqual(result[1]["source_type"], SourceType.OPENMHZ)
+
+
+class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.delete_feed."""
+
+    async def test_delete_succeeds(self) -> None:
+        """True is returned when a feed is deleted."""
+        pool = _make_pool(execute_result="DELETE 1")
+        store = FeedStore(pool)
+
+        result = await store.delete_feed(_FEED_ID)
+
+        self.assertTrue(result)
+        pool.execute.assert_called_once_with(
+            feed_queries.DELETE_FEED_SQL, _FEED_ID
+        )
+
+    async def test_delete_fails_when_not_found(self) -> None:
+        """False is returned when no feed is deleted."""
+        pool = _make_pool(execute_result="DELETE 0")
+        store = FeedStore(pool)
+
+        result = await store.delete_feed(_FEED_ID)
+
+        self.assertFalse(result)
 
 
 if __name__ == "__main__":

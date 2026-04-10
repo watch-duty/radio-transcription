@@ -718,12 +718,44 @@ async def test_list_feeds_returns_all_feeds(
     db_pool: asyncpg.Pool, store: FeedStore
 ) -> None:
     """list_feeds retrieves all feeds ordered by created_at DESC."""
-    feed_id_a = await _insert_feed(db_pool, "Feed A")
-    feed_id_b = await _insert_feed(db_pool, "Feed B")
+    feed_id_a = await _insert_feed(
+        db_pool, "Feed A", source_feed_id="src_a", external_id="ext_a"
+    )
+    feed_id_b = await _insert_feed(
+        db_pool, "Feed B", source_feed_id="src_b", external_id="ext_b"
+    )
 
     feeds = await store.list_feeds()
 
     assert len(feeds) >= 2
     # The most recently created should be first
     assert feeds[0]["id"] == feed_id_b
+    assert feeds[0]["source_feed_id"] == "src_b"
+    assert feeds[0]["external_id"] == "ext_b"
+
     assert feeds[1]["id"] == feed_id_a
+    assert feeds[1]["source_feed_id"] == "src_a"
+    assert feeds[1]["external_id"] == "ext_a"
+
+
+# -- Tests: delete_feed ------------------------------------------------
+
+
+async def test_delete_feed_succeeds(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """delete_feed deletes the feed and returns True."""
+    feed_id = await _insert_feed(db_pool, "Delete Test Feed")
+
+    result = await store.delete_feed(feed_id)
+
+    assert result is True
+    # Verify deleted
+    row = await db_pool.fetchrow("SELECT 1 FROM feeds WHERE id = $1", feed_id)
+    assert row is None
+
+
+async def test_delete_feed_returns_false_if_not_found(store: FeedStore) -> None:
+    """delete_feed returns False for non-existent ID."""
+    result = await store.delete_feed(uuid.uuid4())
+    assert result is False

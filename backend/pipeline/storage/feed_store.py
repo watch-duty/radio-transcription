@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, TypedDict
 from backend.pipeline.storage.feed_queries import (
     ACQUIRE_FEEDS_BATCH_SQL,
     CREATE_FEED_SQL,
+    DELETE_FEED_SQL,
     GET_FEED_SQL,
     LEASE_FEED_SQL,
     LIST_FEEDS_SQL,
@@ -112,6 +113,29 @@ class FeedStore:
     ) -> None:
         self._pool = pool
         self._source_types = source_types
+
+    def _row_to_feed(self, row: asyncpg.Record) -> Feed:
+        """Convert a database row to a Feed dict with validation."""
+        try:
+            source_type = SourceType(row["source_type"])
+        except ValueError as e:
+            msg = f"Unknown source type {row['source_type']!r} for feed {row['id']}"
+            raise ValueError(msg) from e
+
+        return Feed(
+            id=row["id"],
+            name=row["name"],
+            source_type=source_type,
+            status=row["status"],
+            failure_count=row["failure_count"],
+            worker_id=row["worker_id"],
+            last_heartbeat=row["last_heartbeat"],
+            last_processed_filename=row["last_processed_filename"],
+            last_bookmark_time=row["last_bookmark_time"],
+            created_at=row["created_at"],
+            source_feed_id=row["source_feed_id"],
+            external_id=row["external_id"],
+        )
 
     async def lease_feed(self, worker_id: uuid.UUID) -> LeasedFeed | None:
         """
@@ -400,7 +424,7 @@ class FeedStore:
     async def create_feed(
         self,
         name: str,
-        source_type: str,
+        source_type: str | SourceType,
         source_feed_id: str,
         external_id: str,
     ) -> Feed:
@@ -409,10 +433,28 @@ class FeedStore:
         Atomically creates a new feed in the `feeds` table and its corresponding
         properties in the `feed_properties` table.
         """
+        if not source_feed_id:
+            msg = "source_feed_id cannot be empty"
+            raise ValueError(msg)
+        if not external_id:
+            msg = "external_id cannot be empty"
+            raise ValueError(msg)
+
+        # Validate SourceType
+        if isinstance(source_type, str):
+            try:
+                SourceType(source_type)
+            except ValueError as e:
+                msg = f"Invalid source type {source_type!r}"
+                raise ValueError(msg) from e
+            source_type_str = source_type
+        else:
+            source_type_str = source_type.value
+
         row = await self._pool.fetchrow(
             CREATE_FEED_SQL,
             name,
-            source_type,
+            source_type_str,
             source_feed_id,
             external_id,
         )
@@ -420,20 +462,7 @@ class FeedStore:
             msg = f"Failed to create feed {name}"
             raise ValueError(msg)
 
-        return Feed(
-            id=row["id"],
-            name=row["name"],
-            source_type=SourceType(row["source_type"]),
-            status=row["status"],
-            failure_count=row["failure_count"],
-            worker_id=row["worker_id"],
-            last_heartbeat=row["last_heartbeat"],
-            last_processed_filename=row["last_processed_filename"],
-            last_bookmark_time=row["last_bookmark_time"],
-            created_at=row["created_at"],
-            source_feed_id=row["source_feed_id"],
-            external_id=row["external_id"],
-        )
+        return self._row_to_feed(row)
 
     async def get_feed(self, feed_id: uuid.UUID) -> Feed | None:
         """Fetch a specific feed by ID.
@@ -444,20 +473,7 @@ class FeedStore:
         if row is None:
             return None
 
-        return Feed(
-            id=row["id"],
-            name=row["name"],
-            source_type=SourceType(row["source_type"]),
-            status=row["status"],
-            failure_count=row["failure_count"],
-            worker_id=row["worker_id"],
-            last_heartbeat=row["last_heartbeat"],
-            last_processed_filename=row["last_processed_filename"],
-            last_bookmark_time=row["last_bookmark_time"],
-            created_at=row["created_at"],
-            source_feed_id=row["source_feed_id"],
-            external_id=row["external_id"],
-        )
+        return self._row_to_feed(row)
 
     async def list_feeds(self) -> list[Feed]:
         """List all feeds.
@@ -465,20 +481,12 @@ class FeedStore:
         Retrieves all feeds ordered by creation time descending.
         """
         rows = await self._pool.fetch(LIST_FEEDS_SQL)
-        return [
-            Feed(
-                id=row["id"],
-                name=row["name"],
-                source_type=SourceType(row["source_type"]),
-                status=row["status"],
-                failure_count=row["failure_count"],
-                worker_id=row["worker_id"],
-                last_heartbeat=row["last_heartbeat"],
-                last_processed_filename=row["last_processed_filename"],
-                last_bookmark_time=row["last_bookmark_time"],
-                created_at=row["created_at"],
-                source_feed_id=row["source_feed_id"],
-                external_id=row["external_id"],
-            )
-            for row in rows
-        ]
+        return [self._row_to_feed(row) for row in rows]
+
+    async def delete_feed(self, feed_id: uuid.UUID) -> bool:
+        """Delete a feed by ID.
+
+        Returns True if a row was deleted, False otherwise.
+        """
+        result = await self._pool.execute(DELETE_FEED_SQL, feed_id)
+        return result == "DELETE 1"

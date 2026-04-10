@@ -144,8 +144,8 @@ WITH new_feed AS (
     RETURNING id, name, source_type, status, failure_count, worker_id, last_heartbeat, last_processed_filename, last_bookmark_time, created_at
 ),
 new_props AS (
-    INSERT INTO feed_properties (feed_id, source_feed_id, external_id)
-    SELECT id, $3, $4 FROM new_feed
+    INSERT INTO feed_properties (feed_id, source_feed_id, external_id, source_type)
+    SELECT id, $3, $4, source_type FROM new_feed
     RETURNING source_feed_id, external_id
 )
 SELECT nf.*, np.source_feed_id, np.external_id
@@ -159,7 +159,7 @@ SELECT f.id, f.name, f.source_type, f.status, f.failure_count,
        f.last_bookmark_time, f.created_at,
        fp.source_feed_id, fp.external_id
 FROM feeds f
-LEFT JOIN feed_properties fp ON f.id = fp.feed_id
+INNER JOIN feed_properties fp ON f.id = fp.feed_id
 WHERE f.id = $1
 """
 
@@ -169,6 +169,11 @@ SELECT f.id, f.name, f.source_type, f.status, f.failure_count,
        f.last_bookmark_time, f.created_at,
        fp.source_feed_id, fp.external_id
 FROM feeds f
-LEFT JOIN feed_properties fp ON f.id = fp.feed_id
+INNER JOIN feed_properties fp ON f.id = fp.feed_id
 ORDER BY f.created_at DESC
+"""
+
+DELETE_FEED_SQL = """\
+DELETE FROM feeds
+WHERE id = $1
 """
