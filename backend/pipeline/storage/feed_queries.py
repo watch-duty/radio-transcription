@@ -159,7 +159,7 @@ SELECT f.id, f.name, f.source_type, f.status, f.failure_count,
        f.last_bookmark_time, f.created_at,
        fp.source_feed_id, fp.external_id
 FROM feeds f
-INNER JOIN feed_properties fp ON f.id = fp.feed_id
+LEFT JOIN feed_properties fp ON f.id = fp.feed_id
 WHERE f.id = $1
 """
 
@@ -169,7 +169,7 @@ SELECT f.id, f.name, f.source_type, f.status, f.failure_count,
        f.last_bookmark_time, f.created_at,
        fp.source_feed_id, fp.external_id
 FROM feeds f
-INNER JOIN feed_properties fp ON f.id = fp.feed_id
+LEFT JOIN feed_properties fp ON f.id = fp.feed_id
 ORDER BY f.created_at DESC
 """
 

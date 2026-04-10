@@ -83,8 +83,8 @@ class Feed(TypedDict):
     last_processed_filename: str | None
     last_bookmark_time: datetime.datetime | None
     created_at: datetime.datetime
-    source_feed_id: str
-    external_id: str
+    source_feed_id: str | None
+    external_id: str | None
 
 
 class FeedStore:
