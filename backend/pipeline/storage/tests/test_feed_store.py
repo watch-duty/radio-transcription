@@ -632,7 +632,7 @@ class TestGetFeed(unittest.IsolatedAsyncioTestCase):
 
         result = await store.get_feed(_FEED_ID)
 
-        self.assertIsNotNone(result)
+        assert result is not None
         self.assertEqual(result["id"], _FEED_ID)
 
     async def test_returns_none_when_not_exists(self) -> None:
