@@ -98,14 +98,11 @@ jobs:
       - name: Enable Corepack (node package manager)
         run: corepack enable
       - name: Install dependencies
-        run: yarn --cwd frontend/api install --frozen-lockfile --non-interactive
-        run: yarn --cwd frontend/transcription-ui install --frozen-lockfile --non-interactive
+        run: yarn --cwd frontend/api install --frozen-lockfile --non-interactive && yarn --cwd frontend/transcription-ui install --frozen-lockfile --non-interactive
       - name: Run ESLint
-        run: yarn --cwd frontend/api lint:check
-        run: yarn --cwd frontend/transcription-ui lint:check
+        run: yarn --cwd frontend/api lint:check && yarn --cwd frontend/transcription-ui lint:check
       - name: Run Prettier
-        run: yarn --cwd frontend/api format:check
-        run: yarn --cwd frontend/transcription-ui format:check
+        run: yarn --cwd frontend/api format:check && yarn --cwd frontend/transcription-ui format:check
       - name: Generate routes
         working-directory: frontend/api
         run: yarn generate-routes
