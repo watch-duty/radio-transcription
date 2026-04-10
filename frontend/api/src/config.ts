@@ -4,8 +4,8 @@
  */
 
 export const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN;
-export const TRANSCRIPTS_API_URL = process.env.TRANSCRIPTS_API_URL;
-export const RULES_API_URL = process.env.RULES_API_URL;
+export const TRANSCRIPTS_API_URL = process.env.FRONTEND_TRANSCRIPTS_API_URL || process.env.TRANSCRIPTS_API_URL;
+export const RULES_API_URL = process.env.FRONTEND_RULES_API_URL || process.env.RULES_API_URL;
 
 if (!ALLOWED_ORIGIN) {
   throw new Error('ALLOWED_ORIGIN environment variable is not set');

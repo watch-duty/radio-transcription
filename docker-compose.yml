@@ -155,13 +155,28 @@ services:
       - "8088:8080"
     env_file:
       - ./local_dev/LOCAL.env
-    environment:
-      - TRANSCRIPTS_API_URL=http://transcripts-api:8087/v1/transcripts
     networks:
       - pipeline-network
     depends_on:
       - transcripts-api
       - rules-management
+
+  frontend-ui:
+    image: node:22-slim
+    working_dir: /app
+    volumes:
+      - ./frontend/transcription-ui:/app
+    ports:
+      - "5173:5173"
+    env_file:
+      - ./local_dev/LOCAL.env
+    environment:
+      - VITE_GOOGLE_AUTH_CLIENT_ID=${VITE_GOOGLE_AUTH_CLIENT_ID}
+    command: sh -c "yarn install && ./node_modules/.bin/vite --mode local-dev --host"
+    depends_on:
+      - frontend-api
+    networks:
+      - pipeline-network
 
   integration-tests:
     image: python:3.13-slim

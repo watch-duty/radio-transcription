@@ -33,6 +33,7 @@ Note that currently the following are missing from the E2E setup:
 
 Locally run the full pipeline from E2E
 ```bash
+VITE_GOOGLE_AUTH_CLIENT_ID="<INSERT AUTH CLIENT ID>" &&
 docker-compose down -v && docker-compose up --build -d &&
 docker-compose logs -f \
   transcripts-api\
