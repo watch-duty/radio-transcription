@@ -202,8 +202,6 @@ VITE_API_BASE_URL=<your URL for the API, leave empty to use the local proxy>
 EOF
 ```
 
-If you are running the API locally, open up a new terminal window.
-
 2. Install the package dependencies
 ```bash
 # Assuming you're running from the top level of the root dir.
