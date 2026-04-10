@@ -69,7 +69,7 @@ describe('listTranscripts', () => {
 
     expect(result).toEqual(expectedResult);
     expect(mockRequest).toHaveBeenCalledWith({
-      url: 'http://api.example.com?feedId=test',
+      url: 'http://api.example.com?feed_id=test',
       method: 'GET',
     });
   });
