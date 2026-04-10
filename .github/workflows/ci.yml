@@ -85,7 +85,7 @@ jobs:
       - name: Type check
         run: uv run ty check
 
-  code-quality-checks-typescript:
+  code-quality-checks-typescript-api:
     needs: [setup]
     if: needs.setup.outputs.should_run == 'true'
     runs-on: ubuntu-24.04
@@ -100,10 +100,10 @@ jobs:
       - name: Install dependencies
         working-directory: frontend/api
         run: yarn install --frozen-lockfile --non-interactive
-      - name: Run ESLint
+      - name: Run ESLint for API
         working-directory: frontend/api
         run: yarn lint:check
-      - name: Run Prettier
+      - name: Run Prettier for API
         working-directory: frontend/api
         run: yarn format:check
       - name: Generate routes
@@ -111,6 +111,31 @@ jobs:
         run: yarn generate-routes
       - name: Type check
         working-directory: frontend/api
+        run: npx tsc --noEmit
+
+  code-quality-checks-typescript-ui:
+    needs: [setup]
+    if: needs.setup.outputs.should_run == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 100
+      - name: Install mise, install tools
+        uses: jdx/mise-action@v3
+      - name: Enable Corepack (node package manager)
+        run: corepack enable
+      - name: Install dependencies
+        working-directory: frontend/transcription-ui
+        run: yarn install --frozen-lockfile --non-interactive
+      - name: Run ESLint for UI
+        working-directory: frontend/transcription-ui
+        run: yarn lint:check
+      - name: Run Prettier for UI
+        working-directory: frontend/transcription-ui
+        run: yarn format:check
+      - name: Type check
+        working-directory: frontend/transcription-ui
         run: npx tsc --noEmit
 
   terraform-checks:

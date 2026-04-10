@@ -25,27 +25,45 @@ repos:
         types_or: [python, pyi]
         require_serial: true
         pass_filenames: false
-      - id: frontend-eslint
+      - id: proxy-eslint
         name: Run ESLint
         entry: yarn --cwd frontend/api lint:check
         language: system
         files: ^frontend/api/
         pass_filenames: false
-      - id: frontend-prettier
+      - id: proxy-prettier
         name: Run Prettier
         entry: yarn --cwd frontend/api format:check
         language: system
         files: ^frontend/api/
         pass_filenames: false
-      - id: frontend-generate-routes
+      - id: proxy-generate-routes
         name: Generate routes
         entry: yarn --cwd frontend/api generate-routes
         language: system
         files: ^frontend/api/
         pass_filenames: false
-      - id: frontend-type-check
+      - id: proxy-type-check
         name: Type check
-        entry: yarn --cwd frontend/api run tsc --noEmit
+        entry: yarn --cwd frontend/transcription-ui run tsc --noEmit
         language: system
-        files: ^frontend/api/
+        files: ^frontend/transcription-ui/
+        pass_filenames: false
+      - id: ui-eslint
+        name: Run ESLint
+        entry: yarn --cwd frontend/transcription-ui lint:check
+        language: system
+        files: ^frontend/transcription-ui/
+        pass_filenames: false
+      - id: ui-prettier
+        name: Run Prettier
+        entry: yarn --cwd frontend/transcription-ui format:check
+        language: system
+        files: ^frontend/transcription-ui/
+        pass_filenames: false
+      - id: ui-type-check
+        name: Type check
+        entry: yarn --cwd frontend/transcription-ui run tsc --noEmit
+        language: system
+        files: ^frontend/transcription-ui/
         pass_filenames: false
