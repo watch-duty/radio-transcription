@@ -6,7 +6,7 @@
   "scripts": {
     "build": "yarn run generate-routes && tsc",
     "start": "functions-framework --target=api",
-    "dev": "yarn build && yarn start",
+    "local": "yarn build && dotenv -e .env.local -- yarn start",
     "lint:check": "eslint .",
     "lint:fix": "eslint . --fix",
     "format:check": "prettier --check .",
@@ -32,6 +32,7 @@
     "@types/express": "^5.0.6",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^25.5.0",
+    "dotenv-cli": "^11.0.0",
     "eslint": "^10.1.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.4.0",
