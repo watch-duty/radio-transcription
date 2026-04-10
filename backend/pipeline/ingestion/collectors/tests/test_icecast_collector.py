@@ -572,6 +572,35 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results[0].chunk_start_time, fixed_anchor)
         self.assertEqual(results[0].chunk_end_time, clamp_time)
 
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_session_id_set_and_consistent_across_chunks(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """All chunks within one ffmpeg run share the same session_id."""
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=5555,
+            segments=[b"SEG_0", b"SEG_1", b"SEG_2"],
+            wait_delay=0.1,
+            wait_result=0,
+        )
+
+        feed = _make_feed("session-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed, shutdown_event, url_base="https://mock.example.com/"
+        )
+        results = await _collect_chunks_with_timestamps(gen)
+
+        self.assertEqual(len(results), 3)
+        for chunk in results:
+            self.assertIsNotNone(chunk.session_id)
+        self.assertEqual(results[0].session_id, results[1].session_id)
+        self.assertEqual(results[1].session_id, results[2].session_id)
+
 
 if __name__ == "__main__":
     unittest.main()
