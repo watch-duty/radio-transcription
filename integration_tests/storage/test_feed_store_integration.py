@@ -606,7 +606,7 @@ async def test_report_feed_failure_fails_with_wrong_fencing_token(
 
     result = await store.report_feed_failure(feed_id, worker, 999)
 
-    assert result is False
+    assert result is None
     # Verify feed state unchanged (failure was rejected)
     row = await _get_feed_status(db_pool, feed_id)
     assert row["status"] == "active"
