@@ -569,5 +569,133 @@ class TestReleaseFeedsBatch(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[1], _WORKER_ID)
 
 
+class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.create_feed."""
+
+    async def test_returns_feed_on_success(self) -> None:
+        """A created feed is returned as a Feed dict."""
+        row = {
+            "id": _FEED_ID,
+            "name": "New Feed",
+            "source_type": "bcfy_feeds",
+            "status": "unclaimed",
+            "failure_count": 0,
+            "worker_id": None,
+            "last_heartbeat": None,
+            "last_processed_filename": None,
+            "last_bookmark_time": None,
+            "created_at": datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
+            "source_feed_id": "123",
+            "external_id": "ext_123",
+        }
+        pool = _make_pool(fetchrow_result=row)
+        store = FeedStore(pool)
+
+        result = await store.create_feed(
+            "New Feed", "bcfy_feeds", "123", "ext_123"
+        )
+
+        self.assertEqual(result["id"], _FEED_ID)
+        self.assertEqual(result["name"], "New Feed")
+        self.assertEqual(result["source_type"], SourceType.BCFY_FEEDS)
+
+    async def test_raises_value_error_on_failure(self) -> None:
+        """ValueError is raised if the DB returns no row."""
+        pool = _make_pool(fetchrow_result=None)
+        store = FeedStore(pool)
+
+        with self.assertRaises(ValueError):
+            await store.create_feed("New Feed", "bcfy_feeds", "123", "ext_123")
+
+
+class TestGetFeed(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.get_feed."""
+
+    async def test_returns_feed_when_exists(self) -> None:
+        """A feed is returned as a Feed dict when it exists."""
+        row = {
+            "id": _FEED_ID,
+            "name": "My Feed",
+            "source_type": "bcfy_feeds",
+            "status": "unclaimed",
+            "failure_count": 0,
+            "worker_id": None,
+            "last_heartbeat": None,
+            "last_processed_filename": None,
+            "last_bookmark_time": None,
+            "created_at": datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
+            "source_feed_id": "123",
+            "external_id": "ext_123",
+        }
+        pool = _make_pool(fetchrow_result=row)
+        store = FeedStore(pool)
+
+        result = await store.get_feed(_FEED_ID)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["id"], _FEED_ID)
+
+    async def test_returns_none_when_not_exists(self) -> None:
+        """None is returned when the feed does not exist."""
+        pool = _make_pool(fetchrow_result=None)
+        store = FeedStore(pool)
+
+        result = await store.get_feed(_FEED_ID)
+
+        self.assertIsNone(result)
+
+
+class TestListFeeds(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.list_feeds."""
+
+    async def test_returns_list_of_feeds(self) -> None:
+        """A list of Feed dicts is returned."""
+        rows = [
+            {
+                "id": _FEED_ID,
+                "name": "Feed A",
+                "source_type": "bcfy_feeds",
+                "status": "unclaimed",
+                "failure_count": 0,
+                "worker_id": None,
+                "last_heartbeat": None,
+                "last_processed_filename": None,
+                "last_bookmark_time": None,
+                "created_at": datetime.datetime(
+                    2026, 4, 10, tzinfo=datetime.UTC
+                ),
+                "source_feed_id": "123",
+                "external_id": "ext_123",
+            },
+            {
+                "id": _FEED_ID_B,
+                "name": "Feed B",
+                "source_type": "openmhz",
+                "status": "active",
+                "failure_count": 0,
+                "worker_id": _WORKER_ID,
+                "last_heartbeat": datetime.datetime(
+                    2026, 4, 10, tzinfo=datetime.UTC
+                ),
+                "last_processed_filename": None,
+                "last_bookmark_time": None,
+                "created_at": datetime.datetime(
+                    2026, 4, 9, tzinfo=datetime.UTC
+                ),
+                "source_feed_id": "456",
+                "external_id": "ext_456",
+            },
+        ]
+        pool = _make_pool(fetch_result=rows)
+        store = FeedStore(pool)
+
+        result = await store.list_feeds()
+
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["id"], _FEED_ID)
+        self.assertEqual(result[1]["id"], _FEED_ID_B)
+        self.assertEqual(result[1]["source_type"], SourceType.OPENMHZ)
+
+
 if __name__ == "__main__":
     unittest.main()

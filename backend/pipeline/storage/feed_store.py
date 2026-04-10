@@ -6,7 +6,10 @@ from typing import TYPE_CHECKING, TypedDict
 
 from backend.pipeline.storage.feed_queries import (
     ACQUIRE_FEEDS_BATCH_SQL,
+    CREATE_FEED_SQL,
+    GET_FEED_SQL,
     LEASE_FEED_SQL,
+    LIST_FEEDS_SQL,
     RELEASE_FEED_SQL,
     RELEASE_FEEDS_BATCH_SQL,
     RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
@@ -64,6 +67,23 @@ class HeartbeatResult(TypedDict):
     current_worker: uuid.UUID | None
     current_status: str
     renewed: bool
+
+
+class Feed(TypedDict):
+    """Full feed details."""
+
+    id: uuid.UUID
+    name: str
+    source_type: SourceType
+    status: str
+    failure_count: int
+    worker_id: uuid.UUID | None
+    last_heartbeat: datetime.datetime | None
+    last_processed_filename: str | None
+    last_bookmark_time: datetime.datetime | None
+    created_at: datetime.datetime
+    source_feed_id: str
+    external_id: str
 
 
 class FeedStore:
@@ -376,3 +396,89 @@ class FeedStore:
                 )
             )
         return leased_feeds
+
+    async def create_feed(
+        self,
+        name: str,
+        source_type: str,
+        source_feed_id: str,
+        external_id: str,
+    ) -> Feed:
+        """Create a new feed record.
+
+        Atomically creates a new feed in the `feeds` table and its corresponding
+        properties in the `feed_properties` table.
+        """
+        row = await self._pool.fetchrow(
+            CREATE_FEED_SQL,
+            name,
+            source_type,
+            source_feed_id,
+            external_id,
+        )
+        if row is None:
+            msg = f"Failed to create feed {name}"
+            raise ValueError(msg)
+
+        return Feed(
+            id=row["id"],
+            name=row["name"],
+            source_type=SourceType(row["source_type"]),
+            status=row["status"],
+            failure_count=row["failure_count"],
+            worker_id=row["worker_id"],
+            last_heartbeat=row["last_heartbeat"],
+            last_processed_filename=row["last_processed_filename"],
+            last_bookmark_time=row["last_bookmark_time"],
+            created_at=row["created_at"],
+            source_feed_id=row["source_feed_id"],
+            external_id=row["external_id"],
+        )
+
+    async def get_feed(self, feed_id: uuid.UUID) -> Feed | None:
+        """Fetch a specific feed by ID.
+
+        Retrieves feed details including properties from `feed_properties`.
+        """
+        row = await self._pool.fetchrow(GET_FEED_SQL, feed_id)
+        if row is None:
+            return None
+
+        return Feed(
+            id=row["id"],
+            name=row["name"],
+            source_type=SourceType(row["source_type"]),
+            status=row["status"],
+            failure_count=row["failure_count"],
+            worker_id=row["worker_id"],
+            last_heartbeat=row["last_heartbeat"],
+            last_processed_filename=row["last_processed_filename"],
+            last_bookmark_time=row["last_bookmark_time"],
+            created_at=row["created_at"],
+            source_feed_id=row["source_feed_id"],
+            external_id=row["external_id"],
+        )
+
+    async def list_feeds(self) -> list[Feed]:
+        """List all feeds.
+
+        Retrieves all feeds ordered by creation time descending.
+        """
+        rows = await self._pool.fetch(LIST_FEEDS_SQL)
+        return [
+            Feed(
+                id=row["id"],
+                name=row["name"],
+                source_type=SourceType(row["source_type"]),
+                status=row["status"],
+                failure_count=row["failure_count"],
+                worker_id=row["worker_id"],
+                last_heartbeat=row["last_heartbeat"],
+                last_processed_filename=row["last_processed_filename"],
+                last_bookmark_time=row["last_bookmark_time"],
+                created_at=row["created_at"],
+                source_feed_id=row["source_feed_id"],
+                external_id=row["external_id"],
+            )
+            for row in rows
+        ]
