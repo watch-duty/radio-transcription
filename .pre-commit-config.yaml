@@ -45,9 +45,9 @@ repos:
         pass_filenames: false
       - id: proxy-type-check
         name: Type check
-        entry: yarn --cwd frontend/transcription-ui run tsc --noEmit
+        entry: yarn --cwd frontend/api run tsc --noEmit
         language: system
-        files: ^frontend/transcription-ui/
+        files: ^frontend/api/
         pass_filenames: false
       - id: ui-eslint
         name: Run ESLint

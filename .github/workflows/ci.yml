@@ -85,7 +85,7 @@ jobs:
       - name: Type check
         run: uv run ty check
 
-  code-quality-checks-typescript-api:
+  code-quality-checks-typescript-proxy:
     needs: [setup]
     if: needs.setup.outputs.should_run == 'true'
     runs-on: ubuntu-24.04
