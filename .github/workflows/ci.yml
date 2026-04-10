@@ -100,10 +100,10 @@ jobs:
       - name: Install dependencies
         working-directory: frontend/api
         run: yarn install --frozen-lockfile --non-interactive
-      - name: Run ESLint for API
+      - name: Run ESLint
         working-directory: frontend/api
         run: yarn lint:check
-      - name: Run Prettier for API
+      - name: Run Prettier
         working-directory: frontend/api
         run: yarn format:check
       - name: Generate routes
@@ -128,10 +128,10 @@ jobs:
       - name: Install dependencies
         working-directory: frontend/transcription-ui
         run: yarn install --frozen-lockfile --non-interactive
-      - name: Run ESLint for UI
+      - name: Run ESLint
         working-directory: frontend/transcription-ui
         run: yarn lint:check
-      - name: Run Prettier for UI
+      - name: Run Prettier
         working-directory: frontend/transcription-ui
         run: yarn format:check
       - name: Type check
