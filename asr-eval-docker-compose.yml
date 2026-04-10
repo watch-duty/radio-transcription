@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  asr-eval:
+    build:
+      context: .
+      dockerfile: model/nemo_docker/Dockerfile
+    ports:
+      - "8888:8888"
+    volumes:
+      - .:/app
+    working_dir: /app
+    # Override entrypoint to start Jupyter Notebook instead of ZSH
+    entrypoint: ["jupyter", "notebook", "--ip=0.0.0.0", "--allow-root", "--no-browser", "--NotebookApp.token=''", "--NotebookApp.password=''"

@@ -22,6 +22,9 @@ RUN git init && \
     git checkout tags/v2.7.2
 
 RUN pip install -r tools/speech_data_explorer/requirements.txt
+# Install this for now to make all the other colabs compatible.
+RUN pip install jiwer loguru num2words 
+
 
 # Set the working directory to the ASR scripts
 WORKDIR /workspace/nemo
