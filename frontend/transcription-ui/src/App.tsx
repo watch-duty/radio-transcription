@@ -1,5 +1,5 @@
 import AppContainer from './components/AppContainer';
-import TranscriptView from './components/transcript/TranscriptView';
+import TranscriptView from './components/transcripts/TranscriptView';
 import { useAuth } from './context/AuthContext';
 
 import './App.css';
