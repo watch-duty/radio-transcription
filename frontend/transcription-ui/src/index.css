@@ -1,5 +1,6 @@
+@import url('https://fonts.googleapis.com/css?family=Google+Sans+Flex');
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: 'Google Sans Flex', sans-serif;
   line-height: 1.5;
   font-weight: 400;
 
@@ -13,6 +14,12 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+#root {
+  width: 100vw;
+  min-height: 100vh;
+  padding: 0;
+  margin: 0;
+}
 a {
   font-weight: 500;
   color: #646cff;
@@ -41,7 +48,6 @@ button {
   padding: 0.6em 1.2em;
   font-size: 1em;
   font-weight: 500;
-  font-family: inherit;
   background-color: #1a1a1a;
   cursor: pointer;
   transition: border-color 0.25s;

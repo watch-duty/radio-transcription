@@ -5,6 +5,7 @@ import reactRefresh from 'eslint-plugin-react-refresh';
 import { defineConfig, globalIgnores } from 'eslint/config';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
+import css from "@eslint/css";
 
 export default defineConfig([
   globalIgnores(['dist']),
@@ -29,5 +30,11 @@ export default defineConfig([
         ...globals.browser,
       },
     },
+  },
+  {
+    files: ["**/*.css"],
+    plugins: { css },
+    language: "css/css",
+    extends: ["css/recommended"],
   },
 ]);
