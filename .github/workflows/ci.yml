@@ -98,19 +98,19 @@ jobs:
       - name: Enable Corepack (node package manager)
         run: corepack enable
       - name: Install dependencies
-        working-directory: frontend/api
-        run: yarn install --frozen-lockfile --non-interactive
+        run: yarn --cwd frontend/api install --frozen-lockfile --non-interactive && yarn --cwd frontend/transcription-ui install --frozen-lockfile --non-interactive
       - name: Run ESLint
-        working-directory: frontend/api
-        run: yarn lint:check
+        run: yarn --cwd frontend/api lint:check && yarn --cwd frontend/transcription-ui lint:check
       - name: Run Prettier
-        working-directory: frontend/api
-        run: yarn format:check
+        run: yarn --cwd frontend/api format:check && yarn --cwd frontend/transcription-ui format:check
       - name: Generate routes
         working-directory: frontend/api
         run: yarn generate-routes
-      - name: Type check
+      - name: Type check API
         working-directory: frontend/api
+        run: npx tsc --noEmit
+      - name: Type check UI
+        working-directory: frontend/transcription-ui
         run: npx tsc --noEmit
 
   terraform-checks:
