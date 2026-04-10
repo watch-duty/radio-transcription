@@ -11,4 +11,4 @@ services:
       - .:/app
     working_dir: /app
     # Override entrypoint to start Jupyter Notebook instead of ZSH
-    entrypoint: ["jupyter", "notebook", "--ip=0.0.0.0", "--allow-root", "--no-browser", "--NotebookApp.token=''", "--NotebookApp.password=''"
+    entrypoint: ["jupyter", "notebook", "--ip=0.0.0.0", "--allow-root", "--no-browser", "--NotebookApp.token=''", "--NotebookApp.password=''"]
