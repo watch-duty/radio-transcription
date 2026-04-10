@@ -148,6 +148,19 @@ gcloud iam service-accounts add-iam-policy-binding \
     --role="roles/iam.serviceAccountTokenCreator"
 ```
 
+2. Impersonate the service account
+```bash
+# Run this command if you have not impersonated the service account or authenticated with your default account
+export SA_NAME=<your service account name for the API>
+export PROJECT_ID=$(gcloud config get-value project)
+gcloud auth application-default login --impersonate-service-account=$SA_NAME@$PROJECT_ID.iam.gserviceaccount.com
+```
+
+Note that when you are done you can switch back to your default account by running:
+```bash
+gcloud auth application-default login
+```
+
 _Building & Running Locally_
 
 1. The proxy API uses `dotenv` to configure the environment, which looks for the file `.env.local` in the `frontend/api` directory. Either copy `.env.example` to `.env.local`, or create it from scratch using the below command:
