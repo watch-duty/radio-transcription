@@ -622,7 +622,6 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
             )
         self.assertIn("Invalid source type", str(cm.exception))
 
-
 class TestGetFeed(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.get_feed."""
 
@@ -647,7 +646,7 @@ class TestGetFeed(unittest.IsolatedAsyncioTestCase):
 
         result = await store.get_feed(_FEED_ID)
 
-        assert result is not None
+        self.assertIsNotNone(result)
         self.assertEqual(result["id"], _FEED_ID)
 
     async def test_returns_none_when_not_exists(self) -> None:
@@ -735,7 +734,5 @@ class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
         result = await store.delete_feed(_FEED_ID)
 
         self.assertFalse(result)
-
-
 if __name__ == "__main__":
     unittest.main()
