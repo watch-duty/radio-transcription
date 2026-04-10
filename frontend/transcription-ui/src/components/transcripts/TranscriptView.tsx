@@ -9,8 +9,11 @@ import Paper from '@mui/material/Paper';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 
-import { type Transcript, listTranscripts } from '../api/listTranscripts';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../../context/AuthContext';
+import {
+  type Transcript,
+  listTranscripts,
+} from '../../service/listTranscripts';
 
 export function TranscriptView() {
   const [feedId, setFeedId] = useState('');
@@ -40,7 +43,15 @@ export function TranscriptView() {
   };
 
   return (
-    <Box sx={{ width: '100%', textAlign: 'left', height: 'calc(100vh - 112px)', display: 'flex', flexDirection: 'column' }}>
+    <Box
+      sx={{
+        width: '100%',
+        textAlign: 'left',
+        height: 'calc(100vh - 112px)',
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
       <Typography variant="h5" gutterBottom>
         View Transcripts
       </Typography>

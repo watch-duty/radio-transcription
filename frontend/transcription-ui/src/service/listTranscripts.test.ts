@@ -1,9 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { listTranscripts } from './listTranscripts';
 
 describe('listTranscripts', () => {
   const mockFetch = vi.fn();
-  
+
   beforeEach(() => {
     mockFetch.mockClear();
     vi.stubGlobal('fetch', mockFetch);
@@ -12,10 +13,14 @@ describe('listTranscripts', () => {
   it('should fetch transcripts successfully', async () => {
     const mockData = {
       transcripts: [
-        { transmissionId: '1', transcript: 'Hello', startTimestamp: '2026-04-10T12:00:00Z' },
+        {
+          transmissionId: '1',
+          transcript: 'Hello',
+          startTimestamp: '2026-04-10T12:00:00Z',
+        },
       ],
     };
-    
+
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => mockData,
