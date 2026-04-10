@@ -46,13 +46,14 @@ async def run_local_capture() -> None:
         "name": "local-icecast-test",
         "source_type": SourceType.BCFY_FEEDS,
         "last_processed_filename": None,
+        "last_bookmark_time": None,
         "fencing_token": 0,
         "source_feed_id": source_feed_id,
     }
     shutdown_event = asyncio.Event()
 
     chunk_count = 0
-    async for audio_data, start_ts in capture_icecast_stream(
+    async for captured_chunk in capture_icecast_stream(
         feed, shutdown_event, BCFY_FEEDS_URL_BASE
     ):
         chunk_count += 1
@@ -60,13 +61,15 @@ async def run_local_capture() -> None:
         file_timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S_%fZ")
         file_name = f"chunk_{chunk_count:06d}_{file_timestamp}.{AUDIO_FORMAT}"
         file_path = output_dir / file_name
-        await asyncio.to_thread(file_path.write_bytes, audio_data)
+        await asyncio.to_thread(
+            file_path.write_bytes, captured_chunk.audio_bytes
+        )
         logger.info(
             "Local capture chunk %d received (%d bytes) at %s (start: %s) -> %s",
             chunk_count,
-            len(audio_data),
+            len(captured_chunk.audio_bytes),
             timestamp,
-            start_ts.isoformat(timespec="milliseconds"),
+            captured_chunk.chunk_start_time.isoformat(timespec="milliseconds"),
             file_path,
         )
 

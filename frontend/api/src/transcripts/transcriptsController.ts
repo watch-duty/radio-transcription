@@ -1,6 +1,16 @@
-import axios from 'axios';
 import { GoogleAuth } from 'google-auth-library';
-import { Controller, Get, Path, Res, Route, Tags, TsoaResponse } from 'tsoa';
+import {
+  Controller,
+  Extension,
+  Get,
+  Path,
+  Res,
+  Response,
+  Route,
+  Security,
+  Tags,
+  TsoaResponse,
+} from 'tsoa';
 
 import { TRANSCRIPTS_API_URL } from '../config.js';
 
@@ -23,10 +33,45 @@ export interface ListTranscriptsResponse {
   transcripts: Transcript[];
 }
 
+export interface TranscriptResponse {
+  feed_id: string;
+  transmission_id: string;
+  transcript: string;
+  start_timestamp: string;
+  end_timestamp: string;
+  missing_prior_context: boolean;
+  missing_post_context: boolean;
+  source_audio_uris: string[];
+  canonical_audio_uri: string;
+  start_audio_offset: string;
+  end_audio_offset: string;
+  evaluation_decisions: string[];
+}
+
+function convertTranscriptResponse(response: TranscriptResponse): Transcript {
+  return {
+    feedId: response.feed_id,
+    transmissionId: response.transmission_id,
+    transcript: response.transcript,
+    startTimestamp: response.start_timestamp,
+    endTimestamp: response.end_timestamp,
+    missingPriorContext: response.missing_prior_context,
+    missingPostContext: response.missing_post_context,
+    sourceAudioUris: response.source_audio_uris,
+    canonicalAudioUri: response.canonical_audio_uri,
+    startAudioOffset: response.start_audio_offset,
+    endAudioOffset: response.end_audio_offset,
+    evaluationDecisions: response.evaluation_decisions,
+  };
+}
+
 @Route('api/v1/transcripts')
 @Tags('Transcripts')
+@Response(401, 'Unauthorized')
 export class TranscriptsController extends Controller {
   @Get('{feedId}')
+  @Security('google_id_token')
+  @Extension('x-google-backend', 'radio-transcription-api')
   public async listTranscripts(
     @Path() feedId: string,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -35,15 +80,16 @@ export class TranscriptsController extends Controller {
     // Get the Authentication token to allow us to call the Cloud Run function.
     const auth = new GoogleAuth();
     const client = await auth.getIdTokenClient(TRANSCRIPTS_API_URL!);
-    const tokenResponse = await client.getRequestHeaders();
-    const token = tokenResponse.get('Authorization');
 
     try {
-      const response = await axios.get(TRANSCRIPTS_API_URL!, {
-        params: { feedId },
-        headers: { Authorization: token },
+      const response = await client.request({
+        url: `${TRANSCRIPTS_API_URL}?feedId=${feedId}`,
+        method: 'GET',
       });
-      return response.data;
+      const data = response.data as TranscriptResponse[];
+      return {
+        transcripts: data.map(convertTranscriptResponse),
+      };
     } catch (error: unknown) {
       console.error('Error fetching transcript:', error);
       if (error instanceof Error) {

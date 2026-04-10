@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 from typing import TYPE_CHECKING
 from unittest import mock
 
@@ -31,10 +32,12 @@ def configured_module() -> Generator[None]:
 
 
 class TestAddSecretVersion:
+    @mock.patch.object(main, "cleanup_old_versions")
     def test_add_secret_version_adds_encoded_payload(
-        self, configured_module: None
+        self, mock_cleanup: mock.MagicMock, configured_module: None
     ) -> None:
         del configured_module
+        # Setup a mock Secret Manager client and expected response
         secret_client = mock.MagicMock()
         secret_client.secret_path.return_value = "projects/p/secrets/s"
         secret_client.add_secret_version.return_value.name = (
@@ -42,19 +45,146 @@ class TestAddSecretVersion:
         )
         main.secret_client = secret_client
 
+        # Execute the function under test
         result = main.add_secret_version(
             secret_client, "broadcastify-jwt", "token-123"
         )
 
+        # Verify the function returns the new version name
         assert result == "projects/p/secrets/s/versions/1"
+        # Verify the secret path was resolved correctly
         secret_client.secret_path.assert_called_once_with(
             "test-project", "broadcastify-jwt"
         )
+        # Verify the payload was properly encoded and added
         secret_client.add_secret_version.assert_called_once_with(
             request={
                 "parent": "projects/p/secrets/s",
                 "payload": {"data": b"token-123"},
             }
+        )
+        # Verify cleanup is triggered after a successful addition
+        mock_cleanup.assert_called_once_with(secret_client, "broadcastify-jwt")
+
+    @mock.patch.object(main, "cleanup_old_versions")
+    def test_add_secret_version_ignores_cleanup_errors(
+        self, mock_cleanup: mock.MagicMock, configured_module: None
+    ) -> None:
+        del configured_module
+        # Simulate a failure during the cleanup process
+        mock_cleanup.side_effect = Exception("Cleanup failed")
+        # Setup a mock Secret Manager client
+        secret_client = mock.MagicMock()
+        secret_client.secret_path.return_value = "projects/p/secrets/s"
+        secret_client.add_secret_version.return_value.name = (
+            "projects/p/secrets/s/versions/2"
+        )
+        main.secret_client = secret_client
+
+        # Execute the function, which should catch and ignore the cleanup exception
+        result = main.add_secret_version(
+            secret_client, "broadcastify-jwt", "token-123"
+        )
+
+        # Verify the rotation still succeeds despite the cleanup error
+        assert result == "projects/p/secrets/s/versions/2"
+        mock_cleanup.assert_called_once_with(secret_client, "broadcastify-jwt")
+
+
+class TestCleanupOldVersions:
+    def test_cleanup_with_explicit_24_hours(
+        self, configured_module: None
+    ) -> None:
+        """Test cleanup with explicit 24 hours retention."""
+        del configured_module
+        mock_client = mock.MagicMock(
+            spec=main.secretmanager.SecretManagerServiceClient
+        )
+        mock_client.secret_path.return_value = (
+            "projects/123/secrets/test-secret"
+        )
+
+        now = datetime.datetime.now(tz=datetime.UTC)
+        old_version = mock.MagicMock()
+        old_version.name = "projects/123/secrets/test-secret/versions/1"
+        old_version.state = main.secretmanager.SecretVersion.State.ENABLED
+        old_version.create_time = now - datetime.timedelta(hours=25)
+
+        recent_version = mock.MagicMock()
+        recent_version.name = "projects/123/secrets/test-secret/versions/2"
+        recent_version.state = main.secretmanager.SecretVersion.State.ENABLED
+        recent_version.create_time = now - datetime.timedelta(hours=23)
+
+        mock_client.list_secret_versions.return_value = [
+            old_version,
+            recent_version,
+        ]
+
+        main.cleanup_old_versions(mock_client, "test-secret", hours_to_keep=24)
+
+        mock_client.destroy_secret_version.assert_called_once_with(
+            request={"name": "projects/123/secrets/test-secret/versions/1"}
+        )
+
+    def test_cleanup_with_default_6_hours(
+        self, configured_module: None
+    ) -> None:
+        """Test cleanup with default 6 hours retention (new default)."""
+        del configured_module
+        mock_client = mock.MagicMock(
+            spec=main.secretmanager.SecretManagerServiceClient
+        )
+        mock_client.secret_path.return_value = (
+            "projects/123/secrets/test-secret"
+        )
+
+        now = datetime.datetime.now(tz=datetime.UTC)
+        old_version = mock.MagicMock()
+        old_version.name = "projects/123/secrets/test-secret/versions/1"
+        old_version.state = main.secretmanager.SecretVersion.State.ENABLED
+        old_version.create_time = now - datetime.timedelta(hours=7)
+
+        recent_version = mock.MagicMock()
+        recent_version.name = "projects/123/secrets/test-secret/versions/2"
+        recent_version.state = main.secretmanager.SecretVersion.State.ENABLED
+        recent_version.create_time = now - datetime.timedelta(hours=5)
+
+        mock_client.list_secret_versions.return_value = [
+            old_version,
+            recent_version,
+        ]
+
+        # Call without explicit hours_to_keep to test the default value
+        main.cleanup_old_versions(mock_client, "test-secret")
+
+        mock_client.destroy_secret_version.assert_called_once_with(
+            request={"name": "projects/123/secrets/test-secret/versions/1"}
+        )
+
+    def test_cleanup_respects_disabled_versions(
+        self, configured_module: None
+    ) -> None:
+        """Test that cleanup destroys both ENABLED and DISABLED versions."""
+        del configured_module
+        mock_client = mock.MagicMock(
+            spec=main.secretmanager.SecretManagerServiceClient
+        )
+        mock_client.secret_path.return_value = (
+            "projects/123/secrets/test-secret"
+        )
+
+        now = datetime.datetime.now(tz=datetime.UTC)
+        old_disabled = mock.MagicMock()
+        old_disabled.name = "projects/123/secrets/test-secret/versions/1"
+        old_disabled.state = main.secretmanager.SecretVersion.State.DISABLED
+        old_disabled.create_time = now - datetime.timedelta(hours=7)
+
+        mock_client.list_secret_versions.return_value = [old_disabled]
+
+        main.cleanup_old_versions(mock_client, "test-secret")
+
+        mock_client.destroy_secret_version.assert_called_once_with(
+            request={"name": "projects/123/secrets/test-secret/versions/1"}
         )
 
 
@@ -74,12 +204,14 @@ class TestGenerateJwt:
         del configured_module
         api_key = "signing-secret-that-is-at-least-32-bytes"
 
+        # Mock API key and freeze time to test deterministic JWT claims
         with (
             mock.patch.object(main, "BROADCASTIFY_API_KEY", api_key),
             mock.patch.object(main.time, "time", return_value=1700000000),
         ):
             token = main._generate_jwt({"sub": "uid-1", "utk": "utk-1"})
 
+        # Decode the token locally to verify its contents
         decoded = jwt.decode(
             token,
             api_key,
@@ -88,12 +220,14 @@ class TestGenerateJwt:
         )
         header = jwt.get_unverified_header(token)
 
+        # Verify required headers for Broadcastify API
         assert header["alg"] == "HS256"
         assert header["typ"] == "JWT"
         assert header["kid"] == "test-key-id"
+        # Verify required and custom claims
         assert decoded["iss"] == "test-app-id"
         assert decoded["iat"] == 1700000000
-        assert decoded["exp"] == 1700003600
+        assert decoded["exp"] == 1700003600  # Expires 1 hour after iat
         assert decoded["sub"] == "uid-1"
         assert decoded["utk"] == "utk-1"
 
@@ -103,6 +237,7 @@ class TestBroadcastifyCredentialRotation:
         self, configured_module: None
     ) -> None:
         del configured_module
+        # Mock the Broadcastify authentication API response
         mock_response = mock.MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
@@ -110,6 +245,7 @@ class TestBroadcastifyCredentialRotation:
             "token": "utk-456",
         }
 
+        # Setup mocked requests Session to return our mock response
         mock_http_client = mock.MagicMock()
         mock_http_client.post.return_value = mock_response
         mock_http_context = mock.MagicMock()
@@ -117,10 +253,12 @@ class TestBroadcastifyCredentialRotation:
 
         fake_secret_client = mock.MagicMock()
 
+        # Patch external dependencies: HTTP client, JWT generator, and Secret Manager
         with (
             mock.patch.object(
                 main.requests, "Session", return_value=mock_http_context
             ),
+            # Mock two JWTs: one for the initial auth request, one to store as the final secret
             mock.patch.object(
                 main,
                 "_generate_jwt",
@@ -133,16 +271,19 @@ class TestBroadcastifyCredentialRotation:
                 return_value=fake_secret_client,
             ) as mock_secret_manager,
         ):
+            # Trigger the Cloud Function HTTP entry point
             message, status = main.broadcastify_credential_rotation(
                 mock.MagicMock()
             )
 
+        # Verify HTTP success response
         assert status == 200
         assert "Successfully updated" in message
 
         mock_secret_manager.assert_called_once_with()
         assert main.secret_client is fake_secret_client
 
+        # Verify the authentication request sent the correct credentials and unauth JWT
         mock_http_client.post.assert_called_once_with(
             "https://api.bcfy.io/common/v1/auth",
             headers={"Authorization": "Bearer unauth-jwt"},
@@ -150,12 +291,14 @@ class TestBroadcastifyCredentialRotation:
             timeout=30.0,
         )
 
+        # Verify JWT generation was called twice with expected claims for the final token
         assert mock_generate.call_count == 2
         assert mock_generate.call_args_list[1].args[0] == {
             "sub": "uid-123",
             "utk": "utk-456",
         }
 
+        # Verify the new auth JWT is securely saved
         mock_add.assert_called_once_with(
             fake_secret_client,
             "broadcastify-jwt",

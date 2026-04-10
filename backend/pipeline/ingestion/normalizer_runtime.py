@@ -1,6 +1,5 @@
 import asyncio
 import concurrent.futures
-import datetime
 import logging
 import os
 import signal
@@ -14,6 +13,8 @@ import asyncpg
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
+from backend.pipeline.ingestion import quarantine_telemetry
+from backend.pipeline.ingestion.models import CapturedChunk
 from backend.pipeline.ingestion.retry import (
     LeaseExpiredError,
     retry_with_lease_check,
@@ -30,9 +31,9 @@ from backend.pipeline.storage.feed_store import (
 )
 
 FeedID = uuid.UUID
-CaptureFn = Callable[
-    [LeasedFeed, asyncio.Event], AsyncIterator[tuple[bytes, datetime.datetime]]
-]
+# 2-arg interface: route_capturer binds url_base internally.
+# See CollectorFn in models.py for the 3-arg raw collector signature.
+CaptureFn = Callable[[LeasedFeed, asyncio.Event], AsyncIterator[CapturedChunk]]
 logger = logging.getLogger(__name__)
 
 
@@ -60,7 +61,7 @@ class NormalizerRuntime:
     SIGTERM for prompt graceful shutdown.
 
     Args:
-        capture_fn: Async generator factory ``(feed, shutdown_event) -> AsyncIterator[bytes]``.
+        capture_fn: Async generator factory ``(feed, shutdown_event) -> AsyncIterator[CapturedChunk]``.
         settings: Runtime configuration. Defaults to ``NormalizerSettings()``.
 
     """
@@ -170,6 +171,8 @@ class NormalizerRuntime:
             name="heartbeat",
         )
         self._heartbeat_thread.start()
+
+        quarantine_telemetry.configure(settings.google_cloud_project)
 
         try:
             await self._leasing_loop()
@@ -307,7 +310,7 @@ class NormalizerRuntime:
 
     # -- Per-feed pipeline ------------------------------------------------
 
-    async def _process_feed(self, feed: LeasedFeed) -> None:
+    async def _process_feed(self, feed: LeasedFeed) -> None:  # noqa: PLR0912, PLR0915
         """
         Run the capture-upload-bookmark pipeline for a single feed.
 
@@ -318,17 +321,37 @@ class NormalizerRuntime:
         worker_id = self._normalizer_settings.worker_id
         fencing_token = feed["fencing_token"]
         settings = self._normalizer_settings
-        session_id = str(uuid.uuid4())
+        _fallback_session_id: str | None = None
 
         try:
-            async for audio_chunk, chunk_start_time in self._capture_fn(
+            async for captured_chunk in self._capture_fn(
                 feed,
                 self._shutdown,
             ):
+                if not isinstance(captured_chunk, CapturedChunk):
+                    msg = (
+                        f"Collector yielded "
+                        f"{type(captured_chunk).__name__}, "
+                        f"expected CapturedChunk"
+                    )
+                    raise TypeError(msg)  # noqa: TRY301
+                # session_id is owned by the capture function. Fall back
+                # to a runtime-generated UUID during the transition period
+                # for collectors that haven't been updated yet.
+                session_id = captured_chunk.session_id
+                if session_id is None:
+                    if _fallback_session_id is None:
+                        _fallback_session_id = str(uuid.uuid4())
+                        logger.warning(
+                            "Collector for feed %s did not set session_id"
+                            " on CapturedChunk — using fallback",
+                            feed["name"],
+                        )
+                    session_id = _fallback_session_id
                 gcs_uri = await retry_with_lease_check(
                     gcp_helper.upload_staged_audio,
                     self._gcs_client,
-                    audio_chunk,
+                    captured_chunk.audio_bytes,
                     feed,
                     settings.audio_staging_bucket,
                     chunk_seq,
@@ -350,8 +373,9 @@ class NormalizerRuntime:
                     self._normalizer_settings.pubsub_topic_path,
                     str(feed["id"]),
                     gcs_uri,
-                    start_timestamp=chunk_start_time,
+                    start_timestamp=captured_chunk.chunk_start_time,
                     session_id=session_id,
+                    source_type=feed["source_type"],
                 )
                 logger.info(
                     "Published message %s for feed %s", message_id, feed["name"]
@@ -364,6 +388,7 @@ class NormalizerRuntime:
                     worker_id,
                     gcs_uri,
                     fencing_token,
+                    captured_chunk.chunk_end_time,
                     lease_lost=self._lease_lost,
                     shutdown=self._shutdown,
                     max_retries=settings.bookmark_max_retries,
@@ -428,12 +453,18 @@ class NormalizerRuntime:
             # that drops the lease (report_feed_failure sets worker_id=NULL).
             self._releasing_feeds.add(feed["id"])
             try:
-                await self._store.report_feed_failure(
+                status = await self._store.report_feed_failure(
                     feed["id"],
                     worker_id,
                     fencing_token,
                     self._normalizer_settings.feed_failure_threshold,
                 )
+                if status == "quarantined":
+                    await quarantine_telemetry.emit_quarantine_event(
+                        feed_id=str(feed["id"]),
+                        feed_name=feed["name"],
+                        source_type=str(feed["source_type"]),
+                    )
             except Exception:
                 # 60s abandonment window is the safety net if this fails.
                 logger.exception(

@@ -4,6 +4,7 @@ import base64
 import logging
 from typing import TYPE_CHECKING
 
+from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.schema_types import (
     transcribed_audio_pb2 as transcribed_pb2,
 )
@@ -77,7 +78,13 @@ class EvaluationEventProcessor:
 
         # 3. Always write to Transcripts API
         # TODO (https://linear.app/watchduty/issue/GOO-245/): Handle write failure.
-        self.transcripts_client.create_transcript(evaluated_payload)
+        try:
+            self.transcripts_client.create_transcript(evaluated_payload)
+        except AlreadyExistsError:
+            logger.warning(
+                "Transcript already exists for transmission %s which indicates we already processed this transmission. Continuing.",
+                evaluated_payload.transmission_id,
+            )
 
         # 4. Publish to Downstream Topic if flagged or has errors
         if (

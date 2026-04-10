@@ -4,7 +4,18 @@ import enum
 import logging
 from typing import TYPE_CHECKING, TypedDict
 
+from backend.pipeline.storage.feed_queries import (
+    ACQUIRE_FEEDS_BATCH_SQL,
+    LEASE_FEED_SQL,
+    RELEASE_FEED_SQL,
+    RELEASE_FEEDS_BATCH_SQL,
+    RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
+    REPORT_FAILURE_SQL,
+    UPDATE_PROGRESS_SQL,
+)
+
 if TYPE_CHECKING:
+    import datetime
     import uuid
 
     import asyncpg
@@ -29,147 +40,9 @@ class SourceType(enum.StrEnum):
 
     BCFY_FEEDS = "bcfy_feeds"
     BCFY_CALLS = "bcfy_calls"
+    # Echo uses a separate cloud function for ingestion instead of VMs.
     ECHO = "echo"
-
-
-_LEASE_FEED_SQL = """\
-WITH available_feed AS (
-    SELECT id
-    FROM feeds
-    WHERE (
-        status = 'unclaimed'::feed_status
-        OR (status = 'failing'::feed_status AND (retry_after IS NULL OR retry_after <= NOW()))
-        OR (status = 'active'::feed_status
-            AND last_heartbeat < NOW() - INTERVAL '60 seconds')
-    )
-    AND ($2::text[] IS NULL OR source_type = ANY($2::text[]))
-    ORDER BY (status = 'unclaimed'::feed_status) DESC,
-             retry_after ASC NULLS FIRST,
-             last_heartbeat ASC NULLS FIRST
-    LIMIT 1
-    FOR UPDATE SKIP LOCKED
-),
-leased AS (
-    UPDATE feeds
-    SET worker_id = $1,
-        status = 'active'::feed_status,
-        retry_after = NULL,
-        last_heartbeat = NOW(),
-        fencing_token = fencing_token + 1
-    FROM available_feed
-    WHERE feeds.id = available_feed.id
-    RETURNING feeds.id, feeds.name, feeds.source_type,
-              feeds.last_processed_filename, feeds.fencing_token
-)
-SELECT leased.id, leased.name, leased.source_type,
-       leased.last_processed_filename, leased.fencing_token, fpi.source_feed_id
-FROM leased
-LEFT JOIN feed_properties fpi ON fpi.feed_id = leased.id
-"""
-
-_UPDATE_PROGRESS_SQL = """\
-UPDATE feeds
-SET last_processed_filename = $1,
-    last_heartbeat = NOW(),
-    failure_count = 0
-WHERE id = $2 AND worker_id = $3 AND fencing_token = $4
-"""
-
-# Heartbeat renewal deliberately does NOT check fencing_token.  The token is
-# constant for the lifetime of a lease (only incremented on acquisition), so
-# worker_id alone is sufficient here.  Adding per-feed tokens would require
-# passing parallel arrays, adding complexity with no safety benefit.
-_RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL = """\
-WITH current_state AS (
-    SELECT id, worker_id, status
-    FROM feeds WHERE id = ANY($1::uuid[])
-    FOR UPDATE
-),
-do_update AS (
-    UPDATE feeds SET last_heartbeat = NOW()
-    FROM current_state
-    WHERE feeds.id = current_state.id AND current_state.worker_id = $2
-    RETURNING feeds.id
-)
-SELECT
-    current_state.id,
-    current_state.worker_id AS current_worker,
-    current_state.status::text AS current_status,
-    (do_update.id IS NOT NULL) AS renewed
-FROM current_state
-LEFT JOIN do_update ON current_state.id = do_update.id;
-"""
-
-_RELEASE_FEED_SQL = """\
-UPDATE feeds
-SET worker_id = NULL,
-    status = 'unclaimed'::feed_status,
-    last_heartbeat = NOW()
-WHERE id = $1 AND worker_id = $2 AND fencing_token = $3
-"""
-
-_RELEASE_FEEDS_BATCH_SQL = """\
-UPDATE feeds
-SET worker_id = NULL,
-    status = 'unclaimed'::feed_status,
-    last_heartbeat = NOW()
-WHERE worker_id = $1 AND status = 'active'::feed_status
-"""
-
-_ACQUIRE_FEEDS_BATCH_SQL = """\
-WITH available_feeds AS (
-    SELECT id
-    FROM feeds
-    WHERE (
-        status = 'unclaimed'::feed_status
-        OR (status = 'failing'::feed_status AND (retry_after IS NULL OR retry_after <= NOW()))
-        OR (status = 'active'::feed_status
-            AND last_heartbeat < NOW() - $2::interval)
-    )
-    AND ($4::text[] IS NULL OR source_type = ANY($4::text[]))
-    ORDER BY (status = 'unclaimed'::feed_status) DESC,
-             retry_after ASC NULLS FIRST,
-             last_heartbeat ASC NULLS FIRST
-    LIMIT $3
-    FOR UPDATE SKIP LOCKED
-),
-leased AS (
-    UPDATE feeds
-    SET worker_id = $1,
-        status = 'active'::feed_status,
-        retry_after = NULL,
-        last_heartbeat = NOW(),
-        fencing_token = fencing_token + 1
-    FROM available_feeds
-    WHERE feeds.id = available_feeds.id
-    RETURNING feeds.id, feeds.name, feeds.source_type,
-              feeds.last_processed_filename, feeds.fencing_token
-)
-SELECT leased.id, leased.name, leased.source_type,
-       leased.last_processed_filename, leased.fencing_token, fpi.source_feed_id
-FROM leased
-LEFT JOIN feed_properties fpi ON fpi.feed_id = leased.id
-"""
-
-# NOTE: $3 = failure_threshold, $4 = fencing_token,
-#       $5 = backoff_max_sec, $6 = backoff_base_sec.
-# Backoff formula: base * 2^(failure_count), capped at max, plus 0-10s jitter.
-_REPORT_FAILURE_SQL = """\
-UPDATE feeds
-SET status = CASE WHEN failure_count + 1 >= $3
-                  THEN 'quarantined'::feed_status
-                  ELSE 'failing'::feed_status END,
-    failure_count = failure_count + 1,
-    worker_id = NULL,
-    last_heartbeat = NOW(),
-    retry_after = CASE WHEN failure_count + 1 < $3
-                       THEN NOW() + LEAST($5 * INTERVAL '1 second',
-                            $6 * INTERVAL '1 second' * POWER(2, failure_count))
-                            + (RANDOM() * INTERVAL '10 seconds')
-                       ELSE NULL END
-WHERE id = $1 AND worker_id = $2 AND fencing_token = $4
-RETURNING status::text, failure_count, retry_after
-"""
+    OPENMHZ = "openmhz"
 
 
 class LeasedFeed(TypedDict):
@@ -179,6 +52,7 @@ class LeasedFeed(TypedDict):
     name: str
     source_type: SourceType
     last_processed_filename: str | None
+    last_bookmark_time: datetime.datetime | None
     fencing_token: int
     source_feed_id: str | None
 
@@ -236,7 +110,7 @@ class FeedStore:
 
         """
         row = await self._pool.fetchrow(
-            _LEASE_FEED_SQL, worker_id, self._source_types
+            LEASE_FEED_SQL, worker_id, self._source_types
         )
         if row is None:
             return None
@@ -252,6 +126,7 @@ class FeedStore:
             name=row["name"],
             source_type=source_type,
             last_processed_filename=row["last_processed_filename"],
+            last_bookmark_time=row["last_bookmark_time"],
             fencing_token=row["fencing_token"],
             source_feed_id=row["source_feed_id"],
         )
@@ -262,6 +137,7 @@ class FeedStore:
         worker_id: uuid.UUID,
         new_gcs_path: str,
         fencing_token: int,
+        last_bookmark_time: datetime.datetime | None,
     ) -> bool:
         """
         Update the feed's bookmark and heartbeat after a successful write.
@@ -276,6 +152,7 @@ class FeedStore:
             worker_id: UUID of the worker holding the lease.
             new_gcs_path: The GCS object path of the last successfully written file.
             fencing_token: The fencing token received at lease acquisition.
+            last_bookmark_time: Timestamp bookmark for the last processed audio.
 
         Returns:
             ``True`` if the update succeeded (lease still held), ``False`` if the
@@ -283,11 +160,12 @@ class FeedStore:
 
         """
         result = await self._pool.execute(
-            _UPDATE_PROGRESS_SQL,
+            UPDATE_PROGRESS_SQL,
             new_gcs_path,
             feed_id,
             worker_id,
             fencing_token,
+            last_bookmark_time,
         )
         return result == "UPDATE 1"
 
@@ -315,7 +193,7 @@ class FeedStore:
         if not feed_ids:
             return []
         rows = await self._pool.fetch(
-            _RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
+            RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
             feed_ids,
             worker_id,
         )
@@ -337,7 +215,7 @@ class FeedStore:
         failure_threshold: int = 5,
         backoff_base_sec: int = 15,
         backoff_max_sec: int = 600,
-    ) -> bool:
+    ) -> str | None:
         """Report a feed failure with exponential backoff.
 
         Atomically increments ``failure_count``, computes ``retry_after``
@@ -360,12 +238,13 @@ class FeedStore:
             backoff_max_sec: Maximum backoff cap in seconds.
 
         Returns:
-            ``True`` if the failure was recorded, ``False`` if the lease was
+            The new feed status (``'failing'`` or ``'quarantined'``) if
+            the failure was recorded, or ``None`` if the lease was
             already lost.
 
         """
         row = await self._pool.fetchrow(
-            _REPORT_FAILURE_SQL,
+            REPORT_FAILURE_SQL,
             feed_id,
             worker_id,
             failure_threshold,
@@ -374,11 +253,12 @@ class FeedStore:
             backoff_base_sec,
         )
         if row is None:
-            return False
+            return None
 
-        if row["status"] == "quarantined":
+        status: str = row["status"]
+        if status == "quarantined":
             logger.critical(
-                "Feed quarantined",
+                "Feed failure threshold reached — status set to quarantined",
                 extra={
                     "feed_id": str(feed_id),
                     "failure_count": row["failure_count"],
@@ -393,7 +273,7 @@ class FeedStore:
                     "retry_after": str(row["retry_after"]),
                 },
             )
-        return True
+        return status
 
     async def release_feed(
         self,
@@ -422,7 +302,7 @@ class FeedStore:
 
         """
         result = await self._pool.execute(
-            _RELEASE_FEED_SQL,
+            RELEASE_FEED_SQL,
             feed_id,
             worker_id,
             fencing_token,
@@ -442,7 +322,7 @@ class FeedStore:
         Returns:
             The number of feeds released.
         """
-        result = await self._pool.execute(_RELEASE_FEEDS_BATCH_SQL, worker_id)
+        result = await self._pool.execute(RELEASE_FEEDS_BATCH_SQL, worker_id)
         if result.startswith("UPDATE "):
             return int(result.split()[1])
         return 0
@@ -470,7 +350,7 @@ class FeedStore:
         import datetime  # noqa: PLC0415
 
         rows = await self._pool.fetch(
-            _ACQUIRE_FEEDS_BATCH_SQL,
+            ACQUIRE_FEEDS_BATCH_SQL,
             worker_id,
             datetime.timedelta(seconds=abandonment_window_sec),
             limit,
@@ -490,6 +370,7 @@ class FeedStore:
                     name=row["name"],
                     source_type=source_type,
                     last_processed_filename=row["last_processed_filename"],
+                    last_bookmark_time=row["last_bookmark_time"],
                     fencing_token=row["fencing_token"],
                     source_feed_id=row["source_feed_id"],
                 )

@@ -1,3 +1,4 @@
+import concurrent.futures
 import datetime
 import unittest
 import uuid
@@ -28,6 +29,7 @@ def _make_feed(
         name=f"test-{source_type}-{feed_id}",
         source_type=source_type,
         last_processed_filename=None,
+        last_bookmark_time=None,
         fencing_token=fencing_token,
         source_feed_id=None,
     )
@@ -398,7 +400,6 @@ class TestPublishAudioChunkSync(unittest.TestCase):
         publish_args, publish_kwargs = mock_publisher.publish.call_args
         self.assertEqual(publish_args[0], "projects/test/topics/audio")
         self.assertEqual(publish_kwargs["feed_id"], "feed-42")
-        self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
         self.assertEqual(publish_kwargs["source_type"], "echo")
 
         chunk = AudioChunk()
@@ -429,52 +430,18 @@ class TestPublishAudioChunkSync(unittest.TestCase):
         publish_kwargs = mock_publisher.publish.call_args.kwargs
         self.assertNotIn("source_type", publish_kwargs)
 
-    def test_resume_on_err_callback_resumes_ordering_key(self) -> None:
-        mock_future = MagicMock()
-        mock_future.result.return_value = "msg-1"
-        _, mock_publisher = _make_pubsub_client()
-        mock_publisher.publish.return_value = mock_future
-
-        gcp_helper.publish_audio_chunk_sync(
-            mock_publisher,
-            topic_path="projects/test/topics/audio",
-            feed_id="feed-42",
-            gcs_uri="gs://bucket/audio.flac",
-            session_id="sess-1",
-            start_timestamp=datetime.datetime(
-                2026, 3, 5, 12, 0, tzinfo=datetime.UTC
-            ),
-        )
-
-        # Verify a done-callback was registered
-        mock_future.add_done_callback.assert_called_once()
-        callback = mock_future.add_done_callback.call_args[0][0]
-
-        # Simulate a failed future
-        failed_future = MagicMock()
-        failed_future.exception.return_value = Exception("publish failed")
-        callback(failed_future)
-
-        mock_publisher.resume_publish.assert_called_once_with(
-            "projects/test/topics/audio", "feed-42"
-        )
-
 
 class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
     """Test suite for the async publish_audio_chunk wrapper."""
 
-    @patch(
-        "backend.pipeline.common.gcp_helper.asyncio.to_thread",
-        new_callable=AsyncMock,
-    )
-    async def test_delegates_to_sync_via_to_thread(
-        self,
-        mock_to_thread: AsyncMock,
-    ) -> None:
-        """Async wrapper delegates to publish_audio_chunk_sync via to_thread."""
-        mock_to_thread.return_value = "message-123"
+    async def test_delegates_to_publish(self) -> None:
+        """Async wrapper directly calls publisher.publish and uses wrap_future."""
         mock_pubsub_client, mock_publisher = _make_pubsub_client()
         mock_now = datetime.datetime(2026, 3, 5, 12, 0, tzinfo=datetime.UTC)
+
+        fut = concurrent.futures.Future()
+        fut.set_result("message-123")
+        mock_publisher.publish.return_value = fut
 
         result = await gcp_helper.publish_audio_chunk(
             mock_pubsub_client,
@@ -486,52 +453,7 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result, "message-123")
-        mock_to_thread.assert_awaited_once_with(
-            gcp_helper.publish_audio_chunk_sync,
-            mock_publisher,
-            "projects/test/topics/audio",
-            "feed-42",
-            "gs://bucket/audio.flac",
-            "test-session-1",
-            mock_now,
-            None,
-        )
-
-    @patch(
-        "backend.pipeline.common.gcp_helper.asyncio.to_thread",
-        new_callable=AsyncMock,
-    )
-    async def test_returns_message_id(
-        self,
-        mock_to_thread: AsyncMock,
-    ) -> None:
-        """publish_audio_chunk returns the message ID."""
-        mock_pubsub_client, _ = _make_pubsub_client()
-        mock_to_thread.side_effect = ["message-1", "message-2"]
-
-        first = await gcp_helper.publish_audio_chunk(
-            mock_pubsub_client,
-            topic_path="projects/test/topics/audio",
-            feed_id="feed-1",
-            gcs_uri="gs://bucket/one.flac",
-            session_id="test-session-1",
-            start_timestamp=datetime.datetime(
-                2026, 3, 5, 12, 0, tzinfo=datetime.UTC
-            ),
-        )
-        second = await gcp_helper.publish_audio_chunk(
-            mock_pubsub_client,
-            topic_path="projects/test/topics/audio",
-            feed_id="feed-2",
-            gcs_uri="gs://bucket/two.flac",
-            session_id="test-session-2",
-            start_timestamp=datetime.datetime(
-                2026, 3, 5, 12, 0, tzinfo=datetime.UTC
-            ),
-        )
-
-        self.assertEqual(first, "message-1")
-        self.assertEqual(second, "message-2")
+        mock_publisher.publish.assert_called_once()
 
 
 class TestParseGcsUri(unittest.TestCase):

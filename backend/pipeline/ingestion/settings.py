@@ -77,6 +77,11 @@ class NormalizerSettings:
         default_factory=lambda: _require_env("PUBSUB_TOPIC_PATH"),
     )
 
+    # Google Cloud project ID for telemetry metric emission (None disables metrics)
+    google_cloud_project: str | None = field(
+        default_factory=lambda: os.environ.get("GOOGLE_CLOUD_PROJECT"),
+    )
+
     # Database pool
     db: AlloyDBSettings = field(default_factory=AlloyDBSettings)
 

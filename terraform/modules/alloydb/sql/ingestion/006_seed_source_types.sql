@@ -7,5 +7,6 @@
 INSERT INTO source_types (slug, description) VALUES
     ('bcfy_feeds', 'Broadcastify Icecast live streams'),
     ('bcfy_calls', 'Broadcastify API-polled call recordings'),
-    ('echo', 'Watch Duty Echo device recordings')
+    ('echo', 'Watch Duty Echo device recordings'),
+    ('openmhz', 'OpenMHZ radio system call recordings')
 ON CONFLICT (slug) DO NOTHING;

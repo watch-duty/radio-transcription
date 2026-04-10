@@ -21,6 +21,7 @@ _LEASE_ROW = {
     "name": "My Feed",
     "source_type": "bcfy_feeds",
     "last_processed_filename": None,
+    "last_bookmark_time": None,
     "fencing_token": 1,
     "source_feed_id": "123",
 }
@@ -55,6 +56,7 @@ class TestLeaseFeed(unittest.IsolatedAsyncioTestCase):
             "name": "My Feed",
             "source_type": SourceType.BCFY_FEEDS,
             "last_processed_filename": None,
+            "last_bookmark_time": None,
             "fencing_token": 1,
             "source_feed_id": "123",
         }
@@ -119,6 +121,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             "gs://bucket/path/file.ogg",
             1,
+            None,
         )
 
         self.assertTrue(result)
@@ -133,6 +136,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             "gs://bucket/path/file.ogg",
             1,
+            None,
         )
 
         self.assertFalse(result)
@@ -143,10 +147,36 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
         gcs_path = "gs://bucket/path/file.ogg"
 
-        await store.update_feed_progress(_FEED_ID, _WORKER_ID, gcs_path, 1)
+        await store.update_feed_progress(
+            _FEED_ID, _WORKER_ID, gcs_path, 1, None
+        )
 
         args = pool.execute.call_args[0]
-        self.assertEqual(args[1:], (gcs_path, _FEED_ID, _WORKER_ID, 1))
+        self.assertEqual(args[1:], (gcs_path, _FEED_ID, _WORKER_ID, 1, None))
+
+    async def test_passes_non_none_last_bookmark_time(self) -> None:
+        """Non-None last_bookmark_time is forwarded as the 5th SQL parameter."""
+        pool = _make_pool(execute_result="UPDATE 1")
+        store = FeedStore(pool)
+        gcs_path = "gs://bucket/path/file.ogg"
+        last_bookmark_time = datetime.datetime(
+            2024,
+            1,
+            2,
+            tzinfo=datetime.UTC,
+        )
+        await store.update_feed_progress(
+            _FEED_ID,
+            _WORKER_ID,
+            gcs_path,
+            1,
+            last_bookmark_time,
+        )
+        args = pool.execute.call_args[0]
+        self.assertEqual(
+            args[1:],
+            (gcs_path, _FEED_ID, _WORKER_ID, 1, last_bookmark_time),
+        )
 
 
 class TestRenewHeartbeatsBatchDiagnostic(unittest.IsolatedAsyncioTestCase):
@@ -264,8 +294,8 @@ class TestRenewHeartbeatsBatchDiagnostic(unittest.IsolatedAsyncioTestCase):
 class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.report_feed_failure."""
 
-    async def test_returns_true_when_lease_held(self) -> None:
-        """True is returned when the RETURNING row is present."""
+    async def test_returns_status_when_lease_held(self) -> None:
+        """Status string is returned when the RETURNING row is present."""
         pool = _make_pool(
             fetchrow_result={
                 "status": "failing",
@@ -277,16 +307,31 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
 
         result = await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
 
-        self.assertTrue(result)
+        self.assertEqual(result, "failing")
 
-    async def test_returns_false_when_lease_lost(self) -> None:
-        """False is returned when RETURNING yields no row."""
+    async def test_returns_none_when_lease_lost(self) -> None:
+        """None is returned when RETURNING yields no row."""
         pool = _make_pool(fetchrow_result=None)
         store = FeedStore(pool)
 
         result = await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
 
-        self.assertFalse(result)
+        self.assertIsNone(result)
+
+    async def test_returns_quarantined_status(self) -> None:
+        """Quarantined status string is returned at threshold."""
+        pool = _make_pool(
+            fetchrow_result={
+                "status": "quarantined",
+                "failure_count": 5,
+                "retry_after": None,
+            },
+        )
+        store = FeedStore(pool)
+
+        result = await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
+
+        self.assertEqual(result, "quarantined")
 
     async def test_passes_correct_parameters(self) -> None:
         """Parameters are passed in the correct order to the atomic SQL."""
@@ -355,6 +400,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
                 "name": "Feed A",
                 "source_type": "bcfy_feeds",
                 "last_processed_filename": None,
+                "last_bookmark_time": None,
                 "fencing_token": 1,
                 "source_feed_id": "123",
             },
@@ -363,6 +409,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
                 "name": "Feed B",
                 "source_type": "bcfy_feeds",
                 "last_processed_filename": "gs://bucket/path",
+                "last_bookmark_time": None,
                 "fencing_token": 1,
                 "source_feed_id": None,
             },
