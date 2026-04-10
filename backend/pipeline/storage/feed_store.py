@@ -433,7 +433,6 @@ class FeedStore:
         Atomically creates a new feed in the `feeds` table and its corresponding
         properties in the `feed_properties` table.
         """
-
         if not source_feed_id:
             msg = "source_feed_id cannot be empty"
             raise ValueError(msg)
