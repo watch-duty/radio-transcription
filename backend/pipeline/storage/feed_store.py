@@ -23,7 +23,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-
 class SourceType(enum.StrEnum):
     """Supported audio source types.
 
