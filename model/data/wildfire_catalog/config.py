@@ -104,6 +104,22 @@ FIRE_RELEVANT_TAGS = frozenset({
     "Emergency Ops",
 })
 
+# Same tags by numeric ID (from GET /common/v1/tags). Lets us filter
+# bcfy_calls groups by the `tagId` field without string matching.
+FIRE_RELEVANT_TAG_IDS = frozenset({
+    1,   # Multi-Dispatch
+    3,   # Fire Dispatch  (highest-priority fire)
+    4,   # EMS Dispatch
+    6,   # Multi-Tac
+    8,   # Fire-Tac       (highest-priority fire)
+    9,   # EMS-Tac
+    11,  # Interop
+    22,  # Multi-Talk
+    24,  # Fire-Talk
+    25,  # EMS-Talk
+    29,  # Emergency Ops
+})
+
 # ── State wildfire risk heuristic (fallback when FEMA NRI unavailable)
 HIGH_RISK_STATES = frozenset({
     "CA", "OR", "WA", "CO", "MT", "ID", "AZ", "NM",

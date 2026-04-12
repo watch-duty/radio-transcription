@@ -60,3 +60,14 @@ def bcfy_get(url, rate_limiter, params=None):
     if resp.status_code == 204:
         return []
     return resp.json()
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
+def bcfy_post(url, rate_limiter, data=None):
+    rate_limiter.wait()
+    headers = get_auth_headers()
+    resp = requests.post(url, headers=headers, data=data or {}, timeout=_TIMEOUT)
+    resp.raise_for_status()
+    if resp.status_code == 204:
+        return []
+    return resp.json()

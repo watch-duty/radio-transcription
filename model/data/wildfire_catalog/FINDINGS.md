@@ -9,13 +9,14 @@
 
 | Finding | Decision enabled |
 |---|---|
-| **Ecosystem ceiling: 8,688 fire-relevant feeds** across 3 of 4 planned sources | The original 10K headline is unreachable from supply alone — max realistic is ~8.4K |
-| **863 Tier 1 feeds** (high-confidence wildfire-relevant) | Tier 1 alone is a deployable starting set with no post-filtering |
-| **`bcfy_calls` is 0 enumerable** | Cannot ship a bcfy_calls catalog without new API work — the bcfy_calls target needs revision |
-| **Echo ceiling: 718 channels across 23 devices** | 1,400-echo target is **infeasible** — need ~2× more physical Echo devices first |
-| **OpenMHZ unit = 1 system = 1 WebSocket** | Feed bookkeeping, VM sizing, and Cloudflare surface all scale with system count, not anything finer |
+| **All four sources enumerable.** 16,790 fire-relevant feeds discovered across bcfy_feeds, openmhz, bcfy_calls, echo | 10K headline is now **achievable** with a realistic source mix |
+| **2,026 Tier 1 feeds** (high-confidence wildfire-relevant) | Tier 1 alone is a deployable starting set with no post-filtering |
+| **`bcfy_calls` catalog endpoints now in use** — `POST /calls/v1/groups_ctid/{ctid}` + `GET /calls/v1/playlists_public` | Catalog coverage for bcfy_calls is no longer a blocker (was the big gap previously) |
+| **Echo ceiling: 718 channels across 23 devices** | 1,400-echo target is infeasible — need ~2× more physical Echo devices first |
+| **OpenMHZ unit = 1 system = 1 WebSocket** | Feed bookkeeping, VM sizing, and Cloudflare surface all scale with system count |
+| **bcfy_calls unit = 1 groupId = 1 polling loop** (every 10s per feed) | 3,500 bcfy_calls feeds = **350 polls/sec aggregate**. This is a non-trivial per-endpoint load on Broadcastify — worth flagging to them before scale-up. |
 | **Duty cycle varies 0.14/sec (echo) to 400/sec (bcfy_feeds)** | GCS and AlloyDB sizing must be per-source, not flat — current pipeline has no batching |
-| **86% of Tier 1 sits in 15 wildfire-prone states** | Regional sharding is trivial |
+| **88% of Tier 1 sits in 15 wildfire-prone states** | Regional sharding is trivial |
 
 ---
 
@@ -39,15 +40,17 @@ ORDER BY total DESC;
 
 ### Ecosystem ceiling (from this catalog)
 
-The unit in every row below is a **feed record** as it will land in the `feeds` table — one bcfy_feeds Icecast stream, one OpenMHZ system, or one Echo channel. Tier is assigned by the best-scoring audio source within that feed.
+Each source has a natural unit at the collector layer — bcfy_feeds = 1 Icecast stream, openmhz = 1 system (one WebSocket carries all of a system's calls), bcfy_calls = 1 groupId (one polling loop per groupId), echo = 1 device-channel. Tier is assigned by the best-scoring content within that feed.
 
 | Source | Ecosystem total | Fire-relevant | Tier 1 | Tier 1+2 | Collector status |
 |---|---:|---:|---:|---:|---|
 | bcfy_feeds | 7,582 streams | 7,582 | 590 | 4,757 | ✅ Icecast collector shipped |
 | openmhz | 461 systems (333 active) | 388 systems | 100 | 381 | ✅ WebSocket collector shipped |
-| bcfy_calls | **0 enumerable** | 0 | 0 | 0 | ⚠ Polling-only collector exists; no catalog API |
+| bcfy_calls | 8,102 groups (across 234 RR systems) | 8,102 | 1,171 | 6,335 | ✅ Polling collector shipped |
 | echo | 23 devices / 718 channels | 718 | 173 | 554 | ✅ Cloud Function shipped |
-| **Total** | 8,761 | 8,688 | **863** | **5,692** | |
+| **Total** | 16,863 | 16,790 | **2,034** | **12,027** | |
+
+The Tier 1 total of 2,034 above is per-source sums; when the same radio channel appears on more than one source (canonical_id match on `rr:{sid}:{tg}`), the **unique** Tier 1 count is **2,026** — a handful of bcfy_calls ↔ openmhz cross-platform duplicates.
 
 ---
 
@@ -68,13 +71,12 @@ Evidence from production code:
 | Metric | Value at proposed 75-system deployment |
 |---|---|
 | Active WebSocket connections | **75** (one per feed) |
-| File descriptors per VM (250 feeds/VM) | 75 if all OpenMHZ on one VM; typically mixed across VMs |
 | Cloudflare surface | 75 concurrent long-lived TLS sessions with Chrome fingerprint |
 | Reconnect stampede risk | Per-connection exponential backoff at `collector.py:197-200`, **no cross-connection jitter** — all workers reconnect on the same schedule after a transient outage |
 
 ### Within each system: the real bottleneck
 
-Each WebSocket delivers the system's full call firehose. Per call, the worker sequentially: downloads the m4a (`collector.py:139-142`, 30s timeout), converts to FLAC via `asyncio.to_thread` (`collector.py:146-148`, one at a time), uploads to GCS, publishes to Pub/Sub. A busy urban system firing 50+ calls/min saturates that pipeline on CPU/IO, not on network. This is the constraint that drives per-VM feed density, not WebSocket count.
+Each WebSocket delivers the system's full call firehose. Per call, the worker sequentially: downloads the m4a (`collector.py:139-142`, 30s timeout), converts to FLAC via `asyncio.to_thread` (`collector.py:146-148`, one at a time), uploads to GCS, publishes to Pub/Sub. A busy urban system firing 50+ calls/min saturates that pipeline on CPU/IO, not on network. This is the constraint that drives per-VM feed density.
 
 ### Known behaviors to validate before scaling
 
@@ -94,36 +96,44 @@ Settings that drive the load model:
 | GCS write per chunk | **1 PUT, no batching** | `normalizer_runtime.py:352` (`upload_staged_audio`) |
 | Pub/Sub per chunk | **1 publish, no batching** | `normalizer_runtime.py:371` (`publish_audio_chunk`) |
 | bcfy_feeds chunk duration | **15 sec fixed segments** | `icecast_collector.py:307` (`-segment_time 15`) |
-| bcfy_calls chunk | **1 chunk per call (variable)** | `bcfy_calls_collector.py` |
-| openmhz chunk | **1 chunk per call (variable)** | `openmhz/collector.py` |
-| echo chunk | **1 chunk per whole MP3 (hourly)** | `echo/main.py` |
+| bcfy_calls chunk | **1 chunk per call** (variable duration) | `bcfy_calls_collector.py` |
+| bcfy_calls poll interval | **10 sec per feed** | `bcfy_calls_collector.py:26` (`_POLL_INTERVAL_SEC = 10.0`) |
+| openmhz chunk | **1 chunk per call** (variable duration) | `openmhz/collector.py` |
+| echo chunk | **1 chunk per whole MP3** (hourly uploads) | `echo/main.py` |
 | Max feeds per VM worker | **250 (asyncio concurrent)** | `settings.py:45` (`MAX_FEEDS_PER_WORKER`) |
 
-### Aggregate rates at the proposed mix
-
-Duty cycle estimates anchored in the code behavior above; echo rate is **measured from the live S3 bucket** (files arrive hourly, one per channel):
+### Aggregate rates at the proposed 10K mix
 
 | Source | Count | Connections | Duty cycle | Chunk cadence | Chunks/sec (agg) |
 |---|---:|---:|---|---|---:|
 | bcfy_feeds | 6,000 | 6,000 TCP streams | ~100% (silence counts) | 1 chunk / 15s / feed | **400** |
-| openmhz | 75 systems | 75 WS | per-system varies; each system fires ~5–15% of the day on active calls | 1 chunk / call, ~10s avg | **18–52** |
-| echo | 500 channels | 0 (Eventarc/Cloud Function) | — (1 MP3/hour ≠ chunk/sec duty cycle) | 1 chunk / MP3 | **~0.14** |
-| bcfy_calls | 0 | — | — | — | — |
-| **Total** | **6,575** | **6,075** | | | **~418–452** |
+| openmhz | 75 systems | 75 WS | per-system varies; each fires ~5–15% of the day on active calls | 1 chunk / call, ~10s avg | **18–52** |
+| bcfy_calls | 3,500 groups | 3,500 polling loops @ 10s interval | 5–15% (transmission-triggered) | 1 chunk / call, ~10s avg | **18–52** |
+| echo | 500 channels | 0 (Eventarc/Cloud Function) | — (1 MP3/hour) | 1 chunk / MP3 | **~0.14** |
+| **Total** | **10,075** | **6,075 persistent + 3,500 pollers** | | | **~436–504** |
 
 **Math (for verifiability):**
 - bcfy_feeds: 6,000 / 15 = 400 chunks/sec
-- openmhz: 75 systems × ~0.25–0.7 fire-relevant calls/sec per system = 18–52 calls/sec aggregate. Per-system rate varies widely (rural systems fire <1 call/min, busy urban systems 50+ calls/min). Validate against prod telemetry (see §7).
-- echo: 500 channels / 3,600s per hour = 0.14 chunks/sec *(verified: samples from `s3://echo-recordings/ca_chico/20260410/`, `az_flagstaff/`, `wa_cathlamet/` all show one file per channel per hour)*
+- openmhz: 75 systems × ~0.25–0.7 fire-relevant calls/sec per system = 18–52 chunks/sec
+- bcfy_calls: 3,500 groups × ~0.005–0.015 calls/sec per group = 18–52 chunks/sec *(similar-shape load to openmhz in aggregate)*
+- echo: 500 channels / 3,600s per hour = 0.14 chunks/sec *(verified from live S3 listings)*
+
+### Broadcastify API polling load — a new concern
+
+At 3,500 bcfy_calls feeds polling every 10 seconds (`_POLL_INTERVAL_SEC = 10.0`), aggregate poll rate is **350 requests/sec to Broadcastify's `/calls/v1/live/` endpoint**. This is orders of magnitude above the 2 QPS catalog-build rate limit and is sustained, not bursty. Before ramping past a few hundred bcfy_calls feeds we should:
+
+1. Confirm acceptable-use with Broadcastify (their docs don't publish an explicit per-partner rate limit).
+2. Consider increasing `_POLL_INTERVAL_SEC` — doubling to 20s halves load to 175/sec while adding ≤20s latency.
+3. Monitor for 429 responses in prod; the existing retry logic handles transient 429s but sustained 429s would degrade ingestion.
 
 ### Where the prior brief was off
 
-The original 10K plan assumed uniform 60% duty cycle across all 10K feeds → 333 chunks/sec and ~$2,628/month GCS. Two corrections:
+Previous iterations of this brief assumed uniform 60% duty cycle across a hypothetical 10K deployment → 333 chunks/sec. Two corrections stand:
 
 1. **bcfy_feeds is always 100% duty cycle** because ffmpeg emits a 15s segment whether or not there's voice. You can't save GCS operations by reducing duty cycle on bcfy_feeds — the 400 chunks/sec baseline is fixed by segment_time.
-2. **echo is not 10–30% of a 15s-chunk duty cycle** — it's hourly uploads that each become a single, much-longer FLAC chunk. Real contribution to chunks/sec is ~0.14, not 5–15.
+2. **echo is not 10–30% of a 15s-chunk duty cycle** — it's hourly uploads that each become a single long FLAC chunk. Real contribution to chunks/sec is ~0.14, not 5–15.
 
-Net: at the revised mix of **6,575 feeds**, real chunks/sec ≈ **418–452** (the original plan's 333 was for a hypothetical 10K-feed deployment; the supply-side constraints in §5 bring the realistic count down).
+Net at the realistic 10,075-feed mix: **~436–504 chunks/sec**, dominated by bcfy_feeds.
 
 ---
 
@@ -135,17 +145,17 @@ At current no-batching runtime:
 
 | Rate | Monthly PUTs | Cost @ $0.005/1K ops |
 |---|---:|---:|
-| 418/sec (low) | 1.08 B | **~$5,400/month** |
-| 452/sec (high) | 1.17 B | **~$5,900/month** |
+| 436/sec (low) | 1.13 B | **~$5,650/month** |
+| 504/sec (high) | 1.31 B | **~$6,530/month** |
 
 If we add **2:1 batching** (group 2 chunks per upload — not currently implemented):
 
 | Rate | Monthly PUTs | Cost @ $0.005/1K ops |
 |---|---:|---:|
-| 209/sec (low) | 0.54 B | **~$2,700/month** |
-| 226/sec (high) | 0.59 B | **~$2,950/month** |
+| 218/sec (low) | 0.57 B | **~$2,830/month** |
+| 252/sec (high) | 0.65 B | **~$3,270/month** |
 
-Batching adds ~15s latency to audio arrival in Pub/Sub — acceptable for our transcription SLA but **not free**: the runtime needs a small rewrite (batch-write then Pub/Sub publish). Worth ~$2,700/month if the math holds.
+Batching adds ~15s latency to audio arrival in Pub/Sub — acceptable for our transcription SLA but not free: the runtime needs a small rewrite (batch-write then Pub/Sub publish). Worth ~$2,800/month if the math holds.
 
 > Pricing assumption: Google Cloud Storage Class A operations at US multi-region Standard tier, $0.005 per 1,000 operations. Substitute negotiated rate if different.
 
@@ -153,19 +163,19 @@ Batching adds ~15s latency to audio arrival in Pub/Sub — acceptable for our tr
 
 Heartbeats are fixed by the 15s timer, regardless of duty cycle:
 
-| Component | Rate at 6,575 feeds |
+| Component | Rate at 10,075 feeds |
 |---|---:|
-| Heartbeat floor (6,575 feeds / 15s) | **438/sec** |
-| Bookmark writes (= chunks/sec) | 418–452/sec |
-| **Total writes/sec** | **~856–890/sec** |
+| Heartbeat floor (10,075 / 15s) | **672/sec** |
+| Bookmark writes (= chunks/sec) | 436–504/sec |
+| **Total writes/sec** | **~1,108–1,176/sec** |
 
-The original 10K plan projected 1,200/sec AlloyDB writes. At the revised 6,575-feed mix we're 300+/sec under that projection. The 2 vCPU AlloyDB instance very likely remains sufficient — **do not provision the vCPU upgrade without re-running the sizing test**.
+Within the 1,200/sec original projection. Current 2 vCPU AlloyDB *may* be sufficient — **do not provision the vCPU upgrade without re-running the sizing test** (see §7 duty-cycle validation query).
 
 ### Network bandwidth
 
 bcfy_feeds dominates ingress (continuous MP3):
 - 6,000 feeds × 16 kbps = **96 Mbps sustained**
-- openmhz + echo intermittent, negligible average
+- openmhz + bcfy_calls + echo: intermittent, each well under 10 Mbps average
 
 Well under any reasonable egress tier.
 
@@ -173,38 +183,46 @@ Well under any reasonable egress tier.
 
 ## 5. The 10K plan, revised
 
-| Original target | Available | Realistic | Delta |
+With `bcfy_calls` enumeration now working, the original 10K headline is **achievable from current ecosystem supply**:
+
+| Original target | Ecosystem available | Proposed | Delta |
 |---|---|---|---|
 | 5,000 bcfy_feeds | 7,582 streams | **6,000** ✅ | +1,000 |
-| 3,500 bcfy_calls | **0 enumerable** | **0** ❌ | −3,500 (blocker) |
-| 75 openmhz systems | 333 active | **75** ✅ (all Tier 1 systems + highest-duty Tier 2) | on target |
+| 3,500 bcfy_calls | 8,102 fire-relevant groups | **3,500** ✅ (all 1,171 Tier 1 + 2,329 Tier 2) | on target |
+| 75 openmhz systems | 461 systems (333 active) | **75** ✅ (all 100 Tier 1 systems narrowed to top 75) | on target |
 | 1,400 echo | 718 channels | **500** (all Tier 1+2) ⚠ | −900 (HW-bound) |
-| **Total: 10,000** | | **Total: 6,575** | 10K headline unreachable from current supply |
+| **Total: 10,000** | | **Total: 10,075** ✅ | — |
 
-**The 10K headline number does not survive contact with the supply side.** With `bcfy_calls` blocked and Echo hardware-bound, max realistic deployment is ~6.5K feeds from today's ecosystem. To close the gap to 10K leadership would need to either (a) unblock `bcfy_calls` enumeration, (b) expand Echo hardware deployment, or (c) accept the 6.5K figure as the real target. Option (c) still delivers the full Tier 1 set (863 feeds) and wide geographic coverage of wildfire-prone states.
+### Why we can't quite hit 1,400 echo
+
+The Echo fleet physically has 718 channels across 23 devices today. Expanding requires either deploying new Echo devices (partner/hardware work, outside eng) or removing a channel here in exchange for two there (no real benefit). The practical ceiling for echo is 718; any number above that is speculative. 500 is Tier 1+2 and matches what we can validate today.
+
+To actually reach 1,400 echo someday, that's a hardware roadmap question — can surface to Product if they want to push for it.
 
 ---
 
 ## 6. Geographic coverage (Tier 1)
 
-Tier 1 feed counts per state, counted at the feed-record level (bcfy_feeds + openmhz systems + echo channels):
+Tier 1 feed counts per state, counted at the feed-record level across all four sources:
 
-| State | Tier 1 total | bcfy_feeds | openmhz systems | echo |
-|---|---:|---:|---:|---:|
-| CA | 288 | 227 | 15 | 46 |
-| WA | 80 | 14 | 7 | 59 |
-| TX | 76 | 62 | 14 | 0 |
-| OR | 66 | 26 | 7 | 33 |
-| AZ | 52 | 17 | 5 | 30 |
-| CO | 41 | 21 | 20 | 0 |
-| FL | 38 | 34 | 4 | 0 |
-| OK | 33 | 30 | 3 | 0 |
-| SC | 16 | 14 | 2 | 0 |
-| NC | 16 | 13 | 3 | 0 |
+| State | Tier 1 total | bcfy_feeds | openmhz systems | bcfy_calls | echo |
+|---|---:|---:|---:|---:|---:|
+| CA | 545 | 227 | 15 | 257 | 46 |
+| TX | 535 | 62 | 14 | 459 | 0 |
+| FL | 198 | 34 | 4 | 160 | 0 |
+| CO | 94 | 21 | 20 | 53 | 0 |
+| WA | 93 | 14 | 7 | 13 | 59 |
+| OK | 92 | 30 | 3 | 59 | 0 |
+| OR | 75 | 26 | 7 | 9 | 33 |
+| AZ | 62 | 17 | 5 | 10 | 30 |
+| KS | 49 | 12 | 1 | 36 | 0 |
+| SC | 44 | 14 | 2 | 28 | 0 |
 
-**Geographic concentration.** Using the 15 wildfire-prone states (CA, OR, WA, CO, MT, ID, AZ, NM, NV, UT, TX, FL, GA, SC, NC) as the sharding boundary, those states capture the large majority of Tier 1 feeds. Regional sharding is straightforward.
+**Geographic concentration.** 88% (1,777/2,026) of Tier 1 feeds fall within the 15 wildfire-prone states (CA, OR, WA, CO, MT, ID, AZ, NM, NV, UT, TX, FL, GA, SC, NC). Regional sharding of the ingestion pipeline is straightforward.
 
-**Heuristic-to-data win.** Oklahoma and Mississippi both scored 0 Tier 1 under the earlier binary "15 high-risk states = 0.8, everything else = 0.3" heuristic. With USDA WRC county-level data wired up, OK has 33 Tier 1 feeds — still modest, but meaningfully non-zero. This confirms the prior concern about heuristic coarseness was warranted.
+**Source complementarity.** Most states draw Tier 1 volume from ≥2 sources, which validates the multi-source strategy — no single source dominates everywhere. CA and TX stand out: CA has strong contribution from all four sources; TX is bcfy_calls-heavy due to the Alamo Area Regional Radio System (AARRS) and similar P25 statewide systems with rich fire-tagged talkgroups.
+
+**Heuristic-to-data win.** Oklahoma scored 0 Tier 1 under the earlier binary "15 high-risk states = 0.8, everything else = 0.3" heuristic. With USDA WRC county-level data wired up, OK has 92 Tier 1 feeds — confirming the prior concern about heuristic coarseness.
 
 ---
 
@@ -217,10 +235,11 @@ Tier 1 feed counts per state, counted at the feed-record level (bcfy_feeds + ope
    - **Action:** run 50-100 representative feeds on one n2-standard-4 for 24h, measure RSS growth. Single highest-value data point missing.
    - **Effort:** 2–3 days
 
-2. **`bcfy_calls` enumeration**
-   - No working catalog endpoint in Broadcastify Calls API (verified exhaustively — only `/calls/v1/live/` polling and `/calls/v1/group_get/{groupId}` detail work)
-   - **Options:** (a) ask Broadcastify for an endpoint, (b) scrape broadcastify.com/calls/ web UI, (c) buy RadioReference export
-   - **Recommendation:** drop from the 6.5K plan; pursue (c) on a separate track to reopen the path to 10K
+2. **Broadcastify `/calls/v1/live/` polling-rate acceptable-use**
+   - At 3,500 bcfy_calls feeds with `_POLL_INTERVAL_SEC=10`, aggregate poll rate = 350/sec sustained
+   - No published per-partner rate limit in Broadcastify docs
+   - **Action:** confirm with Broadcastify support before scaling past ~500 bcfy_calls feeds. If 350/sec is too high, bump `_POLL_INTERVAL_SEC` to 20s (halves load, adds 10s latency).
+   - **Effort:** 1 email + config change
 
 ### Important (refines sizing)
 
@@ -245,7 +264,7 @@ Tier 1 feed counts per state, counted at the feed-record level (bcfy_feeds + ope
 ### Out of eng control
 
 5. **Echo device hardware expansion**
-   - 1,400-echo target in the 10K plan requires ~2× more Echo devices deployed
+   - 1,400-echo target requires ~2× more Echo devices deployed
    - Catalog can't manufacture devices — partner/hardware work
    - Realistic target with current hardware: 500 channels
 
@@ -253,8 +272,8 @@ Tier 1 feed counts per state, counted at the feed-record level (bcfy_feeds + ope
 
 ## 8. What's shippable today
 
-- **863 Tier 1 feeds** ready for enablement: 590 bcfy_feeds + 100 openmhz systems + 173 echo channels, all scored with priority, agency tier, and geographic risk
-- **5,692 Tier 1+2 feeds** in the admin review CSV for broader selection
+- **2,026 unique Tier 1 feeds** ready for enablement: 590 bcfy_feeds + 100 openmhz systems + 1,171 bcfy_calls groups + 173 echo channels, all scored with priority, agency tier, and geographic risk
+- **12,027 Tier 1+2 feeds** in the admin review CSV for broader selection
 - **Per-county wildfire risk from USDA WRC** (3,143 counties, 0–1 percentile)
 - **Cached raw API responses** — re-runs complete in seconds
 - **Classification log (JSONL)** — every feed's matched keywords + scoring rationale, one JSON line per entry
@@ -270,13 +289,13 @@ Build tool is idempotent and cache-backed: the team can iterate on scoring/filte
 | 1 | Run memory-per-feed benchmark (50–100 feeds, 24h) | Infra | This week |
 | 2 | Query prod `feeds` table, validate current mix vs. plan | Data/Ingestion | This week |
 | 3 | Run the duty cycle validation SQL above | Data/Ingestion | This week |
-| 4 | Decide `bcfy_calls` fate (drop / ask / buy RadioReference) | Leadership | Next sprint |
+| 4 | Confirm `/calls/v1/live/` polling rate with Broadcastify | Ingestion | This week |
 | 5 | Add jittered reconnect to OpenMHZ collector before scaling to 75 concurrent systems | Ingestion | Next sprint |
 | 6 | Admins flag `admin_selected=true` in Tier 1 CSV | Ops | Rolling |
 
 ---
 
-## Appendix A — Code citations (for the curious)
+## Appendix A — Code + API citations (for the curious)
 
 All cited with repo-relative paths + line numbers, verified 2026-04-11:
 
@@ -287,6 +306,7 @@ All cited with repo-relative paths + line numbers, verified 2026-04-11:
 | OpenMHZ collector strips feed ID to short_name | `backend/pipeline/ingestion/collectors/openmhz/collector.py` | 119 |
 | OpenMHZ sequential download + conversion | `backend/pipeline/ingestion/collectors/openmhz/collector.py` | 139–148 |
 | OpenMHZ per-connection backoff (no cross jitter) | `backend/pipeline/ingestion/collectors/openmhz/collector.py` | 197–200 |
+| bcfy_calls poll interval = 10s | `backend/pipeline/ingestion/collectors/bcfy_calls/bcfy_calls_collector.py` | 26 |
 | Heartbeat interval 15s default | `backend/pipeline/ingestion/settings.py` | 55 |
 | Max feeds per VM worker = 250 | `backend/pipeline/ingestion/settings.py` | 45 |
 | Bookmark write on every chunk | `backend/pipeline/ingestion/normalizer_runtime.py` | 386 |
@@ -294,6 +314,18 @@ All cited with repo-relative paths + line numbers, verified 2026-04-11:
 | Pub/Sub publish per chunk | `backend/pipeline/ingestion/normalizer_runtime.py` | 371 |
 | ffmpeg segment time = 15s | `backend/pipeline/ingestion/collectors/icecast_collector.py` | 307 |
 | Chunk duration constant | `backend/pipeline/common/constants.py` | 4 |
+
+### Broadcastify Calls catalog endpoints used
+
+| Purpose | Method + Path | Rate-limited to |
+|---|---|---|
+| State list | `GET /common/v1/states/1` | 2 QPS (catalog build only) |
+| Counties per state | `GET /common/v1/counties/{stid}` | 2 QPS |
+| Service tag definitions (1=Multi-Dispatch, 3=Fire Dispatch, 8=Fire-Tac, …) | `GET /common/v1/tags` | 2 QPS |
+| Public playlists (human-curated) | `GET /calls/v1/playlists_public` | 2 QPS |
+| Playlist detail with group list | `GET /calls/v1/playlist_get/{uuid}` | 2 QPS |
+| **Groups captured in county** | `POST /calls/v1/groups_ctid/{ctid}` | 2 QPS |
+| Group detail (one group) | `GET /calls/v1/group_get/{groupId}` | 2 QPS (not used in bulk catalog build) |
 
 ## Appendix B — Running the catalog
 
@@ -304,7 +336,7 @@ export BCFY_API_KEY=$(gcloud secrets versions access latest --secret=broadcastif
 export BROADCASTIFY_API_KEY_ID=$(gcloud secrets versions access latest --secret=broadcastify-api-key-id-prod)
 export BROADCASTIFY_APP_ID=$(gcloud secrets versions access latest --secret=broadcastify-api-app-id-prod)
 
-./.venv/bin/python run_catalog.py --skip-bcfy-calls --output-dir ./output
+./.venv/bin/python run_catalog.py --output-dir ./output
 ```
 
-Full run: ~15 minutes uncached, seconds with warm cache.
+Full run: ~35 minutes uncached (dominated by the 3,275-county bcfy_calls crawl at 2 QPS), seconds with warm cache.
