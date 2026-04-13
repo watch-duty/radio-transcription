@@ -6,8 +6,6 @@ import unittest
 import uuid
 from unittest import mock
 
-import base64
-
 import asyncpg.exceptions
 
 from backend.pipeline.common.exceptions import AlreadyExistsError

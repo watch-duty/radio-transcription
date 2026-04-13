@@ -13,7 +13,6 @@ from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
 from backend.pipeline.storage.transcript_store import PaginatedTranscripts
 from backend.services.transcripts.main import app
 from backend.services.transcripts.service import TranscriptService
-from backend.pipeline.storage.transcript_store import PaginatedTranscripts
 
 _TRANSMISSION_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 _FEED_ID = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
