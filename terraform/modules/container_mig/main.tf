@@ -48,7 +48,9 @@ resource "google_compute_instance_template" "this" {
 
   network_interface {
     subnetwork = var.subnetwork_id
-    # No access_config block = no external IP. Cloud NAT handles outbound.
+    access_config {
+      network_tier = "PREMIUM"
+    }
   }
 
   service_account {
