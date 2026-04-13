@@ -134,7 +134,9 @@ class TestTranscriptsAPI(unittest.TestCase):
     def test_list_transcripts_success(self) -> None:
         """Test listing all transcripts."""
         mock_msg = _make_transcript_msg()
-        self.mock_store.list_transcripts.return_value = PaginatedTranscripts([mock_msg], None)
+        self.mock_store.list_transcripts.return_value = PaginatedTranscripts(
+            [mock_msg], None
+        )
 
         response = self.client.get("/v1/transcripts")
 
@@ -142,12 +144,16 @@ class TestTranscriptsAPI(unittest.TestCase):
         data = response.json()
         self.assertIn("transcripts", data)
         self.assertEqual(len(data["transcripts"]), 1)
-        self.assertEqual(data["transcripts"][0]["transmission_id"], _TRANSMISSION_ID)
+        self.assertEqual(
+            data["transcripts"][0]["transmission_id"], _TRANSMISSION_ID
+        )
 
     def test_list_transcripts_by_feed_id(self) -> None:
         """Test listing transcripts filtered by feed ID."""
         mock_msg = _make_transcript_msg()
-        self.mock_store.list_transcripts_by_feed_id.return_value = PaginatedTranscripts([mock_msg], None)
+        self.mock_store.list_transcripts_by_feed_id.return_value = (
+            PaginatedTranscripts([mock_msg], None)
+        )
 
         response = self.client.get(f"/v1/transcripts?feed_id={_FEED_ID}")
 
