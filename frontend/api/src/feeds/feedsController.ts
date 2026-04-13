@@ -1,4 +1,4 @@
-import type { Feed, FeedCreate, SourceType } from '@transcription/shared';
+import type { Feed, FeedCreate, SourceType } from '@transcription/common';
 import { GoogleAuth } from 'google-auth-library';
 import {
   Body,

@@ -794,6 +794,9 @@
   dependencies:
     "@babel/runtime" "^7.12.5"
 
+"@transcription/common@file:../common":
+  version "1.0.0"
+
 "@trivago/prettier-plugin-sort-imports@^6.0.2":
   version "6.0.2"
   resolved "https://registry.yarnpkg.com/@trivago/prettier-plugin-sort-imports/-/prettier-plugin-sort-imports-6.0.2.tgz#b30948c4d22a84f00ae9133bcabd0603de3c0261"
@@ -1050,9 +1053,6 @@
     "@vitest/pretty-format" "4.1.4"
     convert-source-map "^2.0.0"
     tinyrainbow "^3.1.0"
-
-"@transcription/shared@file:../shared":
-  version "1.0.0"
 
 acorn-jsx@^5.3.2:
   version "5.3.2"

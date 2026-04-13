@@ -1,7 +1,7 @@
 import type {
   ListTranscriptsResponse,
   Transcript,
-} from '@transcription/shared';
+} from '@transcription/common';
 import { GoogleAuth } from 'google-auth-library';
 import {
   Controller,

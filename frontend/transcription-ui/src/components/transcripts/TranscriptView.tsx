@@ -11,7 +11,7 @@ import ListItem from '@mui/material/ListItem';
 import Paper from '@mui/material/Paper';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
-import type { Transcript } from '@transcription/shared';
+import type { Transcript } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { listTranscripts } from '../../service/listTranscripts';

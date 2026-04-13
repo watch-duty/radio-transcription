@@ -5,7 +5,7 @@ import type {
   RuleCreate,
   RuleUpdate,
   ScopeLevel,
-} from '@transcription/shared';
+} from '@transcription/common';
 import { GoogleAuth } from 'google-auth-library';
 import {
   Body,
