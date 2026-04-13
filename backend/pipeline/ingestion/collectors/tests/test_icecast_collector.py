@@ -8,7 +8,7 @@ from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
-from backend.pipeline.ingestion.collectors import icecast_collector
+from backend.pipeline.ingestion.collectors.icecast import icecast_collector
 from backend.pipeline.ingestion.models import CapturedChunk
 from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 
@@ -172,7 +172,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             p.stop()
 
     @patch(
-        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_normal_capture_yields_flac_segments(
@@ -204,7 +204,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             self.assertIsInstance(chunk, bytes)
 
     @patch(
-        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_shutdown_signal_stops_capture(
@@ -296,7 +296,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.assertIn("missing source_feed_id", str(context.exception))
 
     @patch(
-        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_ffmpeg_normal_exit_code_zero(
@@ -322,7 +322,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(len(chunks), 1)
 
     @patch(
-        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_ffmpeg_error_exit_code_includes_stderr(
@@ -352,7 +352,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.assertIn("stderr tail:", str(context.exception))
 
     @patch(
-        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_ffmpeg_error_exit_code_no_stderr(
@@ -378,7 +378,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.assertIn("(no stderr captured)", str(context.exception))
 
     @patch(
-        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_cleanup_process_on_exception(
@@ -403,11 +403,11 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         # Cleanup runs in finally; the key behavior is that the error is propagated.
 
     @patch(
-        "backend.pipeline.ingestion.collectors.icecast_collector.READ_TIMEOUT_SEC",
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector.READ_TIMEOUT_SEC",
         0.1,
     )
     @patch(
-        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_read_timeout_includes_stderr(
@@ -434,7 +434,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Connection timed out", str(context.exception))
 
     @patch(
-        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_yields_multiple_segments_from_continuous_stream(
@@ -468,10 +468,10 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(b"FLAC_SEGMENT" in chunk or b"FLAC" in chunk)
 
     @patch(
-        "backend.pipeline.ingestion.collectors.icecast_collector._now_utc",
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc",
     )
     @patch(
-        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_timestamps_advance_by_chunk_duration(
@@ -527,10 +527,10 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             )
 
     @patch(
-        "backend.pipeline.ingestion.collectors.icecast_collector._now_utc",
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc",
     )
     @patch(
-        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_last_chunk_end_time_clamped_to_current_time(
@@ -573,7 +573,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results[0].chunk_end_time, clamp_time)
 
     @patch(
-        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_session_id_set_and_consistent_across_chunks(

@@ -16,7 +16,7 @@ from testcontainers.postgres import PostgresContainer
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client
-from backend.pipeline.ingestion.collectors import icecast_collector
+from backend.pipeline.ingestion.collectors.icecast import icecast_collector
 from backend.pipeline.storage.feed_store import FeedStore
 
 MOCK_ENV_VARS = {
@@ -222,7 +222,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
     # -- Tests ------------------------------------------------------------
 
     @patch(
-        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_capture_upload_and_bookmark(
@@ -283,7 +283,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["failure_count"], 0)
 
     @patch(
-        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_multiple_chunks_uploaded_to_gcs(
@@ -345,7 +345,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["last_bookmark_time"], chunk_timestamps[-1])
 
     @patch(
-        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_shutdown_stops_capture_after_partial_upload(
@@ -403,7 +403,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["last_bookmark_time"], last_chunk_ts)
 
     @patch(
-        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_ffmpeg_error_reports_failure_in_db(
@@ -445,7 +445,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(row["worker_id"])
 
     @patch(
-        "backend.pipeline.ingestion.collectors.icecast_collector._create_ffmpeg_process",
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_flac_segment_bytes_roundtrip(
