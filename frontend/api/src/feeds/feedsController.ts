@@ -1,3 +1,4 @@
+import type { Feed, FeedCreate, SourceType } from '@transcription/shared';
 import { GoogleAuth } from 'google-auth-library';
 import {
   Body,
@@ -18,8 +19,6 @@ import {
 
 import { FEEDS_STORE_API_URL } from '../config.js';
 import { isAxiosError } from '../utils.js';
-
-import type { SourceType, BaseFeed, Feed, FeedCreate } from '@transcription/shared';
 
 interface BaseFeedBackend {
   name: string;

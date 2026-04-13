@@ -1,3 +1,11 @@
+import type {
+  LogicalOperator,
+  Rule,
+  RuleConditions,
+  RuleCreate,
+  RuleUpdate,
+  ScopeLevel,
+} from '@transcription/shared';
 import { GoogleAuth } from 'google-auth-library';
 import {
   Body,
@@ -20,23 +28,6 @@ import {
 import { RULES_API_URL } from '../config.js';
 import { isAxiosError } from '../utils.js';
 
-// Types for Frontend (CamelCase)
-import type {
-  ScopeLevel,
-  EvaluationType,
-  LogicalOperator,
-  Scope,
-  KeywordConditions,
-  RegexConditions,
-  GroupConditions,
-  RuleConditions,
-  RuleMetadata,
-  Rule,
-  RuleCreate,
-  RuleUpdate,
-} from '@transcription/shared';
-
-// Types for Backend (SnakeCase)
 interface ScopeResponse {
   level: ScopeLevel;
   target_feeds: string[];

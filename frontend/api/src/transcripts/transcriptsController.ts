@@ -1,3 +1,7 @@
+import type {
+  ListTranscriptsResponse,
+  Transcript,
+} from '@transcription/shared';
 import { GoogleAuth } from 'google-auth-library';
 import {
   Controller,
@@ -13,8 +17,6 @@ import {
 } from 'tsoa';
 
 import { TRANSCRIPTS_API_URL } from '../config.js';
-
-import type { Transcript, ListTranscriptsResponse } from '@transcription/shared';
 
 export interface TranscriptResponse {
   feed_id: string;
