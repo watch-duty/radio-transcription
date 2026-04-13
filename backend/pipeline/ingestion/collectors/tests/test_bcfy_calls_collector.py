@@ -383,7 +383,7 @@ class TestDownloadAndConvertAudio(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(res)
         self.assertEqual(
             self.session.get.call_count,
-            bcfy_calls_collector._MP3_DOWNLOAD_MAX_RETRIES + 1,
+            bcfy_calls_collector._AUDIO_FILE_DOWNLOAD_MAX_RETRIES + 1,
         )
 
     @patch(

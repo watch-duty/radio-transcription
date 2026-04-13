@@ -27,8 +27,8 @@ _MAX_5XX_RETRIES = 3
 _POLL_INTERVAL_SEC = 10.0
 _API_TIMEOUT_SEC = 10.0
 _AUDIO_TIMEOUT_SEC = 60.0
-_MP3_DOWNLOAD_MAX_RETRIES = 3
-_MP3_DOWNLOAD_BACKOFF_BASE_SEC = 1.0
+_AUDIO_FILE_DOWNLOAD_MAX_RETRIES = 3
+_AUDIO_FILE_DOWNLOAD_BACKOFF_BASE_SEC = 1.0
 _MAX_CONSECUTIVE_FAILURES = 10
 _KNOWN_AUDIO_FORMATS = frozenset({"mp3", "m4a", "wav", "ogg", "aac", "flac"})
 
@@ -162,36 +162,36 @@ def _get_audio_format(url: str) -> str:
     return "mp3"
 
 
-def _raise_if_429(status: int, mp3_url: str) -> None:
+def _raise_if_429(status: int, audio_url: str) -> None:
     """Raise RuntimeError if status is 429."""
     if status == 429:
-        msg = f"CDN rate limit (429) downloading MP3: {mp3_url}"
+        msg = f"CDN rate limit (429) downloading Audio file: {audio_url}"
         raise RuntimeError(msg)
 
 
 async def _download_and_convert_audio(  # noqa: PLR0911
     session: aiohttp.ClientSession,
-    mp3_url: str,
+    audio_url: str,
     shutdown_event: asyncio.Event,
 ) -> bytes | None:
-    """Download MP3 audio and convert it to FLAC bytes on a separate thread."""
+    """Download audio file and convert it to FLAC bytes on a separate thread."""
     timeout = aiohttp.ClientTimeout(total=_AUDIO_TIMEOUT_SEC)
-    for attempt in range(_MP3_DOWNLOAD_MAX_RETRIES + 1):
+    for attempt in range(_AUDIO_FILE_DOWNLOAD_MAX_RETRIES + 1):
         try:
-            async with session.get(mp3_url, timeout=timeout) as audio_resp:
-                _raise_if_429(audio_resp.status, mp3_url)
+            async with session.get(audio_url, timeout=timeout) as audio_resp:
+                _raise_if_429(audio_resp.status, audio_url)
 
                 if 500 <= audio_resp.status <= 599:
-                    if attempt < _MP3_DOWNLOAD_MAX_RETRIES:
-                        delay = _MP3_DOWNLOAD_BACKOFF_BASE_SEC * (2**attempt)
+                    if attempt < _AUDIO_FILE_DOWNLOAD_MAX_RETRIES:
+                        delay = _AUDIO_FILE_DOWNLOAD_BACKOFF_BASE_SEC * (2**attempt)
                         logger.warning(
                             "5XX %s downloading audio"
                             " (attempt %d/%d, retry in %.1fs): %s",
                             audio_resp.status,
                             attempt + 1,
-                            _MP3_DOWNLOAD_MAX_RETRIES,
+                            _AUDIO_FILE_DOWNLOAD_MAX_RETRIES,
                             delay,
-                            mp3_url,
+                            audio_url,
                         )
                         if await _sleep_or_shutdown(shutdown_event, delay):
                             return None
@@ -201,15 +201,15 @@ async def _download_and_convert_audio(  # noqa: PLR0911
                         "5XX %s downloading audio after %d retries,"
                         " skipping: %s",
                         audio_resp.status,
-                        _MP3_DOWNLOAD_MAX_RETRIES,
-                        mp3_url,
+                        _AUDIO_FILE_DOWNLOAD_MAX_RETRIES,
+                        audio_url,
                     )
                     return None
 
                 if audio_resp.status != 200:
                     logger.error(
                         "Failed to download audio from %s (status %d)",
-                        mp3_url,
+                        audio_url,
                         audio_resp.status,
                     )
                     return None
@@ -218,20 +218,20 @@ async def _download_and_convert_audio(  # noqa: PLR0911
                 return await asyncio.to_thread(
                     convert_to_flac,
                     audio_bytes,
-                    _get_audio_format(mp3_url),
+                    _get_audio_format(audio_url),
                 )
         except RuntimeError:
             raise
         except Exception as e:
-            if attempt < _MP3_DOWNLOAD_MAX_RETRIES:
-                delay = _MP3_DOWNLOAD_BACKOFF_BASE_SEC * (2**attempt)
+            if attempt < _AUDIO_FILE_DOWNLOAD_MAX_RETRIES:
+                delay = _AUDIO_FILE_DOWNLOAD_BACKOFF_BASE_SEC * (2**attempt)
                 logger.warning(
                     "Network error downloading audio"
                     " (attempt %d/%d, retry in %.1fs): %s",
                     attempt + 1,
-                    _MP3_DOWNLOAD_MAX_RETRIES,
+                    _AUDIO_FILE_DOWNLOAD_MAX_RETRIES,
                     delay,
-                    mp3_url,
+                    audio_url,
                     exc_info=e,
                 )
                 if await _sleep_or_shutdown(shutdown_event, delay):
@@ -240,8 +240,8 @@ async def _download_and_convert_audio(  # noqa: PLR0911
             logger.exception(
                 "Network error downloading audio after %d retries,"
                 " skipping: %s",
-                _MP3_DOWNLOAD_MAX_RETRIES,
-                mp3_url,
+                _AUDIO_FILE_DOWNLOAD_MAX_RETRIES,
+                audio_url,
             )
             return None
     return None
@@ -260,19 +260,19 @@ def _extract_calls_from_response(
 async def _create_chunk_from_call(
     session: aiohttp.ClientSession,
     result: dict[str, Any],
-    mp3_url: str,
+    audio_url: str,
     shutdown_event: asyncio.Event,
     session_id: str,
 ) -> CapturedChunk | None:
     """Download audio for a single call and wrap it in a CapturedChunk."""
     try:
         flac_bytes = await _download_and_convert_audio(
-            session, mp3_url, shutdown_event
+            session, audio_url, shutdown_event
         )
     except RuntimeError:
         raise
     except Exception as e:
-        logger.exception("Failed to process audio for %s: %s", mp3_url, e)
+        logger.exception("Failed to process audio for %s: %s", audio_url, e)
         return None
 
     if not flac_bytes:
@@ -376,14 +376,14 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                         if shutdown_event.is_set():
                             break
 
-                        mp3_url = result.get("url")
-                        if not mp3_url or mp3_url in seen_urls:
+                        audio_url = result.get("url")
+                        if not audio_url or audio_url in seen_urls:
                             continue
 
                         chunk = await _create_chunk_from_call(
                             session,
                             result,
-                            mp3_url,
+                            audio_url,
                             shutdown_event,
                             connection_session_id,
                         )
@@ -394,7 +394,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
 
                         # Only mark as seen and update pagination after a successful
                         # yield, confirming the chunk was handed off to the pipeline.
-                        seen_urls.append(mp3_url)
+                        seen_urls.append(audio_url)
                         # Reset consecutive failures on successful yield
                         consecutive_failures = 0
                 # Update local last_bookmark_time_unix for pagination after processing all calls in the response, ensuring we don't skip any calls if an error occurs mid-page.
