@@ -14,24 +14,7 @@ import {
 
 import { TRANSCRIPTS_API_URL } from '../config.js';
 
-export interface Transcript {
-  feedId: string;
-  transmissionId: string;
-  transcript: string;
-  startTimestamp: string;
-  endTimestamp: string;
-  missingPriorContext: boolean;
-  missingPostContext: boolean;
-  sourceAudioUris: string[];
-  canonicalAudioUri: string;
-  startAudioOffset: string;
-  endAudioOffset: string;
-  evaluationDecisions: string[];
-}
-
-export interface ListTranscriptsResponse {
-  transcripts: Transcript[];
-}
+import type { Transcript, ListTranscriptsResponse } from '@transcription/shared';
 
 export interface TranscriptResponse {
   feed_id: string;

@@ -19,23 +19,7 @@ import {
 import { FEEDS_STORE_API_URL } from '../config.js';
 import { isAxiosError } from '../utils.js';
 
-export type SourceType = 'bcfy_feeds' | 'bcfy_calls' | 'echo' | 'openmhz';
-
-export interface BaseFeed {
-  name: string;
-  sourceType: SourceType;
-}
-
-export interface Feed extends BaseFeed {
-  id: string;
-  sourceFeedId?: string;
-  externalId?: string;
-}
-
-export interface FeedCreate extends BaseFeed {
-  sourceFeedId: string;
-  externalId: string;
-}
+import type { SourceType, BaseFeed, Feed, FeedCreate } from '@transcription/shared';
 
 interface BaseFeedBackend {
   name: string;

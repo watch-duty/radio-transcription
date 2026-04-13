@@ -1051,6 +1051,9 @@
     convert-source-map "^2.0.0"
     tinyrainbow "^3.1.0"
 
+"@transcription/shared@file:../shared":
+  version "1.0.0"
+
 acorn-jsx@^5.3.2:
   version "5.3.2"
   resolved "https://registry.yarnpkg.com/acorn-jsx/-/acorn-jsx-5.3.2.tgz#7ed5bb55908b3b2f1bc55c6af1653bada7f07937"

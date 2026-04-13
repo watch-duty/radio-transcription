@@ -16,6 +16,7 @@
     "generate-spec": "yarn run tsoa spec --yaml && node scripts/post-process-spec.js"
   },
   "dependencies": {
+    "@transcription/shared": "file:../shared",
     "@google-cloud/functions-framework": "^5.0.2",
     "axios": "^1.14.0",
     "cors": "^2.8.6",

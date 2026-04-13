@@ -58,10 +58,18 @@ describe('TranscriptView', () => {
   it('renders transcripts when fetched', async () => {
     const mockTranscripts = [
       {
+        feedId: 'feed123',
         transmissionId: '1',
         transcript: 'Hello',
         canonicalAudioUri: 'gs:://foo.flac',
         startTimestamp: '2026-04-10T12:00:00Z',
+        endTimestamp: '2026-04-10T12:00:05Z',
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: ['gs:://foo.flac'],
+        startAudioOffset: '0s',
+        endAudioOffset: '5s',
+        evaluationDecisions: [],
       },
     ];
     vi.mocked(listTranscripts).mockResolvedValueOnce(mockTranscripts);

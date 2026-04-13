@@ -21,70 +21,20 @@ import { RULES_API_URL } from '../config.js';
 import { isAxiosError } from '../utils.js';
 
 // Types for Frontend (CamelCase)
-export type ScopeLevel = 'FEED_SPECIFIC' | 'GLOBAL';
-export type EvaluationType = 'KEYWORD_MATCH' | 'REGEX_MATCH' | 'RULE_GROUP';
-export type LogicalOperator = 'ANY' | 'ALL';
-
-export interface Scope {
-  level: ScopeLevel;
-  targetFeeds: string[];
-}
-
-export interface KeywordConditions {
-  evaluationType: 'KEYWORD_MATCH';
-  operator: LogicalOperator;
-  keywords: string[];
-  caseSensitive: boolean;
-}
-
-export interface RegexConditions {
-  evaluationType: 'REGEX_MATCH';
-  expression: string;
-  flags: string;
-}
-
-export interface GroupConditions {
-  evaluationType: 'RULE_GROUP';
-  operator: LogicalOperator;
-  childRuleIds: string[];
-}
-
-export type RuleConditions =
-  | KeywordConditions
-  | RegexConditions
-  | GroupConditions;
-
-export interface RuleMetadata {
-  createdBy?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface Rule {
-  ruleId: string;
-  ruleName: string;
-  description?: string;
-  isActive: boolean;
-  scope: Scope;
-  conditions: RuleConditions;
-  metadata: RuleMetadata;
-}
-
-export interface RuleCreate {
-  ruleName: string;
-  description?: string;
-  isActive?: boolean;
-  scope: Scope;
-  conditions: RuleConditions;
-}
-
-export interface RuleUpdate {
-  ruleName?: string;
-  description?: string;
-  isActive?: boolean;
-  scope?: Scope;
-  conditions?: RuleConditions;
-}
+import type {
+  ScopeLevel,
+  EvaluationType,
+  LogicalOperator,
+  Scope,
+  KeywordConditions,
+  RegexConditions,
+  GroupConditions,
+  RuleConditions,
+  RuleMetadata,
+  Rule,
+  RuleCreate,
+  RuleUpdate,
+} from '@transcription/shared';
 
 // Types for Backend (SnakeCase)
 interface ScopeResponse {

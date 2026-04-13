@@ -1116,6 +1116,9 @@
     loupe "^3.1.4"
     tinyrainbow "^2.0.0"
 
+"@transcription/shared@file:../shared":
+  version "1.0.0"
+
 accepts@^2.0.0:
   version "2.0.0"
   resolved "https://registry.yarnpkg.com/accepts/-/accepts-2.0.0.tgz#bbcf4ba5075467f3f2131eab3cffc73c2f5d7895"
