@@ -156,8 +156,8 @@ class TranscriptStore:
         cursor_uid = None
         if next_token:
             try:
-                decoded = base64.b64decode(next_token).decode('utf-8')
-                ts_str, uid_str = decoded.split('|')
+                decoded = base64.b64decode(next_token).decode("utf-8")
+                ts_str, uid_str = decoded.split("|")
                 cursor_ts = datetime.datetime.fromisoformat(ts_str)
                 cursor_uid = uuid.UUID(uid_str)
             except Exception as e:
@@ -169,12 +169,12 @@ SELECT
 FROM transcripts
 WHERE feed_id = $1
 """
-        params = [uid]
+        params: list[uuid.UUID | datetime.datetime | int] = [uid]
         param_count = 1
 
         if cursor_ts and cursor_uid:
             param_count += 2
-            query += f"  AND (end_timestamp < ${param_count-1} OR (end_timestamp = ${param_count-1} AND transmission_id < ${param_count}))\n"
+            query += f"  AND (end_timestamp < ${param_count - 1} OR (end_timestamp = ${param_count - 1} AND transmission_id < ${param_count}))\n"
             params.extend([cursor_ts, cursor_uid])
 
         if start_time:
@@ -188,7 +188,7 @@ WHERE feed_id = $1
             params.append(end_time)
 
         query += "ORDER BY end_timestamp DESC, transmission_id DESC\n"
-        
+
         param_count += 1
         query += f"LIMIT ${param_count}"
         params.append(limit + 1)
@@ -200,11 +200,15 @@ WHERE feed_id = $1
             rows = rows[:limit]
             last_row = rows[-1]
             token_str = f"{last_row['end_timestamp'].isoformat()}|{last_row['transmission_id']}"
-            new_next_token = base64.b64encode(token_str.encode('utf-8')).decode('utf-8')
+            new_next_token = base64.b64encode(token_str.encode("utf-8")).decode(
+                "utf-8"
+            )
         else:
             new_next_token = None
 
-        return PaginatedTranscripts([self._row_to_proto(row) for row in rows], new_next_token)
+        return PaginatedTranscripts(
+            [self._row_to_proto(row) for row in rows], new_next_token
+        )
 
     async def list_transcripts(
         self,
@@ -218,8 +222,8 @@ WHERE feed_id = $1
         cursor_uid = None
         if next_token:
             try:
-                decoded = base64.b64decode(next_token).decode('utf-8')
-                ts_str, uid_str = decoded.split('|')
+                decoded = base64.b64decode(next_token).decode("utf-8")
+                ts_str, uid_str = decoded.split("|")
                 cursor_ts = datetime.datetime.fromisoformat(ts_str)
                 cursor_uid = uuid.UUID(uid_str)
             except Exception as e:
@@ -230,13 +234,15 @@ SELECT
 {transcript_queries.TRANSCRIPT_COLUMNS_SQL}
 FROM transcripts
 """
-        params = []
+        params: list[uuid.UUID | datetime.datetime | int] = []
         param_count = 0
         where_clauses = []
 
         if cursor_ts and cursor_uid:
             param_count += 2
-            where_clauses.append(f"(end_timestamp < ${param_count-1} OR (end_timestamp = ${param_count-1} AND transmission_id < ${param_count}))")
+            where_clauses.append(
+                f"(end_timestamp < ${param_count - 1} OR (end_timestamp = ${param_count - 1} AND transmission_id < ${param_count}))"
+            )
             params.extend([cursor_ts, cursor_uid])
 
         if start_time:
@@ -253,7 +259,7 @@ FROM transcripts
             query += "WHERE " + " AND ".join(where_clauses) + "\n"
 
         query += "ORDER BY end_timestamp DESC, transmission_id DESC\n"
-        
+
         param_count += 1
         query += f"LIMIT ${param_count}"
         params.append(limit + 1)
@@ -265,11 +271,15 @@ FROM transcripts
             rows = rows[:limit]
             last_row = rows[-1]
             token_str = f"{last_row['end_timestamp'].isoformat()}|{last_row['transmission_id']}"
-            new_next_token = base64.b64encode(token_str.encode('utf-8')).decode('utf-8')
+            new_next_token = base64.b64encode(token_str.encode("utf-8")).decode(
+                "utf-8"
+            )
         else:
             new_next_token = None
 
-        return PaginatedTranscripts([self._row_to_proto(row) for row in rows], new_next_token)
+        return PaginatedTranscripts(
+            [self._row_to_proto(row) for row in rows], new_next_token
+        )
 
     async def delete_transcript(self, transmission_id: str) -> bool:
         """Deletes a transcript."""

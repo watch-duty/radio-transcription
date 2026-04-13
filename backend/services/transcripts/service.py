@@ -62,16 +62,21 @@ class TranscriptService:
     ) -> ListTranscriptsResponse:
         """Lists all transcripts with pagination and time window."""
         result = await self._store.list_transcripts(
-            limit=limit, next_token=next_token, start_time=start_time, end_time=end_time
+            limit=limit,
+            next_token=next_token,
+            start_time=start_time,
+            end_time=end_time,
         )
         return ListTranscriptsResponse(
             transcripts=[
                 Transcript(
-                    **json_format.MessageToDict(m, preserving_proto_field_name=True)
+                    **json_format.MessageToDict(
+                        m, preserving_proto_field_name=True
+                    )
                 )
                 for m in result.transcripts
             ],
-            next_token=result.next_token
+            next_token=result.next_token,
         )
 
     async def list_transcripts_by_feed_id(
@@ -84,16 +89,22 @@ class TranscriptService:
     ) -> ListTranscriptsResponse:
         """Lists transcripts filtered by feed ID with pagination and time window."""
         result = await self._store.list_transcripts_by_feed_id(
-            feed_id, limit=limit, next_token=next_token, start_time=start_time, end_time=end_time
+            feed_id,
+            limit=limit,
+            next_token=next_token,
+            start_time=start_time,
+            end_time=end_time,
         )
         return ListTranscriptsResponse(
             transcripts=[
                 Transcript(
-                    **json_format.MessageToDict(m, preserving_proto_field_name=True)
+                    **json_format.MessageToDict(
+                        m, preserving_proto_field_name=True
+                    )
                 )
                 for m in result.transcripts
             ],
-            next_token=result.next_token
+            next_token=result.next_token,
         )
 
     async def delete_transcript(self, transmission_id: str) -> bool:

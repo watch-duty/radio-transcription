@@ -100,14 +100,23 @@ async def list_transcripts(
     try:
         if feed_id:
             return await service.list_transcripts_by_feed_id(
-                feed_id, limit=limit, next_token=next_token, start_time=start_time, end_time=end_time
+                feed_id,
+                limit=limit,
+                next_token=next_token,
+                start_time=start_time,
+                end_time=end_time,
             )
         else:
             return await service.list_transcripts(
-                limit=limit, next_token=next_token, start_time=start_time, end_time=end_time
+                limit=limit,
+                next_token=next_token,
+                start_time=start_time,
+                end_time=end_time,
             )
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
+        )
 
 
 @app.delete(
