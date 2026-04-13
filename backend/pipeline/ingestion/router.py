@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from backend.pipeline.ingestion.collectors import icecast_collector
+from backend.pipeline.ingestion.collectors.icecast import icecast_collector
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     bcfy_calls_collector,
 )
