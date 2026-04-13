@@ -241,9 +241,9 @@ class TestListTranscriptsByFeedId(BaseTranscriptStoreTest):
         # Verify fetch was called with time window
         self.pool.fetch.assert_called_once()
         args = self.pool.fetch.call_args[0]
-        # With dynamic queries, params are [uid, start_time, end_time]
-        self.assertEqual(args[2], start)
-        self.assertEqual(args[3], end)
+        # Params are [query, uid, cursor_ts, cursor_uid, start_time, end_time, limit+1]
+        self.assertEqual(args[4], start)
+        self.assertEqual(args[5], end)
 
 
 class TestListTranscripts(BaseTranscriptStoreTest):
