@@ -42,7 +42,10 @@ resource "google_compute_instance" "eval_instance" {
 
   scheduling {
     on_host_maintenance = "TERMINATE" # Required for GPU instances
-    automatic_restart   = true
+    automatic_restart   = false
+    preemptible         = true
+    provisioning_model  = "SPOT"
+    instance_termination_action = "STOP"
   }
 
   resource_policies = [google_compute_resource_policy.daily_stop.id]
