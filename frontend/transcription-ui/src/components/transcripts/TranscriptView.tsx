@@ -1,10 +1,14 @@
 import { Fragment, useState } from 'react';
+import { Fragment, useState } from 'react';
 
+import ThumbDownIcon from '@mui/icons-material/ThumbDown';
+import ThumbUpIcon from '@mui/icons-material/ThumbUp';
 import ThumbDownIcon from '@mui/icons-material/ThumbDown';
 import ThumbUpIcon from '@mui/icons-material/ThumbUp';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
+import IconButton from '@mui/material/IconButton';
 import IconButton from '@mui/material/IconButton';
 import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
@@ -27,6 +31,9 @@ export function TranscriptView() {
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
 
+  const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
+    useState<string | null>(null);
+
   const handleFetch = async () => {
     if (!feedId.trim()) return;
     setTranscripts([]);
@@ -45,6 +52,10 @@ export function TranscriptView() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const onPlay = (transmissionId: string | null) => {
+    setCurrentlyPlayingTransmissionId(transmissionId);
   };
 
   const onPlay = (transmissionId: string | null) => {
@@ -93,6 +104,86 @@ export function TranscriptView() {
       <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
         {transcripts.length > 0 ? (
           <List component={Paper} variant="outlined" sx={{ p: 0 }}>
+            {transcripts.map((t, index) => {
+              const currentDate = new Date(t.startTimestamp);
+              const prevDate =
+                index > 0
+                  ? new Date(transcripts[index - 1].startTimestamp)
+                  : null;
+              const showHeader =
+                !prevDate ||
+                currentDate.toDateString() !== prevDate.toDateString();
+
+              return (
+                <Fragment key={t.transmissionId}>
+                  {showHeader && (
+                    <ListItem sx={{ py: 0.5, bgcolor: 'action.hover' }}>
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ fontWeight: 'bold' }}
+                      >
+                        {currentDate.toLocaleDateString([], {
+                          weekday: 'long',
+                          month: 'long',
+                          day: 'numeric',
+                          year: 'numeric',
+                        })}
+                      </Typography>
+                    </ListItem>
+                  )}
+                  <ListItem
+                    divider={index < transcripts.length - 1}
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 2,
+                      py: 1.5,
+                    }}
+                  >
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ minWidth: 'max-content' }}
+                    >
+                      {currentDate.toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        timeZoneName: 'short',
+                        hour12: false,
+                      })}
+                    </Typography>
+                    <AudioPlayer
+                      audioUri={t.canonicalAudioUri}
+                      transmissionId={t.transmissionId}
+                      onPlay={onPlay}
+                      currentlyPlayingTransmissionId={
+                        currentlyPlayingTransmissionId
+                      }
+                    />
+                    <Typography
+                      variant="body1"
+                      sx={{ flexGrow: 1, whiteSpace: 'pre-wrap' }}
+                    >
+                      {t.transcript}
+                    </Typography>
+                    <Box sx={{ display: 'flex', gap: 1 }}>
+                      <IconButton size="small" aria-label="thumbs up" disabled>
+                        <ThumbUpIcon fontSize="small" />
+                      </IconButton>
+                      <IconButton
+                        size="small"
+                        aria-label="thumbs down"
+                        disabled
+                      >
+                        <ThumbDownIcon fontSize="small" />
+                      </IconButton>
+                    </Box>
+                  </ListItem>
+                </Fragment>
+              );
+            })}
             {transcripts.map((t, index) => {
               const currentDate = new Date(t.startTimestamp);
               const prevDate =
