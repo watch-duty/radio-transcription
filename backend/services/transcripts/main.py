@@ -85,6 +85,7 @@ async def get_transcript(
 @app.get(
     "/v1/transcripts",
     tags=["transcripts"],
+    response_model=ListTranscriptsResponse,
 )
 async def list_transcripts(
     request: Request,

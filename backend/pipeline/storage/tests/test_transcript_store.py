@@ -195,18 +195,15 @@ class TestListTranscriptsByFeedId(BaseTranscriptStoreTest):
     async def test_list_with_limit(self) -> None:
         """Verify listing with limit returns restricted list."""
         self.pool.fetch.return_value = [_TRANSCRIPT_ROW] * 2
-
         result = await self.store.list_transcripts_by_feed_id(
             str(_FEED_ID), limit=1
         )
-
         self.assertEqual(len(result.transcripts), 1)
         self.assertIsNotNone(result.next_token)
 
     async def test_list_with_next_token(self) -> None:
         """Verify listing with next_token parses token and queries correctly."""
         self.pool.fetch.return_value = [_TRANSCRIPT_ROW]
-
         token_str = f"{datetime.datetime(2026, 1, 1, 0, 1, tzinfo=datetime.UTC).isoformat()}|{_TRANSMISSION_ID}"
         token = base64.b64encode(token_str.encode("utf-8")).decode("utf-8")
 
@@ -228,7 +225,6 @@ class TestListTranscriptsByFeedId(BaseTranscriptStoreTest):
     async def test_list_with_time_window(self) -> None:
         """Verify listing with time window passes arguments to query."""
         self.pool.fetch.return_value = [_TRANSCRIPT_ROW]
-
         start = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
         end = datetime.datetime(2026, 1, 2, tzinfo=datetime.UTC)
 
