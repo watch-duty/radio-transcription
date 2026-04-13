@@ -10,5 +10,13 @@ services:
     volumes:
       - .:/app
     working_dir: /app
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     # Override entrypoint to start Jupyter Notebook instead of ZSH
+
     entrypoint: ["jupyter", "notebook", "--ip=0.0.0.0", "--allow-root", "--no-browser", "--NotebookApp.token=''", "--NotebookApp.password=''"]
