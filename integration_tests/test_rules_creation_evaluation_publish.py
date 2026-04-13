@@ -23,6 +23,7 @@ TRANSCRIPTION_TOPIC = os.environ.get(
 )
 MOCK_SERVER_HOST = os.environ.get("MOCK_SERVER_HOST", "localhost:8082")
 TRANSCRIPTS_API_HOST = os.environ.get("TRANSCRIPTS_API_HOST", "localhost:8087")
+FEEDS_API_HOST = os.environ.get("FEEDS_API_HOST", "localhost:8089")
 
 
 def create_test_rule(test_keyword: str) -> None:
@@ -51,39 +52,46 @@ def create_test_rule(test_keyword: str) -> None:
 @pytest.fixture(name="test_feed")
 def create_test_feed() -> Generator[str]:
     """Fixture to create a temporary feed for testing."""
-    _conn_kwargs = {
-        "host": os.environ.get("ALLOYDB_HOST", "postgres"),
-        "port": int(os.environ.get("ALLOYDB_PORT", "5432")),
-        "user": os.environ.get("ALLOYDB_USER", "postgres"),
-        "password": os.environ.get("ALLOYDB_PASSWORD", "postgres"),
-        "database": os.environ.get("ALLOYDB_DB", "postgres"),
+    feed_name = f"integration-test-feed-{uuid.uuid4()}"
+    payload = {
+        "name": feed_name,
+        "source_type": "bcfy_feeds",
+        "source_feed_id": f"src-{uuid.uuid4()}",
+        "external_id": f"ext-{uuid.uuid4()}",
     }
 
-    async def _setup():
-        conn = await asyncpg.connect(**_conn_kwargs)
-        feed_name = f"integration-test-feed-{uuid.uuid4()}"
-        feed_id = await conn.fetchval(
-            "INSERT INTO feeds (name, source_type) VALUES ($1, $2) RETURNING id",
-            feed_name,
-            "bcfy_feeds",
-        )
-        await conn.close()
-        return str(feed_id)
+    url = f"http://{FEEDS_API_HOST}/v1/feeds"
+    response = requests.post(url, json=payload, timeout=10)
+    response.raise_for_status()
 
-    feed_id = asyncio.run(_setup())
+    feed_id = response.json().get("id", "")
+    assert feed_id != "", "Feed ID not returned by API"
+
     try:
         yield feed_id
     finally:
+        # Clean up transcripts via DB
+        _conn_kwargs = {
+            "host": os.environ.get("ALLOYDB_HOST", "postgres"),
+            "port": int(os.environ.get("ALLOYDB_PORT", "5432")),
+            "user": os.environ.get("ALLOYDB_USER", "postgres"),
+            "password": os.environ.get("ALLOYDB_PASSWORD", "postgres"),
+            "database": os.environ.get("ALLOYDB_DB", "postgres"),
+        }
 
-        async def _cleanup():
+        async def _cleanup_db():
             conn = await asyncpg.connect(**_conn_kwargs)
             await conn.execute(
                 "DELETE FROM transcripts WHERE feed_id = $1::uuid", feed_id
             )
-            await conn.execute("DELETE FROM feeds WHERE id = $1::uuid", feed_id)
             await conn.close()
 
-        asyncio.run(_cleanup())
+        asyncio.run(_cleanup_db())
+
+        # Delete feed via API
+        del_url = f"http://{FEEDS_API_HOST}/v1/feeds/{feed_id}"
+        del_response = requests.delete(del_url, timeout=10)
+        del_response.raise_for_status()
 
 
 def publish_test_message(
