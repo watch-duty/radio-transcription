@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class FeedsService:
+class FeedService:
     """Service for managing feeds, handling interaction with the data from the FeedStore."""
 
     def __init__(self, store: FeedStore) -> None:

@@ -17,7 +17,7 @@ from backend.pipeline.storage.connection import (
 from backend.pipeline.storage.feed_store import FeedStore
 
 from .models import Feed, FeedCreate
-from .service import FeedsService
+from .service import FeedService
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage the lifecycle of the AlloyDB connection pool."""
     pool = await create_pool_with_retry()
     store = FeedStore(pool)
-    app.state.feeds_service = FeedsService(store)
+    app.state.feed_service = FeedService(store)
     yield
     await close_pool(pool)
 
@@ -52,7 +52,7 @@ async def create_feed(
     feed_in: FeedCreate,
 ) -> Feed:
     """Create a new feed."""
-    service: FeedsService = request.app.state.feeds_service
+    service: FeedService = request.app.state.feed_service
     try:
         return await service.create_feed(feed_in)
     except ValueError as e:
@@ -72,7 +72,7 @@ async def get_feed(
     feed_id: str,
 ) -> Feed:
     """Fetch a specific feed by ID."""
-    service: FeedsService = request.app.state.feeds_service
+    service: FeedService = request.app.state.feed_service
     feed = await service.get_feed(feed_id)
     if not feed:
         raise HTTPException(
@@ -91,7 +91,7 @@ async def list_feeds(
     request: Request,
 ) -> list[Feed]:
     """List all feeds."""
-    service: FeedsService = request.app.state.feeds_service
+    service: FeedService = request.app.state.feed_service
     return await service.list_feeds()
 
 
@@ -105,7 +105,7 @@ async def delete_feed(
     feed_id: str,
 ) -> None:
     """Delete a feed."""
-    service: FeedsService = request.app.state.feeds_service
+    service: FeedService = request.app.state.feed_service
     success = await service.delete_feed(feed_id)
     if not success:
         raise HTTPException(

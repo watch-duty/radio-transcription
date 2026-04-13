@@ -20,7 +20,7 @@ class TestFeedsAPI(unittest.TestCase):
     def setUp(self) -> None:
         """Set up a test client and dependency overrides before each test."""
         self.mock_service = AsyncMock()
-        app.state.feeds_service = self.mock_service
+        app.state.feed_service = self.mock_service
 
         app.dependency_overrides[verify_oidc_token] = skip_auth
         self.client = TestClient(app)
