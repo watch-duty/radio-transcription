@@ -60,6 +60,7 @@ describe('TranscriptView', () => {
       {
         transmissionId: '1',
         transcript: 'Hello',
+        canonicalAudioUri: 'gs:://foo.flac',
         startTimestamp: '2026-04-10T12:00:00Z',
       },
     ];
@@ -75,7 +76,7 @@ describe('TranscriptView', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Hello')).toBeTruthy();
-      expect(screen.getByText(/Transmission ID: 1/)).toBeTruthy();
+      expect(screen.getByLabelText('play')).toBeTruthy();
     });
   });
 
