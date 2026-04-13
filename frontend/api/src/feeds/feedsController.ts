@@ -97,18 +97,24 @@ export class FeedsController extends Controller {
       if (isAxiosError(error)) {
         const status = error.response?.status || 500;
         const data = JSON.stringify(error.response?.data);
-        console.error(JSON.stringify({
-          level: 'ERROR',
-          message: `Backend API error: ${status}`,
-          data: error.response?.data,
-        }));
-        throw new Error(`Backend API error ${status}: ${data}`, { cause: error });
+        console.error(
+          JSON.stringify({
+            level: 'ERROR',
+            message: `Backend API error: ${status}`,
+            data: error.response?.data,
+          })
+        );
+        throw new Error(`Backend API error ${status}: ${data}`, {
+          cause: error,
+        });
       }
-      console.error(JSON.stringify({
-        level: 'ERROR',
-        message: 'Unexpected error fetching feeds',
-        error: error instanceof Error ? error.message : String(error)
-      }));
+      console.error(
+        JSON.stringify({
+          level: 'ERROR',
+          message: 'Unexpected error fetching feeds',
+          error: error instanceof Error ? error.message : String(error),
+        })
+      );
       throw new Error('Error fetching feeds', { cause: error });
     }
   }
@@ -135,18 +141,24 @@ export class FeedsController extends Controller {
         }
         const status = error.response?.status || 500;
         const data = JSON.stringify(error.response?.data);
-        console.error(JSON.stringify({
-          level: 'ERROR',
-          message: `Backend API error: ${status}`,
-          data: error.response?.data,
-        }));
-        throw new Error(`Backend API error ${status}: ${data}`, { cause: error });
+        console.error(
+          JSON.stringify({
+            level: 'ERROR',
+            message: `Backend API error: ${status}`,
+            data: error.response?.data,
+          })
+        );
+        throw new Error(`Backend API error ${status}: ${data}`, {
+          cause: error,
+        });
       }
-      console.error(JSON.stringify({
-        level: 'ERROR',
-        message: `Unexpected error fetching feed ${feedId}`,
-        error: error instanceof Error ? error.message : String(error)
-      }));
+      console.error(
+        JSON.stringify({
+          level: 'ERROR',
+          message: `Unexpected error fetching feed ${feedId}`,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      );
       throw new Error(`Error fetching feed ${feedId}`, { cause: error });
     }
   }
@@ -168,18 +180,24 @@ export class FeedsController extends Controller {
       if (isAxiosError(error)) {
         const status = error.response?.status || 500;
         const data = JSON.stringify(error.response?.data);
-        console.error(JSON.stringify({
-          level: 'ERROR',
-          message: `Backend API error: ${status}`,
-          data: error.response?.data,
-        }));
-        throw new Error(`Backend API error ${status}: ${data}`, { cause: error });
+        console.error(
+          JSON.stringify({
+            level: 'ERROR',
+            message: `Backend API error: ${status}`,
+            data: error.response?.data,
+          })
+        );
+        throw new Error(`Backend API error ${status}: ${data}`, {
+          cause: error,
+        });
       }
-      console.error(JSON.stringify({
-        level: 'ERROR',
-        message: 'Unexpected error creating feed',
-        error: error instanceof Error ? error.message : String(error)
-      }));
+      console.error(
+        JSON.stringify({
+          level: 'ERROR',
+          message: 'Unexpected error creating feed',
+          error: error instanceof Error ? error.message : String(error),
+        })
+      );
       throw new Error('Error creating feed', { cause: error });
     }
   }
@@ -206,18 +224,24 @@ export class FeedsController extends Controller {
         }
         const status = error.response?.status || 500;
         const data = JSON.stringify(error.response?.data);
-        console.error(JSON.stringify({
-          level: 'ERROR',
-          message: `Backend API error: ${status}`,
-          data: error.response?.data,
-        }));
-        throw new Error(`Backend API error ${status}: ${data}`, { cause: error });
+        console.error(
+          JSON.stringify({
+            level: 'ERROR',
+            message: `Backend API error: ${status}`,
+            data: error.response?.data,
+          })
+        );
+        throw new Error(`Backend API error ${status}: ${data}`, {
+          cause: error,
+        });
       }
-      console.error(JSON.stringify({
-        level: 'ERROR',
-        message: `Unexpected error deleting feed ${feedId}`,
-        error: error instanceof Error ? error.message : String(error)
-      }));
+      console.error(
+        JSON.stringify({
+          level: 'ERROR',
+          message: `Unexpected error deleting feed ${feedId}`,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      );
       throw new Error(`Error deleting feed ${feedId}`, { cause: error });
     }
   }
