@@ -83,7 +83,10 @@ export class TranscriptsController extends Controller {
         url: `${TRANSCRIPTS_API_URL}?${queryParams.toString()}`,
         method: 'GET',
       });
-      const data = response.data as { transcripts: TranscriptResponse[], next_token?: string };
+      const data = response.data as {
+        transcripts: TranscriptResponse[];
+        next_token?: string;
+      };
       return {
         transcripts: data.transcripts.map(convertTranscriptResponse),
         nextToken: data.next_token,

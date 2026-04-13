@@ -12,6 +12,7 @@ from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
 )
 from backend.services.transcripts.main import app
 from backend.services.transcripts.service import TranscriptService
+from backend.pipeline.storage.transcript_store import PaginatedTranscripts
 
 _TRANSMISSION_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 _FEED_ID = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
@@ -133,27 +134,33 @@ class TestTranscriptsAPI(unittest.TestCase):
     def test_list_transcripts_success(self) -> None:
         """Test listing all transcripts."""
         mock_msg = _make_transcript_msg()
-        self.mock_store.list_transcripts.return_value = [mock_msg]
+        self.mock_store.list_transcripts.return_value = PaginatedTranscripts([mock_msg], None)
 
         response = self.client.get("/v1/transcripts")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data = response.json()
-        self.assertEqual(len(data), 1)
-        self.assertEqual(data[0]["transmission_id"], _TRANSMISSION_ID)
+        self.assertIn("transcripts", data)
+        self.assertEqual(len(data["transcripts"]), 1)
+        self.assertEqual(data["transcripts"][0]["transmission_id"], _TRANSMISSION_ID)
 
     def test_list_transcripts_by_feed_id(self) -> None:
         """Test listing transcripts filtered by feed ID."""
         mock_msg = _make_transcript_msg()
-        self.mock_store.list_transcripts_by_feed_id.return_value = [mock_msg]
+        self.mock_store.list_transcripts_by_feed_id.return_value = PaginatedTranscripts([mock_msg], None)
 
         response = self.client.get(f"/v1/transcripts?feed_id={_FEED_ID}")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data = response.json()
-        self.assertEqual(len(data), 1)
+        self.assertIn("transcripts", data)
+        self.assertEqual(len(data["transcripts"]), 1)
         self.mock_store.list_transcripts_by_feed_id.assert_called_once_with(
-            _FEED_ID
+            _FEED_ID,
+            limit=100,
+            next_token=None,
+            start_time=None,
+            end_time=None,
         )
 
     def test_delete_transcript_success(self) -> None:
