@@ -2,6 +2,7 @@ export interface Transcript {
   transmissionId: string;
   transcript: string;
   startTimestamp: string;
+  canonicalAudioUri: string;
 }
 
 export async function listTranscripts(
