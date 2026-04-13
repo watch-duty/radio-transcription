@@ -11,8 +11,8 @@
     "build:prod": "tsc -b && vite build --mode production",
     "lint:check": "eslint .",
     "lint:fix": "eslint . --fix",
-    "format:check": "prettier --check .",
-    "format:fix": "prettier --write .",
+    "format:check": "prettier --ignore-path ../../.prettierignore --check .",
+    "format:fix": "prettier --ignore-path ../../.prettierignore --write .",
     "test": "vitest"
   },
   "dependencies": {

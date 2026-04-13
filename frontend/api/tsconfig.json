@@ -4,9 +4,6 @@
     "rootDir": "./src",
     "outDir": "./dist",
     "experimentalDecorators": true,
-    "rootDirs": [
-      "./src",
-      "../common"
-    ]
+    "rootDirs": ["./src", "../common"]
   }
 }
