@@ -183,7 +183,9 @@ async def _download_and_convert_audio(  # noqa: PLR0911
 
                 if 500 <= audio_resp.status <= 599:
                     if attempt < _AUDIO_FILE_DOWNLOAD_MAX_RETRIES:
-                        delay = _AUDIO_FILE_DOWNLOAD_BACKOFF_BASE_SEC * (2**attempt)
+                        delay = _AUDIO_FILE_DOWNLOAD_BACKOFF_BASE_SEC * (
+                            2**attempt
+                        )
                         logger.warning(
                             "5XX %s downloading audio"
                             " (attempt %d/%d, retry in %.1fs): %s",
