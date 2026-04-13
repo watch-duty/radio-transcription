@@ -8,6 +8,7 @@ import os
 import random
 import uuid
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 import aiohttp
 from google.cloud import secretmanager
@@ -29,6 +30,7 @@ _AUDIO_TIMEOUT_SEC = 60.0
 _MP3_DOWNLOAD_MAX_RETRIES = 3
 _MP3_DOWNLOAD_BACKOFF_BASE_SEC = 1.0
 _MAX_CONSECUTIVE_FAILURES = 10
+_KNOWN_AUDIO_FORMATS = frozenset({"mp3", "m4a", "wav", "ogg", "aac", "flac"})
 
 
 class AuthError(Exception):
@@ -142,6 +144,24 @@ async def _fetch_calls(
     return None
 
 
+def _get_audio_format(url: str) -> str:
+    """Infer the audio format from a URL's file extension.
+
+    Args:
+        url: The audio file URL.
+
+    Returns:
+        The lowercase file extension without the leading dot (e.g. ``"mp3"``
+        or ``"m4a"``), or ``"mp3"`` if no extension can be determined.
+    """
+    path = urlparse(url).path
+    if "." in path:
+        ext = path.rsplit(".", 1)[-1].lower()
+        if ext in _KNOWN_AUDIO_FORMATS:
+            return ext
+    return "mp3"
+
+
 def _raise_if_429(status: int, mp3_url: str) -> None:
     """Raise RuntimeError if status is 429."""
     if status == 429:
@@ -196,7 +216,9 @@ async def _download_and_convert_audio(  # noqa: PLR0911
 
                 audio_bytes = await audio_resp.read()
                 return await asyncio.to_thread(
-                    convert_to_flac, audio_bytes, "mp3"
+                    convert_to_flac,
+                    audio_bytes,
+                    _get_audio_format(mp3_url),
                 )
         except RuntimeError:
             raise

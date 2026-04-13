@@ -213,6 +213,40 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(res)
 
 
+class TestGetAudioFormat(unittest.TestCase):
+    def test_mp3_url(self) -> None:
+        res = bcfy_calls_collector._get_audio_format(
+            "http://example.com/audio.mp3"
+        )
+        self.assertEqual(res, "mp3")
+
+    def test_m4a_url(self) -> None:
+        res = bcfy_calls_collector._get_audio_format(
+            "http://example.com/audio.m4a"
+        )
+        self.assertEqual(res, "m4a")
+
+    def test_uppercase_extension(self) -> None:
+        res = bcfy_calls_collector._get_audio_format(
+            "http://example.com/audio.MP3"
+        )
+        self.assertEqual(res, "mp3")
+
+    def test_no_path_defaults_to_mp3(self) -> None:
+        res = bcfy_calls_collector._get_audio_format("http://example.com/audio")
+        self.assertEqual(res, "mp3")
+
+    def test_url_without_dot_defaults_to_mp3(self) -> None:
+        res = bcfy_calls_collector._get_audio_format("http://mp3")
+        self.assertEqual(res, "mp3")
+
+    def test_unknown_extension_defaults_to_mp3(self) -> None:
+        res = bcfy_calls_collector._get_audio_format(
+            "http://example.com/audio.php"
+        )
+        self.assertEqual(res, "mp3")
+
+
 class TestDownloadAndConvertAudio(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.session = MagicMock()
@@ -232,11 +266,32 @@ class TestDownloadAndConvertAudio(unittest.IsolatedAsyncioTestCase):
         mock_to_thread.return_value = b"flac"
 
         res = await bcfy_calls_collector._download_and_convert_audio(
-            self.session, "http://mp3", self.shutdown
+            self.session, "http://example.com/audio.mp3", self.shutdown
         )
         self.assertEqual(res, b"flac")
         mock_to_thread.assert_called_once_with(
             bcfy_calls_collector.convert_to_flac, b"mp3", "mp3"
+        )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector.asyncio.to_thread",
+        new_callable=AsyncMock,
+    )
+    async def test_success_m4a(self, mock_to_thread: AsyncMock) -> None:
+        resp = AsyncMock(status=200)
+        resp.read.return_value = b"m4a"
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=resp)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        self.session.get.return_value = cm
+        mock_to_thread.return_value = b"flac"
+
+        res = await bcfy_calls_collector._download_and_convert_audio(
+            self.session, "http://example.com/audio.m4a", self.shutdown
+        )
+        self.assertEqual(res, b"flac")
+        mock_to_thread.assert_called_once_with(
+            bcfy_calls_collector.convert_to_flac, b"m4a", "m4a"
         )
 
     async def test_non_200_status(self) -> None:
