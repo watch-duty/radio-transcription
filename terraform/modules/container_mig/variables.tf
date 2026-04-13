@@ -76,3 +76,24 @@ variable "labels" {
   type        = map(string)
   default     = {}
 }
+
+variable "instance_selections" {
+  description = "Ranked fallback list of machine types for the regional MIG's instance_flexibility_policy. Lowest rank is tried first; subsequent ranks are fallbacks when GCP returns capacity errors on the preferred machine type. Leave empty to use only the machine_type on the instance template (no flexibility)."
+  type = list(object({
+    name          = string
+    rank          = number
+    machine_types = list(string)
+  }))
+  default = []
+}
+
+variable "distribution_policy_target_shape" {
+  description = "How the regional MIG distributes VMs across zones. EVEN (default) distributes as evenly as possible — right for multi-VM deployments (prod at 25-120 VMs) so a single zone outage doesn't take down the fleet. ANY lets GCP place the VM in whichever zone has capacity — right for target_size=1 (dev) because EVEN anchors a single VM to one zone and can't fall back on capacity exhaustion. BALANCED is a middle option. See https://cloud.google.com/compute/docs/instance-groups/distributing-instances-with-regional-instance-groups."
+  type        = string
+  default     = "EVEN"
+
+  validation {
+    condition     = contains(["EVEN", "BALANCED", "ANY", "ANY_SINGLE_ZONE"], var.distribution_policy_target_shape)
+    error_message = "Must be one of: EVEN, BALANCED, ANY, ANY_SINGLE_ZONE."
+  }
+}
