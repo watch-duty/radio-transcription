@@ -82,7 +82,7 @@ export ICECAST_LOCAL_OUTPUT_DIR="/tmp/audio_chunks"
 ```
 # Assuming you're running from the top level of the root dir.
 # Run this command if you are running this for the first time.
-cat <<EOF > backend/pipeline/ingestion/collectors/icecast/.icecast_env
+cat <<EOF > backend/pipeline/ingestion/collectors/.icecast_env
 BROADCASTIFY_USERNAME=<your broadcastify username>
 BROADCASTIFY_PASSWORD=<your broadcastify pword>
 AUDIO_STAGING_BUCKET=<your audio staging bucket>
