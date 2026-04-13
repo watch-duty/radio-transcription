@@ -10,9 +10,6 @@ if TYPE_CHECKING:
 import pytest
 
 from backend.pipeline.storage.transcript_store import TranscriptStore
-from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
-    EvaluatedTranscribedAudio,
-)
 
 
 @pytest.fixture

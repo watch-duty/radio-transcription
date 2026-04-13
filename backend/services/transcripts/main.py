@@ -85,7 +85,6 @@ async def get_transcript(
 @app.get(
     "/v1/transcripts",
     tags=["transcripts"],
-    response_model=ListTranscriptsResponse,
 )
 async def list_transcripts(
     request: Request,
@@ -106,13 +105,12 @@ async def list_transcripts(
                 start_time=start_time,
                 end_time=end_time,
             )
-        else:
-            return await service.list_transcripts(
-                limit=limit,
-                next_token=next_token,
-                start_time=start_time,
-                end_time=end_time,
-            )
+        return await service.list_transcripts(
+            limit=limit,
+            next_token=next_token,
+            start_time=start_time,
+            end_time=end_time,
+        )
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)

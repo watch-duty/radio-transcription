@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass
 import datetime
 import uuid
+from dataclasses import dataclass
 
 import asyncpg
 import asyncpg.exceptions
@@ -78,7 +78,8 @@ class TranscriptStore:
             ts_str, uid_str = decoded.split("|")
             return datetime.datetime.fromisoformat(ts_str), uuid.UUID(uid_str)
         except Exception as e:
-            raise ValueError(f"Invalid next_token: {e}")
+            msg = f"Invalid next_token: {e}"
+            raise ValueError(msg)
 
     def _encode_cursor(self, ts: datetime.datetime, uid: uuid.UUID) -> str:
         """Encode a timestamp and UUID into a base64 pagination token."""
@@ -173,37 +174,15 @@ class TranscriptStore:
         if next_token:
             cursor_ts, cursor_uid = self._decode_cursor(next_token)
 
-        query = f"""
-SELECT
-{transcript_queries.TRANSCRIPT_COLUMNS_SQL}
-FROM transcripts
-WHERE feed_id = $1
-"""
-        params: list[uuid.UUID | datetime.datetime | int] = [uid]
-        param_count = 1
-
-        if cursor_ts and cursor_uid:
-            param_count += 2
-            query += f"  AND (end_timestamp < ${param_count - 1} OR (end_timestamp = ${param_count - 1} AND transmission_id < ${param_count}))\n"
-            params.extend([cursor_ts, cursor_uid])
-
-        if start_time:
-            param_count += 1
-            query += f"  AND end_timestamp >= ${param_count}\n"
-            params.append(start_time)
-
-        if end_time:
-            param_count += 1
-            query += f"  AND end_timestamp <= ${param_count}\n"
-            params.append(end_time)
-
-        query += "ORDER BY end_timestamp DESC, transmission_id DESC\n"
-
-        param_count += 1
-        query += f"LIMIT ${param_count}"
-        params.append(limit + 1)
-
-        rows = await self._pool.fetch(query, *params)
+        rows = await self._pool.fetch(
+            transcript_queries.GET_TRANSCRIPTS_BY_FEED_SQL,
+            uid,
+            cursor_ts,
+            cursor_uid,
+            start_time,
+            end_time,
+            limit + 1,
+        )
 
         has_more = len(rows) > limit
         if has_more:
@@ -232,42 +211,14 @@ WHERE feed_id = $1
         if next_token:
             cursor_ts, cursor_uid = self._decode_cursor(next_token)
 
-        query = f"""
-SELECT
-{transcript_queries.TRANSCRIPT_COLUMNS_SQL}
-FROM transcripts
-"""
-        params: list[uuid.UUID | datetime.datetime | int] = []
-        param_count = 0
-        where_clauses = []
-
-        if cursor_ts and cursor_uid:
-            param_count += 2
-            where_clauses.append(
-                f"(end_timestamp < ${param_count - 1} OR (end_timestamp = ${param_count - 1} AND transmission_id < ${param_count}))"
-            )
-            params.extend([cursor_ts, cursor_uid])
-
-        if start_time:
-            param_count += 1
-            where_clauses.append(f"end_timestamp >= ${param_count}")
-            params.append(start_time)
-
-        if end_time:
-            param_count += 1
-            where_clauses.append(f"end_timestamp <= ${param_count}")
-            params.append(end_time)
-
-        if where_clauses:
-            query += "WHERE " + " AND ".join(where_clauses) + "\n"
-
-        query += "ORDER BY end_timestamp DESC, transmission_id DESC\n"
-
-        param_count += 1
-        query += f"LIMIT ${param_count}"
-        params.append(limit + 1)
-
-        rows = await self._pool.fetch(query, *params)
+        rows = await self._pool.fetch(
+            transcript_queries.LIST_TRANSCRIPTS_SQL,
+            cursor_ts,
+            cursor_uid,
+            start_time,
+            end_time,
+            limit + 1,
+        )
 
         has_more = len(rows) > limit
         if has_more:

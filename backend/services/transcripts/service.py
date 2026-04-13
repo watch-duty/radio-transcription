@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import datetime
 import logging
 from typing import TYPE_CHECKING
 
@@ -13,6 +12,7 @@ from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
 from .models import ListTranscriptsResponse, Transcript
 
 if TYPE_CHECKING:
+    import datetime
     from backend.pipeline.storage.transcript_store import TranscriptStore
 
 logger = logging.getLogger(__name__)
