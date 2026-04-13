@@ -8,7 +8,7 @@ resource "google_compute_resource_policy" "daily_stop" {
       schedule = "0 ${var.stop_hour} * * *"
     }
     vm_start_schedule {
-      schedule = "0 ${var.start_hour} * * *"
+      schedule = "0 ${var.start_hour} * * 1-5"
     }
     time_zone = "America/Los_Angeles"
   }
@@ -22,7 +22,7 @@ resource "google_compute_instance" "eval_instance" {
 
   boot_disk {
     initialize_params {
-      image = "projects/deeplearning-platform-release/global/images/family/common-cu121-debian-11"
+      image = "projects/deeplearning-platform-release/global/images/family/pytorch-2-7-cu128-ubuntu-2204-nvidia-570"
       size  = 100 # Deep Learning images are large, 100GB recommended
       type  = "pd-ssd"
     }

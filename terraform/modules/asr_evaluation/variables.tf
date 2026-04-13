@@ -11,7 +11,7 @@ variable "project_id" {
 variable "machine_type" {
   description = "The machine type to use"
   type        = string
-  default     = "n1-standard-2"
+  default     = "n1-standard-4"
 }
 
 variable "gpu_type" {
