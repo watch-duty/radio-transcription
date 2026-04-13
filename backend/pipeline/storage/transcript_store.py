@@ -69,6 +69,22 @@ class TranscriptStore:
 
         return msg
 
+    def _decode_cursor(
+        self, next_token: str
+    ) -> tuple[datetime.datetime, uuid.UUID]:
+        """Decode a base64 pagination token into a timestamp and UUID."""
+        try:
+            decoded = base64.b64decode(next_token).decode("utf-8")
+            ts_str, uid_str = decoded.split("|")
+            return datetime.datetime.fromisoformat(ts_str), uuid.UUID(uid_str)
+        except Exception as e:
+            raise ValueError(f"Invalid next_token: {e}")
+
+    def _encode_cursor(self, ts: datetime.datetime, uid: uuid.UUID) -> str:
+        """Encode a timestamp and UUID into a base64 pagination token."""
+        token_str = f"{ts.isoformat()}|{uid}"
+        return base64.b64encode(token_str.encode("utf-8")).decode("utf-8")
+
     async def create_transcript(
         self, transcript: EvaluatedTranscribedAudio
     ) -> EvaluatedTranscribedAudio:
@@ -155,13 +171,7 @@ class TranscriptStore:
         cursor_ts = None
         cursor_uid = None
         if next_token:
-            try:
-                decoded = base64.b64decode(next_token).decode("utf-8")
-                ts_str, uid_str = decoded.split("|")
-                cursor_ts = datetime.datetime.fromisoformat(ts_str)
-                cursor_uid = uuid.UUID(uid_str)
-            except Exception as e:
-                raise ValueError(f"Invalid next_token: {e}")
+            cursor_ts, cursor_uid = self._decode_cursor(next_token)
 
         query = f"""
 SELECT
@@ -199,9 +209,8 @@ WHERE feed_id = $1
         if has_more:
             rows = rows[:limit]
             last_row = rows[-1]
-            token_str = f"{last_row['end_timestamp'].isoformat()}|{last_row['transmission_id']}"
-            new_next_token = base64.b64encode(token_str.encode("utf-8")).decode(
-                "utf-8"
+            new_next_token = self._encode_cursor(
+                last_row["end_timestamp"], last_row["transmission_id"]
             )
         else:
             new_next_token = None
@@ -221,13 +230,7 @@ WHERE feed_id = $1
         cursor_ts = None
         cursor_uid = None
         if next_token:
-            try:
-                decoded = base64.b64decode(next_token).decode("utf-8")
-                ts_str, uid_str = decoded.split("|")
-                cursor_ts = datetime.datetime.fromisoformat(ts_str)
-                cursor_uid = uuid.UUID(uid_str)
-            except Exception as e:
-                raise ValueError(f"Invalid next_token: {e}")
+            cursor_ts, cursor_uid = self._decode_cursor(next_token)
 
         query = f"""
 SELECT
@@ -270,9 +273,8 @@ FROM transcripts
         if has_more:
             rows = rows[:limit]
             last_row = rows[-1]
-            token_str = f"{last_row['end_timestamp'].isoformat()}|{last_row['transmission_id']}"
-            new_next_token = base64.b64encode(token_str.encode("utf-8")).decode(
-                "utf-8"
+            new_next_token = self._encode_cursor(
+                last_row["end_timestamp"], last_row["transmission_id"]
             )
         else:
             new_next_token = None
