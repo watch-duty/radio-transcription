@@ -7,6 +7,7 @@ import logging
 import os
 import random
 import uuid
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -148,17 +149,22 @@ def _get_audio_format(url: str) -> str:
     """Infer the audio format from a URL's file extension.
 
     Args:
-        url: The audio file URL.
+        url: The audio file URL (e.g., 'https://site.com/jake.mp3?v=1').
 
     Returns:
-        The lowercase file extension without the leading dot (e.g. ``"mp3"``
-        or ``"m4a"``), or ``"mp3"`` if no extension can be determined.
+        The lowercase file extension without the leading dot,
+        or 'mp3' if no valid extension is found.
     """
+    # 1. Isolate the path from the URL (strips 'https://' and '?query=...')
     path = urlparse(url).path
-    if "." in path:
-        ext = path.rsplit(".", 1)[-1].lower()
-        if ext in _KNOWN_AUDIO_FORMATS:
-            return ext
+
+    # 2. Extract the suffix (e.g., '.mp3'), drop the dot, and make lowercase
+    ext = Path(path).suffix[1:].lower()
+
+    # 3. Validate against known formats
+    if ext in _KNOWN_AUDIO_FORMATS:
+        return ext
+
     return "mp3"
 
 
