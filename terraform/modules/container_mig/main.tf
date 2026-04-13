@@ -26,6 +26,16 @@ data "google_compute_image" "cos" {
   project = "cos-cloud"
 }
 
+# Zones in the region. Used to size update_policy.max_surge_fixed on the
+# regional MIG below; GCP requires it to be >= the number of zones the MIG
+# operates in. Computing dynamically means the module works in regions with
+# more or fewer zones (e.g. us-central1 has 4, us-east5 has 3) without a
+# per-region hardcoded value.
+data "google_compute_zones" "available" {
+  project = var.project_id
+  region  = var.region
+}
+
 # -----------------------------------------------------------------------------
 # Instance Template
 # -----------------------------------------------------------------------------
@@ -81,10 +91,10 @@ resource "google_compute_instance_template" "this" {
 # Managed Instance Group
 # -----------------------------------------------------------------------------
 
-resource "google_compute_instance_group_manager" "this" {
+resource "google_compute_region_instance_group_manager" "this" {
   name               = "${var.name_prefix}-mig"
   project            = var.project_id
-  zone               = var.zone
+  region             = var.region
   base_instance_name = var.name_prefix
   target_size        = var.target_size
 
@@ -92,11 +102,16 @@ resource "google_compute_instance_group_manager" "this" {
     instance_template = google_compute_instance_template.this.self_link_unique
   }
 
+  # Regional MIG distributes across all zones in the region by default. When one
+  # zone lacks capacity (ZONE_RESOURCE_POOL_EXHAUSTED), the MIG automatically
+  # places instances in other zones — which is what the zonal predecessor
+  # couldn't do, and what wedged dev after the NAT-removal apply.
   update_policy {
-    type                  = "PROACTIVE"
-    minimal_action        = "REPLACE"
-    max_surge_fixed       = 1
-    max_unavailable_fixed = 0
-    replacement_method    = "SUBSTITUTE"
+    type                         = "PROACTIVE"
+    minimal_action               = "REPLACE"
+    max_surge_fixed              = length(data.google_compute_zones.available.names)
+    max_unavailable_fixed        = 0
+    replacement_method           = "SUBSTITUTE"
+    instance_redistribution_type = "PROACTIVE"
   }
 }

@@ -8,12 +8,7 @@ variable "project_id" {
 }
 
 variable "region" {
-  description = "The GCP region."
-  type        = string
-}
-
-variable "zone" {
-  description = "The GCE zone for the zonal MIG (e.g. us-central1-a)."
+  description = "The GCP region. The MIG is regional and distributes instances across all zones in this region; individual zone placement is handled by GCP."
   type        = string
 }
 
