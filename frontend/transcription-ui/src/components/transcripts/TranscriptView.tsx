@@ -1,14 +1,10 @@
 import { Fragment, useState } from 'react';
-import { Fragment, useState } from 'react';
 
-import ThumbDownIcon from '@mui/icons-material/ThumbDown';
 import ThumbUpIcon from '@mui/icons-material/ThumbUp';
 import ThumbDownIcon from '@mui/icons-material/ThumbDown';
-import ThumbUpIcon from '@mui/icons-material/ThumbUp';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
-import IconButton from '@mui/material/IconButton';
 import IconButton from '@mui/material/IconButton';
 import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
@@ -31,9 +27,6 @@ export function TranscriptView() {
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
 
-  const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
-    useState<string | null>(null);
-
   const handleFetch = async () => {
     if (!feedId.trim()) return;
     setTranscripts([]);
@@ -52,10 +45,6 @@ export function TranscriptView() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const onPlay = (transmissionId: string | null) => {
-    setCurrentlyPlayingTransmissionId(transmissionId);
   };
 
   const onPlay = (transmissionId: string | null) => {
