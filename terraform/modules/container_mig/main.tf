@@ -142,12 +142,22 @@ resource "google_compute_region_instance_group_manager" "this" {
   # places instances in other zones — which is what the zonal predecessor
   # couldn't do, and what wedged dev after the NAT-removal apply.
   #
+  # update_policy.type is tied to instance_flexibility_policy presence:
+  #   - No flex policy: PROACTIVE (MIG actively rolls VMs onto the latest
+  #     template on every template-version change — standard behavior).
+  #   - With flex policy: OPPORTUNISTIC (required by the GCP API — PROACTIVE
+  #     + flex is rejected as "Instance flexibility policy requires
+  #     opportunistic update policy"). VMs update only when replaced for
+  #     another reason (autohealing, manual rolling-action replace, or
+  #     autoscaler). Explicit rollouts can be triggered via
+  #     `gcloud compute instance-groups managed rolling-action replace`.
+  #
   # instance_redistribution_type is tied to target_shape:
   #   - EVEN: PROACTIVE (converge toward even zonal distribution)
   #   - BALANCED / ANY / ANY_SINGLE_ZONE: NONE — there's no "even" target to
   #     converge toward, and GCP's API can reject PROACTIVE with these shapes.
   update_policy {
-    type                         = "PROACTIVE"
+    type                         = length(var.instance_selections) > 0 ? "OPPORTUNISTIC" : "PROACTIVE"
     minimal_action               = "REPLACE"
     max_surge_fixed              = length(data.google_compute_zones.available.names)
     max_unavailable_fixed        = 0
