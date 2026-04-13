@@ -83,7 +83,7 @@ export class TranscriptsController extends Controller {
 
     try {
       const response = await client.request({
-        url: `${TRANSCRIPTS_API_URL}?feedId=${feedId}`,
+        url: `${TRANSCRIPTS_API_URL}?feed_id=${feedId}`,
         method: 'GET',
       });
       const data = response.data as TranscriptResponse[];
