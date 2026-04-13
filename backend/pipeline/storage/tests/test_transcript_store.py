@@ -1,11 +1,10 @@
 from __future__ import annotations
 
+import base64
 import datetime
 import unittest
 import uuid
 from unittest import mock
-
-import base64
 
 import asyncpg.exceptions
 

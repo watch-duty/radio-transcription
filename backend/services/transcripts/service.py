@@ -13,6 +13,7 @@ from .models import ListTranscriptsResponse, Transcript
 
 if TYPE_CHECKING:
     import datetime
+
     from backend.pipeline.storage.transcript_store import TranscriptStore
 
 logger = logging.getLogger(__name__)
