@@ -19,7 +19,9 @@ MOCK_ENV_VARS = {
 with (
     patch.dict(os.environ, MOCK_ENV_VARS, clear=False),
 ):
-    from backend.pipeline.ingestion.collectors.icecast import local_icecast_collector
+    from backend.pipeline.ingestion.collectors.icecast import (
+        local_icecast_collector,
+    )
 
 
 class TestLocalIcecastCollector(unittest.IsolatedAsyncioTestCase):
