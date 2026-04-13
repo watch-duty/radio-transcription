@@ -1,6 +1,6 @@
 export function isAxiosError(
   error: unknown
-): error is { response?: { status: number } } {
+): error is { response?: { status: number; data?: unknown } } {
   if (typeof error !== 'object' || error === null) {
     return false;
   }
