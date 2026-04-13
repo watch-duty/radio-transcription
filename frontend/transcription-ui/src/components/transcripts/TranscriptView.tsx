@@ -1,5 +1,7 @@
-import { useState, Fragment } from 'react';
+import { Fragment, useState } from 'react';
 
+import ThumbDownIcon from '@mui/icons-material/ThumbDown';
+import ThumbUpIcon from '@mui/icons-material/ThumbUp';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -9,8 +11,6 @@ import ListItem from '@mui/material/ListItem';
 import Paper from '@mui/material/Paper';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
-import ThumbUpIcon from '@mui/icons-material/ThumbUp';
-import ThumbDownIcon from '@mui/icons-material/ThumbDown';
 
 import { useAuth } from '../../context/AuthContext';
 import {
@@ -97,28 +97,53 @@ export function TranscriptView() {
           <List component={Paper} variant="outlined" sx={{ p: 0 }}>
             {transcripts.map((t, index) => {
               const currentDate = new Date(t.startTimestamp);
-              const prevDate = index > 0 ? new Date(transcripts[index - 1].startTimestamp) : null;
-              const showHeader = !prevDate || currentDate.toDateString() !== prevDate.toDateString();
+              const prevDate =
+                index > 0
+                  ? new Date(transcripts[index - 1].startTimestamp)
+                  : null;
+              const showHeader =
+                !prevDate ||
+                currentDate.toDateString() !== prevDate.toDateString();
 
               return (
                 <Fragment key={t.transmissionId}>
                   {showHeader && (
                     <ListItem sx={{ py: 0.5, bgcolor: 'action.hover' }}>
-                      <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 'bold' }}>
-                        {currentDate.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ fontWeight: 'bold' }}
+                      >
+                        {currentDate.toLocaleDateString([], {
+                          weekday: 'long',
+                          month: 'long',
+                          day: 'numeric',
+                          year: 'numeric',
+                        })}
                       </Typography>
                     </ListItem>
                   )}
                   <ListItem
                     divider={index < transcripts.length - 1}
-                    sx={{ display: 'flex', alignItems: 'center', gap: 2, py: 1.5 }}
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 2,
+                      py: 1.5,
+                    }}
                   >
                     <Typography
                       variant="caption"
                       color="text.secondary"
                       sx={{ minWidth: 'max-content' }}
                     >
-                      {currentDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short', hour12: false })}
+                      {currentDate.toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        timeZoneName: 'short',
+                        hour12: false,
+                      })}
                     </Typography>
                     <AudioPlayer
                       audioUri={t.canonicalAudioUri}
@@ -138,7 +163,11 @@ export function TranscriptView() {
                       <IconButton size="small" aria-label="thumbs up" disabled>
                         <ThumbUpIcon fontSize="small" />
                       </IconButton>
-                      <IconButton size="small" aria-label="thumbs down" disabled>
+                      <IconButton
+                        size="small"
+                        aria-label="thumbs down"
+                        disabled
+                      >
                         <ThumbDownIcon fontSize="small" />
                       </IconButton>
                     </Box>

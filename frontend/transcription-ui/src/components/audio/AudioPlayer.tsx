@@ -25,10 +25,18 @@ function AudioPlayer(props: AudioPlayerProps) {
       src: [audioUri.replace('gs://', 'https://storage.googleapis.com/')],
       html5: true,
       preload: 'metadata',
-      onplay: () => { setIsPlaying(true); },
-      onpause: () => { setIsPlaying(false); },
-      onend: () => { setIsPlaying(false); },
-      onstop: () => { setIsPlaying(false); }
+      onplay: () => {
+        setIsPlaying(true);
+      },
+      onpause: () => {
+        setIsPlaying(false);
+      },
+      onend: () => {
+        setIsPlaying(false);
+      },
+      onstop: () => {
+        setIsPlaying(false);
+      },
     });
 
     return () => {
@@ -40,7 +48,7 @@ function AudioPlayer(props: AudioPlayerProps) {
     sound.current?.stop();
   }, []);
 
-  // This effect will ensure multiple audio files are not played at the same time. 
+  // This effect will ensure multiple audio files are not played at the same time.
   useEffect(() => {
     if (currentlyPlayingTransmissionId !== transmissionId) {
       stopAudio();

@@ -1,9 +1,24 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from '@testing-library/react';
+
 import AudioPlayer from './AudioPlayer';
 
-let mockCapturedOptions: any;
+interface MockHowlOptions {
+  onplay?: () => void;
+  onpause?: () => void;
+  onend?: () => void;
+  onstop?: () => void;
+}
+
+let mockCapturedOptions: MockHowlOptions = {};
 const mockHowlInstance = {
   play: vi.fn(),
   pause: vi.fn(),
@@ -12,7 +27,7 @@ const mockHowlInstance = {
 };
 
 vi.mock('howler', () => ({
-  Howl: function (opts: any) {
+  Howl: function (opts: MockHowlOptions) {
     mockCapturedOptions = opts;
     return mockHowlInstance;
   },
@@ -29,7 +44,7 @@ describe('AudioPlayer', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockCapturedOptions = null;
+    mockCapturedOptions = {};
   });
 
   afterEach(() => {
@@ -43,7 +58,7 @@ describe('AudioPlayer', () => {
 
   it('calls onPlay and plays audio when clicked', () => {
     render(<AudioPlayer {...defaultProps} />);
-    
+
     const button = screen.getByLabelText('play');
     fireEvent.click(button);
 
@@ -53,23 +68,23 @@ describe('AudioPlayer', () => {
 
   it('updates UI to pause when playing', () => {
     render(<AudioPlayer {...defaultProps} />);
-    
+
     // Simulate onplay event
     act(() => {
-      mockCapturedOptions.onplay();
+      mockCapturedOptions.onplay?.();
     });
-    
+
     expect(screen.getByLabelText('pause')).toBeTruthy();
   });
 
   it('calls pause when clicked while playing', () => {
     render(<AudioPlayer {...defaultProps} />);
-    
+
     // Simulate playing state
     act(() => {
-      mockCapturedOptions.onplay();
+      mockCapturedOptions.onplay?.();
     });
-    
+
     const button = screen.getByLabelText('pause');
     fireEvent.click(button);
 
@@ -78,18 +93,15 @@ describe('AudioPlayer', () => {
 
   it('stops audio when another transmission starts playing', () => {
     const { rerender } = render(<AudioPlayer {...defaultProps} />);
-    
+
     // Simulate playing
     act(() => {
-      mockCapturedOptions.onplay();
+      mockCapturedOptions.onplay?.();
     });
-    
+
     // Rerender with a different currentlyPlayingTransmissionId
     rerender(
-      <AudioPlayer
-        {...defaultProps}
-        currentlyPlayingTransmissionId="456"
-      />
+      <AudioPlayer {...defaultProps} currentlyPlayingTransmissionId="456" />
     );
 
     expect(mockHowlInstance.stop).toHaveBeenCalled();
@@ -97,7 +109,7 @@ describe('AudioPlayer', () => {
 
   it('unloads sound on unmount', () => {
     const { unmount } = render(<AudioPlayer {...defaultProps} />);
-    
+
     unmount();
 
     expect(mockHowlInstance.unload).toHaveBeenCalled();
