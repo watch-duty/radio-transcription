@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+from dataclasses import dataclass
+import datetime
 import uuid
 
 import asyncpg
@@ -11,6 +14,12 @@ from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
 )
 
 from . import transcript_queries
+
+
+@dataclass
+class PaginatedTranscripts:
+    transcripts: list[EvaluatedTranscribedAudio]
+    next_token: str | None
 
 
 class TranscriptStore:
@@ -130,23 +139,137 @@ class TranscriptStore:
         return self._row_to_proto(row)
 
     async def list_transcripts_by_feed_id(
-        self, feed_id: str
-    ) -> list[EvaluatedTranscribedAudio]:
-        """Lists all transcripts for a specific feed ID."""
+        self,
+        feed_id: str,
+        limit: int = 100,
+        next_token: str | None = None,
+        start_time: datetime.datetime | None = None,
+        end_time: datetime.datetime | None = None,
+    ) -> PaginatedTranscripts:
+        """Lists transcripts for a specific feed ID with pagination and time window."""
         try:
             uid = uuid.UUID(feed_id)
         except ValueError:
-            return []
+            return PaginatedTranscripts([], None)
 
-        rows = await self._pool.fetch(
-            transcript_queries.GET_TRANSCRIPTS_BY_FEED_SQL, uid
-        )
-        return [self._row_to_proto(row) for row in rows]
+        cursor_ts = None
+        cursor_uid = None
+        if next_token:
+            try:
+                decoded = base64.b64decode(next_token).decode('utf-8')
+                ts_str, uid_str = decoded.split('|')
+                cursor_ts = datetime.datetime.fromisoformat(ts_str)
+                cursor_uid = uuid.UUID(uid_str)
+            except Exception as e:
+                raise ValueError(f"Invalid next_token: {e}")
 
-    async def list_transcripts(self) -> list[EvaluatedTranscribedAudio]:
-        """Lists all transcripts ordered by end_timestamp descending."""
-        rows = await self._pool.fetch(transcript_queries.LIST_TRANSCRIPTS_SQL)
-        return [self._row_to_proto(row) for row in rows]
+        query = f"""
+SELECT
+{transcript_queries.TRANSCRIPT_COLUMNS_SQL}
+FROM transcripts
+WHERE feed_id = $1
+"""
+        params = [uid]
+        param_count = 1
+
+        if cursor_ts and cursor_uid:
+            param_count += 2
+            query += f"  AND (end_timestamp < ${param_count-1} OR (end_timestamp = ${param_count-1} AND transmission_id < ${param_count}))\n"
+            params.extend([cursor_ts, cursor_uid])
+
+        if start_time:
+            param_count += 1
+            query += f"  AND end_timestamp >= ${param_count}\n"
+            params.append(start_time)
+
+        if end_time:
+            param_count += 1
+            query += f"  AND end_timestamp <= ${param_count}\n"
+            params.append(end_time)
+
+        query += "ORDER BY end_timestamp DESC, transmission_id DESC\n"
+        
+        param_count += 1
+        query += f"LIMIT ${param_count}"
+        params.append(limit + 1)
+
+        rows = await self._pool.fetch(query, *params)
+
+        has_more = len(rows) > limit
+        if has_more:
+            rows = rows[:limit]
+            last_row = rows[-1]
+            token_str = f"{last_row['end_timestamp'].isoformat()}|{last_row['transmission_id']}"
+            new_next_token = base64.b64encode(token_str.encode('utf-8')).decode('utf-8')
+        else:
+            new_next_token = None
+
+        return PaginatedTranscripts([self._row_to_proto(row) for row in rows], new_next_token)
+
+    async def list_transcripts(
+        self,
+        limit: int = 100,
+        next_token: str | None = None,
+        start_time: datetime.datetime | None = None,
+        end_time: datetime.datetime | None = None,
+    ) -> PaginatedTranscripts:
+        """Lists all transcripts with pagination and time window."""
+        cursor_ts = None
+        cursor_uid = None
+        if next_token:
+            try:
+                decoded = base64.b64decode(next_token).decode('utf-8')
+                ts_str, uid_str = decoded.split('|')
+                cursor_ts = datetime.datetime.fromisoformat(ts_str)
+                cursor_uid = uuid.UUID(uid_str)
+            except Exception as e:
+                raise ValueError(f"Invalid next_token: {e}")
+
+        query = f"""
+SELECT
+{transcript_queries.TRANSCRIPT_COLUMNS_SQL}
+FROM transcripts
+"""
+        params = []
+        param_count = 0
+        where_clauses = []
+
+        if cursor_ts and cursor_uid:
+            param_count += 2
+            where_clauses.append(f"(end_timestamp < ${param_count-1} OR (end_timestamp = ${param_count-1} AND transmission_id < ${param_count}))")
+            params.extend([cursor_ts, cursor_uid])
+
+        if start_time:
+            param_count += 1
+            where_clauses.append(f"end_timestamp >= ${param_count}")
+            params.append(start_time)
+
+        if end_time:
+            param_count += 1
+            where_clauses.append(f"end_timestamp <= ${param_count}")
+            params.append(end_time)
+
+        if where_clauses:
+            query += "WHERE " + " AND ".join(where_clauses) + "\n"
+
+        query += "ORDER BY end_timestamp DESC, transmission_id DESC\n"
+        
+        param_count += 1
+        query += f"LIMIT ${param_count}"
+        params.append(limit + 1)
+
+        rows = await self._pool.fetch(query, *params)
+
+        has_more = len(rows) > limit
+        if has_more:
+            rows = rows[:limit]
+            last_row = rows[-1]
+            token_str = f"{last_row['end_timestamp'].isoformat()}|{last_row['transmission_id']}"
+            new_next_token = base64.b64encode(token_str.encode('utf-8')).decode('utf-8')
+        else:
+            new_next_token = None
+
+        return PaginatedTranscripts([self._row_to_proto(row) for row in rows], new_next_token)
 
     async def delete_transcript(self, transmission_id: str) -> bool:
         """Deletes a transcript."""

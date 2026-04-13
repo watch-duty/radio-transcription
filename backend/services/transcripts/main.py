@@ -1,3 +1,4 @@
+import datetime
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -12,7 +13,7 @@ from backend.pipeline.storage.connection import (
 )
 from backend.pipeline.storage.transcript_store import TranscriptStore
 
-from .models import Transcript
+from .models import ListTranscriptsResponse, Transcript
 from .service import TranscriptService
 
 logger = logging.getLogger(__name__)
@@ -84,16 +85,29 @@ async def get_transcript(
 @app.get(
     "/v1/transcripts",
     tags=["transcripts"],
+    response_model=ListTranscriptsResponse,
 )
 async def list_transcripts(
     request: Request,
     feed_id: str | None = None,
-) -> list[Transcript]:
-    """List transcripts, optionally filtered by feed ID."""
+    limit: int = 100,
+    next_token: str | None = None,
+    start_time: datetime.datetime | None = None,
+    end_time: datetime.datetime | None = None,
+) -> ListTranscriptsResponse:
+    """List transcripts, optionally filtered by feed ID, with pagination and time window."""
     service: TranscriptService = request.app.state.transcript_service
-    if feed_id:
-        return await service.list_transcripts_by_feed_id(feed_id)
-    return await service.list_transcripts()
+    try:
+        if feed_id:
+            return await service.list_transcripts_by_feed_id(
+                feed_id, limit=limit, next_token=next_token, start_time=start_time, end_time=end_time
+            )
+        else:
+            return await service.list_transcripts(
+                limit=limit, next_token=next_token, start_time=start_time, end_time=end_time
+            )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
 @app.delete(

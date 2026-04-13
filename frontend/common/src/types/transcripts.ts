@@ -15,4 +15,5 @@ export interface Transcript {
 
 export interface ListTranscriptsResponse {
   transcripts: Transcript[];
+  nextToken?: string;
 }
