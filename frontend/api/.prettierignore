@@ -1,2 +1,3 @@
 openapi.yaml
 **/generated/*
+dist/
