@@ -97,11 +97,11 @@ jobs:
         uses: jdx/mise-action@v3
       - name: Enable Corepack (node package manager)
         run: corepack enable
+      - name: Build and install common
+        working-directory: frontend/common
+        run: yarn install --frozen-lockfile --non-interactive && yarn build
       - name: Install dependencies
-        run: |
-          yarn --cwd frontend/common install --frozen-lockfile --non-interactive \
-          && yarn --cwd frontend/api install --frozen-lockfile --non-interactive \
-          && yarn --cwd frontend/transcription-ui install --frozen-lockfile --non-interactive
+        run: yarn --cwd frontend/api install --frozen-lockfile --non-interactive && yarn --cwd frontend/transcription-ui install --frozen-lockfile --non-interactive
       - name: Run ESLint
         run: yarn --cwd frontend/api lint:check && yarn --cwd frontend/transcription-ui lint:check
       - name: Run Prettier
@@ -172,11 +172,11 @@ jobs:
         uses: jdx/mise-action@v3
       - name: Enable Corepack (node package manager)
         run: corepack enable
+      - name: Build and install common
+        working-directory: frontend/common
+        run: yarn install --frozen-lockfile --non-interactive && yarn build
       - name: Install dependencies
-        run: |
-          yarn --cwd frontend/common install --frozen-lockfile --non-interactive \
-          && yarn --cwd frontend/api install --frozen-lockfile --non-interactive \
-          && yarn --cwd frontend/transcription-ui install --frozen-lockfile --non-interactive
+        run: yarn --cwd frontend/api install --frozen-lockfile --non-interactive && yarn --cwd frontend/transcription-ui install --frozen-lockfile --non-interactive
       - name: Run proxy tests
         working-directory: frontend/api
         run: yarn test --watch=false
