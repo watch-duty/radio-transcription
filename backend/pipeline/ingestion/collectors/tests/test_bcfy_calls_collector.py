@@ -232,7 +232,7 @@ class TestGetAudioFormat(unittest.TestCase):
         )
         self.assertEqual(res, "mp3")
 
-    def test_no_path_defaults_to_mp3(self) -> None:
+    def test_no_extension_defaults_to_mp3(self) -> None:
         res = bcfy_calls_collector._get_audio_format("http://example.com/audio")
         self.assertEqual(res, "mp3")
 

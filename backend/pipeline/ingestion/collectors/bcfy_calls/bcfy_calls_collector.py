@@ -171,7 +171,7 @@ def _get_audio_format(url: str) -> str:
 def _raise_if_429(status: int, audio_url: str) -> None:
     """Raise RuntimeError if status is 429."""
     if status == 429:
-        msg = f"CDN rate limit (429) downloading Audio file: {audio_url}"
+        msg = f"CDN rate limit (429) downloading audio file: {audio_url}"
         raise RuntimeError(msg)
 
 
