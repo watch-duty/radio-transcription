@@ -88,6 +88,29 @@ resource "google_compute_instance_template" "this" {
 }
 
 # -----------------------------------------------------------------------------
+# Health check (opt-in via var.enable_autohealing)
+# -----------------------------------------------------------------------------
+
+# HTTP probe of /healthz on port 8080. Attached to auto_healing_policies on
+# the MIG below; VMs that fail 3 consecutive probes (90s) are replaced.
+# count-gated so callers that don't opt in don't pay for an unused resource.
+resource "google_compute_health_check" "this" {
+  count = var.enable_autohealing ? 1 : 0
+
+  name                = "${var.name_prefix}-healthz"
+  project             = var.project_id
+  check_interval_sec  = 30
+  timeout_sec         = 10
+  healthy_threshold   = 2
+  unhealthy_threshold = 3 # 3 × 30s = 90s detection
+
+  http_health_check {
+    port         = 8080
+    request_path = "/healthz"
+  }
+}
+
+# -----------------------------------------------------------------------------
 # Managed Instance Group
 # -----------------------------------------------------------------------------
 
@@ -104,10 +127,31 @@ resource "google_compute_region_instance_group_manager" "this" {
   # actually places a VM. If the rolling update fails (zone exhaustion, image
   # pull failure, etc.), terraform silently returns green. With this, the apply
   # fails loudly — the right signal for operators.
-  wait_for_instances = true
+  #
+  # wait_for_instances_status = HEALTHY (when autohealing is on) is a strict
+  # upgrade: apply waits for VMs to pass /healthz, not just be RUNNING. Catches
+  # "container started but serving 503" in the apply itself instead of silently
+  # flapping via the autohealer. Requires the consumer to deploy the /healthz
+  # server AND open the firewall before flipping enable_autohealing to true;
+  # otherwise apply blocks until its 30m timeout.
+  wait_for_instances        = true
+  wait_for_instances_status = var.enable_autohealing ? "HEALTHY" : "STABLE"
 
   version {
     instance_template = google_compute_instance_template.this.self_link_unique
+  }
+
+  # Autohealing. initial_delay_sec = 360 (6 min) covers VM boot (~30s) +
+  # cloud-init (~60s) + docker pull (~2-3 min on cold cache) + container
+  # start + first heartbeat + first feed lease with margin. A VM failing
+  # /healthz during this window would be killed mid-startup, guaranteeing
+  # a recreate loop on any non-trivial rollout.
+  dynamic "auto_healing_policies" {
+    for_each = var.enable_autohealing ? [1] : []
+    content {
+      health_check      = google_compute_health_check.this[0].id
+      initial_delay_sec = 360
+    }
   }
 
   # target_shape: ANY is right for small MIGs (target_size=1, as in dev)

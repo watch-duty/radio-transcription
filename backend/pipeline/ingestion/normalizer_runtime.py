@@ -10,10 +10,12 @@ from collections.abc import AsyncIterator, Callable
 
 import aiohttp
 import asyncpg
+from aiohttp import web
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
-from backend.pipeline.ingestion import quarantine_telemetry
+from backend.pipeline.ingestion import health_server, quarantine_telemetry
+from backend.pipeline.ingestion.health_server import HealthState
 from backend.pipeline.ingestion.models import CapturedChunk
 from backend.pipeline.ingestion.retry import (
     LeaseExpiredError,
@@ -107,6 +109,10 @@ class NormalizerRuntime:
         self._heartbeat_store: FeedStore = None  # type: ignore # set in _main()
         self._gcs_client = gcs_client.GcsClient()
         self._pubsub_client = pubsub_client.PubSubClient()
+        # Shared state published to the /healthz handler. feed_tasks is held
+        # by reference to _feed_tasks so len() reflects live leasing state.
+        self._health_state = HealthState(feed_tasks=self._feed_tasks)
+        self._health_runner: web.AppRunner | None = None
 
     # -- Entry point ------------------------------------------------------
 
@@ -173,6 +179,13 @@ class NormalizerRuntime:
         self._heartbeat_thread.start()
 
         quarantine_telemetry.configure(settings.google_cloud_project)
+
+        # Start /healthz HTTP server. Runs on the same event loop as the
+        # leasing/heartbeat coroutines — this is load-bearing: if the loop is
+        # wedged, the handler stops responding and GCP autohealing takes over.
+        self._health_runner = await health_server.start(
+            settings, self._health_state,
+        )
 
         try:
             await self._leasing_loop()
@@ -564,6 +577,10 @@ class NormalizerRuntime:
         """
         active = dict(self._feed_tasks.items())
         if not active:
+            # No feeds leased yet (startup) or all released. Still stamp:
+            # the cycle ran, the event loop is alive. Gate 3 in /healthz is
+            # the right signal for "should have feeds but doesn't."
+            self._health_state.last_heartbeat_completed = time.monotonic()
             return
 
         results: list[
@@ -597,6 +614,11 @@ class NormalizerRuntime:
                 "Heartbeat renewed for %d feeds",
                 len(renewed_ids),
             )
+            # Stamp on successful completion (after the DB UPDATE and
+            # fence-violation check passed). Read by the /healthz handler to
+            # detect an event loop that's running but degraded — stalled DB
+            # I/O ages the stamp without tripping the 45s stall detector.
+            self._health_state.last_heartbeat_completed = time.monotonic()
             return
 
         # Log diagnostic details for each lost feed before terminating.
@@ -639,6 +661,12 @@ class NormalizerRuntime:
             "Shutting down -- %d active feed tasks",
             len(self._feed_tasks),
         )
+        # Stop the /healthz listener early so external probes get a clean
+        # connection refusal (port closed) rather than hanging on a socket
+        # whose event loop is about to drain.
+        if self._health_runner is not None:
+            await self._health_runner.cleanup()
+
         # Stop heartbeat FIRST to prevent it from seeing released feeds as
         # fence violations during the teardown window.
         self._thread_stop.set()

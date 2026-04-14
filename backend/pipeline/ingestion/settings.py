@@ -130,3 +130,27 @@ class NormalizerSettings:
             os.environ.get("BOOKMARK_RETRY_MAX_DELAY_SEC", "4.0"),
         ),
     )
+
+    # Health check (GET /healthz served on port health_check_port).
+    # health_check_heartbeat_max_age_sec matches heartbeat_stall_timeout_sec —
+    # see health_server.py for the reasoning.
+    health_check_port: int = field(
+        default_factory=lambda: int(
+            os.environ.get("HEALTH_CHECK_PORT", "8080"),
+        ),
+    )
+    health_check_heartbeat_max_age_sec: float = field(
+        default_factory=lambda: float(
+            os.environ.get("HEALTH_CHECK_HEARTBEAT_MAX_AGE_SEC", "45.0"),
+        ),
+    )
+    health_check_heartbeat_grace_sec: float = field(
+        default_factory=lambda: float(
+            os.environ.get("HEALTH_CHECK_HEARTBEAT_GRACE_SEC", "60.0"),
+        ),
+    )
+    health_check_feed_grace_sec: float = field(
+        default_factory=lambda: float(
+            os.environ.get("HEALTH_CHECK_FEED_GRACE_SEC", "300.0"),
+        ),
+    )
