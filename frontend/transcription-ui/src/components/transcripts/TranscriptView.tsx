@@ -3,6 +3,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import ThumbDownIcon from '@mui/icons-material/ThumbDown';
 import ThumbUpIcon from '@mui/icons-material/ThumbUp';
+import WarningAmber from '@mui/icons-material/WarningAmber';
 import type { AlertProps } from '@mui/material/Alert';
 import Autocomplete from '@mui/material/Autocomplete';
 import Box from '@mui/material/Box';
@@ -235,6 +236,11 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
                       py: 1.5,
                     }}
                   >
+                    <Box sx={{ width: '24px', display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
+                      {t.evaluationDecisions && t.evaluationDecisions.length > 0 && (
+                        <WarningAmber color="warning" fontSize="small" data-testid="warning-icon" />
+                      )}
+                    </Box>
                     <Typography
                       variant="caption"
                       color="text.secondary"
