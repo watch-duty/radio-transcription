@@ -131,26 +131,23 @@ class NormalizerSettings:
         ),
     )
 
-    # Health check (GET /healthz served on port health_check_port).
+    # Health check (GET /healthz). Port is hardcoded: the terraform module
+    # (container_mig) hardcodes 8080 in both the docker -p mapping and the
+    # google_compute_health_check, so exposing a Python-side override would
+    # silently break the infra if actually used. Matches terraform by design.
     # health_check_heartbeat_max_age_sec matches heartbeat_stall_timeout_sec —
     # see health_server.py for the reasoning.
-    health_check_port: int = field(
-        default_factory=lambda: int(
-            os.environ.get("HEALTH_CHECK_PORT", "8080"),
-        ),
-    )
+    # health_check_lease_attempt_max_age_sec is 6x lease_poll_interval_sec
+    # (5s), which tolerates slow DB queries but catches a genuinely stuck
+    # leasing loop within ~30s.
+    health_check_port: int = 8080
     health_check_heartbeat_max_age_sec: float = field(
         default_factory=lambda: float(
             os.environ.get("HEALTH_CHECK_HEARTBEAT_MAX_AGE_SEC", "45.0"),
         ),
     )
-    health_check_heartbeat_grace_sec: float = field(
+    health_check_lease_attempt_max_age_sec: float = field(
         default_factory=lambda: float(
-            os.environ.get("HEALTH_CHECK_HEARTBEAT_GRACE_SEC", "60.0"),
-        ),
-    )
-    health_check_feed_grace_sec: float = field(
-        default_factory=lambda: float(
-            os.environ.get("HEALTH_CHECK_FEED_GRACE_SEC", "300.0"),
+            os.environ.get("HEALTH_CHECK_LEASE_ATTEMPT_MAX_AGE_SEC", "30.0"),
         ),
     )

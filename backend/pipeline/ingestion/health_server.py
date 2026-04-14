@@ -22,11 +22,14 @@ class HealthState:
 
     Lives on the event-loop thread; all reads/writes happen there, so no lock
     is required. ``feed_tasks`` is held by reference to the runtime's own
-    ``_feed_tasks`` dict, so ``len()`` in the handler reflects live leasing.
+    ``_feed_tasks`` dict for diagnostic reporting only (``len()`` in the OK
+    response body) — it is NOT a gate, because an idle worker with no feeds
+    available is a valid state under low load.
     """
 
     startup_time: float = field(default_factory=time.monotonic)
     last_heartbeat_completed: float | None = None
+    last_lease_attempt_completed: float | None = None
     feed_tasks: dict[uuid.UUID, object] = field(default_factory=dict)
 
 
@@ -44,13 +47,17 @@ async def _healthz(request: web.Request) -> web.Response:
     # Gate 1 (event-loop responsiveness) is implicit: if aiohttp dispatched
     # this handler, the loop is at least minimally alive.
 
-    # Gate 2: heartbeat freshness.
+    # Gate 2: heartbeat completed at least once, and freshly.
+    # No startup grace: returning 200 before the worker has proven it can
+    # heartbeat would let `wait_for_instances_status = HEALTHY` pass Terraform
+    # the instant the port binds, masking a broken config (bad DB creds,
+    # network partition). The MIG's `initial_delay_sec = 360` handles the
+    # startup window on the autohealer side: 503s during the first 6 min of
+    # VM life don't trigger recreation. Normal-case first heartbeat completes
+    # ~15s after Python process start (heartbeat thread interval), so HEALTHY
+    # transition happens well inside the 360s window.
     hb = state.last_heartbeat_completed
     if hb is None:
-        if uptime < settings.health_check_heartbeat_grace_sec:
-            return web.json_response(
-                {"status": "ok", "reason": "starting", "uptime_s": uptime},
-            )
         return web.json_response(
             {
                 "status": "unhealthy",
@@ -71,15 +78,31 @@ async def _healthz(request: web.Request) -> web.Response:
             status=503,
         )
 
-    # Gate 3: the worker has leased at least one feed, after the startup grace.
-    feed_count = len(state.feed_tasks)
-    if uptime > settings.health_check_feed_grace_sec and feed_count == 0:
+    # Gate 3: the leasing loop is alive. Stamped at the top of every
+    # _leasing_loop iteration regardless of whether feeds were actually
+    # acquired — so "0 feeds leased because the pipeline is under-loaded"
+    # is healthy, while "0 feeds leased because the loop is wedged" returns
+    # 503. Catches the failure mode heartbeat gate can't: heartbeat cycle
+    # and lease loop are independent, so a stuck lease loop won't age the
+    # heartbeat stamp.
+    la = state.last_lease_attempt_completed
+    if la is None:
         return web.json_response(
             {
                 "status": "unhealthy",
-                "reason": "no_active_feeds",
+                "reason": "no_lease_attempt_yet",
                 "uptime_s": uptime,
-                "active_feeds": 0,
+            },
+            status=503,
+        )
+    la_age = now - la
+    if la_age > settings.health_check_lease_attempt_max_age_sec:
+        return web.json_response(
+            {
+                "status": "unhealthy",
+                "reason": "lease_loop_stalled",
+                "lease_attempt_age_s": la_age,
+                "uptime_s": uptime,
             },
             status=503,
         )
@@ -89,7 +112,8 @@ async def _healthz(request: web.Request) -> web.Response:
             "status": "ok",
             "uptime_s": uptime,
             "heartbeat_age_s": hb_age,
-            "active_feeds": feed_count,
+            "lease_attempt_age_s": la_age,
+            "active_feeds": len(state.feed_tasks),
         },
     )
 
