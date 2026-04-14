@@ -14,6 +14,7 @@ import ListItem from '@mui/material/ListItem';
 import Paper from '@mui/material/Paper';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
+import { useTheme } from '@mui/material/styles';
 import type { Feed, Transcript } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
@@ -26,6 +27,7 @@ interface TranscriptViewProps {
 }
 
 export function TranscriptView({ addAlert }: TranscriptViewProps) {
+  const theme = useTheme();
   const { token } = useAuth();
 
   const initialLoadFeedsCalled = useRef(false);
@@ -39,8 +41,8 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
   const [transcriptsLoading, setTranscriptsLoading] = useState(false);
   const [transcriptsError, setTranscriptsError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
-  const [nextToken, setNextToken] = useState<string | undefined>(undefined);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [transcriptNextToken, setTranscriptNextToken] = useState<string | undefined>(undefined);
+  const [loadingMoreTranscripts, setLoadingMoreTranscripts] = useState(false);
 
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
@@ -86,12 +88,12 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
     setTranscripts([]);
     setTranscriptsLoading(true);
     setTranscriptsError(null);
-    setNextToken(undefined);
+    setTranscriptNextToken(undefined);
 
     try {
       const response = await listTranscripts(feedId, token!);
       setTranscripts(response.transcripts);
-      setNextToken(response.nextToken);
+      setTranscriptNextToken(response.nextToken);
     } catch (err: unknown) {
       if (err instanceof Error) {
         const message = `An error occurred while trying to load transcripts for feed ${feedId}. Error: ${err.message}`;
@@ -114,14 +116,14 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
   };
 
   const handleLoadMore = async () => {
-    if (!nextToken || !feedId.trim()) return;
-    setLoadingMore(true);
+    if (!transcriptNextToken || !feedId.trim()) return;
+    setLoadingMoreTranscripts(true);
     setError(null);
 
     try {
-      const response = await listTranscripts(feedId, token!, undefined, nextToken);
+      const response = await listTranscripts(feedId, token!, undefined, transcriptNextToken);
       setTranscripts((prev) => [...prev, ...response.transcripts]);
-      setNextToken(response.nextToken);
+      setTranscriptNextToken(response.nextToken);
     } catch (err: unknown) {
       if (err instanceof Error) {
         setError(err.message);
@@ -129,7 +131,7 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
         setError('An unknown error occurred');
       }
     } finally {
-      setLoadingMore(false);
+      setLoadingMoreTranscripts(false);
     }
   };
 
@@ -311,15 +313,15 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
                 </Fragment>
               );
             })}
-            {nextToken && (
-              <ListItem sx={{ justifyContent: 'center', py: 2 }}>
+            {transcriptNextToken && (
+              <ListItem sx={{ justifyContent: 'center', py: theme.spacing(2) }}>
                 <Button
                   variant="outlined"
                   onClick={handleLoadMore}
-                  disabled={loadingMore}
-                  sx={{ minWidth: '150px' }}
+                  disabled={loadingMoreTranscripts}
+                  sx={{ minWidth: '160px' }}
                 >
-                  {loadingMore ? (
+                  {loadingMoreTranscripts ? (
                     <CircularProgress size={24} color="inherit" />
                   ) : (
                     'Load More'
