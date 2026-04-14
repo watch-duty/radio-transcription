@@ -1,7 +1,10 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 
+import RefreshIcon from '@mui/icons-material/Refresh';
 import ThumbDownIcon from '@mui/icons-material/ThumbDown';
 import ThumbUpIcon from '@mui/icons-material/ThumbUp';
+import type { AlertProps } from '@mui/material/Alert';
+import Autocomplete from '@mui/material/Autocomplete';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -11,39 +14,100 @@ import ListItem from '@mui/material/ListItem';
 import Paper from '@mui/material/Paper';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
-import type { Transcript } from '@transcription/common';
+import type { Feed, Transcript } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
+import { listFeeds } from '../../service/listFeeds';
 import { listTranscripts } from '../../service/listTranscripts';
 import AudioPlayer from '../audio/AudioPlayer';
 
-export function TranscriptView() {
-  const [feedId, setFeedId] = useState('');
-  const [transcripts, setTranscripts] = useState<Transcript[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+interface TranscriptViewProps {
+  addAlert: (alert: AlertProps) => void;
+}
+
+export function TranscriptView({ addAlert }: TranscriptViewProps) {
   const { token } = useAuth();
+
+  const initialLoadFeedsCalled = useRef(false);
+  const [feeds, setFeeds] = useState<Feed[]>([]);
+  const [feedsLoading, setFeedsLoading] = useState<boolean>(false);
+  const [, setFeedsError] = useState<string | null>(null);
+
+  const [feedId, setFeedId] = useState<string>('');
+
+  const [transcripts, setTranscripts] = useState<Transcript[]>([]);
+  const [transcriptsLoading, setTranscriptsLoading] = useState(false);
+  const [transcriptsError, setTranscriptsError] = useState<string | null>(null);
+  const [hasSearched, setHasSearched] = useState(false);
 
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
 
+  // Load all feeds on startup.
+  const loadFeeds = useCallback(async () => {
+    setFeeds([]);
+    setFeedsLoading(true);
+    setFeedsError(null);
+
+    try {
+      const feeds = await listFeeds(token!);
+      setFeeds(feeds);
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        const message = `An unexpected error occurred while trying to load feeds. You can still manually enter a feed ID. Error: ${err.message}`;
+        setFeedsError(err.message);
+        addAlert({
+          severity: 'error',
+          children: message,
+        });
+      } else {
+        setFeedsError('Unknwon error');
+        addAlert({
+          severity: 'error',
+          children:
+            'An unknown error occurred while trying to load feeds. You can still manually enter a feed ID',
+        });
+      }
+    } finally {
+      setFeedsLoading(false);
+    }
+  }, [token, addAlert]);
+
+  useEffect(() => {
+    if (token && !initialLoadFeedsCalled.current) {
+      initialLoadFeedsCalled.current = true;
+      loadFeeds();
+    }
+  }, [token, loadFeeds]);
+
   const handleFetch = async () => {
     if (!feedId.trim()) return;
+    setHasSearched(true);
     setTranscripts([]);
-    setLoading(true);
-    setError(null);
+    setTranscriptsLoading(true);
+    setTranscriptsError(null);
 
     try {
       const transcripts = await listTranscripts(feedId, token!);
       setTranscripts(transcripts);
     } catch (err: unknown) {
       if (err instanceof Error) {
-        setError(err.message);
+        const message = `An error occurred while trying to load transcripts for feed ${feedId}. Error: ${err.message}`;
+        setTranscriptsError(message);
+        addAlert({
+          severity: 'error',
+          children: message,
+        });
       } else {
-        setError('An unknown error occurred');
+        const message = `An error occurred while trying to load transcripts for feed ${feedId}.`;
+        setTranscriptsError(message);
+        addAlert({
+          severity: 'error',
+          children: message,
+        });
       }
     } finally {
-      setLoading(false);
+      setTranscriptsLoading(false);
     }
   };
 
@@ -61,34 +125,74 @@ export function TranscriptView() {
         flexDirection: 'column',
       }}
     >
-      <Typography variant="h5" gutterBottom>
-        View Transcripts
-      </Typography>
-
       <Box sx={{ display: 'flex', gap: 2, mb: 3, alignItems: 'center' }}>
-        <TextField
-          label="Enter Feed ID"
-          variant="outlined"
-          value={feedId}
-          onChange={(e) => setFeedId(e.target.value)}
-          sx={{ flexGrow: 1 }}
+        <Autocomplete
+          disablePortal
+          options={feeds.sort((a, b) => a.name.localeCompare(b.name))}
+          getOptionLabel={(option) =>
+            typeof option === 'string' ? option : option.id
+          }
           size="small"
+          sx={{ width: '25%' }}
+          onInputChange={(_, value) => setFeedId(value)}
+          onChange={(_, option) =>
+            setFeedId(
+              option ? (typeof option === 'string' ? option : option.id) : ''
+            )
+          }
+          freeSolo={true}
+          loading={feedsLoading}
+          filterOptions={(options, { inputValue }) => {
+            const filtered = options.filter((option) => {
+              return (
+                option.name.toLowerCase().includes(inputValue.toLowerCase()) ||
+                option.id.includes(inputValue)
+              );
+            });
+            return filtered;
+          }}
+          renderInput={(params) => (
+            <TextField
+              {...params}
+              label="Select a registered feed or enter a feed ID"
+            />
+          )}
+          renderOption={(props, option) => {
+            const { key, ...optionProps } = props;
+            return (
+              <Box key={key} component="li" {...optionProps}>
+                <Typography noWrap>
+                  {option.name} ({option.id})
+                </Typography>
+              </Box>
+            );
+          }}
         />
+        <IconButton
+          onClick={loadFeeds}
+          disabled={feedsLoading}
+          size="small"
+          sx={{ ml: -1 }}
+        >
+          {feedsLoading ? (
+            <CircularProgress size={24} color="inherit" />
+          ) : (
+            <RefreshIcon />
+          )}
+        </IconButton>
         <Button
           variant="contained"
           onClick={handleFetch}
-          disabled={loading || !feedId.trim()}
+          disabled={transcriptsLoading || !feedId.trim()}
           sx={{ minWidth: '100px' }}
         >
-          {loading ? <CircularProgress size={24} color="inherit" /> : 'Fetch'}
+          {transcriptsLoading ? (
+            <CircularProgress size={24} color="inherit" />
+          ) : (
+            'Fetch'
+          )}
         </Button>
       </Box>
-
-      {error && (
-        <Typography color="error" sx={{ mb: 2 }}>
-          {error}
-        </Typography>
-      )}
 
       <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
         {transcripts.length > 0 ? (
@@ -174,14 +278,15 @@ export function TranscriptView() {
               );
             })}
           </List>
-        ) : (
-          !loading &&
-          !error && (
-            <Typography color="text.secondary" align="center" sx={{ mt: 4 }}>
-              Enter a Feed ID and click Fetch to see transcripts.
-            </Typography>
-          )
-        )}
+        ) : transcriptsLoading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
+            <CircularProgress />
+          </Box>
+        ) : hasSearched && !transcriptsError ? (
+          <Typography color="text.secondary" align="center" sx={{ mt: 4 }}>
+            No transcripts found.
+          </Typography>
+        ) : null}
       </Box>
     </Box>
   );

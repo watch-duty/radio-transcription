@@ -1,4 +1,8 @@
+import { useState } from 'react';
 import { Route, Routes } from 'react-router';
+
+import Alert, { type AlertProps } from '@mui/material/Alert';
+import Box from '@mui/material/Box';
 
 import AppContainer from './components/AppContainer';
 import FeedsView from './components/feeds/FeedsView';
@@ -11,6 +15,19 @@ import './App.css';
 function App() {
   const { token } = useAuth();
 
+  const [alerts, setAlerts] = useState<AlertProps[]>([]);
+
+  const addAlert = (alert: AlertProps) => {
+    // Max of 3 alerts retained.
+    setAlerts((alerts) => {
+      const newAlerts = [...alerts, alert];
+      if (newAlerts.length > 3) {
+        newAlerts.shift();
+      }
+      return newAlerts;
+    });
+  };
+
   if (!token) {
     return <AppContainer>Please login to continue.</AppContainer>;
   }
@@ -18,8 +35,21 @@ function App() {
   // Define the application routes below.
   return (
     <AppContainer>
+      <Box sx={{ width: '100%', mb: 2 }}>
+        {alerts.map((alert, index) => (
+          <Alert
+            key={index}
+            onClose={() =>
+              setAlerts((alerts) => alerts.filter((_, i) => i !== index))
+            }
+            severity={alert.severity}
+          >
+            {alert.children}
+          </Alert>
+        ))}
+      </Box>
       <Routes>
-        <Route path="/" element={<TranscriptView />} />
+        <Route path="/" element={<TranscriptView addAlert={addAlert} />} />
         <Route path="/rules" element={<RulesView />} />
         <Route path="/feeds" element={<FeedsView />} />
       </Routes>
