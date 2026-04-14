@@ -71,3 +71,10 @@ export default defineConfig([
   },
 ]);
 ```
+
+## Routing
+
+This application uses `react-router` for navigation. Please refer to https://reactrouter.com/start/declarative/installation for more information.
+
+The application is set up with a `BrowserRouter` which routes components to their specified path. A list of routes can be found in `src/App.tsx`. Components can navigate to a different route by using the `useNavigate` hook from `react-router`.
+
