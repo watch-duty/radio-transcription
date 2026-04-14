@@ -43,6 +43,12 @@
       "label": "DLQ Topic",
       "helpText": "Pub/Sub topic to route Dead-Letter Queue (DLQ) processing failures.",
       "isOptional": true
+    },
+    {
+      "name": "bypass_stitching",
+      "label": "Bypass Stitching",
+      "helpText": "If true, bypasses stateful stitching and treats each audio chunk as a complete transmission.",
+      "isOptional": true
     }
   ]
 }
