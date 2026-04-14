@@ -11,12 +11,10 @@ import ListItem from '@mui/material/ListItem';
 import Paper from '@mui/material/Paper';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
+import type { Transcript } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
-import {
-  type Transcript,
-  listTranscripts,
-} from '../../service/listTranscripts';
+import { listTranscripts } from '../../service/listTranscripts';
 import AudioPlayer from '../audio/AudioPlayer';
 
 export function TranscriptView() {

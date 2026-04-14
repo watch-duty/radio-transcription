@@ -1,9 +1,4 @@
-export interface Transcript {
-  transmissionId: string;
-  transcript: string;
-  startTimestamp: string;
-  canonicalAudioUri: string;
-}
+import type { Transcript } from '@transcription/common';
 
 export async function listTranscripts(
   feedId: string,

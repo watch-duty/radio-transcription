@@ -97,6 +97,9 @@ jobs:
         uses: jdx/mise-action@v3
       - name: Enable Corepack (node package manager)
         run: corepack enable
+      - name: Build and install common
+        working-directory: frontend/common
+        run: yarn install --frozen-lockfile --non-interactive && yarn build
       - name: Install dependencies
         run: yarn --cwd frontend/api install --frozen-lockfile --non-interactive && yarn --cwd frontend/transcription-ui install --frozen-lockfile --non-interactive
       - name: Run ESLint
@@ -169,11 +172,16 @@ jobs:
         uses: jdx/mise-action@v3
       - name: Enable Corepack (node package manager)
         run: corepack enable
-      - name: Install system dependencies
+      - name: Build and install common
+        working-directory: frontend/common
+        run: yarn install --frozen-lockfile --non-interactive && yarn build
+      - name: Install dependencies
+        run: yarn --cwd frontend/api install --frozen-lockfile --non-interactive && yarn --cwd frontend/transcription-ui install --frozen-lockfile --non-interactive
+      - name: Run proxy tests
         working-directory: frontend/api
-        run: yarn install --frozen-lockfile --non-interactive
-      - name: Run tests
-        working-directory: frontend/api
+        run: yarn test --watch=false
+      - name: Run UI tests
+        working-directory: frontend/transcription-ui
         run: yarn test --watch=false
 
   # Builds each service's Dockerfile and verifies all transitive imports resolve

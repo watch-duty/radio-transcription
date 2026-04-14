@@ -9,13 +9,14 @@
     "local": "yarn build && dotenv -e .env.local -- yarn start",
     "lint:check": "eslint .",
     "lint:fix": "eslint . --fix",
-    "format:check": "prettier --check .",
-    "format:fix": "prettier --write .",
+    "format:check": "prettier --ignore-path ../../.prettierignore --check .",
+    "format:fix": "prettier --ignore-path ../../.prettierignore --write .",
     "test": "vitest",
     "generate-routes": "yarn run tsoa routes",
     "generate-spec": "yarn run tsoa spec --yaml && node scripts/post-process-spec.js"
   },
   "dependencies": {
+    "@transcription/common": "file:../common",
     "@google-cloud/functions-framework": "^5.0.2",
     "axios": "^1.14.0",
     "cors": "^2.8.6",
