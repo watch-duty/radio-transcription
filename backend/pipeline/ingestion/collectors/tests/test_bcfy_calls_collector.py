@@ -1042,10 +1042,15 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         def fetch_side_effect(*args: object, **kwargs: object) -> object:
             nonlocal call_count
             call_count += 1
-            if call_count > bcfy_calls_collector._MAX_CONSECUTIVE_FAILURES + extra_calls_to_prove_no_limit:
+            if (
+                call_count
+                > bcfy_calls_collector._MAX_CONSECUTIVE_FAILURES
+                + extra_calls_to_prove_no_limit
+            ):
                 self.shutdown.set()
                 return None
-            raise bcfy_calls_collector.AuthError("Auth failure")
+            msg = "Auth failure"
+            raise bcfy_calls_collector.AuthError(msg)
 
         mock_fetch.side_effect = fetch_side_effect
 
