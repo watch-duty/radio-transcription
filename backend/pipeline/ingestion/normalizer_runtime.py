@@ -231,11 +231,12 @@ class NormalizerRuntime:
         while True:
             self._reap_completed_tasks()
 
-            # Stamp liveness signal for /healthz gate 3. Recorded at the top
-            # of every iteration so "0 feeds because nothing's available"
-            # stays healthy; only a wedged leasing loop ages this stamp past
-            # the threshold.
-            self._health_state.last_lease_attempt_completed = time.monotonic()
+            # Stamp for /healthz gate 2 (zero-feed check). Updated whenever
+            # we observe leased feeds, so the handler can measure sustained
+            # zero-state vs. momentary zero between a task finishing and the
+            # next acquisition.
+            if self._feed_tasks:
+                self._health_state.last_nonzero_feeds_at = time.monotonic()
 
             # try/except: a transient DB error (connection reset, brief
             # AlloyDB maintenance) must not kill a worker with 200+ healthy

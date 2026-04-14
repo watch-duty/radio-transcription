@@ -15,13 +15,15 @@ if TYPE_CHECKING:
 
 def _fake_settings(
     *,
-    heartbeat_max_age: float = 45.0,
-    lease_attempt_max_age: float = 30.0,
+    startup_grace: float = 120.0,
+    zero_feeds_max: float = 60.0,
+    heartbeat_interval: float = 15.0,
 ) -> mock.Mock:
     """Duck-typed stand-in for NormalizerSettings — only reads the fields /healthz uses."""
     settings = mock.Mock()
-    settings.health_check_heartbeat_max_age_sec = heartbeat_max_age
-    settings.health_check_lease_attempt_max_age_sec = lease_attempt_max_age
+    settings.health_check_startup_grace_sec = startup_grace
+    settings.health_check_zero_feeds_max_sec = zero_feeds_max
+    settings.heartbeat_interval_sec = heartbeat_interval
     settings.health_check_port = 8080
     return settings
 
@@ -30,10 +32,10 @@ class HealthzHandlerTests(AioHTTPTestCase):
     """
     Decision-matrix coverage for /healthz.
 
-    The handler relies on ``time.monotonic`` for ``startup_time``,
-    ``last_heartbeat_completed``, and ``last_lease_attempt_completed``. Each
-    test fixes those absolutely (relative to ``now = time.monotonic()``) so
-    uptime/age are deterministic without patching the clock.
+    Each test fixes ``startup_time``, ``last_heartbeat_completed``, and
+    ``last_nonzero_feeds_at`` relative to ``now = time.monotonic()``, so the
+    handler's uptime / age arithmetic is deterministic without patching the
+    clock.
     """
 
     async def get_application(self) -> web.Application:
@@ -46,62 +48,94 @@ class HealthzHandlerTests(AioHTTPTestCase):
         body = await resp.json()
         return resp.status, body
 
-    async def test_no_heartbeat_yet_returns_unhealthy(self) -> None:
-        """last_heartbeat_completed is None -> 503 (no grace period)."""
+    async def test_startup_grace_returns_healthy_without_heartbeat(self) -> None:
+        """Within grace: 200 healthy even if heartbeat never happened."""
         now = time.monotonic()
-        self.state.startup_time = now - 2.0  # fresh VM, any uptime
+        self.state.startup_time = now - 30.0  # 30s uptime, grace=120s
         self.state.last_heartbeat_completed = None
-        self.state.last_lease_attempt_completed = now
+
+        status, body = await self._get_healthz()
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "healthy")
+        self.assertEqual(body["active_feeds"], 0)
+        self.assertIsNone(body["last_heartbeat_age_sec"])
+
+    async def test_startup_grace_returns_healthy_even_if_stale_heartbeat(self) -> None:
+        """Within grace: 200 regardless of state (spec: 'regardless of state')."""
+        now = time.monotonic()
+        self.state.startup_time = now - 30.0
+        # Even a "stale" heartbeat older than 2×interval doesn't fail during grace.
+        self.state.last_heartbeat_completed = now - 100.0
+
+        status, body = await self._get_healthz()
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "healthy")
+
+    async def test_post_grace_missing_heartbeat_returns_unhealthy(self) -> None:
+        """Post-grace, hb is None → 503 no_heartbeat."""
+        now = time.monotonic()
+        self.state.startup_time = now - 200.0  # past grace
+        self.state.last_heartbeat_completed = None
+        self.state.last_nonzero_feeds_at = now - 10.0  # not the gate under test
 
         status, body = await self._get_healthz()
 
         self.assertEqual(status, 503)
-        self.assertEqual(body["reason"], "no_heartbeat_yet")
+        self.assertEqual(body["status"], "unhealthy")
+        self.assertEqual(body["reason"], "no_heartbeat")
 
-    async def test_stale_heartbeat_returns_unhealthy(self) -> None:
-        """heartbeat_age > max_age -> 503 heartbeat_stale."""
+    async def test_post_grace_stale_heartbeat_returns_unhealthy(self) -> None:
+        """Post-grace, heartbeat age > 2x interval → 503 heartbeat_stale."""
         now = time.monotonic()
-        self.state.startup_time = now - 600.0
-        self.state.last_heartbeat_completed = now - 60.0  # 60s age, max=45s
-        self.state.last_lease_attempt_completed = now
+        self.state.startup_time = now - 300.0
+        # age = 40s, threshold = 2*15 = 30s → stale
+        self.state.last_heartbeat_completed = now - 40.0
+        self.state.last_nonzero_feeds_at = now - 1.0
 
         status, body = await self._get_healthz()
 
         self.assertEqual(status, 503)
         self.assertEqual(body["reason"], "heartbeat_stale")
-        self.assertGreater(body["heartbeat_age_s"], 45.0)
 
-    async def test_no_lease_attempt_yet_returns_unhealthy(self) -> None:
-        """Heartbeat stamped but leasing loop never iterated -> 503."""
+    async def test_post_grace_sustained_zero_feeds_returns_unhealthy(self) -> None:
+        """Past (grace + zero_feeds_max) with zero feeds throughout → 503."""
         now = time.monotonic()
-        self.state.startup_time = now - 10.0
-        self.state.last_heartbeat_completed = now - 2.0
-        self.state.last_lease_attempt_completed = None
+        # startup 200s ago, grace 120s, zero-window 60s ⇒ 200 > 120+60=180s zero
+        self.state.startup_time = now - 200.0
+        self.state.last_heartbeat_completed = now - 1.0
+        self.state.last_nonzero_feeds_at = None  # never had feeds
 
         status, body = await self._get_healthz()
 
         self.assertEqual(status, 503)
-        self.assertEqual(body["reason"], "no_lease_attempt_yet")
+        self.assertEqual(body["reason"], "zero_active_feeds")
 
-    async def test_stale_lease_attempt_returns_unhealthy(self) -> None:
-        """lease_attempt_age > max_age -> 503 lease_loop_stalled."""
+    async def test_post_grace_recently_lost_feeds_still_healthy(self) -> None:
+        """
+        Past grace, currently zero feeds, but last_nonzero_feeds_at is fresh
+        (<60s ago) → 200. Proves the zero-feed clock measures from last-nonzero,
+        not from grace-end — so brief drops between leases don't flap.
+        """
         now = time.monotonic()
-        self.state.startup_time = now - 600.0
-        self.state.last_heartbeat_completed = now - 2.0
-        self.state.last_lease_attempt_completed = now - 45.0  # 45s age, max=30s
+        self.state.startup_time = now - 400.0
+        self.state.last_heartbeat_completed = now - 1.0
+        # Had feeds 30s ago, dropped to zero; 30 < 60 window → still healthy
+        self.state.last_nonzero_feeds_at = now - 30.0
 
         status, body = await self._get_healthz()
 
-        self.assertEqual(status, 503)
-        self.assertEqual(body["reason"], "lease_loop_stalled")
-        self.assertGreater(body["lease_attempt_age_s"], 30.0)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "healthy")
+        self.assertEqual(body["active_feeds"], 0)
 
-    async def test_healthy_worker_with_feeds_returns_ok(self) -> None:
-        """Fresh heartbeat + fresh lease attempt + feeds leased -> 200."""
+    async def test_healthy_worker_returns_spec_response_shape(self) -> None:
+        """Response body has exactly the keys the spec requires, no extras."""
         now = time.monotonic()
-        self.state.startup_time = now - 600.0
+        self.state.startup_time = now - 400.0
         self.state.last_heartbeat_completed = now - 2.0
-        self.state.last_lease_attempt_completed = now - 1.0
+        self.state.last_nonzero_feeds_at = now - 1.0
         self.state.feed_tasks.update({
             "feed-1": object(),
             "feed-2": object(),
@@ -111,27 +145,13 @@ class HealthzHandlerTests(AioHTTPTestCase):
         status, body = await self._get_healthz()
 
         self.assertEqual(status, 200)
-        self.assertEqual(body["status"], "ok")
+        self.assertEqual(
+            set(body.keys()),
+            {"status", "active_feeds", "last_heartbeat_age_sec"},
+        )
+        self.assertEqual(body["status"], "healthy")
         self.assertEqual(body["active_feeds"], 3)
-
-    async def test_healthy_worker_with_zero_feeds_returns_ok(self) -> None:
-        """
-        0 feeds is NOT a failure on its own — underload is a valid state.
-
-        Regression guard for the original design where uptime > feed_grace AND
-        0 feeds returned 503, which crash-looped idle workers.
-        """
-        now = time.monotonic()
-        self.state.startup_time = now - 3600.0  # 1h uptime — no time-based gate
-        self.state.last_heartbeat_completed = now - 2.0
-        self.state.last_lease_attempt_completed = now - 1.0
-        # feed_tasks intentionally empty.
-
-        status, body = await self._get_healthz()
-
-        self.assertEqual(status, 200)
-        self.assertEqual(body["status"], "ok")
-        self.assertEqual(body["active_feeds"], 0)
+        self.assertIsInstance(body["last_heartbeat_age_sec"], (int, float))
 
 
 if __name__ == "__main__":

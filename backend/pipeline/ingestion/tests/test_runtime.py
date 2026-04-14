@@ -100,8 +100,8 @@ def _make_settings(**overrides) -> mock.MagicMock:
         # Real values so health_server doesn't try to bind the MagicMock-default
         # port 1 when a test exercises _main().
         "health_check_port": 8080,
-        "health_check_heartbeat_max_age_sec": 45.0,
-        "health_check_lease_attempt_max_age_sec": 30.0,
+        "health_check_startup_grace_sec": 120.0,
+        "health_check_zero_feeds_max_sec": 60.0,
     }
     defaults.update(overrides)
     m = mock.MagicMock()

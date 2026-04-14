@@ -101,7 +101,7 @@ resource "google_compute_health_check" "this" {
   project             = var.project_id
   check_interval_sec  = 30
   timeout_sec         = 10
-  healthy_threshold   = 2
+  healthy_threshold   = 1
   unhealthy_threshold = 3 # 3 × 30s = 90s detection
 
   http_health_check {
@@ -142,16 +142,18 @@ resource "google_compute_region_instance_group_manager" "this" {
     instance_template = google_compute_instance_template.this.self_link_unique
   }
 
-  # Autohealing. initial_delay_sec = 360 (6 min) covers VM boot (~30s) +
+  # Autohealing. initial_delay_sec = 300 (5 min) covers VM boot (~30s) +
   # cloud-init (~60s) + docker pull (~2-3 min on cold cache) + container
-  # start + first heartbeat + first feed lease with margin. A VM failing
-  # /healthz during this window would be killed mid-startup, guaranteeing
-  # a recreate loop on any non-trivial rollout.
+  # start + first heartbeat + first feed lease. A VM failing /healthz during
+  # this window would be killed mid-startup, guaranteeing a recreate loop on
+  # any non-trivial rollout — so the Python /healthz handler also returns 200
+  # during its own startup grace (health_check_startup_grace_sec, default
+  # 120s) to keep the signal consistent with what the autohealer expects.
   dynamic "auto_healing_policies" {
     for_each = var.enable_autohealing ? [1] : []
     content {
       health_check      = google_compute_health_check.this[0].id
-      initial_delay_sec = 360
+      initial_delay_sec = 300
     }
   }
 
