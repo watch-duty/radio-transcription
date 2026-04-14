@@ -13,7 +13,6 @@ from backend.pipeline.transcription.constants import (
     DEFAULT_VAD_PRE_ROLL_MS,
 )
 from backend.pipeline.transcription.enums import (
-    MetricsExporterType,
     TranscriberType,
     VadType,
 )
@@ -76,18 +75,7 @@ class TranscriptionOptions(PipelineOptions):
             default="{}",
             help="JSON string of VAD-specific configuration.",
         )
-        parser.add_argument(
-            "--metrics_exporter_type",
-            type=str,
-            default=MetricsExporterType.NONE.value,
-            help="Comma-separated metrics platforms (e.g. 'gcp').",
-        )
-        parser.add_argument(
-            "--metrics_config",
-            type=str,
-            default="{}",
-            help="JSON string of metrics-specific configuration.",
-        )
+
         parser.add_argument(
             "--significant_gap_ms",
             type=int,

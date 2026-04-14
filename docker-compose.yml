@@ -114,6 +114,26 @@ services:
     networks:
       - pipeline-network
 
+  feeds-api:
+    build:
+      context: .
+      dockerfile: backend/services/feeds/Dockerfile
+    ports:
+      - "8089:8089"
+    env_file:
+      - ./local_dev/LOCAL.env
+    command: ["uvicorn", "backend.services.feeds.main:app", "--host", "0.0.0.0", "--port", "8089"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8089))"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - pipeline-network
+
   notification:
     build:
       context: .
@@ -171,6 +191,8 @@ services:
       transcripts-api:
         condition: service_healthy
       rules-management:
+        condition: service_healthy
+      feeds-api:
         condition: service_healthy
       rules-evaluation:
         condition: service_healthy

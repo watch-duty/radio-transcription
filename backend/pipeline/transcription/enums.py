@@ -13,10 +13,3 @@ class VadType(enum.StrEnum):
     """Supported Voice Activity Detection models."""
 
     TEN_VAD = "ten_vad"
-
-
-class MetricsExporterType(enum.StrEnum):
-    """Supported telemetry and observability destinations."""
-
-    NONE = "none"
-    GCP = "gcp"

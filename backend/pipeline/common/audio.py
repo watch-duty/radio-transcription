@@ -9,10 +9,8 @@ from pydub import AudioSegment
 from backend.pipeline.common.constants import (
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
+    SAMPLE_WIDTH_16BIT,
 )
-
-# 16-bit PCM sample width in bytes
-_SAMPLE_WIDTH_16BIT = 2
 
 
 def convert_to_flac(audio_bytes: bytes, input_format: str) -> bytes:
@@ -29,7 +27,7 @@ def convert_to_flac(audio_bytes: bytes, input_format: str) -> bytes:
     audio = AudioSegment.from_file(io.BytesIO(audio_bytes), format=input_format)
     audio = audio.set_frame_rate(SAMPLE_RATE_HZ)
     audio = audio.set_channels(NUM_AUDIO_CHANNELS)
-    audio = audio.set_sample_width(_SAMPLE_WIDTH_16BIT)
+    audio = audio.set_sample_width(SAMPLE_WIDTH_16BIT)
     buf = io.BytesIO()
     audio.export(buf, format="flac")
     return buf.getvalue()

@@ -1,3 +1,7 @@
+import type {
+  ListTranscriptsResponse,
+  Transcript,
+} from '@transcription/common';
 import { GoogleAuth } from 'google-auth-library';
 import {
   Controller,
@@ -13,25 +17,6 @@ import {
 } from 'tsoa';
 
 import { TRANSCRIPTS_API_URL } from '../config.js';
-
-export interface Transcript {
-  feedId: string;
-  transmissionId: string;
-  transcript: string;
-  startTimestamp: string;
-  endTimestamp: string;
-  missingPriorContext: boolean;
-  missingPostContext: boolean;
-  sourceAudioUris: string[];
-  canonicalAudioUri: string;
-  startAudioOffset: string;
-  endAudioOffset: string;
-  evaluationDecisions: string[];
-}
-
-export interface ListTranscriptsResponse {
-  transcripts: Transcript[];
-}
 
 export interface TranscriptResponse {
   feed_id: string;
@@ -83,7 +68,7 @@ export class TranscriptsController extends Controller {
 
     try {
       const response = await client.request({
-        url: `${TRANSCRIPTS_API_URL}?feedId=${feedId}`,
+        url: `${TRANSCRIPTS_API_URL}?feed_id=${feedId}`,
         method: 'GET',
       });
       const data = response.data as TranscriptResponse[];

@@ -4,7 +4,7 @@ import time
 
 from google.cloud import monitoring_v3
 
-_NANOS_PER_SECOND = 1_000_000_000
+from backend.pipeline.common.constants import NANOS_PER_SECOND
 
 
 class MonitoringClient:
@@ -46,7 +46,7 @@ class MonitoringClient:
         point.interval = monitoring_v3.TimeInterval(
             end_time={
                 "seconds": int(now),
-                "nanos": int((now - int(now)) * _NANOS_PER_SECOND),
+                "nanos": int((now - int(now)) * NANOS_PER_SECOND),
             }
         )
         series.points = [point]
