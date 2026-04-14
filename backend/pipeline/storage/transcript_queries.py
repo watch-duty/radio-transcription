@@ -49,6 +49,10 @@ WHERE transmission_id = $1
 """
 )
 
+# Fetches transcripts for a specific feed, ordered from newest to oldest.
+# Keyset pagination: $2 (timestamp) and $3 (transmission_id) define the cursor.
+# We fetch records that are older than the cursor (i.e., strictly less than).
+# $4 (start_time) and $5 (end_time) define the time window.
 GET_TRANSCRIPTS_BY_FEED_SQL = (
     """\
 SELECT
@@ -65,6 +69,10 @@ LIMIT $6
 """
 )
 
+# Fetches transcripts across all feeds, ordered from newest to oldest.
+# Keyset pagination: $1 (timestamp) and $2 (transmission_id) define the cursor.
+# We fetch records that are older than the cursor (i.e., strictly less than).
+# $3 (start_time) and $4 (end_time) define the time window.
 LIST_TRANSCRIPTS_SQL = (
     """\
 SELECT

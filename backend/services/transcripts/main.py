@@ -94,7 +94,11 @@ async def list_transcripts(
     start_time: datetime.datetime | None = None,
     end_time: datetime.datetime | None = None,
 ) -> ListTranscriptsResponse:
-    """List transcripts, optionally filtered by feed ID, with pagination and time window."""
+    """List transcripts, optionally filtered by feed ID, with pagination and time window.
+
+    Transcripts are returned in reverse chronological order (newest first).
+    Pagination uses keyset pagination via `next_token`.
+    """
     service: TranscriptService = request.app.state.transcript_service
     try:
         if feed_id:
