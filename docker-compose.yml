@@ -102,6 +102,10 @@ services:
       - "8087:8087"
     env_file:
       - ./local_dev/LOCAL.env
+    volumes:
+      - ~/.config/gcloud:/.config/gcloud
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/.config/gcloud/application_default_credentials.json
     command: ["uvicorn", "backend.services.transcripts.main:app", "--host", "0.0.0.0", "--port", "8087"]
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8087))"]
@@ -175,8 +179,11 @@ services:
       - "8088:8080"
     env_file:
       - ./local_dev/LOCAL.env
+    volumes:
+      - ~/.config/gcloud:/.config/gcloud
     environment:
       - TRANSCRIPTS_API_URL=http://transcripts-api:8087/v1/transcripts
+      - GOOGLE_APPLICATION_CREDENTIALS=/.config/gcloud/application_default_credentials.json
     networks:
       - pipeline-network
     depends_on:

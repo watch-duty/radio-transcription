@@ -39,6 +39,8 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
   const [transcriptsLoading, setTranscriptsLoading] = useState(false);
   const [transcriptsError, setTranscriptsError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
+  const [nextToken, setNextToken] = useState<string | undefined>(undefined);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
@@ -84,10 +86,12 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
     setTranscripts([]);
     setTranscriptsLoading(true);
     setTranscriptsError(null);
+    setNextToken(undefined);
 
     try {
-      const transcripts = await listTranscripts(feedId, token!);
-      setTranscripts(transcripts);
+      const response = await listTranscripts(feedId, token!);
+      setTranscripts(response.transcripts);
+      setNextToken(response.nextToken);
     } catch (err: unknown) {
       if (err instanceof Error) {
         const message = `An error occurred while trying to load transcripts for feed ${feedId}. Error: ${err.message}`;
@@ -106,6 +110,26 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
       }
     } finally {
       setTranscriptsLoading(false);
+    }
+  };
+
+  const handleLoadMore = async () => {
+    if (!nextToken || !feedId.trim()) return;
+    setLoadingMore(true);
+    setError(null);
+
+    try {
+      const response = await listTranscripts(feedId, token!, undefined, nextToken);
+      setTranscripts((prev) => [...prev, ...response.transcripts]);
+      setNextToken(response.nextToken);
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError('An unknown error occurred');
+      }
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -287,6 +311,22 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
                 </Fragment>
               );
             })}
+            {nextToken && (
+              <ListItem sx={{ justifyContent: 'center', py: 2 }}>
+                <Button
+                  variant="outlined"
+                  onClick={handleLoadMore}
+                  disabled={loadingMore}
+                  sx={{ minWidth: '150px' }}
+                >
+                  {loadingMore ? (
+                    <CircularProgress size={24} color="inherit" />
+                  ) : (
+                    'Load More'
+                  )}
+                </Button>
+              </ListItem>
+            )}
           </List>
         ) : transcriptsLoading ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
