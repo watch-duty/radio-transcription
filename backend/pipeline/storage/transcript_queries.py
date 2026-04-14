@@ -57,9 +57,9 @@ SELECT
     + """\
 FROM transcripts
 WHERE feed_id = $1
-  AND ($2::timestamp IS NULL OR end_timestamp < $2 OR (end_timestamp = $2 AND transmission_id < $3))
-  AND ($4::timestamp IS NULL OR end_timestamp >= $4)
-  AND ($5::timestamp IS NULL OR end_timestamp <= $5)
+  AND ($2::timestamptz IS NULL OR end_timestamp < $2 OR (end_timestamp = $2 AND transmission_id < $3))
+  AND ($4::timestamptz IS NULL OR end_timestamp >= $4)
+  AND ($5::timestamptz IS NULL OR end_timestamp <= $5)
 ORDER BY end_timestamp DESC, transmission_id DESC
 LIMIT $6
 """
@@ -72,9 +72,9 @@ SELECT
     + TRANSCRIPT_COLUMNS_SQL
     + """\
 FROM transcripts
-WHERE ($1::timestamp IS NULL OR end_timestamp < $1 OR (end_timestamp = $1 AND transmission_id < $2))
-  AND ($3::timestamp IS NULL OR end_timestamp >= $3)
-  AND ($4::timestamp IS NULL OR end_timestamp <= $4)
+WHERE ($1::timestamptz IS NULL OR end_timestamp < $1 OR (end_timestamp = $1 AND transmission_id < $2))
+  AND ($3::timestamptz IS NULL OR end_timestamp >= $3)
+  AND ($4::timestamptz IS NULL OR end_timestamp <= $4)
 ORDER BY end_timestamp DESC, transmission_id DESC
 LIMIT $5
 """
