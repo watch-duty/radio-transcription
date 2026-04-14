@@ -285,7 +285,9 @@ class RestoreOrderFn(beam.DoFn):
         current_ts_ms = int(float(timestamp) * MS_PER_SECOND)
 
         # Persist the feed_name in state so it is available when emitting
-        # buffered chunks from the gap-timeout handler.
+        # buffered chunks from the gap-timeout handler.  Only write when
+        # non-empty so that a message lacking feed_name (e.g. produced by an
+        # older ingestion path) does not overwrite a valid name already in state.
         if incoming_feed_name:
             feed_name_state.write(incoming_feed_name)
 

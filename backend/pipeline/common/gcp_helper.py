@@ -211,7 +211,7 @@ def publish_audio_chunk_sync(
     audio_chunk_msg = AudioChunk(gcs_uri=gcs_uri)
     audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
     audio_chunk_msg.session_id = session_id
-    if feed_name is not None:
+    if feed_name:
         audio_chunk_msg.feed_name = feed_name
 
     attrs: dict[str, str] = {
@@ -248,7 +248,7 @@ async def publish_audio_chunk(
     audio_chunk_msg = AudioChunk(gcs_uri=gcs_uri)
     audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
     audio_chunk_msg.session_id = session_id
-    if feed_name is not None:
+    if feed_name:
         audio_chunk_msg.feed_name = feed_name
 
     attrs: dict[str, str] = {
