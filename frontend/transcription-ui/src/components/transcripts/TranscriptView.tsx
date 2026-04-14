@@ -173,6 +173,7 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
           disabled={feedsLoading}
           size="small"
           sx={{ ml: -1 }}
+          aria-label="refresh feeds"
         >
           {feedsLoading ? (
             <CircularProgress size={24} color="inherit" />
