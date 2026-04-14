@@ -420,11 +420,18 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                 try:
                     jwt_token = await asyncio.to_thread(_get_jwt_token)
                     headers["Authorization"] = f"Bearer {jwt_token}"
+                    # On successful refresh, reset failures and retry immediately.
+                    consecutive_failures = 0
+                    logger.info(
+                        "Successfully refreshed JWT token for feed %s", feed_id
+                    )
+                    continue
                 except Exception as e:
                     logger.exception("Failed to refresh JWT token: %s", e)
-                consecutive_failures = await _handle_loop_failure(
-                    feed_id, consecutive_failures, shutdown_event
-                )
+                    # Only treat as a failure if we couldn't refresh the token
+                    consecutive_failures = await _handle_loop_failure(
+                        feed_id, consecutive_failures, shutdown_event
+                    )
             except RuntimeError:
                 raise
             except Exception as e:

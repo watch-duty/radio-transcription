@@ -995,7 +995,11 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
     async def test_max_consecutive_failures_auth_error(
         self, mock_sleep: AsyncMock, mock_fetch: AsyncMock, mock_jwt: MagicMock
     ) -> None:
-        mock_jwt.return_value = "token"
+        # Token refresh fails → each AuthError increments failures until limit.
+        mock_jwt.side_effect = [
+            "initial_token",
+            *[Exception("Secret Manager unavailable")] * 20,
+        ]
         mock_fetch.side_effect = bcfy_calls_collector.AuthError("Auth failure")
         mock_sleep.return_value = (
             False  # Simulate sleeping normally without shutdown
@@ -1010,6 +1014,49 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
                 pass
 
         self.assertEqual(mock_fetch.call_count, 10)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_auth_error_with_successful_refresh_does_not_increment_failures(
+        self, mock_sleep: AsyncMock, mock_fetch: AsyncMock, mock_jwt: MagicMock
+    ) -> None:
+        # Token refresh succeeds → AuthError is not counted as a failure;
+        # the loop retries and eventually shuts down cleanly.
+        # First call is the startup fetch; subsequent calls are token refreshes.
+        mock_jwt.side_effect = ["initial_token"] + ["refreshed_token"] * 20
+        mock_sleep.return_value = False
+
+        # Raise AuthError more times than _MAX_CONSECUTIVE_FAILURES to prove
+        # that consecutive_failures is reset on each successful refresh.
+        # After the threshold + 2 extra calls, signal shutdown so the loop exits.
+        extra_calls_to_prove_no_limit = 2
+        call_count = 0
+
+        def fetch_side_effect(*args: object, **kwargs: object) -> object:
+            nonlocal call_count
+            call_count += 1
+            if call_count > bcfy_calls_collector._MAX_CONSECUTIVE_FAILURES + extra_calls_to_prove_no_limit:
+                self.shutdown.set()
+                return None
+            raise bcfy_calls_collector.AuthError("Auth failure")
+
+        mock_fetch.side_effect = fetch_side_effect
+
+        # Should NOT raise RuntimeError because consecutive_failures is reset
+        # to 0 on each successful token refresh.
+        async for _ in bcfy_calls_collector.capture_bcfy_calls(
+            self.leased_feed, self.shutdown, self.url_base
+        ):
+            pass  # no chunks expected
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
