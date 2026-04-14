@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import unittest
+import uuid
 from typing import TYPE_CHECKING
 from unittest import mock
 
@@ -125,9 +126,9 @@ class HealthzHandlerTests(AioHTTPTestCase):
         self.state.last_heartbeat_tick = now - 2.0
         self.state.feed_tasks.update(
             {
-                "feed-1": object(),
-                "feed-2": object(),
-                "feed-3": object(),
+                uuid.uuid4(): object(),
+                uuid.uuid4(): object(),
+                uuid.uuid4(): object(),
             }
         )
 

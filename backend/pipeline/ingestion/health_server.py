@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
@@ -35,7 +35,10 @@ class HealthState:
 
     startup_time: float = field(default_factory=time.monotonic)
     last_heartbeat_tick: float | None = None
-    feed_tasks: dict[uuid.UUID, object] = field(default_factory=dict)
+    # Value type is Any because the handler only calls len() on this — it
+    # doesn't inspect values. Using Any avoids a dict-invariance mismatch
+    # when the runtime passes its dict[UUID, asyncio.Task] by reference.
+    feed_tasks: dict[uuid.UUID, Any] = field(default_factory=dict)
 
 
 # Typed aiohttp app keys (the recommended pattern since aiohttp 3.9).
