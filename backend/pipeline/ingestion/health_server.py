@@ -62,7 +62,9 @@ async def _healthz(request: web.Request) -> web.Response:
             {
                 "status": "healthy",
                 "active_feeds": len(state.feed_tasks),
-                "last_heartbeat_age_sec": (now - hb) if hb is not None else None,
+                "last_heartbeat_age_sec": (now - hb)
+                if hb is not None
+                else None,
             },
         )
 
@@ -104,7 +106,9 @@ async def _healthz(request: web.Request) -> web.Response:
     )
 
 
-def build_app(settings: NormalizerSettings, state: HealthState) -> web.Application:
+def build_app(
+    settings: NormalizerSettings, state: HealthState
+) -> web.Application:
     """Build an aiohttp Application that serves GET /healthz."""
     app = web.Application()
     app[_STATE_KEY] = state

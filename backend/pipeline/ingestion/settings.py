@@ -131,11 +131,13 @@ class NormalizerSettings:
         ),
     )
 
-    # Health check (GET /healthz). Production infra (cloud_config.yaml.tftpl
-    # docker -p mapping + google_compute_health_check in container_mig) pins
-    # port 8080; the HEALTH_CHECK_PORT env var is provided for local-dev and
-    # test flexibility only. Setting it in prod has no effect on what GCP
-    # probes, which will still target 8080.
+    # Health check (GET /healthz). HEALTH_CHECK_PORT exists for local-dev and
+    # test flexibility only. DO NOT override this in production: the docker
+    # -p mapping (cloud_config.yaml.tftpl) and google_compute_health_check
+    # (container_mig) both hardcode 8080, so overriding the env var would
+    # move the Python listener off 8080 while GCP keeps probing 8080 — every
+    # probe would fail with connection-refused and the autohealer would
+    # replace the entire fleet simultaneously.
     #
     # Heartbeat max age is computed inline in the /healthz handler as
     # 2 * heartbeat_interval_sec (spec) — no separate setting.

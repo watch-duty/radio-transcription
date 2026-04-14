@@ -45,7 +45,9 @@ class HealthzHandlerTests(AioHTTPTestCase):
         body = await resp.json()
         return resp.status, body
 
-    async def test_startup_grace_returns_healthy_without_heartbeat(self) -> None:
+    async def test_startup_grace_returns_healthy_without_heartbeat(
+        self,
+    ) -> None:
         """Within grace: 200 healthy even if heartbeat never happened."""
         now = time.monotonic()
         self.state.startup_time = now - 30.0  # 30s uptime, grace=120s
@@ -58,7 +60,9 @@ class HealthzHandlerTests(AioHTTPTestCase):
         self.assertEqual(body["active_feeds"], 0)
         self.assertIsNone(body["last_heartbeat_age_sec"])
 
-    async def test_startup_grace_returns_healthy_even_with_stale_heartbeat(self) -> None:
+    async def test_startup_grace_returns_healthy_even_with_stale_heartbeat(
+        self,
+    ) -> None:
         """Within grace: 200 regardless of state (spec: 'regardless of state')."""
         now = time.monotonic()
         self.state.startup_time = now - 30.0
@@ -119,11 +123,13 @@ class HealthzHandlerTests(AioHTTPTestCase):
         now = time.monotonic()
         self.state.startup_time = now - 400.0
         self.state.last_heartbeat_tick = now - 2.0
-        self.state.feed_tasks.update({
-            "feed-1": object(),
-            "feed-2": object(),
-            "feed-3": object(),
-        })
+        self.state.feed_tasks.update(
+            {
+                "feed-1": object(),
+                "feed-2": object(),
+                "feed-3": object(),
+            }
+        )
 
         status, body = await self._get_healthz()
 

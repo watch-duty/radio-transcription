@@ -701,6 +701,62 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
         rt._pubsub_client.close.assert_awaited_once()
         rt._gcs_client.close.assert_awaited_once()
 
+    async def test_health_runner_cleanup_runs_before_heartbeat_stop(
+        self,
+    ) -> None:
+        """
+        Ordering invariant: /healthz server must be stopped before the heartbeat
+        thread is signaled to stop. Probes get a clean connection-refused during
+        the shutdown window rather than hanging on a socket whose event loop is
+        about to drain.
+        """
+        rt = _make_runtime()
+        rt._shutdown = asyncio.Event()
+        rt._thread_stop = mock.MagicMock()
+        rt._heartbeat_thread = None
+        rt._store = mock.AsyncMock()
+        rt._data_pool = mock.AsyncMock()
+        rt._heartbeat_pool = mock.AsyncMock()
+        rt._pubsub_client = mock.AsyncMock()
+        rt._gcs_client = mock.AsyncMock()
+        rt._health_runner = mock.AsyncMock()
+
+        call_order: list[str] = []
+        rt._health_runner.cleanup.side_effect = lambda: call_order.append(
+            "cleanup"
+        )
+        rt._thread_stop.set.side_effect = lambda: call_order.append("stop")
+
+        await rt._shutdown_sequence()
+
+        rt._health_runner.cleanup.assert_awaited_once()
+        self.assertEqual(call_order, ["cleanup", "stop"])
+
+    async def test_health_runner_cleanup_failure_does_not_skip_heartbeat_stop(
+        self,
+    ) -> None:
+        """
+        If runner.cleanup() raises, the rest of shutdown must still run — we
+        need to signal the heartbeat thread and release leases even if the
+        /healthz server couldn't be torn down cleanly.
+        """
+        rt = _make_runtime()
+        rt._shutdown = asyncio.Event()
+        rt._thread_stop = mock.MagicMock()
+        rt._heartbeat_thread = None
+        rt._store = mock.AsyncMock()
+        rt._data_pool = mock.AsyncMock()
+        rt._heartbeat_pool = mock.AsyncMock()
+        rt._pubsub_client = mock.AsyncMock()
+        rt._gcs_client = mock.AsyncMock()
+        rt._health_runner = mock.AsyncMock()
+        rt._health_runner.cleanup.side_effect = RuntimeError("boom")
+
+        await rt._shutdown_sequence()
+
+        rt._thread_stop.set.assert_called_once()
+        rt._store.release_feeds_batch.assert_awaited_once()
+
 
 class TestHeartbeatLoopSetsLeaseLost(unittest.IsolatedAsyncioTestCase):
     """Tests for _heartbeat_loop setting _lease_lost on exception."""

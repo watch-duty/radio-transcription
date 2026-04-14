@@ -184,7 +184,8 @@ class NormalizerRuntime:
         # leasing/heartbeat coroutines — this is load-bearing: if the loop is
         # wedged, the handler stops responding and GCP autohealing takes over.
         self._health_runner = await health_server.start(
-            settings, self._health_state,
+            settings,
+            self._health_state,
         )
 
         try:
@@ -654,8 +655,8 @@ class NormalizerRuntime:
 
     async def _shutdown_sequence(self) -> None:
         """
-        Orderly teardown: cancel feed tasks, stop heartbeat thread,
-        close GCS client and database pools.
+        Orderly teardown: stop /healthz HTTP server, cancel feed tasks,
+        stop heartbeat thread, close GCS client and database pools.
         """
         logger.info(
             "Shutting down -- %d active feed tasks",
@@ -664,8 +665,18 @@ class NormalizerRuntime:
         # Stop the /healthz listener early so external probes get a clean
         # connection refusal (port closed) rather than hanging on a socket
         # whose event loop is about to drain.
+        # Wrapped in try/except so a cleanup failure here doesn't skip the
+        # heartbeat-thread stop and lease release below — the process is
+        # exiting anyway, but we still want to drop leases so another worker
+        # can pick them up quickly.
         if self._health_runner is not None:
-            await self._health_runner.cleanup()
+            try:
+                await self._health_runner.cleanup()
+            except Exception:
+                logger.warning(
+                    "Failed to cleanly shut down /healthz server — continuing",
+                    exc_info=True,
+                )
 
         # Stop heartbeat FIRST to prevent it from seeing released feeds as
         # fence violations during the teardown window.

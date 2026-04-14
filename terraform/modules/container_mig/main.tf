@@ -71,10 +71,11 @@ resource "google_compute_instance_template" "this" {
   metadata = {
     google-logging-enabled = "true"
     user-data = templatefile("${path.module}/cloud_config.yaml.tftpl", {
-      service_name     = var.name_prefix
-      registry_host    = local.registry_host
-      container_image  = var.container_image
-      env_file_content = local.env_file_content
+      service_name       = var.name_prefix
+      registry_host      = local.registry_host
+      container_image    = var.container_image
+      env_file_content   = local.env_file_content
+      enable_autohealing = var.enable_autohealing
     })
   }
 
@@ -102,7 +103,7 @@ resource "google_compute_health_check" "this" {
   check_interval_sec  = 30
   timeout_sec         = 10
   healthy_threshold   = 1
-  unhealthy_threshold = 3 # 3 × 30s = 90s detection
+  unhealthy_threshold = 3 # 3 consecutive failures = 90s minimum; up to 120s from problem onset
 
   http_health_check {
     port         = 8080
