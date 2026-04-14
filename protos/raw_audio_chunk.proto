@@ -13,4 +13,7 @@ message AudioChunk {
   // This indicates a contiguous sequence of chunks; a new session_id signals a break
   // or a newly initialized stream.
   string session_id = 3;
+
+  // The human-readable name of the radio feed as stored in the database.
+  string feed_name = 4;
 }

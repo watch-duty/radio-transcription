@@ -60,6 +60,7 @@ class TranscriptionResult:
     end_audio_offset_ms: int | None = None
     canonical_audio_uri: str | None = None
     playback_audio_uri: str | None = None
+    feed_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,7 @@ class TransmissionContext:
     start_audio_offset_ms: int | None = None
     end_audio_offset_ms: int | None = None
     buffer_duration_ms: int = 0
+    feed_name: str = ""
 
 
 @dataclass
@@ -166,6 +168,7 @@ class FlushRequest:
     missing_post_context: bool = False
     start_audio_offset_ms: int | None = None
     end_audio_offset_ms: int | None = None
+    feed_name: str = ""
 
 
 @dataclass(frozen=True)

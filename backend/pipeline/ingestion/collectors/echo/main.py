@@ -169,6 +169,7 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
             session_id,
             start_ts,
             source_type="echo",
+            feed_name=feed.get("name"),
         )
 
         # Unconditional heartbeat — also resets failure_count if recovering.

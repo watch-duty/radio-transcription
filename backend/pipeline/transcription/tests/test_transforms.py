@@ -162,10 +162,11 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
 
 class AddEventTimestampTest(unittest.TestCase):
     def test_valid_timestamp_extraction(self) -> None:
-        """Verifies that AddEventTimestamp accurately regex-extracts and assigns the logical windowing timestamp natively from the chunk's standardized filename."""
+        """Verifies that AddEventTimestamp accurately extracts the event timestamp and includes feed_name from the proto."""
         chunk = AudioChunk(
             gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
             session_id="mock-session-id",
+            feed_name="Test Feed",
         )
         chunk.start_timestamp.FromMicroseconds(1678886400000000)
         element = ("test-feed", chunk.SerializeToString())
@@ -179,12 +180,31 @@ class AddEventTimestampTest(unittest.TestCase):
             (
                 "test-feed",
                 (
+                    "Test Feed",
                     "gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
                     "mock-session-id",
                 ),
             ),
         )
         self.assertEqual(result[0].timestamp, 1678886400)  # type: ignore
+
+    def test_valid_timestamp_extraction_without_feed_name(self) -> None:
+        """Verifies that AddEventTimestamp works correctly when feed_name is absent (backward compatibility)."""
+        chunk = AudioChunk(
+            gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
+            session_id="mock-session-id",
+        )
+        chunk.start_timestamp.FromMicroseconds(1678886400000000)
+        element = ("test-feed", chunk.SerializeToString())
+        fn = AddEventTimestamp()
+        result = list(fn.process(element))
+
+        self.assertEqual(len(result), 1)
+        self.assertIsInstance(result[0], TimestampedValue)
+        feed_id, (feed_name, gcs_uri, session_id) = result[0].value  # type: ignore
+        self.assertEqual(feed_id, "test-feed")
+        self.assertEqual(feed_name, "")
+        self.assertEqual(session_id, "mock-session-id")
 
     def test_invalid_timestamp_raises_value_error(self) -> None:
         """Verifies that chunks possessing malformed or unidentifiable file names result in safely tagging the element for DLQ observation instead of crashing."""
@@ -220,6 +240,7 @@ class OrderRestorerTest(unittest.TestCase):
                                 (
                                     beam.coders.StrUtf8Coder(),
                                     beam.coders.StrUtf8Coder(),
+                                    beam.coders.StrUtf8Coder(),
                                 )
                             ),
                         )
@@ -229,7 +250,10 @@ class OrderRestorerTest(unittest.TestCase):
                 .add_elements(
                     [
                         TimestampedValue(
-                            ("feed-1", ("gs://b/100-uuid1.flac", "session-A")),
+                            (
+                                "feed-1",
+                                ("Feed One", "gs://b/100-uuid1.flac", "session-A"),
+                            ),
                             100,
                         )
                     ]
@@ -238,7 +262,10 @@ class OrderRestorerTest(unittest.TestCase):
                 .add_elements(
                     [
                         TimestampedValue(
-                            ("feed-1", ("gs://b/130-uuid3.flac", "session-A")),
+                            (
+                                "feed-1",
+                                ("Feed One", "gs://b/130-uuid3.flac", "session-A"),
+                            ),
                             130,
                         )
                     ]
@@ -247,7 +274,10 @@ class OrderRestorerTest(unittest.TestCase):
                 .add_elements(
                     [
                         TimestampedValue(
-                            ("feed-1", ("gs://b/115-uuid2.flac", "session-A")),
+                            (
+                                "feed-1",
+                                ("Feed One", "gs://b/115-uuid2.flac", "session-A"),
+                            ),
                             115,
                         )
                     ]
@@ -261,9 +291,9 @@ class OrderRestorerTest(unittest.TestCase):
                 restored,
                 equal_to(
                     [
-                        ("feed-1", "gs://b/100-uuid1.flac"),
-                        ("feed-1", "gs://b/115-uuid2.flac"),
-                        ("feed-1", "gs://b/130-uuid3.flac"),
+                        ("feed-1", ("Feed One", "gs://b/100-uuid1.flac")),
+                        ("feed-1", ("Feed One", "gs://b/115-uuid2.flac")),
+                        ("feed-1", ("Feed One", "gs://b/130-uuid3.flac")),
                     ]
                 ),
             )
@@ -285,6 +315,7 @@ class OrderRestorerTest(unittest.TestCase):
                                 (
                                     beam.coders.StrUtf8Coder(),
                                     beam.coders.StrUtf8Coder(),
+                                    beam.coders.StrUtf8Coder(),
                                 )
                             ),
                         )
@@ -296,7 +327,11 @@ class OrderRestorerTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-1",
-                                ("gs://b/100-11111111.flac", "session-A"),
+                                (
+                                    "Feed One",
+                                    "gs://b/100-11111111.flac",
+                                    "session-A",
+                                ),
                             ),
                             100,
                         )
@@ -308,7 +343,11 @@ class OrderRestorerTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-1",
-                                ("gs://b/130-33333333.flac", "session-A"),
+                                (
+                                    "Feed One",
+                                    "gs://b/130-33333333.flac",
+                                    "session-A",
+                                ),
                             ),
                             130,
                         )
@@ -322,7 +361,11 @@ class OrderRestorerTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-1",
-                                ("gs://b/115-22222222.flac", "session-A"),
+                                (
+                                    "Feed One",
+                                    "gs://b/115-22222222.flac",
+                                    "session-A",
+                                ),
                             ),
                             115,
                         )
@@ -338,12 +381,77 @@ class OrderRestorerTest(unittest.TestCase):
                 restored,
                 equal_to(
                     [
-                        ("feed-1", "gs://b/100-11111111.flac"),
-                        ("feed-1", "gs://b/130-33333333.flac"),
-                        ("feed-1", "gs://b/115-22222222.flac"),
+                        ("feed-1", ("Feed One", "gs://b/100-11111111.flac")),
+                        ("feed-1", ("Feed One", "gs://b/130-33333333.flac")),
+                        ("feed-1", ("Feed One", "gs://b/115-22222222.flac")),
                     ]
                 ),
             )
+
+    def test_restore_order_feed_name_propagated_from_buffered_chunks(
+        self,
+    ) -> None:
+        """Verifies that feed_name from state is re-attached to buffered chunks emitted after a gap timeout."""
+        config = OrderRestorerConfig(out_of_order_timeout_ms=5000)
+
+        options = PipelineOptions(
+            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+        )
+        with BeamTestPipeline(options=options) as p:
+            test_stream = (
+                BeamTestStream(
+                    coder=beam.coders.TupleCoder(
+                        (
+                            beam.coders.StrUtf8Coder(),
+                            beam.coders.TupleCoder(
+                                (
+                                    beam.coders.StrUtf8Coder(),
+                                    beam.coders.StrUtf8Coder(),
+                                    beam.coders.StrUtf8Coder(),
+                                )
+                            ),
+                        )
+                    )
+                )
+                .advance_watermark_to(100)
+                .add_elements(
+                    [
+                        TimestampedValue(
+                            (
+                                "feed-1",
+                                ("My Named Feed", "gs://b/100-aaa.flac", "s-A"),
+                            ),
+                            100,
+                        )
+                    ]
+                )
+                .advance_watermark_to(130)
+                .add_elements(
+                    [
+                        TimestampedValue(
+                            (
+                                "feed-1",
+                                ("My Named Feed", "gs://b/130-bbb.flac", "s-A"),
+                            ),
+                            130,
+                        )
+                    ]
+                )
+                .advance_watermark_to_infinity()
+            )
+
+            restored = p | test_stream | beam.ParDo(RestoreOrderFn(config))
+
+            def assert_has_feed_name(
+                elements: list[tuple[str, tuple[str, str]]],
+            ) -> None:
+                for feed_id, (feed_name, _gcs_uri) in elements:
+                    assert feed_id == "feed-1"
+                    assert feed_name == "My Named Feed", (
+                        f"Expected 'My Named Feed', got '{feed_name}'"
+                    )
+
+            assert_that(restored, assert_has_feed_name)
 
     @unittest.skip("DirectRunner metrics validation is flaky")
     def test_delayed_gap_acceptance(self) -> None:
@@ -418,6 +526,7 @@ class StitchAudioTest(unittest.TestCase):
                             beam.coders.TupleCoder(
                                 (
                                     beam.coders.StrUtf8Coder(),
+                                    beam.coders.StrUtf8Coder(),
                                     beam.coders.PickleCoder(),
                                 )
                             ),
@@ -431,6 +540,7 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-123",
                                 (
+                                    "Test Feed",
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/100-11111111-1111-1111-1111-111111111111.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/100-11111111-1111-1111-1111-111111111111.flac"
@@ -448,6 +558,7 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-123",
                                 (
+                                    "Test Feed",
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/115-22222222-2222-2222-2222-222222222222.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/115-22222222-2222-2222-2222-222222222222.flac"
@@ -465,6 +576,7 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-123",
                                 (
+                                    "Test Feed",
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/130-33333333-3333-3333-3333-333333333333.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/130-33333333-3333-3333-3333-333333333333.flac"
@@ -482,6 +594,7 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-123",
                                 (
+                                    "Test Feed",
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/150-44444444-4444-4444-4444-444444444444.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/150-44444444-4444-4444-4444-444444444444.flac"
@@ -499,6 +612,7 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-123",
                                 (
+                                    "Test Feed",
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/160-55555555-5555-5555-5555-555555555555.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/160-55555555-5555-5555-5555-555555555555.flac"
@@ -516,6 +630,7 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-123",
                                 (
+                                    "Test Feed",
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/190-66666666-6666-6666-6666-666666666666.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/190-66666666-6666-6666-6666-666666666666.flac"
@@ -560,6 +675,7 @@ class StitchAudioTest(unittest.TestCase):
                     for u in elements[0][1].contributing_audio_uris
                 )
                 assert elements[0][1].missing_prior_context is False
+                assert elements[0][1].feed_name == "Test Feed"
 
                 # Second element: chunk 130
                 # DID follow a gap (chunk 115 speech ended at 122, 130 starts at 130, gap=8s >= 3s)
@@ -568,6 +684,7 @@ class StitchAudioTest(unittest.TestCase):
                     for u in elements[1][1].contributing_audio_uris
                 )
                 assert elements[1][1].missing_prior_context is False
+                assert elements[1][1].feed_name == "Test Feed"
 
                 # Third element: chunk 160 (chunk 150 was dropped as useless silence after a disconnected gap)
                 assert any(
@@ -575,6 +692,7 @@ class StitchAudioTest(unittest.TestCase):
                     for u in elements[2][1].contributing_audio_uris
                 )
                 assert elements[2][1].missing_prior_context is True
+                assert elements[2][1].feed_name == "Test Feed"
 
             assert_that(
                 results.main,
@@ -632,6 +750,7 @@ class StitchAudioTest(unittest.TestCase):
                             beam.coders.TupleCoder(
                                 (
                                     beam.coders.StrUtf8Coder(),
+                                    beam.coders.StrUtf8Coder(),
                                     beam.coders.PickleCoder(),
                                 )
                             ),
@@ -645,6 +764,7 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-123",
                                 (
+                                    "Test Feed",
                                     "gs://fake-bucket/100-11111111-1111-1111-1111-111111111111.flac",
                                     mock_download(
                                         "gs://fake-bucket/100-11111111-1111-1111-1111-111111111111.flac"
@@ -662,6 +782,7 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-123",
                                 (
+                                    "Test Feed",
                                     "gs://fake-bucket/130-33333333-3333-3333-3333-333333333333.flac",
                                     mock_download(
                                         "gs://fake-bucket/130-33333333-3333-3333-3333-333333333333.flac"
@@ -679,6 +800,7 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-123",
                                 (
+                                    "Test Feed",
                                     "gs://fake-bucket/115-22222222-2222-2222-2222-222222222222.flac",
                                     mock_download(
                                         "gs://fake-bucket/115-22222222-2222-2222-2222-222222222222.flac"
@@ -785,6 +907,7 @@ class StitchAudioTest(unittest.TestCase):
                             beam.coders.TupleCoder(
                                 (
                                     beam.coders.StrUtf8Coder(),
+                                    beam.coders.StrUtf8Coder(),
                                     beam.coders.PickleCoder(),
                                 )
                             ),
@@ -798,6 +921,7 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-max",
                                 (
+                                    "Max Duration Feed",
                                     "gs://fake-bucket/ab12/feed-max/2026-03-06/100-77777777-7777-7777-7777-777777777777.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-max/2026-03-06/100-77777777-7777-7777-7777-777777777777.flac"
@@ -815,6 +939,7 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-max",
                                 (
+                                    "Max Duration Feed",
                                     "gs://fake-bucket/ab12/feed-max/2026-03-06/115-88888888-8888-8888-8888-888888888888.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-max/2026-03-06/115-88888888-8888-8888-8888-888888888888.flac"
@@ -832,6 +957,7 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-max",
                                 (
+                                    "Max Duration Feed",
                                     "gs://fake-bucket/ab12/feed-max/2026-03-06/130-99999999-9999-9999-9999-999999999999.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-max/2026-03-06/130-99999999-9999-9999-9999-999999999999.flac"
@@ -849,6 +975,7 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-max",
                                 (
+                                    "Max Duration Feed",
                                     "gs://fake-bucket/ab12/feed-max/2026-03-06/160-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-max/2026-03-06/160-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac"
@@ -944,6 +1071,7 @@ class StitchAudioTest(unittest.TestCase):
                             beam.coders.TupleCoder(
                                 (
                                     beam.coders.StrUtf8Coder(),
+                                    beam.coders.StrUtf8Coder(),
                                     beam.coders.PickleCoder(),
                                 )
                             ),
@@ -957,6 +1085,7 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-123",
                                 (
+                                    "Stale Timer Feed",
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/101-11111111-1111-1111-1111-111111111111.flac",
                                     mock_processor_inst.download_audio_and_detect.return_value,
                                 ),
@@ -1018,7 +1147,10 @@ class StitchAudioTest(unittest.TestCase):
                 input_elements = [
                     (
                         "feed-123",
-                        "gs://fake-bucket/123-00000000-0000-0000-0000-000000000000.flac",
+                        (
+                            "Wrong Feed Name Type",
+                            "gs://fake-bucket/123-00000000-0000-0000-0000-000000000000.flac",
+                        ),
                     )
                 ]
                 (
@@ -1216,8 +1348,8 @@ class DownloadAudioTest(unittest.TestCase):
             elements = (
                 p
                 | beam.Create(
-                    [("feed-123", "gs://fake-bucket/100-11111111.flac")]
-                ).with_output_types(tuple[str, str])
+                    [("feed-123", ("My Feed", "gs://fake-bucket/100-11111111.flac"))]
+                ).with_output_types(tuple[str, tuple[str, str]])
                 | beam.Map(lambda x: TimestampedValue(x, 100))
             )
 
@@ -1230,6 +1362,7 @@ class DownloadAudioTest(unittest.TestCase):
                         (
                             "feed-123",
                             (
+                                "My Feed",
                                 "gs://fake-bucket/100-11111111.flac",
                                 mock_inst.download_audio_and_detect.return_value,
                             ),
@@ -1237,3 +1370,43 @@ class DownloadAudioTest(unittest.TestCase):
                     ]
                 ),
             )
+
+    @patch("backend.pipeline.transcription.transforms.AudioProcessor")
+    def test_download_audio_preserves_feed_name(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that feed_name is correctly threaded through DownloadAudioFn."""
+        mock_inst = mock_audio_processor.return_value
+        mock_inst.download_audio_and_detect.return_value = AudioChunkData(
+            start_ms=200000,
+            audio=AudioSegment.silent(duration=1000),
+            speech_segments=[],
+            gcs_uri="gs://fake-bucket/200-aaaaaaaa.flac",
+        )
+
+        config = get_test_stitch_config()
+        options = PipelineOptions(
+            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+        )
+
+        with BeamTestPipeline(options=options) as p:
+            elements = (
+                p
+                | beam.Create(
+                    [("feed-xyz", ("Alpha Bravo Feed", "gs://fake-bucket/200-aaaaaaaa.flac"))]
+                ).with_output_types(tuple[str, tuple[str, str]])
+                | beam.Map(lambda x: TimestampedValue(x, 200))
+            )
+
+            results = elements | beam.ParDo(DownloadAudioFn(config))
+
+            def check_feed_name(
+                elements: list[tuple[str, tuple[str, str, Any]]],
+            ) -> None:
+                assert len(elements) == 1
+                feed_id, (feed_name, gcs_uri, _chunk_data) = elements[0]
+                assert feed_id == "feed-xyz"
+                assert feed_name == "Alpha Bravo Feed"
+                assert gcs_uri == "gs://fake-bucket/200-aaaaaaaa.flac"
+
+            assert_that(results, check_feed_name)

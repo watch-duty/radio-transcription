@@ -376,6 +376,7 @@ class NormalizerRuntime:
                     start_timestamp=captured_chunk.chunk_start_time,
                     session_id=session_id,
                     source_type=feed["source_type"],
+                    feed_name=feed["name"],
                 )
                 logger.info(
                     "Published message %s for feed %s", message_id, feed["name"]

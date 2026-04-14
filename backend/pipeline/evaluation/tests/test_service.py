@@ -87,5 +87,34 @@ class TestEvaluationService(unittest.TestCase):
         )
 
 
+    def test_feed_name_is_propagated(self) -> None:
+        """Verifies that feed_name from the TranscribedAudio proto is copied into EvaluatedTranscribedAudio."""
+        self.transcribed_audio.feed_name = "Downtown Scanner"
+        self.mock_evaluator.evaluate.return_value = {
+            "is_flagged": True,
+            "triggered_rules": ["basic_fire_terms"],
+        }
+
+        result_proto = self.service.evaluate(self.transcribed_audio)
+
+        self.assertIsNotNone(result_proto)
+        assert result_proto is not None
+        self.assertEqual(result_proto.feed_name, "Downtown Scanner")
+
+    def test_feed_name_defaults_to_empty_string(self) -> None:
+        """Verifies that when feed_name is absent in the source proto, the evaluation output has an empty feed_name."""
+        # self.transcribed_audio has no feed_name set, so it defaults to ""
+        self.mock_evaluator.evaluate.return_value = {
+            "is_flagged": False,
+            "triggered_rules": [],
+        }
+
+        result_proto = self.service.evaluate(self.transcribed_audio)
+
+        self.assertIsNotNone(result_proto)
+        assert result_proto is not None
+        self.assertEqual(result_proto.feed_name, "")
+
+
 if __name__ == "__main__":
     unittest.main()

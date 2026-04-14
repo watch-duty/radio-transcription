@@ -410,6 +410,53 @@ class TestPublishAudioChunkSync(unittest.TestCase):
             chunk.start_timestamp.seconds, int(mock_now.timestamp())
         )
 
+    def test_sets_feed_name_in_proto(self) -> None:
+        """Verifies that feed_name is serialized into the AudioChunk proto."""
+        mock_future = MagicMock()
+        mock_future.result.return_value = "message-feed-name"
+        _, mock_publisher = _make_pubsub_client()
+        mock_publisher.publish.return_value = mock_future
+
+        gcp_helper.publish_audio_chunk_sync(
+            mock_publisher,
+            topic_path="projects/test/topics/audio",
+            feed_id="feed-77",
+            gcs_uri="gs://bucket/audio.flac",
+            session_id="sess-1",
+            start_timestamp=datetime.datetime(
+                2026, 3, 5, 12, 0, tzinfo=datetime.UTC
+            ),
+            feed_name="Downtown PD",
+        )
+
+        publish_args, _publish_kwargs = mock_publisher.publish.call_args
+        chunk = AudioChunk()
+        chunk.ParseFromString(publish_args[1])
+        self.assertEqual(chunk.feed_name, "Downtown PD")
+
+    def test_feed_name_defaults_to_empty_string_when_omitted(self) -> None:
+        """Verifies that omitting feed_name results in an empty string in the proto."""
+        mock_future = MagicMock()
+        mock_future.result.return_value = "message-no-feed-name"
+        _, mock_publisher = _make_pubsub_client()
+        mock_publisher.publish.return_value = mock_future
+
+        gcp_helper.publish_audio_chunk_sync(
+            mock_publisher,
+            topic_path="projects/test/topics/audio",
+            feed_id="feed-88",
+            gcs_uri="gs://bucket/audio.flac",
+            session_id="sess-2",
+            start_timestamp=datetime.datetime(
+                2026, 3, 5, 12, 0, tzinfo=datetime.UTC
+            ),
+        )
+
+        publish_args, _publish_kwargs = mock_publisher.publish.call_args
+        chunk = AudioChunk()
+        chunk.ParseFromString(publish_args[1])
+        self.assertEqual(chunk.feed_name, "")
+
     def test_omits_source_type_when_none(self) -> None:
         mock_future = MagicMock()
         mock_future.result.return_value = "msg-1"
@@ -454,6 +501,30 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, "message-123")
         mock_publisher.publish.assert_called_once()
+
+    async def test_sets_feed_name_in_proto(self) -> None:
+        """Async wrapper serializes feed_name into the AudioChunk proto."""
+        mock_pubsub_client, mock_publisher = _make_pubsub_client()
+        mock_now = datetime.datetime(2026, 3, 5, 12, 0, tzinfo=datetime.UTC)
+
+        fut = concurrent.futures.Future()
+        fut.set_result("message-feed")
+        mock_publisher.publish.return_value = fut
+
+        await gcp_helper.publish_audio_chunk(
+            mock_pubsub_client,
+            topic_path="projects/test/topics/audio",
+            feed_id="feed-99",
+            gcs_uri="gs://bucket/audio.flac",
+            session_id="sess-99",
+            start_timestamp=mock_now,
+            feed_name="Central Fire",
+        )
+
+        publish_args, _publish_kwargs = mock_publisher.publish.call_args
+        chunk = AudioChunk()
+        chunk.ParseFromString(publish_args[1])
+        self.assertEqual(chunk.feed_name, "Central Fire")
 
 
 class TestParseGcsUri(unittest.TestCase):
