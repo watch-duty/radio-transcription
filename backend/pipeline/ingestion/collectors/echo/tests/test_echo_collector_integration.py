@@ -41,7 +41,7 @@ _SQL_DIR = (
 
 _FAKE_GCS_PORT = 4443
 _ECHO_BUCKET = "wd-echo-recordings-test"
-_CANONICAL_BUCKET = "ingestion-canonical-test"
+_STAGING_BUCKET = "ingestion-staging-test"
 _RAW_AUDIO_TOPIC = "projects/test/topics/raw-audio-test"
 
 
@@ -114,7 +114,7 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         cls._gcs_url = f"http://{cls._gcs_host}:{cls._gcs_port}"
 
         # Create test buckets
-        for bucket_name in (_ECHO_BUCKET, _CANONICAL_BUCKET):
+        for bucket_name in (_ECHO_BUCKET, _STAGING_BUCKET):
             resp = sync_requests.post(
                 f"{cls._gcs_url}/storage/v1/b",
                 json={"name": bucket_name},
@@ -201,9 +201,9 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         event.data = {"name": name, "bucket": _ECHO_BUCKET}
         return event
 
-    def _download_canonical(self, path: str) -> bytes:
+    def _download_staged(self, path: str) -> bytes:
         resp = sync_requests.get(
-            f"{self._gcs_url}/storage/v1/b/{_CANONICAL_BUCKET}/o/{path.replace('/', '%2F')}?alt=media",
+            f"{self._gcs_url}/storage/v1/b/{_STAGING_BUCKET}/o/{path.replace('/', '%2F')}?alt=media",
         )
         resp.raise_for_status()
         return resp.content
@@ -220,7 +220,7 @@ class TestEchoCollectorIntegration(unittest.TestCase):
             patch.object(echo_main, "pubsub_client", mock_pubsub),
             patch.object(echo_main, "feed_store", store),
             patch.object(echo_main, "RAW_AUDIO_TOPIC", _RAW_AUDIO_TOPIC),
-            patch.object(echo_main, "CANONICAL_BUCKET", _CANONICAL_BUCKET),
+            patch.object(echo_main, "STAGING_BUCKET", _STAGING_BUCKET),
         ):
             echo_main._handle(event)
 
@@ -235,9 +235,9 @@ class TestEchoCollectorIntegration(unittest.TestCase):
 
         self._run_handler(self._make_cloud_event(name))
 
-        # Verify MP3 in canonical bucket
+        # Verify MP3 in staging bucket
         mp3_path = f"echo/{feed_id}/20260326/fire_20260326_143022.mp3"
-        downloaded_bytes = self._download_canonical(mp3_path)
+        downloaded_bytes = self._download_staged(mp3_path)
         self.assertEqual(downloaded_bytes, uploaded_bytes)
 
         # Verify AudioChunk published with correct attributes
@@ -346,7 +346,7 @@ class TestEchoCollectorIntegration(unittest.TestCase):
 
         # Verify MP3 still valid
         mp3_path = f"echo/{feed_id}/20260326/idempotent_20260326_143022.mp3"
-        downloaded_bytes = self._download_canonical(mp3_path)
+        downloaded_bytes = self._download_staged(mp3_path)
         self.assertEqual(downloaded_bytes, _make_mp3_bytes())
 
         # Both invocations publish — second upload skipped via

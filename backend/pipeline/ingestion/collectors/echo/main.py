@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-CANONICAL_BUCKET = os.environ.get("CANONICAL_BUCKET", "")
+STAGING_BUCKET = os.environ.get("AUDIO_STAGING_BUCKET", "")
 RAW_AUDIO_TOPIC = os.environ.get("RAW_AUDIO_TOPIC", "")
 
 # ---------------------------------------------------------------------------
@@ -55,15 +55,15 @@ feed_store: SyncFeedStore | None = None
 def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
     """Sync entry point for Eventarc GCS OBJECT_FINALIZE events."""
     global gcs_client, pubsub_client, feed_store  # noqa: PLW0603
-    if not CANONICAL_BUCKET:
-        msg = "CANONICAL_BUCKET environment variable is not set"
+    if not STAGING_BUCKET:
+        msg = "AUDIO_STAGING_BUCKET environment variable is not set"
         raise RuntimeError(msg)
     if not RAW_AUDIO_TOPIC:
         msg = "RAW_AUDIO_TOPIC environment variable is not set"
         raise RuntimeError(msg)
     if gcs_client is None:
         gcs_client = storage.Client()
-        logger.info("Echo ingestion initialized (bucket=%s)", CANONICAL_BUCKET)
+        logger.info("Echo ingestion initialized (bucket=%s)", STAGING_BUCKET)
     if pubsub_client is None:
         pubsub_client = PubSubClient()
     if feed_store is None:
@@ -130,13 +130,13 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
             logger.warning("Object deleted before download, skipping: %s", name)
             return
 
-        # Upload MP3 directly to canonical bucket.
+        # Upload MP3 directly to staging bucket.
         # if_generation_match=0 skips redundant writes but we
         # always proceed to publish (prior invocation may have crashed after upload).
         date_dir = parts[1]
         mp3_path = f"echo/{feed['id']}/{date_dir}/{Path(name).name}"
-        canonical_uri = f"gs://{CANONICAL_BUCKET}/{mp3_path}"
-        blob = gcs_client.bucket(CANONICAL_BUCKET).blob(mp3_path)
+        staging_uri = f"gs://{STAGING_BUCKET}/{mp3_path}"
+        blob = gcs_client.bucket(STAGING_BUCKET).blob(mp3_path)
         try:
             blob.upload_from_string(
                 mp3_bytes,
@@ -144,19 +144,17 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
                 if_generation_match=0,
             )
         except PreconditionFailed:
-            logger.info(
-                "MP3 already exists, skipping upload: %s", canonical_uri
-            )
+            logger.info("MP3 already exists, skipping upload: %s", staging_uri)
 
         # Publish AudioChunk with deterministic session_id for dedup.
         feed_id_str = str(feed["id"])
-        session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, canonical_uri))
+        session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, staging_uri))
         publisher = pubsub_client.get_publisher()
         publish_audio_chunk_sync(
             publisher,
             RAW_AUDIO_TOPIC,
             feed_id_str,
-            canonical_uri,
+            staging_uri,
             session_id,
             start_ts,
             source_type="echo",
