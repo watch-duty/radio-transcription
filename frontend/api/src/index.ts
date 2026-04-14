@@ -1,7 +1,6 @@
 import express, { json, urlencoded } from 'express';
 
 import cors from 'cors';
-import swaggerUi from 'swagger-ui-express';
 import * as fs from 'fs';
 import * as yaml from 'js-yaml';
 import * as path from 'path';
@@ -26,20 +25,37 @@ app.use(
 
 app.use(json());
 
-RegisterRoutes(app);
-
 // Load the generated OpenAPI spec
 try {
   const specPath = path.join(process.cwd(), 'openapi.yaml');
   if (fs.existsSync(specPath)) {
     const file = fs.readFileSync(specPath, 'utf8');
     const swaggerDocument = yaml.load(file) as any;
-    app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+
+    // Fix placeholders and security for local development
+    if (swaggerDocument.servers) {
+      swaggerDocument.servers = [{ url: 'http://localhost:8080' }];
+    }
+
+    if (swaggerDocument.components && swaggerDocument.components.securitySchemes) {
+      // Change OAuth2 to HTTP Bearer for easier local testing
+      swaggerDocument.components.securitySchemes.google_id_token = {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT'
+      };
+    }
+
+    app.get('/openapi.json', (req, res) => {
+      res.json(swaggerDocument);
+    });
   } else {
     console.warn(`OpenAPI spec not found at ${specPath}`);
   }
 } catch (error) {
   console.error('Failed to load OpenAPI spec:', error);
 }
+
+RegisterRoutes(app);
 
 export const api = app;

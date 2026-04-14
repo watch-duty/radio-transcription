@@ -16,15 +16,14 @@
     "generate-spec": "yarn run tsoa spec --yaml && node scripts/post-process-spec.js"
   },
   "dependencies": {
-    "@transcription/common": "file:../common",
     "@google-cloud/functions-framework": "^5.0.2",
+    "@transcription/common": "file:../common",
     "axios": "^1.14.0",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "google-auth-library": "^10.6.2",
     "js-yaml": "^4.1.1",
     "jsonwebtoken": "^9.0.3",
-    "swagger-ui-express": "^5.0.1",
     "tsoa": "^7.0.0-alpha.0"
   },
   "devDependencies": {
@@ -33,9 +32,10 @@
     "@tsconfig/node22": "^22.0.5",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
+    "@types/js-yaml": "^4.0.9",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^25.5.0",
-    "@types/swagger-ui-express": "^4.1.6",
+    "@types/swagger-ui-express": "^4.1.8",
     "dotenv-cli": "^11.0.0",
     "eslint": "^10.1.0",
     "eslint-config-prettier": "^10.1.8",
