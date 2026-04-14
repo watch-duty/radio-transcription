@@ -75,26 +75,13 @@ export class TranscriptsController extends Controller {
       if (startTime) queryParams.append('start_time', startTime);
       if (endTime) queryParams.append('end_time', endTime);
 
-      const isLocal = TRANSCRIPTS_API_URL?.includes('localhost') || TRANSCRIPTS_API_URL?.includes('transcripts-api');
-      let data: { transcripts: TranscriptResponse[]; next_token?: string };
-
-      if (isLocal) {
-        const response = await fetch(`${TRANSCRIPTS_API_URL}?${queryParams.toString()}`, {
-          method: 'GET',
-        });
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        data = await response.json() as { transcripts: TranscriptResponse[]; next_token?: string };
-      } else {
-        const auth = new GoogleAuth();
-        const client = await auth.getIdTokenClient(TRANSCRIPTS_API_URL!);
-        const response = await client.request({
-          url: `${TRANSCRIPTS_API_URL}?${queryParams.toString()}`,
-          method: 'GET',
-        });
-        data = response.data as { transcripts: TranscriptResponse[]; next_token?: string };
-      }
+      const auth = new GoogleAuth();
+      const client = await auth.getIdTokenClient(TRANSCRIPTS_API_URL!);
+      const response = await client.request({
+        url: `${TRANSCRIPTS_API_URL}?${queryParams.toString()}`,
+        method: 'GET',
+      });
+      const data = response.data as { transcripts: TranscriptResponse[]; next_token?: string };
 
       return {
         transcripts: data.transcripts.map(convertTranscriptResponse),
