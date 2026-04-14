@@ -49,13 +49,13 @@ async def _healthz(request: web.Request) -> web.Response:
 
     # Gate 2: heartbeat completed at least once, and freshly.
     # No startup grace: returning 200 before the worker has proven it can
-    # heartbeat would let `wait_for_instances_status = HEALTHY` pass Terraform
-    # the instant the port binds, masking a broken config (bad DB creds,
-    # network partition). The MIG's `initial_delay_sec = 360` handles the
-    # startup window on the autohealer side: 503s during the first 6 min of
-    # VM life don't trigger recreation. Normal-case first heartbeat completes
-    # ~15s after Python process start (heartbeat thread interval), so HEALTHY
-    # transition happens well inside the 360s window.
+    # heartbeat would tell the autohealer "all good" the instant the port
+    # binds, masking a broken config (bad DB creds, network partition) until
+    # the fleet has already rolled. The MIG's `initial_delay_sec = 360` is
+    # the gate instead — 503s during the first 6 min of VM life don't trigger
+    # recreation, so a worker that takes a while to complete its first
+    # heartbeat (normal case: ~15s after Python process start, via the
+    # heartbeat thread's interval) won't be killed mid-startup.
     hb = state.last_heartbeat_completed
     if hb is None:
         return web.json_response(

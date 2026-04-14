@@ -99,7 +99,7 @@ variable "distribution_policy_target_shape" {
 }
 
 variable "enable_autohealing" {
-  description = "If true, attach a google_compute_health_check that probes /healthz on port 8080 and wire it into the MIG's auto_healing_policies. Also upgrades wait_for_instances_status from STABLE to HEALTHY so `terraform apply` fails loud if a VM can't pass /healthz. The consumer is responsible for: (1) exposing /healthz on port 8080 inside the container; (2) adding a firewall rule that allows GCP probe sources (130.211.0.0/22, 35.191.0.0/16) to reach port 8080 on the instances. Without the firewall, every VM is flagged unhealthy and the autohealer recreates instances in a loop."
+  description = "If true, attach a google_compute_health_check that probes /healthz on port 8080 and wire it into the MIG's auto_healing_policies. VMs that fail 3 consecutive probes after the initial_delay_sec window are replaced. The consumer is responsible for: (1) exposing /healthz on port 8080 inside the container; (2) adding a firewall rule that allows GCP probe sources (130.211.0.0/22, 35.191.0.0/16) to reach port 8080 on the instances. Without the firewall, every VM is flagged unhealthy and the autohealer recreates instances in a loop."
   type        = bool
   default     = false
 }

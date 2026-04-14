@@ -128,14 +128,15 @@ resource "google_compute_region_instance_group_manager" "this" {
   # pull failure, etc.), terraform silently returns green. With this, the apply
   # fails loudly — the right signal for operators.
   #
-  # wait_for_instances_status = HEALTHY (when autohealing is on) is a strict
-  # upgrade: apply waits for VMs to pass /healthz, not just be RUNNING. Catches
-  # "container started but serving 503" in the apply itself instead of silently
-  # flapping via the autohealer. Requires the consumer to deploy the /healthz
-  # server AND open the firewall before flipping enable_autohealing to true;
-  # otherwise apply blocks until its 30m timeout.
-  wait_for_instances        = true
-  wait_for_instances_status = var.enable_autohealing ? "HEALTHY" : "STABLE"
+  # wait_for_instances_status stays at its default (STABLE). The provider's
+  # StringInSlice validator only accepts "STABLE" and "UPDATED" — there is no
+  # "HEALTHY" option despite what looked intuitive. "UPDATED" is unusable here
+  # because it's incompatible with OPPORTUNISTIC update_policy: OPPORTUNISTIC
+  # never cycles VMs onto a new template, so "wait for all VMs on latest
+  # template" would block apply until the 30m resource timeout. The autohealer's
+  # initial_delay_sec (auto_healing_policies block below) is the real health
+  # gate; terraform gates only on "VMs are RUNNING."
+  wait_for_instances = true
 
   version {
     instance_template = google_compute_instance_template.this.self_link_unique
