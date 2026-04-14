@@ -61,9 +61,7 @@ function convertFeedCreate(create: FeedCreate): FeedCreateBackend {
 export class FeedsController extends Controller {
   private async getClient() {
     const auth = new GoogleAuth();
-    const url = new URL(FEEDS_STORE_API_URL);
-    const baseUrl = `${url.protocol}//${url.host}`;
-    return await auth.getIdTokenClient(baseUrl);
+    return await auth.getIdTokenClient(FEEDS_STORE_API_URL);
   }
 
   @Get('')
