@@ -69,10 +69,11 @@ async def _healthz(request: web.Request) -> web.Response:
     # Gate 1: Heartbeat dispatch freshness. Threshold = 2x heartbeat_interval_sec.
     # Stamped at the start of each cycle (not on DB success), so this gate
     # fails only when the event loop stops dispatching the cycle at all —
-    # not when the DB is transiently unreachable. Event-loop wedges are also
-    # caught by the 45s stall detector inside _heartbeat_loop, which kicks
-    # in before this gate; this is the external backstop if systemd can't
-    # restart (Docker daemon wedged).
+    # not when the DB is transiently unreachable. Event-loop wedges are
+    # normally self-recovered by _heartbeat_loop's 45s stall detector
+    # (os._exit → systemd restart, well before autohealing would act). This
+    # gate is the external backstop for the case where systemd can't restart
+    # (Docker daemon wedged), where autohealing needs to replace the VM.
     heartbeat_max_age_sec = 2.0 * settings.heartbeat_interval_sec
     if hb is None:
         return web.json_response(
