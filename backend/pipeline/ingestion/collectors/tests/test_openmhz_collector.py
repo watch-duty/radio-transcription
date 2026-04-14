@@ -66,17 +66,14 @@ _COL_MOD = "backend.pipeline.ingestion.collectors.openmhz.collector"
 class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
     @patch(f"{_COL_MOD}.websocket_transport")
     @patch(f"{_COL_MOD}._download_m4a")
-    @patch(f"{_COL_MOD}.convert_to_flac")
     async def test_yields_flac_and_call_time(
         self,
-        mock_convert: MagicMock,
         mock_download: AsyncMock,
         mock_transport: MagicMock,
     ) -> None:
         call = _make_call(call_id="c1", length_sec=5)
         mock_transport.side_effect = lambda *a, **kw: _mock_transport([call])
         mock_download.return_value = b"fake-m4a-bytes"
-        mock_convert.return_value = b"fake-flac-bytes"
 
         shutdown = asyncio.Event()
         results = []
@@ -87,16 +84,13 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             shutdown.set()
 
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0].audio_bytes, b"fake-flac-bytes")
+        self.assertEqual(results[0].audio_bytes, b"fake-m4a-bytes")
         self.assertEqual(results[0].chunk_start_time, call.time)
-        mock_convert.assert_called_once_with(b"fake-m4a-bytes", "m4a")
 
     @patch(f"{_COL_MOD}.websocket_transport")
     @patch(f"{_COL_MOD}._download_m4a")
-    @patch(f"{_COL_MOD}.convert_to_flac")
     async def test_skips_zero_length_calls(
         self,
-        mock_convert: MagicMock,
         mock_download: AsyncMock,
         mock_transport: MagicMock,
     ) -> None:
@@ -106,7 +100,6 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         ]
         mock_transport.side_effect = lambda *a, **kw: _mock_transport(calls)
         mock_download.return_value = b"m4a"
-        mock_convert.return_value = b"flac"
 
         shutdown = asyncio.Event()
         results = []
@@ -121,10 +114,8 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
 
     @patch(f"{_COL_MOD}.websocket_transport")
     @patch(f"{_COL_MOD}._download_m4a")
-    @patch(f"{_COL_MOD}.convert_to_flac")
     async def test_skips_failed_download(
         self,
-        mock_convert: MagicMock,
         mock_download: AsyncMock,
         mock_transport: MagicMock,
     ) -> None:
@@ -134,7 +125,6 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         ]
         mock_transport.side_effect = lambda *a, **kw: _mock_transport(calls)
         mock_download.side_effect = [None, b"m4a"]
-        mock_convert.return_value = b"flac"
 
         shutdown = asyncio.Event()
         results = []
@@ -146,33 +136,6 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(results), 1)
         self.assertEqual(mock_download.call_count, 2)
-        mock_convert.assert_called_once()
-
-    @patch(f"{_COL_MOD}.websocket_transport")
-    @patch(f"{_COL_MOD}._download_m4a")
-    @patch(f"{_COL_MOD}.convert_to_flac")
-    @patch(f"{_COL_MOD}._sleep_or_shutdown", new_callable=AsyncMock)
-    async def test_skips_failed_flac_conversion(
-        self,
-        mock_sleep: AsyncMock,
-        mock_convert: MagicMock,
-        mock_download: AsyncMock,
-        mock_transport: MagicMock,
-    ) -> None:
-        call = _make_call(call_id="corrupt")
-        mock_transport.side_effect = lambda *a, **kw: _mock_transport([call])
-        mock_download.return_value = b"corrupt-m4a"
-        mock_convert.side_effect = Exception("pydub decode error")
-        mock_sleep.return_value = True  # exit on first reconnect attempt
-
-        shutdown = asyncio.Event()
-        results = []
-        async for chunk in openmhz_collector(
-            _TEST_FEED, shutdown, "https://api.openmhz.com/"
-        ):
-            results.append(chunk)
-
-        self.assertEqual(len(results), 0)
 
     async def test_raises_value_error_for_missing_source_feed_id(
         self,

@@ -43,7 +43,6 @@ _FAKE_GCS_PORT = 4443
 _ECHO_BUCKET = "wd-echo-recordings-test"
 _CANONICAL_BUCKET = "ingestion-canonical-test"
 _RAW_AUDIO_TOPIC = "projects/test/topics/raw-audio-test"
-_FLAC_MAGIC = b"fLaC"
 
 
 def _docker_available() -> bool:
@@ -227,25 +226,19 @@ class TestEchoCollectorIntegration(unittest.TestCase):
 
     # -- Tests ------------------------------------------------------------
 
-    def test_successful_mp3_to_flac_pipeline(self) -> None:
-        """Upload MP3 -> resolve feed -> convert FLAC -> upload -> publish."""
+    def test_successful_mp3_pipeline(self) -> None:
+        """Upload MP3 -> resolve feed -> upload -> publish."""
         channel = "fire-ca_almaden"
         feed_id = self._insert_echo_feed(channel)
         name = f"{channel}/20260326/fire_20260326_143022.mp3"
-        self._upload_mp3(name)
+        uploaded_bytes = self._upload_mp3(name)
 
         self._run_handler(self._make_cloud_event(name))
 
-        # Verify FLAC in canonical bucket
-        flac_path = f"echo/{feed_id}/20260326/fire_20260326_143022.flac"
-        flac_bytes = self._download_canonical(flac_path)
-        self.assertTrue(flac_bytes[:4] == _FLAC_MAGIC)
-
-        # Verify FLAC is 16kHz mono 16-bit
-        audio = AudioSegment.from_file(io.BytesIO(flac_bytes), format="flac")
-        self.assertEqual(audio.frame_rate, 16000)
-        self.assertEqual(audio.channels, 1)
-        self.assertEqual(audio.sample_width, 2)
+        # Verify MP3 in canonical bucket
+        mp3_path = f"echo/{feed_id}/20260326/fire_20260326_143022.mp3"
+        downloaded_bytes = self._download_canonical(mp3_path)
+        self.assertEqual(downloaded_bytes, uploaded_bytes)
 
         # Verify AudioChunk published with correct attributes
         self.mock_publisher.publish.assert_called_once()
@@ -279,21 +272,6 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         feed_id = self._insert_echo_feed(channel)
         name = f"{channel}/20260326/badname.mp3"
         self._upload_mp3(name)
-
-        self._run_handler(self._make_cloud_event(name))
-
-        row = self._get_feed_row(feed_id)
-        self.assertEqual(row["failure_count"], 0)
-        self.assertEqual(row["status"], "active")
-        self.mock_publisher.publish.assert_not_called()
-
-    def test_corrupt_audio_skips_gracefully(self) -> None:
-        """Corrupt MP3 -> log warning, return 200, no failure recorded."""
-        channel = "corrupt-ch"
-        feed_id = self._insert_echo_feed(channel)
-        name = f"{channel}/20260326/corrupt_20260326_143022.mp3"
-        blob = self.gcs.bucket(_ECHO_BUCKET).blob(name)
-        blob.upload_from_string(b"not-valid-audio", content_type="audio/mpeg")
 
         self._run_handler(self._make_cloud_event(name))
 
@@ -366,10 +344,10 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         self._run_handler(self._make_cloud_event(name))
         self._run_handler(self._make_cloud_event(name))
 
-        # Verify FLAC still valid
-        flac_path = f"echo/{feed_id}/20260326/idempotent_20260326_143022.flac"
-        flac_bytes = self._download_canonical(flac_path)
-        self.assertTrue(flac_bytes[:4] == _FLAC_MAGIC)
+        # Verify MP3 still valid
+        mp3_path = f"echo/{feed_id}/20260326/idempotent_20260326_143022.mp3"
+        downloaded_bytes = self._download_canonical(mp3_path)
+        self.assertEqual(downloaded_bytes, _make_mp3_bytes())
 
         # Both invocations publish — second upload skipped via
         # if_generation_match=0 but we always proceed to publish.

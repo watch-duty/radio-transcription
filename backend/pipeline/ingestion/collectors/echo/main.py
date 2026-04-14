@@ -19,7 +19,6 @@ import functions_framework
 from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
 
-from backend.pipeline.common.audio import convert_to_flac
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.gcp_helper import publish_audio_chunk_sync
 from backend.pipeline.common.logging import setup_logging
@@ -72,7 +71,7 @@ def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
     _handle(cloud_event)
 
 
-def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR0915
+def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
     """Core handler — fully synchronous."""
     if gcs_client is None or pubsub_client is None or feed_store is None:
         msg = (
@@ -131,30 +130,22 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
             logger.warning("Object deleted before download, skipping: %s", name)
             return
 
-        # Convert MP3 → FLAC. Corrupt audio is a per-file issue — skip it.
-        try:
-            flac_bytes = convert_to_flac(mp3_bytes, "mp3")
-        except Exception:
-            logger.warning(
-                "Failed to decode audio, skipping corrupt file: %s", name
-            )
-            return
-
-        # Upload FLAC. if_generation_match=0 skips redundant writes but we
+        # Upload MP3 directly to canonical bucket.
+        # if_generation_match=0 skips redundant writes but we
         # always proceed to publish (prior invocation may have crashed after upload).
         date_dir = parts[1]
-        flac_path = f"echo/{feed['id']}/{date_dir}/{Path(name).stem}.flac"
-        canonical_uri = f"gs://{CANONICAL_BUCKET}/{flac_path}"
-        blob = gcs_client.bucket(CANONICAL_BUCKET).blob(flac_path)
+        mp3_path = f"echo/{feed['id']}/{date_dir}/{Path(name).name}"
+        canonical_uri = f"gs://{CANONICAL_BUCKET}/{mp3_path}"
+        blob = gcs_client.bucket(CANONICAL_BUCKET).blob(mp3_path)
         try:
             blob.upload_from_string(
-                flac_bytes,
-                content_type="audio/flac",
+                mp3_bytes,
+                content_type="audio/mpeg",
                 if_generation_match=0,
             )
         except PreconditionFailed:
             logger.info(
-                "FLAC already exists, skipping upload: %s", canonical_uri
+                "MP3 already exists, skipping upload: %s", canonical_uri
             )
 
         # Publish AudioChunk with deterministic session_id for dedup.
