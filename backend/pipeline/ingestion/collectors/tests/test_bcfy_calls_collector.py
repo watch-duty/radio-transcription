@@ -881,13 +881,11 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             {"calls": []},
         ]
 
-        sleep_calls = 0
-
-        async def sleep_side_effect(*args, **kwargs) -> bool:
-            nonlocal sleep_calls
-            sleep_calls += 1
-            if sleep_calls == 1:
-                return False
+        async def sleep_side_effect(*args: object, **kwargs: object) -> bool:
+            # With the new behaviour, a successful token refresh uses `continue`
+            # so no sleep occurs in the AuthError path.  The only sleep is the
+            # normal poll-interval sleep after the second (successful) fetch.
+            # Shut down on that first (and only) sleep so the loop exits cleanly.
             self.shutdown.set()
             return True
 
