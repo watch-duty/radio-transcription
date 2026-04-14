@@ -1,6 +1,13 @@
 name: Integration Tests
 
 on:
+  workflow_dispatch:
+    inputs:
+      debug_enabled:
+        description: 'Whether to start SSH session for debugging'
+        required: false
+        type: boolean
+        default: false
   push:
     branches:
       - main
@@ -17,3 +24,7 @@ jobs:
 
       - name: Run integration tests
         run: docker compose run --rm integration-tests
+
+      - name: Open SSH session if workflow fails
+        uses: mxschmitt/action-tmate@v3
+        if: failure() && inputs.debug_enabled

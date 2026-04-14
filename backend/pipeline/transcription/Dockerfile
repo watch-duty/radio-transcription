@@ -1,10 +1,8 @@
-FROM gcr.io/dataflow-templates-base/python313-template-launcher-base:latest AS launcher
-
+# Use Apache Beam Python SDK as the base image
 FROM apache/beam_python3.13_sdk:2.70.0
 
-COPY --from=launcher /opt/google/dataflow/python_template_launcher /opt/google/dataflow/python_template_launcher
 
-# Install OS dependencies: ffmpeg and libomp5
+# Install OS dependencies needed at runtime
 USER root
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -14,29 +12,43 @@ RUN apt-get update && \
         libc++abi1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies via uv
+# Copy uv from the official image
 COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
+
+# Copy the Flex Template Launcher from Google's base image
+COPY --from=gcr.io/dataflow-templates-base/python313-template-launcher-base:latest /opt/google/dataflow/python_template_launcher /opt/google/dataflow/python_template_launcher
+
 WORKDIR /app
+
+# Copy lockfiles and manifests
 COPY pyproject.toml uv.lock ./
-# We intentionally copy the entire backend/ directory before running uv sync.
-# This ensures that ALL workspace sub-projects (e.g. transcription, ingestion) have
-# their corresponding pyproject.toml files present. Without this, uv cannot resolve
-# the local workspace dependencies defined in the root pyproject.toml.
-COPY backend/ ./backend/
+COPY backend/pipeline/transcription/pyproject.toml ./backend/pipeline/transcription/pyproject.toml
 
-ENV UV_PROJECT_ENVIRONMENT=/app/.venv
-ENV PATH="/app/.venv/bin:$PATH"
-ENV PYTHONPATH="/app"
+# Set environment variables for uv to use system python
+ENV UV_PROJECT_ENVIRONMENT="/usr/local/"
+ENV UV_SYSTEM_PYTHON=1
+ENV UV_COMPILE_BYTECODE=1
+ENV UV_NO_CACHE=1
+
+# Install dependencies using uv sync directly into system python
+RUN uv sync --frozen --no-dev --no-install-workspace --package transcription-pipeline && \
+    uv pip install grpcio-tools
+
 ENV FLEX_TEMPLATE_PYTHON_PY_FILE="/app/backend/pipeline/transcription/main.py"
+ENV PYTHONPATH="/app"
+ENV PYTHONUNBUFFERED=1
 
-RUN uv sync --frozen --no-dev && uv pip install grpcio-tools
-
+# Copy full source
+COPY backend/ ./backend/
 COPY protos/ ./protos
 
-# Create the directory for the generated files
-RUN mkdir -p ./backend/pipeline/schema_types
-RUN touch ./backend/pipeline/schema_types/__init__.py
-RUN python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto
+# Generate protobuf bindings
+RUN mkdir -p ./backend/pipeline/schema_types && \
+    touch ./backend/pipeline/schema_types/__init__.py && \
+    python3 -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto
 
-# Set the entrypoint to the Dataflow template launcher
-ENTRYPOINT ["/opt/google/dataflow/python_template_launcher"]
+# Copy and set the entrypoint script
+COPY backend/pipeline/transcription/entrypoint.sh /opt/google/dataflow/entrypoint.sh
+RUN chmod +x /opt/google/dataflow/entrypoint.sh
+
+ENTRYPOINT ["/opt/google/dataflow/entrypoint.sh"]

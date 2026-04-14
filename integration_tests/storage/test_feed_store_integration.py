@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import uuid
 from typing import TYPE_CHECKING
 
@@ -30,9 +31,10 @@ async def _insert_feed(
     failure_count: int = 0,
     worker_id: uuid.UUID | None = None,
     last_heartbeat_age_seconds: int | None = None,
-    stream_url: str | None = None,
+    source_feed_id: str | None = None,
+    external_id: str | None = None,
 ) -> uuid.UUID:
-    """Insert a feed row and optionally an icecast properties row."""
+    """Insert a feed row and optionally a feed properties row."""
     heartbeat_expr = "NULL"
     if last_heartbeat_age_seconds is not None:
         heartbeat_expr = (
@@ -51,12 +53,13 @@ async def _insert_feed(
         str(worker_id) if worker_id else None,
     )
 
-    if stream_url is not None:
+    if source_feed_id is not None and external_id is not None:
         await pool.execute(
-            "INSERT INTO feed_properties_icecast (feed_id, stream_url) "
-            "VALUES ($1::uuid, $2)",
+            "INSERT INTO feed_properties (feed_id, source_feed_id, external_id) "
+            "VALUES ($1::uuid, $2, $3)",
             str(feed_id),
-            stream_url,
+            source_feed_id,
+            external_id,
         )
 
     return feed_id
@@ -77,15 +80,16 @@ async def _get_feed_status(pool: asyncpg.Pool, feed_id: uuid.UUID) -> dict:
 # -- Tests: lease_feed ------------------------------------------------
 
 
-async def test_lease_returns_feed_with_icecast_properties(
+async def test_lease_returns_feed_with_feed_properties(
     db_pool: asyncpg.Pool, store: FeedStore
 ) -> None:
-    """Leased feed includes stream_url from LEFT JOIN."""
+    """Leased feed includes source_feed_id from LEFT JOIN."""
     worker = uuid.uuid4()
     await _insert_feed(
         db_pool,
         "Icecast Feed",
-        stream_url="http://stream.example.com/live",
+        source_feed_id="123",
+        external_id="ext-123",
     )
 
     result = await store.lease_feed(worker)
@@ -93,22 +97,7 @@ async def test_lease_returns_feed_with_icecast_properties(
     assert result is not None
     assert result["name"] == "Icecast Feed"
     assert result["source_type"] == SourceType.BCFY_FEEDS
-    assert result["stream_url"] == "http://stream.example.com/live"
-    assert result["fencing_token"] == 1
-
-
-async def test_lease_returns_feed_without_icecast_properties(
-    db_pool: asyncpg.Pool, store: FeedStore
-) -> None:
-    """Non-icecast feed has stream_url=None."""
-    worker = uuid.uuid4()
-    await _insert_feed(db_pool, "API Feed", source_type="bcfy_calls")
-
-    result = await store.lease_feed(worker)
-
-    assert result is not None
-    assert result["name"] == "API Feed"
-    assert result["stream_url"] is None
+    assert result["source_feed_id"] == "123"
     assert result["fencing_token"] == 1
 
 
@@ -214,6 +203,7 @@ async def test_progress_update_succeeds_with_correct_worker(
         worker,
         "gs://bucket/path/file.ogg",
         0,
+        None,
     )
 
     assert result is True
@@ -239,6 +229,7 @@ async def test_progress_update_fails_with_wrong_worker(
         uuid.uuid4(),
         "gs://bucket/path/file.ogg",
         0,
+        None,
     )
 
     assert result is False
@@ -384,6 +375,7 @@ async def test_successful_processing_resets_failure_count(
         new_worker,
         "chunk_001.flac",
         result["fencing_token"],
+        None,
     )
     row = await db_pool.fetchrow(
         "SELECT failure_count FROM feeds WHERE id = $1",
@@ -575,6 +567,7 @@ async def test_progress_update_fails_with_wrong_fencing_token(
         worker,
         "gs://bucket/path/file.ogg",
         999,  # wrong fencing_token
+        None,
     )
 
     assert result is False
@@ -613,8 +606,156 @@ async def test_report_feed_failure_fails_with_wrong_fencing_token(
 
     result = await store.report_feed_failure(feed_id, worker, 999)
 
-    assert result is False
+    assert result is None
     # Verify feed state unchanged (failure was rejected)
     row = await _get_feed_status(db_pool, feed_id)
     assert row["status"] == "active"
     assert row["failure_count"] == 0
+
+
+# -- Tests: last_bookmark_time ------------------------------------------------
+
+
+async def test_last_bookmark_time_round_trips_through_lease(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """Bookmark set via update_feed_progress survives release and re-lease."""
+    worker = uuid.uuid4()
+    await _insert_feed(db_pool, "Bookmark Feed")
+
+    # Lease the feed.
+    result1 = await store.lease_feed(worker)
+    assert result1 is not None
+    assert result1["last_bookmark_time"] is None
+
+    # Record a bookmark.
+    bookmark = datetime.datetime(2026, 3, 30, 12, 0, 0, tzinfo=datetime.UTC)
+    ok = await store.update_feed_progress(
+        result1["id"],
+        worker,
+        "chunk_001.flac",
+        result1["fencing_token"],
+        bookmark,
+    )
+    assert ok is True
+
+    # Release and re-lease.
+    await store.release_feed(result1["id"], worker, result1["fencing_token"])
+    result2 = await store.lease_feed(uuid.uuid4())
+
+    assert result2 is not None
+    assert result2["id"] == result1["id"]
+    assert result2["last_bookmark_time"] == bookmark
+
+
+# -- Tests: create_feed ------------------------------------------------
+
+
+async def test_create_feed_succeeds(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """create_feed atomically creates a feed and its properties."""
+    feed = await store.create_feed(
+        name="New Integration Feed",
+        source_type="bcfy_feeds",
+        source_feed_id="src_123",
+        external_id="ext_123",
+    )
+
+    assert feed is not None
+    assert feed["name"] == "New Integration Feed"
+    assert feed["source_type"] == SourceType.BCFY_FEEDS
+    assert feed["source_feed_id"] == "src_123"
+    assert feed["external_id"] == "ext_123"
+
+    # Verify in DB
+    row = await db_pool.fetchrow(
+        "SELECT f.name, fp.source_feed_id, fp.external_id "
+        "FROM feeds f "
+        "JOIN feed_properties fp ON f.id = fp.feed_id "
+        "WHERE f.id = $1",
+        feed["id"],
+    )
+    assert row is not None
+    assert row["name"] == "New Integration Feed"
+    assert row["source_feed_id"] == "src_123"
+    assert row["external_id"] == "ext_123"
+
+
+# -- Tests: get_feed --------------------------------------------------
+
+
+async def test_get_feed_returns_feed(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """get_feed retrieves a specific feed by ID."""
+    feed_id = await _insert_feed(
+        db_pool,
+        "Get Feed Test",
+        source_feed_id="src_get",
+        external_id="ext_get",
+    )
+
+    feed = await store.get_feed(feed_id)
+
+    assert feed is not None
+    assert feed["id"] == feed_id
+    assert feed["name"] == "Get Feed Test"
+    assert feed["source_feed_id"] == "src_get"
+    assert feed["external_id"] == "ext_get"
+
+
+async def test_get_feed_returns_none_if_not_found(store: FeedStore) -> None:
+    """get_feed returns None for non-existent ID."""
+    feed = await store.get_feed(uuid.uuid4())
+    assert feed is None
+
+
+# -- Tests: list_feeds ------------------------------------------------
+
+
+async def test_list_feeds_returns_all_feeds(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """list_feeds retrieves all feeds ordered by created_at DESC."""
+    feed_id_a = await _insert_feed(
+        db_pool, "Feed A", source_feed_id="src_a", external_id="ext_a"
+    )
+    feed_id_b = await _insert_feed(
+        db_pool, "Feed B", source_feed_id="src_b", external_id="ext_b"
+    )
+
+    feeds = await store.list_feeds()
+
+    assert len(feeds) >= 2
+    # The most recently created should be first
+    assert feeds[0]["id"] == feed_id_b
+    assert feeds[0]["source_feed_id"] == "src_b"
+    assert feeds[0]["external_id"] == "ext_b"
+
+    assert feeds[1]["id"] == feed_id_a
+    assert feeds[1]["source_feed_id"] == "src_a"
+    assert feeds[1]["external_id"] == "ext_a"
+
+
+# -- Tests: delete_feed ------------------------------------------------
+
+
+async def test_delete_feed_succeeds(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """delete_feed deletes the feed and returns True."""
+    feed_id = await _insert_feed(db_pool, "Delete Test Feed")
+
+    result = await store.delete_feed(feed_id)
+
+    assert result is True
+    # Verify deleted
+    row = await db_pool.fetchrow("SELECT 1 FROM feeds WHERE id = $1", feed_id)
+    assert row is None
+
+
+async def test_delete_feed_returns_false_if_not_found(store: FeedStore) -> None:
+    """delete_feed returns False for non-existent ID."""
+    result = await store.delete_feed(uuid.uuid4())
+    assert result is False

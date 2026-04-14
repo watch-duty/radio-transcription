@@ -2,11 +2,23 @@
 
 DEAD_LETTER_QUEUE_TAG = "transcription_dlq"
 
+# Default path to the packaged Chirp keyword/phrase hints file in the container image.
+DEFAULT_KEYWORDS_FILE_PATH = (
+    "/app/backend/pipeline/transcription/chirp_keywords.json"
+)
+
+# Chirp model configuration defaults
+DEFAULT_CHIRP_LOCATION = "us"
+DEFAULT_CHIRP_RECOGNIZER = "_"
+DEFAULT_CHIRP_MODEL = "chirp_3"
+DEFAULT_CHIRP_LANGUAGE_CODES = ["en-US"]
+DEFAULT_KEYWORD_BOOST = 10.0
+
 # Pipeline Defaults
 DEFAULT_SIGNIFICANT_GAP_MS = 800
-DEFAULT_STALE_TIMEOUT_MS = 45000
+DEFAULT_STALE_TIMEOUT_MS = 75000
 DEFAULT_MAX_TRANSMISSION_DURATION_MS = 600000
-DEFAULT_OUT_OF_ORDER_TIMEOUT_MS = 15000
+DEFAULT_OUT_OF_ORDER_TIMEOUT_MS = 60000
 DEFAULT_FLOAT_TOLERANCE_MS = 500
 MAIN_TAG = "main"
 

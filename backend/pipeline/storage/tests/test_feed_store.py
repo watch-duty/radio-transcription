@@ -5,6 +5,7 @@ import unittest
 import uuid
 from unittest import mock
 
+from backend.pipeline.storage import feed_queries
 from backend.pipeline.storage.feed_store import (
     FeedStore,
     HeartbeatResult,
@@ -21,8 +22,9 @@ _LEASE_ROW = {
     "name": "My Feed",
     "source_type": "bcfy_feeds",
     "last_processed_filename": None,
+    "last_bookmark_time": None,
     "fencing_token": 1,
-    "stream_url": "http://stream.example.com/feed",
+    "source_feed_id": "123",
 }
 
 
@@ -55,8 +57,9 @@ class TestLeaseFeed(unittest.IsolatedAsyncioTestCase):
             "name": "My Feed",
             "source_type": SourceType.BCFY_FEEDS,
             "last_processed_filename": None,
+            "last_bookmark_time": None,
             "fencing_token": 1,
-            "stream_url": "http://stream.example.com/feed",
+            "source_feed_id": "123",
         }
         self.assertEqual(result, expected)
 
@@ -70,14 +73,25 @@ class TestLeaseFeed(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result)
 
     async def test_passes_worker_id_as_parameter(self) -> None:
-        """The worker_id is passed as a parameter to the query."""
+        """The worker_id and source_types are passed as parameters to the query."""
         pool = _make_pool(fetchrow_result=None)
         store = FeedStore(pool)
 
         await store.lease_feed(_WORKER_ID)
 
-        args = pool.fetchrow.call_args
-        self.assertEqual(args[0][1], _WORKER_ID)
+        args = pool.fetchrow.call_args[0]
+        self.assertEqual(args[1], _WORKER_ID)
+        self.assertIsNone(args[2])  # source_types default
+
+    async def test_passes_source_types_filter(self) -> None:
+        """When FeedStore is constructed with source_types, the filter is passed to the query."""
+        pool = _make_pool(fetchrow_result=None)
+        store = FeedStore(pool, source_types=["bcfy_feeds"])
+
+        await store.lease_feed(_WORKER_ID)
+
+        args = pool.fetchrow.call_args[0]
+        self.assertEqual(args[2], ["bcfy_feeds"])
 
     async def test_raises_value_error_on_unknown_source_type(self) -> None:
         """ValueError is raised with details if the DB returns an unknown source type slug."""
@@ -108,6 +122,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             "gs://bucket/path/file.ogg",
             1,
+            None,
         )
 
         self.assertTrue(result)
@@ -122,6 +137,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             "gs://bucket/path/file.ogg",
             1,
+            None,
         )
 
         self.assertFalse(result)
@@ -132,10 +148,36 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
         gcs_path = "gs://bucket/path/file.ogg"
 
-        await store.update_feed_progress(_FEED_ID, _WORKER_ID, gcs_path, 1)
+        await store.update_feed_progress(
+            _FEED_ID, _WORKER_ID, gcs_path, 1, None
+        )
 
         args = pool.execute.call_args[0]
-        self.assertEqual(args[1:], (gcs_path, _FEED_ID, _WORKER_ID, 1))
+        self.assertEqual(args[1:], (gcs_path, _FEED_ID, _WORKER_ID, 1, None))
+
+    async def test_passes_non_none_last_bookmark_time(self) -> None:
+        """Non-None last_bookmark_time is forwarded as the 5th SQL parameter."""
+        pool = _make_pool(execute_result="UPDATE 1")
+        store = FeedStore(pool)
+        gcs_path = "gs://bucket/path/file.ogg"
+        last_bookmark_time = datetime.datetime(
+            2024,
+            1,
+            2,
+            tzinfo=datetime.UTC,
+        )
+        await store.update_feed_progress(
+            _FEED_ID,
+            _WORKER_ID,
+            gcs_path,
+            1,
+            last_bookmark_time,
+        )
+        args = pool.execute.call_args[0]
+        self.assertEqual(
+            args[1:],
+            (gcs_path, _FEED_ID, _WORKER_ID, 1, last_bookmark_time),
+        )
 
 
 class TestRenewHeartbeatsBatchDiagnostic(unittest.IsolatedAsyncioTestCase):
@@ -253,8 +295,8 @@ class TestRenewHeartbeatsBatchDiagnostic(unittest.IsolatedAsyncioTestCase):
 class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.report_feed_failure."""
 
-    async def test_returns_true_when_lease_held(self) -> None:
-        """True is returned when the RETURNING row is present."""
+    async def test_returns_status_when_lease_held(self) -> None:
+        """Status string is returned when the RETURNING row is present."""
         pool = _make_pool(
             fetchrow_result={
                 "status": "failing",
@@ -266,16 +308,31 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
 
         result = await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
 
-        self.assertTrue(result)
+        self.assertEqual(result, "failing")
 
-    async def test_returns_false_when_lease_lost(self) -> None:
-        """False is returned when RETURNING yields no row."""
+    async def test_returns_none_when_lease_lost(self) -> None:
+        """None is returned when RETURNING yields no row."""
         pool = _make_pool(fetchrow_result=None)
         store = FeedStore(pool)
 
         result = await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
 
-        self.assertFalse(result)
+        self.assertIsNone(result)
+
+    async def test_returns_quarantined_status(self) -> None:
+        """Quarantined status string is returned at threshold."""
+        pool = _make_pool(
+            fetchrow_result={
+                "status": "quarantined",
+                "failure_count": 5,
+                "retry_after": None,
+            },
+        )
+        store = FeedStore(pool)
+
+        result = await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
+
+        self.assertEqual(result, "quarantined")
 
     async def test_passes_correct_parameters(self) -> None:
         """Parameters are passed in the correct order to the atomic SQL."""
@@ -344,16 +401,18 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
                 "name": "Feed A",
                 "source_type": "bcfy_feeds",
                 "last_processed_filename": None,
+                "last_bookmark_time": None,
                 "fencing_token": 1,
-                "stream_url": "http://stream.example.com/a",
+                "source_feed_id": "123",
             },
             {
                 "id": _FEED_ID_B,
                 "name": "Feed B",
                 "source_type": "bcfy_feeds",
                 "last_processed_filename": "gs://bucket/path",
+                "last_bookmark_time": None,
                 "fencing_token": 1,
-                "stream_url": None,
+                "source_feed_id": None,
             },
         ]
         pool = _make_pool(fetch_result=rows)
@@ -375,7 +434,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, [])
 
     async def test_passes_correct_parameters(self) -> None:
-        """Parameters include worker_id, timedelta, and limit."""
+        """Parameters include worker_id, timedelta, limit, and source_types."""
         pool = _make_pool(fetch_result=[])
         store = FeedStore(pool)
 
@@ -385,6 +444,17 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[1], _WORKER_ID)
         self.assertEqual(args[2], datetime.timedelta(seconds=60.0))
         self.assertEqual(args[3], 5)
+        self.assertIsNone(args[4])  # source_types default
+
+    async def test_passes_source_types_filter(self) -> None:
+        """When FeedStore is constructed with source_types, the filter is passed to the query."""
+        pool = _make_pool(fetch_result=[])
+        store = FeedStore(pool, source_types=["bcfy_feeds", "bcfy_calls"])
+
+        await store.acquire_feeds_batch(_WORKER_ID, 60.0, limit=5)
+
+        args = pool.fetch.call_args[0]
+        self.assertEqual(args[4], ["bcfy_feeds", "bcfy_calls"])
 
     async def test_raises_value_error_on_unknown_source_type(self) -> None:
         """ValueError is raised with details if the DB returns an unknown source type slug."""
@@ -394,7 +464,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
             "source_type": "invalid_type",
             "last_processed_filename": None,
             "fencing_token": 1,
-            "stream_url": None,
+            "source_feed_id": None,
         }
         pool = _make_pool(fetch_result=[bad_row])
         store = FeedStore(pool)
@@ -498,6 +568,173 @@ class TestReleaseFeedsBatch(unittest.IsolatedAsyncioTestCase):
 
         args = pool.execute.call_args[0]
         self.assertEqual(args[1], _WORKER_ID)
+
+
+class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.create_feed."""
+
+    async def test_returns_feed_on_success(self) -> None:
+        """A created feed is returned as a Feed dict."""
+        row = {
+            "id": _FEED_ID,
+            "name": "New Feed",
+            "source_type": "bcfy_feeds",
+            "status": "unclaimed",
+            "failure_count": 0,
+            "worker_id": None,
+            "last_heartbeat": None,
+            "last_processed_filename": None,
+            "last_bookmark_time": None,
+            "created_at": datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
+            "source_feed_id": "123",
+            "external_id": "ext_123",
+        }
+        pool = _make_pool(fetchrow_result=row)
+        store = FeedStore(pool)
+
+        result = await store.create_feed(
+            "New Feed", "bcfy_feeds", "123", "ext_123"
+        )
+
+        self.assertEqual(result["id"], _FEED_ID)
+        self.assertEqual(result["name"], "New Feed")
+        self.assertEqual(result["source_type"], SourceType.BCFY_FEEDS)
+
+    async def test_raises_value_error_on_failure(self) -> None:
+        """ValueError is raised if the DB returns no row."""
+        pool = _make_pool(fetchrow_result=None)
+        store = FeedStore(pool)
+
+        with self.assertRaises(ValueError):
+            await store.create_feed("New Feed", "bcfy_feeds", "123", "ext_123")
+
+    async def test_create_feed_invalid_source_type(self) -> None:
+        """ValueError is raised when an invalid source type is passed."""
+        pool = _make_pool()
+        store = FeedStore(pool)
+
+        with self.assertRaises(ValueError) as cm:
+            await store.create_feed(
+                name="Test Feed",
+                source_type="invalid_type",
+                source_feed_id="src_123",
+                external_id="ext_123",
+            )
+        self.assertIn("Invalid source type", str(cm.exception))
+
+
+class TestGetFeed(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.get_feed."""
+
+    async def test_returns_feed_when_exists(self) -> None:
+        """A feed is returned as a Feed dict when it exists."""
+        row = {
+            "id": _FEED_ID,
+            "name": "My Feed",
+            "source_type": "bcfy_feeds",
+            "status": "unclaimed",
+            "failure_count": 0,
+            "worker_id": None,
+            "last_heartbeat": None,
+            "last_processed_filename": None,
+            "last_bookmark_time": None,
+            "created_at": datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
+            "source_feed_id": "123",
+            "external_id": "ext_123",
+        }
+        pool = _make_pool(fetchrow_result=row)
+        store = FeedStore(pool)
+
+        result = await store.get_feed(_FEED_ID)
+
+        assert result is not None
+        self.assertEqual(result["id"], _FEED_ID)
+
+    async def test_returns_none_when_not_exists(self) -> None:
+        """None is returned when the feed does not exist."""
+        pool = _make_pool(fetchrow_result=None)
+        store = FeedStore(pool)
+
+        result = await store.get_feed(_FEED_ID)
+
+        self.assertIsNone(result)
+
+
+class TestListFeeds(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.list_feeds."""
+
+    async def test_returns_list_of_feeds(self) -> None:
+        """A list of Feed dicts is returned."""
+        rows = [
+            {
+                "id": _FEED_ID,
+                "name": "Feed A",
+                "source_type": "bcfy_feeds",
+                "status": "unclaimed",
+                "failure_count": 0,
+                "worker_id": None,
+                "last_heartbeat": None,
+                "last_processed_filename": None,
+                "last_bookmark_time": None,
+                "created_at": datetime.datetime(
+                    2026, 4, 10, tzinfo=datetime.UTC
+                ),
+                "source_feed_id": "123",
+                "external_id": "ext_123",
+            },
+            {
+                "id": _FEED_ID_B,
+                "name": "Feed B",
+                "source_type": "openmhz",
+                "status": "active",
+                "failure_count": 0,
+                "worker_id": _WORKER_ID,
+                "last_heartbeat": datetime.datetime(
+                    2026, 4, 10, tzinfo=datetime.UTC
+                ),
+                "last_processed_filename": None,
+                "last_bookmark_time": None,
+                "created_at": datetime.datetime(
+                    2026, 4, 9, tzinfo=datetime.UTC
+                ),
+                "source_feed_id": "456",
+                "external_id": "ext_456",
+            },
+        ]
+        pool = _make_pool(fetch_result=rows)
+        store = FeedStore(pool)
+
+        result = await store.list_feeds()
+
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["id"], _FEED_ID)
+        self.assertEqual(result[1]["id"], _FEED_ID_B)
+        self.assertEqual(result[1]["source_type"], SourceType.OPENMHZ)
+
+
+class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.delete_feed."""
+
+    async def test_delete_succeeds(self) -> None:
+        """True is returned when a feed is deleted."""
+        pool = _make_pool(execute_result="DELETE 1")
+        store = FeedStore(pool)
+
+        result = await store.delete_feed(_FEED_ID)
+
+        self.assertTrue(result)
+        pool.execute.assert_called_once_with(
+            feed_queries.DELETE_FEED_SQL, _FEED_ID
+        )
+
+    async def test_delete_fails_when_not_found(self) -> None:
+        """False is returned when no feed is deleted."""
+        pool = _make_pool(execute_result="DELETE 0")
+        store = FeedStore(pool)
+
+        result = await store.delete_feed(_FEED_ID)
+
+        self.assertFalse(result)
 
 
 if __name__ == "__main__":

@@ -5,9 +5,10 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 
 from backend.pipeline.common.auth import verify_oidc_token
+from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.storage.connection import (
     close_pool,
-    create_pool_from_settings,
+    create_pool_with_retry,
 )
 from backend.pipeline.storage.transcript_store import TranscriptStore
 
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage the lifecycle of the AlloyDB connection pool."""
-    pool = await create_pool_from_settings()
+    pool = await create_pool_with_retry()
     store = TranscriptStore(pool)
     app.state.transcript_service = TranscriptService(store)
     yield
@@ -52,6 +53,11 @@ async def create_transcript(
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except AlreadyExistsError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
             detail=str(e),
         )
 

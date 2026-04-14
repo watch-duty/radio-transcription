@@ -41,9 +41,6 @@ from backend.pipeline.transcription.datatypes import (
     TransmissionContext,
     UpdateStateAction,
 )
-from backend.pipeline.transcription.enums import (
-    MetricsExporterType,
-)
 from backend.pipeline.transcription.resources import (
     SHARED_RESOURCE_HANDLE,
     SharedResources,
@@ -51,11 +48,11 @@ from backend.pipeline.transcription.resources import (
 from backend.pipeline.transcription.stitcher_state import (
     AudioStitchingStateMachine,
 )
-from backend.pipeline.transcription.telemetry import get_metrics_exporter
 from backend.pipeline.transcription.transcribers import (
     Transcriber,
     get_transcriber,
 )
+from backend.pipeline.transcription.utils import generate_transmission_id
 
 logger = logging.getLogger(__name__)
 
@@ -100,14 +97,13 @@ class StitchAudioFn(beam.DoFn):
         self.config = config
 
         self.audio_processor: AudioProcessor | None = None
-        self.metrics_exporter: Any | None = None
 
         # Pipeline Telemetry (Beam Metrics)
         self.stale_flush_count = Metrics.counter(
             "StitchAudioFn", "stale_flush_count"
         )
-        self.gap_flush_count = Metrics.counter(
-            "StitchAudioFn", "gap_flush_count"
+        self.silence_gap_flush_count = Metrics.counter(
+            "StitchAudioFn", "silence_gap_flush_count"
         )
         self.max_duration_flush_count = Metrics.counter(
             "StitchAudioFn", "max_duration_flush_count"
@@ -134,26 +130,6 @@ class StitchAudioFn(beam.DoFn):
         )
         self.audio_processor.setup()
 
-        parsed_exporters = []
-        if self.config.metrics_exporter_type:
-            types = [
-                t.strip() for t in self.config.metrics_exporter_type.split(",")
-            ]
-            for t in types:
-                if not t:
-                    continue
-                try:
-                    parsed_exporters.append(MetricsExporterType(t))
-                except ValueError:
-                    logger.warning("Unknown metrics exporter type: %s", t)
-
-        self.metrics_exporter = get_metrics_exporter(
-            parsed_exporters,
-            self.config.project_id,
-            self.config.metrics_config,
-        )
-        self.metrics_exporter.setup()
-
     def _apply_flush_action(
         self,
         action: FlushAction,
@@ -165,13 +141,20 @@ class StitchAudioFn(beam.DoFn):
         if "Maximum transmission duration" in action.reason:
             self.max_duration_flush_count.inc()
         elif "Significant gap" in action.reason:
-            self.gap_flush_count.inc()
+            self.silence_gap_flush_count.inc()
         logger.info(f"{action.reason}. Flushing preceding continuous audio.")
 
         buffered_audio = action.isolated_audio_buffer or list(
             transmission_buffer.read()
         )
         if buffered_audio:
+            # Create a deterministic UUID using our shared helper so that Beam retries produce the exact same ID
+            transmission_id = generate_transmission_id(
+                action.feed_id,
+                action.speech_time_range.start_ms,
+                action.speech_time_range.end_ms,
+            )
+
             yield (
                 action.feed_id,
                 FlushRequest(
@@ -183,6 +166,7 @@ class StitchAudioFn(beam.DoFn):
                     missing_post_context=action.missing_post_context,
                     start_audio_offset_ms=action.start_audio_offset_ms,
                     end_audio_offset_ms=action.end_audio_offset_ms,
+                    transmission_id=transmission_id,
                 ),
             )
         else:
@@ -306,10 +290,6 @@ class StitchAudioFn(beam.DoFn):
         actions = pipeline.process_chunk(chunk_data, ctx)
         stitching_duration = int((time.time() - start_time) * MS_PER_SECOND)
         self.stitching_time_ms.update(stitching_duration)
-        if self.metrics_exporter:
-            self.metrics_exporter.record_stitching_time(
-                feed_id=feed_id, duration_ms=stitching_duration
-            )
 
         yield from self._apply_state_actions(
             actions=actions,
@@ -382,6 +362,13 @@ class StitchAudioFn(beam.DoFn):
                     f"STALE FLUSH: start={start_time_ms}, end={end_time_ms}, len(uris)={len(processed_uris)}, len(buffer)={len(audio_buffer)}"
                 )
 
+                # Create a deterministic UUID using our shared helper so that Beam retries produce the exact same ID
+                transmission_id = generate_transmission_id(
+                    key,
+                    int(start_time_ms),
+                    int(end_time_ms),
+                )
+
                 yield (
                     key,
                     FlushRequest(
@@ -398,6 +385,7 @@ class StitchAudioFn(beam.DoFn):
                         missing_post_context=True,  # Flushed by timer cutoff, so we assume the tail is missing context.
                         start_audio_offset_ms=curr_context.start_audio_offset_ms,
                         end_audio_offset_ms=curr_context.end_audio_offset_ms,
+                        transmission_id=transmission_id,
                     ),
                 )
             except Exception as e:
@@ -434,7 +422,6 @@ class TranscribeAudioFn(beam.DoFn):
 
         self.audio_processor: AudioProcessor | None = None
         self.transcriber: Transcriber | None = None
-        self.metrics_exporter: Any | None = None
 
         self.vad_speech_count = Metrics.counter(
             "TranscribeAudioFn", "vad_speech_count"
@@ -477,26 +464,6 @@ class TranscribeAudioFn(beam.DoFn):
             config_json=self.config.transcriber_config,
         )
 
-        parsed_exporters = []
-        if self.config.metrics_exporter_type:
-            types = [
-                t.strip() for t in self.config.metrics_exporter_type.split(",")
-            ]
-            for t in types:
-                if not t:
-                    continue
-                try:
-                    parsed_exporters.append(MetricsExporterType(t))
-                except ValueError:
-                    logger.warning("Unknown metrics exporter type: %s", t)
-
-        self.metrics_exporter = get_metrics_exporter(
-            parsed_exporters,
-            self.config.project_id,
-            self.config.metrics_config,
-        )
-        self.metrics_exporter.setup()
-
         if self.audio_processor.gcs_client is None:
             msg = "GCS client not found in AudioProcessor. must call setup() first."
             raise RuntimeError(msg)
@@ -515,9 +482,6 @@ class TranscribeAudioFn(beam.DoFn):
             raise RuntimeError(msg)
         if self.transcriber is None:
             msg = "Transcriber not initialized. setup() must be called."
-            raise RuntimeError(msg)
-        if self.metrics_exporter is None:
-            msg = "MetricsExporter not initialized. setup() must be called."
             raise RuntimeError(msg)
 
         if not request.buffer or len(request.buffer) == 0:
@@ -543,10 +507,9 @@ class TranscribeAudioFn(beam.DoFn):
             dt = datetime.fromtimestamp(
                 request.time_range.start_ms / 1000.0, tz=UTC
             )
-            timestamp_str = dt.strftime("%Y%m%dT%H%M%SZ")
 
-            flac_path = f"stitched/lossless/{request.feed_id}/{dt:%Y/%m/%d}/{timestamp_str}.flac"
-            m4a_path = f"stitched/playback/{request.feed_id}/{dt:%Y/%m/%d}/{timestamp_str}.m4a"
+            flac_path = f"stitched/lossless/{request.feed_id}/{dt:%Y/%m/%d}/{request.transmission_id}.flac"
+            m4a_path = f"stitched/playback/{request.feed_id}/{dt:%Y/%m/%d}/{request.transmission_id}.m4a"
 
             canonical_audio_uri, playback_audio_uri = (
                 self.audio_uploader.upload_audio_derivatives(
@@ -574,9 +537,6 @@ class TranscribeAudioFn(beam.DoFn):
             return None
         duration_ms = int((time.time() - transcribe_start) * MS_PER_SECOND)
         self.transcription_time_ms.update(duration_ms)
-        self.metrics_exporter.record_transcription_time(
-            feed_id=request.feed_id, duration_ms=duration_ms
-        )
 
         logger.info(f"TRANSCRIPT [{request.feed_id}]: {transcript}")
 
@@ -585,6 +545,7 @@ class TranscribeAudioFn(beam.DoFn):
             contributing_audio_uris=request.contributing_audio_uris,
             transcript=transcript,
             time_range=request.time_range,
+            transmission_id=request.transmission_id,
             missing_prior_context=request.missing_prior_context,
             missing_post_context=request.missing_post_context,
             start_audio_offset_ms=request.start_audio_offset_ms,

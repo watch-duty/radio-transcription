@@ -4,7 +4,6 @@
 node_modules
 .pnp
 .pnp.js
-package-lock.json
 .idea
 venv/
 .venv/
@@ -15,6 +14,7 @@ tsconfig.tsbuildinfo
 # misc
 .DS_Store
 .env*
+!.env.example
 .coverage
 __pycache__/
 tmp/
@@ -62,3 +62,16 @@ backend/pipeline/ingestion/collectors/.*
 *.egg
 build/
 dist/
+
+# Generated Typescript files
+**/generated/**.ts
+
+# Jujutsu
+.jj/
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# Python Tools
+.pytest_cache/
+.ruff_cache/

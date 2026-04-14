@@ -1,8 +1,6 @@
 """Apache Beam DoFns for mapping incoming stream messages and downloading audio chunks."""
 
 import logging
-import time
-import uuid
 from collections.abc import Iterator
 from typing import Any, override
 
@@ -149,12 +147,6 @@ class SerializeToPubSubMessageFn(beam.DoFn):
         self, element: TranscriptionResult, *args: Any, **kwargs: Any
     ) -> Iterator[PubsubMessage]:
         """Serializes the final domain result into a wire-ready JSON payload."""
-        # Create a deterministic UUID using uuid5 so that Beam retries produce the exact same ID
-        deterministic_id_string = f"{element.feed_id}_{element.time_range.start_ms}_{element.time_range.end_ms}"
-        deterministic_uuid = uuid.uuid5(
-            uuid.NAMESPACE_OID, deterministic_id_string
-        )
-
         start_offset = None
         if element.start_audio_offset_ms is not None:
             start_offset = Duration(
@@ -174,7 +166,7 @@ class SerializeToPubSubMessageFn(beam.DoFn):
         proto = TranscribedAudio(
             feed_id=element.feed_id,
             source_audio_uris=element.contributing_audio_uris,
-            transmission_id=str(deterministic_uuid),
+            transmission_id=element.transmission_id,
             transcript=element.transcript,
             missing_prior_context=element.missing_prior_context,
             missing_post_context=element.missing_post_context,
@@ -229,7 +221,7 @@ class RestoreOrderFn(beam.DoFn):
     TIMER_ACTIVE_STATE = beam.DoFn.StateParam(TIMER_ACTIVE_SPEC)
 
     OUT_OF_ORDER_TIMER_SPEC = TimerSpec(
-        "out_of_order_timer", TimeDomain.REAL_TIME
+        "out_of_order_timer", TimeDomain.WATERMARK
     )
     # A real-time (processing time) timer that acts as a maximum allowed wait period for missing chunks.
     OUT_OF_ORDER_TIMER = beam.DoFn.TimerParam(OUT_OF_ORDER_TIMER_SPEC)
@@ -240,14 +232,14 @@ class RestoreOrderFn(beam.DoFn):
         self.chunks_buffered_out_of_order = Metrics.counter(
             self.__class__, "chunks_buffered_out_of_order"
         )
-        self.gaps_encountered_counter = Metrics.counter(
-            self.__class__, "gaps_encountered"
+        self.data_gaps_detected_counter = Metrics.counter(
+            self.__class__, "data_gaps_detected"
         )
         self.session_resets_counter = Metrics.counter(
             self.__class__, "session_resets"
         )
-        self.chunks_dropped_late = Metrics.counter(
-            self.__class__, "chunks_dropped_late"
+        self.chunks_processed_late = Metrics.counter(
+            self.__class__, "chunks_processed_late"
         )
 
     @override
@@ -308,7 +300,7 @@ class RestoreOrderFn(beam.DoFn):
         )
 
         if was_late:
-            self.chunks_dropped_late.inc()
+            self.chunks_processed_late.inc()
         if was_buffered:
             self.chunks_buffered_out_of_order.inc()
 
@@ -322,10 +314,10 @@ class RestoreOrderFn(beam.DoFn):
 
         # Handle Timer for Gap Timeout
         if new_buffer_elements and not timer_active_state.read():
-            deadline_s = time.time() + (
+            deadline = timestamp + (
                 self.config.out_of_order_timeout_ms / float(MS_PER_SECOND)
             )
-            out_of_order_timer.set(Timestamp(deadline_s))
+            out_of_order_timer.set(deadline)
             timer_active_state.write(True)  # noqa: FBT003
         elif not new_buffer_elements and timer_active_state.read():
             out_of_order_timer.clear()
@@ -346,7 +338,7 @@ class RestoreOrderFn(beam.DoFn):
         ),
     ) -> Iterator[tuple[str, str]]:
         """Handles the gap timeout."""
-        self.gaps_encountered_counter.inc()
+        self.data_gaps_detected_counter.inc()
         timer_active_state.clear()
 
         buffer_elements = list(out_of_order_buffer_state.read())
@@ -408,12 +400,10 @@ class DownloadAudioFn(beam.DoFn):
         self.audio_processor.setup()
 
     @override
-    def process(
+    def process(  # type: ignore[override] # pyright: ignore[reportIncompatibleMethodOverride]
         self,
         element: tuple[str, str],
-        *args: Any,
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
-        **kwargs: Any,
     ) -> Iterator[tuple[str, tuple[str, Any]] | beam.pvalue.TaggedOutput]:
         """Downloads the raw audio bytes from GCS and passes them to the acoustic processor."""
         feed_id, gcs_path = element

@@ -62,3 +62,9 @@ variable "lifecycle_rules" {
   }))
   default = []
 }
+
+variable "enable_soft_delete" {
+  description = "If false, disables the soft-delete policy on the bucket (retention_duration_seconds = 0). Recommended for high-churn temp/staging buckets to avoid unnecessary storage costs."
+  type        = bool
+  default     = true
+}

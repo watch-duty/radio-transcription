@@ -1,42 +1,59 @@
 from __future__ import annotations
 
-import importlib
 from typing import TYPE_CHECKING
 
+from backend.pipeline.ingestion.collectors.bcfy_calls import (
+    bcfy_calls_collector,
+)
+from backend.pipeline.ingestion.collectors.icecast import icecast_collector
+from backend.pipeline.ingestion.collectors.openmhz import (
+    collector as openmhz_collector_module,
+)
 from backend.pipeline.storage.feed_store import SourceType
 
 if TYPE_CHECKING:
     import asyncio
-    import datetime
     from collections.abc import AsyncIterator
 
+    from backend.pipeline.ingestion.models import CapturedChunk, CollectorFn
     from backend.pipeline.storage.feed_store import LeasedFeed
 
-# Maps source_type -> (module_path, function_name).
-# To add a new collector, add a single entry here.
-_COLLECTOR_REGISTRY: dict[SourceType, tuple[str, str]] = {
+BCFY_FEEDS_URL_BASE = "https://partner.broadcastify.com/"
+BCFY_CALLS_URL_BASE = "https://api.bcfy.io/calls/v1/live/"
+OPENMHZ_URL_BASE = "https://api.openmhz.com/"
+
+# Typed registry: ty/mypy checks each value matches CollectorFn.
+# Adding a new collector = 1 import + 1 dict entry.
+_COLLECTORS: dict[SourceType, tuple[CollectorFn, str]] = {
     SourceType.BCFY_FEEDS: (
-        "backend.pipeline.ingestion.collectors.icecast_collector",
-        "capture_icecast_stream",
+        icecast_collector.capture_icecast_stream,
+        BCFY_FEEDS_URL_BASE,
+    ),
+    SourceType.BCFY_CALLS: (
+        bcfy_calls_collector.capture_bcfy_calls,
+        BCFY_CALLS_URL_BASE,
+    ),
+    SourceType.OPENMHZ: (
+        openmhz_collector_module.openmhz_collector,
+        OPENMHZ_URL_BASE,
     ),
 }
 
 
+def supported_source_types() -> list[str]:
+    """Return source-type slugs that have registered collectors."""
+    return [st.value for st in _COLLECTORS]
+
+
 def route_capturer(
     feed: LeasedFeed, shutdown_event: asyncio.Event
-) -> AsyncIterator[tuple[bytes, datetime.datetime]]:
-    """Routes the feed to the appropriate capture function.
-
-    Looks up the collector in ``_COLLECTOR_REGISTRY`` by source_type,
-    lazily imports it, and calls it with the feed and shutdown event.
-    """
+) -> AsyncIterator[CapturedChunk]:
+    """Routes the feed to the appropriate capture function."""
     source_type = feed["source_type"]
-    entry = _COLLECTOR_REGISTRY.get(source_type)
+    entry = _COLLECTORS.get(source_type)
     if entry is None:
         msg = f"Unsupported source_type: {source_type}"
         raise ValueError(msg)
 
-    module_path, func_name = entry
-    module = importlib.import_module(module_path)
-    capture_fn = getattr(module, func_name)
-    return capture_fn(feed, shutdown_event)
+    capture_fn, url_base = entry
+    return capture_fn(feed, shutdown_event, url_base)

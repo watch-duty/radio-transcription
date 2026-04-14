@@ -13,7 +13,6 @@ from backend.pipeline.transcription.constants import (
     DEFAULT_VAD_PRE_ROLL_MS,
 )
 from backend.pipeline.transcription.enums import (
-    MetricsExporterType,
     TranscriberType,
     VadType,
 )
@@ -26,10 +25,10 @@ class TranscriptionOptions(PipelineOptions):
     def _add_argparse_args(cls, parser: argparse.ArgumentParser) -> None:
         """Registers pipeline CLI parameters to enable interactive flag passing via Dataflow."""
         parser.add_argument(
-            "--input_topic",
+            "--input_subscription",
             type=str,
             required=True,
-            help="Pub/Sub topic to read from",
+            help="Pub/Sub ordered subscription to read from",
         )
         parser.add_argument(
             "--output_topic",
@@ -47,7 +46,7 @@ class TranscriptionOptions(PipelineOptions):
             "--id_label",
             type=str,
             required=False,
-            default="chunk_uri",
+            default="gcs_uri",
             help="Pub/Sub attribute to use for strictly exactly-once deduplication.",
         )
         parser.add_argument(
@@ -76,18 +75,7 @@ class TranscriptionOptions(PipelineOptions):
             default="{}",
             help="JSON string of VAD-specific configuration.",
         )
-        parser.add_argument(
-            "--metrics_exporter_type",
-            type=str,
-            default=MetricsExporterType.NONE.value,
-            help="Comma-separated metrics platforms (e.g. 'gcp').",
-        )
-        parser.add_argument(
-            "--metrics_config",
-            type=str,
-            default="{}",
-            help="JSON string of metrics-specific configuration.",
-        )
+
         parser.add_argument(
             "--significant_gap_ms",
             type=int,

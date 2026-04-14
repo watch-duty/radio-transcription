@@ -1,0 +1,329 @@
+import type {
+  LogicalOperator,
+  Rule,
+  RuleConditions,
+  RuleCreate,
+  RuleUpdate,
+  ScopeLevel,
+} from '@transcription/common';
+import { GoogleAuth } from 'google-auth-library';
+import {
+  Body,
+  Controller,
+  Delete,
+  Extension,
+  Get,
+  Path,
+  Post,
+  Put,
+  Res,
+  Response,
+  Route,
+  Security,
+  SuccessResponse,
+  Tags,
+  TsoaResponse,
+} from 'tsoa';
+
+import { RULES_API_URL } from '../config.js';
+import { isAxiosError } from '../utils.js';
+
+interface ScopeResponse {
+  level: ScopeLevel;
+  target_feeds: string[];
+}
+
+interface KeywordConditionsResponse {
+  evaluation_type: 'KEYWORD_MATCH';
+  operator: LogicalOperator;
+  keywords: string[];
+  case_sensitive: boolean;
+}
+
+interface RegexConditionsResponse {
+  evaluation_type: 'REGEX_MATCH';
+  expression: string;
+  flags: string;
+}
+
+interface GroupConditionsResponse {
+  evaluation_type: 'RULE_GROUP';
+  operator: LogicalOperator;
+  child_rule_ids: string[];
+}
+
+type RuleConditionsResponse =
+  | KeywordConditionsResponse
+  | RegexConditionsResponse
+  | GroupConditionsResponse;
+
+interface RuleMetadataResponse {
+  created_by?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface RuleResponse {
+  rule_id: string;
+  rule_name: string;
+  description?: string;
+  is_active: boolean;
+  scope: ScopeResponse;
+  conditions: RuleConditionsResponse;
+  metadata: RuleMetadataResponse;
+}
+
+interface RuleCreateBackend {
+  rule_name: string;
+  description?: string;
+  is_active?: boolean;
+  scope: ScopeResponse;
+  conditions: RuleConditionsResponse;
+}
+
+type RuleUpdateBackend = Partial<RuleCreateBackend>;
+
+function convertConditions(conditions: RuleConditionsResponse): RuleConditions {
+  switch (conditions.evaluation_type) {
+    case 'KEYWORD_MATCH':
+      return {
+        evaluationType: conditions.evaluation_type,
+        operator: conditions.operator,
+        keywords: conditions.keywords,
+        caseSensitive: conditions.case_sensitive,
+      };
+    case 'REGEX_MATCH':
+      return {
+        evaluationType: conditions.evaluation_type,
+        expression: conditions.expression,
+        flags: conditions.flags,
+      };
+    case 'RULE_GROUP':
+      return {
+        evaluationType: conditions.evaluation_type,
+        operator: conditions.operator,
+        childRuleIds: conditions.child_rule_ids,
+      };
+  }
+}
+
+function convertRuleResponse(response: RuleResponse): Rule {
+  return {
+    ruleId: response.rule_id,
+    ruleName: response.rule_name,
+    description: response.description,
+    isActive: response.is_active,
+    scope: {
+      level: response.scope.level,
+      targetFeeds: response.scope.target_feeds,
+    },
+    conditions: convertConditions(response.conditions),
+    metadata: {
+      createdBy: response.metadata.created_by,
+      createdAt: response.metadata.created_at,
+      updatedAt: response.metadata.updated_at,
+    },
+  };
+}
+
+function convertRuleCreate(create: RuleCreate): RuleCreateBackend {
+  let conditions: RuleConditionsResponse;
+  switch (create.conditions.evaluationType) {
+    case 'KEYWORD_MATCH':
+      conditions = {
+        evaluation_type: 'KEYWORD_MATCH',
+        operator: create.conditions.operator,
+        keywords: create.conditions.keywords,
+        case_sensitive: create.conditions.caseSensitive,
+      };
+      break;
+    case 'REGEX_MATCH':
+      conditions = {
+        evaluation_type: 'REGEX_MATCH',
+        expression: create.conditions.expression,
+        flags: create.conditions.flags,
+      };
+      break;
+    case 'RULE_GROUP':
+      conditions = {
+        evaluation_type: 'RULE_GROUP',
+        operator: create.conditions.operator,
+        child_rule_ids: create.conditions.childRuleIds,
+      };
+      break;
+  }
+
+  return {
+    rule_name: create.ruleName,
+    description: create.description,
+    is_active: create.isActive,
+    scope: {
+      level: create.scope.level,
+      target_feeds: create.scope.targetFeeds,
+    },
+    conditions: conditions,
+  };
+}
+
+function convertRuleUpdate(update: RuleUpdate): RuleUpdateBackend {
+  const result: RuleUpdateBackend = {};
+  if (update.ruleName !== undefined) result.rule_name = update.ruleName;
+  if (update.description !== undefined) result.description = update.description;
+  if (update.isActive !== undefined) result.is_active = update.isActive;
+  if (update.scope !== undefined) {
+    result.scope = {
+      level: update.scope.level,
+      target_feeds: update.scope.targetFeeds,
+    };
+  }
+  if (update.conditions !== undefined) {
+    let conditions: RuleConditionsResponse;
+    switch (update.conditions.evaluationType) {
+      case 'KEYWORD_MATCH':
+        conditions = {
+          evaluation_type: 'KEYWORD_MATCH',
+          operator: update.conditions.operator,
+          keywords: update.conditions.keywords,
+          case_sensitive: update.conditions.caseSensitive,
+        };
+        break;
+      case 'REGEX_MATCH':
+        conditions = {
+          evaluation_type: 'REGEX_MATCH',
+          expression: update.conditions.expression,
+          flags: update.conditions.flags,
+        };
+        break;
+      case 'RULE_GROUP':
+        conditions = {
+          evaluation_type: 'RULE_GROUP',
+          operator: update.conditions.operator,
+          child_rule_ids: update.conditions.childRuleIds,
+        };
+        break;
+    }
+    result.conditions = conditions;
+  }
+  return result;
+}
+
+@Route('api/v1/rules')
+@Tags('Rules')
+@Response(401, 'Unauthorized')
+export class RulesController extends Controller {
+  private async getClient() {
+    const auth = new GoogleAuth();
+    return await auth.getIdTokenClient(RULES_API_URL!);
+  }
+
+  @Get('')
+  @Security('google_id_token')
+  @Extension('x-google-backend', 'radio-transcription-api')
+  public async listRules(): Promise<Rule[]> {
+    const client = await this.getClient();
+    try {
+      const response = await client.request({
+        url: RULES_API_URL!,
+        method: 'GET',
+      });
+      const data = response.data as RuleResponse[];
+      return data.map(convertRuleResponse);
+    } catch (error: unknown) {
+      console.error('Error fetching rules:', error);
+      throw new Error('Error fetching rules', { cause: error });
+    }
+  }
+
+  @Get('{ruleId}')
+  @Security('google_id_token')
+  @Response<{ message: string }>(404, 'Not Found')
+  @Extension('x-google-backend', 'radio-transcription-api')
+  public async getRule(
+    @Path() ruleId: string,
+    @Res() notFound: TsoaResponse<404, { message: string }>
+  ): Promise<Rule> {
+    const client = await this.getClient();
+    try {
+      const response = await client.request({
+        url: `${RULES_API_URL}/${ruleId}`,
+        method: 'GET',
+      });
+      return convertRuleResponse(response.data as RuleResponse);
+    } catch (error: unknown) {
+      if (isAxiosError(error) && error.response?.status === 404) {
+        return notFound(404, { message: `Rule ${ruleId} not found` });
+      }
+      console.error(`Error fetching rule ${ruleId}:`, error);
+      throw new Error(`Error fetching rule ${ruleId}`, { cause: error });
+    }
+  }
+
+  @Post('')
+  @Security('google_id_token')
+  @SuccessResponse('201', 'Created')
+  @Extension('x-google-backend', 'radio-transcription-api')
+  public async createRule(@Body() requestBody: RuleCreate): Promise<Rule> {
+    const client = await this.getClient();
+    try {
+      const response = await client.request({
+        url: RULES_API_URL!,
+        method: 'POST',
+        data: convertRuleCreate(requestBody),
+      });
+      return convertRuleResponse(response.data as RuleResponse);
+    } catch (error: unknown) {
+      console.error('Error creating rule:', error);
+      throw new Error('Error creating rule', { cause: error });
+    }
+  }
+
+  @Put('{ruleId}')
+  @Security('google_id_token')
+  @Response<{ message: string }>(404, 'Not Found')
+  @Extension('x-google-backend', 'radio-transcription-api')
+  public async updateRule(
+    @Path() ruleId: string,
+    @Body() requestBody: RuleUpdate,
+    @Res() notFound: TsoaResponse<404, { message: string }>
+  ): Promise<Rule> {
+    const client = await this.getClient();
+    try {
+      const response = await client.request({
+        url: `${RULES_API_URL}/${ruleId}`,
+        method: 'PUT',
+        data: convertRuleUpdate(requestBody),
+      });
+      return convertRuleResponse(response.data as RuleResponse);
+    } catch (error: unknown) {
+      if (isAxiosError(error) && error.response?.status === 404) {
+        return notFound(404, { message: `Rule ${ruleId} not found` });
+      }
+      console.error(`Error updating rule ${ruleId}:`, error);
+      throw new Error(`Error updating rule ${ruleId}`, { cause: error });
+    }
+  }
+
+  @Delete('{ruleId}')
+  @Security('google_id_token')
+  @SuccessResponse('204', 'No Content')
+  @Response<{ message: string }>(404, 'Not Found')
+  @Extension('x-google-backend', 'radio-transcription-api')
+  public async deleteRule(
+    @Path() ruleId: string,
+    @Res() notFound: TsoaResponse<404, { message: string }>
+  ): Promise<void> {
+    const client = await this.getClient();
+    try {
+      await client.request({
+        url: `${RULES_API_URL}/${ruleId}`,
+        method: 'DELETE',
+      });
+    } catch (error: unknown) {
+      if (isAxiosError(error) && error.response?.status === 404) {
+        return notFound(404, { message: `Rule ${ruleId} not found` });
+      }
+      console.error(`Error deleting rule ${ruleId}:`, error);
+      throw new Error(`Error deleting rule ${ruleId}`, { cause: error });
+    }
+  }
+}

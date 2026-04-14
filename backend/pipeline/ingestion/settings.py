@@ -36,6 +36,9 @@ class NormalizerSettings:
         ),
     )
 
+    # Source-type scoping (None = no filter, lease all types)
+    source_types: list[str] | None = None
+
     # Feed orchestration
     max_feeds_per_worker: int = field(
         default_factory=lambda: int(
@@ -72,6 +75,11 @@ class NormalizerSettings:
     # topic_path is in the form `projects/{project_id}/topics/{topic_id}`
     pubsub_topic_path: str = field(
         default_factory=lambda: _require_env("PUBSUB_TOPIC_PATH"),
+    )
+
+    # Google Cloud project ID for telemetry metric emission (None disables metrics)
+    google_cloud_project: str | None = field(
+        default_factory=lambda: os.environ.get("GOOGLE_CLOUD_PROJECT"),
     )
 
     # Database pool

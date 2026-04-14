@@ -1,0 +1,35 @@
+{
+  "entryFile": "src/index.ts",
+  "noImplicitAdditionalProperties": "throw-on-extras",
+  "controllerPathGlobs": ["src/**/*Controller.ts"],
+  "spec": {
+    "outputDirectory": ".",
+    "specFileBaseName": "openapi",
+    "specVersion": 3.0,
+    "securityDefinitions": {
+      "google_id_token": {
+        "type": "oauth2",
+        "flow": "implicit",
+        "authorizationUrl": "",
+        "scopes": {}
+      }
+    },
+    "servers": ["${radio_transcription_api_service_name}"],
+    "spec": {
+      "x-google-api-management": {
+        "backends": {
+          "radio-transcription-api": {
+            "address": "${radio_transcription_api_url}",
+            "path_translation": "APPEND_PATH_TO_ADDRESS",
+            "protocol": "http/1.1"
+          }
+        }
+      }
+    }
+  },
+  "routes": {
+    "routesDir": "src/generated",
+    "esm": true,
+    "authenticationModule": "src/authentication.ts"
+  }
+}

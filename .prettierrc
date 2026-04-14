@@ -1,0 +1,47 @@
+{
+  "semi": true,
+  "trailingComma": "es5",
+  "singleQuote": true,
+  "printWidth": 80,
+  "tabWidth": 2,
+  "plugins": [
+    "@trivago/prettier-plugin-sort-imports"
+  ],
+  "importOrderSeparation": true,
+  "importOrderSortSpecifiers": true,
+  "overrides": [
+    {
+      "files": "frontend/api/**/*",
+      "options": {
+        "importOrder": [
+          "^node:",
+          "^@google-cloud/",
+          "^express$",
+          "<THIRD_PARTY_MODULES>",
+          "^\\./",
+          "^\\.\\./"
+        ],
+        "importOrderParserPlugins": [
+          "typescript",
+          "decorators-legacy"
+        ]
+      }
+    },
+    {
+      "files": "frontend/transcription-ui/**/*",
+      "options": {
+        "importOrder": [
+          "^react",
+          "<THIRD_PARTY_MODULES>",
+          "^@",
+          "^[./].*(?<!\\.(css))$",
+          "\\.s?css$"
+        ],
+        "importOrderParserPlugins": [
+          "typescript",
+          "jsx"
+        ]
+      }
+    }
+  ]
+}

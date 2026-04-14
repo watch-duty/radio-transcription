@@ -85,6 +85,37 @@ jobs:
       - name: Type check
         run: uv run ty check
 
+  code-quality-checks-typescript:
+    needs: [setup]
+    if: needs.setup.outputs.should_run == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 100
+      - name: Install mise, install tools
+        uses: jdx/mise-action@v3
+      - name: Enable Corepack (node package manager)
+        run: corepack enable
+      - name: Build and install common
+        working-directory: frontend/common
+        run: yarn install --frozen-lockfile --non-interactive && yarn build
+      - name: Install dependencies
+        run: yarn --cwd frontend/api install --frozen-lockfile --non-interactive && yarn --cwd frontend/transcription-ui install --frozen-lockfile --non-interactive
+      - name: Run ESLint
+        run: yarn --cwd frontend/api lint:check && yarn --cwd frontend/transcription-ui lint:check
+      - name: Run Prettier
+        run: yarn --cwd frontend/api format:check && yarn --cwd frontend/transcription-ui format:check
+      - name: Generate routes
+        working-directory: frontend/api
+        run: yarn generate-routes
+      - name: Type check API
+        working-directory: frontend/api
+        run: npx tsc --noEmit
+      - name: Type check UI
+        working-directory: frontend/transcription-ui
+        run: npx tsc --noEmit
+
   terraform-checks:
     needs: [setup]
     if: needs.setup.outputs.should_run == 'true'
@@ -103,7 +134,7 @@ jobs:
           terraform init -backend=false
           terraform validate
 
-  run-tests:
+  run-backend-tests:
     needs: [setup]
     if: needs.setup.outputs.should_run == 'true'
     runs-on: ubuntu-24.04
@@ -111,21 +142,47 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 100
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: ffmpeg libomp5-18
       - name: Install system dependencies (ffmpeg for pydub, libomp5 for TenVAD)
         run: |
-          sudo apt-get update
+          sudo apt-get update -o Acquire::http::Timeout="10"
           sudo apt-get install -y ffmpeg libomp5 libc++1 libc++abi1
       - name: Install mise, install tools
         # mise installs uv and other project-specific tools. see: .tool-versions
         uses: jdx/mise-action@v3
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - name: Install dependencies
         run: uv sync
       - name: Generate Protobuf Python files
         run: mise run generate:protos
       - name: Run tests
-        run: uv run python -m unittest -b
+        run: uv run python -m pytest backend/ -q
+
+  run-frontend-tests:
+    needs: [setup]
+    if: needs.setup.outputs.should_run == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 100
+      - name: Install mise, install tools
+        uses: jdx/mise-action@v3
+      - name: Enable Corepack (node package manager)
+        run: corepack enable
+      - name: Build and install common
+        working-directory: frontend/common
+        run: yarn install --frozen-lockfile --non-interactive && yarn build
+      - name: Install dependencies
+        run: yarn --cwd frontend/api install --frozen-lockfile --non-interactive && yarn --cwd frontend/transcription-ui install --frozen-lockfile --non-interactive
+      - name: Run proxy tests
+        working-directory: frontend/api
+        run: yarn test --watch=false
+      - name: Run UI tests
+        working-directory: frontend/transcription-ui
+        run: yarn test --watch=false
 
   # Builds each service's Dockerfile and verifies all transitive imports resolve
   # and required environment variables are documented. This catches:
