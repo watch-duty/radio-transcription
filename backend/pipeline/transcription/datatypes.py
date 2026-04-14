@@ -117,8 +117,6 @@ class StitchAudioConfig:
     project_id: str
     vad_type: VadType
     vad_config: str
-    metrics_exporter_type: str
-    metrics_config: str
     significant_gap_ms: int
     stale_timeout_ms: int
     max_transmission_duration_ms: int
@@ -151,8 +149,6 @@ class TranscribeAudioConfig:
     transcriber_config: str
     vad_type: VadType
     vad_config: str
-    metrics_exporter_type: str
-    metrics_config: str
     route_to_dlq: bool = True
     stitched_audio_bucket: str | None = None
 

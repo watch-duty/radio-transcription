@@ -80,8 +80,6 @@ def get_test_stitch_config(**kwargs: Any) -> StitchAudioConfig:
         "project_id": "fake-proj",
         "vad_type": VadType.TEN_VAD,
         "vad_config": "{}",
-        "metrics_exporter_type": "",
-        "metrics_config": "{}",
         "significant_gap_ms": 500,
         "stale_timeout_ms": 60000,
         "max_transmission_duration_ms": 600000,
@@ -100,8 +98,6 @@ def get_test_transcribe_config(**kwargs: Any) -> TranscribeAudioConfig:
         "transcriber_config": "{}",
         "vad_type": VadType.TEN_VAD,
         "vad_config": "{}",
-        "metrics_exporter_type": "",
-        "metrics_config": "{}",
     }
     defaults.update(kwargs)
     return TranscribeAudioConfig(**defaults)  # type: ignore

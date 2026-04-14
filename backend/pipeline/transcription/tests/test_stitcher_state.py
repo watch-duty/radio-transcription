@@ -32,8 +32,6 @@ def get_test_stitch_config(
         project_id="test",
         vad_type=VadType.TEN_VAD,
         vad_config="",
-        metrics_exporter_type="none",
-        metrics_config="",
         significant_gap_ms=significant_gap_ms,
         stale_timeout_ms=stale_timeout_ms,
         max_transmission_duration_ms=max_transmission_duration_ms,

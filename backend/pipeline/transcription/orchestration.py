@@ -116,8 +116,6 @@ def get_pipeline(
         project_id=pipeline_options.view_as(GoogleCloudOptions).project,
         vad_type=options.vad_type,
         vad_config=options.vad_config,
-        metrics_exporter_type=options.metrics_exporter_type,
-        metrics_config=options.metrics_config,
         significant_gap_ms=options.significant_gap_ms
         or DEFAULT_SIGNIFICANT_GAP_MS,
         stale_timeout_ms=options.stale_timeout_ms or DEFAULT_STALE_TIMEOUT_MS,
@@ -146,8 +144,6 @@ def get_pipeline(
                 transcriber_config=options.transcriber_config,
                 vad_type=options.vad_type,
                 vad_config=options.vad_config,
-                metrics_exporter_type=options.metrics_exporter_type,
-                metrics_config=options.metrics_config,
                 route_to_dlq=options.route_to_dlq
                 if options.route_to_dlq is not None
                 else True,

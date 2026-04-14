@@ -232,14 +232,14 @@ class RestoreOrderFn(beam.DoFn):
         self.chunks_buffered_out_of_order = Metrics.counter(
             self.__class__, "chunks_buffered_out_of_order"
         )
-        self.gaps_encountered_counter = Metrics.counter(
-            self.__class__, "gaps_encountered"
+        self.data_gaps_detected_counter = Metrics.counter(
+            self.__class__, "data_gaps_detected"
         )
         self.session_resets_counter = Metrics.counter(
             self.__class__, "session_resets"
         )
-        self.chunks_dropped_late = Metrics.counter(
-            self.__class__, "chunks_dropped_late"
+        self.chunks_processed_late = Metrics.counter(
+            self.__class__, "chunks_processed_late"
         )
 
     @override
@@ -300,7 +300,7 @@ class RestoreOrderFn(beam.DoFn):
         )
 
         if was_late:
-            self.chunks_dropped_late.inc()
+            self.chunks_processed_late.inc()
         if was_buffered:
             self.chunks_buffered_out_of_order.inc()
 
@@ -338,7 +338,7 @@ class RestoreOrderFn(beam.DoFn):
         ),
     ) -> Iterator[tuple[str, str]]:
         """Handles the gap timeout."""
-        self.gaps_encountered_counter.inc()
+        self.data_gaps_detected_counter.inc()
         timer_active_state.clear()
 
         buffer_elements = list(out_of_order_buffer_state.read())
