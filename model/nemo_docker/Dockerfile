@@ -31,7 +31,7 @@ RUN git init && \
     git fetch --depth 1 origin refs/tags/v2.7.2:refs/tags/v2.7.2 && \
     git checkout tags/v2.7.2
 
-# Create a data directory for transcriptions (mount local data here at runtime)
+# Create a data directory for transcriptions (mount for local data at runtime)
 RUN mkdir -p /workspace/nemo/data
 
 # Launch into ZSH
