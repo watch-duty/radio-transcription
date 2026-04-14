@@ -25,32 +25,43 @@ app.use(
 
 app.use(json());
 
+function getOpenApiSpec() {
+  const specPath = path.join(process.cwd(), 'openapi.yaml');
+  if (!fs.existsSync(specPath)) {
+    console.warn(`OpenAPI spec not found at ${specPath}`);
+    return null;
+  }
+  
+  const file = fs.readFileSync(specPath, 'utf8');
+  const swaggerDocument = yaml.load(file) as any;
+
+  // Fix placeholders and security for local development
+  if (swaggerDocument.servers) {
+    if (!process.env.SWAGGER_SERVER_URL) {
+      throw new Error('SWAGGER_SERVER_URL environment variable is required but not set.');
+    }
+    swaggerDocument.servers = [{ url: process.env.SWAGGER_SERVER_URL }];
+  }
+
+  if (swaggerDocument.components && swaggerDocument.components.securitySchemes) {
+    // Change OAuth2 to HTTP Bearer for easier local testing
+    swaggerDocument.components.securitySchemes.google_id_token = {
+      type: 'http',
+      scheme: 'bearer',
+      bearerFormat: 'JWT'
+    };
+  }
+
+  return swaggerDocument;
+}
+
 // Load the generated OpenAPI spec
 try {
-  const specPath = path.join(process.cwd(), 'openapi.yaml');
-  if (fs.existsSync(specPath)) {
-    const file = fs.readFileSync(specPath, 'utf8');
-    const swaggerDocument = yaml.load(file) as any;
-
-    // Fix placeholders and security for local development
-    if (swaggerDocument.servers) {
-      swaggerDocument.servers = [{ url: 'http://localhost:8080' }];
-    }
-
-    if (swaggerDocument.components && swaggerDocument.components.securitySchemes) {
-      // Change OAuth2 to HTTP Bearer for easier local testing
-      swaggerDocument.components.securitySchemes.google_id_token = {
-        type: 'http',
-        scheme: 'bearer',
-        bearerFormat: 'JWT'
-      };
-    }
-
+  const swaggerDocument = getOpenApiSpec();
+  if (swaggerDocument) {
     app.get('/openapi.json', (req, res) => {
       res.json(swaggerDocument);
     });
-  } else {
-    console.warn(`OpenAPI spec not found at ${specPath}`);
   }
 } catch (error) {
   console.error('Failed to load OpenAPI spec:', error);
