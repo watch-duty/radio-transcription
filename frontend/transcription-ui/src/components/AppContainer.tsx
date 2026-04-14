@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router';
 
 import AppRegistrationIcon from '@mui/icons-material/AppRegistration';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
@@ -20,7 +21,6 @@ import ListItemText from '@mui/material/ListItemText';
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import { styled, useTheme } from '@mui/material/styles';
-import { useNavigate } from 'react-router';
 
 import Login from './Login';
 
@@ -40,7 +40,7 @@ export default function AppContainer({
 }: {
   children: React.ReactNode;
 }) {
-  let navigate = useNavigate();
+  const navigate = useNavigate();
   const theme = useTheme();
   const [open, setOpen] = useState(false);
 

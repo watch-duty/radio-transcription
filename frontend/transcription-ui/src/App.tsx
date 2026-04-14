@@ -1,8 +1,8 @@
 import { Route, Routes } from 'react-router';
 
-import RulesView from './components/rules/RulesView';
-import FeedsView from './components/feeds/FeedsView';
 import AppContainer from './components/AppContainer';
+import FeedsView from './components/feeds/FeedsView';
+import RulesView from './components/rules/RulesView';
 import TranscriptView from './components/transcripts/TranscriptView';
 import { useAuth } from './context/AuthContext';
 
