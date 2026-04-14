@@ -149,8 +149,3 @@ class NormalizerSettings:
             os.environ.get("HEALTH_CHECK_STARTUP_GRACE_SEC", "120.0"),
         ),
     )
-    health_check_zero_feeds_max_sec: float = field(
-        default_factory=lambda: float(
-            os.environ.get("HEALTH_CHECK_ZERO_FEEDS_MAX_SEC", "60.0"),
-        ),
-    )

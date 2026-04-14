@@ -24,14 +24,17 @@ class HealthState:
     is required. ``feed_tasks`` is held by reference to the runtime's own
     ``_feed_tasks`` dict so ``len()`` reflects live leasing without copying.
 
-    ``last_nonzero_feeds_at`` is stamped by the leasing loop whenever the
-    feed_tasks dict is observed non-empty. Used by gate 2 to decide whether
-    zero-feed state has been *sustained* rather than transient.
+    ``last_heartbeat_tick`` is stamped at the *beginning* of every
+    ``_heartbeat_cycle`` invocation — before any DB I/O — so the stamp
+    represents "the event loop dispatched the cycle" rather than "DB was
+    reachable." Gate 1 of /healthz reads this; if the stamp were anchored to
+    DB success, a transient AlloyDB outage would age every worker's stamp
+    simultaneously and trigger fleet-wide autohealer kills (thundering herd
+    on recovery).
     """
 
     startup_time: float = field(default_factory=time.monotonic)
-    last_heartbeat_completed: float | None = None
-    last_nonzero_feeds_at: float | None = None
+    last_heartbeat_tick: float | None = None
     feed_tasks: dict[uuid.UUID, object] = field(default_factory=dict)
 
 
@@ -45,14 +48,15 @@ async def _healthz(request: web.Request) -> web.Response:
     settings = request.app[_SETTINGS_KEY]
     now = time.monotonic()
     uptime = now - state.startup_time
-    hb = state.last_heartbeat_completed
+    hb = state.last_heartbeat_tick
 
     # Gate 0: Startup grace. Return 200 for the first
     # health_check_startup_grace_sec regardless of state. The MIG autohealer's
-    # initial_delay_sec covers the same window externally — VMs are not killed
-    # during grace even if they return 503 — so this gate exists to match the
-    # spec's contract: an operator checking /healthz during startup sees the
-    # worker booting, not a misleading 503.
+    # initial_delay_sec covers boot, but GCP does NOT reset initial_delay_sec
+    # when the container restarts on an existing VM — so this Python-side
+    # grace also protects against "container crashed, systemd is restarting
+    # it" cycles where connection-refused + 503 during boot would otherwise
+    # unnecessarily tear down the VM.
     if uptime < settings.health_check_startup_grace_sec:
         return web.json_response(
             {
@@ -62,12 +66,13 @@ async def _healthz(request: web.Request) -> web.Response:
             },
         )
 
-    # Gate 1: Heartbeat freshness. Threshold is 2x the heartbeat interval per
-    # spec: normal-case heartbeat cycles complete in <1s, and the stall
-    # detector (heartbeat_stall_timeout_sec) triggers os._exit(1) if a cycle
-    # hangs past its hard ceiling. Failing here means the event loop is
-    # degraded (running but starving the heartbeat coroutine) in a way the
-    # stall detector didn't catch.
+    # Gate 1: Heartbeat dispatch freshness. Threshold = 2x heartbeat_interval_sec.
+    # Stamped at the start of each cycle (not on DB success), so this gate
+    # fails only when the event loop stops dispatching the cycle at all —
+    # not when the DB is transiently unreachable. Event-loop wedges are also
+    # caught by the 45s stall detector inside _heartbeat_loop, which kicks
+    # in before this gate; this is the external backstop if systemd can't
+    # restart (Docker daemon wedged).
     heartbeat_max_age_sec = 2.0 * settings.heartbeat_interval_sec
     if hb is None:
         return web.json_response(
@@ -81,29 +86,18 @@ async def _healthz(request: web.Request) -> web.Response:
             status=503,
         )
 
-    # Gate 2: Zero leased feeds for longer than the configured window,
-    # measured post-grace. Reference point is max(grace_end, last_nonzero):
-    # - grace_end ensures we don't fire the moment grace expires if feeds
-    #   never arrived (must wait zero_feeds_max_sec AFTER grace);
-    # - last_nonzero ensures that if feeds were briefly acquired then lost,
-    #   the zero-duration clock resets from the loss.
-    feed_count = len(state.feed_tasks)
-    if feed_count == 0:
-        grace_end = state.startup_time + settings.health_check_startup_grace_sec
-        last_nonzero = state.last_nonzero_feeds_at
-        reference = (
-            max(grace_end, last_nonzero) if last_nonzero is not None else grace_end
-        )
-        if (now - reference) > settings.health_check_zero_feeds_max_sec:
-            return web.json_response(
-                {"status": "unhealthy", "reason": "zero_active_feeds"},
-                status=503,
-            )
+    # Intentionally no "zero active feeds" gate. A worker with zero feeds is
+    # not necessarily broken — in staging, during a scraper pause, or on an
+    # over-provisioned fleet, idle workers are a valid state. Failing here
+    # would crash-loop idle VMs fleet-wide whenever the upstream feed queue
+    # dries up. If the lease loop itself crashes, the asyncio task will
+    # propagate the exception and exit the process cleanly (systemd
+    # restart); /healthz is not the right place to detect that.
 
     return web.json_response(
         {
             "status": "healthy",
-            "active_feeds": feed_count,
+            "active_feeds": len(state.feed_tasks),
             "last_heartbeat_age_sec": hb_age,
         },
     )

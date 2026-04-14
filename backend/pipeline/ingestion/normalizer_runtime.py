@@ -231,13 +231,6 @@ class NormalizerRuntime:
         while True:
             self._reap_completed_tasks()
 
-            # Stamp for /healthz gate 2 (zero-feed check). Updated whenever
-            # we observe leased feeds, so the handler can measure sustained
-            # zero-state vs. momentary zero between a task finishing and the
-            # next acquisition.
-            if self._feed_tasks:
-                self._health_state.last_nonzero_feeds_at = time.monotonic()
-
             # try/except: a transient DB error (connection reset, brief
             # AlloyDB maintenance) must not kill a worker with 200+ healthy
             # feed tasks. Existing tasks continue uninterrupted; the leasing
@@ -582,12 +575,17 @@ class NormalizerRuntime:
         Batched renewal reduces heartbeat DB load from ~17 qps
         (250 individual queries / 15s) to ~0.07 qps (1 query / 15s).
         """
+        # Stamp at dispatch, NOT on DB success. /healthz gate 1 is a
+        # local-process-health check (spec: "must not check AlloyDB
+        # connectivity"); stamping post-DB would make a transient AlloyDB
+        # outage age every worker's stamp in lockstep, causing the autohealer
+        # to recreate the entire fleet simultaneously — a thundering herd
+        # that makes recovery worse. Stamping here proves the event loop
+        # dispatched the cycle, which is the true local-health signal.
+        self._health_state.last_heartbeat_tick = time.monotonic()
+
         active = dict(self._feed_tasks.items())
         if not active:
-            # No feeds leased yet (startup) or all released. Still stamp:
-            # the cycle ran, the event loop is alive. Gate 3 in /healthz is
-            # the right signal for "should have feeds but doesn't."
-            self._health_state.last_heartbeat_completed = time.monotonic()
             return
 
         results: list[
@@ -621,11 +619,6 @@ class NormalizerRuntime:
                 "Heartbeat renewed for %d feeds",
                 len(renewed_ids),
             )
-            # Stamp on successful completion (after the DB UPDATE and
-            # fence-violation check passed). Read by the /healthz handler to
-            # detect an event loop that's running but degraded — stalled DB
-            # I/O ages the stamp without tripping the 45s stall detector.
-            self._health_state.last_heartbeat_completed = time.monotonic()
             return
 
         # Log diagnostic details for each lost feed before terminating.

@@ -101,7 +101,6 @@ def _make_settings(**overrides) -> mock.MagicMock:
         # port 1 when a test exercises _main().
         "health_check_port": 8080,
         "health_check_startup_grace_sec": 120.0,
-        "health_check_zero_feeds_max_sec": 60.0,
     }
     defaults.update(overrides)
     m = mock.MagicMock()
@@ -567,6 +566,50 @@ class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(len(critical_calls), 1)
         self.assertIn(str(_FEED_ID), str(critical_calls[0]))
+
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+    async def test_stamp_updated_on_empty_feeds(self) -> None:
+        """last_heartbeat_tick is stamped when the cycle dispatches with no feeds."""
+        rt = _make_runtime()
+        rt._feed_tasks = {}
+        rt._heartbeat_store = mock.AsyncMock()
+
+        self.assertIsNone(rt._health_state.last_heartbeat_tick)
+        await rt._heartbeat_cycle()
+
+        self.assertIsNotNone(rt._health_state.last_heartbeat_tick)
+        # DB wasn't called because no active feeds.
+        rt._heartbeat_store.renew_heartbeats_batch_diagnostic.assert_not_called()
+
+    async def test_stamp_updated_even_when_db_raises(self) -> None:
+        """
+        Critical: last_heartbeat_tick is stamped at cycle dispatch (before
+        the DB call), so a transient AlloyDB outage doesn't age the stamp
+        and trigger fleet-wide autohealer kills (thundering herd). Regression
+        guard for the original design where the stamp was only set on
+        successful DB renewal.
+        """
+        rt = _make_runtime()
+        task = asyncio.create_task(asyncio.sleep(100))
+        rt._feed_tasks[_FEED_ID] = task
+        rt._releasing_feeds = set()
+        rt._heartbeat_store = mock.AsyncMock()
+        # Simulate AlloyDB outage: DB call raises.
+        rt._heartbeat_store.renew_heartbeats_batch_diagnostic.side_effect = (
+            asyncpg.exceptions.CannotConnectNowError("AlloyDB unavailable")
+        )
+
+        self.assertIsNone(rt._health_state.last_heartbeat_tick)
+
+        with self.assertRaises(asyncpg.exceptions.CannotConnectNowError):
+            await rt._heartbeat_cycle()
+
+        # Despite the DB raising, the stamp was set before the await —
+        # /healthz will still return 200 and the worker rides out the outage.
+        self.assertIsNotNone(rt._health_state.last_heartbeat_tick)
 
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):

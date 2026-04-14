@@ -45,7 +45,6 @@ class TestNormalizerSettings(unittest.TestCase):
             "GOOGLE_CLOUD_PROJECT": "test-project",
             "HEALTH_CHECK_PORT": "9090",
             "HEALTH_CHECK_STARTUP_GRACE_SEC": "90.0",
-            "HEALTH_CHECK_ZERO_FEEDS_MAX_SEC": "45.0",
         }
 
         with patch.dict("os.environ", env, clear=True):
@@ -78,7 +77,6 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.google_cloud_project, "test-project")
         self.assertEqual(settings.health_check_port, 9090)
         self.assertEqual(settings.health_check_startup_grace_sec, 90.0)
-        self.assertEqual(settings.health_check_zero_feeds_max_sec, 45.0)
 
     def test_edge_case_uses_defaults_and_generates_worker_id(self) -> None:
         """Uses defaults for optional settings when only required vars are set."""
@@ -108,7 +106,6 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertIsNone(settings.google_cloud_project)
         self.assertEqual(settings.health_check_port, 8080)
         self.assertEqual(settings.health_check_startup_grace_sec, 120.0)
-        self.assertEqual(settings.health_check_zero_feeds_max_sec, 60.0)
 
     def test_edge_case_zero_and_negative_numeric_values_parse(self) -> None:
         """Allows zero/negative values because parsing does not enforce ranges."""
