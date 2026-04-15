@@ -24,13 +24,12 @@ terraform plan -var-file=local_variables.tfvars
 terraform apply -var-file=local_variables.tfvars
 ```
 
+### Setup docker on the VM
 Once you have your instance provisioned and set up. You can setup docker on the instance:
 ```
 gcloud compute ssh <your_instance_name> \
     --project <your_project_id> \
     --zone us-central1-a
-git clone https://github.com/watch-duty/radio-transcription.git
-cd radio-transcription
 
 sudo apt update
 sudo apt install -y docker.io docker-compose-v2
@@ -40,8 +39,21 @@ docker compose version
 
 # Verify that you have GPU configured
 sudo docker run --rm --gpus all nvidia/cuda:12.0.0-base-ubuntu22.04 nvidia-smi
+```
 
-sudo docker compose -f asr-eval-docker-compose.yml up
+Optional: Make docker sudoless
+```
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+### Run docker directly on the VM
+```
+git clone https://github.com/watch-duty/radio-transcription.git
+cd radio-transcription
+
+# Add in sudo if you didn't make docker sudoless
+docker compose -f asr-eval-docker-compose.yml up
 
 # Port forwarding for you to be able to access the notebook from your browser.
 # The notebook should be accessible via localhost:8888
