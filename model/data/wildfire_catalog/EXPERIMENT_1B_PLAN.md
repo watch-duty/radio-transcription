@@ -16,14 +16,18 @@ Every fix from the review applied:
 | Review item | Fix in this plan |
 |---|---|
 | Stream-copy + FLAC contradiction | Committed to **Path A (MP3 output)**; downstream format change is now a hard Step 0 prerequisite |
-| Feeds-table not populated | New **Step 0.1** bulk-inserts Tier 1+2 catalog as `deactivated` and flips to `unclaimed` at experiment start |
+| Feeds-table not populated | New **Step 0.1** bulk-inserts Tier 1+2 catalog as `deactivated`; Step 3 activates feeds per-step via SQL (no bulk pre-activation) |
 | Pricing error ($98 vs $141) | Corrected: $141/VM/mo on-demand |
 | `/healthz` endpoint missing | Dropped curl fallback; use **Python-side event-loop monitor only** |
-| Lease doesn't control ratio | Use `source_types` parameter in lease SQL + per-source lease call |
-| Prod AlloyDB load unmonitored | Added during-experiment AlloyDB watcher with abort thresholds |
+| Lease doesn't control ratio | **DB-side activation**: each ramp step flips additional feeds to `unclaimed` in the 41/55/3 ratio via one SQL UPDATE. Zero Python changes. |
+| Prod AlloyDB load unmonitored | Step 2.2 operator checks AlloyDB Cloud Console + Step 2.3 periodic production-health query |
 | Experiment cost not estimated | **$250–650 budget** itemized |
-| `DISABLE_PUBSUB` flag unverified | Marked as a code change in Step 0.4, not an assumption |
+| `DISABLE_PUBSUB` flag unverified | Marked as a code change in Step 0.2 (Change 4), not an assumption |
 | Branch strategy ambiguous | Fresh `experiment/1b-stream-copy` off `main` |
+| (New) Bulk pre-activation blast radius | Step 0.4 no longer flips all 11,473 feeds — feeds stay `deactivated` until Step 3 activates them per-step |
+| (New) Scripted AlloyDB watcher was wrong | Replaced with Cloud Console + human operator at fixed intervals |
+| (New) Cleanup required "original feed IDs" | Step 6.2 filters by `created_at >= '${EXP_INSERT_TS}'` |
+| (New) Production health unmonitored | Step 2.3 checks prod active-feed count every 15 min, aborts on >20% drop from baseline |
 
 ---
 
@@ -66,7 +70,7 @@ Reuse the production ingestion SA and grant the bucket/topic roles on the new re
 
 ### 0.1 Populate feeds table with Tier 1+2 catalog
 
-The experiment needs ~2,500 leasable feeds in the 41/55/3 mix. Production currently runs ~250. Bulk-insert the Tier 1+2 catalog with `status = 'deactivated'`:
+The experiment needs ~2,000 leasable feeds in the 41/55/3 mix, activated progressively via SQL at each ramp step (see Step 3). Production currently runs ~250. Bulk-insert the Tier 1+2 catalog with `status = 'deactivated'`:
 
 ```python
 # one-off script, reads output/wildfire_feed_catalog_admin_review.csv
@@ -74,6 +78,20 @@ The experiment needs ~2,500 leasable feeds in the 41/55/3 mix. Production curren
 # INSERT INTO feeds (name, source_type, status, source_feed_id, ...)
 # VALUES (..., 'deactivated', ...) for each row
 # ~11,473 rows total; at 100 rows/sec = ~2 minutes
+```
+
+**Capture the insert timestamp** immediately after the bulk insert completes — Step 6.2's cleanup uses it as a filter:
+
+```bash
+# Just after the bulk-insert script finishes, record the boundary.
+# Shave off a second to be safely inclusive of any late-arriving rows.
+EXP_INSERT_TS=$(date -u -d '2 seconds ago' +%Y-%m-%dT%H:%M:%SZ)
+echo "EXP_INSERT_TS=${EXP_INSERT_TS}" | tee -a experiment_1b.env
+# Also cross-check against the DB:
+psql -c "SELECT MIN(created_at), MAX(created_at), COUNT(*)
+         FROM feeds
+         WHERE status = 'deactivated'
+           AND created_at >= '${EXP_INSERT_TS}';"
 ```
 
 Schema target columns (from `terraform/modules/alloydb/sql/ingestion/003_feeds.sql`):
@@ -224,16 +242,30 @@ gcloud pubsub topics add-iam-policy-binding audio-experiment-1b-sink \
     --member="serviceAccount:${SA}" --role="roles/pubsub.publisher"
 ```
 
-### 0.4 Flip Tier 1+2 feeds to `unclaimed`
+### 0.4 Capture production health baseline
 
-The moment this runs, the production VM may start leasing extra feeds. Be ready to start the experiment VM within minutes:
+Before any feeds are activated, record the production VM's active-feed count — Step 2.3 monitors it during the experiment and aborts on a >20% drop.
 
-```sql
-UPDATE feeds
-SET status = 'unclaimed'::feed_status
-WHERE source_type IN ('bcfy_feeds','bcfy_calls','openmhz')
-  AND status = 'deactivated'::feed_status;
+```bash
+# Find the production worker_id (the e2-small VM has ~250 active leases)
+PROD_WORKER_ID=$(psql -t -c "
+    SELECT worker_id FROM feeds
+    WHERE status = 'active'::feed_status
+    GROUP BY worker_id
+    ORDER BY COUNT(*) DESC
+    LIMIT 1;
+" | tr -d ' ')
+echo "PROD_WORKER_ID=${PROD_WORKER_ID}" | tee -a experiment_1b.env
+
+PROD_BASELINE=$(psql -t -c "
+    SELECT COUNT(*) FROM feeds
+    WHERE worker_id = '${PROD_WORKER_ID}'
+      AND status = 'active'::feed_status;
+" | tr -d ' ')
+echo "PROD_BASELINE=${PROD_BASELINE}" | tee -a experiment_1b.env
 ```
+
+**No feeds are flipped to `unclaimed` at this point.** Feeds stay `deactivated` until Step 3 activates them per-step in the 41/55/3 ratio. Blast radius is capped at ~2,000 activated feeds at peak (Step 8), not the full 11,473 Tier 1+2.
 
 ---
 
@@ -272,10 +304,12 @@ uv sync  # or whatever the project uses
 export GCS_BUCKET="audio-experiment-1b-YYYYMMDD"
 export PUBSUB_TOPIC="audio-experiment-1b-sink"
 export DISABLE_PUBSUB="true"
-export MAX_FEEDS_PER_WORKER="100"
+export MAX_FEEDS_PER_WORKER="2000"   # set ONCE — ramp is DB-driven
 export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2
 # AlloyDB env vars: same as production SA already scoped via IAM
 ```
+
+Setting `MAX_FEEDS_PER_WORKER=2000` once at startup is the DB-side-activation corollary: the VM is ready to hold up to 2,000 feeds, but only leases what's `unclaimed` in the feeds table. Step 3 controls the ramp by flipping feeds to `unclaimed` in stages — **no process restarts between ramp steps are needed.**
 
 ---
 
@@ -306,37 +340,40 @@ while true; do
 done
 ```
 
-### 2.2 AlloyDB watcher (runs on any VM with psql access; don't run on experiment-1b)
+### 2.2 AlloyDB monitoring — operator-driven, Cloud Console
 
-Watch for regression on the prod DB during the experiment:
+The abort decision involves human judgment (transient spike vs sustained regression), so this is intentionally not scripted. During each 2-hour ramp step, an operator checks the **AlloyDB Cloud Console** at minute 10 / 30 / 60 / 90. During the 72-hour soak, check at least once per shift.
+
+Look at:
+
+| Metric | Where | Abort threshold |
+|---|---|---|
+| Instance CPU utilization | AlloyDB Instance → Overview | Sustained > 70% for ≥ 5 min |
+| p99 transaction latency | AlloyDB Query Insights → Load | Sustained > 20 ms for ≥ 5 min |
+| pgBouncer `cl_waiting` (per pool) | `psql -h <POOLER_IP> -p 6432 -U admin -d pgbouncer -c "SHOW POOLS"` | > 0 on any pool, sustained for 5 min |
+
+If any threshold trips, invoke the abort sequence (Step 6.1) and then triage. The same operator also runs the per-step measurement and owns the abort call.
+
+### 2.3 Production health sanity check
+
+Every 15 minutes during ramp + soak, confirm the production VM's leased-feed count hasn't degraded. If it falls > 20% below the baseline captured in Step 0.4, the experiment is somehow starving prod — abort.
 
 ```bash
-#!/bin/bash
-# alloydb_watch.sh — run on your workstation or a bastion
-INTERVAL=30
-THRESHOLD_CPU=70    # abort if sustained > 70%
-THRESHOLD_P99=20    # abort if p99 query latency > 20ms
-
-while true; do
-    TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    # AlloyDB CPU from gcloud monitoring
-    CPU=$(gcloud monitoring metrics list \
-        --filter='metric.type="alloydb.googleapis.com/instance/cpu/utilization"' \
-        --format='value(points[0].value.doubleValue)' | head -1)
-    # pgBouncer SHOW POOLS — cl_waiting
-    CL_WAITING=$(psql -h <ALLOYDB_POOLER_IP> -p 6432 -U admin -d pgbouncer \
-        -t -c "SHOW POOLS" | awk '$1 == "feeds" {print $5}')
-    echo -e "${TS}\tCPU=${CPU}\tCL_WAITING=${CL_WAITING}"
-    # Abort conditions
-    if (( $(echo "$CPU > $THRESHOLD_CPU" | bc -l) )); then
-        echo "ABORT: AlloyDB CPU > ${THRESHOLD_CPU}%"
-        # send alert / page on-call
-    fi
-    sleep $INTERVAL
-done
+# Run on your workstation every 15 min, or put in a cron:
+CURRENT=$(psql -t -c "
+    SELECT COUNT(*) FROM feeds
+    WHERE worker_id = '${PROD_WORKER_ID}'
+      AND status = 'active'::feed_status;
+" | tr -d ' ')
+THRESHOLD=$(( PROD_BASELINE * 80 / 100 ))
+if (( CURRENT < THRESHOLD )); then
+    echo "ABORT: prod active feeds ${CURRENT} < 80% of baseline ${PROD_BASELINE}"
+fi
 ```
 
-### 2.3 Event-loop latency
+This catches failure modes that AlloyDB CPU alone wouldn't surface — e.g., if prod's lease-acquire calls start losing races to the experiment VM.
+
+### 2.4 Event-loop latency
 
 Python-side monitor already runs as a background task (from Step 0.2 Change 5). Its output goes to stderr; capture via:
 
@@ -346,49 +383,88 @@ journalctl -u ingestion-service -f | grep event_loop_health > event_loop.jsonl
 
 ---
 
-## Step 3 — Ramp
+## Step 3 — Ramp (DB-side activation)
 
-Run each step for **2 hours** to reach steady state. Use the `source_types` lease parameter to control composition — don't rely on random leasing.
+**Ratio control is done at the database, not in Python.** Each ramp step is one SQL UPDATE that flips additional feeds from `deactivated` to `unclaimed` in the 41.4 / 55.2 / 3.3 % mix. The existing lease loop (`backend/pipeline/ingestion/normalizer_runtime.py:229-243`, using `acquire_feeds_batch`) picks them up on its next poll (~5s cadence). **No process restarts between ramp steps.** No Python code changes.
 
-At each step, the Python runtime calls `lease_feed` three times per desired new slot:
+### Cumulative activation by step (pre-computed)
 
-```python
-# pseudocode in normalizer_runtime startup
-for _ in range(int(max_feeds * 0.414)):
-    await store.lease_feed(worker_id, source_types=['bcfy_feeds'])
-for _ in range(int(max_feeds * 0.552)):
-    await store.lease_feed(worker_id, source_types=['bcfy_calls'])
-for _ in range(int(max_feeds * 0.033)):
-    await store.lease_feed(worker_id, source_types=['openmhz'])
+Targets and the per-step additions to reach them:
+
+| Step | Target | bcfy_feeds | bcfy_calls | openmhz | Additions from prev step |
+|---:|---:|---:|---:|---:|---|
+| 1 | 100 | 41 | 55 | 4 | +41 / +55 / +4 |
+| 2 | 250 | 103 | 138 | 9 | +62 / +83 / +5 |
+| 3 | 500 | 207 | 276 | 17 | +104 / +138 / +8 |
+| 4 | 750 | 311 | 414 | 25 | +104 / +138 / +8 |
+| 5 | 1,000 | 414 | 552 | 34 | +103 / +138 / +9 |
+| 6 | 1,250 | 518 | 690 | 42 | +104 / +138 / +8 |
+| 7 | 1,500 | 621 | 828 | 51 | +103 / +138 / +9 |
+| 8 | 2,000 | 828 | 1,104 | 68 | +207 / +276 / +17 |
+
+### SQL template for each ramp step
+
+Substitute `<N_BCFY>`, `<N_CALLS>`, `<N_OMHZ>` with the additions-from-prev-step values:
+
+```sql
+WITH to_activate AS (
+  (SELECT id FROM feeds
+   WHERE source_type = 'bcfy_feeds'
+     AND status = 'deactivated'::feed_status
+     AND created_at >= '${EXP_INSERT_TS}'
+   ORDER BY id
+   LIMIT <N_BCFY>)
+  UNION ALL
+  (SELECT id FROM feeds
+   WHERE source_type = 'bcfy_calls'
+     AND status = 'deactivated'::feed_status
+     AND created_at >= '${EXP_INSERT_TS}'
+   ORDER BY id
+   LIMIT <N_CALLS>)
+  UNION ALL
+  (SELECT id FROM feeds
+   WHERE source_type = 'openmhz'
+     AND status = 'deactivated'::feed_status
+     AND created_at >= '${EXP_INSERT_TS}'
+   ORDER BY id
+   LIMIT <N_OMHZ>)
+)
+UPDATE feeds
+SET status = 'unclaimed'::feed_status
+WHERE id IN (SELECT id FROM to_activate);
 ```
 
-Or the simpler shape: loop once per slot, rotate through source_type arrays.
+The `created_at >= '${EXP_INSERT_TS}'` clause ensures we only activate feeds this experiment inserted, never production's original feeds.
 
-| Step | MAX_FEEDS | bcfy_feeds (~41%) | bcfy_calls (~55%) | openmhz (~3%) | Stop if |
-|---:|---:|---:|---:|---:|---|
-| 1 | 100 | ~41 | ~55 | ~4 | — |
-| 2 | 250 | ~103 | ~138 | ~9 | — |
-| 3 | 500 | ~207 | ~276 | ~17 | — |
-| 4 | 750 | ~311 | ~414 | ~25 | CPU > 75% sustained 5 min OR mem > 85% for 2 min OR p95 loop latency > 100ms for 5 min |
-| 5 | 1,000 | ~414 | ~552 | ~34 | (same) |
-| 6 | 1,250 | ~518 | ~690 | ~42 | (same) |
-| 7 | 1,500 | ~621 | ~828 | ~51 | (same) |
-| 8 | 2,000 | ~828 | ~1,104 | ~68 | (same) |
+### At each ramp step
 
-**Abort conditions from the AlloyDB watcher** (Step 2.2): if prod AlloyDB CPU sustained > 70% OR `cl_waiting > 0` sustained on any pool, stop the experiment and release feeds immediately.
-
-### At each ramp step:
-
-1. Update `MAX_FEEDS_PER_WORKER` env var
-2. Restart the ingestion process (settings read at startup)
-3. Wait 5 minutes for all feeds to connect and stabilize
-4. Start measurement: `./measure.sh <step> | tee -a experiment_1b_results.tsv`
-5. Run for 2 hours
-6. Record actual feed composition via the SQL query in Step 0.1
-7. Note the per-source-type resource breakdown:
+1. **Activate:** run the SQL above with the correct `<N_BCFY>` / `<N_CALLS>` / `<N_OMHZ>` values
+2. **Wait ~10 s** for the lease loop to pick up the newly-`unclaimed` feeds (`LEASE_POLL_INTERVAL_SEC = 5s` default)
+3. **Wait 5 min** for all feeds to connect and reach steady state
+4. **Start measurement:** `./measure.sh <step> | tee -a experiment_1b_results.tsv`
+5. **Run for 2 hours**
+6. **Record actual feed composition** — confirm the lease picked the expected ~41/55/3 mix:
+   ```sql
+   SELECT source_type, COUNT(*)
+   FROM feeds
+   WHERE worker_id = '<experiment_worker_id>'
+     AND status = 'active'::feed_status
+   GROUP BY source_type;
+   ```
+7. **Note per-source-type resource breakdown** (see 5.2 for the analysis method):
    - `ffmpeg_count` ≈ bcfy_feeds count (1 ffmpeg per bcfy_feeds feed under stream-copy)
    - Python RSS growth from step N-1 to N = memory consumed by newly-leased feeds
-8. Check stop criteria before proceeding
+8. **Check stop criteria** before proceeding to the next activation
+
+### Stop criteria (per-step)
+
+| Condition | Threshold | Action |
+|---|---|---|
+| Experiment VM CPU | sustained > 75% for 5 min | Stop ramp at current step |
+| Experiment VM memory | > 85% of 16 GiB for 2 min | Stop ramp at current step |
+| Event-loop p95 latency | > 100 ms for 5 min | Stop ramp at current step |
+| AlloyDB signals | per Step 2.2 | Abort experiment |
+| Prod health drop | per Step 2.3 (>20% below baseline) | Abort experiment |
 
 ---
 
@@ -473,14 +549,27 @@ SET status = 'unclaimed'::feed_status,
 WHERE worker_id = '<experiment_vm_worker_id>';
 ```
 
-### 6.2 Return Tier 1+2 feeds to `deactivated`
+### 6.2 Return experiment-inserted feeds to `deactivated`
+
+Filter by `created_at >= '${EXP_INSERT_TS}'` — the timestamp captured in Step 0.1 — so production's original feeds are untouched. No need to snapshot "original production feed IDs" ahead of time.
 
 ```sql
--- Leave production running with only its original feed set
+-- Leave production's original feeds intact; only deactivate what Step 0.1 inserted
 UPDATE feeds
-SET status = 'deactivated'::feed_status
+SET status = 'deactivated'::feed_status,
+    worker_id = NULL,
+    last_heartbeat = NULL
 WHERE source_type IN ('bcfy_feeds','bcfy_calls','openmhz')
-  AND id NOT IN (<production's-original-feed-ids>);
+  AND created_at >= '${EXP_INSERT_TS}';
+```
+
+Optionally — if the team wants the Tier 1+2 catalog retained for future experiments — leave the rows in the feeds table. Otherwise, delete them after deactivation:
+
+```sql
+DELETE FROM feeds
+WHERE source_type IN ('bcfy_feeds','bcfy_calls','openmhz')
+  AND created_at >= '${EXP_INSERT_TS}'
+  AND status = 'deactivated'::feed_status;
 ```
 
 ### 6.3 Delete infrastructure
@@ -518,6 +607,7 @@ gcloud pubsub topics delete audio-experiment-1b-sink
 | Prod AlloyDB CPU | sustained > 70% for 5 min | Abort experiment, force-release feeds |
 | Prod AlloyDB p99 query latency | sustained > 20ms for 5 min | Abort experiment, force-release feeds |
 | pgBouncer `cl_waiting` | > 0 for 5 min on any pool | Abort experiment |
+| **Production active-feed count** | **> 20% drop from `PROD_BASELINE` (Step 0.4)** | **Abort experiment, force-release feeds** |
 | GCS upload error rate | > 1% 5xx/429 | Pause, investigate before continuing |
 | Any ffmpeg crashes | > 1% of ffmpeg processes in any 10-min window | Pause, investigate |
 
