@@ -18,7 +18,9 @@ export interface OpenApiSpec {
 export class DocsController extends Controller {
   @Get('openapi.json')
   @Security('google_id_token')
-  public async getSpec(@Request() request: express.Request): Promise<OpenApiSpec> {
+  public async getSpec(
+    @Request() request: express.Request
+  ): Promise<OpenApiSpec> {
     // __dirname is frontend/api/src/docs
     // .. goes to src
     // .. goes to api root
