@@ -84,7 +84,7 @@ class ParseAndKeyFn(beam.DoFn):
 class AddEventTimestamp(beam.DoFn):
     """Extracts the event timestamp directly from the `AudioChunk` protobuf.
 
-    Assigns it as the Beam windowing `TimestampedValue`, yielding the GCS URI.
+    Assigns it as the Beam windowing `TimestampedValue`, yielding the `(feed_id, (feed_name, gcs_uri, session_id))` tuple.
     This guarantees that all downstream Watermarks and Timers accurately respect
     the chronological ordering of the hardware audio events.
     """

@@ -412,25 +412,6 @@ class TestPublishAudioChunkSync(unittest.TestCase):
         )
         self.assertEqual(chunk.feed_name, "Central Fire")
 
-    def test_sets_feed_name_in_proto(self) -> None:
-        """Verifies that feed_name is serialized into the AudioChunk proto."""
-        mock_future = MagicMock()
-        mock_future.result.return_value = "message-feed-name"
-        _, mock_publisher = _make_pubsub_client()
-        mock_publisher.publish.return_value = mock_future
-
-        gcp_helper.publish_audio_chunk_sync(
-            mock_publisher,
-            topic_path="projects/test/topics/audio",
-            feed_id="feed-77",
-            gcs_uri="gs://bucket/audio.flac",
-            session_id="sess-1",
-            start_timestamp=datetime.datetime(
-                2026, 3, 5, 12, 0, tzinfo=datetime.UTC
-            ),
-            feed_name="Downtown PD",
-        )
-
     def test_omits_source_type_when_none(self) -> None:
         mock_future = MagicMock()
         mock_future.result.return_value = "msg-1"
