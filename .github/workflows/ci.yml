@@ -106,6 +106,8 @@ jobs:
         run: yarn --cwd frontend/api lint:check && yarn --cwd frontend/transcription-ui lint:check
       - name: Run Prettier
         run: yarn --cwd frontend/api format:check && yarn --cwd frontend/transcription-ui format:check
+      - name: Build packages
+        run: yarn --cwd frontend/api build && yarn --cwd frontend/transcription-ui build:dev
       - name: Generate routes
         working-directory: frontend/api
         run: yarn generate-routes
