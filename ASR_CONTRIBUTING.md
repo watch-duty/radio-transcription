@@ -61,7 +61,10 @@ Run all 3 containers (NeMO + Jupyter, NeMO CLI, and Jupyter)
 docker compose -f asr-eval-docker-compose.yml up
 
 # Run only one
-docker compose -f asr-eval-docker-compose.yml run [asr-eval|nemo|notebooks]
+docker compose -f asr-eval-docker-compose.yml up -d [asr-eval|notebooks]
+
+# To access NeMo CLI using the asr-eval container image
+docker compose -f asr-eval-docker-compose.yml run --entrypoint /bin/zsh asr-eval
 ```
 
 Accessing the Jupyter notebooks from your local machine

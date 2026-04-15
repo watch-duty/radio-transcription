@@ -21,21 +21,6 @@ services:
     # Override entrypoint to start Jupyter Notebook instead of ZSH
     entrypoint: ["jupyter", "notebook", "--ip=0.0.0.0", "--allow-root", "--no-browser", "--NotebookApp.token=''", "--NotebookApp.password=''"]
 
-  # Running NeMO CLI
-  nemo:
-    build:
-      context: .
-      dockerfile: model/nemo_docker/Dockerfile
-    volumes:
-      - ./model:/app
-    working_dir: /app
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
 
   # Lightweight container for simply running Jupyter notebooks (without NeMO)
   notebooks:
@@ -43,7 +28,7 @@ services:
       context: ./model/notebook_docker
       dockerfile: Dockerfile
     ports:
-      - "8889:8888"
+      - "8888:8888"
     command: ["jupyter", "notebook", "--NotebookApp.token=''", "--NotebookApp.password=''"]
     volumes:
       - ./model:/home/jovyan/work
