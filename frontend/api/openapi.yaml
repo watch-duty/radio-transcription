@@ -275,6 +275,11 @@ components:
         - externalId
       type: object
       additionalProperties: false
+    Record_string.unknown_:
+      properties: {}
+      additionalProperties: {}
+      type: object
+      description: Construct a type with a set of properties K of type T
   securitySchemes:
     google_id_token:
       type: oauth2
@@ -599,6 +604,21 @@ paths:
           schema:
             type: string
       x-google-backend: radio-transcription-api
+  /api/v1/docs/openapi.json:
+    get:
+      operationId: GetSpec
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Record_string.unknown_"
+      tags:
+        - Docs
+      security:
+        - google_id_token: []
+      parameters: []
 servers:
   - url: https://${radio_transcription_api_service_name}/
     x-google-endpoint:
