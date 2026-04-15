@@ -2,21 +2,31 @@ import type { Transcript } from '@transcription/common';
 
 export async function listTranscripts(
   feedId: string,
-  token: string
-): Promise<Transcript[]> {
-  const response = await fetch(
-    `${import.meta.env.VITE_API_BASE_URL}/api/v1/transcripts/${feedId}`,
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    }
-  );
+  token: string,
+  limit?: number,
+  nextToken?: string
+): Promise<{ transcripts: Transcript[]; nextToken?: string }> {
+  let url = `${import.meta.env.VITE_API_BASE_URL}/api/v1/transcripts/${feedId}`;
+  const params = new URLSearchParams();
+  if (limit) params.append('limit', limit.toString());
+  if (nextToken) params.append('nextToken', nextToken);
+  if (params.toString()) {
+    url += `?${params.toString()}`;
+  }
+
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
 
   if (!response.ok) {
     throw new Error(`Error: ${response.status} ${response.statusText}`);
   }
 
   const data = await response.json();
-  return data.transcripts || [];
+  return {
+    transcripts: data.transcripts || [],
+    nextToken: data.nextToken,
+  };
 }
