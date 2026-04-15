@@ -37,7 +37,7 @@ function getOpenApiSpec() {
   }
 
   const file = readFileSync(specPath, 'utf8');
-  const swaggerDocument = load(file) as any;
+  const swaggerDocument = load(file) as Record<string, unknown>;
 
   return swaggerDocument;
 }
