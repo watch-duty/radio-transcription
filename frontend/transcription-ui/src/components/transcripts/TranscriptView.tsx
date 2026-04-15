@@ -41,7 +41,9 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
   const [transcriptsLoading, setTranscriptsLoading] = useState(false);
   const [transcriptsError, setTranscriptsError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
-  const [transcriptNextToken, setTranscriptNextToken] = useState<string | undefined>(undefined);
+  const [transcriptNextToken, setTranscriptNextToken] = useState<
+    string | undefined
+  >(undefined);
   const [loadingMoreTranscripts, setLoadingMoreTranscripts] = useState(false);
 
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
@@ -121,7 +123,12 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
     setError(null);
 
     try {
-      const response = await listTranscripts(feedId, token!, undefined, transcriptNextToken);
+      const response = await listTranscripts(
+        feedId,
+        token!,
+        undefined,
+        transcriptNextToken
+      );
       setTranscripts((prev) => [...prev, ...response.transcripts]);
       setTranscriptNextToken(response.nextToken);
     } catch (err: unknown) {

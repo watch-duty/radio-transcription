@@ -50,7 +50,10 @@ describe('TranscriptView', () => {
   });
 
   it('shows loading state when fetching', async () => {
-    vi.mocked(listTranscripts).mockResolvedValueOnce({ transcripts: [], nextToken: undefined });
+    vi.mocked(listTranscripts).mockResolvedValueOnce({
+      transcripts: [],
+      nextToken: undefined,
+    });
 
     render(<TranscriptView addAlert={mockAddAlert} />);
 
@@ -86,7 +89,10 @@ describe('TranscriptView', () => {
         evaluationDecisions: [],
       },
     ];
-    vi.mocked(listTranscripts).mockResolvedValueOnce({ transcripts: mockTranscripts, nextToken: undefined });
+    vi.mocked(listTranscripts).mockResolvedValueOnce({
+      transcripts: mockTranscripts,
+      nextToken: undefined,
+    });
 
     render(<TranscriptView addAlert={mockAddAlert} />);
 
@@ -228,8 +234,14 @@ describe('TranscriptView', () => {
     ];
 
     vi.mocked(listTranscripts)
-      .mockResolvedValueOnce({ transcripts: mockTranscriptsPage1, nextToken: 'token123' })
-      .mockResolvedValueOnce({ transcripts: mockTranscriptsPage2, nextToken: undefined });
+      .mockResolvedValueOnce({
+        transcripts: mockTranscriptsPage1,
+        nextToken: 'token123',
+      })
+      .mockResolvedValueOnce({
+        transcripts: mockTranscriptsPage2,
+        nextToken: undefined,
+      });
 
     render(<TranscriptView />);
 

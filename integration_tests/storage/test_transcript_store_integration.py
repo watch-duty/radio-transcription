@@ -59,6 +59,7 @@ async def test_list_transcripts_pagination(
     await _insert_transcript(db_pool, uuid.uuid4(), feed_id, t1)
     await _insert_transcript(db_pool, uuid.uuid4(), feed_id, t2)
     await _insert_transcript(db_pool, uuid.uuid4(), feed_id, t3)
+
     # Page 1: Limit 2
     result = await store.list_transcripts_by_feed_id(str(feed_id), limit=2)
     assert len(result.transcripts) == 2
