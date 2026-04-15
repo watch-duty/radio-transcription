@@ -41,10 +41,10 @@ resource "google_compute_instance" "eval_instance" {
   }
 
   scheduling {
-    on_host_maintenance = "TERMINATE" # Required for GPU instances
-    automatic_restart   = false
-    preemptible         = true
-    provisioning_model  = "SPOT"
+    on_host_maintenance         = "TERMINATE" # Required for GPU instances
+    automatic_restart           = false
+    preemptible                 = true
+    provisioning_model          = "SPOT"
     instance_termination_action = "STOP"
   }
 
