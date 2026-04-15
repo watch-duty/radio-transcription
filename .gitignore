@@ -76,6 +76,3 @@ dist/
 # Python Tools
 .pytest_cache/
 .ruff_cache/
-
-# Downloads
-downloads/

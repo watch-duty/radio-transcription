@@ -501,7 +501,7 @@ class TranscribeAudioFn(beam.DoFn):
         duration_sec = len(processed_audio) / float(MS_PER_SECOND)
         self.speech_duration_sec_dist.update(int(duration_sec))
 
-        if not self.config.stitched_audio_bucket:
+        if not self.config.canonical_audio_bucket:
             canonical_audio_uri, playback_audio_uri = None, None
         else:
             dt = datetime.fromtimestamp(
@@ -513,7 +513,7 @@ class TranscribeAudioFn(beam.DoFn):
 
             canonical_audio_uri, playback_audio_uri = (
                 self.audio_uploader.upload_audio_derivatives(
-                    bucket_name=self.config.stitched_audio_bucket,
+                    bucket_name=self.config.canonical_audio_bucket,
                     flac_path=flac_path,
                     m4a_path=m4a_path,
                     flac_bytes=flac_bytes,

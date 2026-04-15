@@ -119,10 +119,10 @@ class TranscriptionOptions(PipelineOptions):
             help="If false, exceptions will be raised immediately instead of routing to the Dead Letter Queue. Useful for tests.",
         )
         parser.add_argument(
-            "--stitched_audio_bucket",
+            "--canonical_audio_bucket",
             type=str,
             required=False,
-            help="GCS bucket name for storing clean, stitched audio. If omitted, audio is not persisted to GCS.",
+            help="GCS bucket name for storing clean, stitched or pre-segmented audio. If omitted, audio is not persisted to GCS.",
         )
         parser.add_argument(
             "--bypass_stitching",

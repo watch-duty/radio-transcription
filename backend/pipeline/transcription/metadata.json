@@ -15,9 +15,9 @@
       "isOptional": false
     },
     {
-      "name": "stitched_audio_bucket",
-      "label": "Stitched Audio Bucket",
-      "helpText": "GCS bucket for storing clean, stitched audio. If omitted, binary output is skipped.",
+      "name": "canonical_audio_bucket",
+      "label": "Canonical Audio Bucket",
+      "helpText": "GCS bucket for storing clean, stitched or pre-segmented audio. If omitted, binary output is skipped.",
       "isOptional": true
     },
     {
