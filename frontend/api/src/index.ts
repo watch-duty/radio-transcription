@@ -1,9 +1,9 @@
 import express, { json, urlencoded } from 'express';
 
 import cors from 'cors';
-import * as fs from 'fs';
-import * as yaml from 'js-yaml';
-import * as path from 'path';
+import { existsSync, readFileSync } from 'fs';
+import { load } from 'js-yaml';
+import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
 import { ALLOWED_ORIGIN } from './config.js';
@@ -27,27 +27,17 @@ app.use(
 app.use(json());
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname = dirname(__filename);
 
 function getOpenApiSpec() {
-  const specPath = path.join(__dirname, '..', 'openapi.yaml');
-  if (!fs.existsSync(specPath)) {
+  const specPath = join(__dirname, '..', 'openapi.yaml');
+  if (!existsSync(specPath)) {
     console.warn(`OpenAPI spec not found at ${specPath}`);
     return null;
   }
 
-  const file = fs.readFileSync(specPath, 'utf8');
-  const swaggerDocument = yaml.load(file) as any;
-
-  // Fix server URL placeholder
-  if (swaggerDocument.servers) {
-    if (!process.env.SWAGGER_SERVER_URL) {
-      throw new Error(
-        'SWAGGER_SERVER_URL environment variable is required but not set.'
-      );
-    }
-    swaggerDocument.servers = [{ url: process.env.SWAGGER_SERVER_URL }];
-  }
+  const file = readFileSync(specPath, 'utf8');
+  const swaggerDocument = load(file) as any;
 
   return swaggerDocument;
 }
@@ -57,7 +47,12 @@ try {
   const swaggerDocument = getOpenApiSpec();
   if (swaggerDocument) {
     app.get('/openapi.json', (req, res) => {
-      res.json(swaggerDocument);
+      // Dynamically set the server URL based on the request host to avoid hardcoding or environment variables
+      const dynamicDoc = {
+        ...swaggerDocument,
+        servers: [{ url: `${req.protocol}://${req.get('host')}` }],
+      };
+      res.json(dynamicDoc);
     });
   }
 } catch (error) {
