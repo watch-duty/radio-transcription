@@ -46,7 +46,7 @@ function getOpenApiSpec() {
 try {
   const swaggerDocument = getOpenApiSpec();
   if (swaggerDocument) {
-    app.get('/openapi.json', (req, res) => {
+    app.get('/openapi.yaml', (req, res) => {
       // Dynamically set the server URL based on the request host to avoid hardcoding or environment variables
       const dynamicDoc = {
         ...swaggerDocument,

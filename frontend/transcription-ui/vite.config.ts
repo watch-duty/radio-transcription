@@ -15,7 +15,7 @@ export default defineConfig({
         target: 'http://localhost:8080',
         changeOrigin: true,
       },
-      '/openapi.json': {
+      '/openapi.yaml': {
         target: 'http://localhost:8080',
         changeOrigin: true,
       },
