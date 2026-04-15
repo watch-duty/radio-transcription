@@ -32,16 +32,10 @@ variable "zone" {
   default     = "us-central1-a"
 }
 
-variable "stop_hour" {
-  description = "Hour of the day to stop the VM (0-23), Pacific Time"
+variable "auto_shutdown_hours" {
+  description = "Number of hours to run before auto-shutdown threshold is reached"
   type        = number
-  default     = 12
-}
-
-variable "start_hour" {
-  description = "Hour of the day to start the VM (0-23), Pacific Time"
-  type        = number
-  default     = 0
+  default     = 4
 }
 
 

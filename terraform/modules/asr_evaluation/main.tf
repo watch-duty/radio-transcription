@@ -1,18 +1,3 @@
-resource "google_compute_resource_policy" "daily_stop" {
-  name    = "${var.name}-daily-stop"
-  project = var.project_id
-  region  = join("-", slice(split("-", var.zone), 0, 2))
-
-  instance_schedule_policy {
-    vm_stop_schedule {
-      schedule = "0 ${var.stop_hour} * * *"
-    }
-    vm_start_schedule {
-      schedule = "0 ${var.start_hour} * * 1-5"
-    }
-    time_zone = "America/Los_Angeles"
-  }
-}
 
 resource "google_compute_instance" "eval_instance" {
   name         = var.name
@@ -22,7 +7,7 @@ resource "google_compute_instance" "eval_instance" {
 
   boot_disk {
     initialize_params {
-      image = "projects/deeplearning-platform-release/global/images/family/pytorch-2-7-cu128-ubuntu-2204-nvidia-570"
+      image = "projects/deeplearning-platform-release/global/images/pytorch-2-7-cu128-ubuntu-2204-nvidia-570-v20260320"
       size  = 100 # Deep Learning images are large, 100GB recommended
       type  = "pd-ssd"
     }
@@ -48,7 +33,20 @@ resource "google_compute_instance" "eval_instance" {
     instance_termination_action = "STOP"
   }
 
-  resource_policies = [google_compute_resource_policy.daily_stop.id]
+  resource_policies = []
+
+  metadata_startup_script = <<-EOT
+    #!/bin/bash
+    sleep $(( ${var.auto_shutdown_hours} * 3600 ))
+    while true; do
+      if nvidia-smi --query-compute-apps=pid --format=csv,noheader | grep -q . ; then
+        sleep 1800
+      else
+        sudo poweroff
+        break
+      fi
+    done
+  EOT
 
   service_account {
     # Best practice is to use a dedicated service account, but defaulting to compute default for simplicity if not specified.
@@ -56,7 +54,4 @@ resource "google_compute_instance" "eval_instance" {
   }
 
   tags = ["asr-eval", "jupyter"]
-
-  # Ensure the resource policy is created before attaching it
-  depends_on = [google_compute_resource_policy.daily_stop]
 }
