@@ -26,22 +26,6 @@ app.use(
 
 app.use(json());
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-function getOpenApiSpec() {
-  const specPath = join(__dirname, '..', 'openapi.yaml');
-  if (!existsSync(specPath)) {
-    console.warn(`OpenAPI spec not found at ${specPath}`);
-    return null;
-  }
-
-  const file = readFileSync(specPath, 'utf8');
-  const swaggerDocument = load(file) as Record<string, unknown>;
-
-  return swaggerDocument;
-}
-
 RegisterRoutes(app);
 
 export const api = app;
