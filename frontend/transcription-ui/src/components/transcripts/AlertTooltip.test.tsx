@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import AlertTooltip from './AlertTooltip';
 
@@ -58,10 +58,12 @@ describe('AlertTooltip', () => {
     );
     
     const icon = screen.getByTestId('warning-icon');
-    fireEvent.click(icon);
+    fireEvent.mouseOver(icon);
     
-    expect(screen.getByText('Critical Alert Rule')).toBeTruthy();
-    expect(screen.getByText('Amber Warning Rule')).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByText('Critical Alert Rule')).toBeTruthy();
+      expect(screen.getByText('Amber Warning Rule')).toBeTruthy();
+    });
   });
 
   it('should render rule IDs correctly when rulesLoading is true', async () => {
@@ -74,10 +76,12 @@ describe('AlertTooltip', () => {
     );
     
     const icon = screen.getByTestId('warning-icon');
-    fireEvent.click(icon);
+    fireEvent.mouseOver(icon);
     
-    expect(screen.getByText('rule1')).toBeTruthy();
-    expect(screen.getByText('rule2')).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByText('rule1')).toBeTruthy();
+      expect(screen.getByText('rule2')).toBeTruthy();
+    });
   });
 
   it('should fallback to ruleId if name not in map and rulesLoading is false', async () => {
@@ -90,8 +94,10 @@ describe('AlertTooltip', () => {
     );
     
     const icon = screen.getByTestId('warning-icon');
-    fireEvent.click(icon);
+    fireEvent.mouseOver(icon);
     
-    expect(screen.getByText('unknown-rule')).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByText('unknown-rule')).toBeTruthy();
+    });
   });
 });
