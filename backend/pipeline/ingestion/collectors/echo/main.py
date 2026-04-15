@@ -35,7 +35,16 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 STAGING_BUCKET = os.environ.get("AUDIO_STAGING_BUCKET", "")
-RAW_AUDIO_TOPIC = os.environ.get("RAW_AUDIO_TOPIC", "")
+
+try:
+    from backend.pipeline.ingestion.router import resolve_topic_path
+    from backend.pipeline.ingestion.settings import NormalizerSettings
+    from backend.pipeline.storage.feed_store import SourceType
+
+    settings = NormalizerSettings()
+    RAW_AUDIO_TOPIC = resolve_topic_path(SourceType.ECHO, settings)
+except (ValueError, KeyError):
+    RAW_AUDIO_TOPIC = os.environ.get("RAW_AUDIO_TOPIC", "")
 
 # ---------------------------------------------------------------------------
 # Global state (persisted across warm invocations)

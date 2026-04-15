@@ -18,6 +18,7 @@ tsconfig.tsbuildinfo
 .coverage
 __pycache__/
 tmp/
+downloads/
 .tmpwork/
 mise.local.toml
 mise.*.local.toml

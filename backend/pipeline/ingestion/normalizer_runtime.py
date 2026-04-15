@@ -21,6 +21,7 @@ from backend.pipeline.ingestion.retry import (
     LeaseExpiredError,
     retry_with_lease_check,
 )
+from backend.pipeline.ingestion.router import resolve_topic_path
 from backend.pipeline.ingestion.settings import NormalizerSettings
 from backend.pipeline.storage.connection import (
     close_pool,
@@ -327,19 +328,9 @@ class NormalizerRuntime:
 
     def _get_pubsub_topic_path(self, feed: LeasedFeed) -> str:
         """Determines the Pub/Sub topic path based on the feed source type."""
-        settings = self._normalizer_settings
-        if feed["source_type"] == SourceType.BCFY_FEEDS:
-            return settings.pubsub_topic_path
-
-        topic_path = settings.segmented_pubsub_topic_path
-        if not topic_path:
-            msg = (
-                f"Segmented Pub/Sub topic path not configured for feed "
-                f"{feed['name']} of type {feed['source_type']}"
-            )
-            raise ValueError(msg)
-        return topic_path
-
+        return resolve_topic_path(
+            feed["source_type"], self._normalizer_settings
+        )
     async def _process_feed(self, feed: LeasedFeed) -> None:  # noqa: PLR0912, PLR0915
         """
         Run the capture-upload-bookmark pipeline for a single feed.
@@ -352,8 +343,17 @@ class NormalizerRuntime:
         fencing_token = feed["fencing_token"]
         settings = self._normalizer_settings
         _fallback_session_id: str | None = None
-
         topic_path = self._get_pubsub_topic_path(feed)
+
+        extension = "flac"
+        content_type = "audio/flac"
+
+        if feed["source_type"] == SourceType.OPENMHZ:
+            extension = "m4a"
+            content_type = "audio/mp4"
+        elif feed["source_type"] == SourceType.ECHO:
+            extension = "mp3"
+            content_type = "audio/mpeg"
 
         try:
             async for captured_chunk in self._capture_fn(
@@ -388,6 +388,8 @@ class NormalizerRuntime:
                     settings.audio_staging_bucket,
                     chunk_seq,
                     fencing_token,
+                    extension,
+                    content_type,
                     lease_lost=self._lease_lost,
                     shutdown=self._shutdown,
                     max_retries=settings.gcs_upload_max_retries,
