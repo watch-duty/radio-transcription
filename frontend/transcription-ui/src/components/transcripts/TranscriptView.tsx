@@ -1,12 +1,7 @@
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router';
 
+import LinkIcon from '@mui/icons-material/Link';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import type { AlertProps } from '@mui/material/Alert';
 import Autocomplete from '@mui/material/Autocomplete';
@@ -18,6 +13,7 @@ import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
 import Paper from '@mui/material/Paper';
 import TextField from '@mui/material/TextField';
+import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import type { Feed, Rule, Transcript } from '@transcription/common';
@@ -26,24 +22,31 @@ import { useAuth } from '../../context/AuthContext';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { listTranscripts } from '../../service/listTranscripts';
-import AudioPlayer from '../audio/AudioPlayer';
-import AlertTooltip from './AlertTooltip';
+import TranscriptRow from './TranscriptRow';
 
 interface TranscriptViewProps {
   addAlert: (alert: AlertProps) => void;
+  triggerSnackbar: (message: string) => void;
 }
 
-export function TranscriptView({ addAlert }: TranscriptViewProps) {
+export function TranscriptView({
+  addAlert,
+  triggerSnackbar,
+}: TranscriptViewProps) {
+  const [searchParams, setSearchParams] = useSearchParams();
   const theme = useTheme();
   const { token } = useAuth();
 
   const initialLoadCalled = useRef(false);
+  const autoFetchCalled = useRef(false);
   const [feeds, setFeeds] = useState<Feed[]>([]);
   const [feedsLoading, setFeedsLoading] = useState<boolean>(false);
+  // TODO: determine best way to render errors, leaving this empty for now
   const [, setFeedsError] = useState<string | null>(null);
 
   const [rules, setRules] = useState<Rule[]>([]);
   const [rulesLoading, setRulesLoading] = useState<boolean>(false);
+  // TODO: determine best way to render errors, leaving this empty for now
   const [, setRulesError] = useState<string | null>(null);
 
   const [feedId, setFeedId] = useState<string>('');
@@ -77,6 +80,12 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
     try {
       const feeds = await listFeeds(token!);
       setFeeds(feeds);
+
+      // Preset the feed ID if provided in the URL
+      const feedIdFromUrl = searchParams.get('feedId');
+      if (feedIdFromUrl) {
+        setFeedId(feedIdFromUrl);
+      }
     } catch (err: unknown) {
       if (err instanceof Error) {
         const message = `An unexpected error occurred while trying to load feeds. You can still manually enter a feed ID. Error: ${err.message}`;
@@ -96,7 +105,7 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
     } finally {
       setFeedsLoading(false);
     }
-  }, [token, addAlert]);
+  }, [token, addAlert, searchParams]);
 
   /**
    * A callback that loads all the available rules for the authenticated user.
@@ -132,38 +141,43 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
   /**
    * A callback that loads the transcripts for the specified feed ID.
    */
-  const handleFetch = async () => {
-    if (!feedId.trim()) return;
-    setHasSearched(true);
-    setTranscripts([]);
-    setTranscriptsLoading(true);
-    setTranscriptsError(null);
-    setTranscriptNextToken(undefined);
+  const handleFetch = useCallback(
+    async (targetFeedId?: string) => {
+      const currentFeedId = targetFeedId !== undefined ? targetFeedId : feedId;
+      if (!currentFeedId.trim()) return;
+      setSearchParams({ feedId: currentFeedId.trim() });
+      setHasSearched(true);
+      setTranscripts([]);
+      setTranscriptsLoading(true);
+      setTranscriptsError(null);
+      setTranscriptNextToken(undefined);
 
-    try {
-      const response = await listTranscripts(feedId, token!);
-      setTranscripts(response.transcripts);
-      setTranscriptNextToken(response.nextToken);
-    } catch (err: unknown) {
-      if (err instanceof Error) {
-        const message = `An error occurred while trying to load transcripts for feed ${feedId}. Error: ${err.message}`;
-        setTranscriptsError(message);
-        addAlert({
-          severity: 'error',
-          children: message,
-        });
-      } else {
-        const message = `An error occurred while trying to load transcripts for feed ${feedId}.`;
-        setTranscriptsError(message);
-        addAlert({
-          severity: 'error',
-          children: message,
-        });
+      try {
+        const response = await listTranscripts(currentFeedId, token!);
+        setTranscripts(response.transcripts);
+        setTranscriptNextToken(response.nextToken);
+      } catch (err: unknown) {
+        if (err instanceof Error) {
+          const message = `An error occurred while trying to load transcripts for feed ${feedId}. Error: ${err.message}`;
+          setTranscriptsError(message);
+          addAlert({
+            severity: 'error',
+            children: message,
+          });
+        } else {
+          const message = `An error occurred while trying to load transcripts for feed ${feedId}.`;
+          setTranscriptsError(message);
+          addAlert({
+            severity: 'error',
+            children: message,
+          });
+        }
+      } finally {
+        setTranscriptsLoading(false);
       }
-    } finally {
-      setTranscriptsLoading(false);
-    }
-  };
+    },
+    [feedId, token, addAlert, setSearchParams, feedId]
+  );
 
   const handleLoadMore = async () => {
     if (!transcriptNextToken || !feedId.trim()) return;
@@ -206,6 +220,20 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
     }
   }, [token, loadFeeds, loadRules]);
 
+  /**
+   * This effect handles loading the transcripts if a `feedId` is provided in the URL params.
+   * We utilize the `autoFetchCalled` ref to ensure we don't initialize more than once.
+   */
+  useEffect(() => {
+    if (!autoFetchCalled.current && token) {
+      autoFetchCalled.current = true;
+      const feedIdFromUrl = searchParams.get('feedId');
+      if (feedIdFromUrl) {
+        handleFetch(feedIdFromUrl);
+      }
+    }
+  }, [token, searchParams, handleFetch]);
+
   return (
     <Box
       sx={{
@@ -225,6 +253,7 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
           }
           size="small"
           sx={{ width: '25%' }}
+          value={feedId}
           onInputChange={(_, value) => setFeedId(value)}
           onChange={(_, option) =>
             setFeedId(
@@ -274,7 +303,7 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
         </IconButton>
         <Button
           variant="contained"
-          onClick={handleFetch}
+          onClick={() => handleFetch()}
           disabled={transcriptsLoading || !feedId.trim()}
           sx={{ minWidth: '100px' }}
         >
@@ -284,6 +313,28 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
             'Fetch'
           )}
         </Button>
+        <Box sx={{ flexGrow: 1 }} />
+        <Tooltip title="Copy link to feed">
+          <span>
+            <Button
+              variant="outlined"
+              size="small"
+              disabled={!feedId.trim()}
+              onClick={() => {
+                const url = new URL(
+                  window.location.origin + window.location.pathname
+                );
+                url.searchParams.set('feedId', feedId.trim());
+                navigator.clipboard.writeText(url.toString());
+                triggerSnackbar('Link copied');
+              }}
+              sx={{ minWidth: 0, px: 1.5 }}
+              aria-label="copy feed deeplink"
+            >
+              <LinkIcon fontSize="small" />
+            </Button>
+          </span>
+        </Tooltip>
       </Box>
 
       <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
@@ -300,75 +351,20 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
                 currentDate.toDateString() !== prevDate.toDateString();
 
               return (
-                <Fragment key={t.transmissionId}>
-                  {showHeader && (
-                    <ListItem sx={{ py: 0.5, bgcolor: 'action.hover' }}>
-                      <Typography
-                        variant="caption"
-                        color="text.secondary"
-                        sx={{ fontWeight: 'bold' }}
-                      >
-                        {currentDate.toLocaleDateString([], {
-                          weekday: 'long',
-                          month: 'long',
-                          day: 'numeric',
-                          year: 'numeric',
-                        })}
-                      </Typography>
-                    </ListItem>
-                  )}
-                  <ListItem
-                    divider={index < transcripts.length - 1}
-                    sx={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 2,
-                      py: 1.5,
-                    }}
-                  >
-                    <Box
-                      sx={{
-                        width: '24px',
-                        display: 'flex',
-                        justifyContent: 'center',
-                        flexShrink: 0,
-                      }}
-                    >
-                      <AlertTooltip
-                        evaluationDecisions={t.evaluationDecisions}
-                        ruleIdToNameMap={ruleIdToNameMap}
-                        rulesLoading={rulesLoading}
-                      />
-                    </Box>
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ minWidth: 'max-content' }}
-                    >
-                      {currentDate.toLocaleTimeString([], {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        second: '2-digit',
-                        timeZoneName: 'short',
-                        hour12: false,
-                      })}
-                    </Typography>
-                    <AudioPlayer
-                      audioUri={t.canonicalAudioUri}
-                      transmissionId={t.transmissionId}
-                      onPlay={onPlay}
-                      currentlyPlayingTransmissionId={
-                        currentlyPlayingTransmissionId
-                      }
-                    />
-                    <Typography
-                      variant="body1"
-                      sx={{ flexGrow: 1, whiteSpace: 'pre-wrap' }}
-                    >
-                      {t.transcript}
-                    </Typography>
-                  </ListItem>
-                </Fragment>
+                <TranscriptRow
+                  key={t.transmissionId}
+                  t={t}
+                  index={index}
+                  totalTranscripts={transcripts.length}
+                  ruleIdToNameMap={ruleIdToNameMap}
+                  rulesLoading={rulesLoading}
+                  onPlay={onPlay}
+                  currentlyPlayingTransmissionId={
+                    currentlyPlayingTransmissionId
+                  }
+                  triggerSnackbar={triggerSnackbar}
+                  showHeader={showHeader}
+                />
               );
             })}
             {transcriptNextToken && (

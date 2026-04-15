@@ -3,6 +3,7 @@ import { Route, Routes } from 'react-router';
 
 import Alert, { type AlertProps } from '@mui/material/Alert';
 import Box from '@mui/material/Box';
+import Snackbar from '@mui/material/Snackbar';
 
 import AppContainer from './components/AppContainer';
 import FeedsView from './components/feeds/FeedsView';
@@ -16,6 +17,12 @@ function App() {
   const { token } = useAuth();
 
   const [alerts, setAlerts] = useState<AlertProps[]>([]);
+  const [snackbarMessage, setSnackbarMessage] = useState<string | null>(null);
+
+  const triggerSnackbar = (message: string) => {
+    setSnackbarMessage(null);
+    setTimeout(() => setSnackbarMessage(message), 50);
+  };
 
   const addAlert = (alert: AlertProps) => {
     // Max of 3 alerts retained.
@@ -35,6 +42,12 @@ function App() {
   // Define the application routes below.
   return (
     <AppContainer>
+      <Snackbar
+        open={!!snackbarMessage}
+        autoHideDuration={3000}
+        onClose={() => setSnackbarMessage(null)}
+        message={snackbarMessage}
+      />
       <Box sx={{ width: '100%', mb: 2 }}>
         {alerts.map((alert, index) => (
           <Alert
@@ -49,7 +62,24 @@ function App() {
         ))}
       </Box>
       <Routes>
-        <Route path="/" element={<TranscriptView addAlert={addAlert} />} />
+        <Route
+          path="/"
+          element={
+            <TranscriptView
+              addAlert={addAlert}
+              triggerSnackbar={triggerSnackbar}
+            />
+          }
+        />
+        <Route
+          path="/transcripts"
+          element={
+            <TranscriptView
+              addAlert={addAlert}
+              triggerSnackbar={triggerSnackbar}
+            />
+          }
+        />
         <Route path="/rules" element={<RulesView />} />
         <Route path="/feeds" element={<FeedsView />} />
       </Routes>
