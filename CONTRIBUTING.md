@@ -172,12 +172,15 @@ cat <<EOF > frontend/api/.env.local
 ALLOWED_ORIGIN=http://localhost:5173
 TRANSCRIPTS_API_URL=<your URL for transcripts API>
 RULES_API_URL=<your URL for rules API>
+FEEDS_STORE_API_URL=<your URL for feeds store API>
 EOF
 ```
 
 2. Install the package dependencies
 ```bash
 # Assuming you're running from the top level of the root dir.
+yarn --cwd frontend/common install && \
+yarn --cwd frontend/common build && \
 yarn --cwd frontend/api install
 ```
 
@@ -205,6 +208,8 @@ EOF
 2. Install the package dependencies
 ```bash
 # Assuming you're running from the top level of the root dir.
+yarn --cwd frontend/common install && \
+yarn --cwd frontend/common build && \
 yarn --cwd frontend/transcription-ui install
 ```
 

@@ -97,6 +97,10 @@ def _make_settings(**overrides) -> mock.MagicMock:
         "bookmark_max_retries": 2,
         "bookmark_retry_base_delay_sec": 0.5,
         "bookmark_retry_max_delay_sec": 4.0,
+        # Real values so health_server doesn't try to bind the MagicMock-default
+        # port 1 when a test exercises _main().
+        "health_check_port": 8080,
+        "health_check_startup_grace_sec": 120.0,
     }
     defaults.update(overrides)
     m = mock.MagicMock()
@@ -567,6 +571,50 @@ class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await task
 
+    async def test_stamp_updated_on_empty_feeds(self) -> None:
+        """last_heartbeat_tick is stamped when the cycle dispatches with no feeds."""
+        rt = _make_runtime()
+        rt._feed_tasks = {}
+        rt._heartbeat_store = mock.AsyncMock()
+
+        self.assertIsNone(rt._health_state.last_heartbeat_tick)
+        await rt._heartbeat_cycle()
+
+        self.assertIsNotNone(rt._health_state.last_heartbeat_tick)
+        # DB wasn't called because no active feeds.
+        rt._heartbeat_store.renew_heartbeats_batch_diagnostic.assert_not_called()
+
+    async def test_stamp_updated_even_when_db_raises(self) -> None:
+        """
+        Critical: last_heartbeat_tick is stamped at cycle dispatch (before
+        the DB call), so a transient AlloyDB outage doesn't age the stamp
+        and trigger fleet-wide autohealer kills (thundering herd). Regression
+        guard for the original design where the stamp was only set on
+        successful DB renewal.
+        """
+        rt = _make_runtime()
+        task = asyncio.create_task(asyncio.sleep(100))
+        rt._feed_tasks[_FEED_ID] = task
+        rt._releasing_feeds = set()
+        rt._heartbeat_store = mock.AsyncMock()
+        # Simulate AlloyDB outage: DB call raises.
+        rt._heartbeat_store.renew_heartbeats_batch_diagnostic.side_effect = (
+            asyncpg.exceptions.CannotConnectNowError("AlloyDB unavailable")
+        )
+
+        self.assertIsNone(rt._health_state.last_heartbeat_tick)
+
+        with self.assertRaises(asyncpg.exceptions.CannotConnectNowError):
+            await rt._heartbeat_cycle()
+
+        # Despite the DB raising, the stamp was set before the await —
+        # /healthz will still return 200 and the worker rides out the outage.
+        self.assertIsNotNone(rt._health_state.last_heartbeat_tick)
+
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
 
 class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
     """Tests for pool creation in _main."""
@@ -592,6 +640,10 @@ class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
                 rt, "_shutdown_sequence", new_callable=mock.AsyncMock
             ),
             mock.patch("threading.Thread"),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.health_server.start",
+                new_callable=mock.AsyncMock,
+            ),
         ):
             await rt._main()
 
@@ -648,6 +700,62 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
         mock_close_pool.assert_awaited_once_with(rt._data_pool)
         rt._pubsub_client.close.assert_awaited_once()
         rt._gcs_client.close.assert_awaited_once()
+
+    async def test_health_runner_cleanup_runs_before_heartbeat_stop(
+        self,
+    ) -> None:
+        """
+        Ordering invariant: /healthz server must be stopped before the heartbeat
+        thread is signaled to stop. Probes get a clean connection-refused during
+        the shutdown window rather than hanging on a socket whose event loop is
+        about to drain.
+        """
+        rt = _make_runtime()
+        rt._shutdown = asyncio.Event()
+        rt._thread_stop = mock.MagicMock()
+        rt._heartbeat_thread = None
+        rt._store = mock.AsyncMock()
+        rt._data_pool = mock.AsyncMock()
+        rt._heartbeat_pool = mock.AsyncMock()
+        rt._pubsub_client = mock.AsyncMock()
+        rt._gcs_client = mock.AsyncMock()
+        rt._health_runner = mock.AsyncMock()
+
+        call_order: list[str] = []
+        rt._health_runner.cleanup.side_effect = lambda: call_order.append(
+            "cleanup"
+        )
+        rt._thread_stop.set.side_effect = lambda: call_order.append("stop")
+
+        await rt._shutdown_sequence()
+
+        rt._health_runner.cleanup.assert_awaited_once()
+        self.assertEqual(call_order, ["cleanup", "stop"])
+
+    async def test_health_runner_cleanup_failure_does_not_skip_heartbeat_stop(
+        self,
+    ) -> None:
+        """
+        If runner.cleanup() raises, the rest of shutdown must still run — we
+        need to signal the heartbeat thread and release leases even if the
+        /healthz server couldn't be torn down cleanly.
+        """
+        rt = _make_runtime()
+        rt._shutdown = asyncio.Event()
+        rt._thread_stop = mock.MagicMock()
+        rt._heartbeat_thread = None
+        rt._store = mock.AsyncMock()
+        rt._data_pool = mock.AsyncMock()
+        rt._heartbeat_pool = mock.AsyncMock()
+        rt._pubsub_client = mock.AsyncMock()
+        rt._gcs_client = mock.AsyncMock()
+        rt._health_runner = mock.AsyncMock()
+        rt._health_runner.cleanup.side_effect = RuntimeError("boom")
+
+        await rt._shutdown_sequence()
+
+        rt._thread_stop.set.assert_called_once()
+        rt._store.release_feeds_batch.assert_awaited_once()
 
 
 class TestHeartbeatLoopSetsLeaseLost(unittest.IsolatedAsyncioTestCase):

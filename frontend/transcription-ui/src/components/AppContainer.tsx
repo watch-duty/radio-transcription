@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router';
 
 import AppRegistrationIcon from '@mui/icons-material/AppRegistration';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
@@ -39,6 +40,7 @@ export default function AppContainer({
 }: {
   children: React.ReactNode;
 }) {
+  const navigate = useNavigate();
   const theme = useTheme();
   const [open, setOpen] = useState(false);
 
@@ -100,7 +102,7 @@ export default function AppContainer({
         <Divider />
         <List>
           <ListItem disablePadding>
-            <ListItemButton>
+            <ListItemButton onClick={() => navigate('/')}>
               <ListItemIcon>
                 <VoiceChatIcon />
               </ListItemIcon>
@@ -108,7 +110,7 @@ export default function AppContainer({
             </ListItemButton>
           </ListItem>
           <ListItem disablePadding>
-            <ListItemButton>
+            <ListItemButton onClick={() => navigate('/rules')}>
               <ListItemIcon>
                 <RuleIcon />
               </ListItemIcon>
@@ -116,7 +118,7 @@ export default function AppContainer({
             </ListItemButton>
           </ListItem>
           <ListItem disablePadding>
-            <ListItemButton>
+            <ListItemButton onClick={() => navigate('/feeds')}>
               <ListItemIcon>
                 <AppRegistrationIcon />
               </ListItemIcon>
