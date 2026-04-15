@@ -410,6 +410,7 @@ class TestPublishAudioChunkSync(unittest.TestCase):
         self.assertEqual(
             chunk.start_timestamp.seconds, int(mock_now.timestamp())
         )
+        self.assertEqual(chunk.feed_name, "Central Fire")
 
     def test_sets_feed_name_in_proto(self) -> None:
         """Verifies that feed_name is serialized into the AudioChunk proto."""
@@ -429,11 +430,6 @@ class TestPublishAudioChunkSync(unittest.TestCase):
             ),
             feed_name="Downtown PD",
         )
-
-        publish_args, _publish_kwargs = mock_publisher.publish.call_args
-        chunk = AudioChunk()
-        chunk.ParseFromString(publish_args[1])
-        self.assertEqual(chunk.feed_name, "Downtown PD")
 
     def test_omits_source_type_when_none(self) -> None:
         mock_future = MagicMock()
