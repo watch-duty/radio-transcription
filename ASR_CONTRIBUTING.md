@@ -48,13 +48,24 @@ newgrp docker
 ```
 
 ### Run docker directly on the VM
+Setup
 ```
 git clone https://github.com/watch-duty/radio-transcription.git
 cd radio-transcription
+```
 
+Run all 3 containers (NeMO + Jupyter, NeMO CLI, and Jupyter)
+```
 # Add in sudo if you didn't make docker sudoless
+# Runs all 3 containers
 docker compose -f asr-eval-docker-compose.yml up
 
+# Run only one
+docker compose -f asr-eval-docker-compose.yml run [asr-eval|nemo|notebooks]
+```
+
+Accessing the Jupyter notebooks from your local machine
+```
 # Port forwarding for you to be able to access the notebook from your browser.
 # The notebook should be accessible via localhost:8888
 gcloud compute ssh <your_instance_name> \
@@ -62,3 +73,5 @@ gcloud compute ssh <your_instance_name> \
     --zone us-central1-a \
     -- -L 8888:localhost:8888
 ```
+
+Alternatively, if you want to use VSCode or your local IDE, you can also use Remote SSH. This way you won't have to keep syncing changes between your machine and your local code.
