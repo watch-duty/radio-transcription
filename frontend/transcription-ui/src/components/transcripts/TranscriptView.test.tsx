@@ -182,7 +182,10 @@ describe('TranscriptView', () => {
   });
 
   it('shows no transcripts found message', async () => {
-    vi.mocked(listTranscripts).mockResolvedValueOnce([]);
+    vi.mocked(listTranscripts).mockResolvedValueOnce({
+      transcripts: [],
+      nextToken: undefined,
+    });
 
     render(<TranscriptView addAlert={mockAddAlert} />);
 
@@ -243,9 +246,11 @@ describe('TranscriptView', () => {
         nextToken: undefined,
       });
 
-    render(<TranscriptView />);
+    render(<TranscriptView addAlert={mockAddAlert} />);
 
-    const input = screen.getByLabelText(/Enter Feed ID/i);
+    const input = screen.getByLabelText(
+      /Select a registered feed or enter a feed ID/i
+    );
     fireEvent.change(input, { target: { value: 'feed123' } });
 
     const button = screen.getByRole('button', { name: /Fetch/i });
