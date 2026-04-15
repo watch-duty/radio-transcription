@@ -70,14 +70,13 @@ def _raise_for_fatal_status(
     status: int, feed_id: object, source_feed_id: str
 ) -> None:
     """Raise RuntimeError or AuthError for HTTP status codes that are not retryable."""
-    jwt_token = _get_jwt_token()
     if status == 429:
         msg = f"Rate limited by Broadcastify Calls API (feed {feed_id})"
         raise RuntimeError(msg)
     if status in (401, 403):
         msg = (
             f"Auth failure {status} from Broadcastify Calls API"
-            f" (feed {feed_id}): credentials are invalid (jwt: {jwt_token})"
+            f" (feed {feed_id}): credentials are invalid"
         )
         raise AuthError(msg)
     if status == 404:
@@ -422,14 +421,6 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                 try:
                     jwt_token = await asyncio.to_thread(_get_jwt_token)
                     headers["Authorization"] = f"Bearer {jwt_token}"
-                    # On successful refresh, reset failures and retry immediately.
-                    consecutive_failures = 0
-                    logger.info(
-                        "Successfully refreshed JWT token for feed %s: new token %s",
-                        feed_id,
-                        jwt_token,
-                    )
-                    continue
                 except Exception as e:
                     logger.exception("Failed to refresh JWT token: %s", e)
                 consecutive_failures = await _handle_loop_failure(
