@@ -218,6 +218,7 @@ def publish_audio_chunk_sync(
 
     attrs: dict[str, str] = {
         "feed_id": feed_id,
+        "session_id": session_id,
         "gcs_uri": gcs_uri,
     }
     if source_type is not None:
@@ -226,6 +227,7 @@ def publish_audio_chunk_sync(
     future = publisher.publish(
         topic_path,
         audio_chunk_msg.SerializeToString(),
+        ordering_key=feed_id,
         **attrs,
     )
     return future.result()
@@ -252,6 +254,7 @@ async def publish_audio_chunk(
 
     attrs: dict[str, str] = {
         "feed_id": feed_id,
+        "session_id": session_id,
         "gcs_uri": gcs_uri,
     }
     if source_type is not None:
@@ -260,6 +263,7 @@ async def publish_audio_chunk(
     future = publisher.publish(
         topic_path,
         audio_chunk_msg.SerializeToString(),
+        ordering_key=feed_id,
         **attrs,
     )
     return await asyncio.wrap_future(future)
