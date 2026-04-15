@@ -1,5 +1,5 @@
 # Use the official Jupyter Scipy notebook as base
-FROM jupyter/scipy-notebook:latest
+FROM quay.io/jupyter/pytorch-notebook:latest
 
 # Using root because apparently non-root users can't install
 # system level deps.
