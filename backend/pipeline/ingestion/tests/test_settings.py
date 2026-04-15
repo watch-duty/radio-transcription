@@ -8,7 +8,7 @@ from backend.pipeline.ingestion.settings import NormalizerSettings
 def _required_env() -> dict[str, str]:
     return {
         "AUDIO_STAGING_BUCKET": "staging-bucket",
-        "PUBSUB_TOPIC_PATH": "projects/test-project/topics/test-topic",
+        "CONTINUOUS_PUBSUB_TOPIC_PATH": "projects/test-project/topics/test-topic",
         "ALLOYDB_HOST": "127.0.0.1",
         "ALLOYDB_USER": "radio_user",
         "ALLOYDB_DB": "radio_db",
@@ -79,6 +79,10 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.health_check_port, 9090)
         self.assertEqual(settings.health_check_startup_grace_sec, 90.0)
         self.assertEqual(
+            settings.continuous_pubsub_topic_path,
+            "projects/test-project/topics/test-topic",
+        )
+        self.assertEqual(
             settings.segmented_pubsub_topic_path,
             "projects/test-project/topics/test-segmented-topic",
         )
@@ -111,6 +115,10 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertIsNone(settings.google_cloud_project)
         self.assertEqual(settings.health_check_port, 8080)
         self.assertEqual(settings.health_check_startup_grace_sec, 120.0)
+        self.assertEqual(
+            settings.continuous_pubsub_topic_path,
+            "projects/test-project/topics/test-topic",
+        )
         self.assertIsNone(settings.segmented_pubsub_topic_path)
 
     def test_edge_case_zero_and_negative_numeric_values_parse(self) -> None:
