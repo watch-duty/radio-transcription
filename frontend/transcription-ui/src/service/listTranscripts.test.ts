@@ -37,7 +37,10 @@ describe('listTranscripts', () => {
         },
       })
     );
-    expect(transcripts).toEqual({ transcripts: mockData.transcripts, nextToken: undefined });
+    expect(transcripts).toEqual({
+      transcripts: mockData.transcripts,
+      nextToken: undefined,
+    });
   });
 
   it('should return empty array if transcripts missing in response', async () => {
