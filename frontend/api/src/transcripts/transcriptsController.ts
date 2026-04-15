@@ -67,9 +67,6 @@ export class TranscriptsController extends Controller {
     @Query() endTime?: string
   ): Promise<ListTranscriptsResponse> {
     // Get the Authentication token to allow us to call the Cloud Run function.
-    const auth = new GoogleAuth();
-    const client = await auth.getIdTokenClient(TRANSCRIPTS_API_URL!);
-
     try {
       const queryParams = new URLSearchParams();
       queryParams.append('feed_id', feedId);
@@ -78,6 +75,8 @@ export class TranscriptsController extends Controller {
       if (startTime) queryParams.append('start_time', startTime);
       if (endTime) queryParams.append('end_time', endTime);
 
+      const auth = new GoogleAuth();
+      const client = await auth.getIdTokenClient(TRANSCRIPTS_API_URL!);
       const response = await client.request({
         url: `${TRANSCRIPTS_API_URL}?${queryParams.toString()}`,
         method: 'GET',
@@ -86,6 +85,7 @@ export class TranscriptsController extends Controller {
         transcripts: TranscriptResponse[];
         next_token?: string;
       };
+
       return {
         transcripts: data.transcripts.map(convertTranscriptResponse),
         nextToken: data.next_token,

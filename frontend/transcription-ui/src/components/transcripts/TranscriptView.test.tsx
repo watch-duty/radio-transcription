@@ -50,7 +50,10 @@ describe('TranscriptView', () => {
   });
 
   it('shows loading state when fetching', async () => {
-    vi.mocked(listTranscripts).mockResolvedValueOnce([]);
+    vi.mocked(listTranscripts).mockResolvedValueOnce({
+      transcripts: [],
+      nextToken: undefined,
+    });
 
     render(<TranscriptView addAlert={mockAddAlert} />);
 
@@ -86,7 +89,10 @@ describe('TranscriptView', () => {
         evaluationDecisions: [],
       },
     ];
-    vi.mocked(listTranscripts).mockResolvedValueOnce(mockTranscripts);
+    vi.mocked(listTranscripts).mockResolvedValueOnce({
+      transcripts: mockTranscripts,
+      nextToken: undefined,
+    });
 
     render(<TranscriptView addAlert={mockAddAlert} />);
 
@@ -176,7 +182,10 @@ describe('TranscriptView', () => {
   });
 
   it('shows no transcripts found message', async () => {
-    vi.mocked(listTranscripts).mockResolvedValueOnce([]);
+    vi.mocked(listTranscripts).mockResolvedValueOnce({
+      transcripts: [],
+      nextToken: undefined,
+    });
 
     render(<TranscriptView addAlert={mockAddAlert} />);
 
@@ -190,6 +199,74 @@ describe('TranscriptView', () => {
 
     await waitFor(() => {
       expect(screen.getByText('No transcripts found.')).toBeTruthy();
+    });
+  });
+
+  it('loads more transcripts when Load More is clicked', async () => {
+    const mockTranscriptsPage1 = [
+      {
+        feedId: 'feed123',
+        transmissionId: '1',
+        transcript: 'Hello',
+        canonicalAudioUri: 'gs:://foo.flac',
+        startTimestamp: '2026-04-10T12:00:00Z',
+        endTimestamp: '2026-04-10T12:00:05Z',
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: ['gs:://foo.flac'],
+        startAudioOffset: '0s',
+        endAudioOffset: '5s',
+        evaluationDecisions: [],
+      },
+    ];
+    const mockTranscriptsPage2 = [
+      {
+        feedId: 'feed123',
+        transmissionId: '2',
+        transcript: 'World',
+        canonicalAudioUri: 'gs:://bar.flac',
+        startTimestamp: '2026-04-10T12:01:00Z',
+        endTimestamp: '2026-04-10T12:01:05Z',
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: ['gs:://bar.flac'],
+        startAudioOffset: '0s',
+        endAudioOffset: '5s',
+        evaluationDecisions: [],
+      },
+    ];
+
+    vi.mocked(listTranscripts)
+      .mockResolvedValueOnce({
+        transcripts: mockTranscriptsPage1,
+        nextToken: 'token123',
+      })
+      .mockResolvedValueOnce({
+        transcripts: mockTranscriptsPage2,
+        nextToken: undefined,
+      });
+
+    render(<TranscriptView addAlert={mockAddAlert} />);
+
+    const input = screen.getByLabelText(
+      /Select a registered feed or enter a feed ID/i
+    );
+    fireEvent.change(input, { target: { value: 'feed123' } });
+
+    const button = screen.getByRole('button', { name: /Fetch/i });
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(screen.getByText('Hello')).toBeTruthy();
+    });
+
+    const loadMoreButton = screen.getByRole('button', { name: /Load More/i });
+    expect(loadMoreButton).toBeTruthy();
+    fireEvent.click(loadMoreButton);
+
+    await waitFor(() => {
+      expect(screen.getByText('World')).toBeTruthy();
+      expect(screen.getByText('Hello')).toBeTruthy();
     });
   });
 });
