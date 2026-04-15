@@ -5,7 +5,7 @@ import { useAuth } from '../../context/AuthContext';
 import 'swagger-ui-react/swagger-ui.css';
 
 export function DocsView() {
-  const specUrl = '/openapi.yaml';
+  const specUrl = '/api/v1/docs/openapi.json';
   const { token } = useAuth();
 
   return (

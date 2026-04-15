@@ -42,23 +42,6 @@ function getOpenApiSpec() {
   return swaggerDocument;
 }
 
-// Load the generated OpenAPI spec
-try {
-  const swaggerDocument = getOpenApiSpec();
-  if (swaggerDocument) {
-    app.get('/openapi.yaml', (req, res) => {
-      // Dynamically set the server URL based on the request host to avoid hardcoding or environment variables
-      const dynamicDoc = {
-        ...swaggerDocument,
-        servers: [{ url: `${req.protocol}://${req.get('host')}` }],
-      };
-      res.json(dynamicDoc);
-    });
-  }
-} catch (error) {
-  console.error('Failed to load OpenAPI spec:', error);
-}
-
 RegisterRoutes(app);
 
 export const api = app;
