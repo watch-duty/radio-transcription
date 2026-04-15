@@ -39,7 +39,7 @@ function getOpenApiSpec() {
   const file = fs.readFileSync(specPath, 'utf8');
   const swaggerDocument = yaml.load(file) as any;
 
-  // Fix placeholders and security for local development
+  // Fix server URL placeholder
   if (swaggerDocument.servers) {
     if (!process.env.SWAGGER_SERVER_URL) {
       throw new Error(
@@ -47,18 +47,6 @@ function getOpenApiSpec() {
       );
     }
     swaggerDocument.servers = [{ url: process.env.SWAGGER_SERVER_URL }];
-  }
-
-  if (
-    swaggerDocument.components &&
-    swaggerDocument.components.securitySchemes
-  ) {
-    // Change OAuth2 to HTTP Bearer for easier local testing
-    swaggerDocument.components.securitySchemes.google_id_token = {
-      type: 'http',
-      scheme: 'bearer',
-      bearerFormat: 'JWT',
-    };
   }
 
   return swaggerDocument;
