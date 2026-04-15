@@ -4,6 +4,7 @@ import cors from 'cors';
 import * as fs from 'fs';
 import * as yaml from 'js-yaml';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
 
 import { ALLOWED_ORIGIN } from './config.js';
 import { RegisterRoutes } from './generated/routes.js';
@@ -25,8 +26,11 @@ app.use(
 
 app.use(json());
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 function getOpenApiSpec() {
-  const specPath = path.join(process.cwd(), 'openapi.yaml');
+  const specPath = path.join(__dirname, '..', 'openapi.yaml');
   if (!fs.existsSync(specPath)) {
     console.warn(`OpenAPI spec not found at ${specPath}`);
     return null;
