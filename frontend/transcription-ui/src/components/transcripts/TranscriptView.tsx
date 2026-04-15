@@ -1,9 +1,13 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import RefreshIcon from '@mui/icons-material/Refresh';
-import ThumbDownIcon from '@mui/icons-material/ThumbDown';
-import ThumbUpIcon from '@mui/icons-material/ThumbUp';
-import WarningAmber from '@mui/icons-material/WarningAmber';
 import type { AlertProps } from '@mui/material/Alert';
 import Autocomplete from '@mui/material/Autocomplete';
 import Box from '@mui/material/Box';
@@ -15,10 +19,12 @@ import ListItem from '@mui/material/ListItem';
 import Paper from '@mui/material/Paper';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
-import type { Feed, Transcript } from '@transcription/common';
+import type { Feed, Rule, Transcript } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
+import AlertTooltip from './AlertTooltip';
 import { listFeeds } from '../../service/listFeeds';
+import { listRules } from '../../service/listRules';
 import { listTranscripts } from '../../service/listTranscripts';
 import AudioPlayer from '../audio/AudioPlayer';
 
@@ -29,10 +35,14 @@ interface TranscriptViewProps {
 export function TranscriptView({ addAlert }: TranscriptViewProps) {
   const { token } = useAuth();
 
-  const initialLoadFeedsCalled = useRef(false);
+  const initialLoadCalled = useRef(false);
   const [feeds, setFeeds] = useState<Feed[]>([]);
   const [feedsLoading, setFeedsLoading] = useState<boolean>(false);
   const [, setFeedsError] = useState<string | null>(null);
+
+  const [rules, setRules] = useState<Rule[]>([]);
+  const [rulesLoading, setRulesLoading] = useState<boolean>(false);
+  const [, setRulesError] = useState<string | null>(null);
 
   const [feedId, setFeedId] = useState<string>('');
 
@@ -43,6 +53,12 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
 
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
+
+  const ruleIdToNameMap = useMemo(() => {
+    return new Map<string, string>(
+      rules.map((rule) => [rule.ruleId, rule.ruleName])
+    );
+  }, [rules]);
 
   /**
    * A callback that loads all the available feeds for the authenticated user.
@@ -73,6 +89,37 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
       }
     } finally {
       setFeedsLoading(false);
+    }
+  }, [token, addAlert]);
+
+  /**
+   * A callback that loads all the available rules for the authenticated user.
+   */
+  const loadRules = useCallback(async () => {
+    setRules([]);
+    setRulesLoading(true);
+    setRulesError(null);
+
+    try {
+      const rules = await listRules(token!);
+      setRules(rules);
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        const message = `An unexpected error occurred while trying to load rules. Error: ${err.message}`;
+        setRulesError(err.message);
+        addAlert({
+          severity: 'error',
+          children: message,
+        });
+      } else {
+        setRulesError('Unknwon error');
+        addAlert({
+          severity: 'error',
+          children: 'An unknown error occurred while trying to load rules.',
+        });
+      }
+    } finally {
+      setRulesLoading(false);
     }
   }, [token, addAlert]);
 
@@ -119,9 +166,10 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
    * We utilize the `initialLoadFeedsCalled` ref to ensure we don't initialize more than once.
    */
   useEffect(() => {
-    if (token && !initialLoadFeedsCalled.current) {
-      initialLoadFeedsCalled.current = true;
+    if (token && !initialLoadCalled.current) {
+      initialLoadCalled.current = true;
       loadFeeds();
+      loadRules();
     }
   }, [token, loadFeeds]);
 
@@ -246,9 +294,11 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
                     }}
                   >
                     <Box sx={{ width: '24px', display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
-                      {t.evaluationDecisions && t.evaluationDecisions.length > 0 && (
-                        <WarningAmber color="warning" fontSize="small" data-testid="warning-icon" />
-                      )}
+                      <AlertTooltip
+                        evaluationDecisions={t.evaluationDecisions}
+                        ruleIdToNameMap={ruleIdToNameMap}
+                        rulesLoading={rulesLoading}
+                      />
                     </Box>
                     <Typography
                       variant="caption"
@@ -277,18 +327,6 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
                     >
                       {t.transcript}
                     </Typography>
-                    <Box sx={{ display: 'flex', gap: 1 }}>
-                      <IconButton size="small" aria-label="thumbs up" disabled>
-                        <ThumbUpIcon fontSize="small" />
-                      </IconButton>
-                      <IconButton
-                        size="small"
-                        aria-label="thumbs down"
-                        disabled
-                      >
-                        <ThumbDownIcon fontSize="small" />
-                      </IconButton>
-                    </Box>
                   </ListItem>
                 </Fragment>
               );
