@@ -226,6 +226,16 @@ async def capture_icecast_stream(  # noqa: PLR0915
                             if stderr_tail
                             else "(no stderr captured)"
                         )
+                        # EXPERIMENT 1b: structured ffmpeg-crash log for the
+                        # abort-rule "> 1% ffmpeg crashes in 10 min" metric.
+                        logger.warning(
+                            {
+                                "message": "ffmpeg exited non-zero",
+                                "feed_id": str(feed_id),
+                                "feed_name": feed_name,
+                                "exit_code": exit_code,
+                            },
+                        )
                         msg = (
                             f"Feed {feed_id} ({feed_name}): "
                             f"ffmpeg exited with code {exit_code}\n"

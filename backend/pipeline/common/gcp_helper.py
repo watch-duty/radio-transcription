@@ -155,6 +155,19 @@ async def upload_audio(
                 object_name,
             )
         else:
+            # EXPERIMENT 1b: structured upload-failure log for abort-rule
+            # 5xx/429 error-rate tracking.  Dict form so jsonPayload.status
+            # is queryable in Cloud Logging.
+            logger.warning(
+                {
+                    "message": "GCS upload failed",
+                    "bucket": bucket,
+                    "object": object_name,
+                    "status": exc.status,
+                    "bytes": len(audio_chunk),
+                    "gcs_upload_ms": (time.monotonic() - t0) * 1000.0,
+                },
+            )
             raise
     else:
         # EXPERIMENT 1b: structured upload latency for ramp capacity
@@ -166,6 +179,7 @@ async def upload_audio(
                 "message": "GCS upload ok",
                 "bucket": bucket,
                 "object": object_name,
+                "bytes": len(audio_chunk),
                 "gcs_upload_ms": (time.monotonic() - t0) * 1000.0,
             },
         )
