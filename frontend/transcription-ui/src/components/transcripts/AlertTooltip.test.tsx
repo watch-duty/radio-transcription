@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 
 import AlertTooltip from './AlertTooltip';
 
@@ -29,7 +35,7 @@ describe('AlertTooltip', () => {
   it('should render null if evaluationDecisions is undefined', () => {
     const { container } = render(
       <AlertTooltip
-        evaluationDecisions={undefined as any}
+        evaluationDecisions={undefined as unknown as string[]}
         ruleIdToNameMap={mockRuleIdToNameMap}
         rulesLoading={false}
       />
@@ -56,10 +62,10 @@ describe('AlertTooltip', () => {
         rulesLoading={false}
       />
     );
-    
+
     const icon = screen.getByTestId('warning-icon');
     fireEvent.mouseOver(icon);
-    
+
     await waitFor(() => {
       expect(screen.getByText('Critical Alert Rule')).toBeTruthy();
       expect(screen.getByText('Amber Warning Rule')).toBeTruthy();
@@ -74,10 +80,10 @@ describe('AlertTooltip', () => {
         rulesLoading={true}
       />
     );
-    
+
     const icon = screen.getByTestId('warning-icon');
     fireEvent.mouseOver(icon);
-    
+
     await waitFor(() => {
       expect(screen.getByText('rule1')).toBeTruthy();
       expect(screen.getByText('rule2')).toBeTruthy();
@@ -92,10 +98,10 @@ describe('AlertTooltip', () => {
         rulesLoading={false}
       />
     );
-    
+
     const icon = screen.getByTestId('warning-icon');
     fireEvent.mouseOver(icon);
-    
+
     await waitFor(() => {
       expect(screen.getByText('unknown-rule')).toBeTruthy();
     });

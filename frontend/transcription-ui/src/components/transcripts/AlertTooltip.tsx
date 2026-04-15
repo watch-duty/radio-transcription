@@ -9,7 +9,11 @@ interface AlertTooltipProps {
   rulesLoading: boolean;
 }
 
-export function AlertTooltip({ evaluationDecisions, ruleIdToNameMap, rulesLoading }: AlertTooltipProps) {
+export function AlertTooltip({
+  evaluationDecisions,
+  ruleIdToNameMap,
+  rulesLoading,
+}: AlertTooltipProps) {
   if (!evaluationDecisions || evaluationDecisions.length === 0) {
     return null;
   }
@@ -19,8 +23,12 @@ export function AlertTooltip({ evaluationDecisions, ruleIdToNameMap, rulesLoadin
       title={
         <Box sx={{ p: 0.5 }}>
           {evaluationDecisions.map((ruleId) => (
-            <Typography key={ruleId} variant="caption" sx={{ display: 'block' }}>
-              {rulesLoading ? ruleId : (ruleIdToNameMap.get(ruleId) || ruleId)}
+            <Typography
+              key={ruleId}
+              variant="caption"
+              sx={{ display: 'block' }}
+            >
+              {rulesLoading ? ruleId : ruleIdToNameMap.get(ruleId) || ruleId}
             </Typography>
           ))}
         </Box>
@@ -31,7 +39,11 @@ export function AlertTooltip({ evaluationDecisions, ruleIdToNameMap, rulesLoadin
         sx={{ display: 'inline-flex' }}
         aria-label="view triggered rules"
       >
-        <WarningAmber color="warning" fontSize="small" data-testid="warning-icon" />
+        <WarningAmber
+          color="warning"
+          fontSize="small"
+          data-testid="warning-icon"
+        />
       </Box>
     </Tooltip>
   );

@@ -23,11 +23,11 @@ import { useTheme } from '@mui/material/styles';
 import type { Feed, Rule, Transcript } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
-import AlertTooltip from './AlertTooltip';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { listTranscripts } from '../../service/listTranscripts';
 import AudioPlayer from '../audio/AudioPlayer';
+import AlertTooltip from './AlertTooltip';
 
 interface TranscriptViewProps {
   addAlert: (alert: AlertProps) => void;
@@ -204,7 +204,7 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
       loadFeeds();
       loadRules();
     }
-  }, [token, loadFeeds]);
+  }, [token, loadFeeds, loadRules]);
 
   return (
     <Box
@@ -326,7 +326,14 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
                       py: 1.5,
                     }}
                   >
-                    <Box sx={{ width: '24px', display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
+                    <Box
+                      sx={{
+                        width: '24px',
+                        display: 'flex',
+                        justifyContent: 'center',
+                        flexShrink: 0,
+                      }}
+                    >
                       <AlertTooltip
                         evaluationDecisions={t.evaluationDecisions}
                         ruleIdToNameMap={ruleIdToNameMap}
