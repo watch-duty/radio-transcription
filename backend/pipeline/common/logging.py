@@ -17,7 +17,11 @@ def setup_logging() -> None:
     """
     if is_gcp_env():
         client = cloud_logging.Client()
-        client.setup_logging()
+        # EXPERIMENT 1b Change 7: explicit INFO so ingestion lifecycle
+        # messages (ffmpeg starts, lease transitions, GCS uploads) surface
+        # in Cloud Logging.  Without log_level, the root logger stays at
+        # WARNING and operators are blind during the ramp.
+        client.setup_logging(log_level=logging.INFO)
     else:
         # Standardized format for local development or unsupported environments
         logging.basicConfig(

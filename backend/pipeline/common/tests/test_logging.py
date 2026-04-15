@@ -21,12 +21,16 @@ class TestLogging(TestCase):
             # First call should initialize cloud logging
             setup_logging()
             mock_cloud_logging.Client.assert_called_once()
-            mock_client_inst.setup_logging.assert_called_once()
+            mock_client_inst.setup_logging.assert_called_once_with(
+                log_level=logging.INFO
+            )
 
             # Second call should do nothing (idempotency)
             setup_logging()
             mock_cloud_logging.Client.assert_called_once()
-            mock_client_inst.setup_logging.assert_called_once()
+            mock_client_inst.setup_logging.assert_called_once_with(
+                log_level=logging.INFO
+            )
 
     @mock.patch("logging.basicConfig")
     def test_setup_logging_local(self, mock_basic_config) -> None:

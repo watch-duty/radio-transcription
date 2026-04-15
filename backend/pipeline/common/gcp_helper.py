@@ -4,6 +4,7 @@ import asyncio
 import datetime
 import logging
 import os
+import time
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
@@ -139,6 +140,7 @@ async def upload_audio(
         },
     )
 
+    t0 = time.monotonic()
     try:
         await storage.upload(bucket, object_name, audio_chunk, **upload_kwargs)
     except aiohttp.ClientResponseError as exc:
@@ -154,6 +156,18 @@ async def upload_audio(
             )
         else:
             raise
+    else:
+        # EXPERIMENT 1b: structured upload latency for ramp capacity
+        # analysis.  Parsed per-step during the ramp to compute p95 by
+        # source_type.  See EXPERIMENT_1B_PLAN.md Step 2 (measurement h).
+        logger.info(
+            "GCS upload ok",
+            extra={
+                "bucket": bucket,
+                "object": object_name,
+                "gcs_upload_ms": (time.monotonic() - t0) * 1000.0,
+            },
+        )
     return f"gs://{bucket}/{object_name}"
 
 
