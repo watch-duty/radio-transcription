@@ -3,21 +3,22 @@ import express from 'express';
 import { existsSync, readFileSync } from 'fs';
 import { load } from 'js-yaml';
 import { dirname, join } from 'path';
-import { Controller, Get, Hidden, Request, Route, Security, Tags } from 'tsoa';
+import { Controller, Get, Request, Route, Security, Tags } from 'tsoa';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+export interface OpenApiSpec {
+  [key: string]: unknown;
+}
+
 @Route('api/v1/docs')
 @Tags('Docs')
 export class DocsController extends Controller {
-  @Hidden()
   @Get('openapi.json')
   @Security('google_id_token')
-  public async getSpec(
-    @Request() request: express.Request
-  ): Promise<Record<string, unknown>> {
+  public async getSpec(@Request() request: express.Request): Promise<OpenApiSpec> {
     // __dirname is frontend/api/src/docs
     // .. goes to src
     // .. goes to api root
