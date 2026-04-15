@@ -35,24 +35,29 @@ function getOpenApiSpec() {
     console.warn(`OpenAPI spec not found at ${specPath}`);
     return null;
   }
-  
+
   const file = fs.readFileSync(specPath, 'utf8');
   const swaggerDocument = yaml.load(file) as any;
 
   // Fix placeholders and security for local development
   if (swaggerDocument.servers) {
     if (!process.env.SWAGGER_SERVER_URL) {
-      throw new Error('SWAGGER_SERVER_URL environment variable is required but not set.');
+      throw new Error(
+        'SWAGGER_SERVER_URL environment variable is required but not set.'
+      );
     }
     swaggerDocument.servers = [{ url: process.env.SWAGGER_SERVER_URL }];
   }
 
-  if (swaggerDocument.components && swaggerDocument.components.securitySchemes) {
+  if (
+    swaggerDocument.components &&
+    swaggerDocument.components.securitySchemes
+  ) {
     // Change OAuth2 to HTTP Bearer for easier local testing
     swaggerDocument.components.securitySchemes.google_id_token = {
       type: 'http',
       scheme: 'bearer',
-      bearerFormat: 'JWT'
+      bearerFormat: 'JWT',
     };
   }
 
