@@ -10,10 +10,12 @@ from collections.abc import AsyncIterator, Callable
 
 import aiohttp
 import asyncpg
+from aiohttp import web
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
-from backend.pipeline.ingestion import quarantine_telemetry
+from backend.pipeline.ingestion import health_server, quarantine_telemetry
+from backend.pipeline.ingestion.health_server import HealthState
 from backend.pipeline.ingestion.models import CapturedChunk
 from backend.pipeline.ingestion.retry import (
     LeaseExpiredError,
@@ -107,6 +109,10 @@ class NormalizerRuntime:
         self._heartbeat_store: FeedStore = None  # type: ignore # set in _main()
         self._gcs_client = gcs_client.GcsClient()
         self._pubsub_client = pubsub_client.PubSubClient()
+        # Shared state published to the /healthz handler. feed_tasks is held
+        # by reference to _feed_tasks so len() reflects live leasing state.
+        self._health_state = HealthState(feed_tasks=self._feed_tasks)
+        self._health_runner: web.AppRunner | None = None
 
     # -- Entry point ------------------------------------------------------
 
@@ -173,6 +179,14 @@ class NormalizerRuntime:
         self._heartbeat_thread.start()
 
         quarantine_telemetry.configure(settings.google_cloud_project)
+
+        # Start /healthz HTTP server. Runs on the same event loop as the
+        # leasing/heartbeat coroutines — this is load-bearing: if the loop is
+        # wedged, the handler stops responding and GCP autohealing takes over.
+        self._health_runner = await health_server.start(
+            settings,
+            self._health_state,
+        )
 
         try:
             await self._leasing_loop()
@@ -562,6 +576,15 @@ class NormalizerRuntime:
         Batched renewal reduces heartbeat DB load from ~17 qps
         (250 individual queries / 15s) to ~0.07 qps (1 query / 15s).
         """
+        # Stamp at dispatch, NOT on DB success. /healthz gate 1 is a
+        # local-process-health check (spec: "must not check AlloyDB
+        # connectivity"); stamping post-DB would make a transient AlloyDB
+        # outage age every worker's stamp in lockstep, causing the autohealer
+        # to recreate the entire fleet simultaneously — a thundering herd
+        # that makes recovery worse. Stamping here proves the event loop
+        # dispatched the cycle, which is the true local-health signal.
+        self._health_state.last_heartbeat_tick = time.monotonic()
+
         active = dict(self._feed_tasks.items())
         if not active:
             return
@@ -632,13 +655,29 @@ class NormalizerRuntime:
 
     async def _shutdown_sequence(self) -> None:
         """
-        Orderly teardown: cancel feed tasks, stop heartbeat thread,
-        close GCS client and database pools.
+        Orderly teardown: stop /healthz HTTP server, cancel feed tasks,
+        stop heartbeat thread, close GCS client and database pools.
         """
         logger.info(
             "Shutting down -- %d active feed tasks",
             len(self._feed_tasks),
         )
+        # Stop the /healthz listener early so external probes get a clean
+        # connection refusal (port closed) rather than hanging on a socket
+        # whose event loop is about to drain.
+        # Wrapped in try/except so a cleanup failure here doesn't skip the
+        # heartbeat-thread stop and lease release below — the process is
+        # exiting anyway, but we still want to drop leases so another worker
+        # can pick them up quickly.
+        if self._health_runner is not None:
+            try:
+                await self._health_runner.cleanup()
+            except Exception:
+                logger.warning(
+                    "Failed to cleanly shut down /healthz server — continuing",
+                    exc_info=True,
+                )
+
         # Stop heartbeat FIRST to prevent it from seeing released feeds as
         # fence violations during the teardown window.
         self._thread_stop.set()
