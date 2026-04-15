@@ -81,8 +81,15 @@ async def _drain_stderr(
         logger.warning("stderr drain failed", exc_info=True)
 
 
+# EXPERIMENT 1b: override extension to match stream-copy output.
+# bcfy_feeds sources are MP3; stream-copy preserves that format.
+# The AUDIO_FORMAT constant ("flac") still governs the transcription
+# pipeline — this override only affects the ingestion-side filenames.
+_ICECAST_CHUNK_EXT = "mp3"
+
+
 def _segment_path(directory: Path, index: int) -> Path:
-    return directory / f"chunk_{index:06d}.{AUDIO_FORMAT}"
+    return directory / f"chunk_{index:06d}.{_ICECAST_CHUNK_EXT}"
 
 
 async def capture_icecast_stream(  # noqa: PLR0915
@@ -128,7 +135,7 @@ async def capture_icecast_stream(  # noqa: PLR0915
 
     with tempfile.TemporaryDirectory(prefix="icecast_segments_") as tmp_dir:
         segment_dir = Path(tmp_dir)
-        segment_pattern = str(segment_dir / f"chunk_%06d.{AUDIO_FORMAT}")
+        segment_pattern = str(segment_dir / f"chunk_%06d.{_ICECAST_CHUNK_EXT}")
 
         process = await _create_ffmpeg_process(
             url, segment_pattern, auth_header
@@ -286,6 +293,12 @@ async def _create_ffmpeg_process(
     # 4. -reconnect 1 / -reconnect_at_eof 1 / -reconnect_streamed 1: Enables native
     #    HTTP/TCP reconnects for short internet drops. The external Python timeout
     #    (30s) acts as a secondary dead-man's switch if ffmpeg stalls.
+    # EXPERIMENT 1b: stream-copy mode — no decode/resample/encode.
+    # Input MP3 bytes are copied verbatim into MP3 segments on disk.
+    # Trades FLAC output (decoded, resampled 16kHz mono) for native-format
+    # MP3 passthrough. Transcription downstream must accept MP3 input, OR
+    # accept that this experiment branch is not shippable as-is.
+    # See: model/data/wildfire_catalog/EXPERIMENT_1B_PLAN.md §0.2 Change 1
     return await asyncio.create_subprocess_exec(
         "ffmpeg", "-nostdin",
         "-reconnect", "1",
@@ -298,14 +311,10 @@ async def _create_ffmpeg_process(
         "-headers", auth_header,
         "-i", url,
         "-vn", "-sn", "-dn",
-        "-acodec", AUDIO_FORMAT,
-        "-ar", str(SAMPLE_RATE_HZ),
-        "-sample_fmt", SAMPLE_FORMAT,
-        "-ac", str(NUM_AUDIO_CHANNELS),
-        "-compression_level", "0",
+        "-c:a", "copy",                  # stream-copy — no transcoding
         "-f", "segment",
         "-segment_time", str(CHUNK_DURATION_SECONDS),
-        "-segment_format", AUDIO_FORMAT,
+        "-segment_format", "mp3",         # MP3 output (was FLAC)
         "-reset_timestamps", "1",
         "-segment_start_number", "0",
         segment_pattern,

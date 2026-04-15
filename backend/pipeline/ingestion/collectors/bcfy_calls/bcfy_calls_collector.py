@@ -223,11 +223,12 @@ async def _download_and_convert_audio(  # noqa: PLR0911
                     return None
 
                 audio_bytes = await audio_resp.read()
-                return await asyncio.to_thread(
-                    convert_to_flac,
-                    audio_bytes,
-                    _get_audio_format(audio_url),
-                )
+                # EXPERIMENT 1b: skip the FLAC conversion — store the
+                # downloaded MP3 bytes verbatim to measure the "no
+                # conversion" per-feed CPU cost.  See EXPERIMENT_1B_PLAN.md
+                # §0.2 Change 2.  Downstream transcription must accept
+                # MP3 for this branch to be production-shippable.
+                return audio_bytes
         except RuntimeError:
             raise
         except Exception as e:

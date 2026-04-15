@@ -142,29 +142,19 @@ async def openmhz_collector(
                         if m4a_bytes is None:
                             continue
 
-                        try:
-                            flac_bytes = await asyncio.to_thread(
-                                convert_to_flac, m4a_bytes, "m4a"
-                            )
-                        except Exception:
-                            logger.warning(
-                                "FLAC conversion failed: "
-                                "short_name=%s call_id=%s",
-                                short_name,
-                                call.id,
-                            )
-                            continue
-
+                        # EXPERIMENT 1b: skip the FLAC conversion — yield
+                        # the raw M4A bytes.  See EXPERIMENT_1B_PLAN.md
+                        # §0.2 Change 3.  Downstream transcription must
+                        # accept M4A for this branch to be shippable.
                         logger.debug(
                             "Audio ready: short_name=%s call_id=%s "
-                            "m4a_bytes=%d flac_bytes=%d",
+                            "m4a_bytes=%d (stream-copy mode)",
                             short_name,
                             call.id,
                             len(m4a_bytes),
-                            len(flac_bytes),
                         )
                         yield CapturedChunk(
-                            audio_bytes=flac_bytes,
+                            audio_bytes=m4a_bytes,
                             chunk_start_time=call.time,
                             chunk_end_time=call.time
                             + datetime.timedelta(seconds=call.length_sec),

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
+import os
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
@@ -207,6 +208,12 @@ def publish_audio_chunk_sync(
     This is the synchronous core used by both sync callers (e.g. Echo
     ingestion) and the async wrapper below.
     """
+    # EXPERIMENT 1b: mirror the DISABLE_PUBSUB short-circuit from the
+    # async path for defense in depth.  Echo is not part of this
+    # experiment, but the flag should be honored uniformly.
+    if os.environ.get("DISABLE_PUBSUB", "").lower() == "true":
+        return "pubsub-disabled"
+
     audio_chunk_msg = AudioChunk(gcs_uri=gcs_uri)
     audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
     audio_chunk_msg.session_id = session_id
@@ -240,6 +247,12 @@ async def publish_audio_chunk(
     Leverages asyncio.wrap_future to await the background gRPC thread pool
     non-blockingly, ensuring other asyncio tasks remain responsive.
     """
+    # EXPERIMENT 1b: short-circuit when DISABLE_PUBSUB=true.  Lets the
+    # experiment VM run end-to-end ingestion without writing to the
+    # production Pub/Sub topic.  See EXPERIMENT_1B_PLAN.md §0.2 Change 4.
+    if os.environ.get("DISABLE_PUBSUB", "").lower() == "true":
+        return "pubsub-disabled"
+
     publisher = pubsub_client.get_publisher()
     audio_chunk_msg = AudioChunk(gcs_uri=gcs_uri)
     audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)

@@ -188,6 +188,28 @@ class NormalizerRuntime:
             self._health_state,
         )
 
+        # EXPERIMENT 1b: start the event-loop health monitor as a
+        # background task if EXPERIMENT_1B_EVENT_LOOP_MONITOR=true.
+        # Logs loop latency and sleep drift every 10 s to stderr (JSONL).
+        # See model/data/wildfire_catalog/EXPERIMENT_1B_PLAN.md §0.2 Change 5.
+        self._event_loop_monitor_task: asyncio.Task | None = None
+        if os.environ.get(
+            "EXPERIMENT_1B_EVENT_LOOP_MONITOR", ""
+        ).lower() == "true":
+            from backend.pipeline.ingestion.event_loop_monitor import (  # noqa: PLC0415
+                monitor_event_loop,
+            )
+            interval_s = float(
+                os.environ.get("EXPERIMENT_1B_MONITOR_INTERVAL_SEC", "10.0")
+            )
+            self._event_loop_monitor_task = asyncio.create_task(
+                monitor_event_loop(interval_s),
+                name="event-loop-monitor",
+            )
+            logger.info(
+                "Event-loop monitor enabled (interval=%.1fs)", interval_s
+            )
+
         try:
             await self._leasing_loop()
         finally:
@@ -677,6 +699,11 @@ class NormalizerRuntime:
                     "Failed to cleanly shut down /healthz server — continuing",
                     exc_info=True,
                 )
+
+        # EXPERIMENT 1b: cancel the event-loop monitor. No state to flush;
+        # cancelling early prevents spammy drift logs during teardown.
+        if getattr(self, "_event_loop_monitor_task", None) is not None:
+            self._event_loop_monitor_task.cancel()
 
         # Stop heartbeat FIRST to prevent it from seeing released feeds as
         # fence violations during the teardown window.
