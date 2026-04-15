@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-
 import datetime
 import uuid
 from dataclasses import dataclass
@@ -169,6 +168,7 @@ class TranscriptStore:
             uid = uuid.UUID(feed_id)
         except ValueError:
             return PaginatedTranscripts([], None)
+
         cursor_ts = None
         cursor_uid = None
         if next_token:
@@ -183,6 +183,7 @@ class TranscriptStore:
             end_time,
             limit + 1,
         )
+
         has_more = len(rows) > limit
         if has_more:
             rows = rows[:limit]

@@ -55,10 +55,12 @@ async def test_list_transcripts_pagination(
     t1 = datetime.datetime(2026, 1, 1, 10, 0, 0, tzinfo=datetime.UTC)
     t2 = datetime.datetime(2026, 1, 1, 10, 1, 0, tzinfo=datetime.UTC)
     t3 = datetime.datetime(2026, 1, 1, 10, 2, 0, tzinfo=datetime.UTC)
+
     await _insert_transcript(db_pool, uuid.uuid4(), feed_id, t1)
     await _insert_transcript(db_pool, uuid.uuid4(), feed_id, t2)
     await _insert_transcript(db_pool, uuid.uuid4(), feed_id, t3)
     # Page 1: Limit 2
+
     result = await store.list_transcripts_by_feed_id(str(feed_id), limit=2)
     assert len(result.transcripts) == 2
     assert result.next_token is not None
