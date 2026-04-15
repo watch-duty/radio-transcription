@@ -414,8 +414,9 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
 
             except AuthError:
                 logger.warning(
-                    "Auth failure (401/403) for feed %s, refreshing token.",
+                    "Auth failure (401/403) for feed %s and token %s, refreshing token.",
                     feed_id,
+                    jwt_token,
                 )
                 try:
                     jwt_token = await asyncio.to_thread(_get_jwt_token)

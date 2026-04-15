@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import base64
+import datetime
 import uuid
+from dataclasses import dataclass
 
 import asyncpg
 import asyncpg.exceptions
@@ -11,6 +14,12 @@ from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
 )
 
 from . import transcript_queries
+
+
+@dataclass
+class PaginatedTranscripts:
+    transcripts: list[EvaluatedTranscribedAudio]
+    next_token: str | None
 
 
 class TranscriptStore:
@@ -59,6 +68,23 @@ class TranscriptStore:
             msg.evaluation_decisions.extend(row["evaluation_decisions"])
 
         return msg
+
+    def _decode_cursor(
+        self, next_token: str
+    ) -> tuple[datetime.datetime, uuid.UUID]:
+        """Decode a base64 pagination token into a timestamp and UUID."""
+        try:
+            decoded = base64.b64decode(next_token).decode("utf-8")
+            ts_str, uid_str = decoded.split("|")
+            return datetime.datetime.fromisoformat(ts_str), uuid.UUID(uid_str)
+        except Exception as e:
+            msg = f"Invalid next_token: {e}"
+            raise ValueError(msg)
+
+    def _encode_cursor(self, ts: datetime.datetime, uid: uuid.UUID) -> str:
+        """Encode a timestamp and UUID into a base64 pagination token."""
+        token_str = f"{ts.isoformat()}|{uid}"
+        return base64.b64encode(token_str.encode("utf-8")).decode("utf-8")
 
     async def create_transcript(
         self, transcript: EvaluatedTranscribedAudio
@@ -130,23 +156,83 @@ class TranscriptStore:
         return self._row_to_proto(row)
 
     async def list_transcripts_by_feed_id(
-        self, feed_id: str
-    ) -> list[EvaluatedTranscribedAudio]:
-        """Lists all transcripts for a specific feed ID."""
+        self,
+        feed_id: str,
+        limit: int = 100,
+        next_token: str | None = None,
+        start_time: datetime.datetime | None = None,
+        end_time: datetime.datetime | None = None,
+    ) -> PaginatedTranscripts:
+        """Lists transcripts for a specific feed ID with pagination and time window."""
         try:
             uid = uuid.UUID(feed_id)
         except ValueError:
-            return []
+            return PaginatedTranscripts([], None)
+
+        cursor_ts = None
+        cursor_uid = None
+        if next_token:
+            cursor_ts, cursor_uid = self._decode_cursor(next_token)
 
         rows = await self._pool.fetch(
-            transcript_queries.GET_TRANSCRIPTS_BY_FEED_SQL, uid
+            transcript_queries.GET_TRANSCRIPTS_BY_FEED_SQL,
+            uid,
+            cursor_ts,
+            cursor_uid,
+            start_time,
+            end_time,
+            limit + 1,
         )
-        return [self._row_to_proto(row) for row in rows]
 
-    async def list_transcripts(self) -> list[EvaluatedTranscribedAudio]:
-        """Lists all transcripts ordered by end_timestamp descending."""
-        rows = await self._pool.fetch(transcript_queries.LIST_TRANSCRIPTS_SQL)
-        return [self._row_to_proto(row) for row in rows]
+        has_more = len(rows) > limit
+        if has_more:
+            rows = rows[:limit]
+            last_row = rows[-1]
+            new_next_token = self._encode_cursor(
+                last_row["end_timestamp"], last_row["transmission_id"]
+            )
+        else:
+            new_next_token = None
+
+        return PaginatedTranscripts(
+            [self._row_to_proto(row) for row in rows], new_next_token
+        )
+
+    async def list_transcripts(
+        self,
+        limit: int = 100,
+        next_token: str | None = None,
+        start_time: datetime.datetime | None = None,
+        end_time: datetime.datetime | None = None,
+    ) -> PaginatedTranscripts:
+        """Lists all transcripts with pagination and time window."""
+        cursor_ts = None
+        cursor_uid = None
+        if next_token:
+            cursor_ts, cursor_uid = self._decode_cursor(next_token)
+
+        rows = await self._pool.fetch(
+            transcript_queries.LIST_TRANSCRIPTS_SQL,
+            cursor_ts,
+            cursor_uid,
+            start_time,
+            end_time,
+            limit + 1,
+        )
+
+        has_more = len(rows) > limit
+        if has_more:
+            rows = rows[:limit]
+            last_row = rows[-1]
+            new_next_token = self._encode_cursor(
+                last_row["end_timestamp"], last_row["transmission_id"]
+            )
+        else:
+            new_next_token = None
+
+        return PaginatedTranscripts(
+            [self._row_to_proto(row) for row in rows], new_next_token
+        )
 
     async def delete_transcript(self, transmission_id: str) -> bool:
         """Deletes a transcript."""

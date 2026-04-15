@@ -26,22 +26,24 @@ describe('listTranscripts', () => {
   });
 
   it('should return converted data on success', async () => {
-    const mockBackendResponse = [
-      {
-        feed_id: 'test',
-        transmission_id: '1',
-        transcript: 'hello',
-        start_timestamp: '1',
-        end_timestamp: '2',
-        missing_prior_context: false,
-        missing_post_context: false,
-        source_audio_uris: [],
-        canonical_audio_uri: '',
-        start_audio_offset: '0',
-        end_audio_offset: '0',
-        evaluation_decisions: [],
-      },
-    ];
+    const mockBackendResponse = {
+      transcripts: [
+        {
+          feed_id: 'test',
+          transmission_id: '1',
+          transcript: 'hello',
+          start_timestamp: '1',
+          end_timestamp: '2',
+          missing_prior_context: false,
+          missing_post_context: false,
+          source_audio_uris: [],
+          canonical_audio_uri: '',
+          start_audio_offset: '0',
+          end_audio_offset: '0',
+          evaluation_decisions: [],
+        },
+      ],
+    };
 
     const expectedResult = {
       transcripts: [

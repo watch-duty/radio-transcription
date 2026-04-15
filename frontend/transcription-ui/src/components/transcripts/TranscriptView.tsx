@@ -44,7 +44,9 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
 
-  // Load all feeds on startup.
+  /**
+   * A callback that loads all the available feeds for the authenticated user.
+   */
   const loadFeeds = useCallback(async () => {
     setFeeds([]);
     setFeedsLoading(true);
@@ -74,13 +76,9 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
     }
   }, [token, addAlert]);
 
-  useEffect(() => {
-    if (token && !initialLoadFeedsCalled.current) {
-      initialLoadFeedsCalled.current = true;
-      loadFeeds();
-    }
-  }, [token, loadFeeds]);
-
+  /**
+   * A callback that loads the transcripts for the specified feed ID.
+   */
   const handleFetch = async () => {
     if (!feedId.trim()) return;
     setHasSearched(true);
@@ -115,6 +113,17 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
   const onPlay = (transmissionId: string | null) => {
     setCurrentlyPlayingTransmissionId(transmissionId);
   };
+
+  /**
+   * This effect only loads the feeds once when the token is available.
+   * We utilize the `initialLoadFeedsCalled` ref to ensure we don't initialize more than once.
+   */
+  useEffect(() => {
+    if (token && !initialLoadFeedsCalled.current) {
+      initialLoadFeedsCalled.current = true;
+      loadFeeds();
+    }
+  }, [token, loadFeeds]);
 
   return (
     <Box
@@ -155,7 +164,7 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
           renderInput={(params) => (
             <TextField
               {...params}
-              label="Select a registered feed or enter a feed ID"
+              label="Select a registered feed or enter a feed ID/name"
             />
           )}
           renderOption={(props, option) => {
