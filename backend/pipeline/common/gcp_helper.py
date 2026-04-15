@@ -158,11 +158,12 @@ async def upload_audio(
             raise
     else:
         # EXPERIMENT 1b: structured upload latency for ramp capacity
-        # analysis.  Parsed per-step during the ramp to compute p95 by
-        # source_type.  See EXPERIMENT_1B_PLAN.md Step 2 (measurement h).
+        # analysis.  Pass a dict as the message so CloudLoggingHandler
+        # lands the fields in jsonPayload (extra={} gets stripped).
+        # See EXPERIMENT_1B_PLAN.md Step 2 (measurement h).
         logger.info(
-            "GCS upload ok",
-            extra={
+            {
+                "message": "GCS upload ok",
                 "bucket": bucket,
                 "object": object_name,
                 "gcs_upload_ms": (time.monotonic() - t0) * 1000.0,
