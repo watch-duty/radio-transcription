@@ -8,6 +8,7 @@ import {
   Extension,
   Get,
   Path,
+  Query,
   Res,
   Response,
   Route,
@@ -59,21 +60,35 @@ export class TranscriptsController extends Controller {
   @Extension('x-google-backend', 'radio-transcription-api')
   public async listTranscripts(
     @Path() feedId: string,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    @Res() notFound: TsoaResponse<404, { message: string }>
+    @Res() notFound: TsoaResponse<404, { message: string }>,
+    @Query() limit?: number,
+    @Query() nextToken?: string,
+    @Query() startTime?: string,
+    @Query() endTime?: string
   ): Promise<ListTranscriptsResponse> {
     // Get the Authentication token to allow us to call the Cloud Run function.
-    const auth = new GoogleAuth();
-    const client = await auth.getIdTokenClient(TRANSCRIPTS_API_URL!);
-
     try {
+      const queryParams = new URLSearchParams();
+      queryParams.append('feed_id', feedId);
+      if (limit) queryParams.append('limit', limit.toString());
+      if (nextToken) queryParams.append('next_token', nextToken);
+      if (startTime) queryParams.append('start_time', startTime);
+      if (endTime) queryParams.append('end_time', endTime);
+
+      const auth = new GoogleAuth();
+      const client = await auth.getIdTokenClient(TRANSCRIPTS_API_URL!);
       const response = await client.request({
-        url: `${TRANSCRIPTS_API_URL}?feed_id=${feedId}`,
+        url: `${TRANSCRIPTS_API_URL}?${queryParams.toString()}`,
         method: 'GET',
       });
-      const data = response.data as TranscriptResponse[];
+      const data = response.data as {
+        transcripts: TranscriptResponse[];
+        next_token?: string;
+      };
+
       return {
-        transcripts: data.map(convertTranscriptResponse),
+        transcripts: data.transcripts.map(convertTranscriptResponse),
+        nextToken: data.next_token,
       };
     } catch (error: unknown) {
       console.error('Error fetching transcript:', error);

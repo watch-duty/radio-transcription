@@ -71,9 +71,11 @@ async def test_transcripts_api(
     # 2. List transcripts and verify it's there
     response = await api_client.get("/transcripts", timeout=10.0)
     assert response.status_code == 200, f"Failed to list: {response.text}"
-    transcripts_list = response.json()
+    data = response.json()
+    assert "transcripts" in data
     found = any(
-        item["transmission_id"] == transmission_id for item in transcripts_list
+        item["transmission_id"] == transmission_id
+        for item in data["transcripts"]
     )
     assert found, f"Created transcript {transmission_id} not found in listing"
 

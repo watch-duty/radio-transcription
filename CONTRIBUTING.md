@@ -194,12 +194,12 @@ yarn --cwd frontend/api local
 
 _Building & Running Locally_
 
-1. The frontend UI uses `dotenv` to configure the environment, which looks for the file `.env.local` in the `frontend/transcription-ui` directory. Either copy `.env.example` to `.env.local`, or create it from scratch using the below command:
+1. The frontend UI uses `dotenv` to configure the environment, which looks for the file `.env.local-dev` in the `frontend/transcription-ui` directory. Vite reserves "local" for itself so we are using "local-dev" instead. Either copy `.env.example` to `.env.local-dev`, or create it from scratch using the below command:
 
 ```bash
 # Assuming you're running from the top level of the root dir.
 # Run this command if you are running this for the first time.
-cat <<EOF > frontend/transcription-ui/.env.local
+cat <<EOF > frontend/transcription-ui/.env.local-dev
 VITE_GOOGLE_AUTH_CLIENT_ID=<your Google OAuth 2.0 Client ID for your project, found under Google Auth Platform>
 VITE_API_BASE_URL=<your URL for the API, leave empty to use the local proxy>
 EOF
