@@ -604,21 +604,6 @@ paths:
           schema:
             type: string
       x-google-backend: radio-transcription-api
-  /api/v1/docs/openapi.json:
-    get:
-      operationId: GetSpec
-      responses:
-        "200":
-          description: Ok
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Record_string.unknown_"
-      tags:
-        - Docs
-      security:
-        - google_id_token: []
-      parameters: []
 servers:
   - url: https://${radio_transcription_api_service_name}/
     x-google-endpoint:

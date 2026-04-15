@@ -3,7 +3,7 @@ import express from 'express';
 import { existsSync, readFileSync } from 'fs';
 import { load } from 'js-yaml';
 import { dirname, join } from 'path';
-import { Controller, Get, Request, Route, Security, Tags } from 'tsoa';
+import { Controller, Get, Hidden, Request, Route, Security, Tags } from 'tsoa';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -12,6 +12,7 @@ const __dirname = dirname(__filename);
 @Route('api/v1/docs')
 @Tags('Docs')
 export class DocsController extends Controller {
+  @Hidden()
   @Get('openapi.json')
   @Security('google_id_token')
   public async getSpec(
