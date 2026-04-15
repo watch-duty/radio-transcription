@@ -120,7 +120,7 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
   const handleLoadMore = async () => {
     if (!transcriptNextToken || !feedId.trim()) return;
     setLoadingMoreTranscripts(true);
-    setError(null);
+    setTranscriptsError(null);
 
     try {
       const response = await listTranscripts(
@@ -133,9 +133,9 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
       setTranscriptNextToken(response.nextToken);
     } catch (err: unknown) {
       if (err instanceof Error) {
-        setError(err.message);
+        setTranscriptsError(err.message);
       } else {
-        setError('An unknown error occurred');
+        setTranscriptsError('An unknown error occurred');
       }
     } finally {
       setLoadingMoreTranscripts(false);
