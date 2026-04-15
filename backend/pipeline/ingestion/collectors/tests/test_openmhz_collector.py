@@ -182,10 +182,8 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
 
     @patch(f"{_COL_MOD}.websocket_transport")
     @patch(f"{_COL_MOD}._download_m4a")
-    @patch(f"{_COL_MOD}.convert_to_flac")
     async def test_session_id_consistent_within_connection(
         self,
-        mock_convert: MagicMock,
         mock_download: AsyncMock,
         mock_transport: MagicMock,
     ) -> None:
@@ -193,7 +191,6 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         calls = [_make_call(call_id="c1"), _make_call(call_id="c2")]
         mock_transport.side_effect = lambda *a, **kw: _mock_transport(calls)
         mock_download.return_value = b"m4a"
-        mock_convert.return_value = b"flac"
 
         shutdown = asyncio.Event()
         results = []
@@ -211,12 +208,10 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
 
     @patch(f"{_COL_MOD}.websocket_transport")
     @patch(f"{_COL_MOD}._download_m4a")
-    @patch(f"{_COL_MOD}.convert_to_flac")
     @patch(f"{_COL_MOD}._sleep_or_shutdown", new_callable=AsyncMock)
     async def test_session_id_changes_on_reconnect(
         self,
         mock_sleep: AsyncMock,
-        mock_convert: MagicMock,
         mock_download: AsyncMock,
         mock_transport: MagicMock,
     ) -> None:
@@ -244,7 +239,6 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
 
         mock_transport.side_effect = _transport_factory
         mock_download.return_value = b"m4a"
-        mock_convert.return_value = b"flac"
         mock_sleep.return_value = False
 
         shutdown = asyncio.Event()

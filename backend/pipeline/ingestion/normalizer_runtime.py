@@ -331,6 +331,7 @@ class NormalizerRuntime:
         return resolve_topic_path(
             feed["source_type"], self._normalizer_settings
         )
+
     async def _process_feed(self, feed: LeasedFeed) -> None:  # noqa: PLR0912, PLR0915
         """
         Run the capture-upload-bookmark pipeline for a single feed.
