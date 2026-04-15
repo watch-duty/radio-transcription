@@ -50,6 +50,7 @@ class TranscriptionResult:
     """Intermediate transcription result holding payload data before Protobuf serialization, bypassing Protobuf pickling issues during Dataflow shuffle."""
 
     feed_id: str
+    feed_name: str
     contributing_audio_uris: list[str]
     transcript: str
     time_range: TimeRange
@@ -60,7 +61,6 @@ class TranscriptionResult:
     end_audio_offset_ms: int | None = None
     canonical_audio_uri: str | None = None
     playback_audio_uri: str | None = None
-    feed_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -161,6 +161,7 @@ class FlushRequest:
 
     buffer: AudioSegment
     feed_id: str
+    feed_name: str
     contributing_audio_uris: list[str]
     time_range: TimeRange
     transmission_id: str
@@ -168,7 +169,6 @@ class FlushRequest:
     missing_post_context: bool = False
     start_audio_offset_ms: int | None = None
     end_audio_offset_ms: int | None = None
-    feed_name: str = ""
 
 
 @dataclass(frozen=True)

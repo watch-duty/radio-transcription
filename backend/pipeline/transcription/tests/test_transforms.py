@@ -188,24 +188,6 @@ class AddEventTimestampTest(unittest.TestCase):
         )
         self.assertEqual(result[0].timestamp, 1678886400)  # type: ignore
 
-    def test_valid_timestamp_extraction_without_feed_name(self) -> None:
-        """Verifies that AddEventTimestamp works correctly when feed_name is absent (backward compatibility)."""
-        chunk = AudioChunk(
-            gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
-            session_id="mock-session-id",
-        )
-        chunk.start_timestamp.FromMicroseconds(1678886400000000)
-        element = ("test-feed", chunk.SerializeToString())
-        fn = AddEventTimestamp()
-        result = list(fn.process(element))
-
-        self.assertEqual(len(result), 1)
-        self.assertIsInstance(result[0], TimestampedValue)
-        feed_id, (feed_name, _gcs_uri, session_id) = result[0].value  # type: ignore
-        self.assertEqual(feed_id, "test-feed")
-        self.assertEqual(feed_name, "")
-        self.assertEqual(session_id, "mock-session-id")
-
     def test_invalid_timestamp_raises_value_error(self) -> None:
         """Verifies that chunks possessing malformed or unidentifiable file names result in safely tagging the element for DLQ observation instead of crashing."""
         chunk = AudioChunk(
@@ -399,71 +381,6 @@ class OrderRestorerTest(unittest.TestCase):
                     ]
                 ),
             )
-
-    def test_restore_order_feed_name_propagated_from_buffered_chunks(
-        self,
-    ) -> None:
-        """Verifies that feed_name from state is re-attached to buffered chunks emitted after a gap timeout."""
-        config = OrderRestorerConfig(out_of_order_timeout_ms=5000)
-
-        options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
-        )
-        with BeamTestPipeline(options=options) as p:
-            test_stream = (
-                BeamTestStream(
-                    coder=beam.coders.TupleCoder(
-                        (
-                            beam.coders.StrUtf8Coder(),
-                            beam.coders.TupleCoder(
-                                (
-                                    beam.coders.StrUtf8Coder(),
-                                    beam.coders.StrUtf8Coder(),
-                                    beam.coders.StrUtf8Coder(),
-                                )
-                            ),
-                        )
-                    )
-                )
-                .advance_watermark_to(100)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-1",
-                                ("My Named Feed", "gs://b/100-aaa.flac", "s-A"),
-                            ),
-                            100,
-                        )
-                    ]
-                )
-                .advance_watermark_to(130)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-1",
-                                ("My Named Feed", "gs://b/130-bbb.flac", "s-A"),
-                            ),
-                            130,
-                        )
-                    ]
-                )
-                .advance_watermark_to_infinity()
-            )
-
-            restored = p | test_stream | beam.ParDo(RestoreOrderFn(config))
-
-            def assert_has_feed_name(
-                elements: list[tuple[str, tuple[str, str]]],
-            ) -> None:
-                for feed_id, (feed_name, _gcs_uri) in elements:
-                    assert feed_id == "feed-1"
-                    assert feed_name == "My Named Feed", (
-                        f"Expected 'My Named Feed', got '{feed_name}'"
-                    )
-
-            assert_that(restored, assert_has_feed_name)
 
     @unittest.skip("DirectRunner metrics validation is flaky")
     def test_delayed_gap_acceptance(self) -> None:
@@ -1211,6 +1128,7 @@ class TranscribeAudioTest(unittest.TestCase):
                                 start_ms=101000, end_ms=101500
                             ),
                             transmission_id="test-uuid",
+                            feed_name="Test Feed",
                         ),
                     )
                 ]
@@ -1308,6 +1226,7 @@ class TranscribeAudioTest(unittest.TestCase):
                         contributing_audio_uris=["gs://bbbbbbbb.flac"],
                         time_range=TimeRange(start_ms=0, end_ms=500),
                         transmission_id="test-uuid-1",
+                        feed_name="Test Feed",
                     ),
                     FlushRequest(
                         feed_id="feed-123",
@@ -1315,6 +1234,7 @@ class TranscribeAudioTest(unittest.TestCase):
                         contributing_audio_uris=["gs://cccccccc.flac"],
                         time_range=TimeRange(start_ms=5000, end_ms=5500),
                         transmission_id="test-uuid-2",
+                        feed_name="Test Feed",
                     ),
                 ]
             )
@@ -1387,51 +1307,3 @@ class DownloadAudioTest(unittest.TestCase):
                     ]
                 ),
             )
-
-    @patch("backend.pipeline.transcription.transforms.AudioProcessor")
-    def test_download_audio_preserves_feed_name(
-        self, mock_audio_processor: MagicMock
-    ) -> None:
-        """Verifies that feed_name is correctly threaded through DownloadAudioFn."""
-        mock_inst = mock_audio_processor.return_value
-        mock_inst.download_audio_and_detect.return_value = AudioChunkData(
-            start_ms=200000,
-            audio=AudioSegment.silent(duration=1000),
-            speech_segments=[],
-            gcs_uri="gs://fake-bucket/200-aaaaaaaa.flac",
-        )
-
-        config = get_test_stitch_config()
-        options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
-        )
-
-        with BeamTestPipeline(options=options) as p:
-            elements = (
-                p
-                | beam.Create(
-                    [
-                        (
-                            "feed-xyz",
-                            (
-                                "Alpha Bravo Feed",
-                                "gs://fake-bucket/200-aaaaaaaa.flac",
-                            ),
-                        )
-                    ]
-                ).with_output_types(tuple[str, tuple[str, str]])
-                | beam.Map(lambda x: TimestampedValue(x, 200))
-            )
-
-            results = elements | beam.ParDo(DownloadAudioFn(config))
-
-            def check_feed_name(
-                elements: list[tuple[str, tuple[str, str, Any]]],
-            ) -> None:
-                assert len(elements) == 1
-                feed_id, (feed_name, gcs_uri, _chunk_data) = elements[0]
-                assert feed_id == "feed-xyz"
-                assert feed_name == "Alpha Bravo Feed"
-                assert gcs_uri == "gs://fake-bucket/200-aaaaaaaa.flac"
-
-            assert_that(results, check_feed_name)

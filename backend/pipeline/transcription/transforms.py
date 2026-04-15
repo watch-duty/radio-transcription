@@ -284,12 +284,9 @@ class RestoreOrderFn(beam.DoFn):
         feed_id, (incoming_feed_name, gcs_path, incoming_session_id) = element
         current_ts_ms = int(float(timestamp) * MS_PER_SECOND)
 
-        # Persist the feed_name in state so it is available when emitting
-        # buffered chunks from the gap-timeout handler.  Only write when
-        # non-empty so that a message lacking feed_name (e.g. produced by an
-        # older ingestion path) does not overwrite a valid name already in state.
-        if incoming_feed_name:
-            feed_name_state.write(incoming_feed_name)
+        # Persist the feed_name in state so it can be re-attached when
+        # buffered chunks are emitted after reordering.
+        feed_name_state.write(incoming_feed_name)
 
         current_session_id = session_id_state.read()
         expected_next_ts = expected_next_ts_state.read()
@@ -333,7 +330,7 @@ class RestoreOrderFn(beam.DoFn):
         for chunk in new_buffer_elements:
             out_of_order_buffer_state.add(chunk)
 
-        feed_name = feed_name_state.read() or ""
+        feed_name = feed_name_state.read()
         for gcs_uri in elements_to_emit:
             yield (feed_id, (feed_name, gcs_uri))
 
@@ -369,7 +366,7 @@ class RestoreOrderFn(beam.DoFn):
         self.data_gaps_detected_counter.inc()
         timer_active_state.clear()
 
-        feed_name = feed_name_state.read() or ""
+        feed_name = feed_name_state.read()
         buffer_elements = list(out_of_order_buffer_state.read())
         if buffer_elements:
             sorted_elements = sorted(buffer_elements)

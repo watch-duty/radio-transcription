@@ -136,7 +136,7 @@ class StitchAudioFn(beam.DoFn):
         transmission_context: ReadModifyWriteRuntimeState,
         transmission_buffer: BagRuntimeState,
         stale_timer: RuntimeTimer,
-        feed_name: str = "",
+        feed_name: str,
     ) -> Iterator[tuple[str, FlushRequest]]:
         """Clears current internal state arrays and yields a compiled FlushRequest downstream."""
         if "Maximum transmission duration" in action.reason:
@@ -185,7 +185,7 @@ class StitchAudioFn(beam.DoFn):
         self,
         transmission_context: ReadModifyWriteRuntimeState,
         ctx: StitcherContext,
-        feed_name: str = "",
+        feed_name: str,
     ) -> None:
         """Persists local Python state machine objects back to Apache Beam state API endpoints."""
         new_context = TransmissionContext(
@@ -230,7 +230,7 @@ class StitchAudioFn(beam.DoFn):
         stale_timer: RuntimeTimer,
         ctx: StitcherContext,
         gcs_path: str,
-        feed_name: str = "",
+        feed_name: str,
     ) -> Iterator[tuple[str, FlushRequest]]:
         """Routes individual StateMachineAction results to appropriate Apache Beam side-effects and emitters."""
         flush_count = sum(1 for a in actions if isinstance(a, FlushAction))
@@ -269,7 +269,7 @@ class StitchAudioFn(beam.DoFn):
         transmission_context: ReadModifyWriteRuntimeState,
         transmission_buffer: BagRuntimeState,
         stale_timer: RuntimeTimer,
-        feed_name: str = "",
+        feed_name: str,
     ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
         """Top-level executor managing chunk ingestion, VAD decoding, state persistence, and flush delegation."""
         file_start_ms = chunk_data.start_ms
