@@ -163,7 +163,7 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
           renderInput={(params) => (
             <TextField
               {...params}
-              label="Select a registered feed or enter a feed ID"
+              label="Select a registered feed or enter a feed ID/name"
             />
           )}
           renderOption={(props, option) => {
