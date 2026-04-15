@@ -195,9 +195,11 @@ class TestListTranscriptsByFeedId(BaseTranscriptStoreTest):
     async def test_list_with_limit(self) -> None:
         """Verify listing with limit returns restricted list."""
         self.pool.fetch.return_value = [_TRANSCRIPT_ROW] * 2
+
         result = await self.store.list_transcripts_by_feed_id(
             str(_FEED_ID), limit=1
         )
+
         self.assertEqual(len(result.transcripts), 1)
         self.assertIsNotNone(result.next_token)
 
