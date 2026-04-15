@@ -51,7 +51,7 @@ def resolve_topic_path(
 ) -> str:
     """Determines the Pub/Sub topic path based on the source type."""
     if source_type == SourceType.BCFY_FEEDS:
-        return settings.pubsub_topic_path
+        return settings.continuous_pubsub_topic_path
 
     topic_path = settings.segmented_pubsub_topic_path
     if not topic_path:

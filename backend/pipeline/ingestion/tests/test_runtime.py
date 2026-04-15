@@ -74,7 +74,7 @@ def _make_settings(**overrides) -> mock.MagicMock:
         "heartbeat_stall_timeout_sec": 45.0,
         "graceful_shutdown_timeout_sec": 10.0,
         "audio_staging_bucket": "test-bucket",
-        "pubsub_topic_path": "projects/p/topics/t",
+        "continuous_pubsub_topic_path": "projects/p/topics/t",
         "db": AlloyDBSettings(
             host="10.0.0.1",
             port=6432,
@@ -344,7 +344,9 @@ class TestProcessFeedTimestamps(unittest.IsolatedAsyncioTestCase):
             _, args, kwargs = mock_publish.mock_calls[0]
 
             self.assertEqual(len(args), 4)
-            self.assertEqual(args[1], rt._normalizer_settings.pubsub_topic_path)
+            self.assertEqual(
+                args[1], rt._normalizer_settings.continuous_pubsub_topic_path
+            )
             self.assertEqual(args[2], str(_FEED["id"]))
             self.assertTrue(args[3].startswith("gs://"))
 
@@ -398,12 +400,14 @@ class TestProcessFeedTopicRouting(unittest.IsolatedAsyncioTestCase):
     """Tests for _process_feed topic routing based on SourceType."""
 
     async def test_routes_continuous_feed_to_default_topic(self) -> None:
-        """Continuous feeds (BCFY_FEEDS) go to pubsub_topic_path."""
+        """Continuous feeds (BCFY_FEEDS) go to continuous_pubsub_topic_path."""
 
         async def _one_chunk(feed, shutdown):
             yield _make_captured_chunk(b"audio")
 
-        rt = _make_runtime(pubsub_topic_path="projects/p/topics/continuous")
+        rt = _make_runtime(
+            continuous_pubsub_topic_path="projects/p/topics/continuous"
+        )
         rt._shutdown = asyncio.Event()
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress.return_value = True
@@ -423,7 +427,7 @@ class TestProcessFeedTopicRouting(unittest.IsolatedAsyncioTestCase):
             yield _make_captured_chunk(b"audio")
 
         rt = _make_runtime(
-            pubsub_topic_path="projects/p/topics/continuous",
+            continuous_pubsub_topic_path="projects/p/topics/continuous",
             segmented_pubsub_topic_path="projects/p/topics/segmented",
         )
         rt._shutdown = asyncio.Event()
@@ -455,7 +459,7 @@ class TestProcessFeedTopicRouting(unittest.IsolatedAsyncioTestCase):
             yield _make_captured_chunk(b"audio")
 
         rt = _make_runtime(
-            pubsub_topic_path="projects/p/topics/continuous",
+            continuous_pubsub_topic_path="projects/p/topics/continuous",
             segmented_pubsub_topic_path=None,  # Missing
         )
         rt._shutdown = asyncio.Event()

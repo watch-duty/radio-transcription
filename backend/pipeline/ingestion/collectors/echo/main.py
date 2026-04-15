@@ -1,9 +1,9 @@
 """Echo Audio Ingestion Cloud Run Service.
 
 Triggered by Eventarc on GCS OBJECT_FINALIZE events from the Echo recordings
-bucket. Resolves feed metadata from AlloyDB, converts MP3 to FLAC, writes to
-canonical bucket, and publishes an AudioChunk to the raw-audio topic for
-downstream transcription.
+bucket. Resolves feed metadata from AlloyDB, yields raw audio bytes to the
+staging bucket, and publishes an AudioChunk to the appropriate Pub/Sub topic
+for downstream transcription.
 """
 
 from __future__ import annotations

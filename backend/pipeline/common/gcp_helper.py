@@ -104,7 +104,7 @@ async def upload_audio(
     content_type: str = "audio/flac",
 ) -> str:
     """
-    Upload audio to GCS with optional SED metadata.
+    Upload audio to GCS.
 
     Unlike ``upload_staged_audio``, this accepts an explicit *object_name*
     instead of deriving one from a ``LeasedFeed``.  Also does not need a
