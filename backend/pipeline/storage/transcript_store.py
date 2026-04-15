@@ -174,8 +174,6 @@ class TranscriptStore:
         if next_token:
             cursor_ts, cursor_uid = self._decode_cursor(next_token)
 
-
-
         rows = await self._pool.fetch(
             transcript_queries.GET_TRANSCRIPTS_BY_FEED_SQL,
             uid,

@@ -12,13 +12,11 @@ import pytest
 from backend.pipeline.storage.transcript_store import TranscriptStore
 
 
-
 @pytest.fixture
 async def store(db_pool: asyncpg.Pool) -> TranscriptStore:
     """Provides a TranscriptStore instance with a clean database."""
     await db_pool.execute("TRUNCATE feeds CASCADE")
     return TranscriptStore(db_pool)
-
 
 
 async def _insert_transcript(

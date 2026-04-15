@@ -108,7 +108,6 @@ async def list_transcripts(
                 next_token=next_token,
                 start_time=start_time,
                 end_time=end_time,
-
             )
         return await service.list_transcripts(
             limit=limit,
