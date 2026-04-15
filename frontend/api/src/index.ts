@@ -1,10 +1,6 @@
 import express, { json, urlencoded } from 'express';
 
 import cors from 'cors';
-import { existsSync, readFileSync } from 'fs';
-import { load } from 'js-yaml';
-import { dirname, join } from 'path';
-import { fileURLToPath } from 'url';
 
 import { ALLOWED_ORIGIN } from './config.js';
 import { RegisterRoutes } from './generated/routes.js';
