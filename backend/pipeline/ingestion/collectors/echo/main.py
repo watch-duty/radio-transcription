@@ -165,11 +165,11 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
             publisher,
             RAW_AUDIO_TOPIC,
             feed_id_str,
+            feed["name"],
             canonical_uri,
             session_id,
             start_ts,
             source_type="echo",
-            feed_name=feed.get("name"),
         )
 
         # Unconditional heartbeat — also resets failure_count if recovering.

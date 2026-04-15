@@ -389,6 +389,7 @@ class TestPublishAudioChunkSync(unittest.TestCase):
             mock_publisher,
             topic_path="projects/test/topics/audio",
             feed_id="feed-42",
+            feed_name="Central Fire",
             gcs_uri="gs://bucket/audio.flac",
             session_id="test-session-1",
             start_timestamp=mock_now,
@@ -445,6 +446,7 @@ class TestPublishAudioChunkSync(unittest.TestCase):
             mock_publisher,
             topic_path="projects/test/topics/audio",
             feed_id="feed-88",
+            feed_name="Central Fire",
             gcs_uri="gs://bucket/audio.flac",
             session_id="sess-2",
             start_timestamp=datetime.datetime(
@@ -467,6 +469,7 @@ class TestPublishAudioChunkSync(unittest.TestCase):
             mock_publisher,
             topic_path="projects/test/topics/audio",
             feed_id="feed-1",
+            feed_name="Central Fire",
             gcs_uri="gs://bucket/audio.flac",
             session_id="sess-1",
             start_timestamp=datetime.datetime(
@@ -494,6 +497,7 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
             mock_pubsub_client,
             topic_path="projects/test/topics/audio",
             feed_id="feed-42",
+            feed_name="Central Fire",
             gcs_uri="gs://bucket/audio.flac",
             session_id="test-session-1",
             start_timestamp=mock_now,
@@ -515,10 +519,10 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
             mock_pubsub_client,
             topic_path="projects/test/topics/audio",
             feed_id="feed-99",
+            feed_name="Central Fire",
             gcs_uri="gs://bucket/audio.flac",
             session_id="sess-99",
             start_timestamp=mock_now,
-            feed_name="Central Fire",
         )
 
         publish_args, _publish_kwargs = mock_publisher.publish.call_args

@@ -30,6 +30,7 @@ class TestSendNotification(TestCase):
             transcript="This is a test!",
             transmission_id="1234",
             source_audio_uris=["gs://foo/bar.flac"],
+            feed_name="asdf",
         )
         evaluated_payload.start_audio_offset.seconds = 10
         raw_data = base64.b64encode(evaluated_payload.SerializeToString())
@@ -50,6 +51,7 @@ class TestSendNotification(TestCase):
             transcript="This is a test!",
             transmission_id="1234",
             source_audio_uris=["gs://foo/bar.flac"],
+            feed_name="asdf",
         )
         expected_notification.start_audio_offset.seconds = 10
         mock_request_handler.send_notification.assert_called_once_with(
@@ -84,44 +86,6 @@ class TestSendNotification(TestCase):
         mock_dedupe.process_notification.assert_called_with("1234")
 
         mock_request_handler.send_notification.assert_not_called()
-
-
-    @mock.patch("backend.pipeline.notification.send_notification.deduplication")
-    @mock.patch(
-        "backend.pipeline.notification.send_notification.request_handler"
-    )
-    def test_feed_name_propagated_to_notification(
-        self, mock_request_handler: mock.Mock, mock_dedupe: mock.Mock
-    ) -> None:
-        """Verifies that feed_name from EvaluatedTranscribedAudio is propagated to AlertNotification."""
-        mock_dedupe.process_notification.return_value = True
-
-        evaluated_payload = EvaluatedTranscribedAudio(
-            transcript="Fire on Main Street",
-            transmission_id="9999",
-            source_audio_uris=["gs://foo/fire.flac"],
-            feed_name="Central Dispatch",
-        )
-        raw_data = base64.b64encode(evaluated_payload.SerializeToString())
-        event_data = {"message": {"data": raw_data, "messageId": "9999"}}
-
-        attributes = {
-            "type": "google.cloud.pubsub.topic.v1.messagePublished",
-            "source": "//pubsub.googleapis.com/projects/my-project/topics/my-topic",
-        }
-
-        cloud_event = CloudEvent(attributes, event_data)
-        send_notification(cloud_event)
-
-        expected_notification = AlertNotification(
-            transcript="Fire on Main Street",
-            transmission_id="9999",
-            source_audio_uris=["gs://foo/fire.flac"],
-            feed_name="Central Dispatch",
-        )
-        mock_request_handler.send_notification.assert_called_once_with(
-            expected_notification
-        )
 
 
 if __name__ == "__main__":

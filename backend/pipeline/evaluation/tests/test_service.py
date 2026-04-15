@@ -86,7 +86,6 @@ class TestEvaluationService(unittest.TestCase):
             ],
         )
 
-
     def test_feed_name_is_propagated(self) -> None:
         """Verifies that feed_name from the TranscribedAudio proto is copied into EvaluatedTranscribedAudio."""
         self.transcribed_audio.feed_name = "Downtown Scanner"

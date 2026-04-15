@@ -201,7 +201,7 @@ class AddEventTimestampTest(unittest.TestCase):
 
         self.assertEqual(len(result), 1)
         self.assertIsInstance(result[0], TimestampedValue)
-        feed_id, (feed_name, gcs_uri, session_id) = result[0].value  # type: ignore
+        feed_id, (feed_name, _gcs_uri, session_id) = result[0].value  # type: ignore
         self.assertEqual(feed_id, "test-feed")
         self.assertEqual(feed_name, "")
         self.assertEqual(session_id, "mock-session-id")
@@ -252,7 +252,11 @@ class OrderRestorerTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-1",
-                                ("Feed One", "gs://b/100-uuid1.flac", "session-A"),
+                                (
+                                    "Feed One",
+                                    "gs://b/100-uuid1.flac",
+                                    "session-A",
+                                ),
                             ),
                             100,
                         )
@@ -264,7 +268,11 @@ class OrderRestorerTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-1",
-                                ("Feed One", "gs://b/130-uuid3.flac", "session-A"),
+                                (
+                                    "Feed One",
+                                    "gs://b/130-uuid3.flac",
+                                    "session-A",
+                                ),
                             ),
                             130,
                         )
@@ -276,7 +284,11 @@ class OrderRestorerTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-1",
-                                ("Feed One", "gs://b/115-uuid2.flac", "session-A"),
+                                (
+                                    "Feed One",
+                                    "gs://b/115-uuid2.flac",
+                                    "session-A",
+                                ),
                             ),
                             115,
                         )
@@ -1348,7 +1360,12 @@ class DownloadAudioTest(unittest.TestCase):
             elements = (
                 p
                 | beam.Create(
-                    [("feed-123", ("My Feed", "gs://fake-bucket/100-11111111.flac"))]
+                    [
+                        (
+                            "feed-123",
+                            ("My Feed", "gs://fake-bucket/100-11111111.flac"),
+                        )
+                    ]
                 ).with_output_types(tuple[str, tuple[str, str]])
                 | beam.Map(lambda x: TimestampedValue(x, 100))
             )
@@ -1393,7 +1410,15 @@ class DownloadAudioTest(unittest.TestCase):
             elements = (
                 p
                 | beam.Create(
-                    [("feed-xyz", ("Alpha Bravo Feed", "gs://fake-bucket/200-aaaaaaaa.flac"))]
+                    [
+                        (
+                            "feed-xyz",
+                            (
+                                "Alpha Bravo Feed",
+                                "gs://fake-bucket/200-aaaaaaaa.flac",
+                            ),
+                        )
+                    ]
                 ).with_output_types(tuple[str, tuple[str, str]])
                 | beam.Map(lambda x: TimestampedValue(x, 200))
             )
