@@ -3,7 +3,15 @@ import express from 'express';
 import { existsSync, readFileSync } from 'fs';
 import { load } from 'js-yaml';
 import { dirname, join } from 'path';
-import { Controller, Get, Request, Route, Security, Tags } from 'tsoa';
+import {
+  Controller,
+  Extension,
+  Get,
+  Request,
+  Route,
+  Security,
+  Tags,
+} from 'tsoa';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -18,6 +26,7 @@ export interface OpenApiSpec {
 export class DocsController extends Controller {
   @Get('openapi.json')
   @Security('google_id_token')
+  @Extension('x-google-backend', 'radio-transcription-api')
   public async getSpec(
     @Request() request: express.Request
   ): Promise<OpenApiSpec> {
