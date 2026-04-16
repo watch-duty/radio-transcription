@@ -275,4 +275,4 @@ def broadcastify_credential_rotation(request: flask.Request) -> tuple[str, int]:
         "Broadcastify credentials rotated successfully for username: %s",
         BROADCASTIFY_USERNAME,
     )
-    return ("Successfully updated Broadcastify credentials", 200)
+    return "Successfully updated Broadcastify credentials", 200
