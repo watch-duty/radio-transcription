@@ -8,20 +8,10 @@ from unittest.mock import MagicMock, patch
 
 from anyio import Path as AsyncPath
 
+from backend.pipeline.ingestion.collectors.icecast import (
+    local_icecast_collector,
+)
 from backend.pipeline.ingestion.models import CapturedChunk
-
-MOCK_ENV_VARS = {
-    "BROADCASTIFY_USERNAME": "test_user",
-    "BROADCASTIFY_PASSWORD": "test_pass",
-}
-
-
-with (
-    patch.dict(os.environ, MOCK_ENV_VARS, clear=False),
-):
-    from backend.pipeline.ingestion.collectors.icecast import (
-        local_icecast_collector,
-    )
 
 
 class TestLocalIcecastCollector(unittest.IsolatedAsyncioTestCase):

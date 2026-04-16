@@ -69,8 +69,9 @@ gcloud auth login
 ```
 # Assuming you're running from the top level of the root dir
 source .venv/bin/activate
-export BROADCASTIFY_USERNAME=<your broadcastify username>
-export BROADCASTIFY_PASSWORD=<your broadcastify pword>
+export GOOGLE_CLOUD_PROJECT=<your gcp project id>
+export BROADCASTIFY_USERNAME_SECRET_ID=<secret manager secret id for broadcastify username>
+export BROADCASTIFY_PASSWORD_SECRET_ID=<secret manager secret id for broadcastify password>
 export ICECAST_SOURCE_FEED_ID=123
 python backend/pipeline/ingestion/collectors/icecast/local_icecast_collector.py
 
@@ -83,8 +84,9 @@ export ICECAST_LOCAL_OUTPUT_DIR="/tmp/audio_chunks"
 # Assuming you're running from the top level of the root dir.
 # Run this command if you are running this for the first time.
 cat <<EOF > backend/pipeline/ingestion/collectors/.icecast_env
-BROADCASTIFY_USERNAME=<your broadcastify username>
-BROADCASTIFY_PASSWORD=<your broadcastify pword>
+GOOGLE_CLOUD_PROJECT=<your gcp project id>
+BROADCASTIFY_USERNAME_SECRET_ID=<secret manager secret id for broadcastify username>
+BROADCASTIFY_PASSWORD_SECRET_ID=<secret manager secret id for broadcastify password>
 AUDIO_STAGING_BUCKET=<your audio staging bucket>
 PUBSUB_TOPIC_PATH=<your pubsub topic path>
 ALLOYDB_HOST=<your alloydb host>

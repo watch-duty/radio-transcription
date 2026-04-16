@@ -31,6 +31,11 @@ async def run_local_capture() -> None:
     - ICECAST_SOURCE_FEED_ID: Required source feed ID. Example: "12345"
     - ICECAST_LOCAL_OUTPUT_DIR: Optional output directory for audio chunks.
       Defaults to the current working directory.
+    - GOOGLE_CLOUD_PROJECT: Required GCP project ID for Secret Manager lookups.
+    - BROADCASTIFY_USERNAME_SECRET_ID: Required Secret Manager secret ID for the
+      Broadcastify username.
+    - BROADCASTIFY_PASSWORD_SECRET_ID: Required Secret Manager secret ID for the
+      Broadcastify password.
     """
     source_feed_id = os.getenv("ICECAST_SOURCE_FEED_ID")
     if not source_feed_id:

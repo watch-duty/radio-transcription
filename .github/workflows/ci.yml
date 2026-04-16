@@ -231,16 +231,12 @@ jobs:
       - name: Verify ingestion imports
         run: |
           docker run --rm \
-            -e BROADCASTIFY_USERNAME=smoke-test \
-            -e BROADCASTIFY_PASSWORD=smoke-test \
             -e PUBSUB_EMULATOR_HOST=localhost:8085 \
             ingestion-smoke-test \
             python -c "import backend.pipeline.ingestion.main"
       - name: Verify ingestion settings instantiation
         run: |
           docker run --rm \
-            -e BROADCASTIFY_USERNAME=smoke-test \
-            -e BROADCASTIFY_PASSWORD=smoke-test \
             -e PUBSUB_EMULATOR_HOST=localhost:8085 \
             -e AUDIO_STAGING_BUCKET=smoke-test-bucket \
             -e PUBSUB_TOPIC_PATH=projects/test/topics/test \
