@@ -136,7 +136,7 @@ class StitchAudioFn(beam.DoFn):
         transmission_context: ReadModifyWriteRuntimeState,
         transmission_buffer: BagRuntimeState,
         stale_timer: RuntimeTimer,
-        feed_name: str,
+        ctx: StitcherContext,
     ) -> Iterator[tuple[str, FlushRequest]]:
         """Clears current internal state arrays and yields a compiled FlushRequest downstream."""
         if "Maximum transmission duration" in action.reason:
@@ -168,7 +168,7 @@ class StitchAudioFn(beam.DoFn):
                     start_audio_offset_ms=action.start_audio_offset_ms,
                     end_audio_offset_ms=action.end_audio_offset_ms,
                     transmission_id=transmission_id,
-                    feed_name=feed_name,
+                    feed_name=ctx.feed_name,
                 ),
             )
         else:
@@ -185,7 +185,6 @@ class StitchAudioFn(beam.DoFn):
         self,
         transmission_context: ReadModifyWriteRuntimeState,
         ctx: StitcherContext,
-        feed_name: str,
     ) -> None:
         """Persists local Python state machine objects back to Apache Beam state API endpoints."""
         new_context = TransmissionContext(
@@ -198,7 +197,7 @@ class StitchAudioFn(beam.DoFn):
             end_audio_offset_ms=ctx.end_audio_offset_ms,
             buffer_start_time_ms=ctx.buffer_start_time_ms,
             buffer_duration_ms=ctx.buffer_duration_ms,
-            feed_name=feed_name,
+            feed_name=ctx.feed_name,
         )
         transmission_context.write(new_context)
 
@@ -230,7 +229,6 @@ class StitchAudioFn(beam.DoFn):
         stale_timer: RuntimeTimer,
         ctx: StitcherContext,
         gcs_path: str,
-        feed_name: str,
     ) -> Iterator[tuple[str, FlushRequest]]:
         """Routes individual StateMachineAction results to appropriate Apache Beam side-effects and emitters."""
         flush_count = sum(1 for a in actions if isinstance(a, FlushAction))
@@ -245,16 +243,14 @@ class StitchAudioFn(beam.DoFn):
                         transmission_context,
                         transmission_buffer,
                         stale_timer,
-                        feed_name=feed_name,
+                        ctx,
                     )
                 case AppendBufferAction():
                     self._apply_append_buffer_action(
                         action, transmission_buffer
                     )
                 case UpdateStateAction():
-                    self._apply_update_state_action(
-                        transmission_context, ctx, feed_name=feed_name
-                    )
+                    self._apply_update_state_action(transmission_context, ctx)
                 case ScheduleStaleTimerAction():
                     self._apply_schedule_stale_timer_action(action, stale_timer)
                 case DropAction(reason=reason):
@@ -263,34 +259,67 @@ class StitchAudioFn(beam.DoFn):
     def _process_audio_chunk(
         self,
         *,
-        feed_id: str,
-        gcs_path: str,
-        chunk_data: AudioChunkData,
+        element: tuple[str, tuple[str, str, AudioChunkData]],
         transmission_context: ReadModifyWriteRuntimeState,
         transmission_buffer: BagRuntimeState,
         stale_timer: RuntimeTimer,
-        feed_name: str,
     ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
         """Top-level executor managing chunk ingestion, VAD decoding, state persistence, and flush delegation."""
+        feed_id, (feed_name, gcs_path, chunk_data) = element
         file_start_ms = chunk_data.start_ms
 
-        curr_context: TransmissionContext = (
-            transmission_context.read() or TransmissionContext()
-        )
+        curr_context: TransmissionContext | None = transmission_context.read()
 
         ctx = StitcherContext(
             feed_id=feed_id,
+            feed_name=feed_name,
             current_gcs_uri=gcs_path,
-            contributing_audio_uris=curr_context.contributing_audio_uris.copy(),
-            last_segment_end_time_ms=curr_context.last_end_time_ms,
-            transmission_start_time_ms=curr_context.stale_start_time_ms,
+            contributing_audio_uris=(
+                curr_context.contributing_audio_uris.copy()
+                if curr_context is not None
+                else []
+            ),
+            last_segment_end_time_ms=(
+                curr_context.last_end_time_ms
+                if curr_context is not None
+                else None
+            ),
+            transmission_start_time_ms=(
+                curr_context.stale_start_time_ms
+                if curr_context is not None
+                else None
+            ),
             file_start_ms=file_start_ms,
-            missing_prior_context=curr_context.missing_prior_context,
-            expected_next_chunk_start_ms=curr_context.expected_next_chunk_start_ms,
-            start_audio_offset_ms=curr_context.start_audio_offset_ms,
-            end_audio_offset_ms=curr_context.end_audio_offset_ms,
-            buffer_start_time_ms=curr_context.buffer_start_time_ms,
-            buffer_duration_ms=curr_context.buffer_duration_ms,
+            missing_prior_context=(
+                curr_context.missing_prior_context
+                if curr_context is not None
+                else False
+            ),
+            expected_next_chunk_start_ms=(
+                curr_context.expected_next_chunk_start_ms
+                if curr_context is not None
+                else None
+            ),
+            start_audio_offset_ms=(
+                curr_context.start_audio_offset_ms
+                if curr_context is not None
+                else None
+            ),
+            end_audio_offset_ms=(
+                curr_context.end_audio_offset_ms
+                if curr_context is not None
+                else None
+            ),
+            buffer_start_time_ms=(
+                curr_context.buffer_start_time_ms
+                if curr_context is not None
+                else None
+            ),
+            buffer_duration_ms=(
+                curr_context.buffer_duration_ms
+                if curr_context is not None
+                else 0
+            ),
         )
 
         pipeline = AudioStitchingStateMachine(self.config)
@@ -307,7 +336,6 @@ class StitchAudioFn(beam.DoFn):
             stale_timer=stale_timer,
             ctx=ctx,
             gcs_path=gcs_path,
-            feed_name=feed_name,
         )
 
     @override
@@ -319,17 +347,14 @@ class StitchAudioFn(beam.DoFn):
         stale_timer: RuntimeTimer = STALE_TIMER_PARAM,  # type: ignore
     ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
         """Delegates the incoming audio chunk to the internal state machine for evaluation."""
-        key, (feed_name, gcs_path, chunk_data) = element
+        key, (_feed_name, gcs_path, _chunk_data) = element
 
         try:
             yield from self._process_audio_chunk(
-                feed_id=key,
-                gcs_path=gcs_path,
-                chunk_data=chunk_data,
+                element=element,
                 transmission_context=transmission_context,
                 transmission_buffer=transmission_buffer,
                 stale_timer=stale_timer,
-                feed_name=feed_name,
             )
         except Exception as e:
             if not self.config.route_to_dlq:
@@ -358,9 +383,13 @@ class StitchAudioFn(beam.DoFn):
         audio remaining in the buffer will eventually be flushed and transcribed, preventing
         data loss from stranded state.
         """
-        curr_context: TransmissionContext = (
-            transmission_context.read() or TransmissionContext()
-        )
+        curr_context: TransmissionContext | None = transmission_context.read()
+        if curr_context is None:
+            transmission_context.clear()
+            transmission_buffer.clear()
+            stale_timer.clear()
+            return
+
         start_time_ms = curr_context.stale_start_time_ms
         end_time_ms = curr_context.last_end_time_ms
         processed_uris = curr_context.contributing_audio_uris

@@ -71,6 +71,7 @@ class TransmissionContext:
     We use standard dataclasses here because native Protobuf classes cannot be cleanly pickled.
     """
 
+    feed_name: str
     last_end_time_ms: int | None = None
     stale_start_time_ms: int | None = None
     buffer_start_time_ms: int | None = None
@@ -81,7 +82,6 @@ class TransmissionContext:
     start_audio_offset_ms: int | None = None
     end_audio_offset_ms: int | None = None
     buffer_duration_ms: int = 0
-    feed_name: str = ""
 
 
 @dataclass
@@ -89,6 +89,7 @@ class StitcherContext:
     """Groups context variables for processing a chunk to reduce function arguments."""
 
     feed_id: str
+    feed_name: str
     # The fully qualified GCS URI of the raw audio file currently being parsed.
     current_gcs_uri: str
     # Ordered list of URIs that have been accumulated into the current transmission buffer thus far.

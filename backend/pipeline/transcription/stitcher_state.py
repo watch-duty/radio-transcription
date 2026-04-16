@@ -139,6 +139,7 @@ class AudioStitchingStateMachine:
 
         temp_ctx = StitcherContext(
             feed_id=ctx.feed_id,
+            feed_name=ctx.feed_name,
             current_gcs_uri=ctx.current_gcs_uri,
             contributing_audio_uris=[],
             file_start_ms=chunk_data.start_ms,
