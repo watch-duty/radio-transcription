@@ -13,8 +13,9 @@ from backend.pipeline.ingestion.models import CapturedChunk
 from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 
 MOCK_ENV_VARS = {
-    "BROADCASTIFY_USERNAME": "test_user",
-    "BROADCASTIFY_PASSWORD": "test_pass",
+    "GOOGLE_CLOUD_PROJECT": "test-project",
+    "BROADCASTIFY_USERNAME_SECRET_ID": "username-secret",
+    "BROADCASTIFY_PASSWORD_SECRET_ID": "password-secret",
 }
 
 # Static UUID for consistent test assertions
@@ -130,6 +131,88 @@ async def _collect_chunks_with_timestamps(
     return results
 
 
+class TestGetBroadcastifyCredentials(unittest.TestCase):
+    @patch.dict(
+        os.environ,
+        {
+            "GOOGLE_CLOUD_PROJECT": "proj",
+            "BROADCASTIFY_USERNAME_SECRET_ID": "user-sec",
+            "BROADCASTIFY_PASSWORD_SECRET_ID": "pass-sec",
+        },
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast"
+        ".icecast_collector.secretmanager.SecretManagerServiceClient"
+    )
+    def test_success(self, mock_smc: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_smc.return_value = mock_client
+
+        def _mock_access(request):
+            resp = MagicMock()
+            if "user-sec" in request["name"]:
+                resp.payload.data.decode.return_value = " myuser  "
+            else:
+                resp.payload.data.decode.return_value = " mypass  "
+            return resp
+
+        mock_client.access_secret_version.side_effect = _mock_access
+
+        username, password = icecast_collector._get_broadcastify_credentials()
+
+        self.assertEqual(username, "myuser")
+        self.assertEqual(password, "mypass")
+        self.assertEqual(mock_client.access_secret_version.call_count, 2)
+        mock_client.access_secret_version.assert_any_call(
+            request={"name": "projects/proj/secrets/user-sec/versions/latest"}
+        )
+        mock_client.access_secret_version.assert_any_call(
+            request={"name": "projects/proj/secrets/pass-sec/versions/latest"}
+        )
+
+    @patch.dict(os.environ, {}, clear=True)
+    def test_missing_env(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "must be set"):
+            icecast_collector._get_broadcastify_credentials()
+
+    @patch.dict(
+        os.environ,
+        {
+            "GOOGLE_CLOUD_PROJECT": "proj",
+            "BROADCASTIFY_USERNAME_SECRET_ID": "user-sec",
+            "BROADCASTIFY_PASSWORD_SECRET_ID": "pass-sec",
+        },
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast"
+        ".icecast_collector.secretmanager.SecretManagerServiceClient"
+    )
+    def test_gcp_error(self, mock_smc: MagicMock) -> None:
+        mock_client = MagicMock()
+        mock_smc.return_value = mock_client
+        mock_client.access_secret_version.side_effect = Exception("API error")
+        with self.assertRaisesRegex(RuntimeError, "Failed to access secret"):
+            icecast_collector._get_broadcastify_credentials()
+
+
+class TestBuildAuthHeader(unittest.TestCase):
+    def test_builds_correct_basic_auth_header(self) -> None:
+        import base64
+
+        header = icecast_collector._build_auth_header("myuser", "mypass")
+
+        expected = base64.b64encode(b"myuser:mypass").decode()
+        self.assertEqual(header, f"Authorization: Basic {expected}\r\n")
+
+    def test_colon_in_password(self) -> None:
+        import base64
+
+        header = icecast_collector._build_auth_header("user", "pa:ss")
+
+        expected = base64.b64encode(b"user:pa:ss").decode()
+        self.assertEqual(header, f"Authorization: Basic {expected}\r\n")
+
+
 class TestCreateFfmpegProcess(unittest.IsolatedAsyncioTestCase):
     """Guard against accidentally discarding ffmpeg diagnostic output."""
 
@@ -160,11 +243,32 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.mock_logger = MagicMock()
+
+        mock_smc_patcher = patch(
+            "backend.pipeline.ingestion.collectors.icecast"
+            ".icecast_collector.secretmanager.SecretManagerServiceClient"
+        )
+        mock_smc = mock_smc_patcher.start()
+        mock_client = MagicMock()
+        mock_smc.return_value = mock_client
+
+        def _mock_access(request):
+            resp = MagicMock()
+            if "username-secret" in request["name"]:
+                resp.payload.data.decode.return_value = "test_user"
+            else:
+                resp.payload.data.decode.return_value = "test_pass"
+            return resp
+
+        mock_client.access_secret_version.side_effect = _mock_access
+
         self.patchers = [
+            mock_smc_patcher,
             patch.object(icecast_collector, "logger", self.mock_logger),
             patch.dict(os.environ, MOCK_ENV_VARS),
         ]
-        for p in self.patchers:
+        # mock_smc_patcher was already started above; start the rest
+        for p in self.patchers[1:]:
             p.start()
 
     def tearDown(self) -> None:

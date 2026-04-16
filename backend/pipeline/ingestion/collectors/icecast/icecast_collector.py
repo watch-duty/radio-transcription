@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlencode, urljoin
 
+from google.cloud import secretmanager
+
 from backend.pipeline.common.constants import (
     AUDIO_FORMAT,
     CHUNK_DURATION_SECONDS,
@@ -37,17 +39,53 @@ POLL_INTERVAL_SEC = 0.25  # Polling interval for segment file checks
 STDERR_TAIL_LINES = 30  # Ring buffer size for ffmpeg stderr diagnostics
 
 
-def _build_auth_header() -> str:
-    """Build Basic Auth header from env vars, raising if missing."""
-    user = os.getenv("BROADCASTIFY_USERNAME")
-    password = os.getenv("BROADCASTIFY_PASSWORD")
-    if not user or not password:
+def _get_broadcastify_credentials() -> tuple[str, str]:
+    """Fetch Broadcastify username and password synchronously from Secret Manager.
+
+    Returns:
+        A tuple of (username, password).
+
+    Raises:
+        RuntimeError: If required env vars are missing or the secret cannot be accessed.
+    """
+    project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
+    username_secret_id = os.getenv("BROADCASTIFY_USERNAME_SECRET_ID")
+    password_secret_id = os.getenv("BROADCASTIFY_PASSWORD_SECRET_ID")
+    if not project_id or not username_secret_id or not password_secret_id:
         msg = (
-            "BROADCASTIFY_USERNAME and BROADCASTIFY_PASSWORD "
-            "env vars must be set"
+            "GOOGLE_CLOUD_PROJECT, BROADCASTIFY_USERNAME_SECRET_ID, and "
+            "BROADCASTIFY_PASSWORD_SECRET_ID must be set"
         )
-        raise ValueError(msg)
-    credentials = f"{user}:{password}"
+        raise RuntimeError(msg)
+
+    client = secretmanager.SecretManagerServiceClient()
+
+    def _fetch_secret(secret_id: str) -> str:
+        name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
+        try:
+            response = client.access_secret_version(request={"name": name})
+            return response.payload.data.decode("UTF-8").strip()
+        except Exception as e:
+            logger.exception("Failed to access secret %s: %s", name, e)
+            msg = f"Failed to access secret {name}"
+            raise RuntimeError(msg) from e
+
+    username = _fetch_secret(username_secret_id)
+    password = _fetch_secret(password_secret_id)
+    return username, password
+
+
+def _build_auth_header(username: str, password: str) -> str:
+    """Build Basic Auth header from credentials.
+
+    Args:
+        username: Broadcastify username.
+        password: Broadcastify password.
+
+    Returns:
+        An HTTP Authorization header string for Basic auth.
+    """
+    credentials = f"{username}:{password}"
     encoded = base64.b64encode(credentials.encode()).decode()
     return f"Authorization: Basic {encoded}\r\n"
 
@@ -119,7 +157,7 @@ async def capture_icecast_stream(  # noqa: PLR0915
         msg = f"Feed {feed_id} ({feed_name}) missing source_feed_id in feed_properties"
         raise ValueError(msg)
 
-    auth_header = _build_auth_header()
+    auth_header = _build_auth_header(*await asyncio.to_thread(_get_broadcastify_credentials))
     normalized_url_base = url_base if url_base.endswith("/") else f"{url_base}/"
     # Disable burst-on-connect behavior to prevent sputtering during initial ffmpeg streaming.
     # Note: Some Icecast servers may not support this parameter.
