@@ -124,7 +124,7 @@ class GoogleChirpV3Transcriber(Transcriber):
                 raise ValueError(msg) from e
 
     def _build_adaptation(self) -> cloud_speech.SpeechAdaptation | None:
-        """Builds a SpeechAdaptation from the loaded keywords list and custom classes."""
+        """Builds a SpeechAdaptation from the loaded keywords list."""
         if self.config.keywords_file_path is None:
             return None
 
@@ -135,32 +135,21 @@ class GoogleChirpV3Transcriber(Transcriber):
             if kw.phrase
         ]
 
-        # Add references to custom classes
-        phrases.append(cloud_speech.PhraseSet.Phrase(value="${ten-codes}"))
+        # Add APCO 10-codes directly to phrases
+        phrases.extend(
+            [
+                cloud_speech.PhraseSet.Phrase(value=f"10-{i}", boost=None)
+                for i in range(100)
+            ]
+        )
 
         return cloud_speech.SpeechAdaptation(
             phrase_sets=[
                 cloud_speech.SpeechAdaptation.AdaptationPhraseSet(
                     inline_phrase_set=cloud_speech.PhraseSet(phrases=phrases)
                 )
-            ],
-            custom_classes=self._get_default_custom_classes(),
+            ]
         )
-
-    def _get_default_custom_classes(self) -> list[cloud_speech.CustomClass]:
-        """Generates the default inline CustomClasses for adaptation."""
-        custom_classes = []
-
-        # Add APCO 10-codes
-        ten_codes_items = [
-            cloud_speech.CustomClass.ClassItem(value=f"10-{i}")
-            for i in range(100)
-        ]
-        custom_classes.append(
-            cloud_speech.CustomClass(name="ten-codes", items=ten_codes_items)
-        )
-
-        return custom_classes
 
     def transcribe(
         self,
