@@ -21,7 +21,6 @@ from backend.pipeline.transcription.constants import (
     DEFAULT_CHIRP_LOCATION,
     DEFAULT_CHIRP_MODEL,
     DEFAULT_CHIRP_RECOGNIZER,
-    DEFAULT_KEYWORD_BOOST,
     DEFAULT_KEYWORDS_FILE_PATH,
     DEFAULT_MAX_RETRIES,
     DEFAULT_RETRY_MAX_SECONDS,
@@ -59,7 +58,7 @@ class KeywordItem(pydantic.BaseModel):
     """A single keyword/phrase entry loaded from the keywords JSON file."""
 
     phrase: str
-    boost: float = DEFAULT_KEYWORD_BOOST
+    boost: float | None = None
 
 
 class ChirpConfig(ConfigBase):
@@ -71,6 +70,7 @@ class ChirpConfig(ConfigBase):
     language_codes: list[str] = DEFAULT_CHIRP_LANGUAGE_CODES
     enable_automatic_punctuation: bool = True
     enable_word_time_offsets: bool = False
+    enable_denoiser: bool = True
     # Path to a JSON file containing KeywordItem entries for phrase adaptation.
     # Defaults to the packaged file in the container image; explicitly set to
     # None to disable adaptation (e.g. in tests or non-container environments).
@@ -174,6 +174,9 @@ class GoogleChirpV3Transcriber(Transcriber):
                 features=cloud_speech.RecognitionFeatures(
                     enable_automatic_punctuation=self.config.enable_automatic_punctuation,
                     enable_word_time_offsets=self.config.enable_word_time_offsets,
+                ),
+                denoiser_config=cloud_speech.DenoiserConfig(
+                    denoise_audio=self.config.enable_denoiser
                 ),
             ),
             content=audio_data,

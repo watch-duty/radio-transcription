@@ -176,14 +176,16 @@ class TestTranscribers(unittest.TestCase):
             dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
             transcriber.transcribe(audio_data=dummy_audio)
 
-            # Explicit boost for "Code 3"; KeywordItem default (10.0) for "10-4"
+            # Explicit boost for "Code 3"; no boost for "10-4"
             expected_phrase_calls = [
                 call(value="Code 3", boost=20.0),
-                call(value="10-4", boost=10.0),
+                call(value="10-4", boost=None),
             ]
+
             mock_cs.PhraseSet.Phrase.assert_has_calls(
                 expected_phrase_calls, any_order=False
             )
+
             mock_cs.SpeechAdaptation.assert_called_once()
 
     def test_google_chirp_transcriber_keywords_file_missing_raises(
@@ -198,6 +200,36 @@ class TestTranscribers(unittest.TestCase):
             transcriber = GoogleChirpV3Transcriber("test-project", config)
             with self.assertRaises(FileNotFoundError):
                 transcriber.setup()
+
+    def test_google_chirp_transcriber_denoiser_config(self) -> None:
+        """Verifies that denoiser_config is passed to RecognitionConfig."""
+        with (
+            patch(
+                "backend.pipeline.transcription.transcribers.SpeechClient"
+            ) as mock_speech_client_cls,
+            patch(
+                "backend.pipeline.transcription.transcribers.cloud_speech"
+            ) as mock_cs,
+        ):
+            mock_client_instance = MagicMock()
+            mock_speech_client_cls.return_value = mock_client_instance
+
+            mock_response = MagicMock()
+            mock_result = MagicMock()
+            mock_result.alternatives = [MagicMock(transcript="Success")]
+            mock_response.results = [mock_result]
+            mock_client_instance.recognize.return_value = mock_response
+
+            config = ChirpConfig(keywords_file_path=None, enable_denoiser=True)
+            transcriber = GoogleChirpV3Transcriber("test-project", config)
+            transcriber.setup()
+
+            dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
+            transcriber.transcribe(audio_data=dummy_audio)
+
+            _, kwargs = mock_cs.RecognitionConfig.call_args
+            self.assertIn("denoiser_config", kwargs)
+            mock_cs.DenoiserConfig.assert_called_once_with(denoise_audio=True)
 
 
 if __name__ == "__main__":
