@@ -8,7 +8,7 @@ import {
   Extension,
   Get,
   Path,
-  Query,
+  Queries,
   Res,
   Response,
   Route,
@@ -51,6 +51,17 @@ function convertTranscriptResponse(response: TranscriptResponse): Transcript {
   };
 }
 
+export interface ListTranscriptsQueryParams {
+  /**
+   * @isInt
+   * @default 100
+   */
+  limit?: number;
+  nextToken?: string;
+  startTime?: string;
+  endTime?: string;
+}
+
 @Route('api/v1/transcripts')
 @Tags('Transcripts')
 @Response(401, 'Unauthorized')
@@ -61,19 +72,16 @@ export class TranscriptsController extends Controller {
   public async listTranscripts(
     @Path() feedId: string,
     @Res() notFound: TsoaResponse<404, { message: string }>,
-    @Query() limit?: number,
-    @Query() nextToken?: string,
-    @Query() startTime?: string,
-    @Query() endTime?: string
+    @Queries() query: ListTranscriptsQueryParams
   ): Promise<ListTranscriptsResponse> {
     // Get the Authentication token to allow us to call the Cloud Run function.
     try {
       const queryParams = new URLSearchParams();
       queryParams.append('feed_id', feedId);
-      if (limit) queryParams.append('limit', limit.toString());
-      if (nextToken) queryParams.append('next_token', nextToken);
-      if (startTime) queryParams.append('start_time', startTime);
-      if (endTime) queryParams.append('end_time', endTime);
+      if (query.limit) queryParams.append('limit', query.limit.toString());
+      if (query.nextToken) queryParams.append('next_token', query.nextToken);
+      if (query.startTime) queryParams.append('start_time', query.startTime);
+      if (query.endTime) queryParams.append('end_time', query.endTime);
 
       const auth = new GoogleAuth();
       const client = await auth.getIdTokenClient(TRANSCRIPTS_API_URL!);
