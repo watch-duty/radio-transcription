@@ -1,0 +1,44 @@
+[2026-04-16T01:23:30Z] === RAMP V2 START (openmhz fixed, 30s JWT sync, awk-based abort) ===
+[2026-04-16T01:23:30Z] --- step 1: target 100 (41/55/4) ---
+[2026-04-16T01:23:30Z] activating up to cumulative target: 41 bcfy_feeds, 55 bcfy_calls, 4 openmhz
+[2026-04-16T01:23:31Z] steady-state wait: 300s
+[2026-04-16T01:28:31Z] measurement window: 600s @ 30s cadence
+[2026-04-16T01:38:39Z] step 1 steady: n=19 avg_cpu=11.7% max_rss_mb=839.6
+[2026-04-16T01:38:39Z] --- step 2: target 250 (103/138/9) ---
+[2026-04-16T01:38:39Z] activating up to cumulative target: 103 bcfy_feeds, 138 bcfy_calls, 9 openmhz
+[2026-04-16T01:38:40Z] steady-state wait: 300s
+[2026-04-16T01:43:40Z] measurement window: 600s @ 30s cadence
+[2026-04-16T01:53:49Z] step 2 steady: n=19 avg_cpu=23.6% max_rss_mb=1934.34
+[2026-04-16T01:53:49Z] --- step 3: target 500 (207/276/17) ---
+[2026-04-16T01:53:49Z] activating up to cumulative target: 207 bcfy_feeds, 276 bcfy_calls, 17 openmhz
+[2026-04-16T01:53:49Z] steady-state wait: 300s
+[2026-04-16T01:58:49Z] measurement window: 600s @ 30s cadence
+[2026-04-16T02:08:59Z] step 3 steady: n=19 avg_cpu=42.9% max_rss_mb=3738.62
+[2026-04-16T02:08:59Z] --- step 4: target 750 (311/414/25) ---
+[2026-04-16T02:08:59Z] activating up to cumulative target: 311 bcfy_feeds, 414 bcfy_calls, 25 openmhz
+[2026-04-16T02:08:59Z] steady-state wait: 300s
+[2026-04-16T02:13:59Z] measurement window: 600s @ 30s cadence
+[2026-04-16T02:24:09Z] step 4 steady: n=19 avg_cpu=57.3% max_rss_mb=5557.25
+[2026-04-16T02:24:09Z] --- step 5: target 1000 (414/552/34) ---
+[2026-04-16T02:24:09Z] activating up to cumulative target: 414 bcfy_feeds, 552 bcfy_calls, 34 openmhz
+[2026-04-16T02:24:09Z] steady-state wait: 300s
+[2026-04-16T02:29:09Z] measurement window: 600s @ 30s cadence
+[2026-04-16T02:39:20Z] step 5 steady: n=19 avg_cpu=77.4% max_rss_mb=7353.34
+[2026-04-16T02:39:20Z] --- step 6: target 1500 (621/828/51) ---
+[2026-04-16T02:39:20Z] activating up to cumulative target: 621 bcfy_feeds, 828 bcfy_calls, 51 openmhz
+[2026-04-16T02:39:20Z] steady-state wait: 300s
+[2026-04-16T02:44:20Z] measurement window: 600s @ 30s cadence
+[2026-04-16T02:49:12Z] NOTE: rolling avg 106.86% exceeds one-vCPU equivalent; asyncio ceiling reached
+[2026-04-16T02:49:44Z] NOTE: rolling avg 107.01% exceeds one-vCPU equivalent; asyncio ceiling reached
+[2026-04-16T02:50:16Z] NOTE: rolling avg 107.45% exceeds one-vCPU equivalent; asyncio ceiling reached
+[2026-04-16T02:50:48Z] NOTE: rolling avg 108.20% exceeds one-vCPU equivalent; asyncio ceiling reached
+[2026-04-16T02:51:20Z] NOTE: rolling avg 109.22% exceeds one-vCPU equivalent; asyncio ceiling reached
+[2026-04-16T02:51:53Z] NOTE: rolling avg 110.43% exceeds one-vCPU equivalent; asyncio ceiling reached
+[2026-04-16T02:52:25Z] NOTE: rolling avg 111.00% exceeds one-vCPU equivalent; asyncio ceiling reached
+[2026-04-16T02:52:57Z] NOTE: rolling avg 110.55% exceeds one-vCPU equivalent; asyncio ceiling reached
+[2026-04-16T02:53:29Z] NOTE: rolling avg 110.32% exceeds one-vCPU equivalent; asyncio ceiling reached
+[2026-04-16T02:54:01Z] NOTE: rolling avg 109.67% exceeds one-vCPU equivalent; asyncio ceiling reached
+[2026-04-16T02:54:31Z] step 6 steady: n=19 avg_cpu=108.3% max_rss_mb=10833.9
+[2026-04-16T02:54:31Z] --- step 7: target 2000 (828/1104/68) ---
+[2026-04-16T02:54:31Z] activating up to cumulative target: 828 bcfy_feeds, 1104 bcfy_calls, 68 openmhz
+[2026-04-16T02:54:32Z] steady-state wait: 300s

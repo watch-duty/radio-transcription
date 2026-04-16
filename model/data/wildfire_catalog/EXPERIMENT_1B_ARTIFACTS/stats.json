@@ -1,0 +1,112 @@
+{
+  "uploads": {
+    "bcfy_calls": {
+      "n": 206,
+      "ms_mean": 54.88177420874997,
+      "ms_stdev": 10.814386427364417,
+      "ms_p50": 52.68333500043809,
+      "ms_p95": 72.44383599936555,
+      "ms_p99": 106.57781600002636,
+      "ms_max": 120.96635099987907,
+      "bytes_n": 206,
+      "bytes_mean": 28534.757281553397,
+      "bytes_p50": 10756,
+      "bytes_p95": 109335,
+      "bytes_max": 409867
+    },
+    "bcfy_feeds": {
+      "n": 4794,
+      "ms_mean": 644.087045983314,
+      "ms_stdev": 1365.7928258532077,
+      "ms_p50": 56.3569819996701,
+      "ms_p95": 4095.81181700014,
+      "ms_p99": 6060.60926400005,
+      "ms_max": 7512.69770700037,
+      "bytes_n": 4794,
+      "bytes_mean": 37982.48226950355,
+      "bytes_p50": 30369,
+      "bytes_p95": 60504,
+      "bytes_max": 361346
+    }
+  },
+  "uploads_by_step": {},
+  "loop_health": {
+    "3": {
+      "n": 61,
+      "lat_p50": 0.02,
+      "lat_p95": 0.25,
+      "lat_p99": 0.47,
+      "lat_max": 0.47,
+      "drift_p50": 0.57,
+      "drift_p95": 1.08,
+      "drift_p99": 1.46,
+      "drift_max": 1.46
+    },
+    "4": {
+      "n": 60,
+      "lat_p50": 0.02,
+      "lat_p95": 0.2,
+      "lat_p99": 0.48,
+      "lat_max": 0.48,
+      "drift_p50": 0.59,
+      "drift_p95": 1.13,
+      "drift_p99": 3.1,
+      "drift_max": 3.1
+    },
+    "5": {
+      "n": 61,
+      "lat_p50": 0.03,
+      "lat_p95": 0.46,
+      "lat_p99": 1.35,
+      "lat_max": 1.35,
+      "drift_p50": 0.6,
+      "drift_p95": 1.23,
+      "drift_p99": 2.5,
+      "drift_max": 2.5
+    },
+    "6": {
+      "n": 61,
+      "lat_p50": 0.03,
+      "lat_p95": 0.72,
+      "lat_p99": 0.97,
+      "lat_max": 0.97,
+      "drift_p50": 0.52,
+      "drift_p95": 2.89,
+      "drift_p99": 8.6,
+      "drift_max": 8.6
+    }
+  },
+  "ffmpeg_exits": {
+    "total": 201,
+    "by_step": {
+      "6": 11,
+      "5": 13,
+      "4": 8
+    },
+    "codes": {
+      "8": 197,
+      "234": 4
+    },
+    "distinct_feeds": 47
+  },
+  "bcfy_warnings": {
+    "total": 5000,
+    "by_step": {
+      "6": 3
+    },
+    "top_prefixes": [
+      [
+        "Auth failure (401/403)",
+        4988
+      ],
+      [
+        "Failed to download audio from https://calls.broadcastify.com",
+        10
+      ],
+      [
+        "Failed to download audio from https://calls-ai-1.broadcastif",
+        2
+      ]
+    ]
+  }
+}
