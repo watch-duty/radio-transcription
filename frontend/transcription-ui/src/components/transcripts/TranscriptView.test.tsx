@@ -1,33 +1,17 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   cleanup,
   fireEvent,
-  render,
+  renderWithQueryClient,
   screen,
   waitFor,
-} from '@testing-library/react';
+} from '../../test/testUtils';
 
 import { listFeeds } from '../../service/listFeeds';
 import { listTranscripts } from '../../service/listTranscripts';
 import TranscriptView from './TranscriptView';
-
-const renderWithQueryClient = (ui: React.ReactElement) => {
-  const testQueryClient = new QueryClient({
-    defaultOptions: {
-      queries: {
-        retry: false,
-      },
-    },
-  });
-  return render(
-    <QueryClientProvider client={testQueryClient}>
-      {ui}
-    </QueryClientProvider>
-  );
-};
 
 // Mock the services
 vi.mock('../../service/listTranscripts', () => ({
