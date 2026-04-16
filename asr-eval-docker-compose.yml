@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  # Container for running NeMO and Jupyter Notebooks on GPU (using notebook from NeMO image)
+  asr-eval:
+    build:
+      context: .
+      dockerfile: model/nemo_docker/Dockerfile
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./model:/app
+    working_dir: /app
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # Override entrypoint to start Jupyter Notebook instead of ZSH
+    entrypoint: ["jupyter", "notebook", "--ip=0.0.0.0", "--allow-root", "--no-browser", "--NotebookApp.token=''", "--NotebookApp.password=''"]
+
+  # Contianer for running NeMO and Jupyter without GPU
+  asr-eval-cpu:
+    build:
+      context: .
+      dockerfile: model/nemo_docker/Dockerfile
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./model:/app
+    working_dir: /app
+    # Override entrypoint to start Jupyter Notebook instead of ZSH
+    entrypoint: ["jupyter", "notebook", "--ip=0.0.0.0", "--allow-root", "--no-browser", "--NotebookApp.token=''", "--NotebookApp.password=''"]
+
+  # Lightweight container for simply running Jupyter notebooks (without NeMO)
+  notebooks:
+    build:
+      context: ./model/notebook_docker
+      dockerfile: Dockerfile
+    ports:
+      - "8888:8888"
+    command: ["jupyter", "notebook", "--ip=0.0.0.0", "--NotebookApp.token=''", "--NotebookApp.password=''"]
+    volumes:
+      - ./model:/home/jovyan
