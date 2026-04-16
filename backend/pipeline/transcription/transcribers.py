@@ -72,7 +72,7 @@ class ChirpConfig(ConfigBase):
     enable_automatic_punctuation: bool = True
     enable_word_time_offsets: bool = False
     enable_denoiser: bool = True
-    custom_prompt: str | None = None
+    custom_prompt_file_path: str | None = None
     # Path to a JSON file containing KeywordItem entries for phrase adaptation.
     # Defaults to the packaged file in the container image; explicitly set to
     # None to disable adaptation (e.g. in tests or non-container environments).
@@ -95,6 +95,7 @@ class GoogleChirpV3Transcriber(Transcriber):
 
         self.client: SpeechClient | None = None
         self.keywords_list: list[KeywordItem] = []
+        self.custom_prompt: str | None = None
 
     def _init_client(self) -> SpeechClient:
         opts = client_options.ClientOptions(
@@ -123,6 +124,22 @@ class GoogleChirpV3Transcriber(Transcriber):
                     )
             except pydantic.ValidationError as e:
                 msg = f"Failed to parse keywords file {self.config.keywords_file_path}: {e}"
+                raise ValueError(msg) from e
+
+        if self.config.custom_prompt_file_path:
+            p = pathlib.Path(self.config.custom_prompt_file_path)
+            if not p.exists():
+                msg = f"Custom prompt file {self.config.custom_prompt_file_path} does not exist"
+                raise FileNotFoundError(msg)
+            try:
+                with p.open("r") as f:
+                    self.custom_prompt = f.read()
+                    logger.info(
+                        "Loaded custom prompt from %s",
+                        self.config.custom_prompt_file_path,
+                    )
+            except Exception as e:
+                msg = f"Failed to read custom prompt file {self.config.custom_prompt_file_path}: {e}"
                 raise ValueError(msg) from e
 
     def _build_adaptation(self) -> cloud_speech.SpeechAdaptation | None:
@@ -185,9 +202,9 @@ class GoogleChirpV3Transcriber(Transcriber):
                     enable_automatic_punctuation=self.config.enable_automatic_punctuation,
                     enable_word_time_offsets=self.config.enable_word_time_offsets,
                     custom_prompt_config=cloud_speech.CustomPromptConfig(
-                        custom_prompt=self.config.custom_prompt
+                        custom_prompt=self.custom_prompt
                     )
-                    if self.config.custom_prompt
+                    if self.custom_prompt
                     else None,
                 ),
                 denoiser_config=cloud_speech.DenoiserConfig(

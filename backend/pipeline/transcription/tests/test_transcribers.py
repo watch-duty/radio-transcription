@@ -250,8 +250,14 @@ class TestTranscribers(unittest.TestCase):
             mock_response.results = [mock_result]
             mock_client_instance.recognize.return_value = mock_response
 
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".txt", delete=False
+            ) as f:
+                f.write("Test prompt")
+                prompt_path = f.name
+
             config = ChirpConfig(
-                keywords_file_path=None, custom_prompt="Test prompt"
+                keywords_file_path=None, custom_prompt_file_path=prompt_path
             )
             transcriber = GoogleChirpV3Transcriber("test-project", config)
             transcriber.setup()
