@@ -41,14 +41,6 @@ export class DocsController extends Controller {
     }
 
     const file = readFileSync(specPath, 'utf8');
-    const swaggerDocument = load(file) as Record<string, unknown>;
-
-    // Dynamically set the server URL based on the request host
-    const dynamicDoc = {
-      ...swaggerDocument,
-      servers: [{ url: `${request.protocol}://${request.get('host')}` }],
-    };
-
-    return dynamicDoc;
+    return load(file) as Record<string, unknown>;
   }
 }
