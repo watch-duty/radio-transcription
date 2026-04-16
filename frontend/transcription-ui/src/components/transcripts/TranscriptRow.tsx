@@ -13,7 +13,7 @@ import AudioPlayer from '../audio/AudioPlayer';
 import AlertTooltip from './AlertTooltip';
 
 interface TranscriptRowProps {
-  t: Transcript;
+  transcript: Transcript;
   index: number;
   totalTranscripts: number;
   ruleIdToNameMap: Map<string, string>;
@@ -25,7 +25,7 @@ interface TranscriptRowProps {
 }
 
 export function TranscriptRow({
-  t,
+  transcript,
   index,
   totalTranscripts,
   ruleIdToNameMap,
@@ -35,7 +35,7 @@ export function TranscriptRow({
   triggerSnackbar,
   showHeader,
 }: TranscriptRowProps) {
-  const currentDate = new Date(t.startTimestamp);
+  const currentDate = new Date(transcript.startTimestamp);
 
   return (
     <Fragment>
@@ -73,7 +73,7 @@ export function TranscriptRow({
           }}
         >
           <AlertTooltip
-            evaluationDecisions={t.evaluationDecisions}
+            evaluationDecisions={transcript.evaluationDecisions}
             ruleIdToNameMap={ruleIdToNameMap}
             rulesLoading={rulesLoading}
           />
@@ -92,8 +92,8 @@ export function TranscriptRow({
           })}
         </Typography>
         <AudioPlayer
-          audioUri={t.canonicalAudioUri}
-          transmissionId={t.transmissionId}
+          audioUri={transcript.canonicalAudioUri}
+          transmissionId={transcript.transmissionId}
           onPlay={onPlay}
           currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
         />
@@ -101,7 +101,7 @@ export function TranscriptRow({
           variant="body1"
           sx={{ flexGrow: 1, whiteSpace: 'pre-wrap' }}
         >
-          {t.transcript}
+          {transcript.transcript}
         </Typography>
         <Box sx={{ display: 'flex', gap: 1, flexShrink: 0 }}>
           <Tooltip title="Copy transcript">
@@ -109,7 +109,7 @@ export function TranscriptRow({
               size="small"
               aria-label="copy transcript"
               onClick={() => {
-                navigator.clipboard.writeText(t.transcript);
+                navigator.clipboard.writeText(transcript.transcript);
                 triggerSnackbar('Transcript copied');
               }}
             >
@@ -124,8 +124,10 @@ export function TranscriptRow({
                 const url = new URL(
                   window.location.origin + window.location.pathname
                 );
-                url.searchParams.set('feedId', t.feedId);
-                url.searchParams.set('transmissionId', t.transmissionId);
+                url.searchParams.set('feedId', transcript.feedId);
+                url.searchParams.set('transmissionId', transcript.transmissionId);
+                url.searchParams.set('startTimestamp', new Date(transcript.startTimestamp).getTime().toString());
+                url.searchParams.set('endTimestamp', new Date(transcript.endTimestamp).getTime().toString());
                 navigator.clipboard.writeText(url.toString());
                 triggerSnackbar('Link copied');
               }}

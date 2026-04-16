@@ -337,8 +337,8 @@ export function TranscriptView({
       <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
         {transcripts.length > 0 ? (
           <List component={Paper} variant="outlined" sx={{ p: 0 }}>
-            {transcripts.map((t, index) => {
-              const currentDate = new Date(t.startTimestamp);
+            {transcripts.map((transcript, index) => {
+              const currentDate = new Date(transcript.startTimestamp);
               const prevDate =
                 index > 0
                   ? new Date(transcripts[index - 1].startTimestamp)
@@ -349,8 +349,8 @@ export function TranscriptView({
 
               return (
                 <TranscriptRow
-                  key={t.transmissionId}
-                  t={t}
+                  key={transcript.transmissionId}
+                  transcript={transcript}
                   index={index}
                   totalTranscripts={transcripts.length}
                   ruleIdToNameMap={ruleIdToNameMap}
