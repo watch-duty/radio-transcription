@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router';
 import AppRegistrationIcon from '@mui/icons-material/AppRegistration';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
+import DescriptionIcon from '@mui/icons-material/Description';
 import MenuIcon from '@mui/icons-material/Menu';
 import RuleIcon from '@mui/icons-material/Rule';
 import SettingsIcon from '@mui/icons-material/Settings';
@@ -123,6 +124,14 @@ export default function AppContainer({
                 <AppRegistrationIcon />
               </ListItemIcon>
               <ListItemText primary={'Feeds'} />
+            </ListItemButton>
+          </ListItem>
+          <ListItem disablePadding>
+            <ListItemButton onClick={() => navigate('/docs')}>
+              <ListItemIcon>
+                <DescriptionIcon />
+              </ListItemIcon>
+              <ListItemText primary={'API Docs'} />
             </ListItemButton>
           </ListItem>
         </List>

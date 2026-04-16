@@ -15,7 +15,7 @@
 * Type-checking: `ty check`
 * Unit testing: Python `unittest`
 
-## E2E Local Development
+## Pipeline E2E Local Development
 On a high level, this local pipeline runs the following:
 1. Pub/Sub emulator (manages all PubSub topics for each Pub/Sub instance in the pipeline)
 2. Rules Management service (to manage keywords and evaluation logic)

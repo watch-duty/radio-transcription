@@ -45,6 +45,8 @@ yarn-error.log*
 *.tfstate
 *.tfstate.backup
 *.tfplan
+.terraform.lock.hcl
+terraform/modules/asr_evaluation/local_variables.tfvars
 
 # audio ingestion
 backend/pipeline/ingestion/collectors/.*
