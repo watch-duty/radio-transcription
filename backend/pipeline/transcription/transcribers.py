@@ -151,7 +151,7 @@ class GoogleChirpV3Transcriber(Transcriber):
         """Generates the default inline CustomClasses for adaptation."""
         custom_classes = []
 
-        # 1. Ten codes
+        # Add APCO 10-codes
         ten_codes_items = [
             cloud_speech.CustomClass.ClassItem(value=f"10-{i}")
             for i in range(100)
