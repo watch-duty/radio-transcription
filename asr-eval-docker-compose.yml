@@ -43,4 +43,4 @@ services:
       - "8888:8888"
     command: ["jupyter", "notebook", "--ip=0.0.0.0", "--NotebookApp.token=''", "--NotebookApp.password=''"]
     volumes:
-      - ./model:/home/jovyan/work
+      - ./model:/home/jovyan
