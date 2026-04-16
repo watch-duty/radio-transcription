@@ -231,6 +231,41 @@ class TestTranscribers(unittest.TestCase):
             self.assertIn("denoiser_config", kwargs)
             mock_cs.DenoiserConfig.assert_called_once_with(denoise_audio=True)
 
+    def test_google_chirp_transcriber_custom_prompt(self) -> None:
+        """Verifies that custom_prompt is passed to RecognitionFeatures."""
+        with (
+            patch(
+                "backend.pipeline.transcription.transcribers.SpeechClient"
+            ) as mock_speech_client_cls,
+            patch(
+                "backend.pipeline.transcription.transcribers.cloud_speech"
+            ) as mock_cs,
+        ):
+            mock_client_instance = MagicMock()
+            mock_speech_client_cls.return_value = mock_client_instance
+
+            mock_response = MagicMock()
+            mock_result = MagicMock()
+            mock_result.alternatives = [MagicMock(transcript="Success")]
+            mock_response.results = [mock_result]
+            mock_client_instance.recognize.return_value = mock_response
+
+            config = ChirpConfig(
+                keywords_file_path=None, custom_prompt="Test prompt"
+            )
+            transcriber = GoogleChirpV3Transcriber("test-project", config)
+            transcriber.setup()
+
+            dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
+            transcriber.transcribe(audio_data=dummy_audio)
+
+            mock_cs.RecognitionFeatures.assert_called_once()
+            _, features_kwargs = mock_cs.RecognitionFeatures.call_args
+            self.assertIn("custom_prompt_config", features_kwargs)
+            mock_cs.CustomPromptConfig.assert_called_once_with(
+                custom_prompt="Test prompt"
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

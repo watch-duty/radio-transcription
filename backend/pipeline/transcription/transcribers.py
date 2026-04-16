@@ -72,6 +72,7 @@ class ChirpConfig(ConfigBase):
     enable_automatic_punctuation: bool = True
     enable_word_time_offsets: bool = False
     enable_denoiser: bool = True
+    custom_prompt: str | None = None
     # Path to a JSON file containing KeywordItem entries for phrase adaptation.
     # Defaults to the packaged file in the container image; explicitly set to
     # None to disable adaptation (e.g. in tests or non-container environments).
@@ -183,6 +184,11 @@ class GoogleChirpV3Transcriber(Transcriber):
                 features=cloud_speech.RecognitionFeatures(
                     enable_automatic_punctuation=self.config.enable_automatic_punctuation,
                     enable_word_time_offsets=self.config.enable_word_time_offsets,
+                    custom_prompt_config=cloud_speech.CustomPromptConfig(
+                        custom_prompt=self.config.custom_prompt
+                    )
+                    if self.config.custom_prompt
+                    else None,
                 ),
                 denoiser_config=cloud_speech.DenoiserConfig(
                     denoise_audio=self.config.enable_denoiser
