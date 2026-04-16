@@ -124,25 +124,109 @@ class GoogleChirpV3Transcriber(Transcriber):
                 raise ValueError(msg) from e
 
     def _build_adaptation(self) -> cloud_speech.SpeechAdaptation | None:
-        """Builds a SpeechAdaptation from the loaded keywords list.
-
-        Returns None when no keywords are loaded, skipping adaptation entirely.
-        """
-        if not self.keywords_list:
+        """Builds a SpeechAdaptation from the loaded keywords list and custom classes."""
+        if self.config.keywords_file_path is None:
             return None
 
+        custom_classes = []
+
+        # 1. Ten codes
+        ten_codes_items = [
+            cloud_speech.CustomClass.ClassItem(value=f"10-{i}")
+            for i in range(100)
+        ]
+        custom_classes.append(
+            cloud_speech.CustomClass(name="ten-codes", items=ten_codes_items)
+        )
+
+        # 2. Emergency Vehicles
+        vehicles_items = [
+            cloud_speech.CustomClass.ClassItem(value=v)
+            for v in [
+                "engine",
+                "ladder",
+                "truck",
+                "squad",
+                "utility",
+                "brush truck",
+                "ambulance",
+                "helicopter",
+                "copter",
+                "chopper",
+                "tanker",
+                "tender",
+                "tower",
+                "tower-ladder",
+            ]
+        ]
+        custom_classes.append(
+            cloud_speech.CustomClass(
+                name="emergency-vehicles", items=vehicles_items
+            )
+        )
+
+        # 3. Incident Command
+        command_items = [
+            cloud_speech.CustomClass.ClassItem(value=c)
+            for c in [
+                "IC",
+                "ICP",
+                "incident command",
+                "incident command post",
+                "branch",
+                "division",
+                "strike team",
+            ]
+        ]
+        custom_classes.append(
+            cloud_speech.CustomClass(
+                name="incident-command", items=command_items
+            )
+        )
+
+        # 4. Incident Types
+        types_items = [
+            cloud_speech.CustomClass.ClassItem(value=t)
+            for t in [
+                "brush fire",
+                "building fire",
+                "structure fire",
+                "vegetation fire",
+                "woods fire",
+                "pasture fire",
+                "grass fire",
+                "traffic collision",
+                "medical aid",
+            ]
+        ]
+        custom_classes.append(
+            cloud_speech.CustomClass(name="incident-types", items=types_items)
+        )
+
+        # Phrases from JSON file (remaining ones)
         phrases = [
             cloud_speech.PhraseSet.Phrase(value=kw.phrase, boost=kw.boost)
             for kw in self.keywords_list
             if kw.phrase
         ]
 
+        # Add references to custom classes
+        phrases.extend(
+            [
+                cloud_speech.PhraseSet.Phrase(value="${ten-codes}"),
+                cloud_speech.PhraseSet.Phrase(value="${emergency-vehicles}"),
+                cloud_speech.PhraseSet.Phrase(value="${incident-command}"),
+                cloud_speech.PhraseSet.Phrase(value="${incident-types}"),
+            ]
+        )
+
         return cloud_speech.SpeechAdaptation(
             phrase_sets=[
                 cloud_speech.SpeechAdaptation.AdaptationPhraseSet(
                     inline_phrase_set=cloud_speech.PhraseSet(phrases=phrases)
                 )
-            ]
+            ],
+            custom_classes=custom_classes,
         )
 
     def transcribe(
