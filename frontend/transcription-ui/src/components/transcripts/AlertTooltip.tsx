@@ -2,6 +2,7 @@ import WarningAmber from '@mui/icons-material/WarningAmber';
 import Box from '@mui/material/Box';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
+import {useTheme} from '@mui/material/styles';
 
 interface AlertTooltipProps {
   evaluationDecisions: string[];
@@ -14,14 +15,16 @@ export function AlertTooltip({
   ruleIdToNameMap,
   rulesLoading,
 }: AlertTooltipProps) {
-  if (!evaluationDecisions || evaluationDecisions.length === 0) {
+  const theme = useTheme();
+  
+  if (evaluationDecisions.length == 0) {
     return null;
   }
 
   return (
     <Tooltip
       title={
-        <Box sx={{ p: 0.5 }}>
+        <Box sx={{ p: theme.spacing(2) }}>
           {evaluationDecisions.map((ruleId) => (
             <Typography
               key={ruleId}
