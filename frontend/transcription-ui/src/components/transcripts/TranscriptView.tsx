@@ -37,6 +37,8 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
 
   const [feedId, setFeedId] = useState<string>('');
   const [searchedFeedId, setSearchedFeedId] = useState<string>('');
+  const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
+    useState<string | null>(null);
 
   const {
     data: feeds,
@@ -82,9 +84,6 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
       listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? []
     );
   }, [listTranscriptsResponse]);
-
-  const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
-    useState<string | null>(null);
 
   const {
     data: rules,
