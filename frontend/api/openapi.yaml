@@ -63,6 +63,20 @@ components:
         - transcripts
       type: object
       additionalProperties: false
+    ListTranscriptsQueryParams:
+      properties:
+        limit:
+          type: integer
+          format: int32
+          default: 100
+        nextToken:
+          type: string
+        startTime:
+          type: string
+        endTime:
+          type: string
+      type: object
+      additionalProperties: false
     ScopeLevel:
       type: string
       enum:
@@ -313,23 +327,26 @@ paths:
             type: string
         - in: query
           name: limit
+          required: false
           schema:
-            type: integer
             default: 100
+            format: int32
+            type: integer
         - in: query
           name: nextToken
+          required: false
           schema:
             type: string
         - in: query
           name: startTime
+          required: false
           schema:
             type: string
-            format: date-time
         - in: query
           name: endTime
+          required: false
           schema:
             type: string
-            format: date-time
       x-google-backend: radio-transcription-api
   /api/v1/rules:
     get:
