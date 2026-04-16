@@ -21,6 +21,7 @@ from backend.pipeline.transcription.constants import (
     DEFAULT_CHIRP_LOCATION,
     DEFAULT_CHIRP_MODEL,
     DEFAULT_CHIRP_RECOGNIZER,
+    DEFAULT_KEYWORD_BOOST,
     DEFAULT_KEYWORDS_FILE_PATH,
     DEFAULT_MAX_RETRIES,
     DEFAULT_RETRY_MAX_SECONDS,
@@ -58,7 +59,7 @@ class KeywordItem(pydantic.BaseModel):
     """A single keyword/phrase entry loaded from the keywords JSON file."""
 
     phrase: str
-    boost: float | None = None
+    boost: float = DEFAULT_KEYWORD_BOOST
 
 
 class ChirpConfig(ConfigBase):
@@ -138,7 +139,9 @@ class GoogleChirpV3Transcriber(Transcriber):
         # Add APCO 10-codes directly to phrases
         phrases.extend(
             [
-                cloud_speech.PhraseSet.Phrase(value=f"10-{i}", boost=None)
+                cloud_speech.PhraseSet.Phrase(
+                    value=f"10-{i}", boost=DEFAULT_KEYWORD_BOOST
+                )
                 for i in range(100)
             ]
         )

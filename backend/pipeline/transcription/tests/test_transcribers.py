@@ -176,10 +176,10 @@ class TestTranscribers(unittest.TestCase):
             dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
             transcriber.transcribe(audio_data=dummy_audio)
 
-            # Explicit boost for "Code 3"; no boost for "10-4"
+            # Explicit boost for "Code 3"; default boost for "10-4"
             expected_phrase_calls = [
                 call(value="Code 3", boost=20.0),
-                call(value="10-4", boost=None),
+                call(value="10-4", boost=10.0),
             ]
 
             mock_cs.PhraseSet.Phrase.assert_has_calls(
