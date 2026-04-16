@@ -67,7 +67,7 @@ describe('listTranscripts', () => {
     mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
 
     const controller = new TranscriptsController();
-    const result = await controller.listTranscripts('test', vi.fn(), {});
+    const result = await controller.listTranscripts('test', vi.fn(), { limit: 100 });
 
     expect(result).toEqual(expectedResult);
     expect(mockRequest).toHaveBeenCalledWith({
@@ -82,7 +82,7 @@ describe('listTranscripts', () => {
     const controller = new TranscriptsController();
 
     await expect(
-      controller.listTranscripts('test', vi.fn(), {})
+      controller.listTranscripts('test', vi.fn(), { limit: 100 })
     ).rejects.toThrow('Error fetching transcript: Network Error');
   });
 });
