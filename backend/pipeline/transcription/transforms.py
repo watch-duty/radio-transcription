@@ -110,6 +110,11 @@ class AddEventTimestamp(beam.DoFn):
                 yield beam.pvalue.TaggedOutput(
                     DEAD_LETTER_QUEUE_TAG, {"error": msg, "feed_id": feed_id}
                 )
+            elif not chunk_proto.feed_name:
+                msg = f"AudioChunk missing required feed_name (feed_id: {feed_id})"
+                yield beam.pvalue.TaggedOutput(
+                    DEAD_LETTER_QUEUE_TAG, {"error": msg, "feed_id": feed_id}
+                )
             elif not chunk_proto.gcs_uri:
                 msg = (
                     f"AudioChunk missing required gcs_uri (feed_id: {feed_id})"
