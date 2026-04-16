@@ -13,7 +13,8 @@
     "lint:fix": "eslint . --fix",
     "format:check": "prettier --ignore-path ../../.prettierignore --check .",
     "format:fix": "prettier --ignore-path ../../.prettierignore --write .",
-    "test": "vitest"
+    "test": "vitest",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",

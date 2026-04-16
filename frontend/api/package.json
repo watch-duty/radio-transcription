@@ -13,7 +13,8 @@
     "format:fix": "prettier --ignore-path ../../.prettierignore --write .",
     "test": "vitest",
     "generate-routes": "yarn run tsoa routes",
-    "generate-spec": "yarn run tsoa spec --yaml && node scripts/post-process-spec.js"
+    "generate-spec": "yarn run tsoa spec --yaml && node scripts/post-process-spec.js",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@google-cloud/functions-framework": "^5.0.2",
