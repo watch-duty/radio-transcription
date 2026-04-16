@@ -17,7 +17,7 @@ frontend_dir = "frontend"
 # ---------------------------------------------------------------------------- #
 
 [tasks.lint]
-depends = ["lint:ruff", "lint:ty", "lint:terraform"]
+depends = ["lint:ruff", "lint:ty", "lint:terraform", "lint:frontend"]
 
 [tasks."lint:ruff"]
 description = "Run ruff Python linter with auto-fix"
@@ -34,8 +34,24 @@ terraform validate
 terraform fmt -check -recursive
 """
 
+[tasks."lint:frontend:eslint"]
+description = "Run ESLint checks for frontend"
+run = "yarn --cwd frontend/api run lint:check && yarn --cwd frontend/transcription-ui run lint:check"
+
+[tasks."lint:frontend:prettier"]
+description = "Run Prettier checks for frontend"
+run = "yarn --cwd frontend/api run format:check && yarn --cwd frontend/transcription-ui run format:check"
+
+[tasks."lint:frontend:tsc"]
+description = "Run Type checks for frontend"
+run = "yarn --cwd frontend/api run typecheck && yarn --cwd frontend/transcription-ui run typecheck"
+
+[tasks."lint:frontend"]
+description = "Run all frontend lint checks"
+depends = ["lint:frontend:eslint", "lint:frontend:prettier", "lint:frontend:tsc"]
+
 [tasks.format]
-depends = ["format:ruff", "format:terraform"]
+depends = ["format:ruff", "format:terraform", "format:frontend"]
 
 [tasks."format:ruff"]
 description = "Format Python code with ruff"
@@ -44,6 +60,18 @@ run = "uv run ruff format"
 [tasks."format:terraform"]
 description = "Format Terraform code"
 run = "terraform fmt -recursive"
+
+[tasks."format:frontend:eslint"]
+description = "Fix ESLint issues for frontend"
+run = "yarn --cwd frontend/api run lint:fix && yarn --cwd frontend/transcription-ui run lint:fix"
+
+[tasks."format:frontend:prettier"]
+description = "Fix Prettier issues for frontend"
+run = "yarn --cwd frontend/api run format:fix && yarn --cwd frontend/transcription-ui run format:fix"
+
+[tasks."format:frontend"]
+description = "Apply all frontend fixes"
+depends = ["format:frontend:eslint", "format:frontend:prettier"]
 
 [tasks."generate:protos"]
 description = "Generate Python code from Protobuf definitions"
