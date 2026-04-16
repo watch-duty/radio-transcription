@@ -1,16 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  cleanup,
-  fireEvent,
-  renderWithQueryClient,
-  screen,
-  waitFor,
-} from '../../test/testUtils';
+import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 
 import { listFeeds } from '../../service/listFeeds';
 import { listTranscripts } from '../../service/listTranscripts';
+import { renderWithQueryClient } from '../../test/testUtils';
 import TranscriptView from './TranscriptView';
 
 // Mock the services
