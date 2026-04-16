@@ -20,7 +20,8 @@ import Paper from '@mui/material/Paper';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
-import type { Feed, Rule, Transcript } from '@transcription/common';
+import { useQuery } from '@tanstack/react-query';
+import type { Feed, Transcript } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { listFeeds } from '../../service/listFeeds';
@@ -42,12 +43,10 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
   const [feedsLoading, setFeedsLoading] = useState<boolean>(false);
   const [, setFeedsError] = useState<string | null>(null);
 
-  const [rules, setRules] = useState<Rule[]>([]);
-  const [rulesLoading, setRulesLoading] = useState<boolean>(false);
-  const [, setRulesError] = useState<string | null>(null);
-
   const [feedId, setFeedId] = useState<string>('');
 
+  // TODO: call transcripts using react-query
+  // https://linear.app/watchduty/issue/GOO-313/load-feeds-using-react-query
   const [transcripts, setTranscripts] = useState<Transcript[]>([]);
   const [transcriptsLoading, setTranscriptsLoading] = useState(false);
   const [transcriptsError, setTranscriptsError] = useState<string | null>(null);
@@ -60,11 +59,35 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
 
-  const ruleIdToNameMap = useMemo(() => {
-    return new Map<string, string>(
-      rules.map((rule) => [rule.ruleId, rule.ruleName])
-    );
+  const {
+    data: rules,
+    isError: rulesError,
+    isLoading: rulesLoading,
+  } = useQuery({
+    queryKey: ['listRules', token],
+    queryFn: () => listRules(token!),
+    enabled: !!token,
+  });
+
+  // Memoizing the rule ID to name map so we don't have to recreate it on every render.
+  const ruleIdToNameMap: Map<string, string> = useMemo(() => {
+    if (!rules) {
+      return new Map<string, string>();
+    }
+    return new Map(rules.map((rule) => [rule.ruleId, rule.ruleName]));
   }, [rules]);
+
+  /**
+   * Effect for handling rules errors.
+   */
+  useEffect(() => {
+    if (rulesError) {
+      addAlert({
+        severity: 'error',
+        children: `An error occurred while trying to load rules: ${rulesError}`,
+      });
+    }
+  }, [rulesError, addAlert]);
 
   /**
    * A callback that loads all the available feeds for the authenticated user.
@@ -95,37 +118,6 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
       }
     } finally {
       setFeedsLoading(false);
-    }
-  }, [token, addAlert]);
-
-  /**
-   * A callback that loads all the available rules for the authenticated user.
-   */
-  const loadRules = useCallback(async () => {
-    setRules([]);
-    setRulesLoading(true);
-    setRulesError(null);
-
-    try {
-      const rules = await listRules(token!);
-      setRules(rules);
-    } catch (err: unknown) {
-      if (err instanceof Error) {
-        const message = `An unexpected error occurred while trying to load rules. Error: ${err.message}`;
-        setRulesError(err.message);
-        addAlert({
-          severity: 'error',
-          children: message,
-        });
-      } else {
-        setRulesError('Unknown error');
-        addAlert({
-          severity: 'error',
-          children: 'An unknown error occurred while trying to load rules.',
-        });
-      }
-    } finally {
-      setRulesLoading(false);
     }
   }, [token, addAlert]);
 
@@ -197,14 +189,14 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
   /**
    * This effect only loads the feeds once when the token is available.
    * We utilize the `initialLoadFeedsCalled` ref to ensure we don't initialize more than once.
+   * TODO: remove this after https://linear.app/watchduty/issue/GOO-313/load-feeds-using-react-query
    */
   useEffect(() => {
     if (token && !initialLoadCalled.current) {
       initialLoadCalled.current = true;
       loadFeeds();
-      loadRules();
     }
-  }, [token, loadFeeds, loadRules]);
+  }, [token, loadFeeds]);
 
   return (
     <Box

@@ -17,21 +17,21 @@ export function AlertTooltip({
 }: AlertTooltipProps) {
   const theme = useTheme();
 
-  if (evaluationDecisions.length == 0) {
+  if (!evaluationDecisions || evaluationDecisions.length === 0) {
     return null;
   }
 
   return (
     <Tooltip
       title={
-        <Box sx={{ p: theme.spacing(2) }}>
+        <Box sx={{ p: theme.spacing(1) }}>
           {evaluationDecisions.map((ruleId) => (
             <Typography
               key={ruleId}
               variant="caption"
               sx={{ display: 'block' }}
             >
-              {rulesLoading ? ruleId : ruleIdToNameMap.get(ruleId) || ruleId}
+              {rulesLoading ? ruleId : (ruleIdToNameMap.get(ruleId) ?? ruleId)}
             </Typography>
           ))}
         </Box>
