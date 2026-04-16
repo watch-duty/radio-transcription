@@ -14,6 +14,7 @@
     "test": "vitest",
     "generate-routes": "yarn run tsoa routes",
     "generate-spec": "yarn run tsoa spec --yaml && node scripts/post-process-spec.js",
+    "verify-spec": "yarn generate-spec && git diff --exit-code openapi.yaml",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

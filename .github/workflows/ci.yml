@@ -111,6 +111,9 @@ jobs:
       - name: Generate routes
         working-directory: frontend/api
         run: yarn generate-routes
+      - name: Verify OpenAPI Spec
+        working-directory: frontend/api
+        run: yarn verify-spec
       - name: Type check API
         working-directory: frontend/api
         run: npx tsc --noEmit
