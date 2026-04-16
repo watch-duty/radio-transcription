@@ -128,6 +128,39 @@ class GoogleChirpV3Transcriber(Transcriber):
         if self.config.keywords_file_path is None:
             return None
 
+        # Phrases from JSON file
+        phrases = [
+            cloud_speech.PhraseSet.Phrase(value=kw.phrase, boost=kw.boost)
+            for kw in self.keywords_list
+            if kw.phrase
+        ]
+
+        # Add references to custom classes
+        phrases.extend(
+            [
+                cloud_speech.PhraseSet.Phrase(value="${ten-codes}"),
+                cloud_speech.PhraseSet.Phrase(value="${emergency-vehicles}"),
+                cloud_speech.PhraseSet.Phrase(value="${incident-command}"),
+                cloud_speech.PhraseSet.Phrase(value="${incident-types}"),
+                cloud_speech.PhraseSet.Phrase(value="${radio-responses}"),
+                cloud_speech.PhraseSet.Phrase(value="${unit-status}"),
+                cloud_speech.PhraseSet.Phrase(value="${fire-behavior}"),
+                cloud_speech.PhraseSet.Phrase(value="${tactics-objectives}"),
+                cloud_speech.PhraseSet.Phrase(value="${radio-channels}"),
+            ]
+        )
+
+        return cloud_speech.SpeechAdaptation(
+            phrase_sets=[
+                cloud_speech.SpeechAdaptation.AdaptationPhraseSet(
+                    inline_phrase_set=cloud_speech.PhraseSet(phrases=phrases)
+                )
+            ],
+            custom_classes=self._get_default_custom_classes(),
+        )
+
+    def _get_default_custom_classes(self) -> list[cloud_speech.CustomClass]:
+        """Generates the default inline CustomClasses for adaptation."""
         custom_classes = []
 
         # 1. Ten codes
@@ -203,31 +236,92 @@ class GoogleChirpV3Transcriber(Transcriber):
             cloud_speech.CustomClass(name="incident-types", items=types_items)
         )
 
-        # Phrases from JSON file (remaining ones)
-        phrases = [
-            cloud_speech.PhraseSet.Phrase(value=kw.phrase, boost=kw.boost)
-            for kw in self.keywords_list
-            if kw.phrase
-        ]
-
-        # Add references to custom classes
-        phrases.extend(
-            [
-                cloud_speech.PhraseSet.Phrase(value="${ten-codes}"),
-                cloud_speech.PhraseSet.Phrase(value="${emergency-vehicles}"),
-                cloud_speech.PhraseSet.Phrase(value="${incident-command}"),
-                cloud_speech.PhraseSet.Phrase(value="${incident-types}"),
+        # 5. Radio Responses
+        responses_items = [
+            cloud_speech.CustomClass.ClassItem(value=r)
+            for r in [
+                "acknowledge",
+                "affirmative",
+                "negative",
+                "copy",
+                "loud and clear",
             ]
+        ]
+        custom_classes.append(
+            cloud_speech.CustomClass(
+                name="radio-responses", items=responses_items
+            )
         )
 
-        return cloud_speech.SpeechAdaptation(
-            phrase_sets=[
-                cloud_speech.SpeechAdaptation.AdaptationPhraseSet(
-                    inline_phrase_set=cloud_speech.PhraseSet(phrases=phrases)
-                )
-            ],
-            custom_classes=custom_classes,
+        # 6. Unit Status
+        status_items = [
+            cloud_speech.CustomClass.ClassItem(value=s)
+            for s in [
+                "on-scene",
+                "on-scene in the area",
+                "responding",
+                "respond to",
+                "returning",
+                "en-route",
+                "available",
+                "available returning",
+            ]
+        ]
+        custom_classes.append(
+            cloud_speech.CustomClass(name="unit-status", items=status_items)
         )
+
+        # 7. Fire Behavior
+        behavior_items = [
+            cloud_speech.CustomClass.ClassItem(value=b)
+            for b in [
+                "light flashy fuels",
+                "terrain driven",
+                "wind driven",
+                "rate of spread",
+                "left flank",
+                "right flank",
+            ]
+        ]
+        custom_classes.append(
+            cloud_speech.CustomClass(name="fire-behavior", items=behavior_items)
+        )
+
+        # 8. Tactics / Objectives
+        tactics_items = [
+            cloud_speech.CustomClass.ClassItem(value=t)
+            for t in [
+                "exposure protection",
+                "structure defense",
+                "structure protection",
+                "structures threatened",
+                "smoke investigation",
+            ]
+        ]
+        custom_classes.append(
+            cloud_speech.CustomClass(
+                name="tactics-objectives", items=tactics_items
+            )
+        )
+
+        # 9. Radio Channels
+        channels_items = [
+            cloud_speech.CustomClass.ClassItem(value=c)
+            for c in [
+                "TAC",
+                "VFIRE",
+                "victor",
+                "AIQ",
+                "AOR",
+            ]
+        ]
+        custom_classes.append(
+            cloud_speech.CustomClass(
+                name="radio-channels", items=channels_items
+            )
+        )
+
+        return custom_classes
 
     def transcribe(
         self,
