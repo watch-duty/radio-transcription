@@ -67,7 +67,9 @@ describe('listTranscripts', () => {
     mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
 
     const controller = new TranscriptsController();
-    const result = await controller.listTranscripts('test', vi.fn(), { limit: 100 });
+    const result = await controller.listTranscripts('test', vi.fn(), {
+      limit: 100,
+    });
 
     expect(result).toEqual(expectedResult);
     expect(mockRequest).toHaveBeenCalledWith({
