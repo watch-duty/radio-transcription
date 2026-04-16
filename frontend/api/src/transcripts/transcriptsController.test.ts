@@ -81,8 +81,8 @@ describe('listTranscripts', () => {
     mockRequest.mockRejectedValueOnce(new Error(errorMessage));
     const controller = new TranscriptsController();
 
-    await expect(controller.listTranscripts('test', vi.fn(), {})).rejects.toThrow(
-      'Error fetching transcript: Network Error'
-    );
+    await expect(
+      controller.listTranscripts('test', vi.fn(), {})
+    ).rejects.toThrow('Error fetching transcript: Network Error');
   });
 });
