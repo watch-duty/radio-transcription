@@ -1,4 +1,4 @@
-import { Suspense, lazy, useState, useCallback } from 'react';
+import { Suspense, lazy, useCallback, useState } from 'react';
 import { Route, Routes } from 'react-router';
 
 import Alert, { type AlertProps } from '@mui/material/Alert';

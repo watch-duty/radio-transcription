@@ -1,9 +1,4 @@
-import {
-  Fragment,
-  useEffect,
-  useMemo,
-  useState,
-} from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 
 import RefreshIcon from '@mui/icons-material/Refresh';
 import type { AlertProps } from '@mui/material/Alert';
@@ -18,7 +13,11 @@ import Paper from '@mui/material/Paper';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
-import { useQuery, useQueryClient, useInfiniteQuery } from '@tanstack/react-query';
+import {
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 
 import { useAuth } from '../../context/AuthContext';
 import { listFeeds } from '../../service/listFeeds';
@@ -71,14 +70,17 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
     isSuccess: isTranscriptsSuccess,
   } = useInfiniteQuery({
     queryKey: ['listTranscripts', token, searchedFeedId],
-    queryFn: ({ pageParam }) => listTranscripts(searchedFeedId, token!, undefined, pageParam),
+    queryFn: ({ pageParam }) =>
+      listTranscripts(searchedFeedId, token!, undefined, pageParam),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextToken,
     enabled: !!searchedFeedId,
   });
 
   const transcripts = useMemo(() => {
-    return listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? [];
+    return (
+      listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? []
+    );
   }, [listTranscriptsResponse]);
 
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
@@ -190,7 +192,15 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
         </IconButton>
         <Button
           variant="contained"
-          onClick={() => setSearchedFeedId(feedId)}
+          onClick={() => {
+            if (searchedFeedId === feedId) {
+              queryClient.resetQueries({
+                queryKey: ['listTranscripts', token, searchedFeedId],
+              });
+            } else {
+              setSearchedFeedId(feedId);
+            }
+          }}
           disabled={feedsFetching || transcriptsLoading || !feedId.trim()}
           sx={{ minWidth: '100px' }}
         >
@@ -309,11 +319,11 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
             <CircularProgress />
           </Box>
         ) : transcriptsError ? (
-          <Typography color="text.secondary" align="center" sx={{ mt: 4 }}>
+          <Typography color="error" align="center" sx={{ mt: 4 }}>
             Error loading transcripts.
           </Typography>
         ) : isTranscriptsSuccess ? (
-          <Typography color="text.secondary" align="center" sx={{ mt: 4 }}>
+          <Typography color="textSecondary" align="center" sx={{ mt: 4 }}>
             No transcripts found.
           </Typography>
         ) : null}
