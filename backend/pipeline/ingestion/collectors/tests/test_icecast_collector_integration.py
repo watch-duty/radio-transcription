@@ -19,11 +19,6 @@ from backend.pipeline.common.clients import gcs_client
 from backend.pipeline.ingestion.collectors.icecast import icecast_collector
 from backend.pipeline.storage.feed_store import FeedStore
 
-MOCK_ENV_VARS = {
-    "BROADCASTIFY_USERNAME": "test_user",
-    "BROADCASTIFY_PASSWORD": "test_pass",
-}
-
 _REPO_ROOT = Path(__file__).resolve().parents[5]
 _SQL_DIR = (
     _REPO_ROOT / "terraform" / "modules" / "alloydb" / "sql" / "ingestion"
@@ -122,8 +117,13 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.store = FeedStore(self.pool)
         self.worker_id = uuid.uuid4()
 
-        # Broadcastify env vars for _build_auth_header()
-        os.environ.update(MOCK_ENV_VARS)
+        # Mock credential fetching so tests don't need Secret Manager.
+        self._credentials_patcher = patch(
+            "backend.pipeline.ingestion.collectors.icecast.icecast_collector"
+            "._get_broadcastify_credentials",
+            return_value=("test_user", "test_pass"),
+        )
+        self._credentials_patcher.start()
         # Point Storage at fake-gcs-server via emulator host and use an explicit
         # client instance, since gcp_helper no longer exposes singleton helpers.
         os.environ["STORAGE_EMULATOR_HOST"] = self._gcs_url
@@ -133,8 +133,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         """Close GCS client, remove env var, and close pool."""
         await self.gcs_client.close()
         os.environ.pop("STORAGE_EMULATOR_HOST", None)
-        for key in MOCK_ENV_VARS:
-            os.environ.pop(key, None)
+        self._credentials_patcher.stop()
         await self.pool.close()
 
     # -- Helpers ----------------------------------------------------------
