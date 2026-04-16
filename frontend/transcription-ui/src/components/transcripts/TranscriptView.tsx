@@ -1,9 +1,7 @@
 import {
   Fragment,
-  useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from 'react';
 
@@ -20,8 +18,7 @@ import Paper from '@mui/material/Paper';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
-import { useQuery } from '@tanstack/react-query';
-import type { Feed, Transcript } from '@transcription/common';
+import { useQuery, useQueryClient, useInfiniteQuery } from '@tanstack/react-query';
 
 import { useAuth } from '../../context/AuthContext';
 import { listFeeds } from '../../service/listFeeds';
@@ -37,31 +34,59 @@ interface TranscriptViewProps {
 export function TranscriptView({ addAlert }: TranscriptViewProps) {
   const theme = useTheme();
   const { token } = useAuth();
-
-  const initialLoadCalled = useRef(false);
-  const [feeds, setFeeds] = useState<Feed[]>([]);
-  const [feedsLoading, setFeedsLoading] = useState<boolean>(false);
-  const [, setFeedsError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
   const [feedId, setFeedId] = useState<string>('');
+  const [searchedFeedId, setSearchedFeedId] = useState<string>('');
 
-  // TODO: call transcripts using react-query
-  // https://linear.app/watchduty/issue/GOO-313/load-feeds-using-react-query
-  const [transcripts, setTranscripts] = useState<Transcript[]>([]);
-  const [transcriptsLoading, setTranscriptsLoading] = useState(false);
-  const [transcriptsError, setTranscriptsError] = useState<string | null>(null);
-  const [hasSearched, setHasSearched] = useState(false);
-  const [transcriptNextToken, setTranscriptNextToken] = useState<
-    string | undefined
-  >(undefined);
-  const [loadingMoreTranscripts, setLoadingMoreTranscripts] = useState(false);
+  const {
+    data: feeds,
+    error: feedsError,
+    isFetching: feedsFetching,
+  } = useQuery({
+    queryKey: ['listFeeds', token],
+    queryFn: () => listFeeds(token!),
+    enabled: !!token,
+  });
+
+  /**
+   * Effect for handling feeds errors.
+   */
+  useEffect(() => {
+    if (feedsError) {
+      addAlert({
+        severity: 'error',
+        children: `An error occurred while trying to load feeds: ${feedsError}`,
+      });
+    }
+  }, [feedsError, addAlert]);
+
+  const {
+    data: listTranscriptsResponse,
+    fetchNextPage: fetchNextTranscripts,
+    hasNextPage: hasNextTranscripts,
+    error: transcriptsError,
+    isLoading: transcriptsLoading,
+    isFetching: transcriptsFetching,
+    isSuccess: isTranscriptsSuccess,
+  } = useInfiniteQuery({
+    queryKey: ['listTranscripts', token, searchedFeedId],
+    queryFn: ({ pageParam }) => listTranscripts(searchedFeedId, token!, undefined, pageParam),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.nextToken,
+    enabled: !!searchedFeedId,
+  });
+
+  const transcripts = useMemo(() => {
+    return listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? [];
+  }, [listTranscriptsResponse]);
 
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
 
   const {
     data: rules,
-    isError: rulesError,
+    error: rulesError,
     isLoading: rulesLoading,
   } = useQuery({
     queryKey: ['listRules', token],
@@ -89,114 +114,9 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
     }
   }, [rulesError, addAlert]);
 
-  /**
-   * A callback that loads all the available feeds for the authenticated user.
-   */
-  const loadFeeds = useCallback(async () => {
-    setFeeds([]);
-    setFeedsLoading(true);
-    setFeedsError(null);
-
-    try {
-      const feeds = await listFeeds(token!);
-      setFeeds(feeds);
-    } catch (err: unknown) {
-      if (err instanceof Error) {
-        const message = `An unexpected error occurred while trying to load feeds. You can still manually enter a feed ID. Error: ${err.message}`;
-        setFeedsError(err.message);
-        addAlert({
-          severity: 'error',
-          children: message,
-        });
-      } else {
-        setFeedsError('Unknown error');
-        addAlert({
-          severity: 'error',
-          children:
-            'An unknown error occurred while trying to load feeds. You can still manually enter a feed ID',
-        });
-      }
-    } finally {
-      setFeedsLoading(false);
-    }
-  }, [token, addAlert]);
-
-  /**
-   * A callback that loads the transcripts for the specified feed ID.
-   */
-  const handleFetch = async () => {
-    if (!feedId.trim()) return;
-    setHasSearched(true);
-    setTranscripts([]);
-    setTranscriptsLoading(true);
-    setTranscriptsError(null);
-    setTranscriptNextToken(undefined);
-
-    try {
-      const response = await listTranscripts(feedId, token!);
-      setTranscripts(response.transcripts);
-      setTranscriptNextToken(response.nextToken);
-    } catch (err: unknown) {
-      if (err instanceof Error) {
-        const message = `An error occurred while trying to load transcripts for feed ${feedId}. Error: ${err.message}`;
-        setTranscriptsError(message);
-        addAlert({
-          severity: 'error',
-          children: message,
-        });
-      } else {
-        const message = `An error occurred while trying to load transcripts for feed ${feedId}.`;
-        setTranscriptsError(message);
-        addAlert({
-          severity: 'error',
-          children: message,
-        });
-      }
-    } finally {
-      setTranscriptsLoading(false);
-    }
-  };
-
-  const handleLoadMore = async () => {
-    if (!transcriptNextToken || !feedId.trim()) return;
-    setLoadingMoreTranscripts(true);
-    setTranscriptsError(null);
-
-    try {
-      const response = await listTranscripts(
-        feedId,
-        token!,
-        undefined,
-        transcriptNextToken
-      );
-      setTranscripts((prev) => [...prev, ...response.transcripts]);
-      setTranscriptNextToken(response.nextToken);
-    } catch (err: unknown) {
-      if (err instanceof Error) {
-        setTranscriptsError(err.message);
-      } else {
-        setTranscriptsError('An unknown error occurred');
-      }
-    } finally {
-      setLoadingMoreTranscripts(false);
-    }
-  };
-
   const onPlay = (transmissionId: string | null) => {
     setCurrentlyPlayingTransmissionId(transmissionId);
   };
-
-  /**
-   * This effect only loads the feeds once when the token is available.
-   * We utilize the `initialLoadFeedsCalled` ref to ensure we don't initialize more than once.
-   * TODO: remove this after https://linear.app/watchduty/issue/GOO-313/load-feeds-using-react-query
-   */
-  useEffect(() => {
-    if (token && !initialLoadCalled.current) {
-      initialLoadCalled.current = true;
-      loadFeeds();
-    }
-  }, [token, loadFeeds]);
 
   return (
     <Box
@@ -211,7 +131,7 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
       <Box sx={{ display: 'flex', gap: 2, mb: 3, alignItems: 'center' }}>
         <Autocomplete
           disablePortal
-          options={feeds.sort((a, b) => a.name.localeCompare(b.name))}
+          options={(feeds ?? []).sort((a, b) => a.name.localeCompare(b.name))}
           getOptionLabel={(option) =>
             typeof option === 'string' ? option : option.id
           }
@@ -224,7 +144,8 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
             )
           }
           freeSolo={true}
-          loading={feedsLoading}
+          loading={feedsFetching}
+          disabled={feedsFetching}
           filterOptions={(options, { inputValue }) => {
             const filtered = options.filter((option) => {
               return (
@@ -252,13 +173,16 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
           }}
         />
         <IconButton
-          onClick={loadFeeds}
-          disabled={feedsLoading}
+          onClick={() => {
+            // Invalidate and refresh feeds.
+            queryClient.invalidateQueries({ queryKey: ['listFeeds', token] });
+          }}
+          disabled={feedsFetching}
           size="small"
           sx={{ ml: -1 }}
           aria-label="refresh feeds"
         >
-          {feedsLoading ? (
+          {feedsFetching ? (
             <CircularProgress size={24} color="inherit" />
           ) : (
             <RefreshIcon />
@@ -266,8 +190,8 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
         </IconButton>
         <Button
           variant="contained"
-          onClick={handleFetch}
-          disabled={transcriptsLoading || !feedId.trim()}
+          onClick={() => setSearchedFeedId(feedId)}
+          disabled={feedsFetching || transcriptsLoading || !feedId.trim()}
           sx={{ minWidth: '100px' }}
         >
           {transcriptsLoading ? (
@@ -363,15 +287,15 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
                 </Fragment>
               );
             })}
-            {transcriptNextToken && (
+            {hasNextTranscripts && (
               <ListItem sx={{ justifyContent: 'center', py: theme.spacing(2) }}>
                 <Button
                   variant="outlined"
-                  onClick={handleLoadMore}
-                  disabled={loadingMoreTranscripts}
+                  onClick={() => fetchNextTranscripts()}
+                  disabled={transcriptsFetching}
                   sx={{ minWidth: '160px' }}
                 >
-                  {loadingMoreTranscripts ? (
+                  {transcriptsFetching ? (
                     <CircularProgress size={24} color="inherit" />
                   ) : (
                     'Load More'
@@ -384,7 +308,11 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
           <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
             <CircularProgress />
           </Box>
-        ) : hasSearched && !transcriptsError ? (
+        ) : transcriptsError ? (
+          <Typography color="text.secondary" align="center" sx={{ mt: 4 }}>
+            Error loading transcripts.
+          </Typography>
+        ) : isTranscriptsSuccess ? (
           <Typography color="text.secondary" align="center" sx={{ mt: 4 }}>
             No transcripts found.
           </Typography>

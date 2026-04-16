@@ -1,4 +1,4 @@
-import { Suspense, lazy, useState } from 'react';
+import { Suspense, lazy, useState, useCallback } from 'react';
 import { Route, Routes } from 'react-router';
 
 import Alert, { type AlertProps } from '@mui/material/Alert';
@@ -19,7 +19,7 @@ function App() {
 
   const [alerts, setAlerts] = useState<AlertProps[]>([]);
 
-  const addAlert = (alert: AlertProps) => {
+  const addAlert = useCallback((alert: AlertProps) => {
     // Max of 3 alerts retained.
     setAlerts((alerts) => {
       const newAlerts = [...alerts, alert];
@@ -28,7 +28,7 @@ function App() {
       }
       return newAlerts;
     });
-  };
+  }, []);
 
   if (!token) {
     return <AppContainer>Please login to continue.</AppContainer>;
