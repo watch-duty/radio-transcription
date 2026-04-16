@@ -9,17 +9,21 @@ ENV LC_ALL=C.UTF-8
 
 # Install ZSH, Git, and set up ZSH
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends zsh git wget && \
+    apt-get install -y --no-install-recommends zsh git wget ffmpeg && \
     wget -O- https://github.com/deluan/zsh-in-docker/releases/download/v1.1.5/zsh-in-docker.sh | sh -s -- -t robbyrussell && \
     rm -rf /var/lib/apt/lists/*
 
 # Highlight the prompt so we know we are in a docker container.
 RUN echo "export PROMPT=\"%F{yellow}(docker)%f \$PROMPT\"" >> ~/.zshrc
 
+# Copy standalone requirements
+COPY model/notebook_docker/requirements.txt /tmp/notebook_requirements.txt
+
 # Download requirements.txt first to cache pip install
 RUN --mount=type=cache,target=/root/.cache/pip \
     wget https://raw.githubusercontent.com/NVIDIA/NeMo/v2.7.2/tools/speech_data_explorer/requirements.txt -O /tmp/requirements.txt && \
-    pip install -r /tmp/requirements.txt
+    pip install -r /tmp/requirements.txt && \
+    pip install -r /tmp/notebook_requirements.txt
 
 # Download ONLY the directories needed from NeMO github repo.
 WORKDIR /workspace/nemo

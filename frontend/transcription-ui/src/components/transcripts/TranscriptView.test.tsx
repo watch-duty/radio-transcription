@@ -3,16 +3,11 @@ import { MemoryRouter } from 'react-router';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 
 import { listFeeds } from '../../service/listFeeds';
 import { listTranscripts } from '../../service/listTranscripts';
+import { renderWithQueryClient } from '../../test/testUtils';
 import TranscriptView from './TranscriptView';
 
 // Mock the services
@@ -44,7 +39,7 @@ describe('TranscriptView', () => {
   });
 
   it('renders search field and fetch button', () => {
-    render(
+    renderWithQueryClient(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -61,7 +56,7 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    render(
+    renderWithQueryClient(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -104,7 +99,7 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    render(
+    renderWithQueryClient(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -127,7 +122,7 @@ describe('TranscriptView', () => {
   it('shows error message on failure', async () => {
     vi.mocked(listTranscripts).mockRejectedValueOnce(new Error('Fetch failed'));
 
-    render(
+    renderWithQueryClient(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -157,7 +152,7 @@ describe('TranscriptView', () => {
     ];
     vi.mocked(listFeeds).mockResolvedValueOnce(mockFeeds);
 
-    render(
+    renderWithQueryClient(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -171,7 +166,7 @@ describe('TranscriptView', () => {
   it('shows error alert when feeds fail to load', async () => {
     vi.mocked(listFeeds).mockRejectedValueOnce(new Error('Feeds load failed'));
 
-    render(
+    renderWithQueryClient(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -193,7 +188,7 @@ describe('TranscriptView', () => {
     ];
     vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
 
-    render(
+    renderWithQueryClient(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -217,7 +212,7 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    render(
+    renderWithQueryClient(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -280,7 +275,7 @@ describe('TranscriptView', () => {
         nextToken: undefined,
       });
 
-    render(
+    renderWithQueryClient(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>

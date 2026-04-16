@@ -1,0 +1,11 @@
+google-genai
+google-cloud-storage
+google-cloud-speech
+transformers
+huggingface_hub
+pydub
+python-dotenv
+loguru
+jiwer
+num2words
+nemo_text_processing

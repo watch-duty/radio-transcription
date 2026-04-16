@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Suspense, lazy, useState } from 'react';
 import { Route, Routes } from 'react-router';
 
 import Alert, { type AlertProps } from '@mui/material/Alert';
@@ -12,6 +12,8 @@ import TranscriptView from './components/transcripts/TranscriptView';
 import { useAuth } from './context/AuthContext';
 
 import './App.css';
+
+const DocsView = lazy(() => import('./components/docs/DocsView'));
 
 function App() {
   const { token } = useAuth();
@@ -82,6 +84,14 @@ function App() {
         />
         <Route path="/rules" element={<RulesView />} />
         <Route path="/feeds" element={<FeedsView />} />
+        <Route
+          path="/docs"
+          element={
+            <Suspense fallback={<div>Loading documentation...</div>}>
+              <DocsView />
+            </Suspense>
+          }
+        />
       </Routes>
     </AppContainer>
   );
