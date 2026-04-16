@@ -49,6 +49,12 @@ repos:
         language: system
         files: ^frontend/api/
         pass_filenames: false
+      - id: verify-openapi-spec
+        name: Verify OpenAPI Spec
+        entry: yarn --cwd frontend/api verify-spec
+        language: system
+        files: ^frontend/api/
+        pass_filenames: false
       - id: ui-eslint
         name: Run ESLint
         entry: yarn --cwd frontend/transcription-ui lint:check
