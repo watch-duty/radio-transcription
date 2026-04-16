@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import datetime
 import os
 import unittest
@@ -197,7 +198,6 @@ class TestGetBroadcastifyCredentials(unittest.TestCase):
 
 class TestBuildAuthHeader(unittest.TestCase):
     def test_builds_correct_basic_auth_header(self) -> None:
-        import base64
 
         header = icecast_collector._build_auth_header("myuser", "mypass")
 
@@ -205,7 +205,6 @@ class TestBuildAuthHeader(unittest.TestCase):
         self.assertEqual(header, f"Authorization: Basic {expected}\r\n")
 
     def test_colon_in_password(self) -> None:
-        import base64
 
         header = icecast_collector._build_auth_header("user", "pa:ss")
 
