@@ -2,7 +2,7 @@ import WarningAmber from '@mui/icons-material/WarningAmber';
 import Box from '@mui/material/Box';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
-import {useTheme} from '@mui/material/styles';
+import { useTheme } from '@mui/material/styles';
 
 interface AlertTooltipProps {
   evaluationDecisions: string[];
@@ -16,7 +16,7 @@ export function AlertTooltip({
   rulesLoading,
 }: AlertTooltipProps) {
   const theme = useTheme();
-  
+
   if (evaluationDecisions.length == 0) {
     return null;
   }

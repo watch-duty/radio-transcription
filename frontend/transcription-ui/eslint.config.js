@@ -7,20 +7,25 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 import css from '@eslint/css';
+import pluginQuery from '@tanstack/eslint-plugin-query';
 
 export default defineConfig([
   globalIgnores(['dist']),
+  ...tseslint.configs.recommended,
+  ...pluginQuery.configs['flat/recommended'],
+  {
+    files: ['**/*.{ts,tsx,js,jsx}'],
+    ...reactHooks.configs.flat.recommended,
+  },
+  {
+    files: ['**/*.{ts,tsx,js,jsx}'],
+    ...reactRefresh.configs.vite,
+  },
   {
     files: ['**/*.{ts,tsx}'],
     plugins: {
       react,
     },
-    extends: [
-      tseslint.configs.recommended,
-      reactHooks.configs.flat.recommended,
-      reactRefresh.configs.vite,
-      eslintConfigPrettier,
-    ],
     languageOptions: {
       parserOptions: {
         ecmaFeatures: {
@@ -36,6 +41,6 @@ export default defineConfig([
     files: ['**/*.css'],
     plugins: { css },
     language: 'css/css',
-    extends: ['css/recommended'],
   },
+  eslintConfigPrettier,
 ]);
