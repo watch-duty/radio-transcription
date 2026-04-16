@@ -244,13 +244,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.mock_logger = MagicMock()
 
-        mock_smc_patcher = patch(
-            "backend.pipeline.ingestion.collectors.icecast"
-            ".icecast_collector.secretmanager.SecretManagerServiceClient"
-        )
-        mock_smc = mock_smc_patcher.start()
         mock_client = MagicMock()
-        mock_smc.return_value = mock_client
 
         def _mock_access(request):
             resp = MagicMock()
@@ -263,12 +257,15 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         mock_client.access_secret_version.side_effect = _mock_access
 
         self.patchers = [
-            mock_smc_patcher,
+            patch(
+                "backend.pipeline.ingestion.collectors.icecast"
+                ".icecast_collector.secretmanager.SecretManagerServiceClient",
+                return_value=mock_client,
+            ),
             patch.object(icecast_collector, "logger", self.mock_logger),
             patch.dict(os.environ, MOCK_ENV_VARS),
         ]
-        # mock_smc_patcher was already started above; start the rest
-        for p in self.patchers[1:]:
+        for p in self.patchers:
             p.start()
 
     def tearDown(self) -> None:

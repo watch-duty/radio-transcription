@@ -66,7 +66,7 @@ def _get_broadcastify_credentials() -> tuple[str, str]:
             response = client.access_secret_version(request={"name": name})
             return response.payload.data.decode("UTF-8").strip()
         except Exception as e:
-            logger.exception("Failed to access secret %s: %s", name, e)
+            logger.exception("Failed to access secret %s", name)
             msg = f"Failed to access secret {name}"
             raise RuntimeError(msg) from e
 
@@ -157,7 +157,8 @@ async def capture_icecast_stream(  # noqa: PLR0915
         msg = f"Feed {feed_id} ({feed_name}) missing source_feed_id in feed_properties"
         raise ValueError(msg)
 
-    auth_header = _build_auth_header(*await asyncio.to_thread(_get_broadcastify_credentials))
+    username, password = await asyncio.to_thread(_get_broadcastify_credentials)
+    auth_header = _build_auth_header(username, password)
     normalized_url_base = url_base if url_base.endswith("/") else f"{url_base}/"
     # Disable burst-on-connect behavior to prevent sputtering during initial ffmpeg streaming.
     # Note: Some Icecast servers may not support this parameter.
