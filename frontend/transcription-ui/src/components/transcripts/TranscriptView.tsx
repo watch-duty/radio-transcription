@@ -86,7 +86,7 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
           children: message,
         });
       } else {
-        setFeedsError('Unknwon error');
+        setFeedsError('Unknown error');
         addAlert({
           severity: 'error',
           children:
@@ -118,7 +118,7 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
           children: message,
         });
       } else {
-        setRulesError('Unknwon error');
+        setRulesError('Unknown error');
         addAlert({
           severity: 'error',
           children: 'An unknown error occurred while trying to load rules.',
