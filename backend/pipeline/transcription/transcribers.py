@@ -190,6 +190,9 @@ class GoogleChirpV3Transcriber(Transcriber):
                 "tender",
                 "tower",
                 "tower-ladder",
+                "LAT",
+                "SEAT",
+                "VLAT",
             ]
         ]
         custom_classes.append(

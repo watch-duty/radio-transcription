@@ -28,7 +28,6 @@
   { "phrase": "helispot" },
   { "phrase": "in service" },
   { "phrase": "in service and available" },
-  { "phrase": "LAT" },
   { "phrase": "lead plane" },
   { "phrase": "medic" },
   { "phrase": "paging" },
@@ -36,7 +35,5 @@
   { "phrase": "rescue" },
   { "phrase": "RP" },
   { "phrase": "running" },
-  { "phrase": "SEAT" },
-  { "phrase": "staging" },
-  { "phrase": "VLAT" }
+  { "phrase": "staging" }
 ]
