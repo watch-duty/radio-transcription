@@ -272,4 +272,7 @@ def broadcastify_credential_rotation(request: flask.Request) -> tuple[str, int]:
         raise RuntimeError(msg)
     add_secret_version(secret_client, SECRET_JWT, auth_jwt_token)
     logger.info("Broadcastify credentials rotated successfully")
-    return "Successfully updated broadcastify credentials", 200
+    return (
+        f"Successfully updated broadcastify credentials for user: {BROADCASTIFY_USERNAME}",
+        200,
+    )
