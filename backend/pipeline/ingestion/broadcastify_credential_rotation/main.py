@@ -271,9 +271,8 @@ def broadcastify_credential_rotation(request: flask.Request) -> tuple[str, int]:
         msg = "BROADCASTIFY_JWT_SECRET_ID environment variable is not set"
         raise RuntimeError(msg)
     add_secret_version(secret_client, SECRET_JWT, auth_jwt_token)
-    logger.info("Broadcastify credentials rotated successfully")
-    logger.debug(
-        "Broadcastify credentials rotated for username: %s",
+    logger.info(
+        "Broadcastify credentials rotated successfully for username: %s",
         BROADCASTIFY_USERNAME,
     )
     return ("Successfully updated Broadcastify credentials", 200)
