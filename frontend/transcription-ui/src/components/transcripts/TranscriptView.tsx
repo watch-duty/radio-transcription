@@ -1,8 +1,13 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import RefreshIcon from '@mui/icons-material/Refresh';
-import ThumbDownIcon from '@mui/icons-material/ThumbDown';
-import ThumbUpIcon from '@mui/icons-material/ThumbUp';
 import type { AlertProps } from '@mui/material/Alert';
 import Autocomplete from '@mui/material/Autocomplete';
 import Box from '@mui/material/Box';
@@ -15,12 +20,15 @@ import Paper from '@mui/material/Paper';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
+import { useQuery } from '@tanstack/react-query';
 import type { Feed, Transcript } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { listFeeds } from '../../service/listFeeds';
+import { listRules } from '../../service/listRules';
 import { listTranscripts } from '../../service/listTranscripts';
 import AudioPlayer from '../audio/AudioPlayer';
+import AlertTooltip from './AlertTooltip';
 
 interface TranscriptViewProps {
   addAlert: (alert: AlertProps) => void;
@@ -30,13 +38,15 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
   const theme = useTheme();
   const { token } = useAuth();
 
-  const initialLoadFeedsCalled = useRef(false);
+  const initialLoadCalled = useRef(false);
   const [feeds, setFeeds] = useState<Feed[]>([]);
   const [feedsLoading, setFeedsLoading] = useState<boolean>(false);
   const [, setFeedsError] = useState<string | null>(null);
 
   const [feedId, setFeedId] = useState<string>('');
 
+  // TODO: call transcripts using react-query
+  // https://linear.app/watchduty/issue/GOO-313/load-feeds-using-react-query
   const [transcripts, setTranscripts] = useState<Transcript[]>([]);
   const [transcriptsLoading, setTranscriptsLoading] = useState(false);
   const [transcriptsError, setTranscriptsError] = useState<string | null>(null);
@@ -48,6 +58,36 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
 
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
+
+  const {
+    data: rules,
+    isError: rulesError,
+    isLoading: rulesLoading,
+  } = useQuery({
+    queryKey: ['listRules', token],
+    queryFn: () => listRules(token!),
+    enabled: !!token,
+  });
+
+  // Memoizing the rule ID to name map so we don't have to recreate it on every render.
+  const ruleIdToNameMap: Map<string, string> = useMemo(() => {
+    if (!rules) {
+      return new Map<string, string>();
+    }
+    return new Map(rules.map((rule) => [rule.ruleId, rule.ruleName]));
+  }, [rules]);
+
+  /**
+   * Effect for handling rules errors.
+   */
+  useEffect(() => {
+    if (rulesError) {
+      addAlert({
+        severity: 'error',
+        children: `An error occurred while trying to load rules: ${rulesError}`,
+      });
+    }
+  }, [rulesError, addAlert]);
 
   /**
    * A callback that loads all the available feeds for the authenticated user.
@@ -69,7 +109,7 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
           children: message,
         });
       } else {
-        setFeedsError('Unknwon error');
+        setFeedsError('Unknown error');
         addAlert({
           severity: 'error',
           children:
@@ -149,10 +189,11 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
   /**
    * This effect only loads the feeds once when the token is available.
    * We utilize the `initialLoadFeedsCalled` ref to ensure we don't initialize more than once.
+   * TODO: remove this after https://linear.app/watchduty/issue/GOO-313/load-feeds-using-react-query
    */
   useEffect(() => {
-    if (token && !initialLoadFeedsCalled.current) {
-      initialLoadFeedsCalled.current = true;
+    if (token && !initialLoadCalled.current) {
+      initialLoadCalled.current = true;
       loadFeeds();
     }
   }, [token, loadFeeds]);
@@ -277,6 +318,20 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
                       py: 1.5,
                     }}
                   >
+                    <Box
+                      sx={{
+                        width: '24px',
+                        display: 'flex',
+                        justifyContent: 'center',
+                        flexShrink: 0,
+                      }}
+                    >
+                      <AlertTooltip
+                        evaluationDecisions={t.evaluationDecisions}
+                        ruleIdToNameMap={ruleIdToNameMap}
+                        rulesLoading={rulesLoading}
+                      />
+                    </Box>
                     <Typography
                       variant="caption"
                       color="text.secondary"
@@ -304,18 +359,6 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
                     >
                       {t.transcript}
                     </Typography>
-                    <Box sx={{ display: 'flex', gap: 1 }}>
-                      <IconButton size="small" aria-label="thumbs up" disabled>
-                        <ThumbUpIcon fontSize="small" />
-                      </IconButton>
-                      <IconButton
-                        size="small"
-                        aria-label="thumbs down"
-                        disabled
-                      >
-                        <ThumbDownIcon fontSize="small" />
-                      </IconButton>
-                    </Box>
                   </ListItem>
                 </Fragment>
               );
