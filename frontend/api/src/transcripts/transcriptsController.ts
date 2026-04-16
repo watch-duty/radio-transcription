@@ -51,12 +51,11 @@ function convertTranscriptResponse(response: TranscriptResponse): Transcript {
   };
 }
 
-export interface ListTranscriptsQueryParams {
+export class ListTranscriptsQueryParams {
   /**
    * @isInt
-   * @default 100
    */
-  limit?: number;
+  limit: number = 100;
   nextToken?: string;
   startTime?: string;
   endTime?: string;

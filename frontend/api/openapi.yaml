@@ -63,6 +63,20 @@ components:
         - transcripts
       type: object
       additionalProperties: false
+    ListTranscriptsQueryParams:
+      properties:
+        limit:
+          type: integer
+          format: int32
+          default: 100
+        nextToken:
+          type: string
+        startTime:
+          type: string
+        endTime:
+          type: string
+      type: object
+      additionalProperties: false
     ScopeLevel:
       type: string
       enum:
@@ -315,8 +329,9 @@ paths:
           name: limit
           required: false
           schema:
-            format: double
-            type: number
+            default: 100
+            format: int32
+            type: integer
         - in: query
           name: nextToken
           required: false
