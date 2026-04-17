@@ -147,6 +147,7 @@ export default function AppContainer({
           </ListItem>
         </List>
       </Drawer>
+      {/* The styling here ensures our main container fills the entire webpage. This allows all children to adapt to the full screen size. */}
       <Box
         component="main"
         sx={{
@@ -155,7 +156,7 @@ export default function AppContainer({
           height: '100vh',
           display: 'flex',
           flexDirection: 'column',
-          boxSizing: 'border-box',
+          boxSizing: 'border-box',  
           overflow: 'hidden',
         }}
       >

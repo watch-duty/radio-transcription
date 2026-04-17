@@ -1,4 +1,5 @@
 import { Fragment } from 'react';
+import { useTheme } from '@mui/material/styles';
 
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import Box from '@mui/material/Box';
@@ -34,6 +35,7 @@ export function TranscriptRow({
   triggerSnackbar,
   showHeader,
 }: TranscriptRowProps) {
+  const theme = useTheme();
   const currentDate = new Date(transcript.startTimestamp);
 
   return (
@@ -65,7 +67,7 @@ export function TranscriptRow({
       >
         <Box
           sx={{
-            width: '24px',
+            width: theme.spacing(3),
             display: 'flex',
             justifyContent: 'center',
             flexShrink: 0,

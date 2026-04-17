@@ -87,19 +87,26 @@ export function TranscriptView({
     isSuccess: isTranscriptsSuccess,
   } = useInfiniteQuery({
     queryKey: ['listTranscripts', token, searchedFeedId],
-    queryFn: ({ pageParam }) =>
-      listTranscripts(searchedFeedId, token!, undefined, pageParam),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.nextToken,
+    queryFn: ({ pageParam }) => 
+      token
+        ? listTranscripts(
+            searchedFeedId,
+            token,
+            undefined,
+            pageParam === '' ? undefined : pageParam
+          )
+        : Promise.resolve({ transcripts: [] }),
+    initialPageParam: '',
+    getNextPageParam: (lastPage) => lastPage?.nextToken,
     enabled: !!searchedFeedId,
     refetchOnWindowFocus: false,
   });
 
-  const transcripts = useMemo(() => {
-    return (
-      listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? []
-    );
-  }, [listTranscriptsResponse]);
+  const transcripts = useMemo(
+    () =>
+      listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? [],
+    [listTranscriptsResponse]
+  );
 
   const {
     data: rules,
@@ -221,7 +228,9 @@ export function TranscriptView({
               setSearchedFeedId(feedId);
             }
           }}
-          disabled={feedsFetching || isTranscriptsInitialLoading || !feedId.trim()}
+          disabled={
+            feedsFetching || isTranscriptsInitialLoading || !feedId.trim()
+          }
           sx={{ minWidth: '100px', height: '40px' }}
         >
           {isTranscriptsInitialLoading ? (
@@ -245,7 +254,7 @@ export function TranscriptView({
                 navigator.clipboard.writeText(url.toString());
                 triggerSnackbar('Link copied');
               }}
-              sx={{ minWidth: 0, px: 1.5 }}
+              sx={{ minWidth: 0, px: theme.spacing(1.5) }}
               aria-label="copy feed deeplink"
             >
               <LinkIcon fontSize="small" />

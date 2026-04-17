@@ -21,11 +21,29 @@ function App() {
   const [alerts, setAlerts] = useState<AlertProps[]>([]);
   const [snackbarMessage, setSnackbarMessage] = useState<string | null>(null);
 
+  /**
+   * Triggers a snackbar to display a message.
+   *
+   * @param message The message to display in the snackbar.
+   */
   const triggerSnackbar = (message: string) => {
     setSnackbarMessage(null);
+    // Typically, all updates to React state happen in the same execution loop.
+    // But given the way the Snackbar component is implemented, if we were to just replace
+    // the existing message, the `autoHideDuration` would not reset. That would mean
+    // if it was close to closing itself and the message changed, it would only appear
+    // for the remaining duration. By adding a timeout, we force the Snackbar to close
+    // and then reopen with the new message on the next loop, resetting the timeout
+    // duration.
     setTimeout(() => setSnackbarMessage(message), 50);
   };
 
+  /**
+   * Adds an alert to the alerts list.
+   * Removes the oldest alert if the list exceeds 3 alerts.
+   *
+   * @param alert The alert to add to the list.
+   */
   const addAlert = useCallback((alert: AlertProps) => {
     // Max of 3 alerts retained.
     setAlerts((alerts) => {
@@ -64,6 +82,9 @@ function App() {
         ))}
       </Box>
       <Routes>
+        {/* For now, the transcripts view will exist on the index and /transcripts routes.
+            Adding both here to leave room for a dedicated home page without needing
+            to change the links later. */}
         <Route
           path="/"
           element={
