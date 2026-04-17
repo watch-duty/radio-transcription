@@ -8,9 +8,9 @@ for downstream transcription.
 
 from __future__ import annotations
 
-import io
 import logging
 import os
+import subprocess
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING
 import functions_framework
 from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
-from pydub import AudioSegment
 
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.gcp_helper import publish_audio_chunk_sync
@@ -162,9 +161,8 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
         session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, staging_uri))
         publisher = pubsub_client.get_publisher()
 
-        # Calculate duration of MP3 bytes
-        audio = AudioSegment.from_mp3(io.BytesIO(mp3_bytes))
-        duration_ms = len(audio)
+        # Calculate duration of MP3 bytes using ffprobe
+        duration_ms = _get_mp3_duration(mp3_bytes)
 
         publish_audio_chunk_sync(
             publisher,
@@ -207,3 +205,29 @@ def _parse_timestamp(name: str) -> datetime:
     return datetime.strptime(f"{date_str}{time_str}", "%Y%m%d%H%M%S").replace(
         tzinfo=UTC
     )
+
+
+def _get_mp3_duration(mp3_bytes: bytes) -> int:
+    """Calculate duration of MP3 bytes using ffprobe."""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                "-",
+            ],
+            input=mp3_bytes,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        duration_sec = float(result.stdout.strip())
+        return int(duration_sec * 1000)
+    except Exception as e:
+        logger.exception("Failed to calculate duration using ffprobe: %s", e)
+        raise
