@@ -22,6 +22,7 @@ from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.transcription.constants import DEAD_LETTER_QUEUE_TAG
 from backend.pipeline.transcription.datatypes import (
     AudioChunkData,
+    DownloadedChunkPayload,
     FlushRequest,
     OrderRestorerConfig,
     StitchAudioConfig,
@@ -213,7 +214,7 @@ class BypassStitchingTest(unittest.TestCase):
             speech_segments=[],
             gcs_uri=gcs_path,
         )
-        element = (feed_id, (gcs_path, chunk_data))
+        element = (feed_id, DownloadedChunkPayload(gcs_path, chunk_data))
 
         fn = BypassStitchingFn()
         result = list(fn.process(element))

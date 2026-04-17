@@ -40,7 +40,8 @@ from backend.pipeline.transcription.constants import (
     DEFAULT_FLOAT_TOLERANCE_MS,
 )
 from backend.pipeline.transcription.datatypes import (
-    AudioChunkData,
+    ChunkMetadata,
+    DownloadedChunkPayload,
     FlushRequest,
     OrderRestorerConfig,
     StitchAudioConfig,
@@ -84,7 +85,7 @@ class ParseAndKeyFn(beam.DoFn):
 
 
 @beam.typehints.with_input_types(tuple[str, bytes])
-@beam.typehints.with_output_types(tuple[str, tuple[str, str, int]])
+@beam.typehints.with_output_types(tuple[str, ChunkMetadata])
 class AddEventTimestamp(beam.DoFn):
     """Extracts the event timestamp directly from the `AudioChunk` protobuf.
 
@@ -99,7 +100,7 @@ class AddEventTimestamp(beam.DoFn):
         element: tuple[str, bytes],
         *args: Any,
         **kwargs: Any,
-    ) -> Iterator[tuple[str, tuple[str, str, int]] | beam.pvalue.TaggedOutput]:
+    ) -> Iterator[tuple[str, ChunkMetadata] | beam.pvalue.TaggedOutput]:
         """Extracts the original hardware timestamp and assigns it to Beam's event timeline."""
         feed_id, chunk_data = element
 
@@ -138,7 +139,7 @@ class AddEventTimestamp(beam.DoFn):
                 yield window.TimestampedValue(
                     (
                         feed_id,
-                        (
+                        ChunkMetadata(
                             chunk_proto.gcs_uri,
                             chunk_proto.session_id,
                             chunk_proto.duration_ms,
@@ -202,7 +203,7 @@ class SerializeToPubSubMessageFn(beam.DoFn):
         )
 
 
-@beam.typehints.with_input_types(tuple[str, tuple[str, AudioChunkData]])
+@beam.typehints.with_input_types(tuple[str, DownloadedChunkPayload])
 @beam.typehints.with_output_types(tuple[str, FlushRequest])
 class BypassStitchingFn(beam.DoFn):
     """Stateless DoFn that directly forwards pre-segmented audio to transcription.
@@ -214,12 +215,14 @@ class BypassStitchingFn(beam.DoFn):
     @override
     def process(
         self,
-        element: tuple[str, tuple[str, AudioChunkData]],
+        element: tuple[str, DownloadedChunkPayload],
         *args: Any,
         **kwargs: Any,
     ) -> Iterator[tuple[str, FlushRequest]]:
         """Maps the downloaded audio chunk directly into a FlushRequest."""
-        feed_id, (gcs_path, chunk_data) = element
+        feed_id, payload = element
+        gcs_path = payload.gcs_uri
+        chunk_data = payload.chunk_data
 
         start_ms = chunk_data.start_ms
         duration_ms = len(chunk_data.audio)
@@ -241,7 +244,7 @@ class BypassStitchingFn(beam.DoFn):
         )
 
 
-@beam.typehints.with_input_types(tuple[str, tuple[str, str, int]])
+@beam.typehints.with_input_types(tuple[str, ChunkMetadata])
 @beam.typehints.with_output_types(tuple[str, str])
 class RestoreOrderFn(beam.DoFn):
     """A stateful DoFn that buffers out-of-order chunks and emits them in strict chronological order.
@@ -298,7 +301,7 @@ class RestoreOrderFn(beam.DoFn):
     @override
     def process(  # type: ignore[override]
         self,
-        element: tuple[str, tuple[str, str, int]],
+        element: tuple[str, ChunkMetadata],
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
         session_id_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
             SESSION_ID_SPEC
@@ -317,7 +320,10 @@ class RestoreOrderFn(beam.DoFn):
         ),
     ) -> Iterator[tuple[str, str]]:
         """Ingests out-of-order chunks and orchestrates chronologically sorted yields."""
-        feed_id, (gcs_path, incoming_session_id, duration_ms) = element
+        feed_id, metadata = element
+        gcs_path = metadata.gcs_uri
+        incoming_session_id = metadata.session_id
+        duration_ms = metadata.duration_ms
         current_ts_ms = int(float(timestamp) * MS_PER_SECOND)
 
         current_session_id = session_id_state.read()
@@ -426,7 +432,7 @@ class RestoreOrderFn(beam.DoFn):
 
 
 @beam.typehints.with_input_types(tuple[str, str])
-@beam.typehints.with_output_types(tuple[str, tuple[str, Any]])
+@beam.typehints.with_output_types(tuple[str, DownloadedChunkPayload])
 class DownloadAudioFn(beam.DoFn):
     """A stateless DoFn that downloads audio chunks from GCS based on the provided GCS URI."""
 
@@ -458,7 +464,9 @@ class DownloadAudioFn(beam.DoFn):
         self,
         element: tuple[str, str],
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
-    ) -> Iterator[tuple[str, tuple[str, Any]] | beam.pvalue.TaggedOutput]:
+    ) -> Iterator[
+        tuple[str, DownloadedChunkPayload] | beam.pvalue.TaggedOutput
+    ]:
         """Downloads the raw audio bytes from GCS and passes them to the acoustic processor."""
         feed_id, gcs_path = element
         if not self.audio_processor:
@@ -471,7 +479,7 @@ class DownloadAudioFn(beam.DoFn):
             chunk_data = self.audio_processor.download_audio_and_detect(
                 gcs_path, start_ms
             )
-            yield (feed_id, (gcs_path, chunk_data))
+            yield (feed_id, DownloadedChunkPayload(gcs_path, chunk_data))
         except FileNotFoundError:
             logger.info(
                 "GCS object not found yet. Re-raising to NACK Pub/Sub message."
