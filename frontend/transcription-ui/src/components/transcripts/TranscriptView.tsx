@@ -194,7 +194,8 @@ export function TranscriptView({
       sx={{
         width: '100%',
         textAlign: 'left',
-        height: 'calc(100vh - 112px)',
+        flexGrow: 1,
+        minHeight: 0,
         display: 'flex',
         flexDirection: 'column',
       }}

@@ -9,7 +9,6 @@ import abc
 import logging
 import pathlib
 
-import pydantic
 from google.api_core import client_options
 from google.api_core.retry import Retry
 from google.cloud import speech_v2 as cloud_speech
@@ -17,13 +16,14 @@ from google.cloud.speech_v2 import SpeechClient
 
 from backend.pipeline.common.constants import BYTES_PER_SECOND_16KHZ_MONO
 from backend.pipeline.transcription.constants import (
+    CHIRP_UNINTELLIGIBLE_MARKER,
     DEFAULT_CHIRP_LANGUAGE_CODES,
     DEFAULT_CHIRP_LOCATION,
     DEFAULT_CHIRP_MODEL,
+    DEFAULT_CHIRP_PROMPT_FILE_PATH,
     DEFAULT_CHIRP_RECOGNIZER,
-    DEFAULT_KEYWORD_BOOST,
-    DEFAULT_KEYWORDS_FILE_PATH,
     DEFAULT_MAX_RETRIES,
+    DEFAULT_PHRASE_HINTS_FILE_PATH,
     DEFAULT_RETRY_MAX_SECONDS,
 )
 from backend.pipeline.transcription.enums import TranscriberType
@@ -55,13 +55,6 @@ class Transcriber(abc.ABC):
         """Transcribes the raw audio bytes and returns the text transcript."""
 
 
-class KeywordItem(pydantic.BaseModel):
-    """A single keyword/phrase entry loaded from the keywords JSON file."""
-
-    phrase: str
-    boost: float = DEFAULT_KEYWORD_BOOST
-
-
 class ChirpConfig(ConfigBase):
     """Strongly typed configuration for the Google Chirp V3 Transcriber."""
 
@@ -71,10 +64,16 @@ class ChirpConfig(ConfigBase):
     language_codes: list[str] = DEFAULT_CHIRP_LANGUAGE_CODES
     enable_automatic_punctuation: bool = True
     enable_word_time_offsets: bool = False
-    # Path to a JSON file containing KeywordItem entries for phrase adaptation.
+    enable_denoiser: bool = True
+    # Path to a plain-text file containing the custom prompt for Chirp transcription.
+    # Defaults to the packaged file in the container image; explicitly set to
+    # None to disable the custom prompt (e.g. in tests or non-container environments).
+    custom_prompt_file_path: str | None = DEFAULT_CHIRP_PROMPT_FILE_PATH
+    # Path to a plain-text file of phrase hints for Chirp phrase-set adaptation.
+    # Each non-blank line that doesn't start with '#' is treated as a phrase.
     # Defaults to the packaged file in the container image; explicitly set to
     # None to disable adaptation (e.g. in tests or non-container environments).
-    keywords_file_path: str | None = DEFAULT_KEYWORDS_FILE_PATH
+    phrase_hints_file_path: str | None = DEFAULT_PHRASE_HINTS_FILE_PATH
 
 
 class GoogleChirpV3Transcriber(Transcriber):
@@ -92,7 +91,8 @@ class GoogleChirpV3Transcriber(Transcriber):
         self.config = config
 
         self.client: SpeechClient | None = None
-        self.keywords_list: list[KeywordItem] = []
+        self.phrases: list[str] = []
+        self.custom_prompt: str | None = None
 
     def _init_client(self) -> SpeechClient:
         opts = client_options.ClientOptions(
@@ -101,40 +101,50 @@ class GoogleChirpV3Transcriber(Transcriber):
         return SpeechClient(client_options=opts)
 
     def setup(self) -> None:
-        """Instantiates the Speech-to-Text API gRPC client and loads keywords if configured."""
+        """Instantiates the Speech-to-Text API gRPC client and loads phrase hints if configured."""
         self.client = self._init_client()
 
-        if self.config.keywords_file_path:
-            p = pathlib.Path(self.config.keywords_file_path)
+        if self.config.phrase_hints_file_path:
+            p = pathlib.Path(self.config.phrase_hints_file_path)
             if not p.exists():
-                msg = f"Keywords file {self.config.keywords_file_path} does not exist"
+                msg = f"Phrase hints file {self.config.phrase_hints_file_path} does not exist"
+                raise FileNotFoundError(msg)
+            with p.open("r") as f:
+                self.phrases = [
+                    line.strip()
+                    for line in f
+                    if line.strip() and not line.startswith("#")
+                ]
+            logger.info(
+                "Loaded %d phrase hints from %s",
+                len(self.phrases),
+                self.config.phrase_hints_file_path,
+            )
+
+        if self.config.custom_prompt_file_path:
+            p = pathlib.Path(self.config.custom_prompt_file_path)
+            if not p.exists():
+                msg = f"Custom prompt file {self.config.custom_prompt_file_path} does not exist"
                 raise FileNotFoundError(msg)
             try:
                 with p.open("r") as f:
-                    self.keywords_list = pydantic.TypeAdapter(
-                        list[KeywordItem]
-                    ).validate_json(f.read())
+                    self.custom_prompt = f.read()
                     logger.info(
-                        "Loaded %d keywords from %s",
-                        len(self.keywords_list),
-                        self.config.keywords_file_path,
+                        "Loaded custom prompt from %s",
+                        self.config.custom_prompt_file_path,
                     )
-            except pydantic.ValidationError as e:
-                msg = f"Failed to parse keywords file {self.config.keywords_file_path}: {e}"
+            except Exception as e:
+                msg = f"Failed to read custom prompt file {self.config.custom_prompt_file_path}: {e}"
                 raise ValueError(msg) from e
 
     def _build_adaptation(self) -> cloud_speech.SpeechAdaptation | None:
-        """Builds a SpeechAdaptation from the loaded keywords list.
-
-        Returns None when no keywords are loaded, skipping adaptation entirely.
-        """
-        if not self.keywords_list:
+        """Builds a SpeechAdaptation from the loaded phrase hints."""
+        if self.config.phrase_hints_file_path is None:
             return None
 
         phrases = [
-            cloud_speech.PhraseSet.Phrase(value=kw.phrase, boost=kw.boost)
-            for kw in self.keywords_list
-            if kw.phrase
+            cloud_speech.PhraseSet.Phrase(value=phrase)
+            for phrase in self.phrases
         ]
 
         return cloud_speech.SpeechAdaptation(
@@ -174,6 +184,14 @@ class GoogleChirpV3Transcriber(Transcriber):
                 features=cloud_speech.RecognitionFeatures(
                     enable_automatic_punctuation=self.config.enable_automatic_punctuation,
                     enable_word_time_offsets=self.config.enable_word_time_offsets,
+                    custom_prompt_config=cloud_speech.CustomPromptConfig(
+                        custom_prompt=self.custom_prompt
+                    )
+                    if self.custom_prompt
+                    else None,
+                ),
+                denoiser_config=cloud_speech.DenoiserConfig(
+                    denoise_audio=self.config.enable_denoiser
                 ),
             ),
             content=audio_data,
@@ -204,7 +222,7 @@ class GoogleChirpV3Transcriber(Transcriber):
 
             chunk_text = (
                 result.alternatives[0]
-                .transcript.replace("[BACKGROUND]", "")
+                .transcript.replace(CHIRP_UNINTELLIGIBLE_MARKER, "")
                 .strip()
             )
             if chunk_text:
@@ -214,7 +232,7 @@ class GoogleChirpV3Transcriber(Transcriber):
 
         if not transcript:
             logger.info(
-                "Transcription returned [BACKGROUND] only or was completely empty (no discernable speech)."
+                "Transcription returned [UNINTELLIGIBLE] only or was completely empty (no discernable speech)."
             )
             return None
 

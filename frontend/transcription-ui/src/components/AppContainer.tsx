@@ -157,7 +157,7 @@ export default function AppContainer({
           display: 'flex',
           flexDirection: 'column',
           boxSizing: 'border-box',
-          overflow: 'hidden',
+          overflowY: 'auto',
         }}
       >
         <DrawerHeader />
