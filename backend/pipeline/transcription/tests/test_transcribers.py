@@ -50,7 +50,7 @@ class TestTranscribers(unittest.TestCase):
             mock_client_instance.recognize.assert_called_once()
 
     def test_google_chirp_transcriber_background(self) -> None:
-        """Verifies that the system safely filters and intercepts implicit [BACKGROUND] generic filler outputs, converting them cleanly into None."""
+        """Verifies that the system safely filters and intercepts implicit [UNINTELLIGIBLE] generic filler outputs, converting them cleanly into None."""
         with patch(
             "backend.pipeline.transcription.transcribers.SpeechClient"
         ) as mock_speech_client_cls:
@@ -59,12 +59,17 @@ class TestTranscribers(unittest.TestCase):
 
             mock_response = MagicMock()
             mock_result = MagicMock()
-            mock_result.alternatives = [MagicMock(transcript="[BACKGROUND]")]
+            mock_result.alternatives = [
+                MagicMock(transcript="[UNINTELLIGIBLE]")
+            ]
             mock_response.results = [mock_result]
             mock_client_instance.recognize.return_value = mock_response
 
             transcriber = GoogleChirpV3Transcriber(
-                "test-project", ChirpConfig(phrase_hints_file_path=None, custom_prompt_file_path=None)
+                "test-project",
+                ChirpConfig(
+                    phrase_hints_file_path=None, custom_prompt_file_path=None
+                ),
             )
             transcriber.setup()
 
@@ -89,7 +94,10 @@ class TestTranscribers(unittest.TestCase):
             mock_client_instance.recognize.return_value = mock_response
 
             transcriber = GoogleChirpV3Transcriber(
-                "test-project", ChirpConfig(phrase_hints_file_path=None, custom_prompt_file_path=None)
+                "test-project",
+                ChirpConfig(
+                    phrase_hints_file_path=None, custom_prompt_file_path=None
+                ),
             )
             transcriber.setup()
 
@@ -125,7 +133,10 @@ class TestTranscribers(unittest.TestCase):
             mock_client_instance.recognize.return_value = mock_response
 
             transcriber = GoogleChirpV3Transcriber(
-                "test-project", ChirpConfig(phrase_hints_file_path=None, custom_prompt_file_path=None)
+                "test-project",
+                ChirpConfig(
+                    phrase_hints_file_path=None, custom_prompt_file_path=None
+                ),
             )
             transcriber.setup()
 
@@ -148,7 +159,10 @@ class TestTranscribers(unittest.TestCase):
             f.write("10-4\n")
             phrase_hints_path = f.name
 
-        config = ChirpConfig(phrase_hints_file_path=phrase_hints_path, custom_prompt_file_path=None)
+        config = ChirpConfig(
+            phrase_hints_file_path=phrase_hints_path,
+            custom_prompt_file_path=None,
+        )
 
         with (
             patch(
@@ -218,7 +232,11 @@ class TestTranscribers(unittest.TestCase):
             mock_response.results = [mock_result]
             mock_client_instance.recognize.return_value = mock_response
 
-            config = ChirpConfig(phrase_hints_file_path=None, custom_prompt_file_path=None, enable_denoiser=True)
+            config = ChirpConfig(
+                phrase_hints_file_path=None,
+                custom_prompt_file_path=None,
+                enable_denoiser=True,
+            )
             transcriber = GoogleChirpV3Transcriber("test-project", config)
             transcriber.setup()
 
