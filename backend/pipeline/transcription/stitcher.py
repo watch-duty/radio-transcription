@@ -41,6 +41,11 @@ from backend.pipeline.transcription.datatypes import (
     TransmissionContext,
     UpdateStateAction,
 )
+
+# Force Dataflow workers to load TranscriptionOptions so it recognizes custom flags
+from backend.pipeline.transcription.options import (
+    TranscriptionOptions,  # noqa: F401
+)
 from backend.pipeline.transcription.resources import (
     SHARED_RESOURCE_HANDLE,
     SharedResources,
