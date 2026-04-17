@@ -68,24 +68,31 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
     fetchNextPage: fetchNextTranscripts,
     hasNextPage: hasNextTranscripts,
     error: transcriptsError,
-    isLoading: transcriptsLoading,
-    isFetching: transcriptsFetching,
+    isLoading: transcriptsLoading, // isLoading is the first load, which we use to show the main loading spinner
+    isFetching: transcriptsFetching, // isFetching is any load, which we use to show that we're loading additional data
     isSuccess: isTranscriptsSuccess,
   } = useInfiniteQuery({
     queryKey: ['listTranscripts', token, searchedFeedId],
     queryFn: ({ pageParam }) =>
-      listTranscripts(searchedFeedId, token!, undefined, pageParam),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.nextToken,
+      token
+        ? listTranscripts(
+            searchedFeedId,
+            token,
+            undefined,
+            pageParam === '' ? undefined : pageParam
+          )
+        : Promise.resolve({ transcripts: [] }),
+    initialPageParam: '',
+    getNextPageParam: (lastPage) => lastPage?.nextToken,
     enabled: !!searchedFeedId,
     refetchOnWindowFocus: false,
   });
 
-  const transcripts = useMemo(() => {
-    return (
-      listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? []
-    );
-  }, [listTranscriptsResponse]);
+  const transcripts = useMemo(
+    () =>
+      listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? [],
+    [listTranscriptsResponse]
+  );
 
   const {
     data: rules,
@@ -317,15 +324,29 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
             )}
           </List>
         ) : transcriptsLoading ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
+          <Box
+            sx={{
+              display: 'flex',
+              justifyContent: 'center',
+              mt: theme.spacing(2),
+            }}
+          >
             <CircularProgress />
           </Box>
         ) : transcriptsError ? (
-          <Typography color="error" align="center" sx={{ mt: 4 }}>
+          <Typography
+            color="error"
+            align="center"
+            sx={{ mt: theme.spacing(2) }}
+          >
             Error loading transcripts.
           </Typography>
         ) : isTranscriptsSuccess ? (
-          <Typography color="textSecondary" align="center" sx={{ mt: 4 }}>
+          <Typography
+            color="textSecondary"
+            align="center"
+            sx={{ mt: theme.spacing(2) }}
+          >
             No transcripts found.
           </Typography>
         ) : null}
