@@ -7,6 +7,11 @@ import { RegisterRoutes } from './generated/routes.js';
 
 const app = express();
 
+// Trust proxy headers (like X-Forwarded-Host) so Express can resolve the correct host
+// when running behind the API Gateway. This allows DocsController to set the correct
+// server URL in the spec for Swagger UI.
+app.set('trust proxy', true);
+
 app.use(
   cors({
     origin: ALLOWED_ORIGIN,

@@ -45,13 +45,12 @@ export class DocsController extends Controller {
     const file = readFileSync(specPath, 'utf8');
     const spec = load(file) as Record<string, unknown>;
 
-    if (ALLOWED_ORIGIN.includes('localhost')) {
-      spec.servers = [
-        {
-          url: `${request.protocol}://${request.get('host')}`,
-        },
-      ];
-    }
+    const protocol = request.get('host')?.includes('localhost') ? 'http' : 'https';
+    spec.servers = [
+      {
+        url: `${protocol}://${request.get('host')}`,
+      },
+    ];
 
     return spec;
   }
