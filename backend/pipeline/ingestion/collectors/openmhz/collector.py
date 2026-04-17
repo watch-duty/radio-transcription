@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import datetime
 import logging
 import os
@@ -10,12 +9,18 @@ from typing import TYPE_CHECKING
 
 from curl_cffi.requests import AsyncSession
 
+from backend.pipeline.ingestion.collectors._retry import (
+    _ServerError,
+    retry_http_op,
+)
+from backend.pipeline.ingestion.collectors._utils import _sleep_or_shutdown
 from backend.pipeline.ingestion.collectors.openmhz._ws_transport import (
     websocket_transport,
 )
 from backend.pipeline.ingestion.models import CapturedChunk
 
 if TYPE_CHECKING:
+    import asyncio
     from collections.abc import AsyncIterator
 
     from backend.pipeline.ingestion.collectors.openmhz._types import (
@@ -40,16 +45,6 @@ def _get_transport(name: str) -> TransportFactory:
     raise ValueError(msg)
 
 
-async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
-    """Sleep for *seconds*, returning ``True`` if interrupted by shutdown."""
-    try:
-        await asyncio.wait_for(shutdown.wait(), timeout=seconds)
-    except TimeoutError:
-        return False
-    else:
-        return True
-
-
 async def _download_m4a(
     session: AsyncSession,
     url: str,
@@ -59,41 +54,32 @@ async def _download_m4a(
 
     Returns audio bytes on success, ``None`` on failure.
     """
-    for attempt in range(_DOWNLOAD_MAX_RETRIES):
+
+    async def _attempt() -> bytes | None:
         try:
             resp = await session.get(url, timeout=30.0)
-            if resp.status_code == 200:
-                return resp.content
-            if 400 <= resp.status_code < 500:
-                logger.warning(
-                    "Download non-retryable %d: url=%s",
-                    resp.status_code,
-                    url,
-                )
-                return None
+        except Exception as exc:
+            msg = f"download network error: url={url} exc={exc}"
+            raise _ServerError(msg) from exc
+        if resp.status_code == 200:
+            return resp.content
+        if 400 <= resp.status_code < 500:
             logger.warning(
-                "Download %d (attempt %d/%d): url=%s",
+                "Download non-retryable %d: url=%s",
                 resp.status_code,
-                attempt + 1,
-                _DOWNLOAD_MAX_RETRIES,
                 url,
             )
-        except Exception:
-            logger.warning(
-                "Download error (attempt %d/%d): url=%s",
-                attempt + 1,
-                _DOWNLOAD_MAX_RETRIES,
-                url,
-                exc_info=True,
-            )
-        if attempt < _DOWNLOAD_MAX_RETRIES - 1:
-            if await _sleep_or_shutdown(
-                shutdown, _DOWNLOAD_BACKOFF_BASE_SEC * (2**attempt)
-            ):
-                return None
+            return None
+        msg = f"Download {resp.status_code}: url={url}"
+        raise _ServerError(msg)
 
-    logger.warning("Download failed after retries: url=%s", url)
-    return None
+    return await retry_http_op(
+        _attempt,
+        shutdown,
+        max_retries=_DOWNLOAD_MAX_RETRIES - 1,
+        backoff_base_sec=_DOWNLOAD_BACKOFF_BASE_SEC,
+        operation_name=f"OpenMHZ download {url}",
+    )
 
 
 async def openmhz_collector(

@@ -5,7 +5,6 @@ import collections
 import datetime
 import logging
 import os
-import random
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -14,6 +13,11 @@ from urllib.parse import urlparse
 import aiohttp
 from google.cloud import secretmanager
 
+from backend.pipeline.ingestion.collectors._retry import (
+    _ServerError,
+    retry_http_op,
+)
+from backend.pipeline.ingestion.collectors._utils import _sleep_or_shutdown
 from backend.pipeline.ingestion.models import CapturedChunk
 
 if TYPE_CHECKING:
@@ -35,15 +39,6 @@ _KNOWN_AUDIO_FORMATS = frozenset({"mp3", "m4a", "wav", "ogg", "aac", "flac"})
 
 class AuthError(Exception):
     """Raised when Broadcastify Calls API returns 401 or 403."""
-
-
-async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
-    """Sleep for *seconds*, returning ``True`` if interrupted by shutdown."""
-    try:
-        await asyncio.wait_for(shutdown.wait(), timeout=seconds)
-    except TimeoutError:
-        return False
-    return True
 
 
 def _get_jwt_token() -> str:
@@ -97,36 +92,18 @@ async def _fetch_calls(
     shutdown_event: asyncio.Event,
 ) -> dict[str, Any] | None:
     """Fetch audio calls from Broadcastify, handling retries for 5XX errors."""
-    for attempt in range(_MAX_5XX_RETRIES + 1):
+
+    async def _attempt() -> dict[str, Any] | None:
         if shutdown_event.is_set():
             return None
-
         async with session.get(url, headers=headers, params=params) as resp:
             _raise_for_fatal_status(resp.status, feed_id, source_feed_id)
-
             if 500 <= resp.status <= 599:
-                if attempt < _MAX_5XX_RETRIES:
-                    delay = (2**attempt) + random.uniform(0, 1)  # noqa: S311
-                    logger.warning(
-                        "5XX %s (feed %s), retry %d/%d in %.1fs",
-                        resp.status,
-                        feed_id,
-                        attempt + 1,
-                        _MAX_5XX_RETRIES,
-                        delay,
-                    )
-                    if await _sleep_or_shutdown(shutdown_event, delay):
-                        return None
-                    continue
-
-                logger.error(
-                    "5XX %s (feed %s) after %d retries, giving up on this call",
-                    resp.status,
-                    feed_id,
-                    _MAX_5XX_RETRIES,
+                msg = (
+                    f"5XX {resp.status} from Broadcastify Calls API"
+                    f" (feed {feed_id})"
                 )
-                return None
-
+                raise _ServerError(msg)
             if resp.status != 200:
                 logger.error(
                     "API call failed with status %s for feed %s "
@@ -138,10 +115,16 @@ async def _fetch_calls(
                     params,
                 )
                 return None
-
             return await resp.json()
 
-    return None
+    return await retry_http_op(
+        _attempt,
+        shutdown_event,
+        max_retries=_MAX_5XX_RETRIES,
+        backoff_base_sec=1.0,
+        jitter=1.0,
+        operation_name=f"Broadcastify Calls API (feed {feed_id})",
+    )
 
 
 def _get_audio_format(url: str) -> str:
@@ -174,45 +157,23 @@ def _raise_if_429(status: int, audio_url: str) -> None:
         raise RuntimeError(msg)
 
 
-async def _download_audio(  # noqa: PLR0911
+async def _download_audio(
     session: aiohttp.ClientSession,
     audio_url: str,
     shutdown_event: asyncio.Event,
 ) -> bytes | None:
     """Download audio file."""
     timeout = aiohttp.ClientTimeout(total=_AUDIO_TIMEOUT_SEC)
-    for attempt in range(_AUDIO_FILE_DOWNLOAD_MAX_RETRIES + 1):
+
+    async def _attempt() -> bytes | None:
         try:
             async with session.get(audio_url, timeout=timeout) as audio_resp:
                 _raise_if_429(audio_resp.status, audio_url)
-
                 if 500 <= audio_resp.status <= 599:
-                    if attempt < _AUDIO_FILE_DOWNLOAD_MAX_RETRIES:
-                        delay = _AUDIO_FILE_DOWNLOAD_BACKOFF_BASE_SEC * (
-                            2**attempt
-                        )
-                        logger.warning(
-                            "5XX %s downloading audio"
-                            " (attempt %d/%d, retry in %.1fs): %s",
-                            audio_resp.status,
-                            attempt + 1,
-                            _AUDIO_FILE_DOWNLOAD_MAX_RETRIES,
-                            delay,
-                            audio_url,
-                        )
-                        if await _sleep_or_shutdown(shutdown_event, delay):
-                            return None
-                        continue
-
-                    logger.error(
-                        "5XX %s downloading audio after %d retries,"
-                        " skipping: %s",
-                        audio_resp.status,
-                        _AUDIO_FILE_DOWNLOAD_MAX_RETRIES,
-                        audio_url,
+                    msg = (
+                        f"5XX {audio_resp.status} downloading {audio_url}"
                     )
-                    return None
-
+                    raise _ServerError(msg)  # noqa: TRY301
                 if audio_resp.status != 200:
                     logger.error(
                         "Failed to download audio from %s (status %d)",
@@ -220,33 +181,22 @@ async def _download_audio(  # noqa: PLR0911
                         audio_resp.status,
                     )
                     return None
-
                 return await audio_resp.read()
         except RuntimeError:
             raise
-        except Exception as e:
-            if attempt < _AUDIO_FILE_DOWNLOAD_MAX_RETRIES:
-                delay = _AUDIO_FILE_DOWNLOAD_BACKOFF_BASE_SEC * (2**attempt)
-                logger.warning(
-                    "Network error downloading audio"
-                    " (attempt %d/%d, retry in %.1fs): %s",
-                    attempt + 1,
-                    _AUDIO_FILE_DOWNLOAD_MAX_RETRIES,
-                    delay,
-                    audio_url,
-                    exc_info=e,
-                )
-                if await _sleep_or_shutdown(shutdown_event, delay):
-                    return None
-                continue
-            logger.exception(
-                "Network error downloading audio after %d retries,"
-                " skipping: %s",
-                _AUDIO_FILE_DOWNLOAD_MAX_RETRIES,
-                audio_url,
-            )
-            return None
-    return None
+        except _ServerError:
+            raise
+        except Exception as exc:
+            msg = f"network error downloading {audio_url}: {exc}"
+            raise _ServerError(msg) from exc
+
+    return await retry_http_op(
+        _attempt,
+        shutdown_event,
+        max_retries=_AUDIO_FILE_DOWNLOAD_MAX_RETRIES,
+        backoff_base_sec=_AUDIO_FILE_DOWNLOAD_BACKOFF_BASE_SEC,
+        operation_name=f"audio download {audio_url}",
+    )
 
 
 def _extract_calls_from_response(

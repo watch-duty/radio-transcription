@@ -16,19 +16,6 @@ from backend.pipeline.ingestion.collectors.bcfy_calls import (
 from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 
 
-class TestSleepOrShutdown(unittest.IsolatedAsyncioTestCase):
-    async def test_timeout(self) -> None:
-        shutdown = asyncio.Event()
-        res = await bcfy_calls_collector._sleep_or_shutdown(shutdown, 0.001)
-        self.assertFalse(res)
-
-    async def test_shutdown_set(self) -> None:
-        shutdown = asyncio.Event()
-        shutdown.set()
-        res = await bcfy_calls_collector._sleep_or_shutdown(shutdown, 10.0)
-        self.assertTrue(res)
-
-
 class TestGetJwtToken(unittest.TestCase):
     @patch.dict(
         os.environ,
@@ -132,7 +119,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res, {"call": 1})
 
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        "backend.pipeline.ingestion.collectors._utils._sleep_or_shutdown",
         new_callable=AsyncMock,
     )
     async def test_5xx_retry_success(self, mock_sleep: AsyncMock) -> None:
@@ -160,7 +147,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         mock_sleep.assert_called_once()
 
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        "backend.pipeline.ingestion.collectors._utils._sleep_or_shutdown",
         new_callable=AsyncMock,
     )
     async def test_5xx_max_retries_fail(self, mock_sleep: AsyncMock) -> None:
@@ -181,7 +168,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        "backend.pipeline.ingestion.collectors._utils._sleep_or_shutdown",
         new_callable=AsyncMock,
     )
     async def test_5xx_retry_interrupted_by_shutdown(
@@ -311,8 +298,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
             )
 
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls"
-        ".bcfy_calls_collector._sleep_or_shutdown",
+        "backend.pipeline.ingestion.collectors._utils._sleep_or_shutdown",
         new_callable=AsyncMock,
     )
     async def test_5xx_retry_success(self, mock_sleep: AsyncMock) -> None:
@@ -341,8 +327,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         mock_sleep.assert_called_once()
 
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls"
-        ".bcfy_calls_collector._sleep_or_shutdown",
+        "backend.pipeline.ingestion.collectors._utils._sleep_or_shutdown",
         new_callable=AsyncMock,
     )
     async def test_5xx_max_retries_returns_none(
@@ -365,8 +350,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls"
-        ".bcfy_calls_collector._sleep_or_shutdown",
+        "backend.pipeline.ingestion.collectors._utils._sleep_or_shutdown",
         new_callable=AsyncMock,
     )
     async def test_5xx_retry_interrupted_by_shutdown(
