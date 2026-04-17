@@ -1,0 +1,19 @@
+[2026-04-16T22:59:24Z] === 1c.B2 START (100% bcfy_calls, steps 200/500/1000) ===
+[2026-04-16T22:59:24Z] pre-condition: ensure no other source_type is active
+[2026-04-16T23:00:54Z] --- step 1: target 200 bcfy_calls ---
+[2026-04-16T23:00:54Z] activating 200 bcfy_calls feeds (cumulative)
+[2026-04-16T23:00:55Z] warmup 300s
+[2026-04-16T23:05:55Z] measure 600s @ 30s
+[2026-04-16T23:16:03Z] step 1 steady: n=19 avg_cpu=2.7% max_rss_mb=234.8
+[2026-04-16T23:16:03Z] --- step 2: target 500 bcfy_calls ---
+[2026-04-16T23:16:03Z] activating 500 bcfy_calls feeds (cumulative)
+[2026-04-16T23:16:04Z] warmup 300s
+[2026-04-16T23:21:04Z] measure 600s @ 30s
+[2026-04-16T23:31:12Z] step 2 steady: n=19 avg_cpu=7.0% max_rss_mb=366.5
+[2026-04-16T23:31:12Z] --- step 3: target 1000 bcfy_calls ---
+[2026-04-16T23:31:12Z] activating 1000 bcfy_calls feeds (cumulative)
+[2026-04-16T23:31:13Z] warmup 300s
+[2026-04-16T23:36:13Z] measure 600s @ 30s
+[2026-04-16T23:46:22Z] step 3 steady: n=19 avg_cpu=9.8% max_rss_mb=572.9
+[2026-04-16T23:46:22Z] deactivating all feeds
+[2026-04-16T23:46:22Z] === 1c.B2 COMPLETE ===

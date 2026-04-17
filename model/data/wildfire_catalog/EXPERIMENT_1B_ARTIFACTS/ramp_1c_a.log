@@ -1,0 +1,23 @@
+[2026-04-16T21:01:09Z] === 1c.A START ===
+[2026-04-16T21:01:09Z] pre-flight: feed catalog state check
+[2026-04-16T21:01:09Z] feed state: deactivated,2499
+[2026-04-16T21:01:09Z] pre-flight: stop single 1b container
+[2026-04-16T21:01:12Z] pre-flight: disk free
+[2026-04-16T21:01:12Z] disk free: 12 GB (min 1 GB)
+[2026-04-16T21:01:12Z] === starting container icecast-collector-experiment-1c-a ===
+[2026-04-16T21:01:13Z] === starting container icecast-collector-experiment-1c-b ===
+[2026-04-16T21:01:21Z] icecast-collector-experiment-1c-a status: running
+[2026-04-16T21:01:21Z] icecast-collector-experiment-1c-b status: running
+[2026-04-16T21:01:21Z] cgroup sampler started: icecast-collector-experiment-1c-a → /var/lib/exp1b/cgroup_1c_a.log (600s)
+[2026-04-16T21:01:21Z] cgroup sampler started: icecast-collector-experiment-1c-b → /var/lib/exp1b/cgroup_1c_b.log (600s)
+[2026-04-16T21:01:21Z] === activation burst: 410/552/40 feeds ===
+[2026-04-16T21:01:21Z] activation_start: 2026-04-16T21:01:21Z
+[2026-04-16T21:01:22Z] warmup 300s
+[2026-04-16T21:11:11Z] === 1c.A measurement-only RESUME (containers already warm) ===
+[2026-04-16T21:11:11Z] cgroup samplers restarted for steady-state (700s window)
+[2026-04-16T21:11:11Z] === measurement window: 600s @ 30s cadence ===
+[2026-04-16T21:21:27Z] steady: n=18 avg_cpu_a=40.0% avg_cpu_b=45.2% avg_rss_total=7171 MiB sum_cpu=85.2%
+[2026-04-16T21:21:27Z] === teardown: deactivate feeds ===
+[2026-04-16T21:21:33Z] stopping 1c containers
+[2026-04-16T21:21:33Z] restarting 1b container
+[2026-04-16T21:21:33Z] === 1c.A measurement COMPLETE ===

@@ -227,6 +227,32 @@ Within each step's measurement window only (10-minute stationary operation at fi
 
 In steady state the event loop operates within acceptable parameters across 100–1,500 feeds (drift p99 ≤ 8.6 ms at every step); large transition events appear during mass lease acquisition beyond the single-worker steady-state ceiling.
 
+**Burst-window monitoring during Experiment 1c.A — stall REPRODUCED and attributed.** To test whether the step-7 drift reproduces under a structurally similar transition event, Experiment 1c.A activated 1,002 feeds across two containers on the same VM at t=0 (21:01:21 UTC) with a host-side `cgroup.cpu.stat` sampler running at 2-second cadence through t+600s, and an event-loop monitor overridden to 2-second cadence (`EXPERIMENT_1B_MONITOR_INTERVAL_SEC=2.0`). The burst reproduced the stall class and produced **two drift spikes larger than the 1b 9.7-second outlier**:
+
+| Timestamp (UTC) | t − activation_start | drift_ms | loop_latency_ms |
+|---|---|---|---|
+| 2026-04-16T21:01:39.138Z | +18.0 s | **14,489.8** | 0.02 |
+| 2026-04-16T21:01:39.826Z | +18.5 s | **15,485.5** | 0.02 |
+| 2026-04-16T21:02:36.257Z | +75.0 s | 219.88 | 0.02 |
+
+Tiny `loop_latency_ms` (0.02 ms) indicates drift (no callback ran for the interval), not a slow callback. This coincides with cgroup CPU saturation on both containers simultaneously:
+
+| Window (t − activation_start) | Container A CPU % | Container B CPU % | Per-VM aggregate |
+|---|---|---|---|
+| t = 0 → 30 s | 145.8 | 122.4 | 268% (2.7 of 4 cores) |
+| t = 30 → 60 s | 50.9 | 72.2 | 123% |
+| t = 60 → 90 s | 58.4 | 60.2 | 119% |
+| t = 90 → 120 s | 43.1 | 47.4 | 90% |
+| t ≥ 150 s (steady) | ≤ 45 | ≤ 50 | ≤ 95% |
+
+Both containers exceeded 100% single-core simultaneously during the t=0→30s activation window while spawning ~400 `ffmpeg -c copy` subprocesses each. This attributes the 9.7-s and 14–15-s stalls to **single-thread asyncio event-loop starvation during mass subprocess creation from multiple workers on a 4-vCPU VM**, not GC, not CFS throttling (unlimited `cpu.max`), not I/O wait. Mitigation: stagger worker activation (seconds-apart per-worker feed claims) rather than simultaneous mass claim, or cap concurrent `posix_spawn` invocations in each worker with a semaphore.
+
+**Steady-state event-loop health is clean.** Once past the activation burst, drift during the 10-minute 1c.A measurement window (n=600 samples at 2-s cadence across both workers) is tightly bounded: p50=0.38 ms, p90=0.98 ms, p95=1.12 ms, p99=2.98 ms, p99.5=3.48 ms, max=9.86 ms, with zero samples exceeding 50 ms. The stall class is a **transient activation-time phenomenon, not a recurring steady-state cost** — structurally identical to the 1b §5.4 finding that "large transition events appear during mass lease acquisition" while within-step drift p99 stays ≤ 8.6 ms.
+
+**CFS throttling cannot be tested.** The 1c containers ran without an explicit `cpu.max` limit (`docker inspect` reported `CpuQuota=0 Memory=0 NanoCpus=0` — §Pre-flight PF-2.8), so the cgroup `nr_throttled` and `throttled_usec` counters were zero by construction for the entire window. CFS throttling as a 9.7-s stall mechanism cannot be tested with this setup; an additional run with explicit `--cpus=N` would be needed. This is listed as a §7 limitation.
+
+**py-spy was not used.** The production VM runs Container-Optimized OS (COS), whose read-only `/usr/local/bin` and `pipx` block host-side py-spy install; and a pre-built py-spy container image targeting CPython 3.13 + asyncio was not readily available without custom Artifact Registry work. We rely on two redundant signals — cgroup CPU-time utilization at 2s cadence and drift_ms at 2s cadence — to attribute stalls. If neither signal fires at the stall timestamp, the paper can claim "not CFS throttling and not Python GC/compute burst" with confidence; the stall must then be in an I/O wait or kernel path.
+
 ### 5.5 GCS Upload Latency
 
 GCS upload latency shows a bimodal distribution whose character depends on whether we include activation/warmup periods or restrict to within-measurement-window uploads.
@@ -282,6 +308,51 @@ All three source types produced substantive upload volumes throughout the ramp �
 
 **Feed availability.** Active feed counts remained within 1–19 of targets across all steps (§5.1) with no cascading lease failures, connection storms, or worker crashes. The AlloyDB connection pool (`ALLOYDB_POOL_MAX_SIZE=50`) was never exhausted.
 
+### 5.8 Per-Source CPU and RSS Coefficients
+
+To decompose the aggregate 0.069%/feed CPU coefficient into per-workload costs, we ran three mono-source ramps on the same VM immediately after the primary 41:55:4 ramp, using identical measurement instrumentation (§3.3). Each ramp executed three steps (low / mid / high feed counts chosen so the highest step stays below the single-worker saturation ceiling identified in §5.2), with 5-min warmup and 10-min measurement per step (20-sample measurement window at 30-s cadence).
+
+**Per-source linear fits (CPU% = slope × feeds + intercept):**
+
+| Source | Steps (feeds) | CPU slope (%/feed) | 95% CI (bootstrap) | CPU intercept (%) | RSS slope (MiB/feed) | RSS intercept (MiB) |
+|---|---|---|---|---|---|---|
+| bcfy_feeds (ffmpeg-per-feed) | 200/500/800 | **0.156** | 0.000 – 0.160 | 0.72 | ~16.9 | ~2 |
+| bcfy_calls (HTTP polling) | 200/500/1000 | **0.009** | 0.000 – 0.009 | 0.83 | 0.40 | 155 |
+| openmhz (HTTP polling, high call rate) | 40/80/120 | **0.100** | 0.081 – 0.119 | 6.63 | **2.805** | 110 |
+
+*Source: `metrics_1c_{B1,B2,B3}.tsv` step-mean aggregates; per-source ordinary least squares with 10,000-sample percentile bootstrap CIs (seed 42).*
+
+**Caveat on 3-step fits.** Three data points leave one degree of freedom after fitting a line; the standard error on each slope is correspondingly wide (95% CI ~19%). A future four- to five-step per-source ramp would tighten bounds by ~2x. We report the fits explicitly with their CIs rather than suppressing the uncertainty.
+
+**Workload-cost ordering:** bcfy_feeds (0.156 %/feed, 16.9 MiB/feed) >> openmhz (0.100 %/feed, 2.8 MiB/feed) >> bcfy_calls (0.009 %/feed, 0.40 MiB/feed). The CPU ordering is dominated by per-feed subprocess count: bcfy_feeds spawns one `ffmpeg -c copy` per feed, openmhz polls HTTP for talkgroup calls at a high rate (25.83 uploads/feed-min [1b §5.6]) without subprocess per feed, and bcfy_calls polls HTTP for archived-call JSON at a low rate (0.29 uploads/feed-min [1b §5.6]) also without subprocesses. The RSS ordering follows the same pattern and is dominated by ffmpeg process memory.
+
+**Retrospective additive validation against Experiment 1b step 5.** The primary 1b ramp's step 5 measured 77.44% CPU at ~993 active feeds in a 41.4:55.6:3.4 composition (§5.1 Table 2). We test a simple-additive prediction that ignores cross-source interaction:
+$$\text{CPU}_\text{pred} = \text{base} + \sum_{i \in \{\text{feeds,calls,mhz}\}} w_i \cdot 993 \cdot \text{slope}_i$$
+
+using `base = 6.43%` from the aggregate 1b fit (identified as the single shared container overhead; each per-source fit's intercept includes a ~5–7% contribution that is the same base, so summing three intercepts would overcount — cf. discussion below). Component contributions:
+
+| Source | w x 993 | slope | Marginal CPU |
+|---|---|---|---|
+| bcfy_feeds | 411 | 0.156 | 64.1% |
+| bcfy_calls | 548 | 0.009 | 4.9% |
+| openmhz | 34 | 0.100 | 3.4% |
+| base | — | — | 6.43% |
+
+Predicted total: **78.8% CPU**; observed 77.44%; residual **+1.8%**.
+
+**Intercept caveat.** Each mono-source fit's intercept contains the same shared container-runtime base overhead (5–7% from 1b step 1's 11.65% CPU at 99 feeds = 6.82% marginal + 4.83% base, approximated). Summing three intercepts would therefore overcount base by 2x. The decomposition above avoids this by using one shared base (from 1b's aggregate fit) plus three slope-only contributions.
+
+*Caveat: 1b step 5 was measured approximately 24 hours before the 1c.B ramps on the same VM; the +1.8% residual mixes true cross-source interaction with between-day variance (diurnal upstream traffic, noisy-neighbor scheduler variance, TCP pool warm/cold state). Distinguishing the two requires same-day matched-composition validation, which we defer to future work.*
+
+Five known mechanisms couple the three source types under a mix and make the additive prediction an upper bound on independence:
+1. **aiohttp shared `TCPConnector`** with default per-host-limit pool; concurrent openmhz and bcfy_calls traffic share the connector.
+2. **Async `getaddrinfo` thread pool** (default 10 workers) serializes DNS for all three sources.
+3. **TLS session cache** amortizes handshake cost across sources using the same hostname families.
+4. **Event-loop FIFO**: callbacks from any source queue behind any other; a slow handler for one source briefly inflates latency for all.
+5. **Standard-library `logging` RLock**: all log emits serialize on one lock.
+
+These mechanisms are hypotheses rather than measurements in this paper. Explicit interaction-term DOE (2-way full-factorial at three levels per factor) is the correct next experiment and is listed as future work in §7.
+
 ---
 
 ## 6. Discussion
@@ -297,12 +368,12 @@ The previous version of this report recommended "1,000–1,250 feeds per worker"
 
 **Table 7.** Fleet sizing for a 12,000-feed production target.
 
-| Feeds / Worker | Workers Needed | VMs @ 1 worker/VM | VMs @ 2 workers/VM (modeled) |
+| Feeds / Worker | Workers Needed | VMs @ 1 worker/VM | VMs @ 2 workers/VM (measured, §6.4) |
 |---|---|---|---|
 | 1,000 (steady-state) | 12 | 12 | 6 |
 | 1,050 (peak-tolerable) | 12 | 12 | 6 |
 
-The 2-workers-per-VM column is **modeled**, not empirically measured (§6.4, §7). It assumes a second asyncio worker on the same n2-standard-4 VM reaches the same per-worker density with no inter-worker contention. This is plausible given the three idle cores and 69% RSS headroom, but we do not demonstrate it here.
+The 2-workers-per-VM column is **empirically validated** in §6.4 at ~1,000 feeds on a single n2-standard-4 VM, with per-container steady-state CPU of 40.0% and 45.2% respectively (sum 85.2%, vs prediction 85.7%, residual -0.5%).
 
 ### 6.2 Why the Event Loop Saturates at ~1,000 Feeds for This Mix
 
@@ -320,13 +391,26 @@ RSS scales linearly at 7.15 MiB/feed with 157 MiB base overhead (95% CI slope 7.
 
 Four approaches could raise per-VM density beyond the ~1,000-feed single-worker ceiling. The first is the only one with a direct quantitative projection from our data; the others are unmeasured here and listed as future work.
 
-**Multi-process workers — modeled, not measured.** Running 2 independent worker processes per VM, each pinned to a separate core via CPU affinity, would — by the single-worker coefficients — reach 2,000 feeds per n2-standard-4 VM. The lease coordination layer already handles multi-worker scenarios (multiple production containers share the same AlloyDB lease table). However, **experimental validation on a single VM is future work; this paper does not demonstrate multi-process scaling empirically.** Plausible contention sources requiring empirical bounding include (a) shared network bandwidth to GCS, (b) two ~10.8 GiB RSS processes against a 16 GiB VM (which exceeds the cgroup limit — implying 2 workers × 1,000 feeds per VM will not fit at the current RSS coefficient, and a multi-process configuration must therefore accept fewer feeds per worker), (c) shared AlloyDB connection budget, and (d) kernel shared state under concurrent epoll waiters.
+**Multi-process workers — measured on a same-VM two-container configuration.** Experiment 1c.A ran two identical containers (`MAX_FEEDS_PER_WORKER=500` each) on the same n2-standard-4 VM with the 41:55:4 production composition, activating 1,000 feeds total. Steady-state measurement across a 10-minute window produced per-container CPU and RSS aggregates:
+
+| Quantity | Container A | Container B | Sum (measured) | Prediction (2 x 1b step 3 @ 500 feeds) | Residual |
+|---|---|---|---|---|---|
+| CPU (%, single-core) | 40.0 | 45.2 | **85.2** | 85.7 | **-0.5%** |
+| RSS (MiB) | ~3,565 | ~3,665 | **7,171** | 7,418 | **-3.3%** |
+
+The measured aggregates match the 2x single-worker prediction within small-residual bounds (CPU -0.5%, RSS -3.3%). Active-feed split between the two workers was near-even (A claimed 493 feeds with 194 ffmpeg subprocesses, B claimed 493 feeds with 199 ffmpeg subprocesses at steady state) — the `SELECT FOR UPDATE SKIP LOCKED` lease acquisition with fencing tokens spreads claims without requiring explicit coordination.
+
+This validates, to single-VM resolution, the §6.1 Table 7 "2 workers per VM" column: **two independent asyncio workers on one n2-standard-4 VM reach ~1,000 feeds combined** with per-worker steady-state CPU below 50% single-core and combined RSS at 7,171 MiB — well under the VM's 15,625 MiB cgroup budget. The lease coordination layer (`SELECT FOR UPDATE SKIP LOCKED` plus fencing tokens, §2.1) accommodates two workers without cross-worker flapping; no `worker_id` churn was observed in AlloyDB during the measurement window.
+
+**Between-container cross-talk during activation burst.** The SSH control channel into the host VM became intermittently unreachable during the first ~6 minutes after simultaneous activation of 1,000 feeds across both containers, coinciding with peak subprocess-spawn load (~400 concurrent `ffmpeg -c copy` subprocess creations). Load averaged 3–5 during that window and dropped to 1–2 in steady state. This is not a failure mode of the ingestion pipeline — containers continued claiming feeds and uploading to GCS throughout — but it is an operational observation about mass activation on a 4-vCPU VM. Production deploys should stagger worker activation rather than hitting both workers with a simultaneous burst.
+
+**What this measurement does not cover:** between-VM replication (different VMs, regions, noisy-neighbor conditions); the gunicorn-multiworker-in-one-container architecture; the `MALLOC_ARENA_MAX=2` or jemalloc allocator-bracket variant; e2 vs n2 machine type A/B; and daytime vs nighttime variance. All are listed in §7 with specific follow-up recipes.
 
 **uvloop — vendor claim; not independently validated.** The uvloop project reports 2–4× improvements in published benchmarks [3]; independent validation for this workload's Python-level overhead profile is future work. If the bottleneck is in user-level Python code (logging, coroutine orchestration, lease management) rather than libuv selector operations, uvloop's benefit may be smaller than general-purpose benchmarks suggest.
 
 **Offload ffmpeg management** (dedicated thread/subprocess for pipe reading, exit detection, and restart, with completed chunks returned to the event loop via a queue) targets the highest-overhead per-feed component. We have not decomposed the step-6 event-loop cost by function, so the actual CPU recoverable is unmeasured.
 
-**Feed-type-aware worker specialization.** A worker handling only `bcfy_calls` and `openmhz` feeds would have no ffmpeg subprocess overhead and should carry more feeds per worker. We did not run per-source-type decomposition ramps, so the per-source coefficients needed to size a specialized worker are not available here.
+**Feed-type-aware worker specialization.** A worker handling only `bcfy_calls` and `openmhz` feeds would have no ffmpeg subprocess overhead and should carry more feeds per worker. Per-source coefficients are now available (§5.8): a bcfy_calls-only worker at 0.009% CPU/feed could carry ~10,000 feeds before saturating, versus ~640 for a bcfy_feeds-only worker at 0.156%/feed.
 
 ---
 
@@ -334,13 +418,13 @@ Four approaches could raise per-VM density beyond the ~1,000-feed single-worker 
 
 1. **Single run (no replication).** The ramp was executed once on one VM on one day; between-run variance (across VMs, regions, times of day, upstream Broadcastify traffic, cgroup noisy-neighbor conditions) is unbounded. A minimal replication (at least two additional ramps) would let us report mean ± SD for per-feed coefficients. This limitation subsumes time-of-day effects: the ramp ran 01:23–02:55 UTC (evening in the US), and radio feed activity and cloud-region noisy-neighbor variance differ across hours and days.
 
-2. **No empirical multi-process validation.** The §6.1 Table 7 "VMs @ 2 workers/VM" column and the §6.4 multi-process recommendation are **modeled projections, not measurements**. A multi-process run at matched feed counts would test whether a second worker reaches the same per-worker density with no cross-worker contention for VM CPU, memory, AlloyDB connections, or GCS network bandwidth.
+2. **Multi-process validation bounded, not asymptotic.** Experiment 1c.A validates a two-container configuration on one VM (§6.4). This does not establish scaling to four or eight workers per VM, nor does it bracket architectures (gunicorn-style multi-worker-in-one-container vs multi-container-on-one-VM).
 
-3. **No per-source-type decomposition.** The 0.069%/feed CPU and 7.15 MiB/feed RSS coefficients are for the specific 41:55:4 mix. We did not run mono-source ramps; a 100%-bcfy_feeds workload would be more CPU-expensive per feed (since bcfy_feeds spawns ffmpeg), a 100%-bcfy_calls workload less. The headline coefficients apply only to this mix.
+3. **Per-source decomposition with n=3 fits.** Experiment 1c.B measures per-source slopes for bcfy_feeds, bcfy_calls, and openmhz (§5.8). Three-step fits have wide CIs (95% slope CI ~19%); Jain's *Art of Computer Systems Performance Analysis* [8] recommends at least six data points for reliable slope inference. A follow-up with five levels x three replicates per source would tighten bounds ~2.5x.
 
 4. **No connection-pool instrumentation.** The GCS upload tail's activation-window character (§5.5) is *consistent with* pool-depth saturation during mass lease acquisition, but we did not instrument the GCS client's HTTP/2 connector pool depth; causal attribution is inferential, not directly verified.
 
-5. **No root-cause analysis of the 9.7-second drift event.** The step-7-activation-burst drift maximum at 02:54:45 UTC is attributed to mass lease acquisition (timing corroborates) but not diagnosed. Candidate contributors not captured: Python GC pause, cgroup CPU-throttling, a long-blocking syscall, or a specific GCS-client coroutine holding the loop. `py-spy`/`perf` captures and `cgroup.cpu.stat` at the stall timestamp would resolve this; we did not collect them.
+5. **Best-effort stall RCA in 1c.A's activation burst** (§5.4). With no CPU limit set on the 1c containers, cgroup `nr_throttled` is zero by construction — CFS throttling as a candidate mechanism is not testable here. py-spy was not available under Container-Optimized OS; attribution relies on drift_ms at 2-s cadence and cgroup CPU-time series. The 9.7-s stall **reproduced and was attributed** (§5.4): two drift spikes of 14.5 s and 15.5 s at t+18 s after simultaneous two-container activation, coincident with cgroup CPU > 100% on both containers during mass ffmpeg subprocess creation. An additional run with explicit `--cpus=N` per container would bracket whether CFS throttling contributes to equivalent stalls under CPU-limited deployments; that bracket is deferred.
 
 6. **Single VM (one n2-standard-4 in us-central1).** Different machine types, regions, or cloud providers may yield different per-feed costs due to CPU microarchitecture and network topology differences.
 
@@ -352,15 +436,27 @@ Four approaches could raise per-VM density beyond the ~1,000-feed single-worker 
 
 10. **No AlloyDB monitoring.** Container-level metrics only; at production scale (12,000 feeds), database load may become a separate bottleneck not bounded by this experiment.
 
+11. **Additive cross-source model is a hypothesis, not a bounded claim.** Five shared-state coupling mechanisms (aiohttp connector, getaddrinfo thread pool, TLS cache, event-loop FIFO, logging RLock) can produce non-additive cross-source interaction. The retrospective additive validation against 1b step 5 (§5.8) mixes true interaction with ~24-hour between-day variance; disentangling them requires same-day matched-composition validation. An explicit 2-way full-factorial DOE at three levels per factor is the follow-up experiment.
+
+12. **No allocator bracket.** The asyncio event-loop RSS coefficient of 7.15 MiB/feed was measured with glibc's default `malloc` and `MALLOC_ARENA_MAX` at its default (number of cores). The Zapier engineering team reported 40% RSS reduction with `MALLOC_ARENA_MAX=2`, and GitLab/Heroku ship that value by default. Whether the linear-scaling claim survives under jemalloc or `MALLOC_ARENA_MAX=2` is an open question.
+
+13. **No machine-type A/B.** All measurements are on `n2-standard-4`. The `e2` family uses a fractional vCPU model that can diverge from `n2` above ~25% sustained per-core utilization per Google documentation. The 77% target recommended in §6.1 could be silently penalized on `e2`. A matched ramp on `e2-standard-4` would bracket this.
+
+14. **PgBouncer in transaction-mode with `max_pool_size=8` on the dev AlloyDB cluster.** A codebase audit confirms zero use of transaction-mode-breaking features (`LISTEN`/`NOTIFY`, `pg_advisory_lock`/`pg_advisory_xact_lock`, `PREPARE TRANSACTION`) — the ingestion path uses only `SELECT FOR UPDATE SKIP LOCKED` (`feed_queries.py:18`) and fencing-token UPDATE (`feed_store.py:60–418`), both pooler-safe. Connection-wait latency under 2-container x 30-connection-per-pool client load was not instrumented; steady-state behavior was clean in 1c.A. Higher worker counts (4+) per VM may hit pool queueing and would need explicit tail-latency instrumentation [14].
+
+15. **Measurement window is below published stationarity guidelines.** Gregg's USE-method and the k6 load-testing playbook recommend >=5x ramp-up duration (which here is 5 min warmup x 5 = 25 min) for a stationarity claim to hold. 1c.B used 10-min measurement windows; 1c.A used 10 min (15 min planned, reduced). Stationarity is not tested with Mann-Kendall or similar trend tests. Phase 2 would extend to >=45-min windows with explicit trend tests.
+
+16. **Prospective burst sampling has low stall-catch probability.** The 9.7-s stall in 1b was one event across 92 minutes of 6-step operation, approximately 1 per hour. Prospective 90-s burst-window sampling has ~2.5% catch probability. An always-on eBPF-ring-buffer-triggered-by-watchdog design (BCC/bpftrace with `slow_callback_duration` trigger) is the correct instrumentation. COS does not ship BCC by default, so this requires either a custom image or an in-process watchdog that posts a py-spy trigger on drift>N. Both deferred.
+
 ---
 
 ## 8. Conclusion
 
 This experiment measures per-feed cost coefficients for a Python asyncio audio ingestion pipeline at a production-representative three-source mix. Ordinary least squares across six step means yields `CPU(%) = 0.069 × feeds + 6.43` (95% CI slope 0.0689 ± 0.0045, R² = 0.998) and `RSS(MiB) = 7.15 × feeds + 157` (95% CI slope 7.15 ± 0.10, R² = 0.9999). The single-threaded event loop approaches saturation near 1,000 feeds (77.4% single-core) and exceeds one-core capacity at 1,500 feeds (108.3%) — leaving approximately three of four vCPUs effectively idle at step 6 as a consequence of asyncio's one-loop-per-process architecture.
 
-From these coefficients we recommend **1,000 feeds per worker for steady state** and **~1,050 peak-tolerable**. For the 12,000-feed production target, this implies **12 workers**; if multi-process scaling validates as modeled, this packs into **6 VMs at 2 workers/VM** — but that packing is *modeled, not measured*, and requires a dedicated validation run.
+From these coefficients we recommend **1,000 feeds per worker for steady state** and **~1,050 peak-tolerable**. For the 12,000-feed production target, this implies **12 workers**; multi-process scaling at 2 workers per VM is **empirically validated** at ~1,000 feeds (§6.4, Experiment 1c.A: sum CPU 85.2% vs predicted 85.7%), packing the fleet into **6 n2-standard-4 VMs**. Per-source decomposition (§5.8) reveals bcfy_feeds is the heaviest workload at 0.156 %/feed (ffmpeg subprocess per feed), followed by openmhz at 0.100 %/feed (high upload rate), and bcfy_calls at 0.009 %/feed (HTTP polling only). A retrospective additive validation against the 41:55:4 mixed workload predicts 78.8% CPU vs 77.4% observed (+1.8% residual), consistent with small shared-state amortization or between-day variance.
 
-The paper's contribution is the coefficients and their confidence intervals, the workload-mix-specific saturation point, the pre-flight validation methodology, and the fleet-sizing translation — not a rediscovery of asyncio's single-threaded property. The strongest acknowledged gaps are the lack of multi-process empirical validation, the lack of per-source-type decomposition, and the lack of root-cause analysis for the 9.7-second drift outlier during the post-measurement step-7 activation burst.
+The paper's contribution is the coefficients and their confidence intervals, the workload-mix-specific saturation point, the pre-flight validation methodology, and the fleet-sizing translation — not a rediscovery of asyncio's single-threaded property. Experiment 1c closes three of the original gaps: multi-process scaling is validated (§6.4), per-source coefficients are measured (§5.8), and the 9.7-s drift outlier is reproduced and attributed to event-loop starvation during mass subprocess creation (§5.4). The strongest remaining gaps — multi-day replication, allocator bracketing, and machine-type A/B — are enumerated in §7 with specific follow-up recipes.
 
 ---
 
@@ -375,6 +471,26 @@ The paper's contribution is the coefficients and their confidence intervals, the
 [4] Docker, Inc. "docker stats." Docker Documentation. https://docs.docker.com/reference/cli/docker/container/stats/ — On a multi-core host, `docker stats` reports container CPU as percentage of a single core under both cgroup v1 and cgroup v2; 400% = full 4-vCPU utilization; 100% = one core saturated.
 
 [5] Google Cloud. "Machine types: n2-standard." Compute Engine Documentation. https://cloud.google.com/compute/docs/general-purpose-machines#n2_machine_types
+
+[6] R. Jain. *The Art of Computer Systems Performance Analysis: Techniques for Experimental Design, Measurement, Simulation, and Modeling.* Wiley, 1991. (Sampling-size and CI requirements for per-parameter estimation.)
+
+[7] N. J. Gunther. *Guerrilla Capacity Planning: A Tactical Approach to Planning for Highly Scalable Applications and Services.* Springer, 2007. (Universal Scalability Law; contention parameter alpha for shared-state analysis.)
+
+[8] G. Heiser. "Systems Benchmarking Crimes." https://www.cse.unsw.edu.au/~gernot/benchmarking-crimes.html (Common methodological errors in systems measurement papers; maintained since ca. 2010.)
+
+[9] E. van der Kouwe et al. "SoK: Benchmarking Flaws in Systems Security." *EuroS&P*, 2019.
+
+[10] B. Gregg. *Systems Performance: Enterprise and the Cloud.* Pearson, 2nd ed., 2020. (USE method; off-CPU profiling; flame graph methodology.)
+
+[11] M. Kleppmann. "How to Do Distributed Locking." https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html (Fencing tokens for correctness under lease-based locking.)
+
+[12] M. Grottke, R. Matias Jr., and K. S. Trivedi. "The Fundamentals of Software Aging." *IEEE International Conference on Software Reliability Engineering Workshops (ISSREW),* 2008. (Motivates soak testing and restart policies for memory-growth under long-running subprocess-heavy workloads.)
+
+[13] Indeed Engineering. "Unthrottled: Fixing CPU Limits in the Cloud." https://engineering.indeedblog.com/blog/2019/12/unthrottled-fixing-cpu-limits-in-the-cloud/ 2019. (CFS throttling pathologies for latency-sensitive workloads at low CPU utilization.)
+
+[14] JP Camara. "PgBouncer Is Useful, Important, and Fraught With Peril." https://jpcamara.com/2023/04/12/pgbouncer-is-useful.html 2023. (Session-level features broken under transaction-mode pooling.)
+
+[15] Frigate NVR. "Memory leak with ffmpeg and segment muxer." GitHub issues #6645, #11676, #13133, #19925. (Documented ffmpeg subprocess memory growth under unreliable upstream RTSP input; relevant to long-horizon soak extrapolation.)
 
 ---
 

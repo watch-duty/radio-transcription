@@ -33,3 +33,28 @@ y_rss = [839.60, 1934.34, 3738.62, 5557.25, 7353.34, 10833.90]  # max RSS per st
 print(np.polyfit(x, y_cpu, 1))  # slope, intercept
 print(np.polyfit(x, y_rss, 1))
 ```
+
+---
+
+## Experiment 1c follow-up (2026-04-16 21:01–23:46 UTC)
+
+Follow-up campaign on the same VM addressing three §7 limitations (multi-process validation, stall RCA, per-source decomposition). No source-code changes; only orchestration scripts and container env overrides.
+
+### 1c Raw data
+
+| File | Source | Purpose |
+|------|--------|---------|
+| `metrics_1c_a.tsv` | 2-container `docker stats` 30s samples | 37 rows. Columns: timestamp, container, active, ffmpeg, cpu_pct, rss_mb. |
+| `metrics_1c_B1.tsv` | Mono-source ramp (bcfy_feeds 200/500/800) | 3 steps × 19 samples. |
+| `metrics_1c_B2.tsv` | Mono-source ramp (bcfy_calls 200/500/1000) | 3 steps × 19 samples. |
+| `metrics_1c_B3.tsv` | Mono-source ramp (openmhz 40/80/120) | 3 steps × 19 samples. |
+| `cgroup_1c_a.log`, `cgroup_1c_b.log` | Host-side cgroup.cpu.stat 2s samples | Activation-burst monitoring (298 samples each). |
+| `ramp_1c_a.log` | 1c.A orchestration log | Includes resume after mid-warmup script restart. |
+| `ramp_1c_B1.log`, `ramp_1c_B2.log`, `ramp_1c_B3.log` | Per-source ramp logs | Step boundaries and per-step aggregate summaries. |
+| `experiment_1c_ad_report.md` | Combined 1c.A validation + 1c.D stall RCA findings | Primary finding: stall reproduced (14.5s + 15.5s drift); attributed to subprocess-spawn storm. |
+
+### 1c key findings
+
+- **Multi-process validation (§6.4):** 2 containers × ~500 feeds → sum CPU 85.2% (vs 85.7% predicted), sum RSS 7,171 MiB (vs 7,418 predicted).
+- **Stall RCA (§5.4):** 9.7s drift reproduced during simultaneous activation; max drift 15.5s at t+18s coincident with cgroup CPU >100% per container.
+- **Per-source (§5.8):** bcfy_feeds 0.156%/feed (ffmpeg), openmhz 0.100%/feed, bcfy_calls 0.009%/feed. Additive prediction 73.7% vs observed 77.4% (−4.9% residual).

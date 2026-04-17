@@ -1,0 +1,29 @@
+[2026-04-16T22:10:50Z] === 1c.B1 START (100% bcfy_feeds, steps 200/500/800) ===
+[2026-04-16T22:10:50Z] pre-condition: ensure no other source_type is active
+[2026-04-16T22:12:21Z] --- step 1: target 200 bcfy_feeds ---
+[2026-04-16T22:12:21Z] activating 200 bcfy_feeds feeds (cumulative)
+[2026-04-16T22:12:21Z] warmup 300s
+[2026-04-16T22:17:21Z] measure 600s @ 30s
+[2026-04-16T22:27:30Z] step 1 steady: n=19 avg_cpu=31.6% max_rss_mb=3375.1
+[2026-04-16T22:27:30Z] --- step 2: target 500 bcfy_feeds ---
+[2026-04-16T22:27:30Z] activating 500 bcfy_feeds feeds (cumulative)
+[2026-04-16T22:27:31Z] warmup 300s
+[2026-04-16T22:32:31Z] measure 600s @ 30s
+[2026-04-16T22:42:41Z] step 2 steady: n=19 avg_cpu=74.6% max_rss_mb=8254.46
+[2026-04-16T22:42:41Z] --- step 3: target 800 bcfy_feeds ---
+[2026-04-16T22:42:41Z] activating 800 bcfy_feeds feeds (cumulative)
+[2026-04-16T22:42:41Z] warmup 300s
+[2026-04-16T22:47:41Z] measure 600s @ 30s
+[2026-04-16T22:52:33Z] NOTE: rolling avg 121.79% exceeds one-vCPU equivalent
+[2026-04-16T22:53:05Z] NOTE: rolling avg 121.73% exceeds one-vCPU equivalent
+[2026-04-16T22:53:37Z] NOTE: rolling avg 121.20% exceeds one-vCPU equivalent
+[2026-04-16T22:54:10Z] NOTE: rolling avg 121.93% exceeds one-vCPU equivalent
+[2026-04-16T22:54:42Z] NOTE: rolling avg 122.29% exceeds one-vCPU equivalent
+[2026-04-16T22:55:14Z] NOTE: rolling avg 122.19% exceeds one-vCPU equivalent
+[2026-04-16T22:55:46Z] NOTE: rolling avg 122.20% exceeds one-vCPU equivalent
+[2026-04-16T22:56:18Z] NOTE: rolling avg 121.85% exceeds one-vCPU equivalent
+[2026-04-16T22:56:51Z] NOTE: rolling avg 121.51% exceeds one-vCPU equivalent
+[2026-04-16T22:57:23Z] NOTE: rolling avg 121.90% exceeds one-vCPU equivalent
+[2026-04-16T22:57:53Z] step 3 steady: n=19 avg_cpu=122.0% max_rss_mb=13240.3
+[2026-04-16T22:57:53Z] deactivating all feeds
+[2026-04-16T22:57:53Z] === 1c.B1 COMPLETE ===

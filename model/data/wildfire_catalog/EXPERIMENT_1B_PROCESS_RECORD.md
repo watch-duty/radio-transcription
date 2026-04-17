@@ -245,4 +245,52 @@ Supporting raw data (input, not pipeline output):
 
 ---
 
-*End of Stage 6 Process Record.*
+## Round 2: Experiment 1c follow-up campaign
+
+**Round 2 goal**: close three §7 limitations from the 1b paper (P0-2 multi-process validation, P0-3 9.7-s stall RCA, P1-7 per-source coefficients) within a 10-hour single-day operator budget, to move the revised paper from Major-Revision toward Minor-Revision at a top-tier venue.
+
+**Entry mode**: Phase 0 meta-review at top of a new pipeline cycle — the 1c plan itself was run through academic-pipeline Stage 2.5-scaled integrity + Stage 3-scaled methodology review before the experiment clock started.
+
+### Phase 0 — Plan meta-review
+
+9 P0 issues caught pre-execution: 4 from scaled integrity (benfred/py-spy image nonexistent, invalid gcloud filter syntax, missing --cluster flag, wrong code-path reference) + 5 from methodology review (py-spy fails on COS, PgBouncer max_pool_size=8, scripts not pre-written, thin abort criteria, no data backup). Cost ~45 min; saved >1 hr of in-experiment debugging. User decisions applied: skip py-spy (COS blocks host install); pre-write all scripts to /tmp/; fold abort + backup into scripts.
+
+### Phase PF — 26-check pre-flight
+
+All 26 checks passed or documented. Key findings: PgBouncer transaction-mode max_pool_size=8 (codebase audit: pooler-safe, zero LISTEN/advisory_lock/PREPARE); no CPU limit on containers (nr_throttled structurally zero); JWT native rotation working (laptop sync workaround obsoleted and killed); Python 3.13.13, no uvloop, default asyncio. Pass document: `preflight_1c_pass.md`.
+
+### 1c.A — Multi-container validation + stall RCA
+
+Two containers on same n2-standard-4, 1,002 feeds at 41:55:4. **Result**: sum CPU 85.2% vs predicted 85.7% (−0.5% residual); sum RSS 7,171 MiB vs predicted 7,418 (−3.3%). Claim validated. **Stall reproduced**: 14.5s and 15.5s drift spikes at t+18s after simultaneous activation, coincident with cgroup CPU >100% on both containers during mass ffmpeg subprocess creation. Attribution: event-loop starvation under subprocess-spawn storm. Steady-state clean (p99=2.98ms, 0 spikes >50ms).
+
+### 1c.B — Per-source decomposition
+
+Three mono-source ramps (3 steps × 10-min measurement each):
+
+| Source | Steps | CPU slope (%/feed) | RSS slope (MiB/feed) |
+|---|---|---|---|
+| bcfy_feeds | 200/500/800 | 0.156 | 16.9 |
+| openmhz | 40/80/120 | 0.100 | 2.8 |
+| bcfy_calls | 200/500/1000 | 0.009 | 0.4 |
+
+Retrospective additive validation against 1b step 5: predicted 73.7% vs observed 77.4% (−4.9% residual). Consistent with small cross-source interaction or between-day variance.
+
+### Round 2 pipeline statistics
+
+- Phase 0 meta-review: 45 min (9 P0 caught)
+- Phase PF: 30 min (26 checks, 0 P0)
+- 1c.A: 35 min wall-clock (including orchestration-script restart)
+- 1c.B: 2h25m (B3→B1→B2 sequential)
+- Analysis + paper update: ~1h
+- Total: ~5h of 10h budget used
+- Data loss events: 0
+- Abort events: 0
+- Orchestration-script restarts: 1 (data integrity preserved)
+
+### Updated limitations
+
+Items 2, 3, 5 moved from unbounded to bounded. 6 new items added (11–16): additive-model hypothesis, allocator bracket, machine-type A/B, PgBouncer queueing, stationarity window, burst sampling probability.
+
+---
+
+*End of Round 2 Process Record.*

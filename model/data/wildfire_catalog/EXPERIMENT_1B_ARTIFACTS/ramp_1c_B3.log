@@ -1,0 +1,19 @@
+[2026-04-16T21:22:21Z] === 1c.B3 START (100% openmhz, steps 40/80/120) ===
+[2026-04-16T21:22:21Z] pre-condition: ensure no other source_type is active
+[2026-04-16T21:23:52Z] --- step 1: target 40 openmhz ---
+[2026-04-16T21:23:52Z] activating 40 openmhz feeds (cumulative)
+[2026-04-16T21:23:52Z] warmup 300s
+[2026-04-16T21:28:52Z] measure 600s @ 30s
+[2026-04-16T21:39:01Z] step 1 steady: n=19 avg_cpu=10.9% max_rss_mb=222.7
+[2026-04-16T21:39:01Z] --- step 2: target 80 openmhz ---
+[2026-04-16T21:39:01Z] activating 80 openmhz feeds (cumulative)
+[2026-04-16T21:39:01Z] warmup 300s
+[2026-04-16T21:44:01Z] measure 600s @ 30s
+[2026-04-16T21:54:10Z] step 2 steady: n=19 avg_cpu=14.1% max_rss_mb=333.5
+[2026-04-16T21:54:10Z] --- step 3: target 120 openmhz ---
+[2026-04-16T21:54:10Z] activating 120 openmhz feeds (cumulative)
+[2026-04-16T21:54:10Z] warmup 300s
+[2026-04-16T21:59:10Z] measure 600s @ 30s
+[2026-04-16T22:09:19Z] step 3 steady: n=19 avg_cpu=18.9% max_rss_mb=447.1
+[2026-04-16T22:09:19Z] deactivating all feeds
+[2026-04-16T22:09:20Z] === 1c.B3 COMPLETE ===
