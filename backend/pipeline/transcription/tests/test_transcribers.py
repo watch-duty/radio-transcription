@@ -1,6 +1,5 @@
 """Unit tests for the audio transcription plugins."""
 
-import json
 import tempfile
 import unittest
 from unittest.mock import MagicMock, call, patch
@@ -37,7 +36,7 @@ class TestTranscribers(unittest.TestCase):
             transcriber = get_transcriber(
                 TranscriberType.GOOGLE_CHIRP_V3,
                 "test-project",
-                '{"location": "us", "keywords_file_path": null}',
+                '{"location": "us", "phrase_hints_file_path": null, "custom_prompt_file_path": null}',
             )
             transcriber.setup()
 
@@ -65,7 +64,7 @@ class TestTranscribers(unittest.TestCase):
             mock_client_instance.recognize.return_value = mock_response
 
             transcriber = GoogleChirpV3Transcriber(
-                "test-project", ChirpConfig(keywords_file_path=None)
+                "test-project", ChirpConfig(phrase_hints_file_path=None, custom_prompt_file_path=None)
             )
             transcriber.setup()
 
@@ -90,7 +89,7 @@ class TestTranscribers(unittest.TestCase):
             mock_client_instance.recognize.return_value = mock_response
 
             transcriber = GoogleChirpV3Transcriber(
-                "test-project", ChirpConfig(keywords_file_path=None)
+                "test-project", ChirpConfig(phrase_hints_file_path=None, custom_prompt_file_path=None)
             )
             transcriber.setup()
 
@@ -102,10 +101,10 @@ class TestTranscribers(unittest.TestCase):
             self.assertIn("retry", kwargs)
             self.assertIsInstance(kwargs["retry"], Retry)
 
-    def test_google_chirp_transcriber_no_keywords_omits_adaptation(
+    def test_google_chirp_transcriber_no_phrase_hints_omits_adaptation(
         self,
     ) -> None:
-        """Verifies that adaptation=None is passed to RecognitionConfig when no keywords file is configured."""
+        """Verifies that adaptation=None is passed to RecognitionConfig when no phrase hints file is configured."""
         with (
             patch(
                 "backend.pipeline.transcription.transcribers.SpeechClient"
@@ -126,7 +125,7 @@ class TestTranscribers(unittest.TestCase):
             mock_client_instance.recognize.return_value = mock_response
 
             transcriber = GoogleChirpV3Transcriber(
-                "test-project", ChirpConfig(keywords_file_path=None)
+                "test-project", ChirpConfig(phrase_hints_file_path=None, custom_prompt_file_path=None)
             )
             transcriber.setup()
 
@@ -136,22 +135,20 @@ class TestTranscribers(unittest.TestCase):
             _, kwargs = mock_cs.RecognitionConfig.call_args
             self.assertIsNone(kwargs.get("adaptation"))
 
-    def test_google_chirp_transcriber_keywords_file_loads_and_builds_adaptation(
+    def test_google_chirp_transcriber_phrase_hints_file_loads_and_builds_adaptation(
         self,
     ) -> None:
-        """Verifies that keywords are loaded from a JSON file and used to build SpeechAdaptation, with per-phrase boost respected and the default applied when absent."""
-        keywords = [
-            {"phrase": "Code 3", "boost": 20.0},
-            {"phrase": "10-4"},  # no boost — uses KeywordItem default
-        ]
-
+        """Verifies that phrase hints are loaded from a plain text file and used to build SpeechAdaptation."""
         with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
+            mode="w", suffix=".txt", delete=False
         ) as f:
-            json.dump(keywords, f)
-            keywords_path = f.name
+            f.write("# comment line\n")
+            f.write("Code 3\n")
+            f.write("\n")  # blank line — should be skipped
+            f.write("10-4\n")
+            phrase_hints_path = f.name
 
-        config = ChirpConfig(keywords_file_path=keywords_path)
+        config = ChirpConfig(phrase_hints_file_path=phrase_hints_path, custom_prompt_file_path=None)
 
         with (
             patch(
@@ -176,10 +173,10 @@ class TestTranscribers(unittest.TestCase):
             dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
             transcriber.transcribe(audio_data=dummy_audio)
 
-            # Explicit boost for "Code 3"; default boost for "10-4"
+            # Comment and blank line are skipped; two phrases expected
             expected_phrase_calls = [
-                call(value="Code 3", boost=20.0),
-                call(value="10-4", boost=10.0),
+                call(value="Code 3"),
+                call(value="10-4"),
             ]
 
             mock_cs.PhraseSet.Phrase.assert_has_calls(
@@ -188,12 +185,13 @@ class TestTranscribers(unittest.TestCase):
 
             mock_cs.SpeechAdaptation.assert_called_once()
 
-    def test_google_chirp_transcriber_keywords_file_missing_raises(
+    def test_google_chirp_transcriber_phrase_hints_file_missing_raises(
         self,
     ) -> None:
-        """Verifies that setup() raises FileNotFoundError when keywords_file_path points to a non-existent file."""
+        """Verifies that setup() raises FileNotFoundError when phrase_hints_file_path points to a non-existent file."""
         config = ChirpConfig(
-            keywords_file_path="/nonexistent/path/keywords.json"
+            phrase_hints_file_path="/nonexistent/path/phrase_hints.txt",
+            custom_prompt_file_path=None,
         )
 
         with patch("backend.pipeline.transcription.transcribers.SpeechClient"):
@@ -220,7 +218,7 @@ class TestTranscribers(unittest.TestCase):
             mock_response.results = [mock_result]
             mock_client_instance.recognize.return_value = mock_response
 
-            config = ChirpConfig(keywords_file_path=None, enable_denoiser=True)
+            config = ChirpConfig(phrase_hints_file_path=None, custom_prompt_file_path=None, enable_denoiser=True)
             transcriber = GoogleChirpV3Transcriber("test-project", config)
             transcriber.setup()
 
@@ -257,7 +255,7 @@ class TestTranscribers(unittest.TestCase):
                 prompt_path = f.name
 
             config = ChirpConfig(
-                keywords_file_path=None, custom_prompt_file_path=prompt_path
+                phrase_hints_file_path=None, custom_prompt_file_path=prompt_path
             )
             transcriber = GoogleChirpV3Transcriber("test-project", config)
             transcriber.setup()
