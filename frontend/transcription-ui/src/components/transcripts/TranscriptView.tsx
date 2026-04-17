@@ -27,7 +27,7 @@ import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { listTranscripts } from '../../service/listTranscripts';
 import TranscriptRow from './TranscriptRow';
-import DateTimePicker from './DateTimePicker';
+import DateTimePicker from '../common/DateTimePicker';
 
 interface TranscriptViewProps {
   addAlert: (alert: AlertProps) => void;
