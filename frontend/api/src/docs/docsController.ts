@@ -15,7 +15,9 @@ let cachedSpec: OpenApiSpec | null = null;
 @Tags('Docs')
 export class DocsController extends Controller {
   private async getOpenApiSpec(): Promise<OpenApiSpec | null> {
-    const auth = new GoogleAuth();
+    const auth = new GoogleAuth({
+      scopes: ['https://www.googleapis.com/auth/cloud-platform']
+    });
     const client = await auth.getClient();
     const tokenResponse = await client.getAccessToken();
     const token = tokenResponse.token;
