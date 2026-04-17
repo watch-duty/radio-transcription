@@ -338,7 +338,7 @@ To decompose the aggregate 0.069%/feed CPU coefficient into per-workload costs, 
 |---|---|---|---|---|---|---|
 | bcfy_feeds (ffmpeg-per-feed) | 200/500/800 | **0.156** | 0.000 – 0.160 | 0.72 | ~16.9 | ~2 |
 | bcfy_calls (HTTP polling) | 200/500/1000 | **0.009** | 0.000 – 0.009 | 0.83 | 0.40 | 155 |
-| openmhz (HTTP polling, high call rate) | 40/80/120 | **0.100** | 0.081 – 0.119 | 6.63 | **2.805** | 110 |
+| openmhz (WebSocket notifications + HTTP audio downloads, high call rate) | 40/80/120 | **0.100** | 0.081 – 0.119 | 6.63 | **2.805** | 110 |
 
 *Source: `metrics_1c_{B1,B2,B3}.tsv` step-mean aggregates; per-source ordinary least squares with 10,000-sample percentile bootstrap CIs (seed 42).*
 
@@ -348,7 +348,7 @@ To decompose the aggregate 0.069%/feed CPU coefficient into per-workload costs, 
 
 **Base–slope separation is weak at low feed counts.** The openmhz ramp stepped 40/80/120 feeds with intercept 6.63% — close to the aggregate base overhead of 6.43% from 1b. At 40 feeds, the measured 10.88% CPU is dominated by base overhead (≈ 60% of total), so the ramp has limited leverage to separate base from slope. A true base of 4.5% instead of ~6.5% would shift the fitted slope upward by ~50% on openmhz alone. The same concern applies less severely to bcfy_calls (intercept 0.83%, easily separated) and not at all to bcfy_feeds (intercept 0.72%, slope-dominated at all three steps). A Phase 2 ramp that extends to higher feed counts for openmhz (e.g., 40/120/200/300) would separate base from slope more cleanly.
 
-**Workload-cost ordering:** bcfy_feeds (0.156 %/feed, 16.9 MiB/feed) >> openmhz (0.100 %/feed, 2.8 MiB/feed) >> bcfy_calls (0.009 %/feed, 0.40 MiB/feed). The CPU ordering is dominated by per-feed subprocess count: bcfy_feeds spawns one `ffmpeg -c copy` per feed, openmhz polls HTTP for talkgroup calls at a high rate (25.83 uploads/feed-min [1b §5.6]) without subprocess per feed, and bcfy_calls polls HTTP for archived-call JSON at a low rate (0.29 uploads/feed-min [1b §5.6]) also without subprocesses. The RSS ordering follows the same pattern and is dominated by ffmpeg process memory.
+**Workload-cost ordering:** bcfy_feeds (0.156 %/feed, 16.9 MiB/feed) >> openmhz (0.100 %/feed, 2.8 MiB/feed) >> bcfy_calls (0.009 %/feed, 0.40 MiB/feed). The CPU ordering is dominated by per-feed subprocess count and network-interaction cadence: bcfy_feeds spawns one `ffmpeg -c copy` per feed; openmhz maintains a long-lived WebSocket per feed receiving call-notification JSON, then issues per-notification HTTP downloads at a high rate (25.83 uploads/feed-min [1b §5.6]) without per-feed subprocess; bcfy_calls polls HTTP for archived-call JSON at a low rate (0.29 uploads/feed-min [1b §5.6]) also without subprocesses. The RSS ordering follows the same pattern and is dominated by ffmpeg process memory.
 
 **Retrospective additive validation against Experiment 1b step 5.** The primary 1b ramp's step 5 measured 77.44% CPU at ~993 active feeds in a 41.4:55.6:3.4 composition (§5.1 Table 2). We test a simple-additive prediction that ignores cross-source interaction:
 $$\text{CPU}_\text{pred} = \text{base} + \sum_{i \in \{\text{feeds,calls,mhz}\}} w_i \cdot 993 \cdot \text{slope}_i$$
