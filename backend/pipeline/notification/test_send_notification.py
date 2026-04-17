@@ -43,7 +43,6 @@ class TestSendNotification(TestCase):
     @mock.patch(
         "backend.pipeline.notification.send_notification.request_handler"
     )
-    @mock.patch.dict("os.environ", {"APP_URL": "https://app.example.com"})
     def test_send_notification(
         self, mock_request_handler: mock.Mock, mock_dedupe: mock.Mock
     ) -> None:
