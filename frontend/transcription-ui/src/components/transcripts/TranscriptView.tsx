@@ -348,18 +348,20 @@ export function TranscriptView({
       </Box>
       <Box sx={{ display: 'flex', gap: 2, mb: 3, width: '40%' }}>
         <DateTimePicker
-          label="Timestamp (Optional)"
+          label="Timestamp"
           dateTime={timestamp}
           setDateTime={setTimestamp}
           width="100%"
+          helperText="(Optional) Pick a date and time to search around"
         />
         <TextField
-          label="Duration (minutes, Optional)"
+          label="Duration"
           size="small"
+          type='number'
           value={duration}
           onChange={(e) => setDuration(e.target.value)}
           error={!isDurationValid}
-          helperText={!isDurationValid ? 'Must be a positive number' : undefined}
+          helperText={!isDurationValid ? 'Must be a positive number' : "(Optional) Length of time in minutes to search around the timestamp"}
           sx={{ width: '100%' }}
         />
       </Box>
