@@ -40,11 +40,15 @@ from backend.pipeline.transcription.constants import (
     DEFAULT_FLOAT_TOLERANCE_MS,
 )
 from backend.pipeline.transcription.datatypes import (
+    AudioChunkData,
+    FlushRequest,
     OrderRestorerConfig,
     StitchAudioConfig,
+    TimeRange,
     TranscriptionResult,
 )
 from backend.pipeline.transcription.sequence_buffer import SequenceBuffer
+from backend.pipeline.transcription.utils import generate_transmission_id
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +192,45 @@ class SerializeToPubSubMessageFn(beam.DoFn):
         )
 
 
+@beam.typehints.with_input_types(tuple[str, tuple[str, AudioChunkData]])
+@beam.typehints.with_output_types(tuple[str, FlushRequest])
+class BypassStitchingFn(beam.DoFn):
+    """Stateless DoFn that directly forwards pre-segmented audio to transcription.
+
+    It bypasses the stateful stitching logic and treats each audio chunk as a complete,
+    independent transmission.
+    """
+
+    @override
+    def process(
+        self,
+        element: tuple[str, tuple[str, AudioChunkData]],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Iterator[tuple[str, FlushRequest]]:
+        """Maps the downloaded audio chunk directly into a FlushRequest."""
+        feed_id, (gcs_path, chunk_data) = element
+
+        start_ms = chunk_data.start_ms
+        duration_ms = len(chunk_data.audio)
+        end_ms = start_ms + duration_ms
+
+        transmission_id = generate_transmission_id(feed_id, start_ms, end_ms)
+
+        yield (
+            feed_id,
+            FlushRequest(
+                buffer=chunk_data.audio,
+                feed_id=feed_id,
+                contributing_audio_uris=[gcs_path],
+                time_range=TimeRange(start_ms=start_ms, end_ms=end_ms),
+                transmission_id=transmission_id,
+                missing_prior_context=False,
+                missing_post_context=False,
+            ),
+        )
+
+
 @beam.typehints.with_input_types(tuple[str, tuple[str, str]])
 @beam.typehints.with_output_types(tuple[str, str])
 class RestoreOrderFn(beam.DoFn):
@@ -232,14 +275,14 @@ class RestoreOrderFn(beam.DoFn):
         self.chunks_buffered_out_of_order = Metrics.counter(
             self.__class__, "chunks_buffered_out_of_order"
         )
-        self.gaps_encountered_counter = Metrics.counter(
-            self.__class__, "gaps_encountered"
+        self.data_gaps_detected_counter = Metrics.counter(
+            self.__class__, "data_gaps_detected"
         )
         self.session_resets_counter = Metrics.counter(
             self.__class__, "session_resets"
         )
-        self.chunks_dropped_late = Metrics.counter(
-            self.__class__, "chunks_dropped_late"
+        self.chunks_processed_late = Metrics.counter(
+            self.__class__, "chunks_processed_late"
         )
 
     @override
@@ -300,7 +343,7 @@ class RestoreOrderFn(beam.DoFn):
         )
 
         if was_late:
-            self.chunks_dropped_late.inc()
+            self.chunks_processed_late.inc()
         if was_buffered:
             self.chunks_buffered_out_of_order.inc()
 
@@ -338,7 +381,7 @@ class RestoreOrderFn(beam.DoFn):
         ),
     ) -> Iterator[tuple[str, str]]:
         """Handles the gap timeout."""
-        self.gaps_encountered_counter.inc()
+        self.data_gaps_detected_counter.inc()
         timer_active_state.clear()
 
         buffer_elements = list(out_of_order_buffer_state.read())

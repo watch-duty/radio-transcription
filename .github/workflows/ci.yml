@@ -97,20 +97,28 @@ jobs:
         uses: jdx/mise-action@v3
       - name: Enable Corepack (node package manager)
         run: corepack enable
+      - name: Build and install common
+        working-directory: frontend/common
+        run: yarn install --frozen-lockfile --non-interactive && yarn build
       - name: Install dependencies
-        working-directory: frontend/api
-        run: yarn install --frozen-lockfile --non-interactive
+        run: yarn --cwd frontend/api install --frozen-lockfile --non-interactive && yarn --cwd frontend/transcription-ui install --frozen-lockfile --non-interactive
       - name: Run ESLint
-        working-directory: frontend/api
-        run: yarn lint:check
+        run: yarn --cwd frontend/api lint:check && yarn --cwd frontend/transcription-ui lint:check
       - name: Run Prettier
-        working-directory: frontend/api
-        run: yarn format:check
+        run: yarn --cwd frontend/api format:check && yarn --cwd frontend/transcription-ui format:check
+      - name: Build packages
+        run: yarn --cwd frontend/api build && yarn --cwd frontend/transcription-ui build:dev
       - name: Generate routes
         working-directory: frontend/api
         run: yarn generate-routes
-      - name: Type check
+      - name: Verify OpenAPI Spec
         working-directory: frontend/api
+        run: yarn verify-spec
+      - name: Type check API
+        working-directory: frontend/api
+        run: npx tsc --noEmit
+      - name: Type check UI
+        working-directory: frontend/transcription-ui
         run: npx tsc --noEmit
 
   terraform-checks:
@@ -169,11 +177,16 @@ jobs:
         uses: jdx/mise-action@v3
       - name: Enable Corepack (node package manager)
         run: corepack enable
-      - name: Install system dependencies
+      - name: Build and install common
+        working-directory: frontend/common
+        run: yarn install --frozen-lockfile --non-interactive && yarn build
+      - name: Install dependencies
+        run: yarn --cwd frontend/api install --frozen-lockfile --non-interactive && yarn --cwd frontend/transcription-ui install --frozen-lockfile --non-interactive
+      - name: Run proxy tests
         working-directory: frontend/api
-        run: yarn install --frozen-lockfile --non-interactive
-      - name: Run tests
-        working-directory: frontend/api
+        run: yarn test --watch=false
+      - name: Run UI tests
+        working-directory: frontend/transcription-ui
         run: yarn test --watch=false
 
   # Builds each service's Dockerfile and verifies all transitive imports resolve
@@ -230,7 +243,7 @@ jobs:
             -e BROADCASTIFY_PASSWORD=smoke-test \
             -e PUBSUB_EMULATOR_HOST=localhost:8085 \
             -e AUDIO_STAGING_BUCKET=smoke-test-bucket \
-            -e PUBSUB_TOPIC_PATH=projects/test/topics/test \
+            -e CONTINUOUS_PUBSUB_TOPIC_PATH=projects/test/topics/test \
             -e ALLOYDB_HOST=localhost \
             -e ALLOYDB_USER=worker \
             -e ALLOYDB_DB=postgres \

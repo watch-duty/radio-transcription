@@ -5,11 +5,11 @@ import datetime
 import logging
 import os
 import random
+import uuid
 from typing import TYPE_CHECKING
 
 from curl_cffi.requests import AsyncSession
 
-from backend.pipeline.common.audio import convert_to_flac
 from backend.pipeline.ingestion.collectors.openmhz._ws_transport import (
     websocket_transport,
 )
@@ -124,6 +124,7 @@ async def openmhz_collector(
 
     try:
         while not shutdown_event.is_set():
+            connection_session_id = str(uuid.uuid4())
             try:
                 async with transport_factory(
                     short_name, url_base, shutdown_event
@@ -140,32 +141,19 @@ async def openmhz_collector(
                         if m4a_bytes is None:
                             continue
 
-                        try:
-                            flac_bytes = await asyncio.to_thread(
-                                convert_to_flac, m4a_bytes, "m4a"
-                            )
-                        except Exception:
-                            logger.warning(
-                                "FLAC conversion failed: "
-                                "short_name=%s call_id=%s",
-                                short_name,
-                                call.id,
-                            )
-                            continue
-
                         logger.debug(
                             "Audio ready: short_name=%s call_id=%s "
-                            "m4a_bytes=%d flac_bytes=%d",
+                            "m4a_bytes=%d",
                             short_name,
                             call.id,
                             len(m4a_bytes),
-                            len(flac_bytes),
                         )
                         yield CapturedChunk(
-                            audio_bytes=flac_bytes,
+                            audio_bytes=m4a_bytes,
                             chunk_start_time=call.time,
                             chunk_end_time=call.time
                             + datetime.timedelta(seconds=call.length_sec),
+                            session_id=connection_session_id,
                         )
             except Exception:
                 logger.warning(
@@ -183,7 +171,7 @@ async def openmhz_collector(
                     f"WebSocket failed {consecutive_ws_failures} "
                     f"times consecutively for {short_name}"
                 )
-                logger.exception(
+                logger.error(
                     "Escalating to runtime: short_name=%s "
                     "consecutive_failures=%d",
                     short_name,

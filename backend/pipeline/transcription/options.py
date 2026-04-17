@@ -13,10 +13,18 @@ from backend.pipeline.transcription.constants import (
     DEFAULT_VAD_PRE_ROLL_MS,
 )
 from backend.pipeline.transcription.enums import (
-    MetricsExporterType,
     TranscriberType,
     VadType,
 )
+
+
+def _str2bool(v: str) -> bool:
+    if v.lower() in ("yes", "true", "t", "y", "1"):
+        return True
+    if v.lower() in ("no", "false", "f", "n", "0"):
+        return False
+    msg = f"Boolean value expected, got {v!r}. Permitted values: true, false, yes, no, t, f, y, n, 1, 0."
+    raise argparse.ArgumentTypeError(msg)
 
 
 class TranscriptionOptions(PipelineOptions):
@@ -76,18 +84,7 @@ class TranscriptionOptions(PipelineOptions):
             default="{}",
             help="JSON string of VAD-specific configuration.",
         )
-        parser.add_argument(
-            "--metrics_exporter_type",
-            type=str,
-            default=MetricsExporterType.NONE.value,
-            help="Comma-separated metrics platforms (e.g. 'gcp').",
-        )
-        parser.add_argument(
-            "--metrics_config",
-            type=str,
-            default="{}",
-            help="JSON string of metrics-specific configuration.",
-        )
+
         parser.add_argument(
             "--significant_gap_ms",
             type=int,
@@ -131,10 +128,16 @@ class TranscriptionOptions(PipelineOptions):
             help="If false, exceptions will be raised immediately instead of routing to the Dead Letter Queue. Useful for tests.",
         )
         parser.add_argument(
-            "--stitched_audio_bucket",
+            "--canonical_audio_bucket",
             type=str,
             required=False,
-            help="GCS bucket name for storing clean, stitched audio. If omitted, audio is not persisted to GCS.",
+            help="GCS bucket name for storing clean, stitched or pre-segmented audio. If omitted, audio is not persisted to GCS.",
+        )
+        parser.add_argument(
+            "--bypass_stitching",
+            type=_str2bool,
+            default=False,
+            help="If true, bypasses stateful stitching and treats each audio chunk as a complete transmission.",
         )
 
 

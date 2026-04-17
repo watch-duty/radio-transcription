@@ -401,6 +401,7 @@ class TestPublishAudioChunkSync(unittest.TestCase):
         self.assertEqual(publish_args[0], "projects/test/topics/audio")
         self.assertEqual(publish_kwargs["feed_id"], "feed-42")
         self.assertEqual(publish_kwargs["source_type"], "echo")
+        self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
 
         chunk = AudioChunk()
         chunk.ParseFromString(publish_args[1])
@@ -454,6 +455,8 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, "message-123")
         mock_publisher.publish.assert_called_once()
+        publish_kwargs = mock_publisher.publish.call_args.kwargs
+        self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
 
 
 class TestParseGcsUri(unittest.TestCase):

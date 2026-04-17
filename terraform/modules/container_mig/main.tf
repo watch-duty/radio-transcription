@@ -26,6 +26,16 @@ data "google_compute_image" "cos" {
   project = "cos-cloud"
 }
 
+# Zones in the region. Used to size update_policy.max_surge_fixed on the
+# regional MIG below; GCP requires it to be >= the number of zones the MIG
+# operates in. Computing dynamically means the module works in regions with
+# more or fewer zones (e.g. us-central1 has 4, us-east5 has 3) without a
+# per-region hardcoded value.
+data "google_compute_zones" "available" {
+  project = var.project_id
+  region  = var.region
+}
+
 # -----------------------------------------------------------------------------
 # Instance Template
 # -----------------------------------------------------------------------------
@@ -48,7 +58,9 @@ resource "google_compute_instance_template" "this" {
 
   network_interface {
     subnetwork = var.subnetwork_id
-    # No access_config block = no external IP. Cloud NAT handles outbound.
+    access_config {
+      network_tier = "PREMIUM"
+    }
   }
 
   service_account {
@@ -59,10 +71,11 @@ resource "google_compute_instance_template" "this" {
   metadata = {
     google-logging-enabled = "true"
     user-data = templatefile("${path.module}/cloud_config.yaml.tftpl", {
-      service_name     = var.name_prefix
-      registry_host    = local.registry_host
-      container_image  = var.container_image
-      env_file_content = local.env_file_content
+      service_name       = var.name_prefix
+      registry_host      = local.registry_host
+      container_image    = var.container_image
+      env_file_content   = local.env_file_content
+      enable_autohealing = var.enable_autohealing
     })
   }
 
@@ -76,25 +89,149 @@ resource "google_compute_instance_template" "this" {
 }
 
 # -----------------------------------------------------------------------------
+# Health check (opt-in via var.enable_autohealing)
+# -----------------------------------------------------------------------------
+
+# HTTP probe of /healthz on port 8080. Attached to auto_healing_policies on
+# the MIG below; VMs that fail 3 consecutive probes (90s) are replaced.
+# count-gated so callers that don't opt in don't pay for an unused resource.
+resource "google_compute_health_check" "this" {
+  count = var.enable_autohealing ? 1 : 0
+
+  name                = "${var.name_prefix}-healthz"
+  project             = var.project_id
+  check_interval_sec  = 30
+  timeout_sec         = 10
+  healthy_threshold   = 1
+  unhealthy_threshold = 3 # 3 consecutive failures = 90s minimum; up to 120s from problem onset
+
+  http_health_check {
+    port         = 8080
+    request_path = "/healthz"
+  }
+}
+
+# -----------------------------------------------------------------------------
 # Managed Instance Group
 # -----------------------------------------------------------------------------
 
-resource "google_compute_instance_group_manager" "this" {
+resource "google_compute_region_instance_group_manager" "this" {
   name               = "${var.name_prefix}-mig"
   project            = var.project_id
-  zone               = var.zone
+  region             = var.region
   base_instance_name = var.name_prefix
   target_size        = var.target_size
+
+  # Block `terraform apply` on MIG stabilization (up to the default 15-min
+  # resource timeout). Without this, terraform considers the resource "applied"
+  # once the MIG manager config is set, which is before the rolling update
+  # actually places a VM. If the rolling update fails (zone exhaustion, image
+  # pull failure, etc.), terraform silently returns green. With this, the apply
+  # fails loudly — the right signal for operators.
+  #
+  # wait_for_instances_status stays at its default (STABLE). The provider's
+  # StringInSlice validator only accepts "STABLE" and "UPDATED" — there is no
+  # "HEALTHY" option despite what looked intuitive. "UPDATED" is unusable here
+  # because it's incompatible with OPPORTUNISTIC update_policy: OPPORTUNISTIC
+  # never cycles VMs onto a new template, so "wait for all VMs on latest
+  # template" would block apply until the 30m resource timeout. The autohealer's
+  # initial_delay_sec (auto_healing_policies block below) is the real health
+  # gate; terraform gates only on "VMs are RUNNING."
+  wait_for_instances = true
 
   version {
     instance_template = google_compute_instance_template.this.self_link_unique
   }
 
+  # Autohealing. initial_delay_sec = 300 (5 min) covers VM boot (~30s) +
+  # cloud-init (~60s) + docker pull (~2-3 min on cold cache) + container
+  # start + first heartbeat + first feed lease. A VM failing /healthz during
+  # this window would be killed mid-startup, guaranteeing a recreate loop on
+  # any non-trivial rollout — so the Python /healthz handler also returns 200
+  # during its own startup grace (health_check_startup_grace_sec, default
+  # 120s) to keep the signal consistent with what the autohealer expects.
+  dynamic "auto_healing_policies" {
+    for_each = var.enable_autohealing ? [1] : []
+    content {
+      health_check      = google_compute_health_check.this[0].id
+      initial_delay_sec = 300
+    }
+  }
+
+  # target_shape: ANY is right for small MIGs (target_size=1, as in dev)
+  # because EVEN anchors a single VM to one zone and won't fall back on
+  # capacity exhaustion (the 2026-04-13 dev incident). EVEN/BALANCED is
+  # right at scale (prod 25-120 VMs) because ANY can concentrate VMs in a
+  # single zone, turning one zone's outage into a fleet-wide outage.
+  # Caller-specified so each deployment can pick the appropriate default.
+  distribution_policy_target_shape = var.distribution_policy_target_shape
+
+  # Machine-type fallback: when a given machine class is exhausted across all
+  # zones, the MIG walks the instance_selections ranks in order until one
+  # succeeds. Overrides the instance template's machine_type at VM creation
+  # time. Callers that don't need this (single machine type, willing to fail)
+  # can leave var.instance_selections empty.
+  dynamic "instance_flexibility_policy" {
+    for_each = length(var.instance_selections) > 0 ? [1] : []
+    content {
+      dynamic "instance_selections" {
+        for_each = var.instance_selections
+        content {
+          name          = instance_selections.value.name
+          rank          = instance_selections.value.rank
+          machine_types = instance_selections.value.machine_types
+        }
+      }
+    }
+  }
+
+  # Regional MIG distributes across all zones in the region by default. When one
+  # zone lacks capacity (ZONE_RESOURCE_POOL_EXHAUSTED), the MIG automatically
+  # places instances in other zones — which is what the zonal predecessor
+  # couldn't do, and what wedged dev after the NAT-removal apply.
+  #
+  # update_policy.type is tied to instance_flexibility_policy presence:
+  #   - No flex policy: PROACTIVE (MIG actively rolls VMs onto the latest
+  #     template on every template-version change — standard behavior).
+  #   - With flex policy: OPPORTUNISTIC (required by the GCP API — PROACTIVE
+  #     + flex is rejected as "Instance flexibility policy requires
+  #     opportunistic update policy"). VMs update only when replaced for
+  #     another reason (autohealing, manual rolling-action replace, or
+  #     autoscaler). Explicit rollouts can be triggered via
+  #     `gcloud compute instance-groups managed rolling-action replace`.
+  #
+  # instance_redistribution_type is tied to target_shape:
+  #   - EVEN: PROACTIVE (converge toward even zonal distribution)
+  #   - BALANCED / ANY / ANY_SINGLE_ZONE: NONE — there's no "even" target to
+  #     converge toward, and GCP's API can reject PROACTIVE with these shapes.
   update_policy {
-    type                  = "PROACTIVE"
-    minimal_action        = "REPLACE"
-    max_surge_fixed       = 1
-    max_unavailable_fixed = 0
-    replacement_method    = "SUBSTITUTE"
+    type                         = length(var.instance_selections) > 0 ? "OPPORTUNISTIC" : "PROACTIVE"
+    minimal_action               = "REPLACE"
+    max_surge_fixed              = length(data.google_compute_zones.available.names)
+    max_unavailable_fixed        = 0
+    replacement_method           = "SUBSTITUTE"
+    instance_redistribution_type = var.distribution_policy_target_shape == "EVEN" ? "PROACTIVE" : "NONE"
+  }
+
+  # Resource-level timeout. Default is 15 min per Terraform google provider,
+  # which is tight when wait_for_instances=true must wait for a rolling update
+  # across many VMs — especially if instance_flexibility_policy has to walk
+  # down ranks after capacity errors (each failed attempt + backoff adds time).
+  # 30 min covers prod-scale rollouts (25-120 VMs) with fallback; small MIGs
+  # finish well inside this.
+  timeouts {
+    create = "30m"
+    update = "30m"
+  }
+
+  # Ignore drift on target_size once the MIG exists. Rationale:
+  # - Emergency manual scaling via gcloud (e.g., incident response) shouldn't
+  #   be clobbered by the next unrelated `terraform apply`.
+  # - When an autoscaler is added later, it will own target_size — terraform
+  #   sets the initial value, autoscaler takes it from there.
+  # Trade-off: changing var.target_size via terraform no longer has effect
+  # after initial creation; scale via gcloud, autoscaler, or taint+recreate.
+  lifecycle {
+    ignore_changes = [target_size]
   }
 }

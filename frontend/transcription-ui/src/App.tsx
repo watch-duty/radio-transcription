@@ -1,35 +1,70 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import { Suspense, lazy, useState } from 'react';
+import { Route, Routes } from 'react-router';
+
+import Alert, { type AlertProps } from '@mui/material/Alert';
+import Box from '@mui/material/Box';
+
+import AppContainer from './components/AppContainer';
+import FeedsView from './components/feeds/FeedsView';
+import RulesView from './components/rules/RulesView';
+import TranscriptView from './components/transcripts/TranscriptView';
+import { useAuth } from './context/AuthContext';
+
+import './App.css';
+
+const DocsView = lazy(() => import('./components/docs/DocsView'));
 
 function App() {
-  const [count, setCount] = useState(0)
+  const { token } = useAuth();
 
+  const [alerts, setAlerts] = useState<AlertProps[]>([]);
+
+  const addAlert = (alert: AlertProps) => {
+    // Max of 3 alerts retained.
+    setAlerts((alerts) => {
+      const newAlerts = [...alerts, alert];
+      if (newAlerts.length > 3) {
+        newAlerts.shift();
+      }
+      return newAlerts;
+    });
+  };
+
+  if (!token) {
+    return <AppContainer>Please login to continue.</AppContainer>;
+  }
+
+  // Define the application routes below.
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
+    <AppContainer>
+      <Box sx={{ width: '100%', mb: 2 }}>
+        {alerts.map((alert, index) => (
+          <Alert
+            key={index}
+            onClose={() =>
+              setAlerts((alerts) => alerts.filter((_, i) => i !== index))
+            }
+            severity={alert.severity}
+          >
+            {alert.children}
+          </Alert>
+        ))}
+      </Box>
+      <Routes>
+        <Route path="/" element={<TranscriptView addAlert={addAlert} />} />
+        <Route path="/rules" element={<RulesView />} />
+        <Route path="/feeds" element={<FeedsView />} />
+        <Route
+          path="/docs"
+          element={
+            <Suspense fallback={<div>Loading documentation...</div>}>
+              <DocsView />
+            </Suspense>
+          }
+        />
+      </Routes>
+    </AppContainer>
+  );
 }
 
-export default App
+export default App;

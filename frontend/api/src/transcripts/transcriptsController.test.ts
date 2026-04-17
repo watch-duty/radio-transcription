@@ -26,22 +26,24 @@ describe('listTranscripts', () => {
   });
 
   it('should return converted data on success', async () => {
-    const mockBackendResponse = [
-      {
-        feed_id: 'test',
-        transmission_id: '1',
-        transcript: 'hello',
-        start_timestamp: '1',
-        end_timestamp: '2',
-        missing_prior_context: false,
-        missing_post_context: false,
-        source_audio_uris: [],
-        canonical_audio_uri: '',
-        start_audio_offset: '0',
-        end_audio_offset: '0',
-        evaluation_decisions: [],
-      },
-    ];
+    const mockBackendResponse = {
+      transcripts: [
+        {
+          feed_id: 'test',
+          transmission_id: '1',
+          transcript: 'hello',
+          start_timestamp: '1',
+          end_timestamp: '2',
+          missing_prior_context: false,
+          missing_post_context: false,
+          source_audio_uris: [],
+          canonical_audio_uri: '',
+          start_audio_offset: '0',
+          end_audio_offset: '0',
+          evaluation_decisions: [],
+        },
+      ],
+    };
 
     const expectedResult = {
       transcripts: [
@@ -65,11 +67,13 @@ describe('listTranscripts', () => {
     mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
 
     const controller = new TranscriptsController();
-    const result = await controller.listTranscripts('test', vi.fn());
+    const result = await controller.listTranscripts('test', vi.fn(), {
+      limit: 100,
+    });
 
     expect(result).toEqual(expectedResult);
     expect(mockRequest).toHaveBeenCalledWith({
-      url: 'http://api.example.com?feedId=test',
+      url: 'http://api.example.com?feed_id=test&limit=100',
       method: 'GET',
     });
   });
@@ -79,8 +83,8 @@ describe('listTranscripts', () => {
     mockRequest.mockRejectedValueOnce(new Error(errorMessage));
     const controller = new TranscriptsController();
 
-    await expect(controller.listTranscripts('test', vi.fn())).rejects.toThrow(
-      'Error fetching transcript: Network Error'
-    );
+    await expect(
+      controller.listTranscripts('test', vi.fn(), { limit: 100 })
+    ).rejects.toThrow('Error fetching transcript: Network Error');
   });
 });

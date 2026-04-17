@@ -73,8 +73,11 @@ class NormalizerSettings:
 
     # Pub/Sub
     # topic_path is in the form `projects/{project_id}/topics/{topic_id}`
-    pubsub_topic_path: str = field(
-        default_factory=lambda: _require_env("PUBSUB_TOPIC_PATH"),
+    continuous_pubsub_topic_path: str = field(
+        default_factory=lambda: _require_env("CONTINUOUS_PUBSUB_TOPIC_PATH"),
+    )
+    segmented_pubsub_topic_path: str | None = field(
+        default_factory=lambda: os.environ.get("SEGMENTED_PUBSUB_TOPIC_PATH"),
     )
 
     # Google Cloud project ID for telemetry metric emission (None disables metrics)
@@ -128,5 +131,26 @@ class NormalizerSettings:
     bookmark_retry_max_delay_sec: float = field(
         default_factory=lambda: float(
             os.environ.get("BOOKMARK_RETRY_MAX_DELAY_SEC", "4.0"),
+        ),
+    )
+
+    # Health check (GET /healthz). HEALTH_CHECK_PORT exists for local-dev and
+    # test flexibility only. DO NOT override this in production: the docker
+    # -p mapping (cloud_config.yaml.tftpl) and google_compute_health_check
+    # (container_mig) both hardcode 8080, so overriding the env var would
+    # move the Python listener off 8080 while GCP keeps probing 8080 — every
+    # probe would fail with connection-refused and the autohealer would
+    # replace the entire fleet simultaneously.
+    #
+    # Heartbeat max age is computed inline in the /healthz handler as
+    # 2 * heartbeat_interval_sec (spec) — no separate setting.
+    health_check_port: int = field(
+        default_factory=lambda: int(
+            os.environ.get("HEALTH_CHECK_PORT", "8080"),
+        ),
+    )
+    health_check_startup_grace_sec: float = field(
+        default_factory=lambda: float(
+            os.environ.get("HEALTH_CHECK_STARTUP_GRACE_SEC", "120.0"),
         ),
     )

@@ -15,7 +15,7 @@
 * Type-checking: `ty check`
 * Unit testing: Python `unittest`
 
-## E2E Local Development
+## Pipeline E2E Local Development
 On a high level, this local pipeline runs the following:
 1. Pub/Sub emulator (manages all PubSub topics for each Pub/Sub instance in the pipeline)
 2. Rules Management service (to manage keywords and evaluation logic)
@@ -72,7 +72,7 @@ source .venv/bin/activate
 export BROADCASTIFY_USERNAME=<your broadcastify username>
 export BROADCASTIFY_PASSWORD=<your broadcastify pword>
 export ICECAST_SOURCE_FEED_ID=123
-python backend/pipeline/ingestion/collectors/local_icecast_collector.py
+python backend/pipeline/ingestion/collectors/icecast/local_icecast_collector.py
 
 <optional env variable>
 export ICECAST_LOCAL_OUTPUT_DIR="/tmp/audio_chunks"
@@ -119,6 +119,107 @@ docker compose run --rm integration-tests
 * Testing: [Vitest](https://vitest.dev/) with [React Testing Library](https://testing-library.com/react)
 * Install Node (https://nodejs.org/en/download/)
 * (Optional) Install Firebase CLI (https://firebase.google.com/docs/cli) for hosting deployments
+
+
+## Frontend Development
+
+### Proxy API Development
+
+_Installation_
+
+1. Install the gcloud cli tool https://docs.cloud.google.com/sdk/docs/install-sdk
+```
+gcloud init
+```
+
+_Prerequisites_
+
+This is assuming that you want the local proxy API to make calls to the Google Cloud services in your GCP project (as opposed to the backend services running locally in Docker).
+
+1. Grant yourself the "Service Account Token Creator" role on the service account associated with the proxy API
+```bash
+# Run this command if you are running this for the first time.
+export SA_NAME=<your service account name for the API>
+export PROJECT_ID=$(gcloud config get-value project)
+export USER_EMAIL=$(gcloud config get-value account)
+gcloud iam service-accounts add-iam-policy-binding \
+    $SA_NAME@$PROJECT_ID.iam.gserviceaccount.com \
+    --member="user:$USER_EMAIL" \
+    --role="roles/iam.serviceAccountTokenCreator"
+```
+
+2. Impersonate the service account
+```bash
+# Run this command if you have not impersonated the service account or authenticated with your default account
+export SA_NAME=<your service account name for the API>
+export PROJECT_ID=$(gcloud config get-value project)
+gcloud auth application-default login --impersonate-service-account=$SA_NAME@$PROJECT_ID.iam.gserviceaccount.com
+```
+
+Note that when you are done you can switch back to your default account by running:
+```bash
+gcloud auth application-default login
+```
+
+_Building & Running Locally_
+
+1. The proxy API uses `dotenv` to configure the environment, which looks for the file `.env.local` in the `frontend/api` directory. Either copy `.env.example` to `.env.local`, or create it from scratch using the below command:
+
+```bash
+# Assuming you're running from the top level of the root dir.
+# Run this command if you are running this for the first time.
+cat <<EOF > frontend/api/.env.local
+ALLOWED_ORIGIN=http://localhost:5173
+TRANSCRIPTS_API_URL=<your URL for transcripts API>
+RULES_API_URL=<your URL for rules API>
+FEEDS_STORE_API_URL=<your URL for feeds store API>
+EOF
+```
+
+2. Install the package dependencies
+```bash
+# Assuming you're running from the top level of the root dir.
+yarn --cwd frontend/common install && \
+yarn --cwd frontend/common build && \
+yarn --cwd frontend/api install
+```
+
+3. Run the API locally
+```bash
+# Assuming you're running from the top level of the root dir.
+yarn --cwd frontend/api local
+```
+
+### UI Development
+
+_Building & Running Locally_
+
+1. The frontend UI uses `dotenv` to configure the environment, which looks for the file `.env.local-dev` in the `frontend/transcription-ui` directory. Vite reserves "local" for itself so we are using "local-dev" instead. Either copy `.env.example` to `.env.local-dev`, or create it from scratch using the below command:
+
+```bash
+# Assuming you're running from the top level of the root dir.
+# Run this command if you are running this for the first time.
+cat <<EOF > frontend/transcription-ui/.env.local-dev
+VITE_GOOGLE_AUTH_CLIENT_ID=<your Google OAuth 2.0 Client ID for your project, found under Google Auth Platform>
+VITE_API_BASE_URL=<your URL for the API, leave empty to use the local proxy>
+EOF
+```
+
+2. Install the package dependencies
+```bash
+# Assuming you're running from the top level of the root dir.
+yarn --cwd frontend/common install && \
+yarn --cwd frontend/common build && \
+yarn --cwd frontend/transcription-ui install
+```
+
+3. Run the UI locally
+```bash
+# Assuming you're running from the top level of the root dir.
+yarn --cwd frontend/transcription-ui local
+```
+
+4. Open up a web browser and navigate to http://localhost:5173/
 
 
 ## Making Changes to Files

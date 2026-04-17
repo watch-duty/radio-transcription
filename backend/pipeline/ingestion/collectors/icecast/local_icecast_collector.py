@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from backend.pipeline.common.constants import AUDIO_FORMAT
 from backend.pipeline.common.logging import setup_logging
-from backend.pipeline.ingestion.collectors.icecast_collector import (
+from backend.pipeline.ingestion.collectors.icecast.icecast_collector import (
     capture_icecast_stream,
 )
 from backend.pipeline.ingestion.router import BCFY_FEEDS_URL_BASE

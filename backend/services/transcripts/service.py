@@ -9,9 +9,11 @@ from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
 
-from .models import Transcript
+from .models import ListTranscriptsResponse, Transcript
 
 if TYPE_CHECKING:
+    import datetime
+
     from backend.pipeline.storage.transcript_store import TranscriptStore
 
 logger = logging.getLogger(__name__)
@@ -52,27 +54,59 @@ class TranscriptService:
             **json_format.MessageToDict(msg, preserving_proto_field_name=True)
         )
 
-    async def list_transcripts(self) -> list[Transcript]:
-        """Lists all transcripts."""
-        msgs = await self._store.list_transcripts()
-        return [
-            Transcript(
-                **json_format.MessageToDict(m, preserving_proto_field_name=True)
-            )
-            for m in msgs
-        ]
+    async def list_transcripts(
+        self,
+        limit: int = 100,
+        next_token: str | None = None,
+        start_time: datetime.datetime | None = None,
+        end_time: datetime.datetime | None = None,
+    ) -> ListTranscriptsResponse:
+        """Lists all transcripts with pagination and time window."""
+        result = await self._store.list_transcripts(
+            limit=limit,
+            next_token=next_token,
+            start_time=start_time,
+            end_time=end_time,
+        )
+        return ListTranscriptsResponse(
+            transcripts=[
+                Transcript(
+                    **json_format.MessageToDict(
+                        m, preserving_proto_field_name=True
+                    )
+                )
+                for m in result.transcripts
+            ],
+            next_token=result.next_token,
+        )
 
     async def list_transcripts_by_feed_id(
-        self, feed_id: str
-    ) -> list[Transcript]:
-        """Lists transcripts filtered by feed ID."""
-        msgs = await self._store.list_transcripts_by_feed_id(feed_id)
-        return [
-            Transcript(
-                **json_format.MessageToDict(m, preserving_proto_field_name=True)
-            )
-            for m in msgs
-        ]
+        self,
+        feed_id: str,
+        limit: int = 100,
+        next_token: str | None = None,
+        start_time: datetime.datetime | None = None,
+        end_time: datetime.datetime | None = None,
+    ) -> ListTranscriptsResponse:
+        """Lists transcripts filtered by feed ID with pagination and time window."""
+        result = await self._store.list_transcripts_by_feed_id(
+            feed_id,
+            limit=limit,
+            next_token=next_token,
+            start_time=start_time,
+            end_time=end_time,
+        )
+        return ListTranscriptsResponse(
+            transcripts=[
+                Transcript(
+                    **json_format.MessageToDict(
+                        m, preserving_proto_field_name=True
+                    )
+                )
+                for m in result.transcripts
+            ],
+            next_token=result.next_token,
+        )
 
     async def delete_transcript(self, transmission_id: str) -> bool:
         """Deletes a transcript by transmission ID."""
