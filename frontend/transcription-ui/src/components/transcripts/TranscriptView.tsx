@@ -82,8 +82,8 @@ export function TranscriptView({
     fetchNextPage: fetchNextTranscripts,
     hasNextPage: hasNextTranscripts,
     error: transcriptsError,
-    isLoading: transcriptsLoading,
-    isFetching: transcriptsFetching,
+    isLoading: isTranscriptsInitialLoading, // isLoading is the first load, which we use to show the main loading spinner
+    isFetching: isTranscriptsFetching, // isFetching is any load, which we use to show that we're loading additional data
     isSuccess: isTranscriptsSuccess,
   } = useInfiniteQuery({
     queryKey: ['listTranscripts', token, searchedFeedId],
@@ -221,10 +221,10 @@ export function TranscriptView({
               setSearchedFeedId(feedId);
             }
           }}
-          disabled={feedsFetching || transcriptsLoading || !feedId.trim()}
+          disabled={feedsFetching || isTranscriptsInitialLoading || !feedId.trim()}
           sx={{ minWidth: '100px', height: '40px' }}
         >
-          {transcriptsLoading ? (
+          {isTranscriptsInitialLoading ? (
             <CircularProgress size={24} color="inherit" />
           ) : (
             'Fetch'
@@ -289,10 +289,10 @@ export function TranscriptView({
                 <Button
                   variant="outlined"
                   onClick={() => fetchNextTranscripts()}
-                  disabled={transcriptsFetching}
+                  disabled={isTranscriptsFetching}
                   sx={{ minWidth: '160px' }}
                 >
-                  {transcriptsFetching ? (
+                  {isTranscriptsFetching ? (
                     <CircularProgress size={24} color="inherit" />
                   ) : (
                     'Load More'
@@ -301,16 +301,30 @@ export function TranscriptView({
               </ListItem>
             )}
           </List>
-        ) : transcriptsLoading ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
+        ) : isTranscriptsInitialLoading ? (
+          <Box
+            sx={{
+              display: 'flex',
+              justifyContent: 'center',
+              mt: theme.spacing(2),
+            }}
+          >
             <CircularProgress />
           </Box>
         ) : transcriptsError ? (
-          <Typography color="error" align="center" sx={{ mt: 4 }}>
+          <Typography
+            color="error"
+            align="center"
+            sx={{ mt: theme.spacing(2) }}
+          >
             Error loading transcripts.
           </Typography>
         ) : isTranscriptsSuccess ? (
-          <Typography color="textSecondary" align="center" sx={{ mt: 4 }}>
+          <Typography
+            color="textSecondary"
+            align="center"
+            sx={{ mt: theme.spacing(2) }}
+          >
             No transcripts found.
           </Typography>
         ) : null}
