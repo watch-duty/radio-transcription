@@ -339,7 +339,7 @@ export function TranscriptView({
         </Button>
         <Box sx={{ flexGrow: 1 }} />
         <Tooltip title="Copy link to feed">
-          <span>
+          <Box component="span">
             <Button
               variant="outlined"
               size="small"
@@ -363,7 +363,7 @@ export function TranscriptView({
             >
               <LinkIcon fontSize="small" />
             </Button>
-          </span>
+          </Box>
         </Tooltip>
       </Box>
       <Box sx={{ display: 'flex', gap: 2, mb: 3, width: '40%' }}>
