@@ -68,8 +68,8 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
     fetchNextPage: fetchNextTranscripts,
     hasNextPage: hasNextTranscripts,
     error: transcriptsError,
-    isLoading: transcriptsLoading, // isLoading is the first load, which we use to show the main loading spinner
-    isFetching: transcriptsFetching, // isFetching is any load, which we use to show that we're loading additional data
+    isLoading: isTranscriptsInitialLoading, // isLoading is the first load, which we use to show the main loading spinner
+    isFetching: isTranscriptsFetching, // isFetching is any load, which we use to show that we're loading additional data
     isSuccess: isTranscriptsSuccess,
   } = useInfiniteQuery({
     queryKey: ['listTranscripts', token, searchedFeedId],
@@ -210,10 +210,12 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
               setSearchedFeedId(feedId);
             }
           }}
-          disabled={feedsFetching || transcriptsLoading || !feedId.trim()}
+          disabled={
+            feedsFetching || isTranscriptsInitialLoading || !feedId.trim()
+          }
           sx={{ minWidth: '100px' }}
         >
-          {transcriptsLoading ? (
+          {isTranscriptsInitialLoading ? (
             <CircularProgress size={24} color="inherit" />
           ) : (
             'Fetch'
@@ -311,10 +313,10 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
                 <Button
                   variant="outlined"
                   onClick={() => fetchNextTranscripts()}
-                  disabled={transcriptsFetching}
+                  disabled={isTranscriptsFetching}
                   sx={{ minWidth: '160px' }}
                 >
-                  {transcriptsFetching ? (
+                  {isTranscriptsFetching ? (
                     <CircularProgress size={24} color="inherit" />
                   ) : (
                     'Load More'
@@ -323,7 +325,7 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
               </ListItem>
             )}
           </List>
-        ) : transcriptsLoading ? (
+        ) : isTranscriptsInitialLoading ? (
           <Box
             sx={{
               display: 'flex',
