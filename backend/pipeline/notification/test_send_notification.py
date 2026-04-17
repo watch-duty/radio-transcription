@@ -1,4 +1,7 @@
 import base64
+import importlib
+import os
+import sys
 from unittest import TestCase, main, mock
 
 from cloudevents.http import CloudEvent
@@ -10,13 +13,32 @@ from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
 
-with mock.patch("google.cloud.logging.Client") as mock_client:
+with (
+    mock.patch("google.cloud.logging.Client") as mock_client,
+    mock.patch.dict(os.environ, {"APP_URL": "https://app.example.com"}),
+):
     from backend.pipeline.notification.send_notification import (
         send_notification,
     )
 
 
 class TestSendNotification(TestCase):
+    def test_missing_app_url_raises_on_import(self) -> None:
+        module_name = "backend.pipeline.notification.send_notification"
+        original_module = sys.modules.get(module_name)
+
+        try:
+            with mock.patch.dict(os.environ, {}, clear=True):
+                sys.modules.pop(module_name, None)
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "APP_URL environment variable is not set.",
+                ):
+                    importlib.import_module(module_name)
+        finally:
+            if original_module is not None:
+                sys.modules[module_name] = original_module
+
     @mock.patch("backend.pipeline.notification.send_notification.deduplication")
     @mock.patch(
         "backend.pipeline.notification.send_notification.request_handler"

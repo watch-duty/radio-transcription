@@ -22,6 +22,11 @@ from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
 setup_logging()
 logger = logging.getLogger(__name__)
 
+APP_URL = os.environ.get("APP_URL")
+if APP_URL is None:
+    msg = "APP_URL environment variable is not set."
+    raise ValueError(msg)
+
 # Keeping the notification deduplicate connection outside the main function. This is so the connection is
 # maintained while the function is warm instead of reconnecting each invocation.
 # TODO(schew): https://linear.app/watchduty/issue/GOO-173/update-local-dev-pipeline-with-redis
@@ -57,7 +62,7 @@ def convert_to_notification(
         evaluation_decisions=evaluated_transcribed_audio.evaluation_decisions,
         canonical_audio_uri=evaluated_transcribed_audio.canonical_audio_uri,
         playback_audio_uri=evaluated_transcribed_audio.playback_audio_uri,
-        app_url=os.environ.get("APP_URL", ""),
+        app_url=APP_URL,
     )
     if evaluated_transcribed_audio.start_timestamp.seconds:
         notification.start_timestamp.CopyFrom(
