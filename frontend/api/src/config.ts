@@ -26,7 +26,7 @@ if (!feedsStoreApiUrl) {
 }
 
 if (!projectId) {
-  throw new Error('PROJECT_ID environment variable is not set');
+  console.error('PROJECT_ID environment variable is not set');
 }
 
 export const ALLOWED_ORIGIN = allowedOrigin;
