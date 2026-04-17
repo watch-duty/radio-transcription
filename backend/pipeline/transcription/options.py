@@ -18,6 +18,15 @@ from backend.pipeline.transcription.enums import (
 )
 
 
+def _str2bool(v: str) -> bool:
+    if v.lower() in ("yes", "true", "t", "y", "1"):
+        return True
+    if v.lower() in ("no", "false", "f", "n", "0"):
+        return False
+    msg = "Boolean value expected."
+    raise argparse.ArgumentTypeError(msg)
+
+
 class TranscriptionOptions(PipelineOptions):
     """CLI pipeline configuration options mapping to Beam's PipelineOptions."""
 
@@ -126,7 +135,7 @@ class TranscriptionOptions(PipelineOptions):
         )
         parser.add_argument(
             "--bypass_stitching",
-            action=argparse.BooleanOptionalAction,
+            type=_str2bool,
             default=False,
             help="If true, bypasses stateful stitching and treats each audio chunk as a complete transmission.",
         )
