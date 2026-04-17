@@ -23,7 +23,7 @@ def _str2bool(v: str) -> bool:
         return True
     if v.lower() in ("no", "false", "f", "n", "0"):
         return False
-    msg = "Boolean value expected."
+    msg = f"Boolean value expected, got {v!r}. Permitted values: true, false, yes, no, t, f, y, n, 1, 0."
     raise argparse.ArgumentTypeError(msg)
 
 
