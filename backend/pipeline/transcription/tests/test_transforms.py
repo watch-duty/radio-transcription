@@ -207,6 +207,7 @@ class BypassStitchingTest(unittest.TestCase):
     def test_bypass_stitching_maps_correctly(self) -> None:
         """Verifies that BypassStitchingFn correctly maps AudioChunkData to FlushRequest."""
         feed_id = "test-feed"
+        feed_name = "Test Feed"
         gcs_path = "gs://bucket/test.flac"
         audio_len_ms = 5000
         chunk_data = AudioChunkData(
@@ -215,7 +216,7 @@ class BypassStitchingTest(unittest.TestCase):
             speech_segments=[],
             gcs_uri=gcs_path,
         )
-        element = (feed_id, (gcs_path, chunk_data))
+        element = (feed_id, (feed_name, gcs_path, chunk_data))
 
         fn = BypassStitchingFn()
         result = list(fn.process(element))
@@ -226,6 +227,7 @@ class BypassStitchingTest(unittest.TestCase):
         flush_request = result[0][1]
         self.assertIsInstance(flush_request, FlushRequest)
         self.assertEqual(flush_request.feed_id, feed_id)
+        self.assertEqual(flush_request.feed_name, feed_name)
         self.assertEqual(flush_request.contributing_audio_uris, [gcs_path])
         self.assertEqual(flush_request.time_range.start_ms, 1000)
         self.assertEqual(flush_request.time_range.end_ms, 1000 + audio_len_ms)

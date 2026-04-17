@@ -459,7 +459,7 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, "message-123")
         mock_publisher.publish.assert_called_once()
-        publish_args, _publish_kwargs = mock_publisher.publish.call_args
+        publish_args, publish_kwargs = mock_publisher.publish.call_args
         chunk = AudioChunk()
         chunk.ParseFromString(publish_args[1])
         self.assertEqual(chunk.feed_name, "Central Fire")

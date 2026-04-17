@@ -217,12 +217,12 @@ class BypassStitchingFn(beam.DoFn):
     @override
     def process(
         self,
-        element: tuple[str, tuple[str, AudioChunkData]],
+        element: tuple[str, tuple[str, str, AudioChunkData]],
         *args: Any,
         **kwargs: Any,
     ) -> Iterator[tuple[str, FlushRequest]]:
         """Maps the downloaded audio chunk directly into a FlushRequest."""
-        feed_id, (gcs_path, chunk_data) = element
+        feed_id, (feed_name, gcs_path, chunk_data) = element
 
         start_ms = chunk_data.start_ms
         duration_ms = len(chunk_data.audio)
@@ -235,6 +235,7 @@ class BypassStitchingFn(beam.DoFn):
             FlushRequest(
                 buffer=chunk_data.audio,
                 feed_id=feed_id,
+                feed_name=feed_name,
                 contributing_audio_uris=[gcs_path],
                 time_range=TimeRange(start_ms=start_ms, end_ms=end_ms),
                 transmission_id=transmission_id,
