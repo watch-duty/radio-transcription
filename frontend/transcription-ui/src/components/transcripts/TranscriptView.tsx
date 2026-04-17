@@ -50,14 +50,8 @@ export function TranscriptView({
   const [hasLoadedFromSearchParams, setHasLoadedFromSearchParams] = useState<boolean>(false);
 
   const [feedId, setFeedId] = useState<string>('');
-  const [startTime, setStartTime] = useState<Date | null>(null);
-  const [endTime, setEndTime] = useState<Date | null>(null);
 
   const [searchedFeedId, setSearchedFeedId] = useState<string>('');
-  const [searchedStartTime, setSearchedStartTime] = useState<Date | null>(null);
-  const [searchedEndTime, setSearchedEndTime] = useState<Date | null>(null);
-
-  const areDatesValid = !startTime || !endTime || startTime.getTime() < endTime.getTime();
 
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
@@ -73,20 +67,6 @@ export function TranscriptView({
       if (feedId) {
         setFeedId(feedId);
         setSearchedFeedId(feedId);
-      }
-
-      const startParam = searchParams.get('startTimestamp');
-      if (startParam) {
-        const parsedStart = new Date(Number(startParam));
-        setStartTime(parsedStart);
-        setSearchedStartTime(parsedStart);
-      }
-
-      const endParam = searchParams.get('endTimestamp');
-      if (endParam) {
-        const parsedEnd = new Date(Number(endParam));
-        setEndTime(parsedEnd);
-        setSearchedEndTime(parsedEnd);
       }
     }
   }, [hasLoadedFromSearchParams, searchParams]);
@@ -123,15 +103,13 @@ export function TranscriptView({
     isFetching: transcriptsFetching,
     isSuccess: isTranscriptsSuccess,
   } = useInfiniteQuery({
-    queryKey: ['listTranscripts', token, searchedFeedId, searchedStartTime?.getTime(), searchedEndTime?.getTime()],
+    queryKey: ['listTranscripts', token, searchedFeedId],
     queryFn: ({ pageParam }) =>
       listTranscripts(
         searchedFeedId, 
         token!, 
         undefined, 
-        pageParam, 
-        searchedStartTime ? searchedStartTime.getTime() : undefined,
-        searchedEndTime ? searchedEndTime.getTime() : undefined
+        pageParam,
       ),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextToken,
@@ -254,23 +232,18 @@ export function TranscriptView({
         <Button
           variant="contained"
           onClick={() => {
-            setSearchedStartTime(startTime);
-            setSearchedEndTime(endTime);
-            
             const newParams: Record<string, string> = { feedId: feedId.trim() };
-            if (startTime) newParams.startTimestamp = startTime.getTime().toString();
-            if (endTime) newParams.endTimestamp = endTime.getTime().toString();
             setSearchParams(newParams);
 
-            if (searchedFeedId === feedId && searchedStartTime?.getTime() === startTime?.getTime() && searchedEndTime?.getTime() === endTime?.getTime()) {
+            if (searchedFeedId === feedId) {
               queryClient.resetQueries({
-                queryKey: ['listTranscripts', token, searchedFeedId, startTime?.getTime(), endTime?.getTime()],
+                queryKey: ['listTranscripts', token, searchedFeedId],
               });
             } else {
               setSearchedFeedId(feedId);
             }
           }}
-          disabled={feedsFetching || transcriptsLoading || !feedId.trim() || !areDatesValid}
+          disabled={feedsFetching || transcriptsLoading || !feedId.trim()}
           sx={{ minWidth: '100px', height: '40px' }}
         >
           {transcriptsLoading ? (
@@ -291,8 +264,6 @@ export function TranscriptView({
                   window.location.origin + window.location.pathname
                 );
                 url.searchParams.set('feedId', feedId.trim());
-                if (startTime) url.searchParams.set('startTimestamp', startTime.getTime().toString());
-                if (endTime) url.searchParams.set('endTimestamp', endTime.getTime().toString());
                 navigator.clipboard.writeText(url.toString());
                 triggerSnackbar('Link copied');
               }}
@@ -303,24 +274,6 @@ export function TranscriptView({
             </Button>
           </span>
         </Tooltip>
-      </Box>
-      <Box sx={{ display: 'flex', gap: 2, mb: 3, width: '40%' }}>
-        <DateTimePicker
-          label="Start time (Optional)"
-          dateTime={startTime}
-          setDateTime={setStartTime}
-          error={!areDatesValid}
-          helperText={!areDatesValid ? "Must be before end time" : undefined}
-          width="100%"
-        />
-        <DateTimePicker
-          label="End time (Optional)"
-          dateTime={endTime}
-          setDateTime={setEndTime}
-          error={!areDatesValid}
-          helperText={!areDatesValid ? "Must be after start time" : undefined}
-          width="100%"
-        />
       </Box>
 
       <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>

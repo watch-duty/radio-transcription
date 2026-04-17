@@ -116,7 +116,8 @@ export function TranscriptRow({
               <ContentCopyIcon fontSize="small" />
             </IconButton>
           </Tooltip>
-          <Tooltip title="Copy link to transmission">
+          {/* TODO: re-enable deep links to transcripts once the timestamp picker is added */}
+          {/* <Tooltip title="Copy link to transmission">
             <IconButton
               size="small"
               aria-label="copy deeplink"
@@ -134,7 +135,7 @@ export function TranscriptRow({
             >
               <LinkIcon fontSize="small" />
             </IconButton>
-          </Tooltip>
+          </Tooltip> */}
         </Box>
       </ListItem>
     </Fragment>
