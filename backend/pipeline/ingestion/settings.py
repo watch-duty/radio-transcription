@@ -73,8 +73,11 @@ class NormalizerSettings:
 
     # Pub/Sub
     # topic_path is in the form `projects/{project_id}/topics/{topic_id}`
-    pubsub_topic_path: str = field(
-        default_factory=lambda: _require_env("PUBSUB_TOPIC_PATH"),
+    continuous_pubsub_topic_path: str = field(
+        default_factory=lambda: _require_env("CONTINUOUS_PUBSUB_TOPIC_PATH"),
+    )
+    segmented_pubsub_topic_path: str | None = field(
+        default_factory=lambda: os.environ.get("SEGMENTED_PUBSUB_TOPIC_PATH"),
     )
 
     # Google Cloud project ID for telemetry metric emission (None disables metrics)

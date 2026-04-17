@@ -89,7 +89,7 @@ class AudioProcessor:
     def download_audio_and_detect(
         self, gcs_path: str, start_ms: int
     ) -> AudioChunkData:
-        """Downloads FLAC bytes from GCS and runs the spectral flatness detector natively."""
+        """Downloads audio bytes from GCS and runs the spectral flatness detector natively."""
         if not self.gcs_client:
             msg = "GCS client not initialized. Call setup() first."
             raise RuntimeError(msg)
@@ -108,9 +108,7 @@ class AudioProcessor:
         blob.download_to_file(in_mem_file)
         in_mem_file.seek(0)
 
-        full_audio_segment = AudioSegment.from_file(
-            in_mem_file, format=AUDIO_FORMAT
-        )
+        full_audio_segment = AudioSegment.from_file(in_mem_file)
 
         # Ensure audio is 16kHz mono 16-bit PCM for the detector
         audio_16k = (
