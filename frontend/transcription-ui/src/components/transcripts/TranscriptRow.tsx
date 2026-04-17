@@ -1,5 +1,4 @@
 import { Fragment } from 'react';
-import { useTheme } from '@mui/material/styles';
 
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import Box from '@mui/material/Box';
@@ -7,6 +6,7 @@ import IconButton from '@mui/material/IconButton';
 import ListItem from '@mui/material/ListItem';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
+import { useTheme } from '@mui/material/styles';
 import type { Transcript } from '@transcription/common';
 
 import AudioPlayer from '../audio/AudioPlayer';

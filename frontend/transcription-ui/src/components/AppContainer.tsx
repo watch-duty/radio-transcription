@@ -156,7 +156,7 @@ export default function AppContainer({
           height: '100vh',
           display: 'flex',
           flexDirection: 'column',
-          boxSizing: 'border-box',  
+          boxSizing: 'border-box',
           overflow: 'hidden',
         }}
       >

@@ -87,7 +87,7 @@ export function TranscriptView({
     isSuccess: isTranscriptsSuccess,
   } = useInfiniteQuery({
     queryKey: ['listTranscripts', token, searchedFeedId],
-    queryFn: ({ pageParam }) => 
+    queryFn: ({ pageParam }) =>
       token
         ? listTranscripts(
             searchedFeedId,
