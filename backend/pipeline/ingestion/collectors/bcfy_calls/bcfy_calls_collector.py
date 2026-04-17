@@ -170,6 +170,7 @@ async def _download_audio(
             async with session.get(audio_url, timeout=timeout) as audio_resp:
                 _raise_if_429(audio_resp.status, audio_url)
                 if 500 <= audio_resp.status <= 599:
+                    # Raise to trigger retry_http_op backoff/retry.
                     msg = (
                         f"5XX {audio_resp.status} downloading {audio_url}"
                     )
