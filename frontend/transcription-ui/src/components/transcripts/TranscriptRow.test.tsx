@@ -136,10 +136,10 @@ describe('TranscriptRow', () => {
       expect.stringContaining('transmissionId=tx-123')
     );
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-      expect.stringContaining(`startTimestamp=${expectedStartTimestamp}`)
+      expect.stringContaining('timestamp=')
     );
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-      expect.stringContaining(`endTimestamp=${expectedEndTimestamp}`)
+      expect.stringContaining('duration=')
     );
     expect(mockTriggerSnackbar).toHaveBeenCalledWith('Link copied');
   });

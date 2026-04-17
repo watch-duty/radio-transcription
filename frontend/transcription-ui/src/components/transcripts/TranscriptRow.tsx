@@ -134,20 +134,14 @@ export function TranscriptRow({
                   'transmissionId',
                   transcript.transmissionId
                 );
-                url.searchParams.set(
-                  'startTimestamp',
-                  (
-                    new Date(transcript.startTimestamp).getTime() -
-                    TRANSMISSION_LINK_BUFFER_TIME
-                  ).toString()
-                );
-                url.searchParams.set(
-                  'endTimestamp',
-                  (
-                    new Date(transcript.endTimestamp).getTime() +
-                    TRANSMISSION_LINK_BUFFER_TIME
-                  ).toString()
-                );
+                const startMs = new Date(transcript.startTimestamp).getTime() - TRANSMISSION_LINK_BUFFER_TIME;
+                const endMs = new Date(transcript.endTimestamp).getTime() + TRANSMISSION_LINK_BUFFER_TIME;
+                const midpointMs = (startMs + endMs) / 2;
+                const offsetMs = midpointMs - startMs;
+                const durationMins = Math.round(offsetMs / 60000);
+
+                url.searchParams.set('timestamp', midpointMs.toString());
+                url.searchParams.set('duration', durationMins.toString());
                 navigator.clipboard.writeText(url.toString());
                 triggerSnackbar('Link copied');
               }}

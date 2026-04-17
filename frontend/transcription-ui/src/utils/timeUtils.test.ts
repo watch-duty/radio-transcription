@@ -11,18 +11,10 @@ import {
 
 describe('timeUtils', () => {
   describe('getInitialTimestamp', () => {
-    it('should return endTimestamp - 1min if only endTimestamp is provided', () => {
-      const searchParams = new URLSearchParams('endTimestamp=1700000060000');
+    it('should return Date if timestamp param is provided', () => {
+      const searchParams = new URLSearchParams('timestamp=1700000000000');
       const result = getInitialTimestamp(searchParams);
       expect(result).toEqual(new Date(1700000000000));
-    });
-
-    it('should return midpoint Date if start and end timestamps are provided', () => {
-      const searchParams = new URLSearchParams(
-        'startTimestamp=1700000000000&endTimestamp=1700000060000'
-      );
-      const result = getInitialTimestamp(searchParams);
-      expect(result).toEqual(new Date(1700000030000));
     });
 
     it('should return null if no params are provided', () => {
@@ -32,11 +24,9 @@ describe('timeUtils', () => {
   });
 
   describe('getInitialDuration', () => {
-    it('should return calculated duration if start and end timestamps are provided', () => {
-      const searchParams = new URLSearchParams(
-        'startTimestamp=1700000000000&endTimestamp=1700000120000'
-      );
-      expect(getInitialDuration(searchParams)).toBe('1'); // 120000ms diff / 2 minutes = 1 min from start to center
+    it('should return duration param if provided', () => {
+      const searchParams = new URLSearchParams('duration=15');
+      expect(getInitialDuration(searchParams)).toBe('15');
     });
 
     it('should return empty string if no params are provided', () => {
@@ -46,18 +36,33 @@ describe('timeUtils', () => {
   });
 
   describe('getSearchedStartTime', () => {
-    it('should return startTimestamp if provided without timestamp', () => {
-      const searchParams = new URLSearchParams('startTimestamp=1700000000000');
+    it('should return offset start time if timestamp and duration are provided', () => {
+      const searchParams = new URLSearchParams(
+        'timestamp=1700000000000&duration=5'
+      );
       const result = getSearchedStartTime(searchParams);
-      expect(result).toEqual(new Date(1700000000000));
+      expect(result).toEqual(new Date(1700000000000 - 5 * 60000));
+    });
+
+    it('should return null if only timestamp is provided', () => {
+      const searchParams = new URLSearchParams('timestamp=1700000000000');
+      expect(getSearchedStartTime(searchParams)).toBeNull();
     });
   });
 
   describe('getSearchedEndTime', () => {
-    it('should return endTimestamp if provided without timestamp', () => {
-      const searchParams = new URLSearchParams('endTimestamp=1700000000000');
+    it('should return offset end time with 1min padding if timestamp and duration are provided', () => {
+      const searchParams = new URLSearchParams(
+        'timestamp=1700000000000&duration=5'
+      );
       const result = getSearchedEndTime(searchParams);
-      expect(result).toEqual(new Date(1700000000000));
+      expect(result).toEqual(new Date(1700000000000 + 5 * 60000 + 60000));
+    });
+
+    it('should return timestamp plus 1min padding if duration is not provided', () => {
+      const searchParams = new URLSearchParams('timestamp=1700000000000');
+      const result = getSearchedEndTime(searchParams);
+      expect(result).toEqual(new Date(1700000000000 + 60000));
     });
   });
 

@@ -1,37 +1,39 @@
 export function getInitialTimestamp(
   searchParams: URLSearchParams
 ): Date | null {
-  const start = searchParams.get('startTimestamp');
-  const end = searchParams.get('endTimestamp');
-  if (start && end) {
-    return new Date((Number(start) + Number(end)) / 2);
-  }
-  if (end) {
-    return new Date(Number(end) - 60000);
-  }
-  return null;
+  const param = searchParams.get('timestamp');
+  return param ? new Date(Number(param)) : null;
 }
 
 export function getInitialDuration(searchParams: URLSearchParams): string {
-  const start = searchParams.get('startTimestamp');
-  const end = searchParams.get('endTimestamp');
-  if (start && end) {
-    const diffMs = Number(end) - Number(start);
-    return String(Math.round(diffMs / (2 * 60000)));
-  }
-  return '';
+  const param = searchParams.get('duration');
+  return param !== null ? param : '';
 }
 
 export function getSearchedStartTime(
   searchParams: URLSearchParams
 ): Date | null {
-  const start = searchParams.get('startTimestamp');
-  return start ? new Date(Number(start)) : null;
+  const ts = searchParams.get('timestamp');
+  const dur = searchParams.get('duration');
+  if (ts) {
+    if (dur && dur.trim() !== '') {
+      return new Date(Number(ts) - Number(dur) * 60000);
+    }
+    return null;
+  }
+  return null;
 }
 
 export function getSearchedEndTime(searchParams: URLSearchParams): Date | null {
-  const end = searchParams.get('endTimestamp');
-  return end ? new Date(Number(end)) : null;
+  const ts = searchParams.get('timestamp');
+  const dur = searchParams.get('duration');
+  if (ts) {
+    if (dur && dur.trim() !== '') {
+      return new Date(Number(ts) + Number(dur) * 60000 + 60000);
+    }
+    return new Date(Number(ts) + 60000);
+  }
+  return null;
 }
 
 export function calculateSearchTimes(
