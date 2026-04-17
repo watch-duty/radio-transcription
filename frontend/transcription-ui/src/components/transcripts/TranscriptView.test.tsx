@@ -340,7 +340,9 @@ describe('TranscriptView', () => {
         nextToken: undefined,
       });
 
-    renderWithQueryClient(<TranscriptView addAlert={mockAddAlert} />);
+    renderWithQueryClient(<MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>);
 
     const input = screen.getByLabelText(
       /Select a registered feed or enter a feed ID/i
@@ -386,7 +388,9 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(<TranscriptView addAlert={vi.fn()} />);
+    renderWithQueryClient(<MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>);
 
     const input = screen.getByLabelText(
       /Select a registered feed or enter a feed ID/i

@@ -43,15 +43,30 @@ export function TranscriptView({
   addAlert,
   triggerSnackbar,
 }: TranscriptViewProps) {
-  const [searchParams, setSearchParams] = useSearchParams();
   const theme = useTheme();
   const { token } = useAuth();
   const queryClient = useQueryClient();
+
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [hasLoadedFromSearchParams, setHasLoadedFromSearchParams] = useState<boolean>(false);
 
   const [feedId, setFeedId] = useState<string>('');
   const [searchedFeedId, setSearchedFeedId] = useState<string>('');
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
+
+  /**
+   * Effect which preloads the feed selection and transcripts based on the search params.
+   */
+  useEffect(() => {
+    if (!hasLoadedFromSearchParams && searchParams.get('feedId')) {
+      setHasLoadedFromSearchParams(true);
+      
+      const feedId = searchParams.get('feedId');
+      setFeedId(feedId!);
+      setSearchedFeedId(feedId!);
+    }
+  }, [hasLoadedFromSearchParams, searchParams]);
 
   const {
     data: feeds,
@@ -61,6 +76,7 @@ export function TranscriptView({
     queryKey: ['listFeeds', token],
     queryFn: () => listFeeds(token!),
     enabled: !!token,
+    refetchOnWindowFocus: false,
   });
 
   /**
@@ -90,6 +106,7 @@ export function TranscriptView({
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextToken,
     enabled: !!searchedFeedId,
+    refetchOnWindowFocus: false,
   });
 
   const transcripts = useMemo(() => {
@@ -106,6 +123,7 @@ export function TranscriptView({
     queryKey: ['listRules', token],
     queryFn: () => listRules(token!),
     enabled: !!token,
+    refetchOnWindowFocus: false,
   });
 
   // Memoizing the rule ID to name map so we don't have to recreate it on every render.
@@ -212,6 +230,7 @@ export function TranscriptView({
               });
             } else {
               setSearchedFeedId(feedId);
+              setSearchParams({ feedId });
             }
           }}
           disabled={feedsFetching || transcriptsLoading || !feedId.trim()}
