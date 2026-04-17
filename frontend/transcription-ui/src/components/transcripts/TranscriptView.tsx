@@ -261,8 +261,14 @@ export function TranscriptView({
             setSearchedEndTime(calcEnd);
 
             const newParams: Record<string, string> = { feedId: feedId.trim() };
-            if (timestamp) newParams.timestamp = timestamp.getTime().toString();
-            if (duration) newParams.duration = duration.trim();
+            if (timestamp) {
+              if (duration && duration.trim() !== '') {
+                newParams.startTimestamp = calcStart!.getTime().toString();
+                newParams.endTimestamp = calcEnd!.getTime().toString();
+              } else {
+                newParams.endTimestamp = calcEnd!.getTime().toString();
+              }
+            }
             setSearchParams(newParams);
 
             if (
@@ -309,12 +315,16 @@ export function TranscriptView({
                   window.location.origin + window.location.pathname
                 );
                 url.searchParams.set('feedId', feedId.trim());
-                if (timestamp)
-                  url.searchParams.set(
-                    'timestamp',
-                    timestamp.getTime().toString()
-                  );
-                if (duration) url.searchParams.set('duration', duration.trim());
+                const { startTime: calcStart, endTime: calcEnd } =
+                  calculateSearchTimes(timestamp, duration);
+                if (timestamp) {
+                  if (duration && duration.trim() !== '') {
+                    url.searchParams.set('startTimestamp', calcStart!.getTime().toString());
+                    url.searchParams.set('endTimestamp', calcEnd!.getTime().toString());
+                  } else {
+                    url.searchParams.set('endTimestamp', calcEnd!.getTime().toString());
+                  }
+                }
                 navigator.clipboard.writeText(url.toString());
                 triggerSnackbar('Link copied');
               }}
