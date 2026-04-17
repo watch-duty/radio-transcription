@@ -48,6 +48,7 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
     queryKey: ['listFeeds', token],
     queryFn: () => listFeeds(token!),
     enabled: !!token,
+    refetchOnWindowFocus: false,
   });
 
   /**
@@ -77,6 +78,7 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextToken,
     enabled: !!searchedFeedId,
+    refetchOnWindowFocus: false,
   });
 
   const transcripts = useMemo(() => {
@@ -93,6 +95,7 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
     queryKey: ['listRules', token],
     queryFn: () => listRules(token!),
     enabled: !!token,
+    refetchOnWindowFocus: false,
   });
 
   // Memoizing the rule ID to name map so we don't have to recreate it on every render.
