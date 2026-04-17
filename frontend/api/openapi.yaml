@@ -612,7 +612,9 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/OpenApiSpec"
+                allOf:
+                  - $ref: "#/components/schemas/OpenApiSpec"
+                nullable: true
       tags:
         - Docs
       security:
