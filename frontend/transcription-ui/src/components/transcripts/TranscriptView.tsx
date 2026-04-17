@@ -1,5 +1,7 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
 
+import LinkIcon from '@mui/icons-material/Link';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import type { AlertProps } from '@mui/material/Alert';
 import Autocomplete from '@mui/material/Autocomplete';
@@ -11,6 +13,7 @@ import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
 import Paper from '@mui/material/Paper';
 import TextField from '@mui/material/TextField';
+import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import {
@@ -23,20 +26,31 @@ import { useAuth } from '../../context/AuthContext';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { listTranscripts } from '../../service/listTranscripts';
-import AudioPlayer from '../audio/AudioPlayer';
-import AlertTooltip from './AlertTooltip';
+import TranscriptRow from './TranscriptRow';
 
 interface TranscriptViewProps {
   addAlert: (alert: AlertProps) => void;
+  triggerSnackbar: (message: string) => void;
 }
 
-export function TranscriptView({ addAlert }: TranscriptViewProps) {
+export function TranscriptView({
+  addAlert,
+  triggerSnackbar,
+}: TranscriptViewProps) {
   const theme = useTheme();
   const { token } = useAuth();
   const queryClient = useQueryClient();
 
-  const [feedId, setFeedId] = useState<string>('');
-  const [searchedFeedId, setSearchedFeedId] = useState<string>('');
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const [feedId, setFeedId] = useState<string>(
+    () => searchParams.get('feedId') || ''
+  );
+
+  const [searchedFeedId, setSearchedFeedId] = useState<string>(
+    () => searchParams.get('feedId') || ''
+  );
+
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
 
@@ -139,7 +153,7 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
         flexDirection: 'column',
       }}
     >
-      <Box sx={{ display: 'flex', gap: 2, mb: 3, alignItems: 'center' }}>
+      <Box sx={{ display: 'flex', gap: 2, mb: 1, alignItems: 'center' }}>
         <Autocomplete
           disablePortal
           options={(feeds ?? []).sort((a, b) => a.name.localeCompare(b.name))}
@@ -147,7 +161,8 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
             typeof option === 'string' ? option : option.id
           }
           size="small"
-          sx={{ width: '25%' }}
+          sx={{ width: '40%' }}
+          value={feedId}
           onInputChange={(_, value) => setFeedId(value)}
           onChange={(_, option) =>
             setFeedId(
@@ -202,6 +217,9 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
         <Button
           variant="contained"
           onClick={() => {
+            const newParams: Record<string, string> = { feedId: feedId.trim() };
+            setSearchParams(newParams);
+
             if (searchedFeedId === feedId) {
               queryClient.resetQueries({
                 queryKey: ['listTranscripts', token, searchedFeedId],
@@ -213,7 +231,7 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
           disabled={
             feedsFetching || isTranscriptsInitialLoading || !feedId.trim()
           }
-          sx={{ minWidth: '100px' }}
+          sx={{ minWidth: '100px', height: '40px' }}
         >
           {isTranscriptsInitialLoading ? (
             <CircularProgress size={24} color="inherit" />
@@ -221,13 +239,35 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
             'Fetch'
           )}
         </Button>
+        <Box sx={{ flexGrow: 1 }} />
+        <Tooltip title="Copy link to feed">
+          <Box component="span">
+            <Button
+              variant="outlined"
+              size="small"
+              disabled={!feedId.trim()}
+              onClick={() => {
+                const url = new URL(
+                  window.location.origin + window.location.pathname
+                );
+                url.searchParams.set('feedId', feedId.trim());
+                navigator.clipboard.writeText(url.toString());
+                triggerSnackbar('Link copied');
+              }}
+              sx={{ minWidth: 0, px: theme.spacing(1.5) }}
+              aria-label="copy feed deeplink"
+            >
+              <LinkIcon fontSize="small" />
+            </Button>
+          </Box>
+        </Tooltip>
       </Box>
 
       <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
         {transcripts.length > 0 ? (
           <List component={Paper} variant="outlined" sx={{ p: 0 }}>
-            {transcripts.map((t, index) => {
-              const currentDate = new Date(t.startTimestamp);
+            {transcripts.map((transcript, index) => {
+              const currentDate = new Date(transcript.startTimestamp);
               const prevDate =
                 index > 0
                   ? new Date(transcripts[index - 1].startTimestamp)
@@ -237,75 +277,20 @@ export function TranscriptView({ addAlert }: TranscriptViewProps) {
                 currentDate.toDateString() !== prevDate.toDateString();
 
               return (
-                <Fragment key={t.transmissionId}>
-                  {showHeader && (
-                    <ListItem sx={{ py: 0.5, bgcolor: 'action.hover' }}>
-                      <Typography
-                        variant="caption"
-                        color="text.secondary"
-                        sx={{ fontWeight: 'bold' }}
-                      >
-                        {currentDate.toLocaleDateString([], {
-                          weekday: 'long',
-                          month: 'long',
-                          day: 'numeric',
-                          year: 'numeric',
-                        })}
-                      </Typography>
-                    </ListItem>
-                  )}
-                  <ListItem
-                    divider={index < transcripts.length - 1}
-                    sx={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 2,
-                      py: 1.5,
-                    }}
-                  >
-                    <Box
-                      sx={{
-                        width: '24px',
-                        display: 'flex',
-                        justifyContent: 'center',
-                        flexShrink: 0,
-                      }}
-                    >
-                      <AlertTooltip
-                        evaluationDecisions={t.evaluationDecisions}
-                        ruleIdToNameMap={ruleIdToNameMap}
-                        rulesLoading={rulesLoading}
-                      />
-                    </Box>
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ minWidth: 'max-content' }}
-                    >
-                      {currentDate.toLocaleTimeString([], {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        second: '2-digit',
-                        timeZoneName: 'short',
-                        hour12: false,
-                      })}
-                    </Typography>
-                    <AudioPlayer
-                      audioUri={t.canonicalAudioUri}
-                      transmissionId={t.transmissionId}
-                      onPlay={onPlay}
-                      currentlyPlayingTransmissionId={
-                        currentlyPlayingTransmissionId
-                      }
-                    />
-                    <Typography
-                      variant="body1"
-                      sx={{ flexGrow: 1, whiteSpace: 'pre-wrap' }}
-                    >
-                      {t.transcript}
-                    </Typography>
-                  </ListItem>
-                </Fragment>
+                <TranscriptRow
+                  key={transcript.transmissionId}
+                  transcript={transcript}
+                  index={index}
+                  totalTranscripts={transcripts.length}
+                  ruleIdToNameMap={ruleIdToNameMap}
+                  rulesLoading={rulesLoading}
+                  onPlay={onPlay}
+                  currentlyPlayingTransmissionId={
+                    currentlyPlayingTransmissionId
+                  }
+                  triggerSnackbar={triggerSnackbar}
+                  showHeader={showHeader}
+                />
               );
             })}
             {hasNextTranscripts && (

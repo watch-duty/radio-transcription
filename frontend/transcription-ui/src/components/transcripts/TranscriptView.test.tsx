@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { MemoryRouter } from 'react-router';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
@@ -37,7 +39,11 @@ describe('TranscriptView', () => {
   });
 
   it('renders search field and fetch button', () => {
-    renderWithQueryClient(<TranscriptView addAlert={mockAddAlert} />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
     expect(
       screen.getByLabelText(/Select a registered feed or enter a feed ID/i)
     ).toBeTruthy();
@@ -50,7 +56,11 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(<TranscriptView addAlert={mockAddAlert} />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
 
     const input = screen.getByLabelText(
       /Select a registered feed or enter a feed ID/i
@@ -92,7 +102,11 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(<TranscriptView addAlert={mockAddAlert} />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
 
     const input = screen.getByLabelText(
       /Select a registered feed or enter a feed ID/i
@@ -114,7 +128,11 @@ describe('TranscriptView', () => {
   it('shows error message on failure', async () => {
     vi.mocked(listTranscripts).mockRejectedValueOnce(new Error('Fetch failed'));
 
-    renderWithQueryClient(<TranscriptView addAlert={mockAddAlert} />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
 
     const input = screen.getByLabelText(
       /Select a registered feed or enter a feed ID/i
@@ -138,7 +156,11 @@ describe('TranscriptView', () => {
     ];
     vi.mocked(listFeeds).mockResolvedValueOnce(mockFeeds);
 
-    renderWithQueryClient(<TranscriptView addAlert={mockAddAlert} />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
 
     await waitFor(() => {
       expect(listFeeds).toHaveBeenCalledTimes(1);
@@ -148,7 +170,11 @@ describe('TranscriptView', () => {
   it('shows error alert when feeds fail to load', async () => {
     vi.mocked(listFeeds).mockRejectedValueOnce(new Error('Feeds load failed'));
 
-    renderWithQueryClient(<TranscriptView addAlert={mockAddAlert} />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
 
     await waitFor(() => {
       expect(mockAddAlert).toHaveBeenCalledWith(
@@ -166,7 +192,11 @@ describe('TranscriptView', () => {
     ];
     vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
 
-    renderWithQueryClient(<TranscriptView addAlert={mockAddAlert} />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
 
     await waitFor(() => {
       expect(listFeeds).toHaveBeenCalledTimes(1);
@@ -189,7 +219,11 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(<TranscriptView addAlert={mockAddAlert} />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
 
     const input = screen.getByLabelText(
       /Select a registered feed or enter a feed ID/i
@@ -251,7 +285,11 @@ describe('TranscriptView', () => {
         nextToken: undefined,
       });
 
-    renderWithQueryClient(<TranscriptView addAlert={mockAddAlert} />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
 
     const input = screen.getByLabelText(
       /Select a registered feed or enter a feed ID/i
@@ -302,7 +340,11 @@ describe('TranscriptView', () => {
         nextToken: undefined,
       });
 
-    renderWithQueryClient(<TranscriptView addAlert={mockAddAlert} />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
 
     const input = screen.getByLabelText(
       /Select a registered feed or enter a feed ID/i
@@ -348,7 +390,11 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(<TranscriptView addAlert={vi.fn()} />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
 
     const input = screen.getByLabelText(
       /Select a registered feed or enter a feed ID/i
