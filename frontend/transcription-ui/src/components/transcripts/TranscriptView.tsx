@@ -1,8 +1,6 @@
 import {
-  useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from 'react';
 import { useSearchParams } from 'react-router';
@@ -33,6 +31,7 @@ import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { listTranscripts } from '../../service/listTranscripts';
 import TranscriptRow from './TranscriptRow';
+import DateTimePicker from './DateTimePicker';
 
 interface TranscriptViewProps {
   addAlert: (alert: AlertProps) => void;
@@ -51,7 +50,15 @@ export function TranscriptView({
   const [hasLoadedFromSearchParams, setHasLoadedFromSearchParams] = useState<boolean>(false);
 
   const [feedId, setFeedId] = useState<string>('');
+  const [startTime, setStartTime] = useState<Date | null>(null);
+  const [endTime, setEndTime] = useState<Date | null>(null);
+
   const [searchedFeedId, setSearchedFeedId] = useState<string>('');
+  const [searchedStartTime, setSearchedStartTime] = useState<Date | null>(null);
+  const [searchedEndTime, setSearchedEndTime] = useState<Date | null>(null);
+
+  const areDatesValid = !startTime || !endTime || startTime.getTime() < endTime.getTime();
+
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
 
@@ -59,12 +66,28 @@ export function TranscriptView({
    * Effect which preloads the feed selection and transcripts based on the search params.
    */
   useEffect(() => {
-    if (!hasLoadedFromSearchParams && searchParams.get('feedId')) {
+    if (!hasLoadedFromSearchParams && (searchParams.get('feedId') || searchParams.get('startTimestamp') || searchParams.get('endTimestamp'))) {
       setHasLoadedFromSearchParams(true);
       
       const feedId = searchParams.get('feedId');
-      setFeedId(feedId!);
-      setSearchedFeedId(feedId!);
+      if (feedId) {
+        setFeedId(feedId);
+        setSearchedFeedId(feedId);
+      }
+
+      const startParam = searchParams.get('startTimestamp');
+      if (startParam) {
+        const parsedStart = new Date(Number(startParam));
+        setStartTime(parsedStart);
+        setSearchedStartTime(parsedStart);
+      }
+
+      const endParam = searchParams.get('endTimestamp');
+      if (endParam) {
+        const parsedEnd = new Date(Number(endParam));
+        setEndTime(parsedEnd);
+        setSearchedEndTime(parsedEnd);
+      }
     }
   }, [hasLoadedFromSearchParams, searchParams]);
 
@@ -100,9 +123,16 @@ export function TranscriptView({
     isFetching: transcriptsFetching,
     isSuccess: isTranscriptsSuccess,
   } = useInfiniteQuery({
-    queryKey: ['listTranscripts', token, searchedFeedId],
+    queryKey: ['listTranscripts', token, searchedFeedId, searchedStartTime?.getTime(), searchedEndTime?.getTime()],
     queryFn: ({ pageParam }) =>
-      listTranscripts(searchedFeedId, token!, undefined, pageParam),
+      listTranscripts(
+        searchedFeedId, 
+        token!, 
+        undefined, 
+        pageParam, 
+        searchedStartTime ? searchedStartTime.getTime() : undefined,
+        searchedEndTime ? searchedEndTime.getTime() : undefined
+      ),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextToken,
     enabled: !!searchedFeedId,
@@ -160,7 +190,7 @@ export function TranscriptView({
         flexDirection: 'column',
       }}
     >
-      <Box sx={{ display: 'flex', gap: 2, mb: 3, alignItems: 'center' }}>
+      <Box sx={{ display: 'flex', gap: 2, mb: 1, alignItems: 'center' }}>
         <Autocomplete
           disablePortal
           options={(feeds ?? []).sort((a, b) => a.name.localeCompare(b.name))}
@@ -168,7 +198,7 @@ export function TranscriptView({
             typeof option === 'string' ? option : option.id
           }
           size="small"
-          sx={{ width: '25%' }}
+          sx={{ width: '40%' }}
           value={feedId}
           onInputChange={(_, value) => setFeedId(value)}
           onChange={(_, option) =>
@@ -224,17 +254,24 @@ export function TranscriptView({
         <Button
           variant="contained"
           onClick={() => {
-            if (searchedFeedId === feedId) {
+            setSearchedStartTime(startTime);
+            setSearchedEndTime(endTime);
+            
+            const newParams: Record<string, string> = { feedId: feedId.trim() };
+            if (startTime) newParams.startTimestamp = startTime.getTime().toString();
+            if (endTime) newParams.endTimestamp = endTime.getTime().toString();
+            setSearchParams(newParams);
+
+            if (searchedFeedId === feedId && searchedStartTime?.getTime() === startTime?.getTime() && searchedEndTime?.getTime() === endTime?.getTime()) {
               queryClient.resetQueries({
-                queryKey: ['listTranscripts', token, searchedFeedId],
+                queryKey: ['listTranscripts', token, searchedFeedId, startTime?.getTime(), endTime?.getTime()],
               });
             } else {
               setSearchedFeedId(feedId);
-              setSearchParams({ feedId });
             }
           }}
-          disabled={feedsFetching || transcriptsLoading || !feedId.trim()}
-          sx={{ minWidth: '100px' }}
+          disabled={feedsFetching || transcriptsLoading || !feedId.trim() || !areDatesValid}
+          sx={{ minWidth: '100px', height: '40px' }}
         >
           {transcriptsLoading ? (
             <CircularProgress size={24} color="inherit" />
@@ -254,6 +291,8 @@ export function TranscriptView({
                   window.location.origin + window.location.pathname
                 );
                 url.searchParams.set('feedId', feedId.trim());
+                if (startTime) url.searchParams.set('startTimestamp', startTime.getTime().toString());
+                if (endTime) url.searchParams.set('endTimestamp', endTime.getTime().toString());
                 navigator.clipboard.writeText(url.toString());
                 triggerSnackbar('Link copied');
               }}
@@ -264,6 +303,24 @@ export function TranscriptView({
             </Button>
           </span>
         </Tooltip>
+      </Box>
+      <Box sx={{ display: 'flex', gap: 2, mb: 3, width: '40%' }}>
+        <DateTimePicker
+          label="Start time (Optional)"
+          dateTime={startTime}
+          setDateTime={setStartTime}
+          error={!areDatesValid}
+          helperText={!areDatesValid ? "Must be before end time" : undefined}
+          width="100%"
+        />
+        <DateTimePicker
+          label="End time (Optional)"
+          dateTime={endTime}
+          setDateTime={setEndTime}
+          error={!areDatesValid}
+          helperText={!areDatesValid ? "Must be after start time" : undefined}
+          width="100%"
+        />
       </Box>
 
       <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
