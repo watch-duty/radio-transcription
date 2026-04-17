@@ -12,7 +12,7 @@ DEFAULT_CHIRP_PROMPT_FILE_PATH = (
     "/app/backend/pipeline/transcription/chirp_prompt.txt"
 )
 
-# Marker emitted by Chirp V3 when no intelligible speech is detected.
+# Marker defined in the prompt to indicate when the model detects no intelligible speech.
 CHIRP_UNINTELLIGIBLE_MARKER = "[UNINTELLIGIBLE]"
 
 # Chirp model configuration defaults
