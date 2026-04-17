@@ -26,7 +26,6 @@ COPY --from=builder /common/dist ./dist
 WORKDIR /app
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package.json /app/yarn.lock ./
-COPY frontend/api/openapi.yaml ./
 # Install only prod dependencies to keep image small
 RUN yarn install --production --frozen-lockfile --non-interactive
 
