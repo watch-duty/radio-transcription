@@ -54,26 +54,23 @@ logger = logging.getLogger(__name__)
 
 
 @beam.typehints.with_input_types(PubsubMessage)
-@beam.typehints.with_output_types(tuple[str, tuple[bytes, str | None]])
+@beam.typehints.with_output_types(tuple[str, bytes])
 class ParseAndKeyFn(beam.DoFn):
     """Extracts the feed_id and builds the GCS URI from Pub/Sub attributes.
 
     Routes messages missing required attributes to the DLQ.
-    Yields a tuple of `(feed_id, (payload, duration_ms))` to establish a deterministic routing key
+    Yields a tuple of `(feed_id, payload)` to establish a deterministic routing key
     for all subsequent stateful operations (like stitching) on that feed.
     """
 
     @override
     def process(
         self, element: PubsubMessage, *args: Any, **kwargs: Any
-    ) -> Iterator[
-        tuple[str, tuple[bytes, str | None]] | beam.pvalue.TaggedOutput
-    ]:
+    ) -> Iterator[tuple[str, bytes] | beam.pvalue.TaggedOutput]:
         """Extracts the feed_id attribute from the payload to establish a routing key."""
         try:
             feed_id = element.attributes["feed_id"]
-            duration_ms = element.attributes.get("duration_ms")
-            yield (feed_id, (element.data, duration_ms))
+            yield (feed_id, element.data)
         except KeyError as e:
             msg = f"Missing required payload attribute: {e}"
             logger.exception(msg)
@@ -86,8 +83,8 @@ class ParseAndKeyFn(beam.DoFn):
             )
 
 
-@beam.typehints.with_input_types(tuple[str, tuple[bytes, str | None]])
-@beam.typehints.with_output_types(tuple[str, tuple[str, str, str | None]])
+@beam.typehints.with_input_types(tuple[str, bytes])
+@beam.typehints.with_output_types(tuple[str, tuple[str, str, int]])
 class AddEventTimestamp(beam.DoFn):
     """Extracts the event timestamp directly from the `AudioChunk` protobuf.
 
@@ -99,14 +96,12 @@ class AddEventTimestamp(beam.DoFn):
     @override
     def process(
         self,
-        element: tuple[str, tuple[bytes, str | None]],
+        element: tuple[str, bytes],
         *args: Any,
         **kwargs: Any,
-    ) -> Iterator[
-        tuple[str, tuple[str, str, str | None]] | beam.pvalue.TaggedOutput
-    ]:
+    ) -> Iterator[tuple[str, tuple[str, str, int]] | beam.pvalue.TaggedOutput]:
         """Extracts the original hardware timestamp and assigns it to Beam's event timeline."""
-        feed_id, (chunk_data, duration_ms) = element
+        feed_id, chunk_data = element
 
         chunk_proto = AudioChunk()
         try:
@@ -146,7 +141,7 @@ class AddEventTimestamp(beam.DoFn):
                         (
                             chunk_proto.gcs_uri,
                             chunk_proto.session_id,
-                            duration_ms,
+                            chunk_proto.duration_ms,
                         ),
                     ),
                     timestamp_sec,
@@ -246,7 +241,7 @@ class BypassStitchingFn(beam.DoFn):
         )
 
 
-@beam.typehints.with_input_types(tuple[str, tuple[str, str, str | None]])
+@beam.typehints.with_input_types(tuple[str, tuple[str, str, int]])
 @beam.typehints.with_output_types(tuple[str, str])
 class RestoreOrderFn(beam.DoFn):
     """A stateful DoFn that buffers out-of-order chunks and emits them in strict chronological order.
@@ -303,7 +298,7 @@ class RestoreOrderFn(beam.DoFn):
     @override
     def process(  # type: ignore[override]
         self,
-        element: tuple[str, tuple[str, str, str | None]],
+        element: tuple[str, tuple[str, str, int]],
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
         session_id_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
             SESSION_ID_SPEC
@@ -322,9 +317,8 @@ class RestoreOrderFn(beam.DoFn):
         ),
     ) -> Iterator[tuple[str, str]]:
         """Ingests out-of-order chunks and orchestrates chronologically sorted yields."""
-        feed_id, (gcs_path, incoming_session_id, duration_str) = element
+        feed_id, (gcs_path, incoming_session_id, duration_ms) = element
         current_ts_ms = int(float(timestamp) * MS_PER_SECOND)
-        duration_ms = int(duration_str) if duration_str is not None else None
 
         current_session_id = session_id_state.read()
         expected_next_ts = expected_next_ts_state.read()
