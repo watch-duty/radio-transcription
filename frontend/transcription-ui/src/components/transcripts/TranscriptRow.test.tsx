@@ -124,10 +124,10 @@ describe('TranscriptRow', () => {
     const deepLinkButton = screen.getAllByLabelText('copy deeplink')[0];
     fireEvent.click(deepLinkButton);
 
-    const expectedStartTimestamp =
-      new Date(mockTranscript.startTimestamp).getTime() - 300000;
-    const expectedEndTimestamp =
-      new Date(mockTranscript.endTimestamp).getTime() + 300000;
+    const startMs = new Date(mockTranscript.startTimestamp).getTime() - 300000;
+    const endMs = new Date(mockTranscript.endTimestamp).getTime() + 300000;
+    const expectedMidpointMs = (startMs + endMs) / 2;
+    const expectedDurationMins = Math.round((expectedMidpointMs - startMs) / 60000);
 
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
       expect.stringContaining('feedId=feed-123')
@@ -136,10 +136,10 @@ describe('TranscriptRow', () => {
       expect.stringContaining('transmissionId=tx-123')
     );
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-      expect.stringContaining('timestamp=')
+      expect.stringContaining(`timestamp=${expectedMidpointMs}`)
     );
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-      expect.stringContaining('duration=')
+      expect.stringContaining(`duration=${expectedDurationMins}`)
     );
     expect(mockTriggerSnackbar).toHaveBeenCalledWith('Link copied');
   });
