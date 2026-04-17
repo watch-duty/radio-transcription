@@ -14,6 +14,8 @@ import {
 } from 'tsoa';
 import { fileURLToPath } from 'url';
 
+import { ALLOWED_ORIGIN } from '../config.js';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -41,14 +43,16 @@ export class DocsController extends Controller {
     }
 
     const file = readFileSync(specPath, 'utf8');
-    const swaggerDocument = load(file) as Record<string, unknown>;
+    const spec = load(file) as Record<string, unknown>;
 
-    // Dynamically set the server URL based on the request host
-    const dynamicDoc = {
-      ...swaggerDocument,
-      servers: [{ url: `${request.protocol}://${request.get('host')}` }],
-    };
+    if (ALLOWED_ORIGIN.includes('localhost')) {
+      spec.servers = [
+        {
+          url: `${request.protocol}://${request.get('host')}`,
+        },
+      ];
+    }
 
-    return dynamicDoc;
+    return spec;
   }
 }

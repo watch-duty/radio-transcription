@@ -37,7 +37,7 @@ _SQL_DIR = (
 
 _FAKE_GCS_PORT = 4443
 _TEST_BUCKET = "test-audio-bucket"
-_FLAC_MAGIC = b"fLaC"
+
 
 _COL_MOD = "backend.pipeline.ingestion.collectors.openmhz.collector"
 
@@ -277,11 +277,11 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         # Assert: exactly 1 chunk uploaded
         self.assertEqual(len(chunks_uploaded), 1)
 
-        # Assert: GCS object is valid FLAC
+        # Assert: GCS object matches downloaded M4A
         _, gcs_path = chunks_uploaded[0]
         object_name = gcs_path.replace(f"gs://{_TEST_BUCKET}/", "")
         downloaded = await self._download_gcs_object(object_name)
-        self.assertEqual(downloaded[:4], _FLAC_MAGIC)
+        self.assertEqual(downloaded, _make_m4a_bytes())
 
         # Assert: DB bookmark updated
         row = await self._get_feed_row(feed["id"])
@@ -332,7 +332,7 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         for path in gcs_paths:
             object_name = path.replace(f"gs://{_TEST_BUCKET}/", "")
             downloaded = await self._download_gcs_object(object_name)
-            self.assertEqual(downloaded[:4], _FLAC_MAGIC)
+            self.assertEqual(downloaded, _make_m4a_bytes())
 
         row = await self._get_feed_row(feed["id"])
         self.assertEqual(row["last_processed_filename"], gcs_paths[-1])

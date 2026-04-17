@@ -40,11 +40,15 @@ from backend.pipeline.transcription.constants import (
     DEFAULT_FLOAT_TOLERANCE_MS,
 )
 from backend.pipeline.transcription.datatypes import (
+    AudioChunkData,
+    FlushRequest,
     OrderRestorerConfig,
     StitchAudioConfig,
+    TimeRange,
     TranscriptionResult,
 )
 from backend.pipeline.transcription.sequence_buffer import SequenceBuffer
+from backend.pipeline.transcription.utils import generate_transmission_id
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +189,45 @@ class SerializeToPubSubMessageFn(beam.DoFn):
             data=proto.SerializeToString(),
             attributes={},
             ordering_key=element.feed_id,
+        )
+
+
+@beam.typehints.with_input_types(tuple[str, tuple[str, AudioChunkData]])
+@beam.typehints.with_output_types(tuple[str, FlushRequest])
+class BypassStitchingFn(beam.DoFn):
+    """Stateless DoFn that directly forwards pre-segmented audio to transcription.
+
+    It bypasses the stateful stitching logic and treats each audio chunk as a complete,
+    independent transmission.
+    """
+
+    @override
+    def process(
+        self,
+        element: tuple[str, tuple[str, AudioChunkData]],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Iterator[tuple[str, FlushRequest]]:
+        """Maps the downloaded audio chunk directly into a FlushRequest."""
+        feed_id, (gcs_path, chunk_data) = element
+
+        start_ms = chunk_data.start_ms
+        duration_ms = len(chunk_data.audio)
+        end_ms = start_ms + duration_ms
+
+        transmission_id = generate_transmission_id(feed_id, start_ms, end_ms)
+
+        yield (
+            feed_id,
+            FlushRequest(
+                buffer=chunk_data.audio,
+                feed_id=feed_id,
+                contributing_audio_uris=[gcs_path],
+                time_range=TimeRange(start_ms=start_ms, end_ms=end_ms),
+                transmission_id=transmission_id,
+                missing_prior_context=False,
+                missing_post_context=False,
+            ),
         )
 
 

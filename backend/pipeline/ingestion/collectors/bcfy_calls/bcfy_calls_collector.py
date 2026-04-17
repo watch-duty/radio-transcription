@@ -14,7 +14,6 @@ from urllib.parse import urlparse
 import aiohttp
 from google.cloud import secretmanager
 
-from backend.pipeline.common.audio import convert_to_flac
 from backend.pipeline.ingestion.models import CapturedChunk
 
 if TYPE_CHECKING:
@@ -175,12 +174,12 @@ def _raise_if_429(status: int, audio_url: str) -> None:
         raise RuntimeError(msg)
 
 
-async def _download_and_convert_audio(  # noqa: PLR0911
+async def _download_audio(  # noqa: PLR0911
     session: aiohttp.ClientSession,
     audio_url: str,
     shutdown_event: asyncio.Event,
 ) -> bytes | None:
-    """Download audio file and convert it to FLAC bytes on a separate thread."""
+    """Download audio file."""
     timeout = aiohttp.ClientTimeout(total=_AUDIO_TIMEOUT_SEC)
     for attempt in range(_AUDIO_FILE_DOWNLOAD_MAX_RETRIES + 1):
         try:
@@ -222,12 +221,7 @@ async def _download_and_convert_audio(  # noqa: PLR0911
                     )
                     return None
 
-                audio_bytes = await audio_resp.read()
-                return await asyncio.to_thread(
-                    convert_to_flac,
-                    audio_bytes,
-                    _get_audio_format(audio_url),
-                )
+                return await audio_resp.read()
         except RuntimeError:
             raise
         except Exception as e:
@@ -274,16 +268,14 @@ async def _create_chunk_from_call(
 ) -> CapturedChunk | None:
     """Download audio for a single call and wrap it in a CapturedChunk."""
     try:
-        flac_bytes = await _download_and_convert_audio(
-            session, audio_url, shutdown_event
-        )
+        audio_bytes = await _download_audio(session, audio_url, shutdown_event)
     except RuntimeError:
         raise
     except Exception as e:
         logger.exception("Failed to process audio for %s: %s", audio_url, e)
         return None
 
-    if not flac_bytes:
+    if not audio_bytes:
         return None
 
     start_ts = result.get("start_ts")
@@ -302,7 +294,7 @@ async def _create_chunk_from_call(
     )
 
     return CapturedChunk(
-        audio_bytes=flac_bytes,
+        audio_bytes=audio_bytes,
         chunk_start_time=chunk_start_time,
         chunk_end_time=chunk_end_time,
         session_id=session_id,
