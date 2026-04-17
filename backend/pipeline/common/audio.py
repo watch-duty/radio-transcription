@@ -37,11 +37,13 @@ def convert_to_flac(audio_bytes: bytes, input_format: str) -> bytes:
     return buf.getvalue()
 
 
-def get_mp3_duration(mp3_bytes: bytes) -> int:
-    """Calculate duration of MP3 bytes using ffprobe.
+def get_audio_duration(audio_bytes: bytes) -> int:
+    """Calculate duration of audio bytes using ffprobe.
+
+    Supports various formats like MP3, M4A, WAV, etc.
 
     Args:
-        mp3_bytes: Raw MP3 audio bytes.
+        audio_bytes: Raw audio bytes.
 
     Returns:
         Duration in milliseconds.
@@ -58,7 +60,7 @@ def get_mp3_duration(mp3_bytes: bytes) -> int:
                 "default=noprint_wrappers=1:nokey=1",
                 "-",
             ],
-            input=mp3_bytes,
+            input=audio_bytes,
             capture_output=True,
             text=True,
             check=True,
