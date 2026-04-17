@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 
 import LinkIcon from '@mui/icons-material/Link';
@@ -26,8 +26,8 @@ import { useAuth } from '../../context/AuthContext';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { listTranscripts } from '../../service/listTranscripts';
-import TranscriptRow from './TranscriptRow';
 import DateTimePicker from '../common/DateTimePicker';
+import TranscriptRow from './TranscriptRow';
 
 interface TranscriptViewProps {
   addAlert: (alert: AlertProps) => void;
@@ -44,7 +44,9 @@ export function TranscriptView({
 
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [feedId, setFeedId] = useState<string>(() => searchParams.get('feedId') || '');
+  const [feedId, setFeedId] = useState<string>(
+    () => searchParams.get('feedId') || ''
+  );
   const [timestamp, setTimestamp] = useState<Date | null>(() => {
     const param = searchParams.get('timestamp');
     if (param) return new Date(Number(param));
@@ -67,19 +69,23 @@ export function TranscriptView({
     return '';
   });
 
-  const [searchedFeedId, setSearchedFeedId] = useState<string>(() => searchParams.get('feedId') || '');
-  const [searchedStartTime, setSearchedStartTime] = useState<Date | null>(() => {
-    const ts = searchParams.get('timestamp');
-    const dur = searchParams.get('duration');
-    if (ts) {
-      if (dur && dur.trim() !== '') {
-        return new Date(Number(ts) - Number(dur) * 60000);
+  const [searchedFeedId, setSearchedFeedId] = useState<string>(
+    () => searchParams.get('feedId') || ''
+  );
+  const [searchedStartTime, setSearchedStartTime] = useState<Date | null>(
+    () => {
+      const ts = searchParams.get('timestamp');
+      const dur = searchParams.get('duration');
+      if (ts) {
+        if (dur && dur.trim() !== '') {
+          return new Date(Number(ts) - Number(dur) * 60000);
+        }
+        return null;
       }
-      return null;
+      const start = searchParams.get('startTimestamp');
+      return start ? new Date(Number(start)) : null;
     }
-    const start = searchParams.get('startTimestamp');
-    return start ? new Date(Number(start)) : null;
-  });
+  );
   const [searchedEndTime, setSearchedEndTime] = useState<Date | null>(() => {
     const ts = searchParams.get('timestamp');
     const dur = searchParams.get('duration');
@@ -94,7 +100,8 @@ export function TranscriptView({
     return end ? new Date(Number(end)) : null;
   });
 
-  const isDurationValid = !duration || (!isNaN(Number(duration)) && Number(duration) >= 0);
+  const isDurationValid =
+    !duration || (!isNaN(Number(duration)) && Number(duration) >= 0);
 
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
@@ -347,11 +354,7 @@ export function TranscriptView({
                     'timestamp',
                     timestamp.getTime().toString()
                   );
-                if (duration)
-                  url.searchParams.set(
-                    'duration',
-                    duration.trim()
-                  );
+                if (duration) url.searchParams.set('duration', duration.trim());
                 navigator.clipboard.writeText(url.toString());
                 triggerSnackbar('Link copied');
               }}
@@ -374,11 +377,15 @@ export function TranscriptView({
         <TextField
           label="Duration (minutes)"
           size="small"
-          type='number'
+          type="number"
           value={duration}
           onChange={(e) => setDuration(e.target.value)}
           error={!isDurationValid}
-          helperText={!isDurationValid ? 'Must be a positive number' : "(Optional) Length of time to search around the timestamp"}
+          helperText={
+            !isDurationValid
+              ? 'Must be a positive number'
+              : '(Optional) Length of time to search around the timestamp'
+          }
           sx={{ width: '100%' }}
         />
       </Box>

@@ -136,11 +136,17 @@ export function TranscriptRow({
                 );
                 url.searchParams.set(
                   'startTimestamp',
-                  (new Date(transcript.startTimestamp).getTime() - TRANSMISSION_LINK_BUFFER_TIME).toString()
+                  (
+                    new Date(transcript.startTimestamp).getTime() -
+                    TRANSMISSION_LINK_BUFFER_TIME
+                  ).toString()
                 );
                 url.searchParams.set(
                   'endTimestamp',
-                  (new Date(transcript.endTimestamp).getTime() + TRANSMISSION_LINK_BUFFER_TIME).toString()
+                  (
+                    new Date(transcript.endTimestamp).getTime() +
+                    TRANSMISSION_LINK_BUFFER_TIME
+                  ).toString()
                 );
                 navigator.clipboard.writeText(url.toString());
                 triggerSnackbar('Link copied');
