@@ -37,7 +37,10 @@ describe('listTranscripts', () => {
         },
       })
     );
-    expect(transcripts).toEqual(mockData.transcripts);
+    expect(transcripts).toEqual({
+      transcripts: mockData.transcripts,
+      nextToken: undefined,
+    });
   });
 
   it('should return empty array if transcripts missing in response', async () => {
@@ -48,7 +51,7 @@ describe('listTranscripts', () => {
 
     const transcripts = await listTranscripts('feed123', 'tokenXYZ');
 
-    expect(transcripts).toEqual([]);
+    expect(transcripts).toEqual({ transcripts: [], nextToken: undefined });
   });
 
   it('should throw error if response not ok', async () => {

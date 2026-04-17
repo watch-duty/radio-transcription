@@ -57,8 +57,24 @@ components:
           items:
             $ref: "#/components/schemas/Transcript"
           type: array
+        nextToken:
+          type: string
       required:
         - transcripts
+      type: object
+      additionalProperties: false
+    ListTranscriptsQueryParams:
+      properties:
+        limit:
+          type: integer
+          format: int32
+          default: 100
+        nextToken:
+          type: string
+        startTime:
+          type: string
+        endTime:
+          type: string
       type: object
       additionalProperties: false
     ScopeLevel:
@@ -259,6 +275,10 @@ components:
         - externalId
       type: object
       additionalProperties: false
+    OpenApiSpec:
+      properties: {}
+      type: object
+      additionalProperties: {}
   securitySchemes:
     google_id_token:
       type: oauth2
@@ -307,6 +327,28 @@ paths:
         - in: path
           name: feedId
           required: true
+          schema:
+            type: string
+        - in: query
+          name: limit
+          required: false
+          schema:
+            default: 100
+            format: int32
+            type: integer
+        - in: query
+          name: nextToken
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: startTime
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: endTime
+          required: false
           schema:
             type: string
       x-google-backend: radio-transcription-api
@@ -560,6 +602,22 @@ paths:
           required: true
           schema:
             type: string
+      x-google-backend: radio-transcription-api
+  /api/v1/docs/openapi.json:
+    get:
+      operationId: GetSpec
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenApiSpec"
+      tags:
+        - Docs
+      security:
+        - google_id_token: []
+      parameters: []
       x-google-backend: radio-transcription-api
 servers:
   - url: https://${radio_transcription_api_service_name}/

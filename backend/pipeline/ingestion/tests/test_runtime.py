@@ -74,7 +74,7 @@ def _make_settings(**overrides) -> mock.MagicMock:
         "heartbeat_stall_timeout_sec": 45.0,
         "graceful_shutdown_timeout_sec": 10.0,
         "audio_staging_bucket": "test-bucket",
-        "pubsub_topic_path": "projects/p/topics/t",
+        "continuous_pubsub_topic_path": "projects/p/topics/t",
         "db": AlloyDBSettings(
             host="10.0.0.1",
             port=6432,
@@ -97,6 +97,10 @@ def _make_settings(**overrides) -> mock.MagicMock:
         "bookmark_max_retries": 2,
         "bookmark_retry_base_delay_sec": 0.5,
         "bookmark_retry_max_delay_sec": 4.0,
+        # Real values so health_server doesn't try to bind the MagicMock-default
+        # port 1 when a test exercises _main().
+        "health_check_port": 8080,
+        "health_check_startup_grace_sec": 120.0,
     }
     defaults.update(overrides)
     m = mock.MagicMock()
@@ -340,7 +344,9 @@ class TestProcessFeedTimestamps(unittest.IsolatedAsyncioTestCase):
             _, args, kwargs = mock_publish.mock_calls[0]
 
             self.assertEqual(len(args), 5)
-            self.assertEqual(args[1], rt._normalizer_settings.pubsub_topic_path)
+            self.assertEqual(
+                args[1], rt._normalizer_settings.continuous_pubsub_topic_path
+            )
             self.assertEqual(args[2], str(_FEED["id"]))
             self.assertEqual(args[3], "Test Feed")
             self.assertTrue(args[4].startswith("gs://"))
@@ -389,6 +395,95 @@ class TestProcessFeedSessionId(unittest.IsolatedAsyncioTestCase):
             self.assertIn("session_id", kwargs2)
             self.assertTrue(len(kwargs1["session_id"]) > 0)
             self.assertEqual(kwargs1["session_id"], kwargs2["session_id"])
+
+
+class TestProcessFeedTopicRouting(unittest.IsolatedAsyncioTestCase):
+    """Tests for _process_feed topic routing based on SourceType."""
+
+    async def test_routes_continuous_feed_to_default_topic(self) -> None:
+        """Continuous feeds (BCFY_FEEDS) go to continuous_pubsub_topic_path."""
+
+        async def _one_chunk(feed, shutdown):
+            yield _make_captured_chunk(b"audio")
+
+        rt = _make_runtime(
+            continuous_pubsub_topic_path="projects/p/topics/continuous"
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress.return_value = True
+        rt._releasing_feeds = set()
+
+        with _mock_upload_audio(), _mock_pubsub_publish() as mock_publish:
+            await rt._process_feed(_FEED)  # _FEED is BCFY_FEEDS
+
+            mock_publish.assert_called_once()
+            _, args, _ = mock_publish.mock_calls[0]
+            self.assertEqual(args[1], "projects/p/topics/continuous")
+
+    async def test_routes_segmented_feed_to_segmented_topic(self) -> None:
+        """Segmented feeds (not BCFY_FEEDS) go to segmented_pubsub_topic_path."""
+
+        async def _one_chunk(feed, shutdown):
+            yield _make_captured_chunk(b"audio")
+
+        rt = _make_runtime(
+            continuous_pubsub_topic_path="projects/p/topics/continuous",
+            segmented_pubsub_topic_path="projects/p/topics/segmented",
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress.return_value = True
+        rt._releasing_feeds = set()
+
+        segmented_feed = LeasedFeed(
+            id=_FEED_ID,
+            name="Test Feed",
+            source_type=SourceType.OPENMHZ,  # Not BCFY_FEEDS
+            last_processed_filename=None,
+            last_bookmark_time=None,
+            fencing_token=1,
+            source_feed_id="123",
+        )
+
+        with _mock_upload_audio(), _mock_pubsub_publish() as mock_publish:
+            await rt._process_feed(segmented_feed)
+
+            mock_publish.assert_called_once()
+            _, args, _ = mock_publish.mock_calls[0]
+            self.assertEqual(args[1], "projects/p/topics/segmented")
+
+    async def test_raises_if_segmented_topic_missing(self) -> None:
+        """Raises ValueError if segmented feed processed but segmented topic missing."""
+
+        async def _one_chunk(feed, shutdown):
+            yield _make_captured_chunk(b"audio")
+
+        rt = _make_runtime(
+            continuous_pubsub_topic_path="projects/p/topics/continuous",
+            segmented_pubsub_topic_path=None,  # Missing
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+
+        segmented_feed = LeasedFeed(
+            id=_FEED_ID,
+            name="Test Feed",
+            source_type=SourceType.OPENMHZ,
+            last_processed_filename=None,
+            last_bookmark_time=None,
+            fencing_token=1,
+            source_feed_id="123",
+        )
+
+        with _mock_upload_audio(), _mock_pubsub_publish():
+            with self.assertRaises(ValueError) as context:
+                await rt._process_feed(segmented_feed)
+            self.assertIn(
+                "Segmented Pub/Sub topic path not configured",
+                str(context.exception),
+            )
 
 
 class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
@@ -568,6 +663,50 @@ class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await task
 
+    async def test_stamp_updated_on_empty_feeds(self) -> None:
+        """last_heartbeat_tick is stamped when the cycle dispatches with no feeds."""
+        rt = _make_runtime()
+        rt._feed_tasks = {}
+        rt._heartbeat_store = mock.AsyncMock()
+
+        self.assertIsNone(rt._health_state.last_heartbeat_tick)
+        await rt._heartbeat_cycle()
+
+        self.assertIsNotNone(rt._health_state.last_heartbeat_tick)
+        # DB wasn't called because no active feeds.
+        rt._heartbeat_store.renew_heartbeats_batch_diagnostic.assert_not_called()
+
+    async def test_stamp_updated_even_when_db_raises(self) -> None:
+        """
+        Critical: last_heartbeat_tick is stamped at cycle dispatch (before
+        the DB call), so a transient AlloyDB outage doesn't age the stamp
+        and trigger fleet-wide autohealer kills (thundering herd). Regression
+        guard for the original design where the stamp was only set on
+        successful DB renewal.
+        """
+        rt = _make_runtime()
+        task = asyncio.create_task(asyncio.sleep(100))
+        rt._feed_tasks[_FEED_ID] = task
+        rt._releasing_feeds = set()
+        rt._heartbeat_store = mock.AsyncMock()
+        # Simulate AlloyDB outage: DB call raises.
+        rt._heartbeat_store.renew_heartbeats_batch_diagnostic.side_effect = (
+            asyncpg.exceptions.CannotConnectNowError("AlloyDB unavailable")
+        )
+
+        self.assertIsNone(rt._health_state.last_heartbeat_tick)
+
+        with self.assertRaises(asyncpg.exceptions.CannotConnectNowError):
+            await rt._heartbeat_cycle()
+
+        # Despite the DB raising, the stamp was set before the await —
+        # /healthz will still return 200 and the worker rides out the outage.
+        self.assertIsNotNone(rt._health_state.last_heartbeat_tick)
+
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
 
 class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
     """Tests for pool creation in _main."""
@@ -593,6 +732,10 @@ class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
                 rt, "_shutdown_sequence", new_callable=mock.AsyncMock
             ),
             mock.patch("threading.Thread"),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.health_server.start",
+                new_callable=mock.AsyncMock,
+            ),
         ):
             await rt._main()
 
@@ -649,6 +792,62 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
         mock_close_pool.assert_awaited_once_with(rt._data_pool)
         rt._pubsub_client.close.assert_awaited_once()
         rt._gcs_client.close.assert_awaited_once()
+
+    async def test_health_runner_cleanup_runs_before_heartbeat_stop(
+        self,
+    ) -> None:
+        """
+        Ordering invariant: /healthz server must be stopped before the heartbeat
+        thread is signaled to stop. Probes get a clean connection-refused during
+        the shutdown window rather than hanging on a socket whose event loop is
+        about to drain.
+        """
+        rt = _make_runtime()
+        rt._shutdown = asyncio.Event()
+        rt._thread_stop = mock.MagicMock()
+        rt._heartbeat_thread = None
+        rt._store = mock.AsyncMock()
+        rt._data_pool = mock.AsyncMock()
+        rt._heartbeat_pool = mock.AsyncMock()
+        rt._pubsub_client = mock.AsyncMock()
+        rt._gcs_client = mock.AsyncMock()
+        rt._health_runner = mock.AsyncMock()
+
+        call_order: list[str] = []
+        rt._health_runner.cleanup.side_effect = lambda: call_order.append(
+            "cleanup"
+        )
+        rt._thread_stop.set.side_effect = lambda: call_order.append("stop")
+
+        await rt._shutdown_sequence()
+
+        rt._health_runner.cleanup.assert_awaited_once()
+        self.assertEqual(call_order, ["cleanup", "stop"])
+
+    async def test_health_runner_cleanup_failure_does_not_skip_heartbeat_stop(
+        self,
+    ) -> None:
+        """
+        If runner.cleanup() raises, the rest of shutdown must still run — we
+        need to signal the heartbeat thread and release leases even if the
+        /healthz server couldn't be torn down cleanly.
+        """
+        rt = _make_runtime()
+        rt._shutdown = asyncio.Event()
+        rt._thread_stop = mock.MagicMock()
+        rt._heartbeat_thread = None
+        rt._store = mock.AsyncMock()
+        rt._data_pool = mock.AsyncMock()
+        rt._heartbeat_pool = mock.AsyncMock()
+        rt._pubsub_client = mock.AsyncMock()
+        rt._gcs_client = mock.AsyncMock()
+        rt._health_runner = mock.AsyncMock()
+        rt._health_runner.cleanup.side_effect = RuntimeError("boom")
+
+        await rt._shutdown_sequence()
+
+        rt._thread_stop.set.assert_called_once()
+        rt._store.release_feeds_batch.assert_awaited_once()
 
 
 class TestHeartbeatLoopSetsLeaseLost(unittest.IsolatedAsyncioTestCase):
@@ -832,9 +1031,13 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         rt._store.report_feed_failure.return_value = "quarantined"
         rt._releasing_feeds = set()
 
-        with mock.patch(
-            "backend.pipeline.ingestion.normalizer_runtime.quarantine_telemetry"
-        ) as mock_telemetry:
+        with (
+            _mock_upload_audio(),
+            _mock_pubsub_publish(),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.quarantine_telemetry"
+            ) as mock_telemetry,
+        ):
             mock_telemetry.emit_quarantine_event = mock.AsyncMock()
             await rt._process_feed(_FEED)
 
@@ -864,9 +1067,13 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         rt._store.report_feed_failure.return_value = "failing"
         rt._releasing_feeds = set()
 
-        with mock.patch(
-            "backend.pipeline.ingestion.normalizer_runtime.quarantine_telemetry"
-        ) as mock_telemetry:
+        with (
+            _mock_upload_audio(),
+            _mock_pubsub_publish(),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.quarantine_telemetry"
+            ) as mock_telemetry,
+        ):
             mock_telemetry.emit_quarantine_event = mock.AsyncMock()
             await rt._process_feed(_FEED)
 

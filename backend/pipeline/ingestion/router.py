@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from backend.pipeline.ingestion.models import CapturedChunk, CollectorFn
+    from backend.pipeline.ingestion.settings import NormalizerSettings
     from backend.pipeline.storage.feed_store import LeasedFeed
 
 BCFY_FEEDS_URL_BASE = "https://partner.broadcastify.com/"
@@ -43,6 +44,20 @@ _COLLECTORS: dict[SourceType, tuple[CollectorFn, str]] = {
 def supported_source_types() -> list[str]:
     """Return source-type slugs that have registered collectors."""
     return [st.value for st in _COLLECTORS]
+
+
+def resolve_topic_path(
+    source_type: SourceType, settings: NormalizerSettings
+) -> str:
+    """Determines the Pub/Sub topic path based on the source type."""
+    if source_type == SourceType.BCFY_FEEDS:
+        return settings.continuous_pubsub_topic_path
+
+    topic_path = settings.segmented_pubsub_topic_path
+    if not topic_path:
+        msg = f"Segmented Pub/Sub topic path not configured for source type {source_type}"
+        raise ValueError(msg)
+    return topic_path
 
 
 def route_capturer(

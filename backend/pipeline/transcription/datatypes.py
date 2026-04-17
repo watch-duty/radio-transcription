@@ -153,7 +153,7 @@ class TranscribeAudioConfig:
     vad_type: VadType
     vad_config: str
     route_to_dlq: bool = True
-    stitched_audio_bucket: str | None = None
+    canonical_audio_bucket: str | None = None
 
 
 @dataclass(frozen=True)

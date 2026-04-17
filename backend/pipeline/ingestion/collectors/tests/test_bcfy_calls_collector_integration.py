@@ -198,7 +198,7 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
     @patch(f"{_COL_MOD}._get_jwt_token")
     @patch(f"{_COL_MOD}._fetch_calls", new_callable=AsyncMock)
-    @patch(f"{_COL_MOD}._download_and_convert_audio", new_callable=AsyncMock)
+    @patch(f"{_COL_MOD}._download_audio", new_callable=AsyncMock)
     @patch(f"{_COL_MOD}._sleep_or_shutdown", new_callable=AsyncMock)
     async def test_capture_upload_and_bookmark(
         self,
@@ -270,7 +270,7 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
     @patch(f"{_COL_MOD}._get_jwt_token")
     @patch(f"{_COL_MOD}._fetch_calls", new_callable=AsyncMock)
-    @patch(f"{_COL_MOD}._download_and_convert_audio", new_callable=AsyncMock)
+    @patch(f"{_COL_MOD}._download_audio", new_callable=AsyncMock)
     @patch(f"{_COL_MOD}._sleep_or_shutdown", new_callable=AsyncMock)
     async def test_multiple_calls_uploaded_to_gcs(
         self,
@@ -347,7 +347,7 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
     @patch(f"{_COL_MOD}._get_jwt_token")
     @patch(f"{_COL_MOD}._fetch_calls", new_callable=AsyncMock)
-    @patch(f"{_COL_MOD}._download_and_convert_audio", new_callable=AsyncMock)
+    @patch(f"{_COL_MOD}._download_audio", new_callable=AsyncMock)
     @patch(f"{_COL_MOD}._sleep_or_shutdown", new_callable=AsyncMock)
     async def test_session_id_set_on_chunks(
         self,

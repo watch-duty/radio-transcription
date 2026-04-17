@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import datetime
 import unittest
 import uuid
@@ -178,14 +179,71 @@ class TestListTranscriptsByFeedId(BaseTranscriptStoreTest):
         """Verify listing for a feed ID returns list of protos."""
         result = await self.store.list_transcripts_by_feed_id(str(_FEED_ID))
 
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0].transmission_id, str(_TRANSMISSION_ID))
+        self.assertEqual(len(result.transcripts), 1)
+        self.assertEqual(
+            result.transcripts[0].transmission_id, str(_TRANSMISSION_ID)
+        )
+        self.assertIsNone(result.next_token)
 
     async def test_returns_empty_list_for_invalid_id(self) -> None:
         """Verify invalid feed ID returns empty list."""
         result = await self.store.list_transcripts_by_feed_id("not-a-uuid")
 
-        self.assertEqual(result, [])
+        self.assertEqual(result.transcripts, [])
+        self.assertIsNone(result.next_token)
+
+    async def test_list_with_limit(self) -> None:
+        """Verify listing with limit returns restricted list."""
+        self.pool.fetch.return_value = [_TRANSCRIPT_ROW] * 2
+
+        result = await self.store.list_transcripts_by_feed_id(
+            str(_FEED_ID), limit=1
+        )
+
+        self.assertEqual(len(result.transcripts), 1)
+        self.assertIsNotNone(result.next_token)
+
+    async def test_list_with_next_token(self) -> None:
+        """Verify listing with next_token parses token and queries correctly."""
+        self.pool.fetch.return_value = [_TRANSCRIPT_ROW]
+
+        token_str = f"{datetime.datetime(2026, 1, 1, 0, 1, tzinfo=datetime.UTC).isoformat()}|{_TRANSMISSION_ID}"
+        token = base64.b64encode(token_str.encode("utf-8")).decode("utf-8")
+
+        result = await self.store.list_transcripts_by_feed_id(
+            str(_FEED_ID), next_token=token
+        )
+
+        self.assertEqual(len(result.transcripts), 1)
+        self.assertIsNone(result.next_token)
+
+        # Verify fetch was called with cursor values
+        self.pool.fetch.assert_called_once()
+        args = self.pool.fetch.call_args[0]
+        self.assertEqual(
+            args[2], datetime.datetime(2026, 1, 1, 0, 1, tzinfo=datetime.UTC)
+        )
+        self.assertEqual(args[3], _TRANSMISSION_ID)
+
+    async def test_list_with_time_window(self) -> None:
+        """Verify listing with time window passes arguments to query."""
+        self.pool.fetch.return_value = [_TRANSCRIPT_ROW]
+
+        start = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
+        end = datetime.datetime(2026, 1, 2, tzinfo=datetime.UTC)
+
+        result = await self.store.list_transcripts_by_feed_id(
+            str(_FEED_ID), start_time=start, end_time=end
+        )
+
+        self.assertEqual(len(result.transcripts), 1)
+
+        # Verify fetch was called with time window
+        self.pool.fetch.assert_called_once()
+        args = self.pool.fetch.call_args[0]
+        # Params are [query, uid, cursor_ts, cursor_uid, start_time, end_time, limit+1]
+        self.assertEqual(args[4], start)
+        self.assertEqual(args[5], end)
 
 
 class TestListTranscripts(BaseTranscriptStoreTest):
@@ -195,8 +253,11 @@ class TestListTranscripts(BaseTranscriptStoreTest):
         """Verify listing all transcripts returns a list."""
         result = await self.store.list_transcripts()
 
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0].transmission_id, str(_TRANSMISSION_ID))
+        self.assertEqual(len(result.transcripts), 1)
+        self.assertEqual(
+            result.transcripts[0].transmission_id, str(_TRANSMISSION_ID)
+        )
+        self.assertIsNone(result.next_token)
 
 
 class TestDeleteTranscript(BaseTranscriptStoreTest):

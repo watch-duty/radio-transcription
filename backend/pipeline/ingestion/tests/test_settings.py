@@ -8,7 +8,7 @@ from backend.pipeline.ingestion.settings import NormalizerSettings
 def _required_env() -> dict[str, str]:
     return {
         "AUDIO_STAGING_BUCKET": "staging-bucket",
-        "PUBSUB_TOPIC_PATH": "projects/test-project/topics/test-topic",
+        "CONTINUOUS_PUBSUB_TOPIC_PATH": "projects/test-project/topics/test-topic",
         "ALLOYDB_HOST": "127.0.0.1",
         "ALLOYDB_USER": "radio_user",
         "ALLOYDB_DB": "radio_db",
@@ -43,6 +43,9 @@ class TestNormalizerSettings(unittest.TestCase):
             "BOOKMARK_RETRY_BASE_DELAY_SEC": "0.25",
             "BOOKMARK_RETRY_MAX_DELAY_SEC": "2.0",
             "GOOGLE_CLOUD_PROJECT": "test-project",
+            "HEALTH_CHECK_PORT": "9090",
+            "HEALTH_CHECK_STARTUP_GRACE_SEC": "90.0",
+            "SEGMENTED_PUBSUB_TOPIC_PATH": "projects/test-project/topics/test-segmented-topic",
         }
 
         with patch.dict("os.environ", env, clear=True):
@@ -73,6 +76,16 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.bookmark_retry_base_delay_sec, 0.25)
         self.assertEqual(settings.bookmark_retry_max_delay_sec, 2.0)
         self.assertEqual(settings.google_cloud_project, "test-project")
+        self.assertEqual(settings.health_check_port, 9090)
+        self.assertEqual(settings.health_check_startup_grace_sec, 90.0)
+        self.assertEqual(
+            settings.continuous_pubsub_topic_path,
+            "projects/test-project/topics/test-topic",
+        )
+        self.assertEqual(
+            settings.segmented_pubsub_topic_path,
+            "projects/test-project/topics/test-segmented-topic",
+        )
 
     def test_edge_case_uses_defaults_and_generates_worker_id(self) -> None:
         """Uses defaults for optional settings when only required vars are set."""
@@ -100,6 +113,13 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.bookmark_retry_base_delay_sec, 0.5)
         self.assertEqual(settings.bookmark_retry_max_delay_sec, 4.0)
         self.assertIsNone(settings.google_cloud_project)
+        self.assertEqual(settings.health_check_port, 8080)
+        self.assertEqual(settings.health_check_startup_grace_sec, 120.0)
+        self.assertEqual(
+            settings.continuous_pubsub_topic_path,
+            "projects/test-project/topics/test-topic",
+        )
+        self.assertIsNone(settings.segmented_pubsub_topic_path)
 
     def test_edge_case_zero_and_negative_numeric_values_parse(self) -> None:
         """Allows zero/negative values because parsing does not enforce ranges."""

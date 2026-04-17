@@ -1,9 +1,9 @@
 """Echo Audio Ingestion Cloud Run Service.
 
 Triggered by Eventarc on GCS OBJECT_FINALIZE events from the Echo recordings
-bucket. Resolves feed metadata from AlloyDB, converts MP3 to FLAC, writes to
-canonical bucket, and publishes an AudioChunk to the raw-audio topic for
-downstream transcription.
+bucket. Resolves feed metadata from AlloyDB, yields raw audio bytes to the
+staging bucket, and publishes an AudioChunk to the appropriate Pub/Sub topic
+for downstream transcription.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ import functions_framework
 from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
 
-from backend.pipeline.common.audio import convert_to_flac
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.gcp_helper import publish_audio_chunk_sync
 from backend.pipeline.common.logging import setup_logging
@@ -35,8 +34,17 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-CANONICAL_BUCKET = os.environ.get("CANONICAL_BUCKET", "")
-RAW_AUDIO_TOPIC = os.environ.get("RAW_AUDIO_TOPIC", "")
+STAGING_BUCKET = os.environ.get("AUDIO_STAGING_BUCKET", "")
+
+try:
+    from backend.pipeline.ingestion.router import resolve_topic_path
+    from backend.pipeline.ingestion.settings import NormalizerSettings
+    from backend.pipeline.storage.feed_store import SourceType
+
+    settings = NormalizerSettings()
+    RAW_AUDIO_TOPIC = resolve_topic_path(SourceType.ECHO, settings)
+except (ValueError, KeyError):
+    RAW_AUDIO_TOPIC = os.environ.get("RAW_AUDIO_TOPIC", "")
 
 # ---------------------------------------------------------------------------
 # Global state (persisted across warm invocations)
@@ -56,15 +64,15 @@ feed_store: SyncFeedStore | None = None
 def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
     """Sync entry point for Eventarc GCS OBJECT_FINALIZE events."""
     global gcs_client, pubsub_client, feed_store  # noqa: PLW0603
-    if not CANONICAL_BUCKET:
-        msg = "CANONICAL_BUCKET environment variable is not set"
+    if not STAGING_BUCKET:
+        msg = "AUDIO_STAGING_BUCKET environment variable is not set"
         raise RuntimeError(msg)
     if not RAW_AUDIO_TOPIC:
         msg = "RAW_AUDIO_TOPIC environment variable is not set"
         raise RuntimeError(msg)
     if gcs_client is None:
         gcs_client = storage.Client()
-        logger.info("Echo ingestion initialized (bucket=%s)", CANONICAL_BUCKET)
+        logger.info("Echo ingestion initialized (bucket=%s)", STAGING_BUCKET)
     if pubsub_client is None:
         pubsub_client = PubSubClient()
     if feed_store is None:
@@ -72,7 +80,7 @@ def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
     _handle(cloud_event)
 
 
-def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR0915
+def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
     """Core handler — fully synchronous."""
     if gcs_client is None or pubsub_client is None or feed_store is None:
         msg = (
@@ -131,42 +139,32 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
             logger.warning("Object deleted before download, skipping: %s", name)
             return
 
-        # Convert MP3 → FLAC. Corrupt audio is a per-file issue — skip it.
-        try:
-            flac_bytes = convert_to_flac(mp3_bytes, "mp3")
-        except Exception:
-            logger.warning(
-                "Failed to decode audio, skipping corrupt file: %s", name
-            )
-            return
-
-        # Upload FLAC. if_generation_match=0 skips redundant writes but we
+        # Upload MP3 directly to staging bucket.
+        # if_generation_match=0 skips redundant writes but we
         # always proceed to publish (prior invocation may have crashed after upload).
         date_dir = parts[1]
-        flac_path = f"echo/{feed['id']}/{date_dir}/{Path(name).stem}.flac"
-        canonical_uri = f"gs://{CANONICAL_BUCKET}/{flac_path}"
-        blob = gcs_client.bucket(CANONICAL_BUCKET).blob(flac_path)
+        mp3_path = f"echo/{feed['id']}/{date_dir}/{Path(name).name}"
+        staging_uri = f"gs://{STAGING_BUCKET}/{mp3_path}"
+        blob = gcs_client.bucket(STAGING_BUCKET).blob(mp3_path)
         try:
             blob.upload_from_string(
-                flac_bytes,
-                content_type="audio/flac",
+                mp3_bytes,
+                content_type="audio/mpeg",
                 if_generation_match=0,
             )
         except PreconditionFailed:
-            logger.info(
-                "FLAC already exists, skipping upload: %s", canonical_uri
-            )
+            logger.info("MP3 already exists, skipping upload: %s", staging_uri)
 
         # Publish AudioChunk with deterministic session_id for dedup.
         feed_id_str = str(feed["id"])
-        session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, canonical_uri))
+        session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, staging_uri))
         publisher = pubsub_client.get_publisher()
         publish_audio_chunk_sync(
             publisher,
             RAW_AUDIO_TOPIC,
             feed_id_str,
             feed["name"],
-            canonical_uri,
+            staging_uri,
             session_id,
             start_ts,
             source_type="echo",

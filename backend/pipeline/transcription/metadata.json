@@ -15,9 +15,9 @@
       "isOptional": false
     },
     {
-      "name": "stitched_audio_bucket",
-      "label": "Stitched Audio Bucket",
-      "helpText": "GCS bucket for storing clean, stitched audio. If omitted, binary output is skipped.",
+      "name": "canonical_audio_bucket",
+      "label": "Canonical Audio Bucket",
+      "helpText": "GCS bucket for storing clean, stitched or pre-segmented audio. If omitted, binary output is skipped.",
       "isOptional": true
     },
     {
@@ -42,6 +42,12 @@
       "name": "dlq_topic",
       "label": "DLQ Topic",
       "helpText": "Pub/Sub topic to route Dead-Letter Queue (DLQ) processing failures.",
+      "isOptional": true
+    },
+    {
+      "name": "bypass_stitching",
+      "label": "Bypass Stitching",
+      "helpText": "If true, bypasses stateful stitching and treats each audio chunk as a complete transmission.",
       "isOptional": true
     }
   ]

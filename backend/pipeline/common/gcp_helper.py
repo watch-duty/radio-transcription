@@ -35,16 +35,18 @@ async def upload_staged_audio(
     bucket: str,
     chunk_seq: int,
     fencing_token: int | None = None,
+    extension: str = "flac",
+    content_type: str = "audio/flac",
 ) -> str:
     """
     Upload an unnormalized audio chunk to GCS and return the object path.
 
     When *fencing_token* is provided, the object path includes a
     token-qualified segment for split-brain prevention:
-    ``{source_type}/{feed_id}/token-{N}/{timestamp}_{seq}.flac``
+    ``{source_type}/{feed_id}/token-{N}/{timestamp}_{seq}.{extension}``
 
     Without a fencing token the legacy path is used:
-    ``{source_type}/{feed_id}/{timestamp}_{seq}.flac``
+    ``{source_type}/{feed_id}/{timestamp}_{seq}.{extension}``
 
     Note: the timestamp is the timestamp of upload, not the original capture time.
 
@@ -57,6 +59,8 @@ async def upload_staged_audio(
         fencing_token: Fencing token from lease acquisition. When set,
             produces a token-qualified path and uses ``ifGenerationMatch=0``
             to guarantee create-only semantics.
+        extension: File extension to use (default: "flac").
+        content_type: Content-Type header for upload (default: "audio/flac").
 
     Returns:
         The full GCS path (``gs://bucket/object``).
@@ -76,12 +80,10 @@ async def upload_staged_audio(
     if fencing_token is not None:
         object_name = (
             f"{feed['source_type']}/{feed['id']}/"
-            f"token-{fencing_token}/{timestamp}_{chunk_seq}.flac"
+            f"token-{fencing_token}/{timestamp}_{chunk_seq}.{extension}"
         )
     else:
-        object_name = (
-            f"{feed['source_type']}/{feed['id']}/{timestamp}_{chunk_seq}.flac"
-        )
+        object_name = f"{feed['source_type']}/{feed['id']}/{timestamp}_{chunk_seq}.{extension}"
 
     return await upload_audio(
         gcs_client,
@@ -89,6 +91,7 @@ async def upload_staged_audio(
         bucket,
         object_name,
         if_generation_match=0 if fencing_token is not None else None,
+        content_type=content_type,
     )
 
 
@@ -98,9 +101,10 @@ async def upload_audio(
     bucket: str,
     object_name: str,
     if_generation_match: int | None = None,
+    content_type: str = "audio/flac",
 ) -> str:
     """
-    Upload audio to GCS with optional SED metadata.
+    Upload audio to GCS.
 
     Unlike ``upload_staged_audio``, this accepts an explicit *object_name*
     instead of deriving one from a ``LeasedFeed``.  Also does not need a
@@ -114,6 +118,7 @@ async def upload_audio(
         if_generation_match: GCS generation precondition. Set to ``0`` for
             create-only semantics (fails with 412 if the object exists).
             When set, a 412 is treated as success (idempotent retry).
+        content_type: Content-Type header for upload (default: "audio/flac").
 
     Returns:
         The full GCS path (``gs://bucket/object``).
@@ -122,7 +127,7 @@ async def upload_audio(
     storage = gcs_client.get_storage()
     upload_kwargs: dict[str, Any] = {
         "metadata": None,
-        "content_type": "audio/flac",
+        "content_type": content_type,
     }
     if if_generation_match is not None:
         upload_kwargs["parameters"] = {
@@ -215,6 +220,7 @@ def publish_audio_chunk_sync(
 
     attrs: dict[str, str] = {
         "feed_id": feed_id,
+        "session_id": session_id,
         "gcs_uri": gcs_uri,
     }
     if source_type is not None:
@@ -223,6 +229,7 @@ def publish_audio_chunk_sync(
     future = publisher.publish(
         topic_path,
         audio_chunk_msg.SerializeToString(),
+        ordering_key=feed_id,
         **attrs,
     )
     return future.result()
@@ -251,6 +258,7 @@ async def publish_audio_chunk(
 
     attrs: dict[str, str] = {
         "feed_id": feed_id,
+        "session_id": session_id,
         "gcs_uri": gcs_uri,
     }
     if source_type is not None:
@@ -259,6 +267,7 @@ async def publish_audio_chunk(
     future = publisher.publish(
         topic_path,
         audio_chunk_msg.SerializeToString(),
+        ordering_key=feed_id,
         **attrs,
     )
     return await asyncio.wrap_future(future)

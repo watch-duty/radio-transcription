@@ -125,10 +125,6 @@ class TestHandle:
             patch(
                 "backend.pipeline.ingestion.collectors.echo.main.pubsub_client"
             ) as mock_pubsub,
-            patch(
-                "backend.pipeline.ingestion.collectors.echo.main.convert_to_flac",
-                return_value=_FAKE_FLAC,
-            ),
         ):
             mock_pubsub.get_publisher.return_value = mock_publisher
             mock_gcs.bucket.return_value.blob.return_value.download_as_bytes.return_value = b"mp3-placeholder"
@@ -210,14 +206,14 @@ class TestHandle:
 
         _handle(self._make_event())
 
-        # Verify FLAC uploaded
+        # Verify MP3 uploaded
         gcs = _patch_globals["gcs"]
         upload_call = (
             gcs.bucket.return_value.blob.return_value.upload_from_string
         )
         upload_call.assert_called_once()
-        flac_bytes = upload_call.call_args[0][0]
-        assert flac_bytes[:4] == b"fLaC"
+        uploaded_bytes = upload_call.call_args[0][0]
+        assert uploaded_bytes == b"mp3-placeholder"
 
         # Verify AudioChunk published
         pub = _patch_globals["publisher"]
@@ -321,30 +317,6 @@ class TestHandle:
         mock_store.resolve_echo_feed.assert_called_once()
         mock_store.record_heartbeat.assert_not_called()
         mock_store.record_failure.assert_not_called()
-
-    @pytest.mark.usefixtures("_patch_globals")
-    def test_corrupt_audio_skips_gracefully(
-        self, mock_store, _patch_globals
-    ) -> None:
-        self._set_feed(
-            mock_store,
-            {
-                "id": uuid.uuid4(),
-                "name": "Central Fire",
-                "status": "active",
-                "failure_count": 0,
-            },
-        )
-
-        with patch(
-            "backend.pipeline.ingestion.collectors.echo.main.convert_to_flac",
-            side_effect=Exception("ffmpeg decode error"),
-        ):
-            _handle(self._make_event())
-
-        mock_store.record_heartbeat.assert_not_called()
-        mock_store.record_failure.assert_not_called()
-        _patch_globals["publisher"].publish.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_publish_failure_records_in_db(

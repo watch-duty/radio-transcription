@@ -36,6 +36,7 @@ from backend.pipeline.transcription.stitcher import (
 from backend.pipeline.transcription.transcribers import Transcriber
 from backend.pipeline.transcription.transforms import (
     AddEventTimestamp,
+    BypassStitchingFn,
     DownloadAudioFn,
     ParseAndKeyFn,
     RestoreOrderFn,
@@ -200,6 +201,37 @@ class AddEventTimestampTest(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertIsInstance(result[0], beam.pvalue.TaggedOutput)
         self.assertEqual(result[0].tag, DEAD_LETTER_QUEUE_TAG)  # type: ignore
+
+
+class BypassStitchingTest(unittest.TestCase):
+    def test_bypass_stitching_maps_correctly(self) -> None:
+        """Verifies that BypassStitchingFn correctly maps AudioChunkData to FlushRequest."""
+        feed_id = "test-feed"
+        gcs_path = "gs://bucket/test.flac"
+        audio_len_ms = 5000
+        chunk_data = AudioChunkData(
+            start_ms=1000,
+            audio=AudioSegment.silent(duration=audio_len_ms),
+            speech_segments=[],
+            gcs_uri=gcs_path,
+        )
+        element = (feed_id, (gcs_path, chunk_data))
+
+        fn = BypassStitchingFn()
+        result = list(fn.process(element))
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0][0], feed_id)
+
+        flush_request = result[0][1]
+        self.assertIsInstance(flush_request, FlushRequest)
+        self.assertEqual(flush_request.feed_id, feed_id)
+        self.assertEqual(flush_request.contributing_audio_uris, [gcs_path])
+        self.assertEqual(flush_request.time_range.start_ms, 1000)
+        self.assertEqual(flush_request.time_range.end_ms, 1000 + audio_len_ms)
+        self.assertFalse(flush_request.missing_prior_context)
+        self.assertFalse(flush_request.missing_post_context)
+        self.assertIsNotNone(flush_request.transmission_id)
 
 
 class OrderRestorerTest(unittest.TestCase):
