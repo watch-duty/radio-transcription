@@ -24,3 +24,24 @@ def test_pipeline_topology_typehints() -> None:
 
     # We do NOT invoke pipeline.run(), because we just wanted to validate the topological typing.
     assert pipeline is not None
+
+
+def test_pipeline_topology_typehints_with_bypass_stitching() -> None:
+    """Builds the DAG with bypass_stitching to trigger Apache Beam's static type checker."""
+    options = TranscriptionOptions(
+        flags=[
+            "--project",
+            "test-project",
+            "--input_subscription",
+            "projects/test-project/subscriptions/in",
+            "--output_topic",
+            "projects/test-project/topics/out",
+            "--dlq_topic",
+            "projects/test-project/topics/dlq",
+            "--bypass_stitching",
+            "true",
+        ]
+    )
+
+    pipeline = get_pipeline(options)
+    assert pipeline is not None
