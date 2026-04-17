@@ -42,35 +42,17 @@ export function TranscriptView({
   const queryClient = useQueryClient();
 
   const [searchParams, setSearchParams] = useSearchParams();
-  const [hasLoadedFromSearchParams, setHasLoadedFromSearchParams] =
-    useState<boolean>(false);
 
-  const [feedId, setFeedId] = useState<string>('');
+  const [feedId, setFeedId] = useState<string>(
+    () => searchParams.get('feedId') || ''
+  );
 
-  const [searchedFeedId, setSearchedFeedId] = useState<string>('');
+  const [searchedFeedId, setSearchedFeedId] = useState<string>(
+    () => searchParams.get('feedId') || ''
+  );
 
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
-
-  /**
-   * Effect which preloads the feed selection and transcripts based on the search params.
-   */
-  useEffect(() => {
-    if (
-      !hasLoadedFromSearchParams &&
-      (searchParams.get('feedId') ||
-        searchParams.get('startTimestamp') ||
-        searchParams.get('endTimestamp'))
-    ) {
-      setHasLoadedFromSearchParams(true);
-
-      const feedId = searchParams.get('feedId');
-      if (feedId) {
-        setFeedId(feedId);
-        setSearchedFeedId(feedId);
-      }
-    }
-  }, [hasLoadedFromSearchParams, searchParams]);
 
   const {
     data: feeds,
