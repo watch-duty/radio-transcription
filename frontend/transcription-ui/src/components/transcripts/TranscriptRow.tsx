@@ -7,6 +7,7 @@ import IconButton from '@mui/material/IconButton';
 import ListItem from '@mui/material/ListItem';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
+import { useTheme } from '@mui/material/styles';
 import type { Transcript } from '@transcription/common';
 
 import AudioPlayer from '../audio/AudioPlayer';
@@ -35,6 +36,7 @@ export function TranscriptRow({
   triggerSnackbar,
   showHeader,
 }: TranscriptRowProps) {
+  const theme = useTheme();
   const currentDate = new Date(transcript.startTimestamp);
 
   return (
@@ -66,7 +68,7 @@ export function TranscriptRow({
       >
         <Box
           sx={{
-            width: '24px',
+            width: theme.spacing(3),
             display: 'flex',
             justifyContent: 'center',
             flexShrink: 0,

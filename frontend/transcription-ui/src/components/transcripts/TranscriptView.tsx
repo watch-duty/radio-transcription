@@ -26,8 +26,8 @@ import { useAuth } from '../../context/AuthContext';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { listTranscripts } from '../../service/listTranscripts';
-import DateTimePicker from './DateTimePicker';
 import TranscriptRow from './TranscriptRow';
+import DateTimePicker from './DateTimePicker';
 
 interface TranscriptViewProps {
   addAlert: (alert: AlertProps) => void;
@@ -120,8 +120,8 @@ export function TranscriptView({
     fetchNextPage: fetchNextTranscripts,
     hasNextPage: hasNextTranscripts,
     error: transcriptsError,
-    isLoading: transcriptsLoading,
-    isFetching: transcriptsFetching,
+    isLoading: isTranscriptsInitialLoading, // isLoading is the first load, which we use to show the main loading spinner
+    isFetching: isTranscriptsFetching, // isFetching is any load, which we use to show that we're loading additional data
     isSuccess: isTranscriptsSuccess,
   } = useInfiniteQuery({
     queryKey: [
@@ -132,25 +132,27 @@ export function TranscriptView({
       searchedEndTime?.getTime(),
     ],
     queryFn: ({ pageParam }) =>
-      listTranscripts(
-        searchedFeedId,
-        token!,
-        undefined,
-        pageParam,
-        searchedStartTime ? searchedStartTime.getTime() : undefined,
-        searchedEndTime ? searchedEndTime.getTime() : undefined
-      ),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.nextToken,
+      token
+        ? listTranscripts(
+            searchedFeedId,
+            token,
+            undefined,
+            pageParam === '' ? undefined : pageParam,
+            searchedStartTime ? searchedStartTime.getTime() : undefined,
+            searchedEndTime ? searchedEndTime.getTime() : undefined
+          )
+        : Promise.resolve({ transcripts: [] }),
+    initialPageParam: '',
+    getNextPageParam: (lastPage) => lastPage?.nextToken,
     enabled: !!searchedFeedId,
     refetchOnWindowFocus: false,
   });
 
-  const transcripts = useMemo(() => {
-    return (
-      listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? []
-    );
-  }, [listTranscriptsResponse]);
+  const transcripts = useMemo(
+    () =>
+      listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? [],
+    [listTranscriptsResponse]
+  );
 
   const {
     data: rules,
@@ -298,13 +300,13 @@ export function TranscriptView({
           }}
           disabled={
             feedsFetching ||
-            transcriptsLoading ||
+            isTranscriptsInitialLoading ||
             !feedId.trim() ||
             !isDurationValid
           }
           sx={{ minWidth: '100px', height: '40px' }}
         >
-          {transcriptsLoading ? (
+          {isTranscriptsInitialLoading ? (
             <CircularProgress size={24} color="inherit" />
           ) : (
             'Fetch'
@@ -335,7 +337,7 @@ export function TranscriptView({
                 navigator.clipboard.writeText(url.toString());
                 triggerSnackbar('Link copied');
               }}
-              sx={{ minWidth: 0, px: 1.5 }}
+              sx={{ minWidth: 0, px: theme.spacing(1.5) }}
               aria-label="copy feed deeplink"
             >
               <LinkIcon fontSize="small" />
@@ -396,10 +398,10 @@ export function TranscriptView({
                 <Button
                   variant="outlined"
                   onClick={() => fetchNextTranscripts()}
-                  disabled={transcriptsFetching}
+                  disabled={isTranscriptsFetching}
                   sx={{ minWidth: '160px' }}
                 >
-                  {transcriptsFetching ? (
+                  {isTranscriptsFetching ? (
                     <CircularProgress size={24} color="inherit" />
                   ) : (
                     'Load More'
@@ -408,16 +410,30 @@ export function TranscriptView({
               </ListItem>
             )}
           </List>
-        ) : transcriptsLoading ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
+        ) : isTranscriptsInitialLoading ? (
+          <Box
+            sx={{
+              display: 'flex',
+              justifyContent: 'center',
+              mt: theme.spacing(2),
+            }}
+          >
             <CircularProgress />
           </Box>
         ) : transcriptsError ? (
-          <Typography color="error" align="center" sx={{ mt: 4 }}>
+          <Typography
+            color="error"
+            align="center"
+            sx={{ mt: theme.spacing(2) }}
+          >
             Error loading transcripts.
           </Typography>
         ) : isTranscriptsSuccess ? (
-          <Typography color="textSecondary" align="center" sx={{ mt: 4 }}>
+          <Typography
+            color="textSecondary"
+            align="center"
+            sx={{ mt: theme.spacing(2) }}
+          >
             No transcripts found.
           </Typography>
         ) : null}

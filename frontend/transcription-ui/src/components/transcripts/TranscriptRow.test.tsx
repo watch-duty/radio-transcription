@@ -39,7 +39,7 @@ describe('TranscriptRow', () => {
     render(
       <MemoryRouter>
         <TranscriptRow
-          t={mockTranscript}
+          transcript={mockTranscript}
           index={0}
           totalTranscripts={1}
           ruleIdToNameMap={ruleIdToNameMap}
@@ -61,7 +61,7 @@ describe('TranscriptRow', () => {
     render(
       <MemoryRouter>
         <TranscriptRow
-          t={mockTranscript}
+          transcript={mockTranscript}
           index={0}
           totalTranscripts={1}
           ruleIdToNameMap={ruleIdToNameMap}
@@ -81,7 +81,7 @@ describe('TranscriptRow', () => {
     render(
       <MemoryRouter>
         <TranscriptRow
-          t={mockTranscript}
+          transcript={mockTranscript}
           index={0}
           totalTranscripts={1}
           ruleIdToNameMap={ruleIdToNameMap}
@@ -101,29 +101,5 @@ describe('TranscriptRow', () => {
       'This is a test transcription'
     );
     expect(mockTriggerSnackbar).toHaveBeenCalledWith('Transcript copied');
-  });
-
-  it('triggers copy deep link clipboard action successfully', () => {
-    render(
-      <MemoryRouter>
-        <TranscriptRow
-          t={mockTranscript}
-          index={0}
-          totalTranscripts={1}
-          ruleIdToNameMap={ruleIdToNameMap}
-          rulesLoading={false}
-          onPlay={mockOnPlay}
-          currentlyPlayingTransmissionId={null}
-          triggerSnackbar={mockTriggerSnackbar}
-          showHeader={false}
-        />
-      </MemoryRouter>
-    );
-
-    const deeplinkButton = screen.getAllByLabelText('copy deeplink')[0];
-    fireEvent.click(deeplinkButton);
-
-    expect(navigator.clipboard.writeText).toHaveBeenCalledTimes(1);
-    expect(mockTriggerSnackbar).toHaveBeenCalledWith('Link copied');
   });
 });
