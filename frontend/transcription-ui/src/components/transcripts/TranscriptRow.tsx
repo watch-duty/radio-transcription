@@ -13,6 +13,9 @@ import type { Transcript } from '@transcription/common';
 import AudioPlayer from '../audio/AudioPlayer';
 import AlertTooltip from './AlertTooltip';
 
+// For deep links to transmissions, we add a buffer either side of the transmission so there is additional context around the transmission by default.
+const TRANSMISSION_LINK_BUFFER_TIME = 60000 * 5;
+
 interface TranscriptRowProps {
   transcript: Transcript;
   index: number;
@@ -133,11 +136,11 @@ export function TranscriptRow({
                 );
                 url.searchParams.set(
                   'startTimestamp',
-                  new Date(transcript.startTimestamp).getTime().toString()
+                  (new Date(transcript.startTimestamp).getTime() - TRANSMISSION_LINK_BUFFER_TIME).toString()
                 );
                 url.searchParams.set(
                   'endTimestamp',
-                  new Date(transcript.endTimestamp).getTime().toString()
+                  (new Date(transcript.endTimestamp).getTime() + TRANSMISSION_LINK_BUFFER_TIME).toString()
                 );
                 navigator.clipboard.writeText(url.toString());
                 triggerSnackbar('Link copied');
