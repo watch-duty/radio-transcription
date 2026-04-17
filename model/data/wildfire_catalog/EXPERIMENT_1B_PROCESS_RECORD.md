@@ -293,4 +293,84 @@ Items 2, 3, 5 moved from unbounded to bounded. 6 new items added (11–16): addi
 
 ---
 
-*End of Round 2 Process Record.*
+## Round 3: Academic-pipeline editorial pass on 1c-extended paper
+
+**Round 3 goal**: close the cross-section inconsistencies introduced when 1c content was grafted onto the 1b paper without updating abstract/§1/§2.2/§6.4-title; run a fresh 5-reviewer Stage 3 panel on the 1c-extended paper; absorb panel feedback; final integrity pass.
+
+**No new experiments.** Pure editorial + reviewer-panel + revision pass. Entry at Stage 2.5 per academic-pipeline mid-entry protocol.
+
+### Stage 2.5 — integrity on 1c-extended paper
+
+Integrity agent found 5 P0 cross-section inconsistencies + 1 P1 citation + 2 P2 polish items. Mode 1 and Mode 3 both NOT_OBSERVED — no pipeline block. Specific P0s: abstract's "modeled but not empirically validated"; §1 "we do not empirically validate / isolate / diagnose"; §2.2 "we do not run per-source-type decomposition"; §6.4 title "(and What This Paper Does Not Validate)"; §1 contribution list only 4 items (missing 1c's 3 new contributions). P1: Jain cited as `[8]` when `[8]` is Heiser; Jain is `[6]`. All findings documented in `integrity_stage2_5_round2.md`.
+
+### Stage 3 — 5-reviewer panel (fresh on 1c-extended paper)
+
+Panel mean **65.8/100** (Round 1 was 62.6; Δ+3.2). Editorial Decision: **Major Revision at top-tier / workshop-ready at HotCloud or LASER**.
+
+Per-reviewer scores:
+
+| Reviewer | Round 3 | Round 1 | Δ |
+|---|---|---|---|
+| R1 Methodologist (25%) | 69 | 68 | +1 |
+| R2 Systems Expert (20%) | 68 | 66 | +2 |
+| R3 Statistician (20%) | 66 | 68 | **−2** |
+| R4 Devil's Advocate (15%) | 58 | 48 | **+10** |
+| EIC (20%) | 66 | 63 | +3 |
+
+R3 dropped −2 because the 1c.B per-source decomposition is both the biggest new contribution and the weakest statistical ground (n=3 bootstrap CIs with 0-lower-bound degeneracy cannot reject zero slope). R4 rose +10 because 1c substantively addressed the Round-1 novelty and validation objections.
+
+P0 items for revision: (1) fix Stage 2.5 cross-section drift; (2) sharpen n=3 bootstrap-CI disclosure; (3) adjust §8 k=2-per-VM scope.
+
+Full panel at `review_stage3_round2.md`.
+
+### Stage 4 — Revision
+
+Applied 18 traceable changes tracked in `response_to_reviewers_round2.md`:
+- **Abstract rewritten** (≈380 words) — includes per-source slopes, multi-process validation, stall attribution, explicit "what we do not bracket"
+- **§1 contributions expanded 4 → 7** — added per-source decomposition, multi-process-at-k=2, stall-class attribution; reframed "we do not claim" as "what we do not bracket" scope statement
+- **§2.2** — forward-reference to §5.8
+- **§5.4** — added 5-row alternative-mechanism exclusion table (CFS throttling, slow callback/GC, I/O wait, getaddrinfo, PgBouncer, kernel page-table); attribution survives the comparison
+- **§5.8** — added bootstrap-degeneracy disclosure paragraph (~11.1% of resamples produce slope=0 at n=3); treated point estimates as primary statistic
+- **§6.2** — acknowledged §5.4 attribution; scoped steady-state 100% breakdown as future py-spy work
+- **§6.4 title** — removed "(and What This Paper Does Not Validate)"
+- **§7 item 3** — Jain citation `[8]` → `[6]`
+- **§7 item 17** — added USL-vs-LSQ deferral
+- **§7 "Future work refinements" paragraph** — residual plot, prediction interval, sub-second aliasing, posix_spawn/fork footnote
+- **§8** — "under the k=2 configuration" qualifier; point-estimates-with-honest-uncertainty framing
+
+### Stage 3' — Verification re-review
+
+Verdict: **Accept-with-inline-fix**. Panel mean projected **68.7/100** (Δ+2.9 from 65.8 baseline; within 68–70 target band). 18/18 traceability items verified. No new issues introduced. Three copy-edit nits flagged as non-blocking. Documented at `review_stage3_prime_round2.md`.
+
+### Stage 4.5 — Final integrity (MANDATORY)
+
+Verdict: **PASS**. One P1 caught and fixed inline: the bootstrap-degeneracy figure in §5.8 said "~3.7%" but the correct combinatorial quantity is P(any-index all-same) = 3/27 = 1/9 ≈ 11.1%. Fixed to "11.1% of resamples (3/27 = 1/9)". Empirical simulation of 100,000 bootstrap samples confirmed 11.15% produce degenerate slope. Argument preserved (higher degeneracy rate actually strengthens the case for treating point estimates as primary). All 7 failure modes NOT_OBSERVED. Documented at `integrity_stage4_5_round2.md`.
+
+### Cumulative panel-score trajectory
+
+| Round | Stage | Panel mean | Decision | Δ |
+|---|---|---|---|---|
+| 1 (1b) | Stage 3 | 50.75 | Major Revision | baseline |
+| 1 (1b) | Stage 3' | 62.60 | Accept with inline fix | +11.85 |
+| 2 (1c extension) | Stage 4.5 only | — | Integrity PASS | (no formal panel) |
+| 3 (editorial) | Stage 3 | 65.80 | Major Revision (workshop-ready) | +3.20 |
+| 3 (editorial) | Stage 3' | **68.70** | **Accept with inline fix** | +2.90 |
+
+### Venue posture after Round 3
+
+- **Workshop now** (HotCloud 2026 / LASER 2026): ready to submit. Editorial coherence and Round-3 panel both support this.
+- **Top-tier** (OSDI / SOSP / EuroSys 2027): requires Phase 2 experimental campaign per §7 items 2, 3, 11, 12, 13, 15, 17. Estimated 30–40 hours of new experiments across ≥ 5-level per-source ramps, k=4+ multi-process bracket, gunicorn A/B, n2/e2 A/B, allocator bracket, multi-day replication, CFS-throttling-under-CPU-limit. Deferred by author decision — this paper can land as-is at a workshop.
+
+### Round 3 pipeline statistics
+
+- Phase: Stage 2.5 → 3 → 4 → 3' → 4.5 → (5 skipped for MD-only) → 6
+- Token spend estimate: ~350k across integrity agent, 5-reviewer-panel agent, revision (mix of agent + direct edits due to agent rate-limit mid-session), verification agent, final-integrity agent, and this process-record entry
+- Wall-clock: ~2 hours in one session
+- New artifacts: 5 under `EXPERIMENT_1B_ARTIFACTS/` (integrity_stage2_5_round2, review_stage3_round2, response_to_reviewers_round2, review_stage3_prime_round2, integrity_stage4_5_round2)
+- Paper line count: 509 → 531 (+22 lines; +4.3%)
+- 7-mode failure checklist final state: 7/7 NOT_OBSERVED
+- P0/P1 post Stage 4.5: 0/0
+
+---
+
+*End of Round 3 Process Record.*

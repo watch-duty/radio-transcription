@@ -57,4 +57,20 @@ Follow-up campaign on the same VM addressing three §7 limitations (multi-proces
 
 - **Multi-process validation (§6.4):** 2 containers × ~500 feeds → sum CPU 85.2% (vs 85.7% predicted), sum RSS 7,171 MiB (vs 7,418 predicted).
 - **Stall RCA (§5.4):** 9.7s drift reproduced during simultaneous activation; max drift 15.5s at t+18s coincident with cgroup CPU >100% per container.
-- **Per-source (§5.8):** bcfy_feeds 0.156%/feed (ffmpeg), openmhz 0.100%/feed, bcfy_calls 0.009%/feed. Additive prediction 73.7% vs observed 77.4% (−4.9% residual).
+- **Per-source (§5.8):** bcfy_feeds 0.156%/feed (ffmpeg), openmhz 0.100%/feed, bcfy_calls 0.009%/feed. Additive prediction 78.8% vs observed 77.4% (+1.8% residual).
+
+---
+
+## Round 3 — academic-pipeline editorial review pass (2026-04-16)
+
+Full pipeline pass on the 1c-extended paper to close cross-section inconsistencies (abstract / §1 / §2.2 / §6.4-title) introduced when 1c content was grafted without updating the summary sections. Fresh 5-reviewer Stage 3 panel, revision, verification, final integrity.
+
+| File | Purpose |
+|------|---------|
+| `integrity_stage2_5_round2.md` | Stage 2.5 integrity: 5 P0 cross-section + 1 P1 citation + 2 P2 polish; Mode 1/3 NOT_OBSERVED |
+| `review_stage3_round2.md` | 5-reviewer panel; mean 65.8/100 (R1=69, R2=68, R3=66, R4=58, EIC=66); Major Revision / workshop-ready |
+| `response_to_reviewers_round2.md` | 31-row traceability matrix: Fixed / Acknowledged / Declined across Stage 2.5 + Stage 3 concerns |
+| `review_stage3_prime_round2.md` | Stage 3' verification: Accept-with-inline-fix; projected panel mean 68.7/100 |
+| `integrity_stage4_5_round2.md` | Final integrity: PASS (1 P1 found — bootstrap degeneracy figure — fixed inline); 7/7 failure modes NOT_OBSERVED |
+
+**Panel-score trajectory**: 50.75 → 62.6 (Round 1) → 65.8 → 68.7 (Round 3). Venue: workshop-ready (HotCloud / LASER 2026) as-is; top-tier requires Phase 2 experimental campaign.
