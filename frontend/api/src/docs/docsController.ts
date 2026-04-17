@@ -14,8 +14,6 @@ import {
 } from 'tsoa';
 import { fileURLToPath } from 'url';
 
-import { ALLOWED_ORIGIN } from '../config.js';
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
