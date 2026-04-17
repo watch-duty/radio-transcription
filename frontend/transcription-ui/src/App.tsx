@@ -82,20 +82,8 @@ function App() {
         ))}
       </Box>
       <Routes>
-        {/* For now, the transcripts view will exist on the index and /transcripts routes.
-            Adding both here to leave room for a dedicated home page without needing
-            to change the links later. */}
         <Route
           path="/"
-          element={
-            <TranscriptView
-              addAlert={addAlert}
-              triggerSnackbar={triggerSnackbar}
-            />
-          }
-        />
-        <Route
-          path="/transcripts"
           element={
             <TranscriptView
               addAlert={addAlert}
