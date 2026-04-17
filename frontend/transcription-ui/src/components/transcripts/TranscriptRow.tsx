@@ -134,8 +134,12 @@ export function TranscriptRow({
                   'transmissionId',
                   transcript.transmissionId
                 );
-                const startMs = new Date(transcript.startTimestamp).getTime() - TRANSMISSION_LINK_BUFFER_TIME;
-                const endMs = new Date(transcript.endTimestamp).getTime() + TRANSMISSION_LINK_BUFFER_TIME;
+                const startMs =
+                  new Date(transcript.startTimestamp).getTime() -
+                  TRANSMISSION_LINK_BUFFER_TIME;
+                const endMs =
+                  new Date(transcript.endTimestamp).getTime() +
+                  TRANSMISSION_LINK_BUFFER_TIME;
                 const midpointMs = (startMs + endMs) / 2;
                 const offsetMs = midpointMs - startMs;
                 const durationMins = Math.round(offsetMs / 60000);

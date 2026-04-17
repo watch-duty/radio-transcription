@@ -127,7 +127,9 @@ describe('TranscriptRow', () => {
     const startMs = new Date(mockTranscript.startTimestamp).getTime() - 300000;
     const endMs = new Date(mockTranscript.endTimestamp).getTime() + 300000;
     const expectedMidpointMs = (startMs + endMs) / 2;
-    const expectedDurationMins = Math.round((expectedMidpointMs - startMs) / 60000);
+    const expectedDurationMins = Math.round(
+      (expectedMidpointMs - startMs) / 60000
+    );
 
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
       expect.stringContaining('feedId=feed-123')
