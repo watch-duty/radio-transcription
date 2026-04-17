@@ -206,6 +206,7 @@ def publish_audio_chunk_sync(
     session_id: str,
     start_timestamp: datetime.datetime,
     source_type: str | None = None,
+    duration_ms: int | None = None,
 ) -> str:
     """Publish an AudioChunk to Pub/Sub and return the message ID.
 
@@ -223,6 +224,8 @@ def publish_audio_chunk_sync(
     }
     if source_type is not None:
         attrs["source_type"] = source_type
+    if duration_ms is not None:
+        attrs["duration_ms"] = str(duration_ms)
 
     future = publisher.publish(
         topic_path,
@@ -241,6 +244,7 @@ async def publish_audio_chunk(
     session_id: str,
     start_timestamp: datetime.datetime,
     source_type: str | None = None,
+    duration_ms: int | None = None,
 ) -> str:
     """Asynchronously publish an AudioChunk to Pub/Sub.
 
@@ -259,6 +263,8 @@ async def publish_audio_chunk(
     }
     if source_type is not None:
         attrs["source_type"] = source_type
+    if duration_ms is not None:
+        attrs["duration_ms"] = str(duration_ms)
 
     future = publisher.publish(
         topic_path,
