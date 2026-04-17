@@ -39,7 +39,7 @@ describe('TranscriptRow', () => {
     render(
       <MemoryRouter>
         <TranscriptRow
-          t={mockTranscript}
+          transcript={mockTranscript}
           index={0}
           totalTranscripts={1}
           ruleIdToNameMap={ruleIdToNameMap}
@@ -61,7 +61,7 @@ describe('TranscriptRow', () => {
     render(
       <MemoryRouter>
         <TranscriptRow
-          t={mockTranscript}
+          transcript={mockTranscript}
           index={0}
           totalTranscripts={1}
           ruleIdToNameMap={ruleIdToNameMap}
@@ -81,7 +81,7 @@ describe('TranscriptRow', () => {
     render(
       <MemoryRouter>
         <TranscriptRow
-          t={mockTranscript}
+          transcript={mockTranscript}
           index={0}
           totalTranscripts={1}
           ruleIdToNameMap={ruleIdToNameMap}
@@ -103,27 +103,28 @@ describe('TranscriptRow', () => {
     expect(mockTriggerSnackbar).toHaveBeenCalledWith('Transcript copied');
   });
 
-  it('triggers copy deep link clipboard action successfully', () => {
-    render(
-      <MemoryRouter>
-        <TranscriptRow
-          t={mockTranscript}
-          index={0}
-          totalTranscripts={1}
-          ruleIdToNameMap={ruleIdToNameMap}
-          rulesLoading={false}
-          onPlay={mockOnPlay}
-          currentlyPlayingTransmissionId={null}
-          triggerSnackbar={mockTriggerSnackbar}
-          showHeader={false}
-        />
-      </MemoryRouter>
-    );
+  // TODO: re-enable deep links to transcripts once the timestamp picker is added
+  // it.skip('triggers copy deep link clipboard action successfully', () => {
+  //   render(
+  //     <MemoryRouter>
+  //       <TranscriptRow
+  //         transcript={mockTranscript}
+  //         index={0}
+  //         totalTranscripts={1}
+  //         ruleIdToNameMap={ruleIdToNameMap}
+  //         rulesLoading={false}
+  //         onPlay={mockOnPlay}
+  //         currentlyPlayingTransmissionId={null}
+  //         triggerSnackbar={mockTriggerSnackbar}
+  //         showHeader={false}
+  //       />
+  //     </MemoryRouter>
+  //   );
 
-    const deeplinkButton = screen.getAllByLabelText('copy deeplink')[0];
-    fireEvent.click(deeplinkButton);
+  //   const deeplinkButton = screen.getAllByLabelText('copy deeplink')[0];
+  //   fireEvent.click(deeplinkButton);
 
-    expect(navigator.clipboard.writeText).toHaveBeenCalledTimes(1);
-    expect(mockTriggerSnackbar).toHaveBeenCalledWith('Link copied');
-  });
+  //   expect(navigator.clipboard.writeText).toHaveBeenCalledTimes(1);
+  //   expect(mockTriggerSnackbar).toHaveBeenCalledWith('Link copied');
+  // });
 });
