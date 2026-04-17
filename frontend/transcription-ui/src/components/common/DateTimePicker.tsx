@@ -33,6 +33,9 @@ export function DateTimePicker({
             helperText: helperText,
             sx: width ? { width } : undefined,
           },
+          actionBar: {
+            actions: ['clear', 'cancel', 'accept'],
+          }, 
         }}
       />
     </LocalizationProvider>

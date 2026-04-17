@@ -70,18 +70,25 @@ export function TranscriptView({
   const [searchedFeedId, setSearchedFeedId] = useState<string>(() => searchParams.get('feedId') || '');
   const [searchedStartTime, setSearchedStartTime] = useState<Date | null>(() => {
     const ts = searchParams.get('timestamp');
-    const dur = searchParams.get('duration') || '0';
+    const dur = searchParams.get('duration');
     if (ts) {
-      return new Date(Number(ts) - Number(dur) * 60000);
+      if (dur && dur.trim() !== '') {
+        return new Date(Number(ts) - Number(dur) * 60000);
+      }
+      return null;
     }
     const start = searchParams.get('startTimestamp');
     return start ? new Date(Number(start)) : null;
   });
   const [searchedEndTime, setSearchedEndTime] = useState<Date | null>(() => {
     const ts = searchParams.get('timestamp');
-    const dur = searchParams.get('duration') || '0';
+    const dur = searchParams.get('duration');
     if (ts) {
-      return new Date(Number(ts) + Number(dur) * 60000);
+      if (dur && dur.trim() !== '') {
+        // The additional 60000ms is so that the inputted timestamp is included in the search results, rather than only prior to that
+        return new Date(Number(ts) + Number(dur) * 60000 + 60000);
+      }
+      return new Date(Number(ts) + 60000);
     }
     const end = searchParams.get('endTimestamp');
     return end ? new Date(Number(end)) : null;
@@ -264,13 +271,23 @@ export function TranscriptView({
         <Button
           variant="contained"
           onClick={() => {
+            // Three posibilites for querying:
+            // 1. If no timestamp is provided, we don't set those fields.
+            // 2. If only the timestamp is provided but no duration, we set the duration to the endTime but leave startTime empty so that we get all results prior to that time.
+            // 3. If both the timestamp and duration are provided, we apply the offset to the timestamp and set the start and end times.
+
             let calcStart: Date | null = null;
             let calcEnd: Date | null = null;
             if (timestamp) {
-              const mins = duration ? Number(duration) : 0;
-              const offsetMs = mins * 60000;
-              calcStart = new Date(timestamp.getTime() - offsetMs);
-              calcEnd = new Date(timestamp.getTime() + offsetMs);
+              if (duration && duration.trim() !== '') {
+                const mins = Number(duration);
+                const offsetMs = mins * 60000;
+                calcStart = new Date(timestamp.getTime() - offsetMs);
+                calcEnd = new Date(timestamp.getTime() + offsetMs + 60000);
+              } else {
+                calcEnd = new Date(timestamp.getTime() + 60000);
+                calcStart = null;
+              }
             }
 
             setSearchedStartTime(calcStart);
@@ -355,13 +372,13 @@ export function TranscriptView({
           helperText="(Optional) Pick a date and time to search around"
         />
         <TextField
-          label="Duration"
+          label="Duration (minutes)"
           size="small"
           type='number'
           value={duration}
           onChange={(e) => setDuration(e.target.value)}
           error={!isDurationValid}
-          helperText={!isDurationValid ? 'Must be a positive number' : "(Optional) Length of time in minutes to search around the timestamp"}
+          helperText={!isDurationValid ? 'Must be a positive number' : "(Optional) Length of time to search around the timestamp"}
           sx={{ width: '100%' }}
         />
       </Box>
