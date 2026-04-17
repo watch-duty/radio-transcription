@@ -1,8 +1,4 @@
-import {
-  useEffect,
-  useMemo,
-  useState,
-} from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 
 import LinkIcon from '@mui/icons-material/Link';
@@ -46,7 +42,8 @@ export function TranscriptView({
   const queryClient = useQueryClient();
 
   const [searchParams, setSearchParams] = useSearchParams();
-  const [hasLoadedFromSearchParams, setHasLoadedFromSearchParams] = useState<boolean>(false);
+  const [hasLoadedFromSearchParams, setHasLoadedFromSearchParams] =
+    useState<boolean>(false);
 
   const [feedId, setFeedId] = useState<string>('');
 
@@ -59,9 +56,14 @@ export function TranscriptView({
    * Effect which preloads the feed selection and transcripts based on the search params.
    */
   useEffect(() => {
-    if (!hasLoadedFromSearchParams && (searchParams.get('feedId') || searchParams.get('startTimestamp') || searchParams.get('endTimestamp'))) {
+    if (
+      !hasLoadedFromSearchParams &&
+      (searchParams.get('feedId') ||
+        searchParams.get('startTimestamp') ||
+        searchParams.get('endTimestamp'))
+    ) {
       setHasLoadedFromSearchParams(true);
-      
+
       const feedId = searchParams.get('feedId');
       if (feedId) {
         setFeedId(feedId);
@@ -104,12 +106,7 @@ export function TranscriptView({
   } = useInfiniteQuery({
     queryKey: ['listTranscripts', token, searchedFeedId],
     queryFn: ({ pageParam }) =>
-      listTranscripts(
-        searchedFeedId, 
-        token!, 
-        undefined, 
-        pageParam,
-      ),
+      listTranscripts(searchedFeedId, token!, undefined, pageParam),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.nextToken,
     enabled: !!searchedFeedId,
