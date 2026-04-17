@@ -319,10 +319,19 @@ export function TranscriptView({
                   calculateSearchTimes(timestamp, duration);
                 if (timestamp) {
                   if (duration && duration.trim() !== '') {
-                    url.searchParams.set('startTimestamp', calcStart!.getTime().toString());
-                    url.searchParams.set('endTimestamp', calcEnd!.getTime().toString());
+                    url.searchParams.set(
+                      'startTimestamp',
+                      calcStart!.getTime().toString()
+                    );
+                    url.searchParams.set(
+                      'endTimestamp',
+                      calcEnd!.getTime().toString()
+                    );
                   } else {
-                    url.searchParams.set('endTimestamp', calcEnd!.getTime().toString());
+                    url.searchParams.set(
+                      'endTimestamp',
+                      calcEnd!.getTime().toString()
+                    );
                   }
                 }
                 navigator.clipboard.writeText(url.toString());

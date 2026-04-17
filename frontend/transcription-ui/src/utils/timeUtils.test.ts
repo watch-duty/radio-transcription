@@ -32,7 +32,6 @@ describe('timeUtils', () => {
   });
 
   describe('getInitialDuration', () => {
-
     it('should return calculated duration if start and end timestamps are provided', () => {
       const searchParams = new URLSearchParams(
         'startTimestamp=1700000000000&endTimestamp=1700000120000'
@@ -47,7 +46,6 @@ describe('timeUtils', () => {
   });
 
   describe('getSearchedStartTime', () => {
-
     it('should return startTimestamp if provided without timestamp', () => {
       const searchParams = new URLSearchParams('startTimestamp=1700000000000');
       const result = getSearchedStartTime(searchParams);
@@ -56,7 +54,6 @@ describe('timeUtils', () => {
   });
 
   describe('getSearchedEndTime', () => {
-
     it('should return endTimestamp if provided without timestamp', () => {
       const searchParams = new URLSearchParams('endTimestamp=1700000000000');
       const result = getSearchedEndTime(searchParams);
