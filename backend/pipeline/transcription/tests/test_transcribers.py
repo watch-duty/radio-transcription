@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, call, patch
 from google.api_core.retry import Retry
 
 from backend.pipeline.common.constants import BYTES_PER_SECOND_16KHZ_MONO
+from backend.pipeline.transcription.constants import CHIRP_UNINTELLIGIBLE_MARKER
 from backend.pipeline.transcription.enums import TranscriberType
 from backend.pipeline.transcription.transcribers import (
     ChirpConfig,
@@ -60,7 +61,7 @@ class TestTranscribers(unittest.TestCase):
             mock_response = MagicMock()
             mock_result = MagicMock()
             mock_result.alternatives = [
-                MagicMock(transcript="[UNINTELLIGIBLE]")
+                MagicMock(transcript=CHIRP_UNINTELLIGIBLE_MARKER)
             ]
             mock_response.results = [mock_result]
             mock_client_instance.recognize.return_value = mock_response

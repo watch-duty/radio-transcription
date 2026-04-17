@@ -16,6 +16,7 @@ from google.cloud.speech_v2 import SpeechClient
 
 from backend.pipeline.common.constants import BYTES_PER_SECOND_16KHZ_MONO
 from backend.pipeline.transcription.constants import (
+    CHIRP_UNINTELLIGIBLE_MARKER,
     DEFAULT_CHIRP_LANGUAGE_CODES,
     DEFAULT_CHIRP_LOCATION,
     DEFAULT_CHIRP_MODEL,
@@ -221,7 +222,7 @@ class GoogleChirpV3Transcriber(Transcriber):
 
             chunk_text = (
                 result.alternatives[0]
-                .transcript.replace("[UNINTELLIGIBLE]", "")
+                .transcript.replace(CHIRP_UNINTELLIGIBLE_MARKER, "")
                 .strip()
             )
             if chunk_text:
