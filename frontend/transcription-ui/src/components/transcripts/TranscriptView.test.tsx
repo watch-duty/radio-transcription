@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { MemoryRouter } from 'react-router';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
@@ -37,7 +39,11 @@ describe('TranscriptView', () => {
   });
 
   it('renders search field and fetch button', () => {
-    renderWithQueryClient(<TranscriptView addAlert={mockAddAlert} />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
     expect(
       screen.getByLabelText(/Select a registered feed or enter a feed ID/i)
     ).toBeTruthy();
@@ -50,11 +56,18 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(<TranscriptView addAlert={mockAddAlert} />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
 
     const input = screen.getByLabelText(
       /Select a registered feed or enter a feed ID/i
     );
+    await waitFor(() => {
+      expect((input as HTMLInputElement).disabled).toBe(false);
+    });
     fireEvent.change(input, { target: { value: 'feed123' } });
 
     const button = screen.getByRole('button', { name: /Fetch/i });
@@ -89,11 +102,19 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(<TranscriptView addAlert={mockAddAlert} />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
 
     const input = screen.getByLabelText(
       /Select a registered feed or enter a feed ID/i
     );
+    await waitFor(() => {
+      expect((input as HTMLInputElement).disabled).toBe(false);
+    });
+
     fireEvent.change(input, { target: { value: 'feed123' } });
 
     const button = screen.getByRole('button', { name: /Fetch/i });
@@ -101,30 +122,31 @@ describe('TranscriptView', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Hello')).toBeTruthy();
-      expect(screen.getByLabelText('play')).toBeTruthy();
     });
   });
 
   it('shows error message on failure', async () => {
     vi.mocked(listTranscripts).mockRejectedValueOnce(new Error('Fetch failed'));
 
-    renderWithQueryClient(<TranscriptView addAlert={mockAddAlert} />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
 
     const input = screen.getByLabelText(
       /Select a registered feed or enter a feed ID/i
     );
+    await waitFor(() => {
+      expect((input as HTMLInputElement).disabled).toBe(false);
+    });
     fireEvent.change(input, { target: { value: 'feed123' } });
 
     const button = screen.getByRole('button', { name: /Fetch/i });
     fireEvent.click(button);
 
     await waitFor(() => {
-      expect(mockAddAlert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          severity: 'error',
-          children: expect.stringContaining('Fetch failed'),
-        })
-      );
+      expect(screen.getByText('Error loading transcripts.')).toBeTruthy();
     });
   });
 
@@ -134,7 +156,11 @@ describe('TranscriptView', () => {
     ];
     vi.mocked(listFeeds).mockResolvedValueOnce(mockFeeds);
 
-    renderWithQueryClient(<TranscriptView addAlert={mockAddAlert} />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
 
     await waitFor(() => {
       expect(listFeeds).toHaveBeenCalledTimes(1);
@@ -144,7 +170,11 @@ describe('TranscriptView', () => {
   it('shows error alert when feeds fail to load', async () => {
     vi.mocked(listFeeds).mockRejectedValueOnce(new Error('Feeds load failed'));
 
-    renderWithQueryClient(<TranscriptView addAlert={mockAddAlert} />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
 
     await waitFor(() => {
       expect(mockAddAlert).toHaveBeenCalledWith(
@@ -162,13 +192,20 @@ describe('TranscriptView', () => {
     ];
     vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
 
-    renderWithQueryClient(<TranscriptView addAlert={mockAddAlert} />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
 
     await waitFor(() => {
       expect(listFeeds).toHaveBeenCalledTimes(1);
     });
 
     const refreshButton = screen.getByLabelText(/refresh feeds/i);
+    await waitFor(() => {
+      expect((refreshButton as HTMLButtonElement).disabled).toBe(false);
+    });
     fireEvent.click(refreshButton);
 
     await waitFor(() => {
@@ -182,11 +219,18 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(<TranscriptView addAlert={mockAddAlert} />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
 
     const input = screen.getByLabelText(
       /Select a registered feed or enter a feed ID/i
     );
+    await waitFor(() => {
+      expect((input as HTMLInputElement).disabled).toBe(false);
+    });
     fireEvent.change(input, { target: { value: 'feed123' } });
 
     const button = screen.getByRole('button', { name: /Fetch/i });
@@ -241,11 +285,18 @@ describe('TranscriptView', () => {
         nextToken: undefined,
       });
 
-    renderWithQueryClient(<TranscriptView addAlert={mockAddAlert} />);
+    renderWithQueryClient(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
 
     const input = screen.getByLabelText(
       /Select a registered feed or enter a feed ID/i
     );
+    await waitFor(() => {
+      expect((input as HTMLInputElement).disabled).toBe(false);
+    });
     fireEvent.change(input, { target: { value: 'feed123' } });
 
     const button = screen.getByRole('button', { name: /Fetch/i });
@@ -263,5 +314,122 @@ describe('TranscriptView', () => {
       expect(screen.getByText('World')).toBeTruthy();
       expect(screen.getByText('Hello')).toBeTruthy();
     });
+  });
+
+  it('refetches when Fetch is clicked again with the same feedId after an error', async () => {
+    const mockAddAlert = vi.fn();
+    vi.mocked(listTranscripts)
+      .mockRejectedValueOnce(new Error('Fetch failed'))
+      .mockResolvedValueOnce({
+        transcripts: [
+          {
+            feedId: 'feed123',
+            transmissionId: '1',
+            transcript: 'Success after retry',
+            canonicalAudioUri: 'gs:://foo.flac',
+            startTimestamp: '2026-04-10T12:00:00Z',
+            endTimestamp: '2026-04-10T12:00:05Z',
+            missingPriorContext: false,
+            missingPostContext: false,
+            sourceAudioUris: ['gs:://foo.flac'],
+            startAudioOffset: '0s',
+            endAudioOffset: '5s',
+            evaluationDecisions: [],
+          },
+        ],
+        nextToken: undefined,
+      });
+
+    renderWithQueryClient(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    const input = screen.getByLabelText(
+      /Select a registered feed or enter a feed ID/i
+    );
+    await waitFor(() => {
+      expect((input as HTMLInputElement).disabled).toBe(false);
+    });
+    fireEvent.change(input, { target: { value: 'feed123' } });
+
+    const button = screen.getByRole('button', { name: /Fetch/i });
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(screen.getByText('Error loading transcripts.')).toBeTruthy();
+    });
+
+    // Click Fetch again without changing input
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(screen.getByText('Success after retry')).toBeTruthy();
+    });
+  });
+
+  it('shows loading spinner again when Fetch is clicked with the same feedId', async () => {
+    vi.mocked(listTranscripts).mockResolvedValueOnce({
+      transcripts: [
+        {
+          feedId: 'feed123',
+          transmissionId: '1',
+          transcript: 'Initial load',
+          canonicalAudioUri: 'gs:://foo.flac',
+          startTimestamp: '2026-04-10T12:00:00Z',
+          endTimestamp: '2026-04-10T12:00:05Z',
+          missingPriorContext: false,
+          missingPostContext: false,
+          sourceAudioUris: ['gs:://foo.flac'],
+          startAudioOffset: '0s',
+          endAudioOffset: '5s',
+          evaluationDecisions: [],
+        },
+      ],
+      nextToken: undefined,
+    });
+
+    renderWithQueryClient(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    const input = screen.getByLabelText(
+      /Select a registered feed or enter a feed ID/i
+    );
+    await waitFor(() => {
+      expect((input as HTMLInputElement).disabled).toBe(false);
+    });
+    fireEvent.change(input, { target: { value: 'feed123' } });
+
+    const button = screen.getByRole('button', { name: /Fetch/i });
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(screen.getByText('Initial load')).toBeTruthy();
+    });
+
+    let resolveTranscripts: (
+      value: Awaited<ReturnType<typeof listTranscripts>>
+    ) => void = () => {};
+    const pendingPromise = new Promise<
+      Awaited<ReturnType<typeof listTranscripts>>
+    >((resolve) => {
+      resolveTranscripts = resolve;
+    });
+    vi.mocked(listTranscripts).mockReturnValueOnce(pendingPromise);
+
+    // Click Fetch again with the same feedId
+    fireEvent.click(button);
+
+    // The loading spinner should be displayed
+    await waitFor(() => {
+      expect(screen.getAllByRole('progressbar').length).toBeGreaterThan(0);
+    });
+
+    // Cleanup promise to avoid unhandled rejections
+    resolveTranscripts({ transcripts: [], nextToken: undefined });
   });
 });

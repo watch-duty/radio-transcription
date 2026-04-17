@@ -104,7 +104,9 @@ def get_pipeline(
 
     # Order chunks based on exact 15,000ms chunk duration expectations
     if options.bypass_stitching:
-        restored = timestamped.main
+        restored = timestamped.main | "DropSessionId" >> beam.Map(
+            lambda x: (x[0], x[1][0])
+        )
     else:
         restored = timestamped.main | "RestoreOrder" >> beam.ParDo(
             RestoreOrderFn(
