@@ -1,19 +1,9 @@
-import express from 'express';
-
 import axios from 'axios';
 import { GoogleAuth } from 'google-auth-library';
 import { load } from 'js-yaml';
-import {
-  Controller,
-  Extension,
-  Get,
-  Request,
-  Route,
-  Security,
-  Tags,
-} from 'tsoa';
+import { Controller, Extension, Get, Route, Security, Tags } from 'tsoa';
 
-import { ALLOWED_ORIGIN, PROJECT_ID } from '../config.js';
+import { API_PUBLIC_URL, PROJECT_ID } from '../config.js';
 
 export interface OpenApiSpec {
   [key: string]: unknown;
@@ -88,9 +78,7 @@ export class DocsController extends Controller {
   @Get('openapi.json')
   @Security('google_id_token')
   @Extension('x-google-backend', 'radio-transcription-api')
-  public async getSpec(
-    @Request() request: express.Request
-  ): Promise<OpenApiSpec | null> {
+  public async getSpec(): Promise<OpenApiSpec | null> {
     if (!cachedSpec) {
       // Get config from API Gateway
       cachedSpec = await this.getOpenApiSpec();
@@ -101,10 +89,10 @@ export class DocsController extends Controller {
       return null;
     }
 
-    if (ALLOWED_ORIGIN.includes('localhost')) {
+    if (API_PUBLIC_URL) {
       cachedSpec.servers = [
         {
-          url: `${request.protocol}://${request.get('host')}`,
+          url: API_PUBLIC_URL,
         },
       ];
     }
