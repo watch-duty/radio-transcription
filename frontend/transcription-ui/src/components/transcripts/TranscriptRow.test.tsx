@@ -124,8 +124,10 @@ describe('TranscriptRow', () => {
     const deepLinkButton = screen.getAllByLabelText('copy deeplink')[0];
     fireEvent.click(deepLinkButton);
 
-    const expectedStartTimestamp = new Date(mockTranscript.startTimestamp).getTime() - 300000;
-    const expectedEndTimestamp = new Date(mockTranscript.endTimestamp).getTime() + 300000;
+    const expectedStartTimestamp =
+      new Date(mockTranscript.startTimestamp).getTime() - 300000;
+    const expectedEndTimestamp =
+      new Date(mockTranscript.endTimestamp).getTime() + 300000;
 
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
       expect.stringContaining('feedId=feed-123')

@@ -26,6 +26,14 @@ import { useAuth } from '../../context/AuthContext';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { listTranscripts } from '../../service/listTranscripts';
+import {
+  calculateSearchTimes,
+  getInitialDuration,
+  getInitialTimestamp,
+  getSearchedEndTime,
+  getSearchedStartTime,
+  validateDuration,
+} from '../../utils/timeUtils';
 import DateTimePicker from '../common/DateTimePicker';
 import TranscriptRow from './TranscriptRow';
 
@@ -47,61 +55,24 @@ export function TranscriptView({
   const [feedId, setFeedId] = useState<string>(
     () => searchParams.get('feedId') || ''
   );
-  const [timestamp, setTimestamp] = useState<Date | null>(() => {
-    const param = searchParams.get('timestamp');
-    if (param) return new Date(Number(param));
-    const start = searchParams.get('startTimestamp');
-    const end = searchParams.get('endTimestamp');
-    if (start && end) {
-      return new Date((Number(start) + Number(end)) / 2);
-    }
-    return null;
-  });
-  const [duration, setDuration] = useState<string>(() => {
-    const param = searchParams.get('duration');
-    if (param !== null) return param;
-    const start = searchParams.get('startTimestamp');
-    const end = searchParams.get('endTimestamp');
-    if (start && end) {
-      const diffMs = Number(end) - Number(start);
-      return String(Math.round(diffMs / (2 * 60000)));
-    }
-    return '';
-  });
+  const [timestamp, setTimestamp] = useState<Date | null>(() =>
+    getInitialTimestamp(searchParams)
+  );
+  const [duration, setDuration] = useState<string>(() =>
+    getInitialDuration(searchParams)
+  );
 
   const [searchedFeedId, setSearchedFeedId] = useState<string>(
     () => searchParams.get('feedId') || ''
   );
-  const [searchedStartTime, setSearchedStartTime] = useState<Date | null>(
-    () => {
-      const ts = searchParams.get('timestamp');
-      const dur = searchParams.get('duration');
-      if (ts) {
-        if (dur && dur.trim() !== '') {
-          return new Date(Number(ts) - Number(dur) * 60000);
-        }
-        return null;
-      }
-      const start = searchParams.get('startTimestamp');
-      return start ? new Date(Number(start)) : null;
-    }
+  const [searchedStartTime, setSearchedStartTime] = useState<Date | null>(() =>
+    getSearchedStartTime(searchParams)
   );
-  const [searchedEndTime, setSearchedEndTime] = useState<Date | null>(() => {
-    const ts = searchParams.get('timestamp');
-    const dur = searchParams.get('duration');
-    if (ts) {
-      if (dur && dur.trim() !== '') {
-        // The additional 60000ms is so that the inputted timestamp is included in the search results, rather than only prior to that
-        return new Date(Number(ts) + Number(dur) * 60000 + 60000);
-      }
-      return new Date(Number(ts) + 60000);
-    }
-    const end = searchParams.get('endTimestamp');
-    return end ? new Date(Number(end)) : null;
-  });
+  const [searchedEndTime, setSearchedEndTime] = useState<Date | null>(() =>
+    getSearchedEndTime(searchParams)
+  );
 
-  const isDurationValid =
-    !duration || (!isNaN(Number(duration)) && Number(duration) >= 0);
+  const isDurationValid = validateDuration(duration);
 
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
@@ -283,19 +254,8 @@ export function TranscriptView({
             // 2. If only the timestamp is provided but no duration, we set the duration to the endTime but leave startTime empty so that we get all results prior to that time.
             // 3. If both the timestamp and duration are provided, we apply the offset to the timestamp and set the start and end times.
 
-            let calcStart: Date | null = null;
-            let calcEnd: Date | null = null;
-            if (timestamp) {
-              if (duration && duration.trim() !== '') {
-                const mins = Number(duration);
-                const offsetMs = mins * 60000;
-                calcStart = new Date(timestamp.getTime() - offsetMs);
-                calcEnd = new Date(timestamp.getTime() + offsetMs + 60000);
-              } else {
-                calcEnd = new Date(timestamp.getTime() + 60000);
-                calcStart = null;
-              }
-            }
+            const { startTime: calcStart, endTime: calcEnd } =
+              calculateSearchTimes(timestamp, duration);
 
             setSearchedStartTime(calcStart);
             setSearchedEndTime(calcEnd);
