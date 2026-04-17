@@ -247,52 +247,36 @@ class TestGetAudioFormat(unittest.TestCase):
         self.assertEqual(res, "mp3")
 
 
-class TestDownloadAndConvertAudio(unittest.IsolatedAsyncioTestCase):
+class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.session = MagicMock()
         self.shutdown = asyncio.Event()
 
-    @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector.asyncio.to_thread",
-        new_callable=AsyncMock,
-    )
-    async def test_success(self, mock_to_thread: AsyncMock) -> None:
+    async def test_success(self) -> None:
         resp = AsyncMock(status=200)
         resp.read.return_value = b"mp3"
         cm = MagicMock()
         cm.__aenter__ = AsyncMock(return_value=resp)
         cm.__aexit__ = AsyncMock(return_value=False)
         self.session.get.return_value = cm
-        mock_to_thread.return_value = b"flac"
 
-        res = await bcfy_calls_collector._download_and_convert_audio(
+        res = await bcfy_calls_collector._download_audio(
             self.session, "http://example.com/audio.mp3", self.shutdown
         )
-        self.assertEqual(res, b"flac")
-        mock_to_thread.assert_called_once_with(
-            bcfy_calls_collector.convert_to_flac, b"mp3", "mp3"
-        )
+        self.assertEqual(res, b"mp3")
 
-    @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector.asyncio.to_thread",
-        new_callable=AsyncMock,
-    )
-    async def test_success_m4a(self, mock_to_thread: AsyncMock) -> None:
+    async def test_success_m4a(self) -> None:
         resp = AsyncMock(status=200)
         resp.read.return_value = b"m4a"
         cm = MagicMock()
         cm.__aenter__ = AsyncMock(return_value=resp)
         cm.__aexit__ = AsyncMock(return_value=False)
         self.session.get.return_value = cm
-        mock_to_thread.return_value = b"flac"
 
-        res = await bcfy_calls_collector._download_and_convert_audio(
+        res = await bcfy_calls_collector._download_audio(
             self.session, "http://example.com/audio.m4a", self.shutdown
         )
-        self.assertEqual(res, b"flac")
-        mock_to_thread.assert_called_once_with(
-            bcfy_calls_collector.convert_to_flac, b"m4a", "m4a"
-        )
+        self.assertEqual(res, b"m4a")
 
     async def test_non_200_status(self) -> None:
         resp = AsyncMock(status=404)
@@ -301,7 +285,7 @@ class TestDownloadAndConvertAudio(unittest.IsolatedAsyncioTestCase):
         cm.__aexit__ = AsyncMock(return_value=False)
         self.session.get.return_value = cm
 
-        res = await bcfy_calls_collector._download_and_convert_audio(
+        res = await bcfy_calls_collector._download_audio(
             self.session, "http://mp3", self.shutdown
         )
         self.assertIsNone(res)
@@ -309,7 +293,7 @@ class TestDownloadAndConvertAudio(unittest.IsolatedAsyncioTestCase):
     async def test_http_exception(self) -> None:
         self.session.get.side_effect = aiohttp.ClientError()
 
-        res = await bcfy_calls_collector._download_and_convert_audio(
+        res = await bcfy_calls_collector._download_audio(
             self.session, "http://mp3", self.shutdown
         )
         self.assertIsNone(res)
@@ -322,7 +306,7 @@ class TestDownloadAndConvertAudio(unittest.IsolatedAsyncioTestCase):
         self.session.get.return_value = cm
 
         with self.assertRaisesRegex(RuntimeError, "rate limit"):
-            await bcfy_calls_collector._download_and_convert_audio(
+            await bcfy_calls_collector._download_audio(
                 self.session, "http://mp3", self.shutdown
             )
 
@@ -348,17 +332,11 @@ class TestDownloadAndConvertAudio(unittest.IsolatedAsyncioTestCase):
             ),
         ]
 
-        with patch(
-            "backend.pipeline.ingestion.collectors.bcfy_calls"
-            ".bcfy_calls_collector.asyncio.to_thread",
-            new_callable=AsyncMock,
-        ) as mock_to_thread:
-            mock_to_thread.return_value = b"flac"
-            res = await bcfy_calls_collector._download_and_convert_audio(
-                self.session, "http://mp3", self.shutdown
-            )
+        res = await bcfy_calls_collector._download_audio(
+            self.session, "http://mp3", self.shutdown
+        )
 
-        self.assertEqual(res, b"flac")
+        self.assertEqual(res, b"mp3")
         self.assertEqual(self.session.get.call_count, 2)
         mock_sleep.assert_called_once()
 
@@ -377,7 +355,7 @@ class TestDownloadAndConvertAudio(unittest.IsolatedAsyncioTestCase):
         cm.__aexit__ = AsyncMock(return_value=False)
         self.session.get.return_value = cm
 
-        res = await bcfy_calls_collector._download_and_convert_audio(
+        res = await bcfy_calls_collector._download_audio(
             self.session, "http://mp3", self.shutdown
         )
         self.assertIsNone(res)
@@ -401,7 +379,7 @@ class TestDownloadAndConvertAudio(unittest.IsolatedAsyncioTestCase):
         cm.__aexit__ = AsyncMock(return_value=False)
         self.session.get.return_value = cm
 
-        res = await bcfy_calls_collector._download_and_convert_audio(
+        res = await bcfy_calls_collector._download_audio(
             self.session, "http://mp3", self.shutdown
         )
         self.assertIsNone(res)
@@ -451,7 +429,7 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls"
-        ".bcfy_calls_collector._download_and_convert_audio",
+        ".bcfy_calls_collector._download_audio",
         new_callable=AsyncMock,
     )
     async def test_success_with_timestamps(self, mock_dl: AsyncMock) -> None:
@@ -470,7 +448,7 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls"
-        ".bcfy_calls_collector._download_and_convert_audio",
+        ".bcfy_calls_collector._download_audio",
         new_callable=AsyncMock,
     )
     async def test_success_missing_timestamps_uses_now(
@@ -497,7 +475,7 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls"
-        ".bcfy_calls_collector._download_and_convert_audio",
+        ".bcfy_calls_collector._download_audio",
         new_callable=AsyncMock,
     )
     async def test_download_returns_none_returns_none(
@@ -514,7 +492,7 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls"
-        ".bcfy_calls_collector._download_and_convert_audio",
+        ".bcfy_calls_collector._download_audio",
         new_callable=AsyncMock,
     )
     async def test_runtime_error_reraised(self, mock_dl: AsyncMock) -> None:
@@ -528,7 +506,7 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls"
-        ".bcfy_calls_collector._download_and_convert_audio",
+        ".bcfy_calls_collector._download_audio",
         new_callable=AsyncMock,
     )
     async def test_unexpected_exception_returns_none(
@@ -631,7 +609,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._download_and_convert_audio",
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._download_audio",
         new_callable=AsyncMock,
     )
     @patch(
@@ -702,7 +680,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._download_and_convert_audio",
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._download_audio",
         new_callable=AsyncMock,
     )
     @patch(
@@ -762,7 +740,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._download_and_convert_audio",
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._download_audio",
         new_callable=AsyncMock,
     )
     @patch(
@@ -916,7 +894,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._download_and_convert_audio",
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._download_audio",
         new_callable=AsyncMock,
     )
     @patch(
@@ -1019,7 +997,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._download_and_convert_audio",
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._download_audio",
         new_callable=AsyncMock,
     )
     async def test_download_audio_runtime_error_reraised(
@@ -1045,7 +1023,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._download_and_convert_audio",
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._download_audio",
         new_callable=AsyncMock,
     )
     @patch(

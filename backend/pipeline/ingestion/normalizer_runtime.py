@@ -21,6 +21,7 @@ from backend.pipeline.ingestion.retry import (
     LeaseExpiredError,
     retry_with_lease_check,
 )
+from backend.pipeline.ingestion.router import resolve_topic_path
 from backend.pipeline.ingestion.settings import NormalizerSettings
 from backend.pipeline.storage.connection import (
     close_pool,
@@ -30,6 +31,7 @@ from backend.pipeline.storage.feed_store import (
     FeedStore,
     HeartbeatResult,
     LeasedFeed,
+    SourceType,
 )
 
 FeedID = uuid.UUID
@@ -324,6 +326,12 @@ class NormalizerRuntime:
 
     # -- Per-feed pipeline ------------------------------------------------
 
+    def _get_pubsub_topic_path(self, feed: LeasedFeed) -> str:
+        """Determines the Pub/Sub topic path based on the feed source type."""
+        return resolve_topic_path(
+            feed["source_type"], self._normalizer_settings
+        )
+
     async def _process_feed(self, feed: LeasedFeed) -> None:  # noqa: PLR0912, PLR0915
         """
         Run the capture-upload-bookmark pipeline for a single feed.
@@ -336,6 +344,17 @@ class NormalizerRuntime:
         fencing_token = feed["fencing_token"]
         settings = self._normalizer_settings
         _fallback_session_id: str | None = None
+        topic_path = self._get_pubsub_topic_path(feed)
+
+        extension = "flac"
+        content_type = "audio/flac"
+
+        if feed["source_type"] == SourceType.OPENMHZ:
+            extension = "m4a"
+            content_type = "audio/mp4"
+        elif feed["source_type"] == SourceType.ECHO:
+            extension = "mp3"
+            content_type = "audio/mpeg"
 
         try:
             async for captured_chunk in self._capture_fn(
@@ -370,6 +389,8 @@ class NormalizerRuntime:
                     settings.audio_staging_bucket,
                     chunk_seq,
                     fencing_token,
+                    extension,
+                    content_type,
                     lease_lost=self._lease_lost,
                     shutdown=self._shutdown,
                     max_retries=settings.gcs_upload_max_retries,
@@ -384,7 +405,7 @@ class NormalizerRuntime:
                 )
                 message_id = await gcp_helper.publish_audio_chunk(
                     self._pubsub_client,
-                    self._normalizer_settings.pubsub_topic_path,
+                    topic_path,
                     str(feed["id"]),
                     gcs_uri,
                     start_timestamp=captured_chunk.chunk_start_time,
