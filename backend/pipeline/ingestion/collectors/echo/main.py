@@ -8,6 +8,7 @@ for downstream transcription.
 
 from __future__ import annotations
 
+import io
 import logging
 import os
 import uuid
@@ -18,6 +19,7 @@ from typing import TYPE_CHECKING
 import functions_framework
 from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
+from pydub import AudioSegment
 
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.gcp_helper import publish_audio_chunk_sync
@@ -159,6 +161,11 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
         feed_id_str = str(feed["id"])
         session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, staging_uri))
         publisher = pubsub_client.get_publisher()
+
+        # Calculate duration of MP3 bytes
+        audio = AudioSegment.from_mp3(io.BytesIO(mp3_bytes))
+        duration_ms = len(audio)
+
         publish_audio_chunk_sync(
             publisher,
             RAW_AUDIO_TOPIC,
@@ -166,6 +173,7 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
             staging_uri,
             session_id,
             start_ts,
+            duration_ms=duration_ms,
             source_type="echo",
         )
 
