@@ -125,9 +125,18 @@ export function TranscriptRow({
                   window.location.origin + window.location.pathname
                 );
                 url.searchParams.set('feedId', transcript.feedId);
-                url.searchParams.set('transmissionId', transcript.transmissionId);
-                url.searchParams.set('startTimestamp', new Date(transcript.startTimestamp).getTime().toString());
-                url.searchParams.set('endTimestamp', new Date(transcript.endTimestamp).getTime().toString());
+                url.searchParams.set(
+                  'transmissionId',
+                  transcript.transmissionId
+                );
+                url.searchParams.set(
+                  'startTimestamp',
+                  new Date(transcript.startTimestamp).getTime().toString()
+                );
+                url.searchParams.set(
+                  'endTimestamp',
+                  new Date(transcript.endTimestamp).getTime().toString()
+                );
                 navigator.clipboard.writeText(url.toString());
                 triggerSnackbar('Link copied');
               }}

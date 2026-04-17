@@ -1,6 +1,6 @@
-import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { DateTimePicker as MuiDateTimePicker } from '@mui/x-date-pickers/DateTimePicker';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 
 export interface DateTimePickerProps {
   label: string;
@@ -21,17 +21,18 @@ export function DateTimePicker({
 }: DateTimePickerProps) {
   return (
     <LocalizationProvider dateAdapter={AdapterDateFns}>
-      <MuiDateTimePicker 
-        label={label} 
-        value={dateTime} 
-        onChange={setDateTime} 
-        slotProps={{ 
-          textField: { 
+      <MuiDateTimePicker
+        label={label}
+        value={dateTime}
+        onChange={setDateTime}
+        ampm={false}
+        slotProps={{
+          textField: {
             size: 'small',
             error: error,
             helperText: helperText,
-            sx: width ? { width } : undefined
-          } 
+            sx: width ? { width } : undefined,
+          },
         }}
       />
     </LocalizationProvider>
