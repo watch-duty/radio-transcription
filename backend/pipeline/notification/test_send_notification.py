@@ -21,6 +21,7 @@ class TestSendNotification(TestCase):
     @mock.patch(
         "backend.pipeline.notification.send_notification.request_handler"
     )
+    @mock.patch.dict("os.environ", {"APP_URL": "https://app.example.com"})
     def test_send_notification(
         self, mock_request_handler: mock.Mock, mock_dedupe: mock.Mock
     ) -> None:
@@ -50,6 +51,7 @@ class TestSendNotification(TestCase):
             transcript="This is a test!",
             transmission_id="1234",
             source_audio_uris=["gs://foo/bar.flac"],
+            app_url="https://app.example.com",
         )
         expected_notification.start_audio_offset.seconds = 10
         mock_request_handler.send_notification.assert_called_once_with(

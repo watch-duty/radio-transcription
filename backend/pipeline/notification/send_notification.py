@@ -1,5 +1,6 @@
 import base64
 import logging
+import os
 
 import functions_framework
 from cloudevents.http.event import CloudEvent
@@ -56,6 +57,7 @@ def convert_to_notification(
         evaluation_decisions=evaluated_transcribed_audio.evaluation_decisions,
         canonical_audio_uri=evaluated_transcribed_audio.canonical_audio_uri,
         playback_audio_uri=evaluated_transcribed_audio.playback_audio_uri,
+        app_url=os.environ.get("APP_URL", ""),
     )
     if evaluated_transcribed_audio.start_timestamp.seconds:
         notification.start_timestamp.CopyFrom(
