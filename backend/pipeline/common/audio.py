@@ -62,10 +62,9 @@ def get_audio_duration(audio_bytes: bytes) -> int:
             ],
             input=audio_bytes,
             capture_output=True,
-            text=True,
             check=True,
         )
-        duration_sec = float(result.stdout.strip())
+        duration_sec = float(result.stdout.decode().strip())
         return int(duration_sec * 1000)
     except Exception as e:
         logger.exception("Failed to calculate duration using ffprobe: %s", e)

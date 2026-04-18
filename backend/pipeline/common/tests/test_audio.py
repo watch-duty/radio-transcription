@@ -10,7 +10,7 @@ class TestAudioUtils(unittest.TestCase):
     def test_get_audio_duration_success(self, mock_run: MagicMock) -> None:
         """Test successful duration extraction using ffprobe."""
         mock_result = MagicMock()
-        mock_result.stdout = "15.500000\n"
+        mock_result.stdout = b"15.500000\n"
         mock_run.return_value = mock_result
 
         audio_bytes = b"dummy audio"
