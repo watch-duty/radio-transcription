@@ -46,7 +46,15 @@ SELECT cron.schedule(
     'feeds-abandoned-lease-sweep',
     '30 seconds',
     $$
-    WITH abandoned AS (
+    -- AS MATERIALIZED is load-bearing: from PG 12 onward, unmarked CTEs
+    -- are inlined into the outer query when the planner judges it
+    -- profitable. Inlining a FOR UPDATE SKIP LOCKED + LIMIT CTE would
+    -- let the planner push the LIMIT inside a nested-loop join, risking
+    -- repeated scans that each lock-and-skip different rows. MATERIALIZED
+    -- pins the CTE to one execution, so exactly the 500 rows we locked
+    -- here are the ones the outer UPDATE operates on. Analogous to the
+    -- claim CTE's MATERIALIZED requirement in the scaling plan §6.
+    WITH abandoned AS MATERIALIZED (
         SELECT id, last_heartbeat FROM feeds
          WHERE status = 'active'::feed_status
            AND last_heartbeat < NOW() - INTERVAL '60 seconds'
