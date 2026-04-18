@@ -6,7 +6,7 @@
 -- Invariant: no index on the feeds table may reference a column that the
 -- hot write path mutates, because PostgreSQL's Heap-Only Tuple optimization
 -- is disabled for an UPDATE whenever any indexed column is modified. The
--- eight guarded columns below are all mutated at high frequency by claim,
+-- nine guarded columns below are all mutated at high frequency by claim,
 -- heartbeat, progress, release, or failure paths.
 --
 -- The one allow-list exception is idx_feeds_failing_retryable: it indexes
@@ -24,15 +24,22 @@
 -- and the added complexity is not worth it. Reviewers of future migrations
 -- should scan CREATE INDEX diffs for expression-form references to the
 -- guarded column list below.
-SELECT i.indexname, a.attname
-  FROM pg_indexes i
-  JOIN pg_class c ON c.relname = i.indexname
-  JOIN pg_index x ON x.indexrelid = c.oid
-  JOIN pg_attribute a ON a.attrelid = x.indrelid
- WHERE i.schemaname = 'public'
-   AND i.tablename = 'feeds'
+--
+-- Schema safety: the joins walk pg_class OIDs rather than index names. A
+-- name-based join (JOIN pg_class c ON c.relname = i.indexname) matches any
+-- index with the given name across every schema, which could surface false
+-- positives if a test or migration creates a same-named index elsewhere.
+-- The OID-based form anchors everything to the feeds table in public.
+SELECT c.relname AS indexname, a.attname
+  FROM pg_class t
+  JOIN pg_index x ON x.indrelid = t.oid
+  JOIN pg_class c ON c.oid = x.indexrelid
+  JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(x.indkey)
+ WHERE t.relname = 'feeds'
+   AND t.relnamespace = 'public'::regnamespace
    AND a.attname IN (
        'last_heartbeat',
+       'last_progress_at',
        'unclaimed_since',
        'worker_id',
        'fencing_token',
@@ -41,5 +48,4 @@ SELECT i.indexname, a.attname
        'failure_count',
        'retry_after'
    )
-   AND a.attnum = ANY(x.indkey)
-   AND i.indexname <> 'idx_feeds_failing_retryable';
+   AND c.relname <> 'idx_feeds_failing_retryable';
