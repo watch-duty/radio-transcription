@@ -47,7 +47,7 @@ SELECT cron.schedule(
     '30 seconds',
     $$
     WITH abandoned AS (
-        SELECT id FROM feeds
+        SELECT id, last_heartbeat FROM feeds
          WHERE status = 'active'::feed_status
            AND last_heartbeat < NOW() - INTERVAL '60 seconds'
          LIMIT 500
@@ -56,7 +56,18 @@ SELECT cron.schedule(
     UPDATE feeds
        SET status = 'unclaimed'::feed_status,
            worker_id = NULL,
-           unclaimed_since = NOW()
+           -- Preserve the true abandonment time rather than resetting to
+           -- NOW(). The autoscaler's oldest-unclaimed-feed-age metric is
+           -- MIN(unclaimed_since) WHERE status='unclaimed'; if the sweep
+           -- stamped NOW() on a zonal outage's ~4k abandoned feeds, the
+           -- metric would artificially reset to ~0 seconds right when
+           -- scale-out is most needed. Using the abandoned worker's
+           -- last_heartbeat is strictly better than the alternative of
+           -- NOW() - INTERVAL '60 seconds' because it also reflects the
+           -- case where the sweep runs behind (e.g., pg_cron paused),
+           -- signaling the real age of the backlog rather than a fixed
+           -- "at least 60s" floor.
+           unclaimed_since = abandoned.last_heartbeat
       FROM abandoned
      WHERE feeds.id = abandoned.id;
     $$
