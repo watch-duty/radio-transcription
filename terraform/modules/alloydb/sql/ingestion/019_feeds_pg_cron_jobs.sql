@@ -55,13 +55,13 @@ SELECT cron.schedule(
     -- here are the ones the outer UPDATE operates on. Analogous to the
     -- claim CTE's MATERIALIZED requirement in the scaling plan §6.
     WITH abandoned AS MATERIALIZED (
-        SELECT id, last_heartbeat FROM feeds
+        SELECT id, last_heartbeat FROM public.feeds
          WHERE status = 'active'::feed_status
            AND last_heartbeat < NOW() - INTERVAL '60 seconds'
          LIMIT 500
          FOR UPDATE SKIP LOCKED
     )
-    UPDATE feeds
+    UPDATE public.feeds
        SET status = 'unclaimed'::feed_status,
            worker_id = NULL,
            -- Preserve the true abandonment time rather than resetting to
@@ -97,5 +97,5 @@ SELECT cron.schedule(
 SELECT cron.schedule(
     'feeds-vac',
     '* * * * *',
-    'VACUUM feeds'
+    'VACUUM public.feeds'
 );
