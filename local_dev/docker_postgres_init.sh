@@ -6,6 +6,8 @@
 # *pg_cron* skip in .github/workflows/ci.yml's alloydb-hot-protection-check job
 # and in the integration-test fixtures.
 set -e
+# Shell globs expand in alphabetical order (matches the ingestion fileset's
+# behavior in main.tf:115 and the CI skip loop in .github/workflows/ci.yml).
 for f in /sql/*.sql; do
     name=$(basename "$f")
     case "$name" in

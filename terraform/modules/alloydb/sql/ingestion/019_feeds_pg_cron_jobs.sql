@@ -6,6 +6,17 @@
 -- Idempotent: CREATE EXTENSION IF NOT EXISTS + cron.schedule's name-based
 -- upsert semantics (calling schedule() with an existing job_name updates
 -- the existing row rather than inserting a duplicate).
+--
+-- File-naming convention (load-bearing): any migration whose application
+-- requires pg_cron must have "pg_cron" in its filename. The substring is
+-- matched by (a) the CI guard job in .github/workflows/ci.yml, (b) the
+-- docker-compose postgres init script in local_dev/docker_postgres_init.sh,
+-- and (c) the integration-test fixtures under backend/**/tests/ and
+-- integration_tests/**/conftest.py. Any of those contexts runs against a
+-- vanilla postgres image that lacks the pg_cron extension, so they skip
+-- files matching *pg_cron*. If a future migration breaks this convention,
+-- local tests and docker-compose will crash at CREATE EXTENSION with no
+-- useful hint about where to apply the fix.
 CREATE EXTENSION IF NOT EXISTS pg_cron;
 
 -- Abandoned-lease sweep. Runs every 30 s, reclaims at most 500 rows per

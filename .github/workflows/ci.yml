@@ -286,7 +286,10 @@ jobs:
         working-directory: terraform/modules/alloydb/sql/ingestion
         run: |
           set -euo pipefail
-          for f in $(ls *.sql | sort); do
+          # Bash expands globs alphabetically in the current locale, so no
+          # explicit sort is needed (and parsing `ls` is fragile with odd
+          # filenames).
+          for f in *.sql; do
             case "$f" in
               *pg_cron*)
                 echo "Skipping $f (pg_cron extension not installed in CI)";

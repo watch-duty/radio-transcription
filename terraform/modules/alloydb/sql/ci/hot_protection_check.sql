@@ -14,6 +14,16 @@
 -- (rare) failure-to-retry transition. Partial-index bloat there is
 -- operationally acceptable given the volume; no other index on retry_after
 -- is permitted.
+--
+-- Known blindspot: this query matches indexed columns via pg_index.indkey,
+-- which stores 0 for expression-index entries (the real expression lives in
+-- pg_index.indexprs as a pg_node_tree). An expression index such as
+-- CREATE INDEX ... ON feeds ((COALESCE(worker_id, ''))) would therefore
+-- slip past this check. Parsing indexprs to catch that case is deliberately
+-- not done — expression indexes on these columns are unlikely in practice
+-- and the added complexity is not worth it. Reviewers of future migrations
+-- should scan CREATE INDEX diffs for expression-form references to the
+-- guarded column list below.
 SELECT i.indexname, a.attname
   FROM pg_indexes i
   JOIN pg_class c ON c.relname = i.indexname
