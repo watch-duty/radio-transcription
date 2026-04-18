@@ -125,10 +125,14 @@ class TestHandle:
             patch(
                 "backend.pipeline.ingestion.collectors.echo.main.pubsub_client"
             ) as mock_pubsub,
+            patch(
+                "backend.pipeline.ingestion.collectors.echo.main.get_audio_duration"
+            ) as mock_get_duration,
         ):
             mock_pubsub.get_publisher.return_value = mock_publisher
             mock_gcs.bucket.return_value.blob.return_value.download_as_bytes.return_value = b"mp3-placeholder"
             mock_gcs.bucket.return_value.blob.return_value.upload_from_string = MagicMock()
+            mock_get_duration.return_value = 15000
 
             yield {
                 "store": mock_store,
