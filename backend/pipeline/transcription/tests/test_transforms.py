@@ -22,6 +22,7 @@ from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.transcription.constants import DEAD_LETTER_QUEUE_TAG
 from backend.pipeline.transcription.datatypes import (
     AudioChunkData,
+    ChunkMetadata,
     DownloadedChunkPayload,
     FlushRequest,
     OrderRestorerConfig,
@@ -180,9 +181,10 @@ class AddEventTimestampTest(unittest.TestCase):
             result[0].value,  # type: ignore
             (
                 "test-feed",
-                (
-                    "gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
-                    "mock-session-id",
+                ChunkMetadata(
+                    gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
+                    session_id="mock-session-id",
+                    duration_ms=0,
                 ),
             ),
         )
@@ -249,12 +251,7 @@ class OrderRestorerTest(unittest.TestCase):
                     coder=beam.coders.TupleCoder(
                         (
                             beam.coders.StrUtf8Coder(),
-                            beam.coders.TupleCoder(
-                                (
-                                    beam.coders.StrUtf8Coder(),
-                                    beam.coders.StrUtf8Coder(),
-                                )
-                            ),
+                            beam.coders.PickleCoder(),
                         )
                     )
                 )
@@ -262,7 +259,12 @@ class OrderRestorerTest(unittest.TestCase):
                 .add_elements(
                     [
                         TimestampedValue(
-                            ("feed-1", ("gs://b/100-uuid1.flac", "session-A")),
+                            (
+                                "feed-1",
+                                ChunkMetadata(
+                                    "gs://b/100-uuid1.flac", "session-A", 15000
+                                ),
+                            ),
                             100,
                         )
                     ]
@@ -271,7 +273,12 @@ class OrderRestorerTest(unittest.TestCase):
                 .add_elements(
                     [
                         TimestampedValue(
-                            ("feed-1", ("gs://b/130-uuid3.flac", "session-A")),
+                            (
+                                "feed-1",
+                                ChunkMetadata(
+                                    "gs://b/130-uuid3.flac", "session-A", 15000
+                                ),
+                            ),
                             130,
                         )
                     ]
@@ -280,7 +287,12 @@ class OrderRestorerTest(unittest.TestCase):
                 .add_elements(
                     [
                         TimestampedValue(
-                            ("feed-1", ("gs://b/115-uuid2.flac", "session-A")),
+                            (
+                                "feed-1",
+                                ChunkMetadata(
+                                    "gs://b/115-uuid2.flac", "session-A", 15000
+                                ),
+                            ),
                             115,
                         )
                     ]
@@ -314,12 +326,7 @@ class OrderRestorerTest(unittest.TestCase):
                     coder=beam.coders.TupleCoder(
                         (
                             beam.coders.StrUtf8Coder(),
-                            beam.coders.TupleCoder(
-                                (
-                                    beam.coders.StrUtf8Coder(),
-                                    beam.coders.StrUtf8Coder(),
-                                )
-                            ),
+                            beam.coders.PickleCoder(),
                         )
                     )
                 )
@@ -329,7 +336,11 @@ class OrderRestorerTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-1",
-                                ("gs://b/100-11111111.flac", "session-A"),
+                                ChunkMetadata(
+                                    "gs://b/100-11111111.flac",
+                                    "session-A",
+                                    15000,
+                                ),
                             ),
                             100,
                         )
@@ -341,7 +352,11 @@ class OrderRestorerTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-1",
-                                ("gs://b/130-33333333.flac", "session-A"),
+                                ChunkMetadata(
+                                    "gs://b/130-33333333.flac",
+                                    "session-A",
+                                    15000,
+                                ),
                             ),
                             130,
                         )
@@ -355,7 +370,11 @@ class OrderRestorerTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-1",
-                                ("gs://b/115-22222222.flac", "session-A"),
+                                ChunkMetadata(
+                                    "gs://b/115-22222222.flac",
+                                    "session-A",
+                                    15000,
+                                ),
                             ),
                             115,
                         )
@@ -448,12 +467,7 @@ class StitchAudioTest(unittest.TestCase):
                     coder=beam.coders.TupleCoder(
                         (
                             beam.coders.StrUtf8Coder(),
-                            beam.coders.TupleCoder(
-                                (
-                                    beam.coders.StrUtf8Coder(),
-                                    beam.coders.PickleCoder(),
-                                )
-                            ),
+                            beam.coders.PickleCoder(),
                         )
                     )
                 )
@@ -463,7 +477,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                (
+                                DownloadedChunkPayload(
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/100-11111111-1111-1111-1111-111111111111.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/100-11111111-1111-1111-1111-111111111111.flac"
@@ -480,7 +494,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                (
+                                DownloadedChunkPayload(
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/115-22222222-2222-2222-2222-222222222222.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/115-22222222-2222-2222-2222-222222222222.flac"
@@ -497,7 +511,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                (
+                                DownloadedChunkPayload(
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/130-33333333-3333-3333-3333-333333333333.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/130-33333333-3333-3333-3333-333333333333.flac"
@@ -514,7 +528,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                (
+                                DownloadedChunkPayload(
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/150-44444444-4444-4444-4444-444444444444.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/150-44444444-4444-4444-4444-444444444444.flac"
@@ -531,7 +545,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                (
+                                DownloadedChunkPayload(
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/160-55555555-5555-5555-5555-555555555555.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/160-55555555-5555-5555-5555-555555555555.flac"
@@ -548,7 +562,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                (
+                                DownloadedChunkPayload(
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/190-66666666-6666-6666-6666-666666666666.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/190-66666666-6666-6666-6666-666666666666.flac"
@@ -662,12 +676,7 @@ class StitchAudioTest(unittest.TestCase):
                     coder=beam.coders.TupleCoder(
                         (
                             beam.coders.StrUtf8Coder(),
-                            beam.coders.TupleCoder(
-                                (
-                                    beam.coders.StrUtf8Coder(),
-                                    beam.coders.PickleCoder(),
-                                )
-                            ),
+                            beam.coders.PickleCoder(),
                         )
                     )
                 )
@@ -677,7 +686,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                (
+                                DownloadedChunkPayload(
                                     "gs://fake-bucket/100-11111111-1111-1111-1111-111111111111.flac",
                                     mock_download(
                                         "gs://fake-bucket/100-11111111-1111-1111-1111-111111111111.flac"
@@ -694,7 +703,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                (
+                                DownloadedChunkPayload(
                                     "gs://fake-bucket/130-33333333-3333-3333-3333-333333333333.flac",
                                     mock_download(
                                         "gs://fake-bucket/130-33333333-3333-3333-3333-333333333333.flac"
@@ -711,7 +720,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                (
+                                DownloadedChunkPayload(
                                     "gs://fake-bucket/115-22222222-2222-2222-2222-222222222222.flac",
                                     mock_download(
                                         "gs://fake-bucket/115-22222222-2222-2222-2222-222222222222.flac"
@@ -815,12 +824,7 @@ class StitchAudioTest(unittest.TestCase):
                     coder=beam.coders.TupleCoder(
                         (
                             beam.coders.StrUtf8Coder(),
-                            beam.coders.TupleCoder(
-                                (
-                                    beam.coders.StrUtf8Coder(),
-                                    beam.coders.PickleCoder(),
-                                )
-                            ),
+                            beam.coders.PickleCoder(),
                         )
                     )
                 )
@@ -830,7 +834,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-max",
-                                (
+                                DownloadedChunkPayload(
                                     "gs://fake-bucket/ab12/feed-max/2026-03-06/100-77777777-7777-7777-7777-777777777777.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-max/2026-03-06/100-77777777-7777-7777-7777-777777777777.flac"
@@ -847,7 +851,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-max",
-                                (
+                                DownloadedChunkPayload(
                                     "gs://fake-bucket/ab12/feed-max/2026-03-06/115-88888888-8888-8888-8888-888888888888.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-max/2026-03-06/115-88888888-8888-8888-8888-888888888888.flac"
@@ -864,7 +868,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-max",
-                                (
+                                DownloadedChunkPayload(
                                     "gs://fake-bucket/ab12/feed-max/2026-03-06/130-99999999-9999-9999-9999-999999999999.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-max/2026-03-06/130-99999999-9999-9999-9999-999999999999.flac"
@@ -881,7 +885,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-max",
-                                (
+                                DownloadedChunkPayload(
                                     "gs://fake-bucket/ab12/feed-max/2026-03-06/160-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-max/2026-03-06/160-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac"
@@ -989,7 +993,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                (
+                                DownloadedChunkPayload(
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/101-11111111-1111-1111-1111-111111111111.flac",
                                     mock_processor_inst.download_audio_and_detect.return_value,
                                 ),
@@ -1051,7 +1055,15 @@ class StitchAudioTest(unittest.TestCase):
                 input_elements = [
                     (
                         "feed-123",
-                        "gs://fake-bucket/123-00000000-0000-0000-0000-000000000000.flac",
+                        DownloadedChunkPayload(
+                            "gs://fake-bucket/123-00000000-0000-0000-0000-000000000000.flac",
+                            AudioChunkData(
+                                start_ms=0,
+                                audio=AudioSegment.silent(duration=0),
+                                speech_segments=[],
+                                gcs_uri="gs://fake-bucket/123-00000000-0000-0000-0000-000000000000.flac",
+                            ),
+                        ),
                     )
                 ]
                 (
@@ -1262,7 +1274,7 @@ class DownloadAudioTest(unittest.TestCase):
                     [
                         (
                             "feed-123",
-                            (
+                            DownloadedChunkPayload(
                                 "gs://fake-bucket/100-11111111.flac",
                                 mock_inst.download_audio_and_detect.return_value,
                             ),
