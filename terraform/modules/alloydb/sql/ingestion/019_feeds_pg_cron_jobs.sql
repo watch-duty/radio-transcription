@@ -73,12 +73,21 @@ SELECT cron.schedule(
     $$
 );
 
--- Minute-cadence VACUUM (ANALYZE). Required because heap_page_prune_opt
--- reclaims tuple bytes but does not shrink the line-pointer (ItemId) array;
--- only VACUUM pushes LP_DEAD → LP_UNUSED. On a 12k-row / ~430-page table
--- each run is tens of milliseconds. See scaling plan §6.
+-- Minute-cadence VACUUM. Required because heap_page_prune_opt reclaims
+-- tuple bytes but does not shrink the line-pointer (ItemId) array; only
+-- VACUUM pushes LP_DEAD → LP_UNUSED. On a 12k-row / ~430-page table each
+-- run is tens of milliseconds. See scaling plan §6.
+--
+-- Deliberately NOT "VACUUM (ANALYZE)" as the scaling plan's verbatim SQL
+-- suggested. ANALYZE every 60 seconds is redundant with autovacuum's
+-- analyze path (autovacuum checks per naptime, default 60s) and
+-- invalidates cached plans fleet-wide on every tick — a measurable cost
+-- for the claim and heartbeat queries that re-plan from cold against a
+-- freshly-analyzed pg_statistic. Bare VACUUM fulfills this job's sole
+-- stated purpose (LP-array maintenance) and leaves statistics-freshness
+-- to autovacuum, where it belongs.
 SELECT cron.schedule(
     'feeds-vac',
     '* * * * *',
-    'VACUUM (ANALYZE) feeds'
+    'VACUUM feeds'
 );
