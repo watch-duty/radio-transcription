@@ -31,10 +31,10 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(cm.records), 1)
         record = cm.records[0]
         # extra fields are set dynamically on LogRecord by the logger
-        self.assertEqual(getattr(record, "event_type"), "feed_quarantined")
-        self.assertEqual(getattr(record, "feed_id"), "abc-123")
-        self.assertEqual(getattr(record, "feed_name"), "Test Feed")
-        self.assertEqual(getattr(record, "source_type"), "bcfy_feeds")
+        self.assertEqual(getattr(record, "event_type"), "feed_quarantined")  # noqa: B009
+        self.assertEqual(getattr(record, "feed_id"), "abc-123")  # noqa: B009
+        self.assertEqual(getattr(record, "feed_name"), "Test Feed")  # noqa: B009
+        self.assertEqual(getattr(record, "source_type"), "bcfy_feeds")  # noqa: B009
 
     async def test_calls_write_time_series_when_configured(self) -> None:
         """Metric is written when a project ID is configured."""

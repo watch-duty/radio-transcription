@@ -40,7 +40,7 @@ class TestCallEvent(unittest.TestCase):
             emergency=False,
         )
         with self.assertRaises(AttributeError):
-            setattr(event, "id", "xyz")
+            setattr(event, "id", "xyz")  # noqa: B010
 
     def test_transport_factory_type_is_importable(self) -> None:
         self.assertTrue(TransportFactory is not None)
