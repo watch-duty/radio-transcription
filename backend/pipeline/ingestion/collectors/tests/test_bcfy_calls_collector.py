@@ -394,7 +394,7 @@ class TestExtractCallsFromResponse(unittest.TestCase):
 
     def test_non_dict_input(self) -> None:
         res = bcfy_calls_collector._extract_calls_from_response(
-            [{"url": "http://1"}]  # type: ignore[arg-type]
+            [{"url": "http://1"}]  # type: ignore
         )
         self.assertEqual(res, [])
 
