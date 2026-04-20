@@ -36,3 +36,43 @@ def generate_transmission_id(feed_id: str, start_ms: int, end_ms: int) -> str:
     """
     deterministic_id = f"{feed_id}_{start_ms}_{end_ms}"
     return str(uuid.uuid5(uuid.NAMESPACE_OID, deterministic_id))
+
+
+import tempfile
+import subprocess
+import os
+import numpy as np
+import soundfile as sf
+
+
+def export_flac_from_numpy(
+    audio_buffer: np.ndarray, sample_rate: int = 16000
+) -> bytes:
+    """Exports a NumPy array to FLAC bytes."""
+    buf = io.BytesIO()
+    sf.write(buf, audio_buffer, sample_rate, format="FLAC")
+    return buf.getvalue()
+
+
+def export_m4a_from_numpy(
+    audio_buffer: np.ndarray, sample_rate: int = 16000
+) -> bytes:
+    """Exports a NumPy array to M4A bytes using ffmpeg."""
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as wav_file:
+        wav_path = wav_file.name
+        sf.write(wav_path, audio_buffer, sample_rate)
+
+    m4a_path = wav_path.replace(".wav", ".m4a")
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", wav_path, "-c:a", "aac", m4a_path],
+            check=True,
+            capture_output=True,
+        )
+        with open(m4a_path, "rb") as f:
+            return f.read()
+    finally:
+        if os.path.exists(wav_path):
+            os.remove(wav_path)
+        if os.path.exists(m4a_path):
+            os.remove(m4a_path)
