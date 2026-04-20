@@ -16,6 +16,7 @@ import {
   Path,
   Post,
   Put,
+  Queries,
   Res,
   Response,
   Route,
@@ -207,6 +208,13 @@ function convertRuleUpdate(update: RuleUpdate): RuleUpdateBackend {
   return result;
 }
 
+export class ListRulesQueryParams {
+  /**
+   * Optional list of rule IDs to filter by.
+   */
+  ruleIds?: string[];
+}
+
 @Route('api/v1/rules')
 @Tags('Rules')
 @Response(401, 'Unauthorized')
@@ -219,13 +227,22 @@ export class RulesController extends Controller {
   @Get('')
   @Security('google_id_token')
   @Extension('x-google-backend', 'radio-transcription-api')
-  public async listRules(): Promise<Rule[]> {
+  public async listRules(
+    @Queries() query: ListRulesQueryParams
+  ): Promise<Rule[]> {
     const client = await this.getClient();
     try {
+      const params = new URLSearchParams();
+      if (query.ruleIds) {
+        query.ruleIds.forEach((id) => params.append('rule_ids', id));
+      }
+
       const response = await client.request({
-        url: RULES_API_URL!,
+        url: RULES_API_URL,
         method: 'GET',
+        params: params,
       });
+
       const data = response.data as RuleResponse[];
       return data.map(convertRuleResponse);
     } catch (error: unknown) {

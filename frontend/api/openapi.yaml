@@ -201,6 +201,15 @@ components:
         - metadata
       type: object
       additionalProperties: false
+    ListRulesQueryParams:
+      properties:
+        ruleIds:
+          items:
+            type: string
+          type: array
+          description: Optional list of rule IDs to filter by.
+      type: object
+      additionalProperties: false
     RuleCreate:
       properties:
         ruleName:
@@ -370,7 +379,15 @@ paths:
         - Rules
       security:
         - google_id_token: []
-      parameters: []
+      parameters:
+        - description: Optional list of rule IDs to filter by.
+          in: query
+          name: ruleIds
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
       x-google-backend: radio-transcription-api
     post:
       operationId: CreateRule

@@ -76,6 +76,24 @@ async def test_list_rules(store: RulesStore) -> None:
     assert "Rule 2" in names
 
 
+async def test_list_rules_with_ids(store: RulesStore) -> None:
+    """Verify listing rules filtered by IDs."""
+    r1 = await store.create_rule(_create_sample_rule_in("Rule 1"))
+    r2 = await store.create_rule(_create_sample_rule_in("Rule 2"))
+    await store.create_rule(_create_sample_rule_in("Rule 3"))
+
+    rules = await store.list_rules(rule_ids=[r1.rule_id, r2.rule_id])
+    assert len(rules) == 2
+    ids = {r.rule_id for r in rules}
+    assert r1.rule_id in ids
+    assert r2.rule_id in ids
+
+    names = {r.rule_name for r in rules}
+    assert "Rule 1" in names
+    assert "Rule 2" in names
+    assert "Rule 3" not in names
+
+
 async def test_update_rule(store: RulesStore) -> None:
     """Verify partial updates to a rule."""
     created = await store.create_rule(_create_sample_rule_in("Old Name"))

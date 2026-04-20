@@ -70,9 +70,15 @@ class RulesStore:
 
         return Rule.model_validate(self._prepare_row(row))
 
-    async def list_rules(self) -> list[Rule]:
-        """List all transcription rules."""
-        rows = await self._pool.fetch(rules_queries.LIST_RULES_SQL)
+    async def list_rules(self, rule_ids: list[str] | None = None) -> list[Rule]:
+        """List all transcription rules, optionally filtered by rule IDs."""
+        if rule_ids:
+            uids = [uuid.UUID(rid) for rid in rule_ids]
+            rows = await self._pool.fetch(
+                rules_queries.GET_RULES_BY_IDS_SQL, uids
+            )
+        else:
+            rows = await self._pool.fetch(rules_queries.LIST_RULES_SQL)
         return [Rule.model_validate(self._prepare_row(row)) for row in rows]
 
     async def update_rule(

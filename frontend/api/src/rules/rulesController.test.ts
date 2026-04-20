@@ -22,6 +22,7 @@ vi.mock('google-auth-library', () => {
 describe('RulesController', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockRequest.mockReset();
   });
 
   const mockBackendRule = {
@@ -73,12 +74,13 @@ describe('RulesController', () => {
       mockRequest.mockResolvedValueOnce({ data: [mockBackendRule] });
 
       const controller = new RulesController();
-      const result = await controller.listRules();
+      const result = await controller.listRules({});
 
       expect(result).toEqual([expectedFrontendRule]);
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://rules-api.example.com',
         method: 'GET',
+        params: expect.any(URLSearchParams),
       });
     });
 
@@ -86,7 +88,7 @@ describe('RulesController', () => {
       mockRequest.mockRejectedValueOnce(new Error('Network Error'));
       const controller = new RulesController();
 
-      await expect(controller.listRules()).rejects.toThrow(
+      await expect(controller.listRules({})).rejects.toThrow(
         'Error fetching rules'
       );
     });
