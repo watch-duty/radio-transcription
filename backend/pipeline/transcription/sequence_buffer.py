@@ -28,6 +28,7 @@ class SequenceBuffer:
         gcs_uri: str,
         expected_next_ts: int | None,
         buffer_elements: list[BufferedChunk],
+        chunk_duration_ms: int | None = None,
     ) -> tuple[int, list[BufferedChunk], list[str], bool, bool]:
         """Processes a single incoming audio chunk against the expected sequence progression.
 
@@ -44,16 +45,21 @@ class SequenceBuffer:
         if expected_next_ts is None:
             expected_next_ts = current_ts_ms
 
-        # We allow a small epsilon to absorb float arithmetic truncation (e.g. 14.999s vs 15.000s).
+        # We allow a small epsilon to absorb float arithmetic tolerance.
         epsilon_ms = DEFAULT_FLOAT_TOLERANCE_MS
         difference = current_ts_ms - expected_next_ts
 
         if abs(difference) <= epsilon_ms:
             # HAPP PATH: The chunk matches our mathematical expectation exactly.
             to_emit.append(gcs_uri)
-            # Advance the expected timestamp strictly by perfect arithmetic (e.g. +15,000ms)
-            # rather than measuring the audio duration exactly, to prevent drift.
-            expected_next_ts = current_ts_ms + self.config.chunk_duration_ms
+            # Advance the expected timestamp. Use provided duration if available (for varying lengths),
+            # otherwise fallback to fixed config duration.
+            duration = (
+                chunk_duration_ms
+                if chunk_duration_ms is not None
+                else self.config.chunk_duration_ms
+            )
+            expected_next_ts = current_ts_ms + duration
 
             # Now that the sequence advanced, see if we already possess the newly expected chunks
             # that were previously held in the buffer.

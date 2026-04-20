@@ -13,8 +13,12 @@ class TestGcsClient(unittest.IsolatedAsyncioTestCase):
     @mock.patch(
         "backend.pipeline.common.clients.gcs_client.aiohttp.ClientSession"
     )
+    @mock.patch(
+        "backend.pipeline.common.clients.gcs_client.aiohttp.TCPConnector"
+    )
     async def test_get_storage_is_lazy_and_reused(
         self,
+        mock_tcp_connector: mock.MagicMock,
         mock_client_session: mock.MagicMock,
         mock_storage_cls: mock.MagicMock,
     ) -> None:
@@ -31,7 +35,10 @@ class TestGcsClient(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(first, second)
         self.assertIs(first, mock_storage)
-        mock_client_session.assert_called_once_with()
+        mock_tcp_connector.assert_called_once_with(limit=100, limit_per_host=0)
+        mock_client_session.assert_called_once_with(
+            connector=mock_tcp_connector.return_value
+        )
         mock_storage_cls.assert_called_once_with(session=mock_session)
 
     @mock.patch("backend.pipeline.common.clients.gcs_client.Storage")

@@ -33,12 +33,6 @@
       "isOptional": true
     },
     {
-      "name": "metrics_exporter_type",
-      "label": "Metrics Exporter Type",
-      "helpText": "Comma-separated metrics platforms (e.g. 'gcp'). Defaults to 'none'.",
-      "isOptional": true
-    },
-    {
       "name": "dlq_topic",
       "label": "DLQ Topic",
       "helpText": "Pub/Sub topic to route Dead-Letter Queue (DLQ) processing failures.",

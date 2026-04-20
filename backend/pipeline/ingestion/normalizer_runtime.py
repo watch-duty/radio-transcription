@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator, Callable
 
 import aiohttp
 import asyncpg
+import uvloop
 from aiohttp import web
 
 from backend.pipeline.common import gcp_helper
@@ -109,7 +110,13 @@ class NormalizerRuntime:
         self._heartbeat_thread: threading.Thread | None = None
         self._store: FeedStore = None  # type: ignore # set in _main()
         self._heartbeat_store: FeedStore = None  # type: ignore # set in _main()
-        self._gcs_client = gcs_client.GcsClient()
+        # Size the aiohttp connection pool to match the feed concurrency so
+        # GCS uploads are never queued waiting for a free connection slot.
+        # Without this, the default limit of 100 means ~150 uploads always
+        # queue at the 250-feed target, adding latency and event-loop overhead.
+        self._gcs_client = gcs_client.GcsClient(
+            max_connections=self._normalizer_settings.max_feeds_per_worker,
+        )
         self._pubsub_client = pubsub_client.PubSubClient()
         # Shared state published to the /healthz handler. feed_tasks is held
         # by reference to _feed_tasks so len() reflects live leasing state.
@@ -122,14 +129,17 @@ class NormalizerRuntime:
         """
         Start the runtime. Blocks until shutdown completes.
 
-        Sets up logging, then delegates to the async ``_main`` coroutine.
+        Uses uvloop as the event loop implementation. uvloop is a
+        drop-in asyncio replacement built on libuv (C extension) that
+        reduces per-callback scheduling overhead, which matters at 250
+        concurrent feed tasks each generating frequent I/O completions.
         """
         logger.info(
             "Starting NormalizerRuntime worker_id=%s max_feeds=%d",
             self._normalizer_settings.worker_id,
             self._normalizer_settings.max_feeds_per_worker,
         )
-        asyncio.run(self._main())
+        asyncio.run(self._main(), loop_factory=uvloop.new_event_loop)
 
     # -- Async core -------------------------------------------------------
 
@@ -403,6 +413,13 @@ class NormalizerRuntime:
                     ),
                     operation_name="GCS upload",
                 )
+                duration_ms = int(
+                    (
+                        captured_chunk.chunk_end_time
+                        - captured_chunk.chunk_start_time
+                    ).total_seconds()
+                    * 1000
+                )
                 message_id = await gcp_helper.publish_audio_chunk(
                     self._pubsub_client,
                     topic_path,
@@ -411,6 +428,7 @@ class NormalizerRuntime:
                     start_timestamp=captured_chunk.chunk_start_time,
                     session_id=session_id,
                     source_type=feed["source_type"],
+                    duration_ms=duration_ms,
                 )
                 logger.info(
                     "Published message %s for feed %s", message_id, feed["name"]

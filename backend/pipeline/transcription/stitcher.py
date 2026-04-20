@@ -28,6 +28,7 @@ from backend.pipeline.transcription.constants import (
 from backend.pipeline.transcription.datatypes import (
     AppendBufferAction,
     AudioChunkData,
+    DownloadedChunkPayload,
     DropAction,
     FlushAction,
     FlushRequest,
@@ -84,7 +85,7 @@ SEQUENTIAL_BARRIER_SPEC = ReadModifyWriteStateSpec(
 SEQUENTIAL_BARRIER_STATE = beam.DoFn.StateParam(SEQUENTIAL_BARRIER_SPEC)
 
 
-@beam.typehints.with_input_types(tuple[str, tuple[str, AudioChunkData]])
+@beam.typehints.with_input_types(tuple[str, DownloadedChunkPayload])
 @beam.typehints.with_output_types(tuple[str, FlushRequest])
 class StitchAudioFn(beam.DoFn):
     """A stateful Beam DoFn responsible for maintaining chronological continuous audio state per radio feed.
@@ -308,13 +309,15 @@ class StitchAudioFn(beam.DoFn):
     @override
     def process(  # type: ignore[override]
         self,
-        element: tuple[str, tuple[str, AudioChunkData]],
+        element: tuple[str, DownloadedChunkPayload],
         transmission_buffer: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         stale_timer: RuntimeTimer = STALE_TIMER_PARAM,  # type: ignore
     ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
         """Delegates the incoming audio chunk to the internal state machine for evaluation."""
-        key, (gcs_path, chunk_data) = element
+        key, payload = element
+        gcs_path = payload.gcs_uri
+        chunk_data = payload.chunk_data
 
         try:
             yield from self._process_audio_chunk(
