@@ -497,7 +497,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         if feed is None:
             msg = "Expected a LeasedFeed, got None"
             raise AssertionError(msg)
-        
+
         # Mock missing source_feed_id on the loaded feed object
         feed["source_feed_id"] = None
 
