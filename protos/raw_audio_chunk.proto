@@ -16,4 +16,7 @@ message AudioChunk {
 
   // The duration of the audio chunk in milliseconds.
   int32 duration_ms = 4;
+
+  // The human-readable name of the radio feed that produced this chunk.
+  string feed_name = 5;
 }

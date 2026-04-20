@@ -173,6 +173,7 @@ class StitchAudioFn(beam.DoFn):
                     start_audio_offset_ms=action.start_audio_offset_ms,
                     end_audio_offset_ms=action.end_audio_offset_ms,
                     transmission_id=transmission_id,
+                    feed_name=action.feed_name,
                 ),
             )
         else:
@@ -201,6 +202,7 @@ class StitchAudioFn(beam.DoFn):
             end_audio_offset_ms=ctx.end_audio_offset_ms,
             buffer_start_time_ms=ctx.buffer_start_time_ms,
             buffer_duration_ms=ctx.buffer_duration_ms,
+            feed_name=ctx.feed_name,
         )
         transmission_context.write(new_context)
 
@@ -288,6 +290,7 @@ class StitchAudioFn(beam.DoFn):
             end_audio_offset_ms=curr_context.end_audio_offset_ms,
             buffer_start_time_ms=curr_context.buffer_start_time_ms,
             buffer_duration_ms=curr_context.buffer_duration_ms,
+            feed_name=chunk_data.feed_name or curr_context.feed_name,
         )
 
         pipeline = AudioStitchingStateMachine(self.config)
@@ -394,6 +397,7 @@ class StitchAudioFn(beam.DoFn):
                         start_audio_offset_ms=curr_context.start_audio_offset_ms,
                         end_audio_offset_ms=curr_context.end_audio_offset_ms,
                         transmission_id=transmission_id,
+                        feed_name=curr_context.feed_name,
                     ),
                 )
             except Exception as e:
@@ -560,6 +564,7 @@ class TranscribeAudioFn(beam.DoFn):
             end_audio_offset_ms=request.end_audio_offset_ms,
             canonical_audio_uri=canonical_audio_uri,
             playback_audio_uri=playback_audio_uri,
+            feed_name=request.feed_name,
         )
 
     @override

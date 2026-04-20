@@ -43,6 +43,7 @@ class AudioChunkData:
     audio: AudioSegment
     speech_segments: list[TimeRange]
     gcs_uri: str
+    feed_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,7 @@ class ChunkMetadata:
     gcs_uri: str
     session_id: str
     duration_ms: int
+    feed_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -77,6 +79,7 @@ class TranscriptionResult:
     end_audio_offset_ms: int | None = None
     canonical_audio_uri: str | None = None
     playback_audio_uri: str | None = None
+    feed_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -97,6 +100,7 @@ class TransmissionContext:
     start_audio_offset_ms: int | None = None
     end_audio_offset_ms: int | None = None
     buffer_duration_ms: int = 0
+    feed_name: str = ""
 
 
 @dataclass
@@ -117,6 +121,7 @@ class StitcherContext:
     start_audio_offset_ms: int | None = None
     end_audio_offset_ms: int | None = None
     buffer_duration_ms: int = 0
+    feed_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -183,6 +188,7 @@ class FlushRequest:
     missing_post_context: bool = False
     start_audio_offset_ms: int | None = None
     end_audio_offset_ms: int | None = None
+    feed_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -219,6 +225,7 @@ class FlushAction(StateMachineAction):
     end_audio_offset_ms: int | None
     clear_state: bool = True
     isolated_audio_buffer: list[AudioSegment] | None = None
+    feed_name: str = ""
 
 
 @dataclass(frozen=True)

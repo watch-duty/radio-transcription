@@ -169,6 +169,7 @@ class AddEventTimestampTest(unittest.TestCase):
         chunk = AudioChunk(
             gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
             session_id="mock-session-id",
+            feed_name="Test Feed",
         )
         chunk.start_timestamp.FromMicroseconds(1678886400000000)
         element = ("test-feed", chunk.SerializeToString())
@@ -185,6 +186,7 @@ class AddEventTimestampTest(unittest.TestCase):
                     gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
                     session_id="mock-session-id",
                     duration_ms=0,
+                    feed_name="Test Feed",
                 ),
             ),
         )
@@ -215,6 +217,7 @@ class BypassStitchingTest(unittest.TestCase):
             audio=AudioSegment.silent(duration=audio_len_ms),
             speech_segments=[],
             gcs_uri=gcs_path,
+            feed_name="test-feed-name",
         )
         element = (feed_id, DownloadedChunkPayload(gcs_path, chunk_data))
 
@@ -233,6 +236,7 @@ class BypassStitchingTest(unittest.TestCase):
         self.assertFalse(flush_request.missing_prior_context)
         self.assertFalse(flush_request.missing_post_context)
         self.assertIsNotNone(flush_request.transmission_id)
+        self.assertEqual(flush_request.feed_name, "test-feed-name")
 
 
 class OrderRestorerTest(unittest.TestCase):
@@ -306,9 +310,9 @@ class OrderRestorerTest(unittest.TestCase):
                 restored,
                 equal_to(
                     [
-                        ("feed-1", "gs://b/100-uuid1.flac"),
-                        ("feed-1", "gs://b/115-uuid2.flac"),
-                        ("feed-1", "gs://b/130-uuid3.flac"),
+                        ("feed-1", ("gs://b/100-uuid1.flac", "")),
+                        ("feed-1", ("gs://b/115-uuid2.flac", "")),
+                        ("feed-1", ("gs://b/130-uuid3.flac", "")),
                     ]
                 ),
             )
@@ -390,9 +394,9 @@ class OrderRestorerTest(unittest.TestCase):
                 restored,
                 equal_to(
                     [
-                        ("feed-1", "gs://b/100-11111111.flac"),
-                        ("feed-1", "gs://b/130-33333333.flac"),
-                        ("feed-1", "gs://b/115-22222222.flac"),
+                        ("feed-1", ("gs://b/100-11111111.flac", "")),
+                        ("feed-1", ("gs://b/130-33333333.flac", "")),
+                        ("feed-1", ("gs://b/115-22222222.flac", "")),
                     ]
                 ),
             )
@@ -1261,8 +1265,8 @@ class DownloadAudioTest(unittest.TestCase):
             elements = (
                 p
                 | beam.Create(
-                    [("feed-123", "gs://fake-bucket/100-11111111.flac")]
-                ).with_output_types(tuple[str, str])
+                    [("feed-123", ("gs://fake-bucket/100-11111111.flac", ""))]
+                ).with_output_types(tuple[str, tuple[str, str]])
                 | beam.Map(lambda x: TimestampedValue(x, 100))
             )
 

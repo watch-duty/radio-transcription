@@ -129,6 +129,7 @@ class AudioStitchingStateMachine:
             missing_post_context=missing_post_context,
             start_audio_offset_ms=ctx.start_audio_offset_ms,
             end_audio_offset_ms=None,
+            feed_name=ctx.feed_name,
         )
 
     def _process_late_chunk_independently(
@@ -143,6 +144,7 @@ class AudioStitchingStateMachine:
             contributing_audio_uris=[],
             file_start_ms=chunk_data.start_ms,
             missing_prior_context=True,
+            feed_name=ctx.feed_name,
         )
 
         raw_actions: list[StateMachineAction] = []
@@ -195,6 +197,7 @@ class AudioStitchingStateMachine:
                             end_audio_offset_ms=action.end_audio_offset_ms,
                             clear_state=False,
                             isolated_audio_buffer=isolated_audio_buffer.copy(),
+                            feed_name=action.feed_name,
                         )
                     )
                 case DropAction():
