@@ -10,11 +10,9 @@ import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import type { Transcript } from '@transcription/common';
 
+import { DEFAULT_DURATION_MINUTES } from '../../utils/timeUtils';
 import AudioPlayer from '../audio/AudioPlayer';
 import AlertTooltip from './AlertTooltip';
-
-// For deep links to transmissions, we add a default duration in minutes to either side of the transmission so there is additional context around the transmission.
-const DEFAULT_DURATION_MINUTES = 5;
 
 interface TranscriptRowProps {
   transcript: Transcript;

@@ -58,7 +58,7 @@ export function TranscriptView({
   const [timestamp, setTimestamp] = useState<Date | null>(() =>
     getInitialTimestamp(searchParams)
   );
-  const [duration, setDuration] = useState<string>(() =>
+  const [duration, setDuration] = useState<string | null>(() =>
     getInitialDuration(searchParams)
   );
 
@@ -72,7 +72,7 @@ export function TranscriptView({
     getSearchedEndTime(searchParams)
   );
 
-  const isDurationValid = validateDuration(duration);
+  const isDurationValid = !duration || validateDuration(duration);
 
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
@@ -338,7 +338,7 @@ export function TranscriptView({
           label="Duration (minutes)"
           size="small"
           type="number"
-          value={duration}
+          value={duration ?? ''}
           onChange={(e) => setDuration(e.target.value)}
           error={!isDurationValid}
           helperText={
