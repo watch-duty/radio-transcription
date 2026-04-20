@@ -389,6 +389,7 @@ class TestPublishAudioChunkSync(unittest.TestCase):
             mock_publisher,
             topic_path="projects/test/topics/audio",
             feed_id="feed-42",
+            feed_name="Central Fire",
             gcs_uri="gs://bucket/audio.flac",
             session_id="test-session-1",
             start_timestamp=mock_now,
@@ -411,6 +412,7 @@ class TestPublishAudioChunkSync(unittest.TestCase):
         self.assertEqual(
             chunk.start_timestamp.seconds, int(mock_now.timestamp())
         )
+        self.assertEqual(chunk.feed_name, "Central Fire")
 
     def test_omits_source_type_when_none(self) -> None:
         mock_future = MagicMock()
@@ -422,6 +424,7 @@ class TestPublishAudioChunkSync(unittest.TestCase):
             mock_publisher,
             topic_path="projects/test/topics/audio",
             feed_id="feed-1",
+            feed_name="Central Fire",
             gcs_uri="gs://bucket/audio.flac",
             session_id="sess-1",
             start_timestamp=datetime.datetime(
@@ -450,6 +453,7 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
             mock_pubsub_client,
             topic_path="projects/test/topics/audio",
             feed_id="feed-42",
+            feed_name="Central Fire",
             gcs_uri="gs://bucket/audio.flac",
             session_id="test-session-1",
             start_timestamp=mock_now,
@@ -458,7 +462,10 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, "message-123")
         mock_publisher.publish.assert_called_once()
-        publish_kwargs = mock_publisher.publish.call_args.kwargs
+        publish_args, publish_kwargs = mock_publisher.publish.call_args
+        chunk = AudioChunk()
+        chunk.ParseFromString(publish_args[1])
+        self.assertEqual(chunk.feed_name, "Central Fire")
         self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
 
 
