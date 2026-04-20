@@ -16,15 +16,32 @@ on:
       - main
 
 jobs:
-  run-integration-tests:
+  component-tests:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Run integration tests
-        run: docker compose run --rm integration-tests
+      - name: Install mise, install tools
+        uses: jdx/mise-action@v3
+
+      - name: Run component tests
+        run: mise run test:component
+
+  e2e-tests:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install mise, install tools
+        uses: jdx/mise-action@v3
+
+      - name: Run E2E tests
+        run: mise run test:e2e
 
       - name: Open SSH session if workflow fails
         uses: mxschmitt/action-tmate@v3
-        if: failure() && inputs.debug_enabled
+        if: failure() && github.event_name == 'workflow_dispatch' && inputs.debug_enabled

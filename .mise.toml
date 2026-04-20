@@ -85,14 +85,30 @@ run = "uv run python -m unittest discover backend/pipeline"
 description = "Run all unit tests (alias)"
 depends = ["test:unit"]
 
-[tasks."test:rules"]
-description = "Run RulesStore integration tests"
+[tasks."test:component:rules"]
+description = "Run RulesStore component tests"
 run = "uv run pytest integration_tests/storage/test_rules_store_integration.py"
 
-[tasks."test:feeds"]
-description = "Run FeedStore integration tests"
+[tasks."test:component:feeds"]
+description = "Run FeedStore component tests"
 run = "uv run pytest integration_tests/storage/test_feed_store_integration.py"
 
-[tasks."test:integ"]
-description = "Run all storage integration tests"
+[tasks."test:component"]
+description = "Run all component tests"
 run = "uv run pytest integration_tests/storage/"
+
+[tasks."test:e2e"]
+description = "Run all E2E tests in Docker Compose"
+run = """
+docker compose run --rm integration-tests
+docker compose down
+"""
+
+[tasks."test:api"]
+description = "Run API integration tests"
+run = "uv run pytest integration_tests/api/"
+
+[tasks."test:e2e:local"]
+description = "Run E2E tests on host (Requires running environment)"
+depends = ["generate:protos"]
+run = "uv run pytest integration_tests/e2e/"
