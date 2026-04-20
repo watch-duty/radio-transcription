@@ -1,6 +1,7 @@
 import base64
 import logging
 import os
+import urllib.parse
 
 import functions_framework
 from cloudevents.http.event import CloudEvent
@@ -49,13 +50,34 @@ def parse_cloud_event(
     return None
 
 
+def _build_app_url(
+    evaluated_transcribed_audio: EvaluatedTranscribedAudio,
+) -> str:
+    query_params = {
+        "feedId": evaluated_transcribed_audio.feed_id,
+        "transmissionId": evaluated_transcribed_audio.transmission_id,
+    }
+    if (
+        evaluated_transcribed_audio.start_timestamp.seconds
+        or evaluated_transcribed_audio.start_timestamp.nanos
+    ):
+        timestamp = evaluated_transcribed_audio.start_timestamp
+        query_params["timestamp"] = str(
+            timestamp.seconds * 1000 + timestamp.nanos // 1_000_000
+        )
+    # TODO(anthonyxiang): https://linear.app/watchduty/issue/GOO-320/duration-as-env-variable
+    query_params["duration"] = "5"
+
+    separator = "&" if urllib.parse.urlsplit(APP_URL).query else "?"
+    return str(APP_URL) + separator + urllib.parse.urlencode(query_params)
+
+
 def convert_to_notification(
     evaluated_transcribed_audio: EvaluatedTranscribedAudio,
 ) -> AlertNotification:
     feed_id = evaluated_transcribed_audio.feed_id
     transmission_id = evaluated_transcribed_audio.transmission_id
-    # TODO(anthonyxiang): https://linear.app/watchduty/issue/GOO-320/duration-as-env-variable
-    app_url = f"{APP_URL}?feedId={feed_id}&transmissionId={transmission_id}&duration=5"
+    app_url = _build_app_url(evaluated_transcribed_audio)
     notification = AlertNotification(
         feed_id=feed_id,
         transmission_id=transmission_id,
@@ -68,12 +90,12 @@ def convert_to_notification(
         playback_audio_uri=evaluated_transcribed_audio.playback_audio_uri,
         app_url=app_url,
     )
-    if evaluated_transcribed_audio.start_timestamp.seconds:
+    if (
+        evaluated_transcribed_audio.start_timestamp.seconds
+        or evaluated_transcribed_audio.start_timestamp.nanos
+    ):
         notification.start_timestamp.CopyFrom(
             evaluated_transcribed_audio.start_timestamp
-        )
-        notification.app_url += (
-            f"&timestamp={evaluated_transcribed_audio.start_timestamp}"
         )
     if evaluated_transcribed_audio.end_timestamp.seconds:
         notification.end_timestamp.CopyFrom(

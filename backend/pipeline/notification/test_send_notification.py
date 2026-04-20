@@ -14,10 +14,11 @@ from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
 )
 
 with (
-    mock.patch("google.cloud.logging.Client") as mock_client,
+    mock.patch("google.cloud.logging.Client"),
     mock.patch.dict(os.environ, {"APP_URL": "https://app.example.com"}),
 ):
     from backend.pipeline.notification.send_notification import (
+        convert_to_notification,
         send_notification,
     )
 
@@ -107,6 +108,22 @@ class TestSendNotification(TestCase):
         mock_dedupe.process_notification.assert_called_with("1234")
 
         mock_request_handler.send_notification.assert_not_called()
+
+    def test_convert_to_notification_encodes_epoch_timestamp(self) -> None:
+        evaluated_payload = EvaluatedTranscribedAudio(
+            feed_id="feed-1",
+            transmission_id="tx-1",
+        )
+        evaluated_payload.start_timestamp.seconds = 1776280988
+        evaluated_payload.start_timestamp.nanos = 990000000
+
+        notification = convert_to_notification(evaluated_payload)
+
+        self.assertEqual(
+            notification.app_url,
+            "https://app.example.com?feedId=feed-1&transmissionId=tx-1"
+            "&timestamp=1776280988990&duration=5",
+        )
 
 
 if __name__ == "__main__":
