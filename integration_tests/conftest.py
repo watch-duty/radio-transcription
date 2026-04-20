@@ -41,6 +41,7 @@ def postgres_container() -> Generator[dict[str, Any]]:
         dbname="postgres",
         driver=None,
     )
+    container.with_command("postgres -c 'max_connections=100'")
     container.start()
 
     host = container.get_container_host_ip()
