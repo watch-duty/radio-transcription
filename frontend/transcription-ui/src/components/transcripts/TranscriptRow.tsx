@@ -14,9 +14,6 @@ import { DEFAULT_DURATION_MINUTES } from '../../utils/timeUtils';
 import AudioPlayer from '../audio/AudioPlayer';
 import AlertTooltip from './AlertTooltip';
 
-// For deep links to transmissions, we add a buffer either side of the transmission so there is additional context around the transmission by default.
-const TRANSMISSION_LINK_BUFFER_TIME = 60000 * 5;
-
 interface TranscriptRowProps {
   transcript: Transcript;
   index: number;
