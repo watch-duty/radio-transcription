@@ -283,7 +283,8 @@ class RestoreOrderFn(beam.DoFn):
     FEED_NAME_SPEC = ReadModifyWriteStateSpec(
         "feed_name", beam.coders.StrUtf8Coder()
     )
-    # Persists the feed_name per feed key so it can be re-attached when emitting from the gap timeout handler.
+    # Persists the feed_name per feed key so it can be re-attached
+    # when emitting from the gap timeout handler.
     FEED_NAME_STATE = beam.DoFn.StateParam(FEED_NAME_SPEC)
 
     OUT_OF_ORDER_TIMER_SPEC = TimerSpec(
