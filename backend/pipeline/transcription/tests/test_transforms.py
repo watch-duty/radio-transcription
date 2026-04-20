@@ -266,7 +266,10 @@ class OrderRestorerTest(unittest.TestCase):
                             (
                                 "feed-1",
                                 ChunkMetadata(
-                                    "gs://b/100-uuid1.flac", "session-A", 15000, ""
+                                    "gs://b/100-uuid1.flac",
+                                    "session-A",
+                                    15000,
+                                    "",
                                 ),
                             ),
                             100,
@@ -280,7 +283,10 @@ class OrderRestorerTest(unittest.TestCase):
                             (
                                 "feed-1",
                                 ChunkMetadata(
-                                    "gs://b/130-uuid3.flac", "session-A", 15000, ""
+                                    "gs://b/130-uuid3.flac",
+                                    "session-A",
+                                    15000,
+                                    "",
                                 ),
                             ),
                             130,
@@ -294,7 +300,10 @@ class OrderRestorerTest(unittest.TestCase):
                             (
                                 "feed-1",
                                 ChunkMetadata(
-                                    "gs://b/115-uuid2.flac", "session-A", 15000, ""
+                                    "gs://b/115-uuid2.flac",
+                                    "session-A",
+                                    15000,
+                                    "",
                                 ),
                             ),
                             115,

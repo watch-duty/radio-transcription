@@ -497,7 +497,7 @@ class DownloadAudioFn(beam.DoFn):
 
         try:
             chunk_data = self.audio_processor.download_audio_and_detect(
-                gcs_path, start_ms
+                gcs_path, start_ms, feed_name
             )
             chunk_data = replace(chunk_data, feed_name=feed_name)
             yield (feed_id, DownloadedChunkPayload(gcs_path, chunk_data))

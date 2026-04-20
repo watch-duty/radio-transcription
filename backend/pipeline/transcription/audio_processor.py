@@ -87,7 +87,7 @@ class AudioProcessor:
             self.gcs_client = active_gcs_factory()
 
     def download_audio_and_detect(
-        self, gcs_path: str, start_ms: int
+        self, gcs_path: str, start_ms: int, feed_name: str
     ) -> AudioChunkData:
         """Downloads audio bytes from GCS and runs the spectral flatness detector natively."""
         if not self.gcs_client:
@@ -127,7 +127,7 @@ class AudioProcessor:
             audio=full_audio_segment,
             speech_segments=speech_segments,
             gcs_uri=gcs_path,
-            feed_name="",
+            feed_name=feed_name,
         )
 
     def check_vad(self, audio_buffer: AudioSegment) -> bool:

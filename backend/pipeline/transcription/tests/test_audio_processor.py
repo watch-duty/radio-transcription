@@ -52,7 +52,9 @@ class AudioProcessorTest(unittest.TestCase):
         processor = AudioProcessor(vad_type=VadType.TEN_VAD)
         # Act & Assert
         with self.assertRaises(RuntimeError):
-            processor.download_audio_and_detect("gs://test/file.flac", 0)
+            processor.download_audio_and_detect(
+                "gs://test/file.flac", 0, "test-feed"
+            )
 
     @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
     @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
@@ -151,7 +153,9 @@ class AudioProcessorTest(unittest.TestCase):
 
         # Act
         result = processor.download_audio_and_detect(
-            "gs://my-bucket/audio/feed1/12345.flac", start_ms=5000
+            "gs://my-bucket/audio/feed1/12345.flac",
+            start_ms=5000,
+            feed_name="feed1",
         )
 
         # Assert
@@ -182,5 +186,5 @@ class AudioProcessorTest(unittest.TestCase):
         # Act & Assert
         with self.assertRaises(FileNotFoundError):
             processor.download_audio_and_detect(
-                "gs://my-bucket/missing.flac", 0
+                "gs://my-bucket/missing.flac", 0, feed_name="test-feed"
             )
