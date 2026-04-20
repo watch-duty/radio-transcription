@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import io
+import logging
+import subprocess
 
 from pydub import AudioSegment
 
@@ -11,6 +13,8 @@ from backend.pipeline.common.constants import (
     SAMPLE_RATE_HZ,
     SAMPLE_WIDTH_16BIT,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def convert_to_flac(audio_bytes: bytes, input_format: str) -> bytes:
@@ -31,3 +35,37 @@ def convert_to_flac(audio_bytes: bytes, input_format: str) -> bytes:
     buf = io.BytesIO()
     audio.export(buf, format="flac")
     return buf.getvalue()
+
+
+def get_audio_duration(audio_bytes: bytes) -> int:
+    """Calculate duration of audio bytes using ffprobe.
+
+    Supports various formats like MP3, M4A, WAV, etc.
+
+    Args:
+        audio_bytes: Raw audio bytes.
+
+    Returns:
+        Duration in milliseconds.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                "-",
+            ],
+            input=audio_bytes,
+            capture_output=True,
+            check=True,
+        )
+        duration_sec = float(result.stdout.decode().strip())
+        return int(duration_sec * 1000)
+    except Exception as e:
+        logger.exception("Failed to calculate duration using ffprobe: %s", e)
+        raise

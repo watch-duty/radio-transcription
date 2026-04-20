@@ -55,6 +55,9 @@ message AlertNotification {
   // The URI of the audio file optimized for playback (e.g., compressed M4A/Opus).
   string playback_audio_uri = 13;
 
+  // The transcription URL deeplink for this transmission.
+  string app_url = 14;
+  
   // The human-readable name of the radio feed as stored in the database.
-  string feed_name = 14;
+  string feed_name = 15;
 }

@@ -46,6 +46,23 @@ class AudioChunkData:
 
 
 @dataclass(frozen=True)
+class ChunkMetadata:
+    """Metadata for an audio chunk before download."""
+
+    gcs_uri: str
+    session_id: str
+    duration_ms: int
+
+
+@dataclass(frozen=True)
+class DownloadedChunkPayload:
+    """Payload for a downloaded audio chunk with its metadata."""
+
+    gcs_uri: str
+    chunk_data: AudioChunkData
+
+
+@dataclass(frozen=True)
 class TranscriptionResult:
     """Intermediate transcription result holding payload data before Protobuf serialization, bypassing Protobuf pickling issues during Dataflow shuffle."""
 

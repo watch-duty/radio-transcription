@@ -1,5 +1,7 @@
 import base64
 import logging
+import os
+import urllib.parse
 
 import functions_framework
 from cloudevents.http.event import CloudEvent
@@ -20,6 +22,12 @@ from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
 # Setup Logging
 setup_logging()
 logger = logging.getLogger(__name__)
+
+APP_URL = os.environ.get("APP_URL")
+if APP_URL is None or not APP_URL.strip():
+    msg = "APP_URL environment variable is not set or is empty."
+    raise ValueError(msg)
+APP_URL = APP_URL.strip()
 
 # Keeping the notification deduplicate connection outside the main function. This is so the connection is
 # maintained while the function is warm instead of reconnecting each invocation.
@@ -43,9 +51,28 @@ def parse_cloud_event(
     return None
 
 
+def _build_app_url(
+    evaluated_transcribed_audio: EvaluatedTranscribedAudio,
+) -> str:
+    query_params = {
+        "feedId": evaluated_transcribed_audio.feed_id,
+        "transmissionId": evaluated_transcribed_audio.transmission_id,
+    }
+    if evaluated_transcribed_audio.start_timestamp.seconds:
+        timestamp = evaluated_transcribed_audio.start_timestamp
+        query_params["timestamp"] = str(
+            timestamp.seconds * 1000 + timestamp.nanos // 1_000_000
+        )
+    # TODO(anthonyxiang): https://linear.app/watchduty/issue/GOO-320/duration-as-env-variable
+    query_params["duration"] = "5"
+
+    return f"{APP_URL}?{urllib.parse.urlencode(query_params)}"
+
+
 def convert_to_notification(
     evaluated_transcribed_audio: EvaluatedTranscribedAudio,
 ) -> AlertNotification:
+    app_url = _build_app_url(evaluated_transcribed_audio)
     notification = AlertNotification(
         feed_id=evaluated_transcribed_audio.feed_id,
         transmission_id=evaluated_transcribed_audio.transmission_id,
@@ -57,6 +84,7 @@ def convert_to_notification(
         canonical_audio_uri=evaluated_transcribed_audio.canonical_audio_uri,
         playback_audio_uri=evaluated_transcribed_audio.playback_audio_uri,
         feed_name=evaluated_transcribed_audio.feed_name,
+        app_url=app_url,
     )
     if evaluated_transcribed_audio.start_timestamp.seconds:
         notification.start_timestamp.CopyFrom(

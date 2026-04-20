@@ -206,6 +206,7 @@ def publish_audio_chunk_sync(
     gcs_uri: str,
     session_id: str,
     start_timestamp: datetime.datetime,
+    duration_ms: int,
     source_type: str | None = None,
 ) -> str:
     """Publish an AudioChunk to Pub/Sub and return the message ID.
@@ -217,6 +218,7 @@ def publish_audio_chunk_sync(
     audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
     audio_chunk_msg.session_id = session_id
     audio_chunk_msg.feed_name = feed_name
+    audio_chunk_msg.duration_ms = duration_ms
 
     attrs: dict[str, str] = {
         "feed_id": feed_id,
@@ -243,6 +245,7 @@ async def publish_audio_chunk(
     gcs_uri: str,
     session_id: str,
     start_timestamp: datetime.datetime,
+    duration_ms: int,
     source_type: str | None = None,
 ) -> str:
     """Asynchronously publish an AudioChunk to Pub/Sub.
@@ -255,6 +258,7 @@ async def publish_audio_chunk(
     audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
     audio_chunk_msg.session_id = session_id
     audio_chunk_msg.feed_name = feed_name
+    audio_chunk_msg.duration_ms = duration_ms
 
     attrs: dict[str, str] = {
         "feed_id": feed_id,

@@ -19,6 +19,7 @@ import functions_framework
 from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
 
+from backend.pipeline.common.audio import get_audio_duration
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.gcp_helper import publish_audio_chunk_sync
 from backend.pipeline.common.logging import setup_logging
@@ -159,6 +160,10 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
         feed_id_str = str(feed["id"])
         session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, staging_uri))
         publisher = pubsub_client.get_publisher()
+
+        # Calculate duration of audio bytes using shared helper
+        duration_ms = get_audio_duration(mp3_bytes)
+
         publish_audio_chunk_sync(
             publisher,
             RAW_AUDIO_TOPIC,
@@ -167,6 +172,7 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
             staging_uri,
             session_id,
             start_ts,
+            duration_ms=duration_ms,
             source_type="echo",
         )
 

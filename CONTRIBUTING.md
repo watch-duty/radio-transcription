@@ -173,6 +173,8 @@ ALLOWED_ORIGIN=http://localhost:5173
 TRANSCRIPTS_API_URL=<your URL for transcripts API>
 RULES_API_URL=<your URL for rules API>
 FEEDS_STORE_API_URL=<your URL for feeds store API>
+PROJECT_ID=<your project ID>
+API_PUBLIC_URL=http://localhost:5173
 EOF
 ```
 

@@ -393,6 +393,7 @@ class TestPublishAudioChunkSync(unittest.TestCase):
             gcs_uri="gs://bucket/audio.flac",
             session_id="test-session-1",
             start_timestamp=mock_now,
+            duration_ms=15000,
             source_type="echo",
         )
 
@@ -429,6 +430,7 @@ class TestPublishAudioChunkSync(unittest.TestCase):
             start_timestamp=datetime.datetime(
                 2026, 3, 5, 12, 0, tzinfo=datetime.UTC
             ),
+            duration_ms=15000,
         )
 
         publish_kwargs = mock_publisher.publish.call_args.kwargs
@@ -455,6 +457,7 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
             gcs_uri="gs://bucket/audio.flac",
             session_id="test-session-1",
             start_timestamp=mock_now,
+            duration_ms=15000,
         )
 
         self.assertEqual(result, "message-123")
