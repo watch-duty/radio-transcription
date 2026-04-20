@@ -67,7 +67,7 @@ async def create_rule(
 )
 async def list_rules(
     service: Annotated[BaseRulesService, Depends(get_rules_service)],
-    rule_ids: Annotated[list[str] | None, Query(None)] = None,
+    rule_ids: Annotated[list[str] | None, Query()] = None,
 ) -> list[Rule]:
     """List all transcription rules, optionally filtered by rule IDs."""
     return await service.list_rules(rule_ids)
