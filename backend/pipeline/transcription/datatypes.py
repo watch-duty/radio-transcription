@@ -67,7 +67,6 @@ class TranscriptionResult:
     """Intermediate transcription result holding payload data before Protobuf serialization, bypassing Protobuf pickling issues during Dataflow shuffle."""
 
     feed_id: str
-    feed_name: str
     contributing_audio_uris: list[str]
     transcript: str
     time_range: TimeRange
@@ -88,7 +87,6 @@ class TransmissionContext:
     We use standard dataclasses here because native Protobuf classes cannot be cleanly pickled.
     """
 
-    feed_name: str
     last_end_time_ms: int | None = None
     stale_start_time_ms: int | None = None
     buffer_start_time_ms: int | None = None
@@ -106,7 +104,6 @@ class StitcherContext:
     """Groups context variables for processing a chunk to reduce function arguments."""
 
     feed_id: str
-    feed_name: str
     # The fully qualified GCS URI of the raw audio file currently being parsed.
     current_gcs_uri: str
     # Ordered list of URIs that have been accumulated into the current transmission buffer thus far.
@@ -179,7 +176,6 @@ class FlushRequest:
 
     buffer: AudioSegment
     feed_id: str
-    feed_name: str
     contributing_audio_uris: list[str]
     time_range: TimeRange
     transmission_id: str

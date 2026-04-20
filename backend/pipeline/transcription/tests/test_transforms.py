@@ -165,11 +165,10 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
 
 class AddEventTimestampTest(unittest.TestCase):
     def test_valid_timestamp_extraction(self) -> None:
-        """Verifies that AddEventTimestamp accurately extracts the event timestamp and includes feed_name from the proto."""
+        """Verifies that AddEventTimestamp accurately regex-extracts and assigns the logical windowing timestamp natively from the chunk's standardized filename."""
         chunk = AudioChunk(
             gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
             session_id="mock-session-id",
-            feed_name="Test Feed",
         )
         chunk.start_timestamp.FromMicroseconds(1678886400000000)
         element = ("test-feed", chunk.SerializeToString())
@@ -183,7 +182,6 @@ class AddEventTimestampTest(unittest.TestCase):
             (
                 "test-feed",
                 ChunkMetadata(
-                    "Test Feed",
                     gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
                     session_id="mock-session-id",
                     duration_ms=0,
@@ -210,7 +208,6 @@ class BypassStitchingTest(unittest.TestCase):
     def test_bypass_stitching_maps_correctly(self) -> None:
         """Verifies that BypassStitchingFn correctly maps AudioChunkData to FlushRequest."""
         feed_id = "test-feed"
-        feed_name = "Test Feed"
         gcs_path = "gs://bucket/test.flac"
         audio_len_ms = 5000
         chunk_data = AudioChunkData(
@@ -219,7 +216,7 @@ class BypassStitchingTest(unittest.TestCase):
             speech_segments=[],
             gcs_uri=gcs_path,
         )
-        element = (feed_id, DownloadedChunkPayload(feed_name, gcs_path, chunk_data))
+        element = (feed_id, DownloadedChunkPayload(gcs_path, chunk_data))
 
         fn = BypassStitchingFn()
         result = list(fn.process(element))
@@ -230,7 +227,6 @@ class BypassStitchingTest(unittest.TestCase):
         flush_request = result[0][1]
         self.assertIsInstance(flush_request, FlushRequest)
         self.assertEqual(flush_request.feed_id, feed_id)
-        self.assertEqual(flush_request.feed_name, feed_name)
         self.assertEqual(flush_request.contributing_audio_uris, [gcs_path])
         self.assertEqual(flush_request.time_range.start_ms, 1000)
         self.assertEqual(flush_request.time_range.end_ms, 1000 + audio_len_ms)
@@ -266,7 +262,6 @@ class OrderRestorerTest(unittest.TestCase):
                             (
                                 "feed-1",
                                 ChunkMetadata(
-                                    "Feed One",
                                     "gs://b/100-uuid1.flac", "session-A", 15000
                                 ),
                             ),
@@ -281,7 +276,6 @@ class OrderRestorerTest(unittest.TestCase):
                             (
                                 "feed-1",
                                 ChunkMetadata(
-                                    "Feed One",
                                     "gs://b/130-uuid3.flac", "session-A", 15000
                                 ),
                             ),
@@ -296,7 +290,6 @@ class OrderRestorerTest(unittest.TestCase):
                             (
                                 "feed-1",
                                 ChunkMetadata(
-                                    "Feed One",
                                     "gs://b/115-uuid2.flac", "session-A", 15000
                                 ),
                             ),
@@ -313,9 +306,9 @@ class OrderRestorerTest(unittest.TestCase):
                 restored,
                 equal_to(
                     [
-                        ("feed-1", ("Feed One", "gs://b/100-uuid1.flac")),
-                        ("feed-1", ("Feed One", "gs://b/115-uuid2.flac")),
-                        ("feed-1", ("Feed One", "gs://b/130-uuid3.flac")),
+                        ("feed-1", "gs://b/100-uuid1.flac"),
+                        ("feed-1", "gs://b/115-uuid2.flac"),
+                        ("feed-1", "gs://b/130-uuid3.flac"),
                     ]
                 ),
             )
@@ -344,7 +337,6 @@ class OrderRestorerTest(unittest.TestCase):
                             (
                                 "feed-1",
                                 ChunkMetadata(
-                                    "Feed One",
                                     "gs://b/100-11111111.flac",
                                     "session-A",
                                     15000,
@@ -361,7 +353,6 @@ class OrderRestorerTest(unittest.TestCase):
                             (
                                 "feed-1",
                                 ChunkMetadata(
-                                    "Feed One",
                                     "gs://b/130-33333333.flac",
                                     "session-A",
                                     15000,
@@ -380,7 +371,6 @@ class OrderRestorerTest(unittest.TestCase):
                             (
                                 "feed-1",
                                 ChunkMetadata(
-                                    "Feed One",
                                     "gs://b/115-22222222.flac",
                                     "session-A",
                                     15000,
@@ -400,9 +390,9 @@ class OrderRestorerTest(unittest.TestCase):
                 restored,
                 equal_to(
                     [
-                        ("feed-1", ("Feed One", "gs://b/100-11111111.flac")),
-                        ("feed-1", ("Feed One", "gs://b/130-33333333.flac")),
-                        ("feed-1", ("Feed One", "gs://b/115-22222222.flac")),
+                        ("feed-1", "gs://b/100-11111111.flac"),
+                        ("feed-1", "gs://b/130-33333333.flac"),
+                        ("feed-1", "gs://b/115-22222222.flac"),
                     ]
                 ),
             )
@@ -488,7 +478,6 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-123",
                                 DownloadedChunkPayload(
-                                    "Test Feed",
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/100-11111111-1111-1111-1111-111111111111.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/100-11111111-1111-1111-1111-111111111111.flac"
@@ -506,7 +495,6 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-123",
                                 DownloadedChunkPayload(
-                                    "Test Feed",
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/115-22222222-2222-2222-2222-222222222222.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/115-22222222-2222-2222-2222-222222222222.flac"
@@ -524,7 +512,6 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-123",
                                 DownloadedChunkPayload(
-                                    "Test Feed",
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/130-33333333-3333-3333-3333-333333333333.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/130-33333333-3333-3333-3333-333333333333.flac"
@@ -542,7 +529,6 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-123",
                                 DownloadedChunkPayload(
-                                    "Test Feed",
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/150-44444444-4444-4444-4444-444444444444.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/150-44444444-4444-4444-4444-444444444444.flac"
@@ -560,7 +546,6 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-123",
                                 DownloadedChunkPayload(
-                                    "Test Feed",
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/160-55555555-5555-5555-5555-555555555555.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/160-55555555-5555-5555-5555-555555555555.flac"
@@ -578,7 +563,6 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-123",
                                 DownloadedChunkPayload(
-                                    "Test Feed",
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/190-66666666-6666-6666-6666-666666666666.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/190-66666666-6666-6666-6666-666666666666.flac"
@@ -623,7 +607,6 @@ class StitchAudioTest(unittest.TestCase):
                     for u in elements[0][1].contributing_audio_uris
                 )
                 assert elements[0][1].missing_prior_context is False
-                assert elements[0][1].feed_name == "Test Feed"
 
                 # Second element: chunk 130
                 # DID follow a gap (chunk 115 speech ended at 122, 130 starts at 130, gap=8s >= 3s)
@@ -632,7 +615,6 @@ class StitchAudioTest(unittest.TestCase):
                     for u in elements[1][1].contributing_audio_uris
                 )
                 assert elements[1][1].missing_prior_context is False
-                assert elements[1][1].feed_name == "Test Feed"
 
                 # Third element: chunk 160 (chunk 150 was dropped as useless silence after a disconnected gap)
                 assert any(
@@ -640,7 +622,6 @@ class StitchAudioTest(unittest.TestCase):
                     for u in elements[2][1].contributing_audio_uris
                 )
                 assert elements[2][1].missing_prior_context is True
-                assert elements[2][1].feed_name == "Test Feed"
 
             assert_that(
                 results.main,
@@ -706,7 +687,6 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-123",
                                 DownloadedChunkPayload(
-                                    "Test Feed",
                                     "gs://fake-bucket/100-11111111-1111-1111-1111-111111111111.flac",
                                     mock_download(
                                         "gs://fake-bucket/100-11111111-1111-1111-1111-111111111111.flac"
@@ -724,7 +704,6 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-123",
                                 DownloadedChunkPayload(
-                                    "Test Feed",
                                     "gs://fake-bucket/130-33333333-3333-3333-3333-333333333333.flac",
                                     mock_download(
                                         "gs://fake-bucket/130-33333333-3333-3333-3333-333333333333.flac"
@@ -742,7 +721,6 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-123",
                                 DownloadedChunkPayload(
-                                    "Test Feed",
                                     "gs://fake-bucket/115-22222222-2222-2222-2222-222222222222.flac",
                                     mock_download(
                                         "gs://fake-bucket/115-22222222-2222-2222-2222-222222222222.flac"
@@ -857,7 +835,6 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-max",
                                 DownloadedChunkPayload(
-                                    "Max Duration Feed",
                                     "gs://fake-bucket/ab12/feed-max/2026-03-06/100-77777777-7777-7777-7777-777777777777.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-max/2026-03-06/100-77777777-7777-7777-7777-777777777777.flac"
@@ -875,7 +852,6 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-max",
                                 DownloadedChunkPayload(
-                                    "Max Duration Feed",
                                     "gs://fake-bucket/ab12/feed-max/2026-03-06/115-88888888-8888-8888-8888-888888888888.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-max/2026-03-06/115-88888888-8888-8888-8888-888888888888.flac"
@@ -893,7 +869,6 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-max",
                                 DownloadedChunkPayload(
-                                    "Max Duration Feed",
                                     "gs://fake-bucket/ab12/feed-max/2026-03-06/130-99999999-9999-9999-9999-999999999999.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-max/2026-03-06/130-99999999-9999-9999-9999-999999999999.flac"
@@ -911,7 +886,6 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-max",
                                 DownloadedChunkPayload(
-                                    "Max Duration Feed",
                                     "gs://fake-bucket/ab12/feed-max/2026-03-06/160-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-max/2026-03-06/160-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac"
@@ -1007,7 +981,6 @@ class StitchAudioTest(unittest.TestCase):
                             beam.coders.TupleCoder(
                                 (
                                     beam.coders.StrUtf8Coder(),
-                                    beam.coders.StrUtf8Coder(),
                                     beam.coders.PickleCoder(),
                                 )
                             ),
@@ -1021,7 +994,6 @@ class StitchAudioTest(unittest.TestCase):
                             (
                                 "feed-123",
                                 DownloadedChunkPayload(
-                                    "Stale Timer Feed",
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/101-11111111-1111-1111-1111-111111111111.flac",
                                     mock_processor_inst.download_audio_and_detect.return_value,
                                 ),
@@ -1084,7 +1056,6 @@ class StitchAudioTest(unittest.TestCase):
                     (
                         "feed-123",
                         DownloadedChunkPayload(
-                            "Wrong Feed Name Type",
                             "gs://fake-bucket/123-00000000-0000-0000-0000-000000000000.flac",
                             AudioChunkData(
                                 start_ms=0,
@@ -1141,7 +1112,6 @@ class TranscribeAudioTest(unittest.TestCase):
                                 start_ms=101000, end_ms=101500
                             ),
                             transmission_id="test-uuid",
-                            feed_name="Test Feed",
                         ),
                     )
                 ]
@@ -1239,7 +1209,6 @@ class TranscribeAudioTest(unittest.TestCase):
                         contributing_audio_uris=["gs://bbbbbbbb.flac"],
                         time_range=TimeRange(start_ms=0, end_ms=500),
                         transmission_id="test-uuid-1",
-                        feed_name="Test Feed",
                     ),
                     FlushRequest(
                         feed_id="feed-123",
@@ -1247,7 +1216,6 @@ class TranscribeAudioTest(unittest.TestCase):
                         contributing_audio_uris=["gs://cccccccc.flac"],
                         time_range=TimeRange(start_ms=5000, end_ms=5500),
                         transmission_id="test-uuid-2",
-                        feed_name="Test Feed",
                     ),
                 ]
             )
@@ -1293,13 +1261,8 @@ class DownloadAudioTest(unittest.TestCase):
             elements = (
                 p
                 | beam.Create(
-                    [
-                        (
-                            "feed-123",
-                            ("My Feed", "gs://fake-bucket/100-11111111.flac"),
-                        )
-                    ]
-                ).with_output_types(tuple[str, tuple[str, str]])
+                    [("feed-123", "gs://fake-bucket/100-11111111.flac")]
+                ).with_output_types(tuple[str, str])
                 | beam.Map(lambda x: TimestampedValue(x, 100))
             )
 
@@ -1312,7 +1275,6 @@ class DownloadAudioTest(unittest.TestCase):
                         (
                             "feed-123",
                             DownloadedChunkPayload(
-                                "My Feed",
                                 "gs://fake-bucket/100-11111111.flac",
                                 mock_inst.download_audio_and_detect.return_value,
                             ),

@@ -89,7 +89,7 @@ class ParseAndKeyFn(beam.DoFn):
 class AddEventTimestamp(beam.DoFn):
     """Extracts the event timestamp directly from the `AudioChunk` protobuf.
 
-    Assigns it as the Beam windowing `TimestampedValue`, yielding the `(feed_id, (feed_name, gcs_uri, session_id))` tuple.
+    Assigns it as the Beam windowing `TimestampedValue`, yielding the GCS URI.
     This guarantees that all downstream Watermarks and Timers accurately respect
     the chronological ordering of the hardware audio events.
     """
@@ -118,11 +118,6 @@ class AddEventTimestamp(beam.DoFn):
                 yield beam.pvalue.TaggedOutput(
                     DEAD_LETTER_QUEUE_TAG, {"error": msg, "feed_id": feed_id}
                 )
-            elif not chunk_proto.feed_name:
-                msg = f"AudioChunk missing required feed_name (feed_id: {feed_id})"
-                yield beam.pvalue.TaggedOutput(
-                    DEAD_LETTER_QUEUE_TAG, {"error": msg, "feed_id": feed_id}
-                )
             elif not chunk_proto.gcs_uri:
                 msg = (
                     f"AudioChunk missing required gcs_uri (feed_id: {feed_id})"
@@ -145,7 +140,6 @@ class AddEventTimestamp(beam.DoFn):
                     (
                         feed_id,
                         ChunkMetadata(
-                            chunk_proto.feed_name,
                             chunk_proto.gcs_uri,
                             chunk_proto.session_id,
                             chunk_proto.duration_ms,
@@ -195,7 +189,6 @@ class SerializeToPubSubMessageFn(beam.DoFn):
             end_audio_offset=end_offset,
             canonical_audio_uri=element.canonical_audio_uri,
             playback_audio_uri=element.playback_audio_uri,
-            feed_name=element.feed_name,
         )
         proto.start_timestamp.FromMicroseconds(
             element.time_range.start_ms * MICROSECONDS_PER_MS
@@ -228,7 +221,6 @@ class BypassStitchingFn(beam.DoFn):
     ) -> Iterator[tuple[str, FlushRequest]]:
         """Maps the downloaded audio chunk directly into a FlushRequest."""
         feed_id, payload = element
-        feed_name = payload.feed_name
         gcs_path = payload.gcs_uri
         chunk_data = payload.chunk_data
 
@@ -243,7 +235,6 @@ class BypassStitchingFn(beam.DoFn):
             FlushRequest(
                 buffer=chunk_data.audio,
                 feed_id=feed_id,
-                feed_name=feed_name,
                 contributing_audio_uris=[gcs_path],
                 time_range=TimeRange(start_ms=start_ms, end_ms=end_ms),
                 transmission_id=transmission_id,
@@ -285,12 +276,6 @@ class RestoreOrderFn(beam.DoFn):
     # Boolean flag ensuring we only ever have a single active processing-time timer scheduled across the buffer.
     TIMER_ACTIVE_STATE = beam.DoFn.StateParam(TIMER_ACTIVE_SPEC)
 
-    FEED_NAME_SPEC = ReadModifyWriteStateSpec(
-        "feed_name", beam.coders.StrUtf8Coder()
-    )
-    # Stores the feed_name for the current key so it can be re-attached when buffered chunks are emitted.
-    FEED_NAME_STATE = beam.DoFn.StateParam(FEED_NAME_SPEC)
-
     OUT_OF_ORDER_TIMER_SPEC = TimerSpec(
         "out_of_order_timer", TimeDomain.WATERMARK
     )
@@ -330,24 +315,16 @@ class RestoreOrderFn(beam.DoFn):
         timer_active_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
             TIMER_ACTIVE_SPEC
         ),
-        feed_name_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            FEED_NAME_SPEC
-        ),
         out_of_order_timer: RuntimeTimer = beam.DoFn.TimerParam(  # type: ignore # noqa: B008
             OUT_OF_ORDER_TIMER_SPEC
         ),
-    ) -> Iterator[tuple[str, tuple[str, str]]]:
+    ) -> Iterator[tuple[str, str]]:
         """Ingests out-of-order chunks and orchestrates chronologically sorted yields."""
         feed_id, metadata = element
         gcs_path = metadata.gcs_uri
-        incoming_feed_name = metadata.incoming_feed_name
         incoming_session_id = metadata.session_id
         duration_ms = metadata.duration_ms
         current_ts_ms = int(float(timestamp) * MS_PER_SECOND)
-
-        # Persist the feed_name in state so it can be re-attached when
-        # buffered chunks are emitted after reordering.
-        feed_name_state.write(incoming_feed_name)
 
         current_session_id = session_id_state.read()
         expected_next_ts = expected_next_ts_state.read()
@@ -392,9 +369,8 @@ class RestoreOrderFn(beam.DoFn):
         for chunk in new_buffer_elements:
             out_of_order_buffer_state.add(chunk)
 
-        feed_name = feed_name_state.read()
         for gcs_uri in elements_to_emit:
-            yield (feed_id, (feed_name, gcs_uri))
+            yield (feed_id, gcs_uri)
 
         # Handle Timer for Gap Timeout
         if new_buffer_elements and not timer_active_state.read():
@@ -420,15 +396,11 @@ class RestoreOrderFn(beam.DoFn):
         timer_active_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
             TIMER_ACTIVE_SPEC
         ),
-        feed_name_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            FEED_NAME_SPEC
-        ),
-    ) -> Iterator[tuple[str, tuple[str, str]]]:
+    ) -> Iterator[tuple[str, str]]:
         """Handles the gap timeout."""
         self.data_gaps_detected_counter.inc()
         timer_active_state.clear()
 
-        feed_name = feed_name_state.read()
         buffer_elements = list(out_of_order_buffer_state.read())
         if buffer_elements:
             sorted_elements = sorted(buffer_elements)
@@ -456,7 +428,7 @@ class RestoreOrderFn(beam.DoFn):
                 out_of_order_buffer_state.add(chunk)
 
             for gcs_uri in elements_to_emit:
-                yield (feed_id, (feed_name, gcs_uri))
+                yield (feed_id, gcs_uri)
 
 
 @beam.typehints.with_input_types(tuple[str, str])
@@ -490,13 +462,13 @@ class DownloadAudioFn(beam.DoFn):
     @override
     def process(  # type: ignore[override] # pyright: ignore[reportIncompatibleMethodOverride]
         self,
-        element: tuple[str, tuple[str, str]],
+        element: tuple[str, str],
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
     ) -> Iterator[
         tuple[str, DownloadedChunkPayload] | beam.pvalue.TaggedOutput
     ]:
         """Downloads the raw audio bytes from GCS and passes them to the acoustic processor."""
-        feed_id, (feed_name, gcs_path) = element
+        feed_id, gcs_path = element
         if not self.audio_processor:
             msg = "AudioProcessor not initialized. setup() must be called."
             raise RuntimeError(msg)
@@ -507,7 +479,7 @@ class DownloadAudioFn(beam.DoFn):
             chunk_data = self.audio_processor.download_audio_and_detect(
                 gcs_path, start_ms
             )
-            yield (feed_id, DownloadedChunkPayload(feed_name, gcs_path, chunk_data))
+            yield (feed_id, DownloadedChunkPayload(gcs_path, chunk_data))
         except FileNotFoundError:
             logger.info(
                 "GCS object not found yet. Re-raising to NACK Pub/Sub message."
