@@ -79,3 +79,6 @@ dist/
 .ruff_cache/
 # Models
 *.onnx
+
+# Jujutsu
+.jj/
