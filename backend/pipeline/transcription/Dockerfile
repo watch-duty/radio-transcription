@@ -1,5 +1,5 @@
 # Use Apache Beam Python SDK as the base image
-FROM apache/beam_python3.13_sdk:2.70.0
+FROM apache/beam_python3.13_sdk:2.71.0
 
 
 # Install OS dependencies needed at runtime
