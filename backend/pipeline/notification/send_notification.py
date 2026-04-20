@@ -69,8 +69,7 @@ def _build_app_url(
     # TODO(anthonyxiang): https://linear.app/watchduty/issue/GOO-320/duration-as-env-variable
     query_params["duration"] = "5"
 
-    separator = "&" if urllib.parse.urlsplit(APP_URL).query else "?"
-    return str(APP_URL) + separator + urllib.parse.urlencode(query_params)
+    return f"{APP_URL}?{urllib.parse.urlencode(query_params)}"
 
 
 def convert_to_notification(
