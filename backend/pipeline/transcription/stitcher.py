@@ -49,6 +49,7 @@ from backend.pipeline.transcription.datatypes import (
     TransmissionContext,
     UpdateStateAction,
 )
+from backend.pipeline.common.storage.gcs_uploader import GCSAudioUploader
 from backend.pipeline.transcription.enums import (
     MetricsExporterType,
 )
@@ -207,7 +208,9 @@ class StitchAudioFn(beam.DoFn):
                     desired_len_16k,
                 )
                 full_audio_raw_16k = full_audio_raw_16k[:desired_len_16k]
-                full_audio_denoised_16k = full_audio_denoised_16k[:desired_len_16k]
+                full_audio_denoised_16k = full_audio_denoised_16k[
+                    :desired_len_16k
+                ]
                 full_audio_orig = full_audio_orig[:desired_len_orig]
 
             # Apply Global Normalization to denoised audio for Chirp
@@ -287,7 +290,9 @@ class StitchAudioFn(beam.DoFn):
         sliced_audio_orig = chunk_data.stored_audio[start_idx_orig:end_idx_orig]
 
         # Store as tuple (raw_16k, denoised_16k, original)
-        transmission_buffer.add((raw_audio_16k, denoised_audio_16k, sliced_audio_orig))
+        transmission_buffer.add(
+            (raw_audio_16k, denoised_audio_16k, sliced_audio_orig)
+        )
 
     def _apply_schedule_stale_timer_action(
         self, action: ScheduleStaleTimerAction, stale_timer: RuntimeTimer
@@ -325,6 +330,7 @@ class StitchAudioFn(beam.DoFn):
                         from backend.pipeline.transcription.datatypes import (
                             FlushAction as FA,
                         )
+
                         flush_action = FA(
                             reason=action.reason,
                             feed_id=action.feed_id,
@@ -420,7 +426,9 @@ class StitchAudioFn(beam.DoFn):
         pipeline = AudioStitchingStateMachine(self.config)
 
         start_time = time.time()
-        actions = pipeline.process_chunk(chunk_data, ctx, padded_segments, vad_result)
+        actions = pipeline.process_chunk(
+            chunk_data, ctx, padded_segments, vad_result
+        )
         stitching_duration = int((time.time() - start_time) * MS_PER_SECOND)
         self.stitching_time_ms.update(stitching_duration)
         if self.metrics_exporter:
@@ -508,7 +516,7 @@ class StitchAudioFn(beam.DoFn):
                 stitched_raw_16k = np.concatenate(raw_16k_buffer)
                 stitched_denoised_16k = np.concatenate(denoised_16k_buffer)
                 stitched_orig = np.concatenate(audio_orig_buffer)
-                
+
                 # Apply Global Normalization to denoised audio for Chirp
                 peak = np.max(np.abs(stitched_denoised_16k))
                 if peak > 0:
@@ -520,7 +528,7 @@ class StitchAudioFn(beam.DoFn):
                     ).astype(np.int16)
                 else:
                     normalized_denoised = stitched_denoised_16k
- 
+
                 yield (
                     key,
                     FlushRequest(
@@ -637,6 +645,14 @@ class TranscribeAudioFn(beam.DoFn):
         )
         self.metrics_exporter.setup()
 
+        if self.audio_processor.gcs_client is None:
+            msg = "GCS client not found in AudioProcessor. must call setup() first."
+            raise RuntimeError(msg)
+
+        self.audio_uploader = GCSAudioUploader(
+            gcs_client=self.audio_processor.gcs_client,
+        )
+
     def _export_and_transcribe(
         self,
         request: FlushRequest,
@@ -674,6 +690,36 @@ class TranscribeAudioFn(beam.DoFn):
         self.speech_duration_sec_dist.update(int(duration_sec))
 
         flac_bytes = self.audio_processor.export_flac(processed_audio)
+
+        if not self.config.canonical_audio_bucket:
+            canonical_audio_uri, playback_audio_uri = None, None
+        else:
+            dt = datetime.fromtimestamp(
+                request.time_range.start_ms / 1000.0, tz=UTC
+            )
+
+            flac_path = f"lossless/{request.feed_id}/{dt:%Y/%m/%d}/{request.transmission_id}.flac"
+            m4a_path = f"playback/{request.feed_id}/{dt:%Y/%m/%d}/{request.transmission_id}.m4a"
+
+            from backend.pipeline.transcription.utils import (
+                export_m4a_from_numpy,
+            )
+
+            canonical_audio_uri, playback_audio_uri = (
+                self.audio_uploader.upload_audio_derivatives(
+                    bucket_name=self.config.canonical_audio_bucket,
+                    flac_path=flac_path,
+                    m4a_path=m4a_path,
+                    flac_bytes=flac_bytes,
+                    processed_audio=processed_audio,
+                    export_m4a_fn=export_m4a_from_numpy,
+                )
+            )
+        if not canonical_audio_uri and (
+            request.contributing_audio_uris
+            and len(request.contributing_audio_uris) == 1
+        ):
+            canonical_audio_uri = request.contributing_audio_uris[0]
 
         transcribe_start = time.time()
 
