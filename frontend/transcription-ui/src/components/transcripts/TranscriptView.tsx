@@ -36,6 +36,7 @@ import {
 } from '../../utils/timeUtils';
 import DateTimePicker from '../common/DateTimePicker';
 import TranscriptRow from './TranscriptRow';
+import AudioDisplay from '../audio/AudioDisplay';
 
 interface TranscriptViewProps {
   addAlert: (alert: AlertProps) => void;
@@ -75,6 +76,8 @@ export function TranscriptView({
   const isDurationValid = validateDuration(duration);
 
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
+    useState<string | null>(null);
+  const [highlightedTransmissionId, setHighlightedTransmissionId] =
     useState<string | null>(null);
 
   const {
@@ -172,6 +175,14 @@ export function TranscriptView({
 
   const onPlay = (transmissionId: string | null) => {
     setCurrentlyPlayingTransmissionId(transmissionId);
+  };
+
+  const handleClipClick = (transmissionId: string) => {
+    const element = document.getElementById(`transcript-${transmissionId}`);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    setHighlightedTransmissionId(transmissionId);
   };
 
   return (
@@ -344,11 +355,17 @@ export function TranscriptView({
           helperText={
             !isDurationValid
               ? 'Must be a positive number'
-              : '(Optional) Length of time to search around the timestamp'
+              : '(Optional) Duration to search around the timestamp'
           }
           sx={{ width: '100%' }}
         />
       </Box>
+
+      <AudioDisplay
+        transcripts={transcripts}
+        currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
+        onClipClick={handleClipClick}
+      />
 
       <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
         {transcripts.length > 0 ? (
@@ -377,6 +394,9 @@ export function TranscriptView({
                   }
                   triggerSnackbar={triggerSnackbar}
                   showHeader={showHeader}
+                  isHighlighted={
+                    transcript.transmissionId === highlightedTransmissionId
+                  }
                 />
               );
             })}

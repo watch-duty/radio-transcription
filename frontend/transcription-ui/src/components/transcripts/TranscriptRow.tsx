@@ -26,6 +26,7 @@ interface TranscriptRowProps {
   currentlyPlayingTransmissionId: string | null;
   triggerSnackbar: (message: string) => void;
   showHeader: boolean;
+  isHighlighted?: boolean;
 }
 
 export function TranscriptRow({
@@ -38,6 +39,7 @@ export function TranscriptRow({
   currentlyPlayingTransmissionId,
   triggerSnackbar,
   showHeader,
+  isHighlighted,
 }: TranscriptRowProps) {
   const theme = useTheme();
   const currentDate = new Date(transcript.startTimestamp);
@@ -61,12 +63,14 @@ export function TranscriptRow({
         </ListItem>
       )}
       <ListItem
+        id={`transcript-${transcript.transmissionId}`}
         divider={index < totalTranscripts - 1}
         sx={{
           display: 'flex',
           alignItems: 'center',
           gap: 2,
           py: 1.5,
+          bgcolor: isHighlighted ? 'action.selected' : 'transparent',
         }}
       >
         <Box

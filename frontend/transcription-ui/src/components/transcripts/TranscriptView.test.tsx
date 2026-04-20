@@ -24,6 +24,10 @@ vi.mock('../../context/AuthContext', () => ({
   useAuth: () => ({ token: 'fake-token' }),
 }));
 
+vi.mock('@wavesurfer/react', () => ({
+  default: () => <div data-testid="wavesurfer-player" />,
+}));
+
 describe('TranscriptView', () => {
   const mockAddAlert = vi.fn();
 

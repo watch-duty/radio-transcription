@@ -5,6 +5,7 @@ import { Howl } from 'howler';
 import PauseIcon from '@mui/icons-material/Pause';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import IconButton from '@mui/material/IconButton';
+import { getAudioUrl } from '../../utils/audioUtils';
 
 export interface AudioPlayerProps {
   audioUri: string;
@@ -19,30 +20,12 @@ function AudioPlayer(props: AudioPlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const sound = useRef<Howl>(null);
 
-  // This effect initializes the audio player and ensures it is cleaned up when the component is unmounted.
+  // Cleanup effect to ensure sound is unloaded when component unmounts
   useEffect(() => {
-    sound.current = new Howl({
-      src: [audioUri.replace('gs://', 'https://storage.googleapis.com/')],
-      html5: true,
-      preload: 'metadata',
-      onplay: () => {
-        setIsPlaying(true);
-      },
-      onpause: () => {
-        setIsPlaying(false);
-      },
-      onend: () => {
-        setIsPlaying(false);
-      },
-      onstop: () => {
-        setIsPlaying(false);
-      },
-    });
-
     return () => {
       sound.current?.unload();
     };
-  }, [audioUri]);
+  }, []);
 
   const stopAudio = useCallback(() => {
     sound.current?.stop();
@@ -56,11 +39,23 @@ function AudioPlayer(props: AudioPlayerProps) {
   }, [currentlyPlayingTransmissionId, transmissionId, stopAudio]);
 
   const toggleAudio = () => {
+    if (!sound.current) {
+      sound.current = new Howl({
+        src: [getAudioUrl(audioUri)],
+        html5: true,
+        preload: 'metadata',
+        onplay: () => setIsPlaying(true),
+        onpause: () => setIsPlaying(false),
+        onend: () => setIsPlaying(false),
+        onstop: () => setIsPlaying(false),
+      });
+    }
+
     if (!isPlaying) {
       onPlay(transmissionId);
-      sound.current?.play();
+      sound.current.play();
     } else {
-      sound.current?.pause();
+      sound.current.pause();
     }
   };
 

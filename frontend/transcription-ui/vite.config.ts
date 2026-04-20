@@ -19,6 +19,11 @@ export default defineConfig({
         target: 'http://localhost:8080',
         changeOrigin: true,
       },
+      '/gcs': {
+        target: 'https://storage.googleapis.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/gcs/, ''),
+      },
     },
   },
 });
