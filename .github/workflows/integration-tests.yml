@@ -47,4 +47,4 @@ jobs:
 
       - name: Open SSH session if workflow fails
         uses: mxschmitt/action-tmate@v3
-        if: failure() && github.event_name == 'workflow_dispatch' && inputs.debug_enabled
+        if: github.event_name == 'workflow_dispatch' && inputs.debug_enabled
