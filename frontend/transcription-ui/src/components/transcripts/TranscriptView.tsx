@@ -173,13 +173,14 @@ export function TranscriptView({
 
   useEffect(() => {
     if (isTranscriptsSuccess && targetTransmissionId) {
-      const element = document.getElementById(`transcript-${targetTransmissionId}`);
+      const element = document.getElementById(
+        `transcript-${targetTransmissionId}`
+      );
       if (element) {
         element.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     }
   }, [isTranscriptsSuccess, targetTransmissionId, transcripts]);
-
 
   const onPlay = (transmissionId: string | null) => {
     setCurrentlyPlayingTransmissionId(transmissionId);
@@ -405,7 +406,9 @@ export function TranscriptView({
                   }
                   triggerSnackbar={triggerSnackbar}
                   showHeader={showHeader}
-                  isHighlighted={transcript.transmissionId === targetTransmissionId}
+                  isHighlighted={
+                    transcript.transmissionId === targetTransmissionId
+                  }
                 />
               );
             })}

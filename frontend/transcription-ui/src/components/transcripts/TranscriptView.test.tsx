@@ -460,7 +460,9 @@ describe('TranscriptView', () => {
     });
 
     renderWithQueryClient(
-      <MemoryRouter initialEntries={['/?feedId=feed123&transmissionId=target-id']}>
+      <MemoryRouter
+        initialEntries={['/?feedId=feed123&transmissionId=target-id']}
+      >
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
     );
