@@ -436,4 +436,49 @@ describe('TranscriptView', () => {
     // Cleanup promise to avoid unhandled rejections
     resolveTranscripts({ transcripts: [], nextToken: undefined });
   });
+
+  it('scrolls to highlighted transcript when transmissionId is in search params', async () => {
+    const mockScrollIntoView = vi.fn();
+    window.HTMLElement.prototype.scrollIntoView = mockScrollIntoView;
+
+    const mockTranscripts = [
+      {
+        feedId: 'feed123',
+        transmissionId: 'target-id',
+        transcript: 'Hello target',
+        canonicalAudioUri: 'gs:://foo.flac',
+        startTimestamp: '2026-04-10T12:00:00Z',
+        endTimestamp: '2026-04-10T12:00:05Z',
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: ['gs:://foo.flac'],
+        startAudioOffset: '0s',
+        endAudioOffset: '5s',
+        evaluationDecisions: [],
+      },
+    ];
+
+    vi.mocked(listTranscripts).mockResolvedValueOnce({
+      transcripts: mockTranscripts,
+      nextToken: undefined,
+    });
+
+    renderWithQueryClient(
+      <MemoryRouter
+        initialEntries={['/?feedId=feed123&transmissionId=target-id']}
+      >
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    // Wait for the transcript to be rendered
+    await waitFor(() => {
+      expect(screen.getByText('Hello target')).toBeTruthy();
+    });
+
+    // Verify scrollIntoView was called
+    await waitFor(() => {
+      expect(mockScrollIntoView).toHaveBeenCalled();
+    });
+  });
 });

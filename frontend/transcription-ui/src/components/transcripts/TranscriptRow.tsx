@@ -37,7 +37,7 @@ export function TranscriptRow({
   currentlyPlayingTransmissionId,
   triggerSnackbar,
   showHeader,
-  isHighlighted,
+  isHighlighted = false,
 }: TranscriptRowProps) {
   const theme = useTheme();
   const currentDate = new Date(transcript.startTimestamp);
@@ -68,7 +68,7 @@ export function TranscriptRow({
           alignItems: 'center',
           gap: 2,
           py: 1.5,
-          bgcolor: isHighlighted ? 'action.selected' : 'transparent',
+          bgcolor: isHighlighted ? 'action.selected' : 'inherit',
         }}
       >
         <Box

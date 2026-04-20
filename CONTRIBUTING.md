@@ -102,13 +102,21 @@ docker run -v ~/.config/gcloud:/.config/gcloud \
            -it icecast
 ```
 
-## Integration Tests
-There is a basic set of integration tests that are currently run against the local pipeline.
-These can be found under /integration_tests. Make sure to build and run the pipeline locally
-before running.
-```
-docker compose run --rm integration-tests
-```
+## Integration and E2E Tests
+We categorize our non-unit tests into three levels to balance speed and coverage. These are located under `integration_tests/`:
+
+1. **Component Tests**: Isolated tests for database stores using `testcontainers`.
+   * Run all: `mise run test:component`
+   * Run specific: `mise run test:component:rules` or `test:component:feeds`
+
+2. **API Tests**: Tests targeting running services via HTTP.
+   * Run all: `mise run test:api`
+
+3. **End-to-End (E2E) Tests**: Full system flow tests involving multiple services and the Pub/Sub emulator.
+   * Run in an isolated environment (Docker handles lifecycle): `mise run test:e2e`
+   * Run against a running background environment: `mise run test:e2e:local` (Requires you to start the environment first)
+
+For more details on the architecture and local execution of the pipeline, see the **Pipeline E2E Local Development** section above.
 
 ## Frontend tools
 

@@ -52,6 +52,7 @@ export function TranscriptView({
   const queryClient = useQueryClient();
 
   const [searchParams, setSearchParams] = useSearchParams();
+  const targetTransmissionId = searchParams.get('transmissionId');
 
   const [feedId, setFeedId] = useState<string>(
     () => searchParams.get('feedId') || ''
@@ -78,7 +79,7 @@ export function TranscriptView({
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
   const [highlightedTransmissionId, setHighlightedTransmissionId] =
-    useState<string | null>(null);
+    useState<string | null>(targetTransmissionId);
 
   const {
     data: feeds,
@@ -172,6 +173,17 @@ export function TranscriptView({
       });
     }
   }, [rulesError, addAlert]);
+
+  useEffect(() => {
+    if (isTranscriptsSuccess && targetTransmissionId) {
+      const element = document.getElementById(
+        `transcript-${targetTransmissionId}`
+      );
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+  }, [isTranscriptsSuccess, targetTransmissionId, transcripts]);
 
   const onPlay = (transmissionId: string | null) => {
     setCurrentlyPlayingTransmissionId(transmissionId);
@@ -359,6 +371,23 @@ export function TranscriptView({
           }
           sx={{ width: '100%' }}
         />
+        <Button
+          variant="outlined"
+          color="primary"
+          onClick={() => {
+            setTimestamp(null);
+            setDuration(null);
+            // Remove timestamp and duration from search params to reset
+            const nextParams = new URLSearchParams(searchParams);
+            nextParams.delete('timestamp');
+            nextParams.delete('duration');
+            setSearchParams(nextParams);
+          }}
+          disabled={!timestamp && !duration}
+          sx={{ height: '40px', minWidth: '100px' }}
+        >
+          Clear
+        </Button>
       </Box>
 
       <AudioDisplay
@@ -436,13 +465,16 @@ export function TranscriptView({
             Error loading transcripts.
           </Typography>
         ) : isTranscriptsSuccess ? (
-          <Typography
-            color="textSecondary"
-            align="center"
-            sx={{ mt: theme.spacing(2) }}
-          >
-            No transcripts found.
-          </Typography>
+          <Box sx={{ mt: theme.spacing(2), textAlign: 'center' }}>
+            <Typography color="textSecondary" align="center">
+              No transcripts found.
+            </Typography>
+            {(searchedStartTime || searchedEndTime) && (
+              <Typography color="textSecondary" align="center" sx={{ mt: 1 }}>
+                Try clearing the time filters to see recent transcripts.
+              </Typography>
+            )}
+          </Box>
         ) : null}
       </Box>
     </Box>
