@@ -7,6 +7,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import apache_beam as beam
+import numpy as np
 from apache_beam.io.gcp.pubsub import PubsubMessage
 from apache_beam.options.pipeline_options import (
     PipelineOptions,
@@ -16,20 +17,18 @@ from apache_beam.testing.test_pipeline import TestPipeline as BeamTestPipeline
 from apache_beam.testing.test_stream import TestStream as BeamTestStream
 from apache_beam.testing.util import assert_that, equal_to
 from apache_beam.transforms.window import TimestampedValue
-from pydub import AudioSegment
 
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.transcription.constants import DEAD_LETTER_QUEUE_TAG
 from backend.pipeline.transcription.datatypes import (
     AudioChunkData,
-    ChunkMetadata,
-    DownloadedChunkPayload,
     FlushRequest,
     OrderRestorerConfig,
     PaddedSegment,
     StitchAudioConfig,
     TimeRange,
     TranscribeAudioConfig,
+    VadResult,
 )
 from backend.pipeline.transcription.enums import TranscriberType
 from backend.pipeline.transcription.stitcher import (
@@ -39,8 +38,6 @@ from backend.pipeline.transcription.stitcher import (
 from backend.pipeline.transcription.transcribers import Transcriber
 from backend.pipeline.transcription.transforms import (
     AddEventTimestamp,
-    BypassStitchingFn,
-    DownloadAudioFn,
     ParseAndKeyFn,
     RestoreOrderFn,
 )
@@ -82,8 +79,9 @@ def get_test_stitch_config(**kwargs: Any) -> StitchAudioConfig:
 
     defaults = {
         "project_id": "fake-proj",
-
         "vad_config": "{}",
+        "metrics_exporter_type": "",
+        "metrics_config": "{}",
         "significant_gap_ms": 500,
         "stale_timeout_ms": 60000,
         "max_transmission_duration_ms": 600000,
@@ -100,8 +98,9 @@ def get_test_transcribe_config(**kwargs: Any) -> TranscribeAudioConfig:
         "project_id": "fake-proj",
         "transcriber_type": TranscriberType.GOOGLE_CHIRP_V3,
         "transcriber_config": "{}",
-
         "vad_config": "{}",
+        "metrics_exporter_type": "",
+        "metrics_config": "{}",
     }
     defaults.update(kwargs)
     return TranscribeAudioConfig(**defaults)  # type: ignore
@@ -117,7 +116,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             {"feed_id": "test-feed"},
         )
         options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+            flags=["--input_topic=a", "--output_topic=b", "--project=c"]
         )
         with BeamTestPipeline(options=options) as p:
             messages = p | beam.Create([mock_msg])
@@ -143,7 +142,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             {},  # Missing feed_id
         )
         options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+            flags=["--input_topic=a", "--output_topic=b", "--project=c"]
         )
         with BeamTestPipeline(options=options) as p:
             messages = p | beam.Create([mock_msg])
@@ -182,10 +181,9 @@ class AddEventTimestampTest(unittest.TestCase):
             result[0].value,  # type: ignore
             (
                 "test-feed",
-                ChunkMetadata(
-                    gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
-                    session_id="mock-session-id",
-                    duration_ms=0,
+                (
+                    "gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
+                    "mock-session-id",
                 ),
             ),
         )
@@ -205,44 +203,13 @@ class AddEventTimestampTest(unittest.TestCase):
         self.assertEqual(result[0].tag, DEAD_LETTER_QUEUE_TAG)  # type: ignore
 
 
-class BypassStitchingTest(unittest.TestCase):
-    def test_bypass_stitching_maps_correctly(self) -> None:
-        """Verifies that BypassStitchingFn correctly maps AudioChunkData to FlushRequest."""
-        feed_id = "test-feed"
-        gcs_path = "gs://bucket/test.flac"
-        audio_len_ms = 5000
-        chunk_data = AudioChunkData(
-            start_ms=1000,
-            audio=AudioSegment.silent(duration=audio_len_ms),
-            speech_segments=[],
-            gcs_uri=gcs_path,
-        )
-        element = (feed_id, DownloadedChunkPayload(gcs_path, chunk_data))
-
-        fn = BypassStitchingFn()
-        result = list(fn.process(element))
-
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0][0], feed_id)
-
-        flush_request = result[0][1]
-        self.assertIsInstance(flush_request, FlushRequest)
-        self.assertEqual(flush_request.feed_id, feed_id)
-        self.assertEqual(flush_request.contributing_audio_uris, [gcs_path])
-        self.assertEqual(flush_request.time_range.start_ms, 1000)
-        self.assertEqual(flush_request.time_range.end_ms, 1000 + audio_len_ms)
-        self.assertFalse(flush_request.missing_prior_context)
-        self.assertFalse(flush_request.missing_post_context)
-        self.assertIsNotNone(flush_request.transmission_id)
-
-
 class OrderRestorerTest(unittest.TestCase):
     def test_restore_order_buffers_and_releases(self) -> None:
         """Verifies that structurally disordered data streams correctly buffer elements in-memory to artificially re-align and emit chronologically."""
         config = OrderRestorerConfig(out_of_order_timeout_ms=5000)
 
         options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+            flags=["--input_topic=a", "--output_topic=b", "--project=c"]
         )
         with BeamTestPipeline(options=options) as p:
             # Emit chunk 1, then chunk 3. Chunk 3 should be buffered.
@@ -252,7 +219,12 @@ class OrderRestorerTest(unittest.TestCase):
                     coder=beam.coders.TupleCoder(
                         (
                             beam.coders.StrUtf8Coder(),
-                            beam.coders.PickleCoder(),
+                            beam.coders.TupleCoder(
+                                (
+                                    beam.coders.StrUtf8Coder(),
+                                    beam.coders.StrUtf8Coder(),
+                                )
+                            ),
                         )
                     )
                 )
@@ -260,12 +232,7 @@ class OrderRestorerTest(unittest.TestCase):
                 .add_elements(
                     [
                         TimestampedValue(
-                            (
-                                "feed-1",
-                                ChunkMetadata(
-                                    "gs://b/100-uuid1.flac", "session-A", 15000
-                                ),
-                            ),
+                            ("feed-1", ("gs://b/100-uuid1.flac", "session-A")),
                             100,
                         )
                     ]
@@ -274,12 +241,7 @@ class OrderRestorerTest(unittest.TestCase):
                 .add_elements(
                     [
                         TimestampedValue(
-                            (
-                                "feed-1",
-                                ChunkMetadata(
-                                    "gs://b/130-uuid3.flac", "session-A", 15000
-                                ),
-                            ),
+                            ("feed-1", ("gs://b/130-uuid3.flac", "session-A")),
                             130,
                         )
                     ]
@@ -288,12 +250,7 @@ class OrderRestorerTest(unittest.TestCase):
                 .add_elements(
                     [
                         TimestampedValue(
-                            (
-                                "feed-1",
-                                ChunkMetadata(
-                                    "gs://b/115-uuid2.flac", "session-A", 15000
-                                ),
-                            ),
+                            ("feed-1", ("gs://b/115-uuid2.flac", "session-A")),
                             115,
                         )
                     ]
@@ -319,7 +276,7 @@ class OrderRestorerTest(unittest.TestCase):
         config = OrderRestorerConfig(out_of_order_timeout_ms=5000)
 
         options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+            flags=["--input_topic=a", "--output_topic=b", "--project=c"]
         )
         with BeamTestPipeline(options=options) as p:
             test_stream = (
@@ -327,7 +284,12 @@ class OrderRestorerTest(unittest.TestCase):
                     coder=beam.coders.TupleCoder(
                         (
                             beam.coders.StrUtf8Coder(),
-                            beam.coders.PickleCoder(),
+                            beam.coders.TupleCoder(
+                                (
+                                    beam.coders.StrUtf8Coder(),
+                                    beam.coders.StrUtf8Coder(),
+                                )
+                            ),
                         )
                     )
                 )
@@ -337,11 +299,7 @@ class OrderRestorerTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-1",
-                                ChunkMetadata(
-                                    "gs://b/100-11111111.flac",
-                                    "session-A",
-                                    15000,
-                                ),
+                                ("gs://b/100-11111111.flac", "session-A"),
                             ),
                             100,
                         )
@@ -353,11 +311,7 @@ class OrderRestorerTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-1",
-                                ChunkMetadata(
-                                    "gs://b/130-33333333.flac",
-                                    "session-A",
-                                    15000,
-                                ),
+                                ("gs://b/130-33333333.flac", "session-A"),
                             ),
                             130,
                         )
@@ -371,11 +325,7 @@ class OrderRestorerTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-1",
-                                ChunkMetadata(
-                                    "gs://b/115-22222222.flac",
-                                    "session-A",
-                                    15000,
-                                ),
+                                ("gs://b/115-22222222.flac", "session-A"),
                             ),
                             115,
                         )
@@ -426,6 +376,8 @@ class StitchAudioTest(unittest.TestCase):
             "190-66666666-6666-6666-6666-666666666666.flac": [(0.0, 2.0)],
         }
 
+        vad_results_map = {}
+
         def mock_download(path: str, start_ms: int = 0) -> AudioChunkData:
 
             filename = path.rsplit("/", maxsplit=1)[-1]
@@ -470,27 +422,53 @@ class StitchAudioTest(unittest.TestCase):
 
                 padded_segments.append(
                     PaddedSegment(
-                        audio=AudioSegment.silent(duration=duration),
+                        audio=np.zeros(int(duration * 16), dtype=np.int16),
                         start_ms=pad_start,
                         speech_start_ms=abs_s_ms,
                         speech_end_ms=abs_e_ms,
                     )
                 )
 
+            silence_ranges = []
+            last_end = 0
+            for s_range in speech_ranges:
+                s_ms = s_range.start_ms
+                if s_ms > last_end:
+                    silence_ranges.append(
+                        TimeRange(start_ms=last_end, end_ms=s_ms)
+                    )
+                last_end = s_range.end_ms
+
+            if last_end < duration_ms:
+                silence_ranges.append(
+                    TimeRange(start_ms=last_end, end_ms=duration_ms)
+                )
+
+            # Store for detect_vad
+            vad_results_map[chunk_start_ms] = (
+                padded_segments,
+                VadResult(speech_segments=speech_ranges, silence_segments=silence_ranges),
+            )
+
             return AudioChunkData(
                 start_ms=chunk_start_ms,
-                audio=AudioSegment.silent(duration=duration_ms),
-                speech_segments=speech_ranges,
+                audio=np.zeros(int(duration_ms * 16), dtype=np.int16),
                 gcs_uri=path,
-                padded_segments=padded_segments,
+                stored_audio=np.zeros(int(duration_ms * 16), dtype=np.int16),
+                original_sr=16000,
+                is_pure_silence=not speech_ranges,
             )
+
+        def mock_detect_vad(chunk_audio: np.ndarray, start_ms: int):
+            return vad_results_map.get(start_ms, ([], VadResult([], [])))
 
         mock_processor_inst.download_audio_and_detect.side_effect = (
             mock_download
         )
+        mock_processor_inst.detect_vad.side_effect = mock_detect_vad
 
         options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+            flags=["--input_topic=a", "--output_topic=b", "--project=c"]
         )
         options.view_as(StandardOptions).streaming = True
 
@@ -502,7 +480,12 @@ class StitchAudioTest(unittest.TestCase):
                     coder=beam.coders.TupleCoder(
                         (
                             beam.coders.StrUtf8Coder(),
-                            beam.coders.PickleCoder(),
+                            beam.coders.TupleCoder(
+                                (
+                                    beam.coders.StrUtf8Coder(),
+                                    beam.coders.PickleCoder(),
+                                )
+                            ),
                         )
                     )
                 )
@@ -512,7 +495,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                DownloadedChunkPayload(
+                                (
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/100-11111111-1111-1111-1111-111111111111.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/100-11111111-1111-1111-1111-111111111111.flac"
@@ -529,7 +512,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                DownloadedChunkPayload(
+                                (
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/115-22222222-2222-2222-2222-222222222222.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/115-22222222-2222-2222-2222-222222222222.flac"
@@ -546,7 +529,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                DownloadedChunkPayload(
+                                (
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/130-33333333-3333-3333-3333-333333333333.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/130-33333333-3333-3333-3333-333333333333.flac"
@@ -563,7 +546,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                DownloadedChunkPayload(
+                                (
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/150-44444444-4444-4444-4444-444444444444.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/150-44444444-4444-4444-4444-444444444444.flac"
@@ -580,7 +563,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                DownloadedChunkPayload(
+                                (
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/160-55555555-5555-5555-5555-555555555555.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/160-55555555-5555-5555-5555-555555555555.flac"
@@ -597,7 +580,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                DownloadedChunkPayload(
+                                (
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/190-66666666-6666-6666-6666-666666666666.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/190-66666666-6666-6666-6666-666666666666.flac"
@@ -716,7 +699,7 @@ class StitchAudioTest(unittest.TestCase):
 
                 padded_segments.append(
                     PaddedSegment(
-                        audio=AudioSegment.silent(duration=duration),
+                        audio=np.zeros(int(duration * 16), dtype=np.int16),
                         start_ms=pad_start,
                         speech_start_ms=abs_s_ms,
                         speech_end_ms=abs_e_ms,
@@ -725,17 +708,19 @@ class StitchAudioTest(unittest.TestCase):
 
             return AudioChunkData(
                 start_ms=chunk_start_ms,
-                audio=AudioSegment.silent(duration=duration_ms),
+                audio=np.zeros(int(duration_ms * 16), dtype=np.int16),
                 speech_segments=speech_ranges,
                 gcs_uri=path,
                 padded_segments=padded_segments,
+                stored_audio=np.zeros(int(duration_ms * 16), dtype=np.int16),
+                original_sr=16000,
             )
 
         mock_processor_inst.download_audio_and_detect.side_effect = (
             mock_download
         )
         options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+            flags=["--input_topic=a", "--output_topic=b", "--project=c"]
         )
         options.view_as(StandardOptions).streaming = True
         config = get_test_stitch_config(significant_gap_ms=3000)
@@ -746,7 +731,12 @@ class StitchAudioTest(unittest.TestCase):
                     coder=beam.coders.TupleCoder(
                         (
                             beam.coders.StrUtf8Coder(),
-                            beam.coders.PickleCoder(),
+                            beam.coders.TupleCoder(
+                                (
+                                    beam.coders.StrUtf8Coder(),
+                                    beam.coders.PickleCoder(),
+                                )
+                            ),
                         )
                     )
                 )
@@ -756,7 +746,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                DownloadedChunkPayload(
+                                (
                                     "gs://fake-bucket/100-11111111-1111-1111-1111-111111111111.flac",
                                     mock_download(
                                         "gs://fake-bucket/100-11111111-1111-1111-1111-111111111111.flac"
@@ -773,7 +763,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                DownloadedChunkPayload(
+                                (
                                     "gs://fake-bucket/130-33333333-3333-3333-3333-333333333333.flac",
                                     mock_download(
                                         "gs://fake-bucket/130-33333333-3333-3333-3333-333333333333.flac"
@@ -790,7 +780,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                DownloadedChunkPayload(
+                                (
                                     "gs://fake-bucket/115-22222222-2222-2222-2222-222222222222.flac",
                                     mock_download(
                                         "gs://fake-bucket/115-22222222-2222-2222-2222-222222222222.flac"
@@ -858,6 +848,8 @@ class StitchAudioTest(unittest.TestCase):
             "160-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac": [(0.0, 2.0)],
         }
 
+        vad_results_map = {}
+
         def mock_download(path: str, start_ms: int = 0) -> AudioChunkData:
 
             filename = path.rsplit("/", maxsplit=1)[-1]
@@ -893,27 +885,51 @@ class StitchAudioTest(unittest.TestCase):
 
                 padded_segments.append(
                     PaddedSegment(
-                        audio=AudioSegment.silent(duration=duration),
+                        audio=np.zeros(int(duration * 16), dtype=np.int16),
                         start_ms=pad_start,
                         speech_start_ms=abs_s_ms,
                         speech_end_ms=abs_e_ms,
                     )
                 )
 
+            # For this test, we assume silence is whatever is not speech
+            silence_ranges = []
+            last_end = 0
+            for s_range in speech_ranges:
+                s_ms = s_range.start_ms
+                if s_ms > last_end:
+                    silence_ranges.append(
+                        TimeRange(start_ms=last_end, end_ms=s_ms)
+                    )
+                last_end = s_range.end_ms
+            if last_end < duration_ms:
+                silence_ranges.append(
+                    TimeRange(start_ms=last_end, end_ms=duration_ms)
+                )
+
+            vad_results_map[chunk_start_ms] = (
+                padded_segments,
+                VadResult(speech_segments=speech_ranges, silence_segments=silence_ranges),
+            )
+
             return AudioChunkData(
                 start_ms=chunk_start_ms,
-                audio=AudioSegment.silent(duration=duration_ms),
-                speech_segments=speech_ranges,
+                audio=np.zeros(int(duration_ms * 16), dtype=np.int16),
                 gcs_uri=path,
-                padded_segments=padded_segments,
+                stored_audio=np.zeros(int(duration_ms * 16), dtype=np.int16),
+                original_sr=16000,
             )
+
+        def mock_detect_vad(chunk_audio: np.ndarray, start_ms: int):
+            return vad_results_map.get(start_ms, ([], VadResult([], [])))
 
         mock_processor_inst.download_audio_and_detect.side_effect = (
             mock_download
         )
+        mock_processor_inst.detect_vad.side_effect = mock_detect_vad
 
         options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+            flags=["--input_topic=a", "--output_topic=b", "--project=c"]
         )
         options.view_as(StandardOptions).streaming = True
 
@@ -928,7 +944,12 @@ class StitchAudioTest(unittest.TestCase):
                     coder=beam.coders.TupleCoder(
                         (
                             beam.coders.StrUtf8Coder(),
-                            beam.coders.PickleCoder(),
+                            beam.coders.TupleCoder(
+                                (
+                                    beam.coders.StrUtf8Coder(),
+                                    beam.coders.PickleCoder(),
+                                )
+                            ),
                         )
                     )
                 )
@@ -938,7 +959,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-max",
-                                DownloadedChunkPayload(
+                                (
                                     "gs://fake-bucket/ab12/feed-max/2026-03-06/100-77777777-7777-7777-7777-777777777777.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-max/2026-03-06/100-77777777-7777-7777-7777-777777777777.flac"
@@ -955,7 +976,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-max",
-                                DownloadedChunkPayload(
+                                (
                                     "gs://fake-bucket/ab12/feed-max/2026-03-06/115-88888888-8888-8888-8888-888888888888.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-max/2026-03-06/115-88888888-8888-8888-8888-888888888888.flac"
@@ -972,7 +993,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-max",
-                                DownloadedChunkPayload(
+                                (
                                     "gs://fake-bucket/ab12/feed-max/2026-03-06/130-99999999-9999-9999-9999-999999999999.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-max/2026-03-06/130-99999999-9999-9999-9999-999999999999.flac"
@@ -989,7 +1010,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-max",
-                                DownloadedChunkPayload(
+                                (
                                     "gs://fake-bucket/ab12/feed-max/2026-03-06/160-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac",
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-max/2026-03-06/160-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac"
@@ -1064,13 +1085,15 @@ class StitchAudioTest(unittest.TestCase):
         mock_processor_inst.export_flac.return_value = b"flac_bytes"
         mock_processor_inst.download_audio_and_detect.return_value = AudioChunkData(
             start_ms=101000,
-            audio=AudioSegment.silent(duration=20000),
+            audio=np.zeros(20000 * 16, dtype=np.int16),
+            stored_audio=np.zeros(20000 * 16, dtype=np.int16),
+            original_sr=16000,
             speech_segments=[TimeRange(12500, 15000)],
             gcs_uri="gs://fake-bucket/ab12/feed-123/2026-03-06/101-11111111-1111-1111-1111-111111111111.flac",
         )
 
         options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+            flags=["--input_topic=a", "--output_topic=b", "--project=c"]
         )
         options.view_as(StandardOptions).streaming = True
 
@@ -1097,7 +1120,7 @@ class StitchAudioTest(unittest.TestCase):
                         TimestampedValue(
                             (
                                 "feed-123",
-                                DownloadedChunkPayload(
+                                (
                                     "gs://fake-bucket/ab12/feed-123/2026-03-06/101-11111111-1111-1111-1111-111111111111.flac",
                                     mock_processor_inst.download_audio_and_detect.return_value,
                                 ),
@@ -1149,25 +1172,13 @@ class StitchAudioTest(unittest.TestCase):
 
         with self.assertRaises(Exception):
             options = PipelineOptions(
-                flags=[
-                    "--input_subscription=a",
-                    "--output_topic=b",
-                    "--project=c",
-                ]
+                flags=["--input_topic=a", "--output_topic=b", "--project=c"]
             )
             with BeamTestPipeline(options=options) as p:
                 input_elements = [
                     (
                         "feed-123",
-                        DownloadedChunkPayload(
-                            "gs://fake-bucket/123-00000000-0000-0000-0000-000000000000.flac",
-                            AudioChunkData(
-                                start_ms=0,
-                                audio=AudioSegment.silent(duration=0),
-                                speech_segments=[],
-                                gcs_uri="gs://fake-bucket/123-00000000-0000-0000-0000-000000000000.flac",
-                            ),
-                        ),
+                        "gs://fake-bucket/123-00000000-0000-0000-0000-000000000000.flac",
                     )
                 ]
                 (
@@ -1186,23 +1197,21 @@ class TranscribeAudioTest(unittest.TestCase):
     @patch("backend.pipeline.transcription.stitcher.verify_speech_segment")
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
     def test_dlq_routing(
-        self, mock_audio_processor: MagicMock, mock_verify_speech: MagicMock, mock_get_transcriber: MagicMock
+        self,
+        mock_audio_processor: MagicMock,
+        mock_verify_speech: MagicMock,
+        mock_get_transcriber: MagicMock,
     ) -> None:
         """Verifies that explicit Python exceptions raised randomly within transformations dynamically populate a standardized and resilient Dataflow Dead Letter Queue error."""
         mock_processor_inst = mock_audio_processor.return_value
         mock_verify_speech.return_value = True
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
         mock_processor_inst.export_flac.return_value = b"flac_bytes"
-        mock_processor_inst.process_buffer.return_value = (
-            True,
-            b"flac_bytes",
-            AudioSegment.silent(duration=500),
-        )
 
         config = get_test_transcribe_config(route_to_dlq=True)
 
         options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+            flags=["--input_topic=a", "--output_topic=b", "--project=c"]
         )
         with BeamTestPipeline(options=options) as p:
             elements = p | beam.Create(
@@ -1211,12 +1220,15 @@ class TranscribeAudioTest(unittest.TestCase):
                         "feed-123",
                         FlushRequest(
                             feed_id="feed-123",
-                            buffer=AudioSegment.silent(duration=500),
+                            buffer=np.zeros((500 * 16), dtype=np.int16),
                             contributing_audio_uris=["gs://f/11111111.flac"],
                             time_range=TimeRange(
                                 start_ms=101000, end_ms=101500
                             ),
-                            transmission_id="test-uuid",
+                            stored_buffer=np.zeros(
+                                (500 * 16), dtype=np.int16
+                            ),
+                            original_sr=16000,
                         ),
                     )
                 ]
@@ -1290,7 +1302,7 @@ class TranscribeAudioTest(unittest.TestCase):
 
             padded_segments = [
                 PaddedSegment(
-                    audio=AudioSegment.silent(duration=1000),
+                    audio=np.zeros((1000 * 16), dtype=np.int16),
                     start_ms=chunk_start_ms,
                     speech_start_ms=chunk_start_ms,
                     speech_end_ms=chunk_start_ms + 1000,
@@ -1299,10 +1311,12 @@ class TranscribeAudioTest(unittest.TestCase):
 
             return AudioChunkData(
                 start_ms=chunk_start_ms,
-                audio=AudioSegment.silent(duration=duration_ms),
+                audio=np.zeros(int(duration_ms * 16), dtype=np.int16),
                 speech_segments=speech_ranges,
                 gcs_uri=path,
                 padded_segments=padded_segments,
+                stored_audio=np.zeros(int(duration_ms * 16), dtype=np.int16),
+                original_sr=16000,
             )
 
         mock_processor_inst.download_audio_and_detect.side_effect = (
@@ -1312,7 +1326,7 @@ class TranscribeAudioTest(unittest.TestCase):
         main_thread_name = threading.current_thread().name
 
         options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+            flags=["--input_topic=a", "--output_topic=b", "--project=c"]
         )
         options.view_as(StandardOptions).streaming = True
 
@@ -1323,17 +1337,19 @@ class TranscribeAudioTest(unittest.TestCase):
                 [
                     FlushRequest(
                         feed_id="feed-123",
-                        buffer=AudioSegment.silent(duration=500),
+                        buffer=np.zeros((500 * 16), dtype=np.int16),
+                        stored_buffer=np.zeros((500 * 16), dtype=np.int16),
+                        original_sr=16000,
                         contributing_audio_uris=["gs://bbbbbbbb.flac"],
                         time_range=TimeRange(start_ms=0, end_ms=500),
-                        transmission_id="test-uuid-1",
                     ),
                     FlushRequest(
                         feed_id="feed-123",
-                        buffer=AudioSegment.silent(duration=500),
+                        buffer=np.zeros((500 * 16), dtype=np.int16),
+                        stored_buffer=np.zeros((500 * 16), dtype=np.int16),
+                        original_sr=16000,
                         contributing_audio_uris=["gs://cccccccc.flac"],
                         time_range=TimeRange(start_ms=5000, end_ms=5500),
-                        transmission_id="test-uuid-2",
                     ),
                 ]
             )
@@ -1354,49 +1370,3 @@ class TranscribeAudioTest(unittest.TestCase):
             main_thread_name in execution_threads,
             f"Transcription executed on MainThread ({main_thread_name}) instead of a background thread pool!",
         )
-
-
-class DownloadAudioTest(unittest.TestCase):
-    @patch("backend.pipeline.transcription.transforms.AudioProcessor")
-    def test_download_audio_timestamp_injection(
-        self, mock_audio_processor: MagicMock
-    ) -> None:
-        """Verifies that DownloadAudioFn can be processed natively by Apache Beam without _DoFnParam injection errors."""
-        mock_inst = mock_audio_processor.return_value
-        mock_inst.download_audio_and_detect.return_value = AudioChunkData(
-            start_ms=100000,
-            audio=AudioSegment.silent(duration=1000),
-            speech_segments=[],
-            gcs_uri="gs://fake-bucket/100-11111111.flac",
-        )
-
-        config = get_test_stitch_config()
-        options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
-        )
-
-        with BeamTestPipeline(options=options) as p:
-            elements = (
-                p
-                | beam.Create(
-                    [("feed-123", "gs://fake-bucket/100-11111111.flac")]
-                ).with_output_types(tuple[str, str])
-                | beam.Map(lambda x: TimestampedValue(x, 100))
-            )
-
-            results = elements | beam.ParDo(DownloadAudioFn(config))
-
-            assert_that(
-                results,
-                equal_to(
-                    [
-                        (
-                            "feed-123",
-                            DownloadedChunkPayload(
-                                "gs://fake-bucket/100-11111111.flac",
-                                mock_inst.download_audio_and_detect.return_value,
-                            ),
-                        )
-                    ]
-                ),
-            )

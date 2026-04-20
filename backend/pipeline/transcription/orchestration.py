@@ -41,7 +41,6 @@ from backend.pipeline.transcription.stitcher import (
 )
 from backend.pipeline.transcription.transforms import (
     AddEventTimestamp,
-    BypassStitchingFn,
     DownloadAudioFn,
     ParseAndKeyFn,
     RestoreOrderFn,
@@ -134,7 +133,6 @@ def get_pipeline(
     # Core pipeline logic: State buffers audio across multiple chunks, flushing only on silence or timeout.
     if options.bypass_stitching:
         stitching_main = downloaded_chunks.main | "BypassStitch" >> beam.ParDo(
-            BypassStitchingFn()
         )
     else:
         stitching_results = (

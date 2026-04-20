@@ -60,7 +60,6 @@ from backend.pipeline.transcription.resources import (
 from backend.pipeline.transcription.stitcher_state import (
     AudioStitchingStateMachine,
 )
-from backend.pipeline.transcription.telemetry import get_metrics_exporter
 from backend.pipeline.transcription.transcribers import (
     Transcriber,
     get_transcriber,
@@ -157,12 +156,6 @@ class StitchAudioFn(beam.DoFn):
                 except ValueError:
                     logger.warning("Unknown metrics exporter type: %s", t)
 
-        self.metrics_exporter = get_metrics_exporter(
-            parsed_exporters,
-            self.config.project_id,
-            self.config.metrics_config,
-        )
-        self.metrics_exporter.setup()
 
     def _apply_flush_action(
         self,
@@ -638,11 +631,6 @@ class TranscribeAudioFn(beam.DoFn):
                 except ValueError:
                     logger.warning("Unknown metrics exporter type: %s", t)
 
-        self.metrics_exporter = get_metrics_exporter(
-            parsed_exporters,
-            self.config.project_id,
-            self.config.metrics_config,
-        )
         self.metrics_exporter.setup()
 
         if self.audio_processor.gcs_client is None:
