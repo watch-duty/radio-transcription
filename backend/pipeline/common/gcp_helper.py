@@ -216,15 +216,12 @@ def publish_audio_chunk_sync(
     """
     audio_chunk_msg = AudioChunk(gcs_uri=gcs_uri)
     audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
+    audio_chunk_msg.feed_id = feed_id
     audio_chunk_msg.session_id = session_id
     audio_chunk_msg.feed_name = feed_name
     audio_chunk_msg.duration_ms = duration_ms
 
-    attrs: dict[str, str] = {
-        "feed_id": feed_id,
-        "session_id": session_id,
-        "gcs_uri": gcs_uri,
-    }
+    attrs: dict[str, str] = {}
     if source_type is not None:
         attrs["source_type"] = source_type
 
@@ -256,15 +253,12 @@ async def publish_audio_chunk(
     publisher = pubsub_client.get_publisher()
     audio_chunk_msg = AudioChunk(gcs_uri=gcs_uri)
     audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
+    audio_chunk_msg.feed_id = feed_id
     audio_chunk_msg.session_id = session_id
     audio_chunk_msg.feed_name = feed_name
     audio_chunk_msg.duration_ms = duration_ms
 
-    attrs: dict[str, str] = {
-        "feed_id": feed_id,
-        "session_id": session_id,
-        "gcs_uri": gcs_uri,
-    }
+    attrs: dict[str, str] = {}
     if source_type is not None:
         attrs["source_type"] = source_type
 
