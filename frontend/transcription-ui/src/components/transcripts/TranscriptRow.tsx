@@ -13,8 +13,8 @@ import type { Transcript } from '@transcription/common';
 import AudioPlayer from '../audio/AudioPlayer';
 import AlertTooltip from './AlertTooltip';
 
-// For deep links to transmissions, we add a buffer either side of the transmission so there is additional context around the transmission by default.
-const TRANSMISSION_LINK_BUFFER_TIME = 60000 * 5;
+// For deep links to transmissions, we add a default duration in minutes to either side of the transmission so there is additional context around the transmission.
+const DEFAULT_DURATION_MINUTES = 5;
 
 interface TranscriptRowProps {
   transcript: Transcript;
@@ -134,18 +134,14 @@ export function TranscriptRow({
                   'transmissionId',
                   transcript.transmissionId
                 );
-                const startMs =
-                  new Date(transcript.startTimestamp).getTime() -
-                  TRANSMISSION_LINK_BUFFER_TIME;
-                const endMs =
-                  new Date(transcript.endTimestamp).getTime() +
-                  TRANSMISSION_LINK_BUFFER_TIME;
-                const midpointMs = (startMs + endMs) / 2;
-                const offsetMs = midpointMs - startMs;
-                const durationMins = Math.round(offsetMs / 60000);
-
-                url.searchParams.set('timestamp', midpointMs.toString());
-                url.searchParams.set('duration', durationMins.toString());
+                url.searchParams.set(
+                  'timestamp',
+                  new Date(transcript.startTimestamp).getTime().toString()
+                );
+                url.searchParams.set(
+                  'duration',
+                  DEFAULT_DURATION_MINUTES.toString()
+                );
                 navigator.clipboard.writeText(url.toString());
                 triggerSnackbar('Link copied');
               }}
