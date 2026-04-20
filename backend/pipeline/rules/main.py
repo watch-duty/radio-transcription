@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 
 from backend.pipeline.common.auth import verify_oidc_token
 from backend.pipeline.common.rules.models import Rule, RuleCreate, RuleUpdate
@@ -67,9 +67,10 @@ async def create_rule(
 )
 async def list_rules(
     service: Annotated[BaseRulesService, Depends(get_rules_service)],
+    rule_ids: Annotated[list[str] | None, Query(None)] = None,
 ) -> list[Rule]:
-    """List all transcription rules."""
-    return await service.list_rules()
+    """List all transcription rules, optionally filtered by rule IDs."""
+    return await service.list_rules(rule_ids)
 
 
 @app.get(

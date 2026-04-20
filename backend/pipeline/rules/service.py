@@ -24,8 +24,8 @@ class BaseRulesService(ABC):
         """Fetch a specific transcription rule by ID."""
 
     @abstractmethod
-    async def list_rules(self) -> list[Rule]:
-        """List all transcription rules."""
+    async def list_rules(self, rule_ids: list[str] | None = None) -> list[Rule]:
+        """List all transcription rules, optionally filtered by rule IDs."""
 
     @abstractmethod
     async def update_rule(
@@ -50,8 +50,8 @@ class AlloyRulesService(BaseRulesService):
     async def get_rule(self, rule_id: str) -> Rule | None:
         return await self._store.get_rule(rule_id)
 
-    async def list_rules(self) -> list[Rule]:
-        return await self._store.list_rules()
+    async def list_rules(self, rule_ids: list[str] | None = None) -> list[Rule]:
+        return await self._store.list_rules(rule_ids)
 
     async def update_rule(
         self, rule_id: str, rule_in: RuleUpdate
