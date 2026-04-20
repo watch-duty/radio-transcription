@@ -80,6 +80,7 @@ describe('RulesController', () => {
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://rules-api.example.com',
         method: 'GET',
+        params: expect.any(URLSearchParams),
       });
     });
 
