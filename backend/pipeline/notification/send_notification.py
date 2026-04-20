@@ -83,6 +83,7 @@ def convert_to_notification(
         evaluation_decisions=evaluated_transcribed_audio.evaluation_decisions,
         canonical_audio_uri=evaluated_transcribed_audio.canonical_audio_uri,
         playback_audio_uri=evaluated_transcribed_audio.playback_audio_uri,
+        feed_name=evaluated_transcribed_audio.feed_name,
         app_url=app_url,
     )
     if evaluated_transcribed_audio.start_timestamp.seconds:

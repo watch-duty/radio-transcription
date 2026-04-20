@@ -52,6 +52,6 @@ message TranscribedAudio {
   // The URI of the audio file optimized for playback (e.g., compressed M4A/Opus).
   string playback_audio_uri = 12;
 
-  // The human-readable name of the radio feed that produced this transmission.
+  // The human-readable name of the radio feed as stored in the database.
   string feed_name = 13;
 }

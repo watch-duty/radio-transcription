@@ -168,6 +168,7 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
             publisher,
             RAW_AUDIO_TOPIC,
             feed_id_str,
+            feed["name"],
             staging_uri,
             session_id,
             start_ts,

@@ -173,6 +173,7 @@ class TestHandle:
             mock_store,
             {
                 "id": uuid.uuid4(),
+                "name": "Central Fire",
                 "status": "quarantined",
                 "failure_count": 5,
             },
@@ -187,6 +188,7 @@ class TestHandle:
             mock_store,
             {
                 "id": uuid.uuid4(),
+                "name": "Central Fire",
                 "status": "deactivated",
                 "failure_count": 0,
             },
@@ -200,6 +202,7 @@ class TestHandle:
             mock_store,
             {
                 "id": feed_id,
+                "name": "Central Fire",
                 "status": "active",
                 "failure_count": 0,
             },
@@ -235,6 +238,7 @@ class TestHandle:
             mock_store,
             {
                 "id": feed_id,
+                "name": "Central Fire",
                 "status": "active",
                 "failure_count": 0,
             },
@@ -258,6 +262,7 @@ class TestHandle:
             mock_store,
             {
                 "id": feed_id,
+                "name": "Central Fire",
                 "status": "active",
                 "failure_count": 0,
             },
@@ -282,6 +287,7 @@ class TestHandle:
             mock_store,
             {
                 "id": feed_id,
+                "name": "Central Fire",
                 "status": "active",
                 "failure_count": 0,
             },
@@ -303,6 +309,7 @@ class TestHandle:
             mock_store,
             {
                 "id": uuid.uuid4(),
+                "name": "Central Fire",
                 "status": "active",
                 "failure_count": 0,
             },
@@ -324,6 +331,7 @@ class TestHandle:
             mock_store,
             {
                 "id": feed_id,
+                "name": "Central Fire",
                 "status": "active",
                 "failure_count": 0,
             },
