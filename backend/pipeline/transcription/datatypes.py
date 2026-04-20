@@ -43,7 +43,7 @@ class AudioChunkData:
     audio: AudioSegment
     speech_segments: list[TimeRange]
     gcs_uri: str
-    feed_name: str = ""
+    feed_name: str
 
 
 @dataclass(frozen=True)
@@ -53,7 +53,7 @@ class ChunkMetadata:
     gcs_uri: str
     session_id: str
     duration_ms: int
-    feed_name: str = ""
+    feed_name: str
 
 
 @dataclass(frozen=True)

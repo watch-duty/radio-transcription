@@ -266,7 +266,7 @@ class OrderRestorerTest(unittest.TestCase):
                             (
                                 "feed-1",
                                 ChunkMetadata(
-                                    "gs://b/100-uuid1.flac", "session-A", 15000
+                                    "gs://b/100-uuid1.flac", "session-A", 15000, ""
                                 ),
                             ),
                             100,
@@ -280,7 +280,7 @@ class OrderRestorerTest(unittest.TestCase):
                             (
                                 "feed-1",
                                 ChunkMetadata(
-                                    "gs://b/130-uuid3.flac", "session-A", 15000
+                                    "gs://b/130-uuid3.flac", "session-A", 15000, ""
                                 ),
                             ),
                             130,
@@ -294,7 +294,7 @@ class OrderRestorerTest(unittest.TestCase):
                             (
                                 "feed-1",
                                 ChunkMetadata(
-                                    "gs://b/115-uuid2.flac", "session-A", 15000
+                                    "gs://b/115-uuid2.flac", "session-A", 15000, ""
                                 ),
                             ),
                             115,
@@ -344,6 +344,7 @@ class OrderRestorerTest(unittest.TestCase):
                                     "gs://b/100-11111111.flac",
                                     "session-A",
                                     15000,
+                                    "",
                                 ),
                             ),
                             100,
@@ -360,6 +361,7 @@ class OrderRestorerTest(unittest.TestCase):
                                     "gs://b/130-33333333.flac",
                                     "session-A",
                                     15000,
+                                    "",
                                 ),
                             ),
                             130,
@@ -378,6 +380,7 @@ class OrderRestorerTest(unittest.TestCase):
                                     "gs://b/115-22222222.flac",
                                     "session-A",
                                     15000,
+                                    "",
                                 ),
                             ),
                             115,
@@ -452,6 +455,7 @@ class StitchAudioTest(unittest.TestCase):
                     for s, e in sed_map.get(filename, [])
                 ],
                 gcs_uri=path,
+                feed_name="",
             )
 
         mock_processor_inst.download_audio_and_detect.side_effect = (
@@ -663,6 +667,7 @@ class StitchAudioTest(unittest.TestCase):
                     for s, e in sed_map.get(filename, [])
                 ],
                 gcs_uri=path,
+                feed_name="",
             )
 
         mock_processor_inst.download_audio_and_detect.side_effect = (
@@ -806,6 +811,7 @@ class StitchAudioTest(unittest.TestCase):
                     for s, e in sed_map.get(filename, [])
                 ],
                 gcs_uri=path,
+                feed_name="",
             )
 
         mock_processor_inst.download_audio_and_detect.side_effect = (
@@ -967,6 +973,7 @@ class StitchAudioTest(unittest.TestCase):
             audio=AudioSegment.silent(duration=20000),
             speech_segments=[TimeRange(12500, 15000)],
             gcs_uri="gs://fake-bucket/ab12/feed-123/2026-03-06/101-11111111-1111-1111-1111-111111111111.flac",
+            feed_name="",
         )
 
         options = PipelineOptions(
@@ -1066,6 +1073,7 @@ class StitchAudioTest(unittest.TestCase):
                                 audio=AudioSegment.silent(duration=0),
                                 speech_segments=[],
                                 gcs_uri="gs://fake-bucket/123-00000000-0000-0000-0000-000000000000.flac",
+                                feed_name="",
                             ),
                         ),
                     )
@@ -1189,6 +1197,7 @@ class TranscribeAudioTest(unittest.TestCase):
                 audio=AudioSegment.silent(duration=1000),
                 speech_segments=[TimeRange(0, 1000)],
                 gcs_uri=path,
+                feed_name="",
             )
 
         mock_processor_inst.download_audio_and_detect.side_effect = (
@@ -1254,6 +1263,7 @@ class DownloadAudioTest(unittest.TestCase):
             audio=AudioSegment.silent(duration=1000),
             speech_segments=[],
             gcs_uri="gs://fake-bucket/100-11111111.flac",
+            feed_name="",
         )
 
         config = get_test_stitch_config()

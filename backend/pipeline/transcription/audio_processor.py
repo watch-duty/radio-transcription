@@ -127,6 +127,7 @@ class AudioProcessor:
             audio=full_audio_segment,
             speech_segments=speech_segments,
             gcs_uri=gcs_path,
+            feed_name="",
         )
 
     def check_vad(self, audio_buffer: AudioSegment) -> bool:
