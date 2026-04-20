@@ -58,10 +58,7 @@ def _build_app_url(
         "feedId": evaluated_transcribed_audio.feed_id,
         "transmissionId": evaluated_transcribed_audio.transmission_id,
     }
-    if (
-        evaluated_transcribed_audio.start_timestamp.seconds
-        or evaluated_transcribed_audio.start_timestamp.nanos
-    ):
+    if evaluated_transcribed_audio.start_timestamp.seconds:
         timestamp = evaluated_transcribed_audio.start_timestamp
         query_params["timestamp"] = str(
             timestamp.seconds * 1000 + timestamp.nanos // 1_000_000
@@ -75,12 +72,10 @@ def _build_app_url(
 def convert_to_notification(
     evaluated_transcribed_audio: EvaluatedTranscribedAudio,
 ) -> AlertNotification:
-    feed_id = evaluated_transcribed_audio.feed_id
-    transmission_id = evaluated_transcribed_audio.transmission_id
     app_url = _build_app_url(evaluated_transcribed_audio)
     notification = AlertNotification(
-        feed_id=feed_id,
-        transmission_id=transmission_id,
+        feed_id=evaluated_transcribed_audio.feed_id,
+        transmission_id=evaluated_transcribed_audio.transmission_id,
         source_audio_uris=evaluated_transcribed_audio.source_audio_uris,
         transcript=evaluated_transcribed_audio.transcript,
         missing_prior_context=evaluated_transcribed_audio.missing_prior_context,
@@ -90,10 +85,7 @@ def convert_to_notification(
         playback_audio_uri=evaluated_transcribed_audio.playback_audio_uri,
         app_url=app_url,
     )
-    if (
-        evaluated_transcribed_audio.start_timestamp.seconds
-        or evaluated_transcribed_audio.start_timestamp.nanos
-    ):
+    if evaluated_transcribed_audio.start_timestamp.seconds:
         notification.start_timestamp.CopyFrom(
             evaluated_transcribed_audio.start_timestamp
         )
