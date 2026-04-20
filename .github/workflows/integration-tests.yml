@@ -17,7 +17,6 @@ on:
 
 jobs:
   component-tests:
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
@@ -33,7 +32,6 @@ jobs:
         run: mise run test:component
 
   e2e-tests:
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
