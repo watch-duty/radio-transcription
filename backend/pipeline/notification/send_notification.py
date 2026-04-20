@@ -24,9 +24,10 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 APP_URL = os.environ.get("APP_URL")
-if APP_URL is None:
-    msg = "APP_URL environment variable is not set."
+if APP_URL is None or not APP_URL.strip():
+    msg = "APP_URL environment variable is not set or is empty."
     raise ValueError(msg)
+APP_URL = APP_URL.strip()
 
 # Keeping the notification deduplicate connection outside the main function. This is so the connection is
 # maintained while the function is warm instead of reconnecting each invocation.
