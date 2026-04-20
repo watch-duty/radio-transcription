@@ -361,7 +361,7 @@ export function TranscriptView({
           label="Duration (minutes)"
           size="small"
           type="number"
-          value={duration}
+          value={duration ?? ''}
           onChange={(e) => setDuration(e.target.value)}
           error={!isDurationValid}
           helperText={
