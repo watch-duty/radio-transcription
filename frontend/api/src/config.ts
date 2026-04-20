@@ -8,6 +8,7 @@ const transcriptsApiUrl = process.env.TRANSCRIPTS_API_URL;
 const rulesApiUrl = process.env.RULES_API_URL;
 const feedsStoreApiUrl = process.env.FEEDS_STORE_API_URL;
 const projectId = process.env.PROJECT_ID;
+const apiPublicUrl = process.env.API_PUBLIC_URL;
 
 if (!allowedOrigin) {
   throw new Error('ALLOWED_ORIGIN environment variable is not set');
@@ -26,7 +27,11 @@ if (!feedsStoreApiUrl) {
 }
 
 if (!projectId) {
-  throw new Error('PROJECT_ID environment variable is not set');
+  console.error('PROJECT_ID environment variable is not set');
+}
+
+if (!apiPublicUrl) {
+  console.error('API_PUBLIC_URL environment variable is not set');
 }
 
 export const ALLOWED_ORIGIN = allowedOrigin;
@@ -34,3 +39,4 @@ export const TRANSCRIPTS_API_URL = transcriptsApiUrl;
 export const RULES_API_URL = rulesApiUrl;
 export const FEEDS_STORE_API_URL = feedsStoreApiUrl;
 export const PROJECT_ID = projectId;
+export const API_PUBLIC_URL = apiPublicUrl;
