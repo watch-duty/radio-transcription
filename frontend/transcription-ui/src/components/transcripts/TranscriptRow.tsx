@@ -1,6 +1,7 @@
 import { Fragment } from 'react';
 
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import LinkIcon from '@mui/icons-material/Link';
 import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import ListItem from '@mui/material/ListItem';
@@ -9,6 +10,7 @@ import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import type { Transcript } from '@transcription/common';
 
+import { DEFAULT_DURATION_MINUTES } from '../../utils/timeUtils';
 import AudioPlayer from '../audio/AudioPlayer';
 import AlertTooltip from './AlertTooltip';
 
@@ -115,6 +117,34 @@ export function TranscriptRow({
               }}
             >
               <ContentCopyIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Copy link to transmission">
+            <IconButton
+              size="small"
+              aria-label="copy deeplink"
+              onClick={() => {
+                const url = new URL(
+                  window.location.origin + window.location.pathname
+                );
+                url.searchParams.set('feedId', transcript.feedId);
+                url.searchParams.set(
+                  'transmissionId',
+                  transcript.transmissionId
+                );
+                url.searchParams.set(
+                  'timestamp',
+                  new Date(transcript.startTimestamp).getTime().toString()
+                );
+                url.searchParams.set(
+                  'duration',
+                  DEFAULT_DURATION_MINUTES.toString()
+                );
+                navigator.clipboard.writeText(url.toString());
+                triggerSnackbar('Link copied');
+              }}
+            >
+              <LinkIcon fontSize="small" />
             </IconButton>
           </Tooltip>
         </Box>

@@ -26,6 +26,15 @@ import { useAuth } from '../../context/AuthContext';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { listTranscripts } from '../../service/listTranscripts';
+import {
+  calculateSearchTimes,
+  getInitialDuration,
+  getInitialTimestamp,
+  getSearchedEndTime,
+  getSearchedStartTime,
+  validateDuration,
+} from '../../utils/timeUtils';
+import DateTimePicker from '../common/DateTimePicker';
 import TranscriptRow from './TranscriptRow';
 
 interface TranscriptViewProps {
@@ -46,10 +55,24 @@ export function TranscriptView({
   const [feedId, setFeedId] = useState<string>(
     () => searchParams.get('feedId') || ''
   );
+  const [timestamp, setTimestamp] = useState<Date | null>(() =>
+    getInitialTimestamp(searchParams)
+  );
+  const [duration, setDuration] = useState<string | null>(() =>
+    getInitialDuration(searchParams)
+  );
 
   const [searchedFeedId, setSearchedFeedId] = useState<string>(
     () => searchParams.get('feedId') || ''
   );
+  const [searchedStartTime, setSearchedStartTime] = useState<Date | null>(() =>
+    getSearchedStartTime(searchParams)
+  );
+  const [searchedEndTime, setSearchedEndTime] = useState<Date | null>(() =>
+    getSearchedEndTime(searchParams)
+  );
+
+  const isDurationValid = !duration || validateDuration(duration);
 
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
@@ -86,14 +109,22 @@ export function TranscriptView({
     isFetching: isTranscriptsFetching, // isFetching is any load, which we use to show that we're loading additional data
     isSuccess: isTranscriptsSuccess,
   } = useInfiniteQuery({
-    queryKey: ['listTranscripts', token, searchedFeedId],
+    queryKey: [
+      'listTranscripts',
+      token,
+      searchedFeedId,
+      searchedStartTime?.getTime(),
+      searchedEndTime?.getTime(),
+    ],
     queryFn: ({ pageParam }) =>
       token
         ? listTranscripts(
             searchedFeedId,
             token,
             undefined,
-            pageParam === '' ? undefined : pageParam
+            pageParam === '' ? undefined : pageParam,
+            searchedStartTime ? searchedStartTime.getTime() : undefined,
+            searchedEndTime ? searchedEndTime.getTime() : undefined
           )
         : Promise.resolve({ transcripts: [] }),
     initialPageParam: '',
@@ -218,19 +249,45 @@ export function TranscriptView({
         <Button
           variant="contained"
           onClick={() => {
+            // Three posibilites for querying:
+            // 1. If no timestamp is provided, we don't set those fields.
+            // 2. If only the timestamp is provided but no duration, we set the duration to the endTime but leave startTime empty so that we get all results prior to that time.
+            // 3. If both the timestamp and duration are provided, we apply the offset to the timestamp and set the start and end times.
+
+            const { startTime: calcStart, endTime: calcEnd } =
+              calculateSearchTimes(timestamp, duration);
+
+            setSearchedStartTime(calcStart);
+            setSearchedEndTime(calcEnd);
+
             const newParams: Record<string, string> = { feedId: feedId.trim() };
+            if (timestamp) newParams.timestamp = timestamp.getTime().toString();
+            if (duration) newParams.duration = duration.trim();
             setSearchParams(newParams);
 
-            if (searchedFeedId === feedId) {
+            if (
+              searchedFeedId === feedId &&
+              searchedStartTime?.getTime() === calcStart?.getTime() &&
+              searchedEndTime?.getTime() === calcEnd?.getTime()
+            ) {
               queryClient.resetQueries({
-                queryKey: ['listTranscripts', token, searchedFeedId],
+                queryKey: [
+                  'listTranscripts',
+                  token,
+                  searchedFeedId,
+                  calcStart?.getTime(),
+                  calcEnd?.getTime(),
+                ],
               });
             } else {
               setSearchedFeedId(feedId);
             }
           }}
           disabled={
-            feedsFetching || isTranscriptsInitialLoading || !feedId.trim()
+            feedsFetching ||
+            isTranscriptsInitialLoading ||
+            !feedId.trim() ||
+            !isDurationValid
           }
           sx={{ minWidth: '100px', height: '40px' }}
         >
@@ -252,6 +309,12 @@ export function TranscriptView({
                   window.location.origin + window.location.pathname
                 );
                 url.searchParams.set('feedId', feedId.trim());
+                if (timestamp)
+                  url.searchParams.set(
+                    'timestamp',
+                    timestamp.getTime().toString()
+                  );
+                if (duration) url.searchParams.set('duration', duration.trim());
                 navigator.clipboard.writeText(url.toString());
                 triggerSnackbar('Link copied');
               }}
@@ -262,6 +325,29 @@ export function TranscriptView({
             </Button>
           </Box>
         </Tooltip>
+      </Box>
+      <Box sx={{ display: 'flex', gap: 2, mb: 3, width: '40%' }}>
+        <DateTimePicker
+          label="Timestamp"
+          dateTime={timestamp}
+          setDateTime={setTimestamp}
+          width="100%"
+          helperText="(Optional) Pick a date and time to search around"
+        />
+        <TextField
+          label="Duration (minutes)"
+          size="small"
+          type="number"
+          value={duration ?? ''}
+          onChange={(e) => setDuration(e.target.value)}
+          error={!isDurationValid}
+          helperText={
+            !isDurationValid
+              ? 'Must be a positive number'
+              : '(Optional) Length of time to search around the timestamp'
+          }
+          sx={{ width: '100%' }}
+        />
       </Box>
 
       <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>

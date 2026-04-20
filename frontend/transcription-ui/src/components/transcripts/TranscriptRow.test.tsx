@@ -12,6 +12,7 @@ const mockTranscript = {
   transmissionId: 'tx-123',
   feedId: 'feed-123',
   startTimestamp: '2026-04-15T16:00:00Z',
+  endTimestamp: '2026-04-15T16:00:05Z',
   canonicalAudioUri: 'https://watchduty.example/audio.mp3',
   transcript: 'This is a test transcription',
   evaluationDecisions: ['rule-1'],
@@ -101,5 +102,42 @@ describe('TranscriptRow', () => {
       'This is a test transcription'
     );
     expect(mockTriggerSnackbar).toHaveBeenCalledWith('Transcript copied');
+  });
+
+  it('triggers copy deeplink action successfully', () => {
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          transcript={mockTranscript}
+          index={0}
+          totalTranscripts={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onPlay={mockOnPlay}
+          currentlyPlayingTransmissionId={null}
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+        />
+      </MemoryRouter>
+    );
+
+    const deepLinkButton = screen.getAllByLabelText('copy deeplink')[0];
+    fireEvent.click(deepLinkButton);
+
+    const startMs = new Date(mockTranscript.startTimestamp).getTime();
+
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      expect.stringContaining('feedId=feed-123')
+    );
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      expect.stringContaining('transmissionId=tx-123')
+    );
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      expect.stringContaining(`timestamp=${startMs}`)
+    );
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      expect.stringContaining(`duration=5`)
+    );
+    expect(mockTriggerSnackbar).toHaveBeenCalledWith('Link copied');
   });
 });
