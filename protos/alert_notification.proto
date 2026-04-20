@@ -54,4 +54,7 @@ message AlertNotification {
 
   // The URI of the audio file optimized for playback (e.g., compressed M4A/Opus).
   string playback_audio_uri = 13;
+
+  // The transcription URL deeplink for this transmission.
+  string app_url = 14;
 }
