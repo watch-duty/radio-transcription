@@ -413,6 +413,13 @@ class NormalizerRuntime:
                     ),
                     operation_name="GCS upload",
                 )
+                duration_ms = int(
+                    (
+                        captured_chunk.chunk_end_time
+                        - captured_chunk.chunk_start_time
+                    ).total_seconds()
+                    * 1000
+                )
                 message_id = await gcp_helper.publish_audio_chunk(
                     self._pubsub_client,
                     topic_path,
@@ -421,6 +428,7 @@ class NormalizerRuntime:
                     start_timestamp=captured_chunk.chunk_start_time,
                     session_id=session_id,
                     source_type=feed["source_type"],
+                    duration_ms=duration_ms,
                 )
                 logger.info(
                     "Published message %s for feed %s", message_id, feed["name"]

@@ -102,20 +102,15 @@ def get_pipeline(
         AddEventTimestamp()
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
-    # Order chunks based on exact 15,000ms chunk duration expectations
-    if options.bypass_stitching:
-        restored = timestamped.main | "DropSessionId" >> beam.Map(
-            lambda x: (x[0], x[1][0])
-        )
-    else:
-        restored = timestamped.main | "RestoreOrder" >> beam.ParDo(
-            RestoreOrderFn(
-                config=OrderRestorerConfig(
-                    out_of_order_timeout_ms=options.out_of_order_timeout_ms
-                    or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
-                )
+    # Order chunks based on event timestamps to ensure chronological processing
+    restored = timestamped.main | "RestoreOrder" >> beam.ParDo(
+        RestoreOrderFn(
+            config=OrderRestorerConfig(
+                out_of_order_timeout_ms=options.out_of_order_timeout_ms
+                or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
             )
         )
+    )
 
     # Claim-check: Download the raw bytes for ordered chunks currently just passing as URIs
     download_config = StitchAudioConfig(
