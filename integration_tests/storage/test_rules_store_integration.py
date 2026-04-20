@@ -87,7 +87,7 @@ async def test_list_rules_with_ids(store: RulesStore) -> None:
     ids = {r.rule_id for r in rules}
     assert r1.rule_id in ids
     assert r2.rule_id in ids
-    
+
     names = {r.rule_name for r in rules}
     assert "Rule 1" in names
     assert "Rule 2" in names
