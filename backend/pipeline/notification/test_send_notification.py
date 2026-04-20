@@ -72,7 +72,7 @@ class TestSendNotification(TestCase):
             transcript="This is a test!",
             transmission_id="1234",
             source_audio_uris=["gs://foo/bar.flac"],
-            app_url="https://app.example.com",
+            app_url="https://app.example.com?feedId=&transmissionId=1234&duration=5",
         )
         expected_notification.start_audio_offset.seconds = 10
         mock_request_handler.send_notification.assert_called_once_with(

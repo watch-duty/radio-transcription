@@ -52,9 +52,12 @@ def parse_cloud_event(
 def convert_to_notification(
     evaluated_transcribed_audio: EvaluatedTranscribedAudio,
 ) -> AlertNotification:
+    feed_id = evaluated_transcribed_audio.feed_id
+    transmission_id = evaluated_transcribed_audio.transmission_id
+    app_url = f"{APP_URL}?feedId={feed_id}&transmissionId={transmission_id}&duration=5"
     notification = AlertNotification(
-        feed_id=evaluated_transcribed_audio.feed_id,
-        transmission_id=evaluated_transcribed_audio.transmission_id,
+        feed_id=feed_id,
+        transmission_id=transmission_id,
         source_audio_uris=evaluated_transcribed_audio.source_audio_uris,
         transcript=evaluated_transcribed_audio.transcript,
         missing_prior_context=evaluated_transcribed_audio.missing_prior_context,
@@ -62,11 +65,15 @@ def convert_to_notification(
         evaluation_decisions=evaluated_transcribed_audio.evaluation_decisions,
         canonical_audio_uri=evaluated_transcribed_audio.canonical_audio_uri,
         playback_audio_uri=evaluated_transcribed_audio.playback_audio_uri,
-        app_url=APP_URL,
+        # TODO(anthonyxiang): https://linear.app/watchduty/issue/GOO-320/duration-as-env-variable
+        app_url=app_url,
     )
     if evaluated_transcribed_audio.start_timestamp.seconds:
         notification.start_timestamp.CopyFrom(
             evaluated_transcribed_audio.start_timestamp
+        )
+        notification.app_url += (
+            f"&timestamp={evaluated_transcribed_audio.start_timestamp}"
         )
     if evaluated_transcribed_audio.end_timestamp.seconds:
         notification.end_timestamp.CopyFrom(
