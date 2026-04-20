@@ -1,8 +1,8 @@
 """Apache Beam DoFns for mapping incoming stream messages and downloading audio chunks."""
 
+import dataclasses
 import logging
 from collections.abc import Iterator
-from dataclasses import replace
 from typing import Any, override
 
 import apache_beam as beam
@@ -283,8 +283,7 @@ class RestoreOrderFn(beam.DoFn):
     FEED_NAME_SPEC = ReadModifyWriteStateSpec(
         "feed_name", beam.coders.StrUtf8Coder()
     )
-    # Persists the feed_name per feed key so it can be re-attached
-    # when emitting from the gap timeout handler.
+    # Persists the feed_name per feed key so it can be re-attached when emitting from the gap timeout handler.
     FEED_NAME_STATE = beam.DoFn.StateParam(FEED_NAME_SPEC)
 
     OUT_OF_ORDER_TIMER_SPEC = TimerSpec(
@@ -500,7 +499,7 @@ class DownloadAudioFn(beam.DoFn):
             chunk_data = self.audio_processor.download_audio_and_detect(
                 gcs_path, start_ms, feed_name
             )
-            chunk_data = replace(chunk_data, feed_name=feed_name)
+            chunk_data = dataclasses.replace(chunk_data, feed_name=feed_name)
             yield (feed_id, DownloadedChunkPayload(gcs_path, chunk_data))
         except FileNotFoundError:
             logger.info(
