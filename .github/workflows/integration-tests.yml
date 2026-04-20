@@ -26,6 +26,9 @@ jobs:
       - name: Install mise, install tools
         uses: jdx/mise-action@v3
 
+      - name: Generate protos
+        run: mise run generate:protos
+
       - name: Run component tests
         run: mise run test:component
 
