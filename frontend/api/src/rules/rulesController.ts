@@ -236,14 +236,13 @@ export class RulesController extends Controller {
       if (query.ruleIds) {
         query.ruleIds.forEach((id) => params.append('rule_ids', id));
       }
-      const url = params.toString()
-        ? `${RULES_API_URL}?${params.toString()}`
-        : RULES_API_URL!;
 
       const response = await client.request({
-        url: url,
+        url: RULES_API_URL,
         method: 'GET',
+        params: params,
       });
+
       const data = response.data as RuleResponse[];
       return data.map(convertRuleResponse);
     } catch (error: unknown) {
