@@ -54,6 +54,7 @@ def convert_to_notification(
 ) -> AlertNotification:
     feed_id = evaluated_transcribed_audio.feed_id
     transmission_id = evaluated_transcribed_audio.transmission_id
+    # TODO(anthonyxiang): https://linear.app/watchduty/issue/GOO-320/duration-as-env-variable
     app_url = f"{APP_URL}?feedId={feed_id}&transmissionId={transmission_id}&duration=5"
     notification = AlertNotification(
         feed_id=feed_id,
@@ -65,7 +66,6 @@ def convert_to_notification(
         evaluation_decisions=evaluated_transcribed_audio.evaluation_decisions,
         canonical_audio_uri=evaluated_transcribed_audio.canonical_audio_uri,
         playback_audio_uri=evaluated_transcribed_audio.playback_audio_uri,
-        # TODO(anthonyxiang): https://linear.app/watchduty/issue/GOO-320/duration-as-env-variable
         app_url=app_url,
     )
     if evaluated_transcribed_audio.start_timestamp.seconds:
