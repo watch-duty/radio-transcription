@@ -29,9 +29,9 @@ describe('timeUtils', () => {
       expect(getInitialDuration(searchParams)).toBe('15');
     });
 
-    it('should return empty string if no params are provided', () => {
+    it('should return null if no params are provided', () => {
       const searchParams = new URLSearchParams();
-      expect(getInitialDuration(searchParams)).toBe('');
+      expect(getInitialDuration(searchParams)).toBeNull();
     });
   });
 

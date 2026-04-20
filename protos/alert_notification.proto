@@ -57,4 +57,7 @@ message AlertNotification {
 
   // The transcription URL deeplink for this transmission.
   string app_url = 14;
+  
+  // The human-readable name of the radio feed as stored in the database.
+  string feed_name = 15;
 }

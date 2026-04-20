@@ -424,6 +424,7 @@ class NormalizerRuntime:
                     self._pubsub_client,
                     topic_path,
                     str(feed["id"]),
+                    feed["name"],
                     gcs_uri,
                     start_timestamp=captured_chunk.chunk_start_time,
                     session_id=session_id,

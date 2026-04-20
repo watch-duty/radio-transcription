@@ -82,6 +82,7 @@ class EvaluationService:
                 evaluation_errors=errors,
                 canonical_audio_uri=new_audio.canonical_audio_uri,
                 playback_audio_uri=new_audio.playback_audio_uri,
+                feed_name=new_audio.feed_name,
             )
             evaluated_payload.start_timestamp.CopyFrom(
                 new_audio.start_timestamp

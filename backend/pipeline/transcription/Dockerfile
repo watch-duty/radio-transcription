@@ -1,5 +1,7 @@
 # Use Apache Beam Python SDK as the base image
-FROM apache/beam_python3.13_sdk:2.70.0
+# IMPORTANT: When updating the version tag here, you must also update the
+# apache-beam dependency version in backend/pipeline/transcription/pyproject.toml.
+FROM apache/beam_python3.13_sdk:2.71.0
 
 
 # Install OS dependencies needed at runtime
