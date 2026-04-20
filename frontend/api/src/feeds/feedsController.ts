@@ -27,8 +27,8 @@ interface BaseFeedBackend {
 
 interface FeedBackend extends BaseFeedBackend {
   id: string;
-  source_feed_id?: string;
-  external_id?: string;
+  source_feed_id: string;
+  external_id: string;
 }
 
 interface FeedCreateBackend extends BaseFeedBackend {
