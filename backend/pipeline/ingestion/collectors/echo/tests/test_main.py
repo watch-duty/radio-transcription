@@ -2,25 +2,18 @@
 
 from __future__ import annotations
 
-import io
-import shutil
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
 from google.api_core.exceptions import NotFound
-from pydub import AudioSegment
 
-from backend.pipeline.common.audio import convert_to_flac
 from backend.pipeline.ingestion.collectors.echo.main import (
     _handle,
     _parse_timestamp,
 )
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
-
-_FAKE_FLAC = b"fLaC" + b"\x00" * 64
-_ffmpeg_available = shutil.which("ffmpeg") is not None
 
 
 # ---------------------------------------------------------------------------
@@ -58,43 +51,6 @@ class TestParseTimestamp:
         name = "ch-loc/20260326/ch_notadate_143022.mp3"
         with pytest.raises(ValueError, match="does not match format"):
             _parse_timestamp(name)
-
-
-# ---------------------------------------------------------------------------
-# convert_to_flac (shared in backend.pipeline.common.audio)
-# ---------------------------------------------------------------------------
-@pytest.mark.skipif(not _ffmpeg_available, reason="ffmpeg not available")
-class TestConvertToFlac:
-    def _make_mp3_bytes(
-        self, *, sample_rate: int = 8000, duration_ms: int = 1000
-    ) -> bytes:
-        """Generate a minimal MP3 for testing."""
-        audio = AudioSegment.silent(
-            duration=duration_ms, frame_rate=sample_rate
-        )
-        buf = io.BytesIO()
-        audio.export(buf, format="mp3")
-        return buf.getvalue()
-
-    def test_converts_to_flac(self) -> None:
-        mp3_bytes = self._make_mp3_bytes()
-        flac_bytes = convert_to_flac(mp3_bytes, "mp3")
-        audio = AudioSegment.from_file(io.BytesIO(flac_bytes), format="flac")
-        assert audio.frame_rate == 16000
-        assert audio.channels == 1
-        assert audio.sample_width == 2
-
-    def test_upsamples_from_8khz(self) -> None:
-        mp3_bytes = self._make_mp3_bytes(sample_rate=8000)
-        flac_bytes = convert_to_flac(mp3_bytes, "mp3")
-        audio = AudioSegment.from_file(io.BytesIO(flac_bytes), format="flac")
-        assert audio.frame_rate == 16000
-
-    def test_output_is_valid_flac(self) -> None:
-        mp3_bytes = self._make_mp3_bytes()
-        flac_bytes = convert_to_flac(mp3_bytes, "mp3")
-        assert len(flac_bytes) > 0
-        assert flac_bytes[:4] == b"fLaC"
 
 
 # ---------------------------------------------------------------------------
