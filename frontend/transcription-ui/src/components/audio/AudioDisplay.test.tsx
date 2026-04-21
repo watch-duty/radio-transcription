@@ -232,7 +232,7 @@ describe('AudioDisplay', () => {
     expect(labels5.length).toBe(4);
     const [h0, m0] = labels5[0].split(':').map(Number);
     const [h3, m3] = labels5[3].split(':').map(Number);
-    let diff5 = (h3 * 60 + m3) - (h0 * 60 + m0);
+    let diff5 = h3 * 60 + m3 - (h0 * 60 + m0);
     if (diff5 < 0) diff5 += 24 * 60;
     expect(diff5).toBe(10);
 
@@ -251,7 +251,7 @@ describe('AudioDisplay', () => {
       expect(labels30.length).toBe(4);
       const [h0_30, m0_30] = labels30[0].split(':').map(Number);
       const [h3_30, m3_30] = labels30[3].split(':').map(Number);
-      let diff30 = (h3_30 * 60 + m3_30) - (h0_30 * 60 + m0_30);
+      let diff30 = h3_30 * 60 + m3_30 - (h0_30 * 60 + m0_30);
       if (diff30 < 0) diff30 += 24 * 60;
       expect(diff30).toBe(15);
     });

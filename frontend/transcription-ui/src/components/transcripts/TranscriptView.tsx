@@ -68,8 +68,8 @@ export function TranscriptView({
   const [searchedFeedId, setSearchedFeedId] = useState<string>(
     () => searchParams.get('feedId') || ''
   );
-  const [searchedDuration, setSearchedDuration] = useState<string | null>(
-    () => searchParams.get('duration')
+  const [searchedDuration, setSearchedDuration] = useState<string | null>(() =>
+    searchParams.get('duration')
   );
   const [searchedStartTime, setSearchedStartTime] = useState<Date | null>(() =>
     getSearchedStartTime(searchParams)

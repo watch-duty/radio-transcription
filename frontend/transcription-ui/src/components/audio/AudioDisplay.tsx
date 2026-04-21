@@ -148,7 +148,12 @@ export function AudioDisplay({
       });
 
     return { startTime, windowDuration, clips };
-  }, [transcripts, currentlyPlayingTransmissionId, windowEndTime, windowDurationMs]);
+  }, [
+    transcripts,
+    currentlyPlayingTransmissionId,
+    windowEndTime,
+    windowDurationMs,
+  ]);
 
   return (
     <Box sx={{ width: '100%', mb: 2 }}>
