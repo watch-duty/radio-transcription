@@ -7,7 +7,6 @@ import uuid
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
-import numpy as np
 import pytest
 from google.api_core.exceptions import NotFound
 

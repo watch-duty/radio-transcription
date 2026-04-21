@@ -2,14 +2,12 @@
 
 import io
 import logging
-import os
 import subprocess
 import tempfile
 import urllib.parse
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-
 
 import numpy as np
 import soundfile as sf
@@ -213,7 +211,8 @@ class AudioProcessor:
             logger.error(
                 f"ffmpeg error during FLAC export: {process.stderr.decode()}"
             )
-            raise RuntimeError("Failed to export FLAC via ffmpeg")
+            msg = "Failed to export FLAC via ffmpeg"
+            raise RuntimeError(msg)
         return process.stdout
 
     def export_m4a(
@@ -255,7 +254,8 @@ class AudioProcessor:
                 logger.error(
                     f"ffmpeg error during M4A export: {process.stderr.decode()}"
                 )
-                raise RuntimeError("Failed to export M4A via ffmpeg")
+                msg = "Failed to export M4A via ffmpeg"
+                raise RuntimeError(msg)
 
             with open(temp_filename, "rb") as f:
                 return f.read()

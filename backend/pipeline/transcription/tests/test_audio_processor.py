@@ -83,7 +83,6 @@ class AudioProcessorTest(unittest.TestCase):
         mock_compute_flatness: MagicMock,
         mock_get_gcs: MagicMock,
     ) -> None:
-
         """Tests that check_vad returns False for white noise due to spectral flatness."""
         mock_vad_instance = MagicMock()
         mock_get_vad.return_value = mock_vad_instance

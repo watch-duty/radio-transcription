@@ -45,14 +45,15 @@ def convert_to_flac(audio_bytes: bytes, input_format: str) -> bytes:
             "pipe:1",
         ],
         input=audio_bytes,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=False,
     )
     if process.returncode != 0:
         logger.error(f"ffmpeg error: {process.stderr.decode()}")
-        raise RuntimeError("Failed to convert to FLAC via ffmpeg")
+        msg = "Failed to convert to FLAC via ffmpeg"
+        raise RuntimeError(msg)
     return process.stdout
+
 
 
 def get_audio_duration(audio_bytes: bytes) -> int:

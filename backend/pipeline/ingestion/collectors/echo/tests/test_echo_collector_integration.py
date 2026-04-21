@@ -7,7 +7,6 @@ canonical bucket write -> Pub/Sub publish -> lifecycle update.
 
 from __future__ import annotations
 
-import io
 import os
 import shutil
 import unittest
@@ -20,7 +19,6 @@ if TYPE_CHECKING:
     import uuid
 
 import docker
-import numpy as np
 import psycopg
 import requests as sync_requests
 from google.cloud import storage
@@ -60,9 +58,8 @@ def _ffmpeg_available() -> bool:
 def _make_mp3_bytes(
     *, sample_rate: int = 8000, duration_ms: int = 500
 ) -> bytes:
-    audio = np.zeros(int((duration_ms) * 16), dtype=np.int16)
-    buf = io.BytesIO()
     return b"dummy mp3 audio"
+
 
 
 @unittest.skipUnless(_docker_available(), "Docker is not available")
