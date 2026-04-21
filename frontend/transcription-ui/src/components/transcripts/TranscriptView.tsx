@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 
 import LinkIcon from '@mui/icons-material/Link';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -15,11 +16,12 @@ import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import {
+  type InfiniteData,
   useInfiniteQuery,
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
-import { Virtuoso } from 'react-virtuoso';
+import type { Transcript } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { listFeeds } from '../../service/listFeeds';
@@ -33,7 +35,6 @@ import {
 import AudioDisplay from '../audio/AudioDisplay';
 import DateTimePicker from '../common/DateTimePicker';
 import TranscriptRow from './TranscriptRow';
-import type { Transcript } from '@transcription/common';
 
 interface TranscriptViewProps {
   addAlert: (alert: AlertProps) => void;
@@ -76,6 +77,7 @@ export function TranscriptView({
   const [hideHeaderButton, setHideHeaderButton] = useState(false);
   const [isAtTop, setIsAtTop] = useState(true);
   const [isPolling, setIsPolling] = useState(false);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
 
   const {
     data: feeds,
@@ -173,7 +175,7 @@ export function TranscriptView({
       if (firstPage.endTime !== undefined) {
         const newStartTime = firstPage.endTime;
         const newEndTime = firstPage.endTime + 30 * 60 * 1000;
-        
+
         if (newEndTime > Date.now()) {
           return undefined;
         }
@@ -185,10 +187,11 @@ export function TranscriptView({
     refetchOnWindowFocus: false,
   });
 
-  const transcripts = useMemo(() => {
-    const all = listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? [];
-    return all.sort((a, b) => new Date(b.startTimestamp).getTime() - new Date(a.startTimestamp).getTime());
-  }, [listTranscriptsResponse]);
+  const transcripts = useMemo(
+    () =>
+      listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? [],
+    [listTranscriptsResponse]
+  );
 
   const newestTimestamp = transcripts[0]?.startTimestamp;
 
@@ -204,31 +207,52 @@ export function TranscriptView({
     return response.transcripts;
   }, [newestTimestamp, searchedFeedId, token]);
 
-  const updateCacheWithNewTranscripts = useCallback((newTranscripts: Transcript[]) => {
-    queryClient.setQueryData(
-      ['listTranscripts', token, searchedFeedId, undefined, undefined],
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (oldData: any) => {
-        if (!oldData) return oldData;
-        
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const existingIds = new Set(oldData.pages.flatMap((p: any) => p.transcripts.map((t: any) => t.transmissionId)));
-        const filteredNew = newTranscripts.filter((t) => !existingIds.has(t.transmissionId));
-        
-        if (filteredNew.length === 0) return oldData;
+  const updateCacheWithNewTranscripts = useCallback(
+    (newTranscripts: Transcript[]) => {
+      queryClient.setQueryData<
+        InfiniteData<{
+          transcripts: Transcript[];
+          nextToken?: string;
+          startTime?: number;
+          endTime?: number;
+        }>
+      >(
+        ['listTranscripts', token, searchedFeedId, undefined, undefined],
+        (oldData) => {
+          if (!oldData) return oldData;
 
-        const newPages = [...oldData.pages];
-        newPages[0] = {
-          ...newPages[0],
-          transcripts: [...filteredNew, ...newPages[0].transcripts],
-        };
-        return { ...oldData, pages: newPages };
-      }
-    );
-  }, [token, searchedFeedId, queryClient]);
+          const existingIds = new Set(
+            oldData.pages.flatMap((p) =>
+              p.transcripts.map((t) => t.transmissionId)
+            )
+          );
+          const filteredNew = newTranscripts.filter(
+            (t) => !existingIds.has(t.transmissionId)
+          );
+
+          if (filteredNew.length === 0) return oldData;
+
+          const newPages = [...oldData.pages];
+          newPages[0] = {
+            ...newPages[0],
+            transcripts: [...filteredNew, ...newPages[0].transcripts],
+          };
+          return { ...oldData, pages: newPages };
+        }
+      );
+    },
+    [token, searchedFeedId, queryClient]
+  );
 
   useEffect(() => {
-    if (import.meta.env.MODE === 'test' || searchedStartTime || !isAtTop || !newestTimestamp || !searchedFeedId) return;
+    if (
+      import.meta.env.MODE === 'test' ||
+      searchedStartTime ||
+      !isAtTop ||
+      !newestTimestamp ||
+      !searchedFeedId
+    )
+      return;
 
     const interval = setInterval(async () => {
       try {
@@ -245,7 +269,14 @@ export function TranscriptView({
     }, 15000);
 
     return () => clearInterval(interval);
-  }, [searchedStartTime, isAtTop, newestTimestamp, searchedFeedId, fetchNewerTranscripts, updateCacheWithNewTranscripts]);
+  }, [
+    searchedStartTime,
+    isAtTop,
+    newestTimestamp,
+    searchedFeedId,
+    fetchNewerTranscripts,
+    updateCacheWithNewTranscripts,
+  ]);
 
   const {
     data: rules,
@@ -294,9 +325,15 @@ export function TranscriptView({
   };
 
   const handleClipClick = (transmissionId: string) => {
-    const element = document.getElementById(`transcript-${transmissionId}`);
-    if (element) {
-      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const index = transcripts.findIndex(
+      (t) => t.transmissionId === transmissionId
+    );
+    if (index !== -1) {
+      virtuosoRef.current?.scrollToIndex({
+        index,
+        align: 'start',
+        behavior: 'smooth',
+      });
     }
     setHighlightedTransmissionId(transmissionId);
   };
@@ -311,7 +348,15 @@ export function TranscriptView({
         height: 'calc(100vh)',
       }}
     >
-      <Box sx={{ display: 'flex', gap: 2, mb: 4, alignItems: 'center', width: '100%' }}>
+      <Box
+        sx={{
+          display: 'flex',
+          gap: 2,
+          mb: 4,
+          alignItems: 'center',
+          width: '100%',
+        }}
+      >
         <Autocomplete
           disablePortal
           options={(feeds ?? []).sort((a, b) => a.name.localeCompare(b.name))}
@@ -412,11 +457,7 @@ export function TranscriptView({
               setSearchedFeedId(feedId);
             }
           }}
-          disabled={
-            feedsFetching ||
-            isTranscriptsInitialLoading ||
-            !feedId
-          }
+          disabled={feedsFetching || isTranscriptsInitialLoading || !feedId}
           sx={{ minWidth: '100px', height: '40px' }}
         >
           {isTranscriptsInitialLoading ? (
@@ -483,7 +524,14 @@ export function TranscriptView({
         onClipClick={handleClipClick}
       />
 
-      <Box sx={{ flexGrow: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      <Box
+        sx={{
+          flexGrow: 1,
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
         {transcripts.length > 0 ? (
           <>
             <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1 }}>
@@ -507,110 +555,155 @@ export function TranscriptView({
                     }
                   }}
                   disabled={isTranscriptsFetching || isPolling}
-                  startIcon={isPolling ? <CircularProgress size={16} color="inherit" /> : <RefreshIcon />}
+                  startIcon={
+                    isPolling ? (
+                      <CircularProgress size={16} color="inherit" />
+                    ) : (
+                      <RefreshIcon />
+                    )
+                  }
                   sx={{ textTransform: 'none' }}
                 >
                   {isPolling ? 'Refreshing...' : 'Refresh (15s)'}
                 </Button>
               )}
             </Box>
-          <Paper variant="outlined" sx={{ display: 'flex', flexDirection: 'column', flexGrow: 1, minHeight: 0, overflow: 'hidden' }}>
-            <Virtuoso
-              data={transcripts}
-              atTopStateChange={(atTop) => setIsAtTop(atTop)}
-              itemContent={(index, transcript) => {
-                const currentDate = new Date(transcript.startTimestamp);
-                const prevDate =
-                  index > 0
-                    ? new Date(transcripts[index - 1].startTimestamp)
-                    : null;
-                const showHeader =
-                  !prevDate ||
-                  currentDate.toDateString() !== prevDate.toDateString();
-
-                return (
-                  <TranscriptRow
-                    key={transcript.transmissionId}
-                    transcript={transcript}
-                    index={index}
-                    totalTranscripts={transcripts.length}
-                    ruleIdToNameMap={ruleIdToNameMap}
-                    rulesLoading={rulesLoading}
-                    onPlay={onPlay}
-                    currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
-                    triggerSnackbar={triggerSnackbar}
-                    showHeader={showHeader}
-                    isHighlighted={transcript.transmissionId === highlightedTransmissionId}
-                  />
-                );
+            <Paper
+              variant="outlined"
+              sx={{
+                display: 'flex',
+                flexDirection: 'column',
+                flexGrow: 1,
+                minHeight: 0,
+                overflow: 'hidden',
               }}
-              components={{
-                Header: () => (
-                  hasPreviousTranscripts && !hideHeaderButton ? (
-                    <Box sx={{ display: 'flex', justifyContent: 'center', py: 1 }}>
-                      {isFetchingPreviousTranscripts ? (
-                        <CircularProgress size={40} />
-                      ) : (
-                        <Button
-                          variant="text"
-                          onClick={async () => {
-                            const result = await fetchPreviousTranscripts();
-                            if (result.data && result.data.pages[0]?.transcripts.length === 0) {
-                              triggerSnackbar('No newer transcripts found');
-                              setHideHeaderButton(true);
-                            }
-                          }}
-                          disabled={isTranscriptsFetching}
-                          sx={{ minWidth: '160px' }}
-                        >
-                          Load newer transcripts
-                        </Button>
-                      )}
-                    </Box>
-                  ) : null
-                ),
-                Footer: () => {
-                  if (hasNextTranscripts && !hideFooterButton) {
-                    return (
-                      <Box sx={{ display: 'flex', justifyContent: 'center', py: 1 }}>
-                        {isFetchingNextTranscripts ? (
+            >
+              <Virtuoso
+                ref={virtuosoRef}
+                data={transcripts}
+                atTopStateChange={(atTop) => setIsAtTop(atTop)}
+                itemContent={(index, transcript) => {
+                  const currentDate = new Date(transcript.startTimestamp);
+                  const prevDate =
+                    index > 0
+                      ? new Date(transcripts[index - 1].startTimestamp)
+                      : null;
+                  const showHeader =
+                    !prevDate ||
+                    currentDate.toDateString() !== prevDate.toDateString();
+
+                  return (
+                    <TranscriptRow
+                      key={transcript.transmissionId}
+                      transcript={transcript}
+                      index={index}
+                      totalTranscripts={transcripts.length}
+                      ruleIdToNameMap={ruleIdToNameMap}
+                      rulesLoading={rulesLoading}
+                      onPlay={onPlay}
+                      currentlyPlayingTransmissionId={
+                        currentlyPlayingTransmissionId
+                      }
+                      triggerSnackbar={triggerSnackbar}
+                      showHeader={showHeader}
+                      isHighlighted={
+                        transcript.transmissionId === highlightedTransmissionId
+                      }
+                    />
+                  );
+                }}
+                components={{
+                  Header: () =>
+                    hasPreviousTranscripts && !hideHeaderButton ? (
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          justifyContent: 'center',
+                          py: 1,
+                        }}
+                      >
+                        {isFetchingPreviousTranscripts ? (
                           <CircularProgress size={40} />
                         ) : (
                           <Button
                             variant="text"
                             onClick={async () => {
-                              const result = await fetchNextTranscripts();
-                              if (result.data) {
-                                const lastPage = result.data.pages[result.data.pages.length - 1];
-                                if (lastPage?.transcripts.length === 0) {
-                                  triggerSnackbar('No older transcripts found');
-                                  setHideFooterButton(true);
-                                }
+                              const result = await fetchPreviousTranscripts();
+                              if (
+                                result.data &&
+                                result.data.pages[0]?.transcripts.length === 0
+                              ) {
+                                triggerSnackbar('No newer transcripts found');
+                                setHideHeaderButton(true);
                               }
                             }}
                             disabled={isTranscriptsFetching}
                             sx={{ minWidth: '160px' }}
                           >
-                            Load previous transcripts
+                            Load newer transcripts
                           </Button>
                         )}
                       </Box>
-                    );
-                  }
-                  if (!hasNextTranscripts || hideFooterButton) {
-                    return (
-                      <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
-                        <Typography variant="caption" color="text.secondary">
-                          No more transcripts found
-                        </Typography>
-                      </Box>
-                    );
-                  }
-                  return null;
-                },
-              }}
-            />
-          </Paper>
+                    ) : null,
+                  Footer: () => {
+                    if (hasNextTranscripts && !hideFooterButton) {
+                      return (
+                        <Box
+                          sx={{
+                            display: 'flex',
+                            justifyContent: 'center',
+                            py: 1,
+                          }}
+                        >
+                          {isFetchingNextTranscripts ? (
+                            <CircularProgress size={40} />
+                          ) : (
+                            <Button
+                              variant="text"
+                              onClick={async () => {
+                                const result = await fetchNextTranscripts();
+                                if (result.data) {
+                                  const lastPage =
+                                    result.data.pages[
+                                      result.data.pages.length - 1
+                                    ];
+                                  if (lastPage?.transcripts.length === 0) {
+                                    triggerSnackbar(
+                                      'No older transcripts found'
+                                    );
+                                    setHideFooterButton(true);
+                                  }
+                                }
+                              }}
+                              disabled={isTranscriptsFetching}
+                              sx={{ minWidth: '160px' }}
+                            >
+                              Load previous transcripts
+                            </Button>
+                          )}
+                        </Box>
+                      );
+                    }
+                    if (!hasNextTranscripts || hideFooterButton) {
+                      return (
+                        <Box
+                          sx={{
+                            display: 'flex',
+                            justifyContent: 'center',
+                            py: 2,
+                          }}
+                        >
+                          <Typography variant="caption" color="text.secondary">
+                            No more transcripts found
+                          </Typography>
+                        </Box>
+                      );
+                    }
+                    return null;
+                  },
+                }}
+              />
+            </Paper>
           </>
         ) : isTranscriptsInitialLoading ? (
           <Box

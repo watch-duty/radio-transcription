@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import React from 'react';
 import { MemoryRouter } from 'react-router';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -29,11 +30,15 @@ vi.mock('@wavesurfer/react', () => ({
 }));
 
 vi.mock('react-virtuoso', () => ({
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  Virtuoso: ({ data, itemContent }: any) => (
+  Virtuoso: ({
+    data,
+    itemContent,
+  }: {
+    data: unknown[];
+    itemContent: (index: number, item: unknown) => React.ReactNode;
+  }) => (
     <div data-testid="virtuoso">
-      {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-      {data.map((item: any, index: number) => itemContent(index, item))}
+      {data.map((item: unknown, index: number) => itemContent(index, item))}
     </div>
   ),
 }));
@@ -254,8 +259,6 @@ describe('TranscriptView', () => {
       expect(screen.getByText('No transcripts found.')).toBeTruthy();
     });
   });
-
-
 
   it('refetches when Fetch is clicked again with the same feedId after an error', async () => {
     const mockAddAlert = vi.fn();

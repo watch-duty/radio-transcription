@@ -44,19 +44,37 @@ export function TranscriptRow({
   return (
     <Fragment>
       {showHeader && (
-        <ListItem sx={{ py: 0.5, bgcolor: 'action.hover' }}>
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            sx={{ fontWeight: 'bold' }}
+        <ListItem
+          sx={{
+            position: 'sticky',
+            top: 0,
+            zIndex: 1,
+            py: 0,
+            px: 0,
+            bgcolor: 'background.paper',
+          }}
+        >
+          <Box
+            sx={{
+              width: '100%',
+              py: 0.5,
+              px: 2,
+              bgcolor: 'action.hover',
+            }}
           >
-            {currentDate.toLocaleDateString([], {
-              weekday: 'long',
-              month: 'long',
-              day: 'numeric',
-              year: 'numeric',
-            })}
-          </Typography>
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ fontWeight: 'bold' }}
+            >
+              {currentDate.toLocaleDateString([], {
+                weekday: 'long',
+                month: 'long',
+                day: 'numeric',
+                year: 'numeric',
+              })}
+            </Typography>
+          </Box>
         </ListItem>
       )}
       <ListItem
@@ -68,6 +86,7 @@ export function TranscriptRow({
           gap: 2,
           py: 1.5,
           bgcolor: isHighlighted ? 'action.selected' : 'inherit',
+          scrollMarginTop: theme.spacing(5),
         }}
       >
         <Box

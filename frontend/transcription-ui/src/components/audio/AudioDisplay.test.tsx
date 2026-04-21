@@ -101,8 +101,8 @@ describe('AudioDisplay', () => {
       {
         transmissionId: '2',
         feedId: 'feed1',
-        startTimestamp: new Date('2026-04-20T08:40:00Z').toISOString(),
-        endTimestamp: new Date('2026-04-20T08:40:05Z').toISOString(),
+        startTimestamp: new Date('2026-04-20T08:20:00Z').toISOString(),
+        endTimestamp: new Date('2026-04-20T08:20:05Z').toISOString(),
         transcript: 'Test 2',
         canonicalAudioUri: 'audio2.flac',
         evaluationDecisions: [],
@@ -253,7 +253,7 @@ describe('AudioDisplay', () => {
       const [h3_30, m3_30] = labels30[3].split(':').map(Number);
       let diff30 = h3_30 * 60 + m3_30 - (h0_30 * 60 + m0_30);
       if (diff30 < 0) diff30 += 24 * 60;
-      expect(diff30).toBe(15);
+      expect(diff30).toBe(30);
     });
   });
 });

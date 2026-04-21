@@ -17,7 +17,7 @@ interface AudioDisplayProps {
   userDuration?: string | null;
 }
 
-const MAX_WINDOW_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+const MAX_WINDOW_DURATION_MS = 30 * 60 * 1000; // 30 minutes
 
 const formatTime = (timestamp: number) => {
   const date = new Date(timestamp);
