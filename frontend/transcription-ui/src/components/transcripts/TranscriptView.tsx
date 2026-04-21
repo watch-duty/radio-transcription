@@ -405,9 +405,11 @@ export function TranscriptView({
         userDuration={searchedDuration}
       />
 
-      <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
+      <Box sx={{ flexGrow: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         {transcripts.length > 0 ? (
-          <List component={Paper} variant="outlined" sx={{ p: 0 }}>
+          <Paper variant="outlined" sx={{ display: 'flex', flexDirection: 'column', flexGrow: 1, minHeight: 0, overflow: 'hidden' }}>
+            <Box sx={{ overflowY: 'auto', flexGrow: 1 }}>
+              <List sx={{ p: 0 }}>
             {transcripts.map((transcript, index) => {
               const currentDate = new Date(transcript.startTimestamp);
               const prevDate =
@@ -454,7 +456,9 @@ export function TranscriptView({
                 </Button>
               </ListItem>
             )}
-          </List>
+              </List>
+            </Box>
+          </Paper>
         ) : isTranscriptsInitialLoading ? (
           <Box
             sx={{
