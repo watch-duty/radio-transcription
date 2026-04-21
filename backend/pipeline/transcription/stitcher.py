@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any, override
 
+import numpy as np
 import apache_beam as beam
 from apache_beam.metrics import Metrics
 from apache_beam.transforms.userstate import (
@@ -164,7 +165,7 @@ class StitchAudioFn(beam.DoFn):
             yield (
                 action.feed_id,
                 FlushRequest(
-                    buffer=sum(buffered_audio[1:], buffered_audio[0]),
+                    buffer=np.concatenate(buffered_audio),
                     feed_id=action.feed_id,
                     contributing_audio_uris=action.contributing_audio_uris,
                     time_range=action.time_range,
@@ -380,7 +381,7 @@ class StitchAudioFn(beam.DoFn):
                 yield (
                     key,
                     FlushRequest(
-                        buffer=sum(audio_buffer[1:], audio_buffer[0]),
+                        buffer=np.concatenate(audio_buffer),
                         feed_id=key,
                         contributing_audio_uris=processed_uris,
                         time_range=TimeRange(
@@ -506,7 +507,7 @@ class TranscribeAudioFn(beam.DoFn):
             return None
 
         self.vad_speech_count.inc()
-        duration_sec = len(processed_audio) / float(MS_PER_SECOND)
+        duration_sec = len(processed_audio) / float(SAMPLE_RATE_HZ)
         self.speech_duration_sec_dist.update(int(duration_sec))
 
         if not self.config.canonical_audio_bucket:

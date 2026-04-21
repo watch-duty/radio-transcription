@@ -7,8 +7,8 @@ from collections.abc import Callable
 from typing import Any
 
 import numpy as np
+import soundfile as sf
 from google.cloud import storage
-from pydub import AudioSegment, effects
 
 from backend.pipeline.common.constants import (
     AUDIO_FORMAT,
@@ -108,39 +108,26 @@ class AudioProcessor:
         blob.download_to_file(in_mem_file)
         in_mem_file.seek(0)
 
-        full_audio_segment = AudioSegment.from_file(in_mem_file)
-
-        # Ensure audio is 16kHz mono 16-bit PCM for the detector
-        audio_16k = (
-            full_audio_segment.set_frame_rate(SAMPLE_RATE_HZ)
-            .set_channels(NUM_AUDIO_CHANNELS)
-            .set_sample_width(BYTES_PER_SAMPLE_16BIT)
-        )
-
-        pcm_bytes = audio_16k.raw_data
-        samples = np.frombuffer(pcm_bytes, dtype=np.int16)
+        samples, _ = sf.read(in_mem_file, dtype='int16')
+        if samples.ndim > 1:
+            samples = np.mean(samples, axis=1).astype(np.int16)
 
         speech_segments = self.sed_detector.detect(samples)
 
         return AudioChunkData(
             start_ms=start_ms,
-            audio=full_audio_segment,
+            audio=samples,
             speech_segments=speech_segments,
             gcs_uri=gcs_path,
         )
 
-    def check_vad(self, audio_buffer: AudioSegment) -> bool:
+    def check_vad(self, audio_buffer: np.ndarray) -> bool:
         """Evaluates audio buffer with TenVAD and returns True if speech is detected."""
         if self.vad is None:
             msg = "VAD plugin not initialized. Call setup() first."
             raise RuntimeError(msg)
 
-        audio_16k = (
-            audio_buffer.set_frame_rate(SAMPLE_RATE_HZ)
-            .set_channels(NUM_AUDIO_CHANNELS)
-            .set_sample_width(BYTES_PER_SAMPLE_16BIT)
-        )
-        pcm_bytes = audio_16k.raw_data
+        pcm_bytes = audio_buffer.tobytes()
 
         # DSP Pre-Filtering
         # Fast DSP heuristics are applied before the Neural VAD to:
@@ -148,41 +135,20 @@ class AudioProcessor:
         # 2. Improve robustness by preventing the neural network from hallucinating false-positive speech on uniform white noise (radio squelch).
         # 1. Mathematical Heuristics (Pre-Filters)
         # Convert to float32 normalized array for DSP analysis
-        samples = (
-            np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32)
-            / INT16_MAX_FLOAT
+        audio_data = (
+            audio_buffer.astype(np.float32) / INT16_MAX_FLOAT
         )
-        n_samples = len(samples)
-        if n_samples == 0:
-            return False
-
-        # Dynamically scale FFT windows to silence UserWarnings on short fragments
-        n_fft = min(DEFAULT_SED_FFT_SIZE, n_samples)
-        hop_length = min(DEFAULT_SED_HOP_SIZE, max(1, n_samples // 4))
-
-        # 1a. RMS Silence Gate: Drop chunks that lack physical acoustic energy
-        mean_rms = np.mean(
-            compute_rms_energy(
-                samples=samples, frame_length=n_fft, hop_length=hop_length
-            )
-        )
-        if (
-            mean_rms < VAD_RMS_SILENCE_THRESHOLD
-        ):  # Approx -46 dBFS (total silence)
+        rms_energy = compute_rms_energy(audio_data)
+        if rms_energy < VAD_RMS_SILENCE_THRESHOLD:  # Below noise floor
             logger.info(
-                f"VAD Heuristic: Dropped quiet segment (RMS: {mean_rms:.5f})"
+                f"VAD Heuristic: Dropped near-silence (RMS Energy: {rms_energy:.5f})"
             )
             return False
 
-        # 1b. Spectral Flatness Noise Gate: Drop chunks that are purely uniform "white noise" static.
-        # Human speech contains sharp harmonic peaks (formants) resulting in very low Wiener entropy (< 0.1).
-        mean_flatness = np.mean(
-            compute_spectral_flatness(
-                samples=samples,
-                sample_rate=SAMPLE_RATE_HZ,
-                n_fft=n_fft,
-                hop_length=hop_length,
-            )
+        mean_flatness = compute_spectral_flatness(
+            audio_data,
+            n_fft=DEFAULT_SED_FFT_SIZE,
+            hop_length=DEFAULT_SED_HOP_SIZE,
         )
         if mean_flatness > VAD_FLATNESS_NOISE_THRESHOLD:  # Featureless static
             logger.info(
@@ -193,33 +159,50 @@ class AudioProcessor:
         # 2. Neural Evaluation (Final Authority)
         return self.vad.evaluate(pcm_bytes, sample_rate=SAMPLE_RATE_HZ)
 
-    def preprocess_audio(self, audio_buffer: AudioSegment) -> AudioSegment:
+    def preprocess_audio(self, audio_buffer: np.ndarray) -> np.ndarray:
         """Applies native bandpass filtering to remove rumble and static."""
-        audio = effects.high_pass_filter(audio_buffer, HIGHPASS_FILTER_FREQ)
-        return effects.low_pass_filter(audio, LOWPASS_FILTER_FREQ)
+        import scipy.signal as signal
+        nyq = 0.5 * SAMPLE_RATE_HZ
+        high = HIGHPASS_FILTER_FREQ / nyq
+        low = LOWPASS_FILTER_FREQ / nyq
+        b, a = signal.butter(4, [high, low], btype='band')
+        filtered = signal.lfilter(b, a, audio_buffer)
+        return filtered.astype(np.int16)
 
-    def export_flac(self, audio_buffer: AudioSegment) -> bytes:
-        """Exports an AudioSegment to FLAC bytes."""
+    def export_flac(self, audio_buffer: np.ndarray) -> bytes:
+        """Exports a NumPy array to FLAC bytes."""
         buf = io.BytesIO()
-        audio_buffer.export(buf, format=AUDIO_FORMAT)
+        sf.write(buf, audio_buffer, SAMPLE_RATE_HZ, format="FLAC")
         return buf.getvalue()
 
-    def export_m4a(self, audio_buffer: AudioSegment) -> bytes:
-        """Exports an AudioSegment to M4A (AAC) bytes optimized for voice."""
-        buf = io.BytesIO()
-        # "ipod" is the ffmpeg format identifier for M4A.
-        # We optimize for voice by forcing 16kHz, mono, and 32kbps bitrate.
-        audio_buffer.export(
-            buf,
-            format="ipod",
-            codec="aac",
-            parameters=["-ar", "16000", "-ac", "1", "-b:a", "32k"],
-        )
-        return buf.getvalue()
+    def export_m4a(self, audio_buffer: np.ndarray) -> bytes:
+        """Exports a NumPy array to M4A (AAC) bytes using ffmpeg."""
+        import tempfile
+        import subprocess
+        import os
+        
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as wav_file:
+            wav_path = wav_file.name
+            sf.write(wav_path, audio_buffer, SAMPLE_RATE_HZ)
+    
+        m4a_path = wav_path.replace(".wav", ".m4a")
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", wav_path, "-c:a", "aac", "-b:a", "32k", "-ar", "16000", "-ac", "1", m4a_path],
+                check=True,
+                capture_output=True,
+            )
+            with open(m4a_path, "rb") as f:
+                return f.read()
+        finally:
+            if os.path.exists(wav_path):
+                os.remove(wav_path)
+            if os.path.exists(m4a_path):
+                os.remove(m4a_path)
 
     def process_buffer(
-        self, audio_buffer: AudioSegment
-    ) -> tuple[bool, bytes | None, AudioSegment | None]:
+        self, audio_buffer: np.ndarray
+    ) -> tuple[bool, bytes | None, np.ndarray | None]:
         """Encapsulates sequence of pre-processing, VAD check, and FLAC export."""
         processed_audio = self.preprocess_audio(audio_buffer)
         if not self.check_vad(processed_audio):

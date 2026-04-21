@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, patch
 import asyncpg
 import docker
 import requests as sync_requests
-from pydub import AudioSegment
+import numpy as np
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.waiting_utils import wait_for_logs
 from testcontainers.postgres import PostgresContainer
@@ -52,7 +52,7 @@ def _docker_available() -> bool:
 
 def _make_m4a_bytes() -> bytes:
     """Generate a valid 1-second silent m4a file using pydub."""
-    segment = AudioSegment.silent(duration=1000, frame_rate=16000)
+    segment = np.zeros(int((1000) * 16), dtype=np.int16)
     buf = io.BytesIO()
     segment.export(buf, format="ipod")
     return buf.getvalue()

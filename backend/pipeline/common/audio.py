@@ -6,8 +6,6 @@ import io
 import logging
 import subprocess
 
-from pydub import AudioSegment
-
 from backend.pipeline.common.constants import (
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
@@ -21,20 +19,33 @@ def convert_to_flac(audio_bytes: bytes, input_format: str) -> bytes:
     """Convert audio to canonical FLAC format (16 kHz, 16-bit, mono).
 
     Args:
-        audio_bytes: Raw audio bytes in any pydub-supported format.
+        audio_bytes: Raw audio bytes in any supported format.
         input_format: Input audio format (e.g. ``"mp3"``, ``"wav"``).
 
     Returns:
         FLAC-encoded bytes at the pipeline's canonical sample rate,
         channel count, and bit depth.
     """
-    audio = AudioSegment.from_file(io.BytesIO(audio_bytes), format=input_format)
-    audio = audio.set_frame_rate(SAMPLE_RATE_HZ)
-    audio = audio.set_channels(NUM_AUDIO_CHANNELS)
-    audio = audio.set_sample_width(SAMPLE_WIDTH_16BIT)
-    buf = io.BytesIO()
-    audio.export(buf, format="flac")
-    return buf.getvalue()
+    process = subprocess.run(
+        [
+            "ffmpeg",
+            "-f", input_format,
+            "-i", "pipe:0",
+            "-f", "flac",
+            "-ar", str(SAMPLE_RATE_HZ),
+            "-ac", str(NUM_AUDIO_CHANNELS),
+            "-sample_fmt", "s16",
+            "pipe:1"
+        ],
+        input=audio_bytes,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if process.returncode != 0:
+        logger.error(f"ffmpeg error: {process.stderr.decode()}")
+        raise RuntimeError("Failed to convert to FLAC via ffmpeg")
+    return process.stdout
 
 
 def get_audio_duration(audio_bytes: bytes) -> int:

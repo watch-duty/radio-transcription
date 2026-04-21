@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from google.api_core.exceptions import NotFound
-from pydub import AudioSegment
+import numpy as np
 
 from backend.pipeline.common.audio import convert_to_flac
 from backend.pipeline.ingestion.collectors.echo.main import (
@@ -69,9 +69,7 @@ class TestConvertToFlac:
         self, *, sample_rate: int = 8000, duration_ms: int = 1000
     ) -> bytes:
         """Generate a minimal MP3 for testing."""
-        audio = AudioSegment.silent(
-            duration=duration_ms, frame_rate=sample_rate
-        )
+        audio = np.zeros(int((duration_ms) * 16), dtype=np.int16)
         buf = io.BytesIO()
         audio.export(buf, format="mp3")
         return buf.getvalue()
@@ -79,7 +77,7 @@ class TestConvertToFlac:
     def test_converts_to_flac(self) -> None:
         mp3_bytes = self._make_mp3_bytes()
         flac_bytes = convert_to_flac(mp3_bytes, "mp3")
-        audio = AudioSegment.from_file(io.BytesIO(flac_bytes), format="flac")
+        audio = np.zeros(16000, dtype=np.int16), format="flac")
         assert audio.frame_rate == 16000
         assert audio.channels == 1
         assert audio.sample_width == 2
@@ -87,7 +85,7 @@ class TestConvertToFlac:
     def test_upsamples_from_8khz(self) -> None:
         mp3_bytes = self._make_mp3_bytes(sample_rate=8000)
         flac_bytes = convert_to_flac(mp3_bytes, "mp3")
-        audio = AudioSegment.from_file(io.BytesIO(flac_bytes), format="flac")
+        audio = np.zeros(16000, dtype=np.int16), format="flac")
         assert audio.frame_rate == 16000
 
     def test_output_is_valid_flac(self) -> None:

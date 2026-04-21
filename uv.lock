@@ -2232,15 +2232,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pydub"
-version = "0.25.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/fe/9a/e6bca0eed82db26562c73b5076539a4a08d3cffd19c3cc5913a3e61145fd/pydub-0.25.1.tar.gz", hash = "sha256:980a33ce9949cab2a569606b65674d748ecbca4f0796887fd6f46173a7b0d30f", size = 38326, upload-time = "2021-03-10T02:09:54.659Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a6/53/d78dc063216e62fc55f6b2eebb447f6a4b0a59f55c8406376f76bf959b08/pydub-0.25.1-py2.py3-none-any.whl", hash = "sha256:65617e33033874b59d87db603aa1ed450633288aefead953b30bded59cb599a6", size = 32327, upload-time = "2021-03-10T02:09:53.503Z" },
-]
-
-[[package]]
 name = "pygments"
 version = "2.20.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2845,8 +2836,8 @@ dependencies = [
     { name = "numpy" },
     { name = "protobuf" },
     { name = "pydantic" },
-    { name = "pydub" },
     { name = "scipy" },
+    { name = "soundfile" },
     { name = "ten-vad" },
     { name = "tenacity" },
 ]
@@ -2862,8 +2853,8 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "protobuf", specifier = ">=5.29.6" },
     { name = "pydantic", specifier = ">=2.12.5" },
-    { name = "pydub", specifier = ">=0.25.1" },
     { name = "scipy", specifier = ">=1.17.1" },
+    { name = "soundfile", specifier = ">=0.13.1" },
     { name = "ten-vad", specifier = ">=1.0.6.8" },
     { name = "tenacity", specifier = ">=9.1.4" },
 ]

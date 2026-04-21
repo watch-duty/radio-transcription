@@ -24,7 +24,7 @@ import psycopg
 import requests as sync_requests
 from google.cloud import storage
 from psycopg.rows import dict_row
-from pydub import AudioSegment
+import numpy as np
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.waiting_utils import wait_for_logs
 from testcontainers.postgres import PostgresContainer
@@ -60,7 +60,7 @@ def _ffmpeg_available() -> bool:
 def _make_mp3_bytes(
     *, sample_rate: int = 8000, duration_ms: int = 500
 ) -> bytes:
-    audio = AudioSegment.silent(duration=duration_ms, frame_rate=sample_rate)
+    audio = np.zeros(int((duration_ms) * 16), dtype=np.int16)
     buf = io.BytesIO()
     audio.export(buf, format="mp3")
     return buf.getvalue()

@@ -1,6 +1,6 @@
 import unittest
 
-from pydub import AudioSegment
+import numpy as np
 
 from backend.pipeline.transcription.datatypes import (
     AppendBufferAction,
@@ -48,7 +48,7 @@ def mock_audio_chunk(
 ) -> AudioChunkData:
     return AudioChunkData(
         start_ms=start_ms,
-        audio=AudioSegment.silent(duration=duration_ms),
+        audio=np.zeros(int((duration_ms) * 16), dtype=np.int16),
         speech_segments=[
             TimeRange(int(s * 1000), int(e * 1000)) for s, e in speech_segments
         ],

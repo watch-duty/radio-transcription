@@ -299,7 +299,6 @@ async def _create_ffmpeg_process(
         "-i", url,
         "-vn", "-sn", "-dn",
         "-acodec", AUDIO_FORMAT,
-        "-ar", str(SAMPLE_RATE_HZ),
         "-sample_fmt", SAMPLE_FORMAT,
         "-ac", str(NUM_AUDIO_CHANNELS),
         "-compression_level", "0",

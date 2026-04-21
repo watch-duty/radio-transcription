@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 
-from pydub import AudioSegment
+import numpy as np
 
 from backend.pipeline.common.constants import (
     CHUNK_DURATION_SECONDS,
@@ -40,7 +40,7 @@ class AudioChunkData:
     """A domain model representing a single decoded audio chunk and its VAD metadata."""
 
     start_ms: int
-    audio: AudioSegment
+    audio: np.ndarray
     speech_segments: list[TimeRange]
     gcs_uri: str
 
@@ -174,7 +174,7 @@ class TranscribeAudioConfig:
 class FlushRequest:
     """Encapsulates the data required to flush an audio buffer to the transcription API."""
 
-    buffer: AudioSegment
+    buffer: np.ndarray
     feed_id: str
     contributing_audio_uris: list[str]
     time_range: TimeRange
@@ -201,7 +201,7 @@ class DropAction(StateMachineAction):
 class AppendBufferAction(StateMachineAction):
     """Signals that the provided audio segment should be appended to the active transmission buffer."""
 
-    audio_buffer: AudioSegment
+    audio_buffer: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -218,7 +218,7 @@ class FlushAction(StateMachineAction):
     start_audio_offset_ms: int | None
     end_audio_offset_ms: int | None
     clear_state: bool = True
-    isolated_audio_buffer: list[AudioSegment] | None = None
+    isolated_audio_buffer: list[np.ndarray] | None = None
 
 
 @dataclass(frozen=True)
