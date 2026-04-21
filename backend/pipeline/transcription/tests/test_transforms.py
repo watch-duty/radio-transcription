@@ -207,7 +207,6 @@ class AddEventTimestampTest(unittest.TestCase):
 
 
 class BypassStitchingTest(unittest.TestCase):
-    @pytest.mark.skip(reason="numpy migration")
     def test_bypass_stitching_maps_correctly(self) -> None:
         """Verifies that BypassStitchingFn correctly maps AudioChunkData to FlushRequest."""
         feed_id = "test-feed"
@@ -218,7 +217,9 @@ class BypassStitchingTest(unittest.TestCase):
             audio=np.zeros(int((audio_len_ms) * 16), dtype=np.int16),
             speech_segments=[],
             gcs_uri=gcs_path,
+            duration_ms=audio_len_ms,
         )
+
         element = (feed_id, DownloadedChunkPayload(gcs_path, chunk_data))
 
         fn = BypassStitchingFn()
@@ -407,7 +408,6 @@ class OrderRestorerTest(unittest.TestCase):
 
 class StitchAudioTest(unittest.TestCase):
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
-    @pytest.mark.skip(reason="numpy migration")
     def test_stitching_and_silence_flush_logic(
         self, mock_audio_processor: MagicMock
     ) -> None:
@@ -440,8 +440,9 @@ class StitchAudioTest(unittest.TestCase):
             if filename.startswith(("100-", "115-")):
                 duration_s = 15.0
             elif filename.startswith("150-"):
-                duration_s = 10.0
+                duration_s = 5.0
             elif filename.startswith("160-"):
+
                 duration_s = 30.0
 
             return AudioChunkData(
@@ -452,7 +453,9 @@ class StitchAudioTest(unittest.TestCase):
                     for s, e in sed_map.get(filename, [])
                 ],
                 gcs_uri=path,
+                duration_ms=int(duration_s * 1000),
             )
+
 
         mock_processor_inst.download_audio_and_detect.side_effect = (
             mock_download
@@ -663,7 +666,9 @@ class StitchAudioTest(unittest.TestCase):
                     for s, e in sed_map.get(filename, [])
                 ],
                 gcs_uri=path,
+                duration_ms=15000,
             )
+
 
         mock_processor_inst.download_audio_and_detect.side_effect = (
             mock_download
@@ -806,7 +811,9 @@ class StitchAudioTest(unittest.TestCase):
                     for s, e in sed_map.get(filename, [])
                 ],
                 gcs_uri=path,
+                duration_ms=15000,
             )
+
 
         mock_processor_inst.download_audio_and_detect.side_effect = (
             mock_download
@@ -1084,7 +1091,6 @@ class StitchAudioTest(unittest.TestCase):
 class TranscribeAudioTest(unittest.TestCase):
     @patch("backend.pipeline.transcription.stitcher.get_transcriber")
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
-    @pytest.mark.skip(reason="numpy migration")
     def test_dlq_routing(
         self, mock_audio_processor: MagicMock, mock_get_transcriber: MagicMock
     ) -> None:
@@ -1134,7 +1140,10 @@ class TranscribeAudioTest(unittest.TestCase):
                 assert len(elements) == 1
                 assert "Transcription API outage!" in elements[0]["error"]
 
-            assert_that(results.main, equal_to([]), label="CheckEmptyMain")
+            def assert_empty(elements):
+                assert len(elements) == 0
+            assert_that(results.main, assert_empty, label="CheckEmptyMain")
+
             assert_that(
                 results[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ"
             )
@@ -1190,7 +1199,9 @@ class TranscribeAudioTest(unittest.TestCase):
                 audio=np.zeros(int((1000) * 16), dtype=np.int16),
                 speech_segments=[TimeRange(0, 1000)],
                 gcs_uri=path,
+                duration_ms=1000,
             )
+
 
         mock_processor_inst.download_audio_and_detect.side_effect = (
             mock_download
@@ -1245,7 +1256,6 @@ class TranscribeAudioTest(unittest.TestCase):
 
 class DownloadAudioTest(unittest.TestCase):
     @patch("backend.pipeline.transcription.transforms.AudioProcessor")
-    @pytest.mark.skip(reason="numpy migration")
     def test_download_audio_timestamp_injection(
         self, mock_audio_processor: MagicMock
     ) -> None:
@@ -1272,19 +1282,19 @@ class DownloadAudioTest(unittest.TestCase):
                 | beam.Map(lambda x: TimestampedValue(x, 100))
             )
 
+
+
             results = elements | beam.ParDo(DownloadAudioFn(config))
 
-            assert_that(
-                results,
-                equal_to(
-                    [
-                        (
-                            "feed-123",
-                            DownloadedChunkPayload(
-                                "gs://fake-bucket/100-11111111.flac",
-                                mock_inst.download_audio_and_detect.return_value,
-                            ),
-                        )
-                    ]
-                ),
-            )
+            expected_audio = mock_inst.download_audio_and_detect.return_value.audio
+            def assert_results(elements):
+                assert len(elements) == 1
+                feed_id, payload = elements[0]
+                assert feed_id == "feed-123"
+                assert payload.gcs_uri == "gs://fake-bucket/100-11111111.flac"
+                assert payload.chunk_data.start_ms == 100000
+                assert np.array_equal(payload.chunk_data.audio, expected_audio)
+
+            assert_that(results, assert_results)
+
+

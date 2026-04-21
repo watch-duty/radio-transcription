@@ -79,8 +79,9 @@ class AudioStitchingStateMachine:
 
         # 3. Always update the expected contiguous start time for the NEXT chunk
         ctx.expected_next_chunk_start_ms = (
-            chunk_data.start_ms + chunk_duration_ms
+            chunk_data.start_ms + chunk_data.duration_ms
         )
+
         actions.append(UpdateStateAction())
         return actions
 
@@ -164,8 +165,9 @@ class AudioStitchingStateMachine:
             is_chopped_at_end = (
                 last_segment is not None
                 and last_segment.end_ms
-                >= int(CHUNK_DURATION_SECONDS * MS_PER_SECOND)
+                >= chunk_data.duration_ms
             )
+
             raw_actions.append(
                 self._flush_current_transmission(
                     "Flushing isolated late-arriving audio chunk",

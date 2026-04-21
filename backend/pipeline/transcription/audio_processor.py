@@ -89,7 +89,7 @@ class AudioProcessor:
             self.gcs_client = active_gcs_factory()
 
     def download_audio_and_detect(
-        self, gcs_path: str, start_ms: int
+        self, gcs_path: str, start_ms: int, duration_ms: int | None = None
     ) -> AudioChunkData:
         """Downloads audio bytes from GCS and runs the spectral flatness detector natively."""
         if not self.gcs_client:
@@ -116,13 +116,18 @@ class AudioProcessor:
 
         speech_segments = self.sed_detector.detect(samples)
 
+        if duration_ms is None:
+            duration_ms = len(samples) // (sr // 1000)
+
         return AudioChunkData(
             start_ms=start_ms,
             audio=samples,
             sample_rate=sr,
             speech_segments=speech_segments,
             gcs_uri=gcs_path,
+            duration_ms=duration_ms,
         )
+
 
     def check_vad(self, audio_buffer: np.ndarray) -> bool:
         """Evaluates audio buffer with TenVAD and returns True if speech is detected."""
@@ -210,41 +215,57 @@ class AudioProcessor:
     def export_m4a(
         self, audio_buffer: np.ndarray, sample_rate: int = SAMPLE_RATE_HZ
     ) -> bytes:
-        """Exports a NumPy array to M4A (AAC) bytes using ffmpeg via stdin/stdout."""
+        """Exports a NumPy array to M4A (AAC) bytes using ffmpeg via a temporary file."""
+        import os
         import subprocess
+        import tempfile
 
-        process = subprocess.run(
-            [
-                "ffmpeg",
-                "-f",
-                "s16le",  # Input format: 16-bit signed little-endian PCM
-                "-ar",
-                str(SAMPLE_RATE_HZ),  # Force 16kHz
-                "-ac",
-                "1",  # Input channels (mono)
-                "-i",
-                "pipe:0",  # Read from stdin
-                "-f",
-                "ipod",  # Output format: M4A/MP4 container
-                "-c:a",
-                "aac",  # Output codec: AAC
-                "-b:a",
-                M4A_BITRATE,  # Output bitrate from constant
-                "pipe:1",  # Write to stdout
-            ],
-            input=audio_buffer.tobytes(),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
+        with tempfile.NamedTemporaryFile(suffix=".m4a", delete=False) as temp_file:
+            temp_filename = temp_file.name
 
-        if process.returncode != 0:
-            logger.error(
-                f"ffmpeg error during M4A export: {process.stderr.decode()}"
+        try:
+            process = subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",  # Overwrite output file if it exists
+                    "-f",
+                    "s16le",  # Input format: 16-bit signed little-endian PCM
+                    "-ar",
+                    str(SAMPLE_RATE_HZ),  # Force 16kHz
+                    "-ac",
+                    "1",  # Input channels (mono)
+                    "-i",
+                    "pipe:0",  # Read from stdin
+                    "-f",
+                    "ipod",  # Output format: M4A/MP4 container
+                    "-c:a",
+                    "aac",  # Output codec: AAC
+                    "-b:a",
+                    M4A_BITRATE,  # Output bitrate from constant
+                    temp_filename,  # Write to temp file
+                ],
+                input=audio_buffer.tobytes(),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
             )
-            raise RuntimeError("Failed to export M4A via ffmpeg")
 
-        return process.stdout
+            if process.returncode != 0:
+                logger.error(
+                    f"ffmpeg error during M4A export: {process.stderr.decode()}"
+                )
+                raise RuntimeError("Failed to export M4A via ffmpeg")
+
+            with open(temp_filename, "rb") as f:
+                m4a_bytes = f.read()
+
+            return m4a_bytes
+        finally:
+            try:
+                os.unlink(temp_filename)
+            except OSError:
+                pass
+
 
     def process_buffer(
         self, audio_buffer: np.ndarray

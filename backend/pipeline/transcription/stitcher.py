@@ -497,7 +497,8 @@ class TranscribeAudioFn(beam.DoFn):
             msg = "Transcriber not initialized. setup() must be called."
             raise RuntimeError(msg)
 
-        if not request.buffer or len(request.buffer) == 0:
+        if request.buffer is None or request.buffer.size == 0:
+
             return None
 
         success, flac_bytes, processed_audio = (

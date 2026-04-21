@@ -53,7 +53,9 @@ def mock_audio_chunk(
             TimeRange(int(s * 1000), int(e * 1000)) for s, e in speech_segments
         ],
         gcs_uri=gcs_uri,
+        duration_ms=duration_ms,
     )
+
 
 
 class AudioStitchingStateMachineTest(unittest.TestCase):

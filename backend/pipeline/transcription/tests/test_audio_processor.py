@@ -62,7 +62,6 @@ class AudioProcessorTest(unittest.TestCase):
     def test_check_vad_evaluates_speech(self) -> None:
         pass
 
-    @pytest.mark.skip(reason="pydub removed")
     def test_preprocess_audio_applies_bandpass(self) -> None:
         """Verifies that the audio preprocessing filters do not corrupt or truncate the np.ndarray structure."""
         # A 1-second audio segment with noise at different frequencies
@@ -72,7 +71,8 @@ class AudioProcessorTest(unittest.TestCase):
         # so we just assert it returns an np.ndarray and doesn't crash.
         processed = self.processor.preprocess_audio(audio)
         self.assertIsInstance(processed, np.ndarray)
-        self.assertEqual(len(processed), 1000)
+        self.assertEqual(len(processed), len(audio))
+
 
     @unittest.skipIf(
         shutil.which("ffmpeg") is None, "ffmpeg is required for pydub I/O tests"
@@ -104,7 +104,6 @@ class AudioProcessorTest(unittest.TestCase):
         "backend.pipeline.transcription.audio_processor.AcousticGateDetector"
     )
     @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
-    @pytest.mark.skip(reason="pydub removed")
     def test_download_audio_and_detect(
         self,
         mock_get_gcs: MagicMock,
