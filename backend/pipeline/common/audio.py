@@ -7,6 +7,7 @@ import logging
 import subprocess
 
 from backend.pipeline.common.constants import (
+    FLAC_COMPRESSION_LEVEL,
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
     SAMPLE_WIDTH_16BIT,
@@ -35,7 +36,7 @@ def convert_to_flac(audio_bytes: bytes, input_format: str) -> bytes:
             "-ar", str(SAMPLE_RATE_HZ),
             "-ac", str(NUM_AUDIO_CHANNELS),
             "-sample_fmt", "s16",
-            "-compression_level", "5",
+            "-compression_level", FLAC_COMPRESSION_LEVEL,
             "pipe:1"
         ],
         input=audio_bytes,

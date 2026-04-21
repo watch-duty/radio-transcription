@@ -12,6 +12,8 @@ from google.cloud import storage
 
 from backend.pipeline.common.constants import (
     AUDIO_FORMAT,
+    FLAC_COMPRESSION_LEVEL,
+    M4A_BITRATE,
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
 )
@@ -178,11 +180,11 @@ class AudioProcessor:
             [
                 "ffmpeg",
                 "-f", "s16le",
-                "-ar", "16000",                 # Force 16kHz
+                "-ar", str(SAMPLE_RATE_HZ),     # Force 16kHz
                 "-ac", "1",                    # Mono
                 "-i", "pipe:0",                # Read from stdin
                 "-f", "flac",                  # Output format
-                "-compression_level", "5",     # Compression level 5
+                "-compression_level", FLAC_COMPRESSION_LEVEL,
                 "pipe:1"                       # Write to stdout
             ],
             input=audio_buffer.tobytes(),
@@ -203,12 +205,12 @@ class AudioProcessor:
             [
                 "ffmpeg",
                 "-f", "s16le",                 # Input format: 16-bit signed little-endian PCM
-                "-ar", "16000",                # Force 16kHz
+                "-ar", str(SAMPLE_RATE_HZ),    # Force 16kHz
                 "-ac", "1",                    # Input channels (mono)
                 "-i", "pipe:0",                # Read from stdin
                 "-f", "ipod",                  # Output format: M4A/MP4 container
                 "-c:a", "aac",                 # Output codec: AAC
-                "-b:a", "32k",                 # Output bitrate 32k
+                "-b:a", M4A_BITRATE,           # Output bitrate from constant
                 "pipe:1"                       # Write to stdout
             ],
             input=audio_buffer.tobytes(),
