@@ -19,6 +19,7 @@ export default defineConfig({
         target: 'http://localhost:8080',
         changeOrigin: true,
       },
+      // To prevent CORS errors with fetching from GCS on localhost
       '/gcs': {
         target: 'https://storage.googleapis.com',
         changeOrigin: true,
