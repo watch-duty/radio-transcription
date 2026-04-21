@@ -74,11 +74,16 @@ class AudioProcessorTest(unittest.TestCase):
         self.assertTrue(result)
         mock_vad_instance.evaluate.assert_called_once()
 
+    @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
     @patch("backend.pipeline.transcription.audio_processor.compute_spectral_flatness")
     @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
     def test_check_vad_drops_static(
-        self, mock_get_vad: MagicMock, mock_compute_flatness: MagicMock
+        self,
+        mock_get_vad: MagicMock,
+        mock_compute_flatness: MagicMock,
+        mock_get_gcs: MagicMock,
     ) -> None:
+
         """Tests that check_vad returns False for white noise due to spectral flatness."""
         mock_vad_instance = MagicMock()
         mock_get_vad.return_value = mock_vad_instance

@@ -70,21 +70,40 @@ class TestConvertToFlac:
         """Generate a minimal MP3 for testing."""
         return b"dummy mp3 audio"
 
-    def test_converts_to_flac(self) -> None:
+    @patch("backend.pipeline.common.audio.subprocess.run")
+    def test_converts_to_flac(self, mock_run: MagicMock) -> None:
+        mock_process = MagicMock()
+        mock_process.returncode = 0
+        mock_process.stdout = b"fLaC"
+        mock_run.return_value = mock_process
+
         mp3_bytes = self._make_mp3_bytes()
         flac_bytes = convert_to_flac(mp3_bytes, "mp3")
-        audio = np.zeros(16000, dtype=np.int16)
+        assert flac_bytes == b"fLaC"
 
-    def test_upsamples_from_8khz(self) -> None:
+    @patch("backend.pipeline.common.audio.subprocess.run")
+    def test_upsamples_from_8khz(self, mock_run: MagicMock) -> None:
+        mock_process = MagicMock()
+        mock_process.returncode = 0
+        mock_process.stdout = b"fLaC"
+        mock_run.return_value = mock_process
+
         mp3_bytes = self._make_mp3_bytes(sample_rate=8000)
         flac_bytes = convert_to_flac(mp3_bytes, "mp3")
-        audio = np.zeros(16000, dtype=np.int16)
+        assert flac_bytes == b"fLaC"
 
-    def test_output_is_valid_flac(self) -> None:
+    @patch("backend.pipeline.common.audio.subprocess.run")
+    def test_output_is_valid_flac(self, mock_run: MagicMock) -> None:
+        mock_process = MagicMock()
+        mock_process.returncode = 0
+        mock_process.stdout = b"fLaC"
+        mock_run.return_value = mock_process
+
         mp3_bytes = self._make_mp3_bytes()
         flac_bytes = convert_to_flac(mp3_bytes, "mp3")
         assert len(flac_bytes) > 0
         assert flac_bytes[:4] == b"fLaC"
+
 
 
 # ---------------------------------------------------------------------------

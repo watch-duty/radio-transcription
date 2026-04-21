@@ -233,7 +233,7 @@ class AudioProcessor:
                     "-f",
                     "s16le",  # Input format: 16-bit signed little-endian PCM
                     "-ar",
-                    str(SAMPLE_RATE_HZ),  # Force 16kHz
+                    str(sample_rate),  # Force 16kHz
                     "-ac",
                     "1",  # Input channels (mono)
                     "-i",
