@@ -97,6 +97,19 @@ export function TranscriptView({
     refetchOnWindowFocus: false,
   });
 
+  // Memoizing the feed ID to feed map so we don't have to recreate it on every render.
+  const feedIdToFeedMap = useMemo(() => {
+    if (!feeds) {
+      return new Map<string, NonNullable<typeof feeds>[number]>();
+    }
+    return new Map(feeds.map((f) => [f.id, f]));
+  }, [feeds]);
+
+  // Memoizing the selected feed object derived from the feedId state.
+  const selectedFeed = useMemo(() => {
+    return feedIdToFeedMap.get(feedId) || null;
+  }, [feedIdToFeedMap, feedId]);
+
   /**
    * Effect for handling feeds errors.
    */
@@ -217,43 +230,28 @@ export function TranscriptView({
         <Autocomplete
           disablePortal
           options={(feeds ?? []).sort((a, b) => a.name.localeCompare(b.name))}
-          getOptionLabel={(option) =>
-            typeof option === 'string' ? option : option.id
-          }
+          getOptionLabel={(option) => option.name}
           size="small"
           sx={{ width: '40%' }}
-          value={feedId}
-          onInputChange={(_, value) => setFeedId(value)}
-          onChange={(_, option) =>
-            setFeedId(
-              option ? (typeof option === 'string' ? option : option.id) : ''
-            )
-          }
-          freeSolo={true}
+          value={selectedFeed}
+          onChange={(_, option) => option && setFeedId(option.id)}
+          // Explicitly disallowing custom input - the user should always pick from registered feeds
+          freeSolo={false}
           loading={feedsFetching}
           disabled={feedsFetching}
-          filterOptions={(options, { inputValue }) => {
-            const filtered = options.filter((option) => {
-              return (
-                option.name.toLowerCase().includes(inputValue.toLowerCase()) ||
-                option.id.includes(inputValue)
-              );
-            });
-            return filtered;
-          }}
+          filterOptions={(options, { inputValue }) =>
+            options.filter((option) =>
+              option.name.toLowerCase().includes(inputValue.toLowerCase())
+            )
+          }
           renderInput={(params) => (
-            <TextField
-              {...params}
-              label="Select a registered feed or enter a feed ID/name"
-            />
+            <TextField {...params} label="Select a registered feed" />
           )}
           renderOption={(props, option) => {
             const { key, ...optionProps } = props;
             return (
               <Box key={key} component="li" {...optionProps}>
-                <Typography noWrap>
-                  {option.name} ({option.id})
-                </Typography>
+                <Typography noWrap>{option.name}</Typography>
               </Box>
             );
           }}
@@ -289,6 +287,10 @@ export function TranscriptView({
             setSearchedEndTime(calcEnd);
             setSearchedDuration(duration);
 
+            if (!feedId) {
+              return;
+            }
+
             const newParams: Record<string, string> = { feedId: feedId.trim() };
             if (timestamp) newParams.timestamp = timestamp.getTime().toString();
             if (duration) newParams.duration = duration.trim();
@@ -315,7 +317,7 @@ export function TranscriptView({
           disabled={
             feedsFetching ||
             isTranscriptsInitialLoading ||
-            !feedId.trim() ||
+            !feedId ||
             !isDurationValid
           }
           sx={{ minWidth: '100px', height: '40px' }}
@@ -332,12 +334,16 @@ export function TranscriptView({
             <Button
               variant="outlined"
               size="small"
-              disabled={!feedId.trim()}
+              disabled={!feedId}
               onClick={() => {
+                if (!feedId) {
+                  return;
+                }
+
                 const url = new URL(
                   window.location.origin + window.location.pathname
                 );
-                url.searchParams.set('feedId', feedId.trim());
+                url.searchParams.set('feedId', feedId);
                 if (timestamp)
                   url.searchParams.set(
                     'timestamp',
