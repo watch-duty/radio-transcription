@@ -1,9 +1,25 @@
-import { GoogleLogin } from '@react-oauth/google';
+import { GoogleLogin, googleLogout } from '@react-oauth/google';
+
+import Button from '@mui/material/Button';
 
 import { useAuth } from '../context/AuthContext';
 
 export function Login() {
-  const { setToken } = useAuth();
+  const { token, setToken } = useAuth();
+
+  if (token) {
+    return (
+      <Button
+        color="inherit"
+        onClick={() => {
+          googleLogout();
+          setToken(null);
+        }}
+      >
+        Sign Out
+      </Button>
+    );
+  }
 
   return (
     <GoogleLogin
