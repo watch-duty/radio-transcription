@@ -12,8 +12,8 @@ export async function listTranscripts(
   const params = new URLSearchParams();
   if (limit) params.append('limit', limit.toString());
   if (nextToken) params.append('nextToken', nextToken);
-  if (startTime) params.append('startTime', startTime.toString());
-  if (endTime) params.append('endTime', endTime.toString());
+  if (startTime) params.append('startTime', new Date(startTime).toISOString());
+  if (endTime) params.append('endTime', new Date(endTime).toISOString());
   if (params.toString()) {
     url += `?${params.toString()}`;
   }

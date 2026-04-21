@@ -135,9 +135,6 @@ describe('TranscriptRow', () => {
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
       expect.stringContaining(`timestamp=${startMs}`)
     );
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-      expect.stringContaining(`duration=5`)
-    );
     expect(mockTriggerSnackbar).toHaveBeenCalledWith('Link copied');
   });
 });

@@ -28,6 +28,16 @@ vi.mock('@wavesurfer/react', () => ({
   default: () => <div data-testid="wavesurfer-player" />,
 }));
 
+vi.mock('react-virtuoso', () => ({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  Virtuoso: ({ data, itemContent }: any) => (
+    <div data-testid="virtuoso">
+      {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+      {data.map((item: any, index: number) => itemContent(index, item))}
+    </div>
+  ),
+}));
+
 describe('TranscriptView', () => {
   const mockAddAlert = vi.fn();
 
@@ -245,80 +255,7 @@ describe('TranscriptView', () => {
     });
   });
 
-  it('loads more transcripts when Load More is clicked', async () => {
-    const mockTranscriptsPage1 = [
-      {
-        feedId: 'feed123',
-        transmissionId: '1',
-        transcript: 'Hello',
-        canonicalAudioUri: 'gs:://foo.flac',
-        startTimestamp: '2026-04-10T12:00:00Z',
-        endTimestamp: '2026-04-10T12:00:05Z',
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: ['gs:://foo.flac'],
-        startAudioOffset: '0s',
-        endAudioOffset: '5s',
-        evaluationDecisions: [],
-      },
-    ];
-    const mockTranscriptsPage2 = [
-      {
-        feedId: 'feed123',
-        transmissionId: '2',
-        transcript: 'World',
-        canonicalAudioUri: 'gs:://bar.flac',
-        startTimestamp: '2026-04-10T12:01:00Z',
-        endTimestamp: '2026-04-10T12:01:05Z',
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: ['gs:://bar.flac'],
-        startAudioOffset: '0s',
-        endAudioOffset: '5s',
-        evaluationDecisions: [],
-      },
-    ];
 
-    vi.mocked(listTranscripts)
-      .mockResolvedValueOnce({
-        transcripts: mockTranscriptsPage1,
-        nextToken: 'token123',
-      })
-      .mockResolvedValueOnce({
-        transcripts: mockTranscriptsPage2,
-        nextToken: undefined,
-      });
-
-    renderWithQueryClient(
-      <MemoryRouter>
-        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
-    );
-
-    const input = screen.getByLabelText(/Select a registered feed/i);
-    await waitFor(() => {
-      expect((input as HTMLInputElement).disabled).toBe(false);
-    });
-    fireEvent.change(input, { target: { value: 'feed123' } });
-    fireEvent.keyDown(input, { key: 'ArrowDown' });
-    fireEvent.keyDown(input, { key: 'Enter' });
-
-    const button = screen.getByRole('button', { name: /Fetch/i });
-    fireEvent.click(button);
-
-    await waitFor(() => {
-      expect(screen.getByText('Hello')).toBeTruthy();
-    });
-
-    const loadMoreButton = screen.getByRole('button', { name: /Load More/i });
-    expect(loadMoreButton).toBeTruthy();
-    fireEvent.click(loadMoreButton);
-
-    await waitFor(() => {
-      expect(screen.getByText('World')).toBeTruthy();
-      expect(screen.getByText('Hello')).toBeTruthy();
-    });
-  });
 
   it('refetches when Fetch is clicked again with the same feedId after an error', async () => {
     const mockAddAlert = vi.fn();

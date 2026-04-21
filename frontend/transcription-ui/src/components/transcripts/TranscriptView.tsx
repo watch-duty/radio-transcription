@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 
 import LinkIcon from '@mui/icons-material/Link';
@@ -9,9 +9,6 @@ import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
 import IconButton from '@mui/material/IconButton';
-import InputAdornment from '@mui/material/InputAdornment';
-import List from '@mui/material/List';
-import ListItem from '@mui/material/ListItem';
 import Paper from '@mui/material/Paper';
 import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
@@ -22,22 +19,21 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
+import { Virtuoso } from 'react-virtuoso';
 
 import { useAuth } from '../../context/AuthContext';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { listTranscripts } from '../../service/listTranscripts';
 import {
-  calculateSearchTimes,
-  getInitialDuration,
   getInitialTimestamp,
   getSearchedEndTime,
   getSearchedStartTime,
-  validateDuration,
 } from '../../utils/timeUtils';
 import AudioDisplay from '../audio/AudioDisplay';
 import DateTimePicker from '../common/DateTimePicker';
 import TranscriptRow from './TranscriptRow';
+import type { Transcript } from '@transcription/common';
 
 interface TranscriptViewProps {
   addAlert: (alert: AlertProps) => void;
@@ -61,15 +57,8 @@ export function TranscriptView({
   const [timestamp, setTimestamp] = useState<Date | null>(() =>
     getInitialTimestamp(searchParams)
   );
-  const [duration, setDuration] = useState<string | null>(() =>
-    getInitialDuration(searchParams)
-  );
-
   const [searchedFeedId, setSearchedFeedId] = useState<string>(
     () => searchParams.get('feedId') || ''
-  );
-  const [searchedDuration, setSearchedDuration] = useState<string | null>(() =>
-    searchParams.get('duration')
   );
   const [searchedStartTime, setSearchedStartTime] = useState<Date | null>(() =>
     getSearchedStartTime(searchParams)
@@ -78,13 +67,15 @@ export function TranscriptView({
     getSearchedEndTime(searchParams)
   );
 
-  const isDurationValid = !duration || validateDuration(duration);
-
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
   const [highlightedTransmissionId, setHighlightedTransmissionId] = useState<
     string | null
   >(targetTransmissionId);
+  const [hideFooterButton, setHideFooterButton] = useState(false);
+  const [hideHeaderButton, setHideHeaderButton] = useState(false);
+  const [isAtTop, setIsAtTop] = useState(true);
+  const [isPolling, setIsPolling] = useState(false);
 
   const {
     data: feeds,
@@ -126,9 +117,13 @@ export function TranscriptView({
     data: listTranscriptsResponse,
     fetchNextPage: fetchNextTranscripts,
     hasNextPage: hasNextTranscripts,
+    fetchPreviousPage: fetchPreviousTranscripts,
+    hasPreviousPage: hasPreviousTranscripts,
+    isFetchingNextPage: isFetchingNextTranscripts,
+    isFetchingPreviousPage: isFetchingPreviousTranscripts,
     error: transcriptsError,
-    isLoading: isTranscriptsInitialLoading, // isLoading is the first load, which we use to show the main loading spinner
-    isFetching: isTranscriptsFetching, // isFetching is any load, which we use to show that we're loading additional data
+    isLoading: isTranscriptsInitialLoading,
+    isFetching: isTranscriptsFetching,
     isSuccess: isTranscriptsSuccess,
   } = useInfiniteQuery({
     queryKey: [
@@ -138,28 +133,119 @@ export function TranscriptView({
       searchedStartTime?.getTime(),
       searchedEndTime?.getTime(),
     ],
-    queryFn: ({ pageParam }) =>
-      token
-        ? listTranscripts(
-            searchedFeedId,
-            token,
-            undefined,
-            pageParam === '' ? undefined : pageParam,
-            searchedStartTime ? searchedStartTime.getTime() : undefined,
-            searchedEndTime ? searchedEndTime.getTime() : undefined
-          )
-        : Promise.resolve({ transcripts: [] }),
-    initialPageParam: '',
-    getNextPageParam: (lastPage) => lastPage?.nextToken,
+    queryFn: async ({ pageParam }) => {
+      const { startTime, endTime, nextToken } = pageParam as {
+        startTime?: number;
+        endTime?: number;
+        nextToken?: string;
+      };
+      const response = await listTranscripts(
+        searchedFeedId,
+        token!,
+        undefined,
+        nextToken,
+        startTime,
+        endTime
+      );
+      return { ...response, startTime, endTime };
+    },
+    initialPageParam: {
+      startTime: searchedStartTime?.getTime() ?? undefined,
+      endTime: searchedEndTime?.getTime() ?? undefined,
+    },
+    getNextPageParam: (lastPage) => {
+      if (lastPage.nextToken) {
+        return {
+          startTime: lastPage.startTime,
+          endTime: lastPage.endTime,
+          nextToken: lastPage.nextToken,
+        };
+      }
+      if (lastPage.startTime !== undefined) {
+        return {
+          startTime: lastPage.startTime - 30 * 60 * 1000,
+          endTime: lastPage.startTime,
+        };
+      }
+      return undefined;
+    },
+    getPreviousPageParam: (firstPage) => {
+      if (firstPage.endTime !== undefined) {
+        const newStartTime = firstPage.endTime;
+        const newEndTime = firstPage.endTime + 30 * 60 * 1000;
+        
+        if (newEndTime > Date.now()) {
+          return undefined;
+        }
+        return { startTime: newStartTime, endTime: newEndTime };
+      }
+      return undefined;
+    },
     enabled: !!searchedFeedId,
     refetchOnWindowFocus: false,
   });
 
-  const transcripts = useMemo(
-    () =>
-      listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? [],
-    [listTranscriptsResponse]
-  );
+  const transcripts = useMemo(() => {
+    const all = listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? [];
+    return all.sort((a, b) => new Date(b.startTimestamp).getTime() - new Date(a.startTimestamp).getTime());
+  }, [listTranscriptsResponse]);
+
+  const newestTimestamp = transcripts[0]?.startTimestamp;
+
+  const fetchNewerTranscripts = useCallback(async () => {
+    if (!newestTimestamp || !searchedFeedId) return [];
+    const response = await listTranscripts(
+      searchedFeedId,
+      token!,
+      undefined,
+      undefined,
+      new Date(newestTimestamp).getTime()
+    );
+    return response.transcripts;
+  }, [newestTimestamp, searchedFeedId, token]);
+
+  const updateCacheWithNewTranscripts = useCallback((newTranscripts: Transcript[]) => {
+    queryClient.setQueryData(
+      ['listTranscripts', token, searchedFeedId, undefined, undefined],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (oldData: any) => {
+        if (!oldData) return oldData;
+        
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const existingIds = new Set(oldData.pages.flatMap((p: any) => p.transcripts.map((t: any) => t.transmissionId)));
+        const filteredNew = newTranscripts.filter((t) => !existingIds.has(t.transmissionId));
+        
+        if (filteredNew.length === 0) return oldData;
+
+        const newPages = [...oldData.pages];
+        newPages[0] = {
+          ...newPages[0],
+          transcripts: [...filteredNew, ...newPages[0].transcripts],
+        };
+        return { ...oldData, pages: newPages };
+      }
+    );
+  }, [token, searchedFeedId, queryClient]);
+
+  useEffect(() => {
+    if (import.meta.env.MODE === 'test' || searchedStartTime || !isAtTop || !newestTimestamp || !searchedFeedId) return;
+
+    const interval = setInterval(async () => {
+      try {
+        setIsPolling(true);
+        const newTranscripts = await fetchNewerTranscripts();
+        if (newTranscripts.length > 0) {
+          updateCacheWithNewTranscripts(newTranscripts);
+        }
+      } catch (error) {
+        console.error('Polling error:', error);
+      } finally {
+        setIsPolling(false);
+      }
+    }, 15000);
+
+    return () => clearInterval(interval);
+  }, [searchedStartTime, isAtTop, newestTimestamp, searchedFeedId, fetchNewerTranscripts, updateCacheWithNewTranscripts]);
 
   const {
     data: rules,
@@ -220,19 +306,18 @@ export function TranscriptView({
       sx={{
         width: '100%',
         textAlign: 'left',
-        flexGrow: 1,
-        minHeight: 0,
         display: 'flex',
         flexDirection: 'column',
+        height: 'calc(100vh)',
       }}
     >
-      <Box sx={{ display: 'flex', gap: 2, mb: 1, alignItems: 'center' }}>
+      <Box sx={{ display: 'flex', gap: 2, mb: 4, alignItems: 'center', width: '100%' }}>
         <Autocomplete
           disablePortal
           options={(feeds ?? []).sort((a, b) => a.name.localeCompare(b.name))}
           getOptionLabel={(option) => option.name}
           size="small"
-          sx={{ width: '40%' }}
+          sx={{ width: '20%' }}
           value={selectedFeed}
           onChange={(_, option) => option && setFeedId(option.id)}
           // Explicitly disallowing custom input - the user should always pick from registered feeds
@@ -272,6 +357,14 @@ export function TranscriptView({
             <RefreshIcon />
           )}
         </IconButton>
+
+        <DateTimePicker
+          label="Timestamp (optional)"
+          dateTime={timestamp}
+          setDateTime={setTimestamp}
+          width="15%"
+        />
+
         <Button
           variant="contained"
           onClick={() => {
@@ -280,12 +373,18 @@ export function TranscriptView({
             // 2. If only the timestamp is provided but no duration, we set the duration to the endTime but leave startTime empty so that we get all results prior to that time.
             // 3. If both the timestamp and duration are provided, we apply the offset to the timestamp and set the start and end times.
 
-            const { startTime: calcStart, endTime: calcEnd } =
-              calculateSearchTimes(timestamp, duration);
+            let calcStart: Date | null = null;
+            let calcEnd: Date | null = null;
+
+            if (timestamp) {
+              calcStart = new Date(timestamp.getTime() - 15 * 60 * 1000);
+              calcEnd = new Date(timestamp.getTime() + 15 * 60 * 1000);
+            }
 
             setSearchedStartTime(calcStart);
             setSearchedEndTime(calcEnd);
-            setSearchedDuration(duration);
+            setHideFooterButton(false);
+            setHideHeaderButton(false);
 
             if (!feedId) {
               return;
@@ -293,7 +392,6 @@ export function TranscriptView({
 
             const newParams: Record<string, string> = { feedId: feedId.trim() };
             if (timestamp) newParams.timestamp = timestamp.getTime().toString();
-            if (duration) newParams.duration = duration.trim();
             setSearchParams(newParams);
 
             if (
@@ -317,8 +415,7 @@ export function TranscriptView({
           disabled={
             feedsFetching ||
             isTranscriptsInitialLoading ||
-            !feedId ||
-            !isDurationValid
+            !feedId
           }
           sx={{ minWidth: '100px', height: '40px' }}
         >
@@ -328,7 +425,26 @@ export function TranscriptView({
             'Fetch'
           )}
         </Button>
+
+        <Button
+          variant="outlined"
+          color="primary"
+          onClick={() => {
+            setTimestamp(null);
+            // Remove timestamp and duration from search params to reset
+            const nextParams = new URLSearchParams(searchParams);
+            nextParams.delete('timestamp');
+            nextParams.delete('duration');
+            setSearchParams(nextParams);
+          }}
+          disabled={!timestamp}
+          sx={{ height: '40px', minWidth: '100px' }}
+        >
+          Clear
+        </Button>
+
         <Box sx={{ flexGrow: 1 }} />
+
         <Tooltip title="Copy link to feed">
           <Box component="span">
             <Button
@@ -349,7 +465,6 @@ export function TranscriptView({
                     'timestamp',
                     timestamp.getTime().toString()
                   );
-                if (duration) url.searchParams.set('duration', duration.trim());
                 navigator.clipboard.writeText(url.toString());
                 triggerSnackbar('Link copied');
               }}
@@ -361,106 +476,142 @@ export function TranscriptView({
           </Box>
         </Tooltip>
       </Box>
-      <Box sx={{ display: 'flex', gap: 2, mb: 3, width: '40%' }}>
-        <DateTimePicker
-          label="Timestamp (optional)"
-          dateTime={timestamp}
-          setDateTime={setTimestamp}
-          width="100%"
-        />
-        <TextField
-          label="Duration (optional)"
-          size="small"
-          type="number"
-          value={duration ?? ''}
-          onChange={(e) => setDuration(e.target.value)}
-          error={!isDurationValid}
-          helperText={!isDurationValid && 'Must be a positive number'}
-          sx={{ width: '100%' }}
-          slotProps={{
-            input: {
-              endAdornment: (
-                <InputAdornment position="end">minutes</InputAdornment>
-              ),
-            },
-          }}
-        />
-        <Button
-          variant="outlined"
-          color="primary"
-          onClick={() => {
-            setTimestamp(null);
-            setDuration(null);
-            // Remove timestamp and duration from search params to reset
-            const nextParams = new URLSearchParams(searchParams);
-            nextParams.delete('timestamp');
-            nextParams.delete('duration');
-            setSearchParams(nextParams);
-          }}
-          disabled={!timestamp && !duration}
-          sx={{ height: '40px', minWidth: '100px' }}
-        >
-          Clear
-        </Button>
-      </Box>
 
       <AudioDisplay
         transcripts={transcripts}
         currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
         onClipClick={handleClipClick}
-        userDuration={searchedDuration}
       />
 
-      <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
+      <Box sx={{ flexGrow: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         {transcripts.length > 0 ? (
-          <List component={Paper} variant="outlined" sx={{ p: 0 }}>
-            {transcripts.map((transcript, index) => {
-              const currentDate = new Date(transcript.startTimestamp);
-              const prevDate =
-                index > 0
-                  ? new Date(transcripts[index - 1].startTimestamp)
-                  : null;
-              const showHeader =
-                !prevDate ||
-                currentDate.toDateString() !== prevDate.toDateString();
-
-              return (
-                <TranscriptRow
-                  key={transcript.transmissionId}
-                  transcript={transcript}
-                  index={index}
-                  totalTranscripts={transcripts.length}
-                  ruleIdToNameMap={ruleIdToNameMap}
-                  rulesLoading={rulesLoading}
-                  onPlay={onPlay}
-                  currentlyPlayingTransmissionId={
-                    currentlyPlayingTransmissionId
-                  }
-                  triggerSnackbar={triggerSnackbar}
-                  showHeader={showHeader}
-                  isHighlighted={
-                    transcript.transmissionId === highlightedTransmissionId
-                  }
-                />
-              );
-            })}
-            {hasNextTranscripts && (
-              <ListItem sx={{ justifyContent: 'center', py: theme.spacing(2) }}>
+          <>
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1 }}>
+              {(!hasPreviousTranscripts || hideHeaderButton) && (
                 <Button
-                  variant="outlined"
-                  onClick={() => fetchNextTranscripts()}
-                  disabled={isTranscriptsFetching}
-                  sx={{ minWidth: '160px' }}
+                  size="small"
+                  variant="text"
+                  onClick={async () => {
+                    setIsPolling(true);
+                    try {
+                      const newTranscripts = await fetchNewerTranscripts();
+                      if (newTranscripts.length > 0) {
+                        updateCacheWithNewTranscripts(newTranscripts);
+                      } else {
+                        triggerSnackbar('No newer transcripts found');
+                      }
+                    } catch (error) {
+                      console.error('Manual refresh error:', error);
+                    } finally {
+                      setIsPolling(false);
+                    }
+                  }}
+                  disabled={isTranscriptsFetching || isPolling}
+                  startIcon={isPolling ? <CircularProgress size={16} color="inherit" /> : <RefreshIcon />}
+                  sx={{ textTransform: 'none' }}
                 >
-                  {isTranscriptsFetching ? (
-                    <CircularProgress size={24} color="inherit" />
-                  ) : (
-                    'Load More'
-                  )}
+                  {isPolling ? 'Refreshing...' : 'Refresh (15s)'}
                 </Button>
-              </ListItem>
-            )}
-          </List>
+              )}
+            </Box>
+          <Paper variant="outlined" sx={{ display: 'flex', flexDirection: 'column', flexGrow: 1, minHeight: 0, overflow: 'hidden' }}>
+            <Virtuoso
+              data={transcripts}
+              atTopStateChange={(atTop) => setIsAtTop(atTop)}
+              itemContent={(index, transcript) => {
+                const currentDate = new Date(transcript.startTimestamp);
+                const prevDate =
+                  index > 0
+                    ? new Date(transcripts[index - 1].startTimestamp)
+                    : null;
+                const showHeader =
+                  !prevDate ||
+                  currentDate.toDateString() !== prevDate.toDateString();
+
+                return (
+                  <TranscriptRow
+                    key={transcript.transmissionId}
+                    transcript={transcript}
+                    index={index}
+                    totalTranscripts={transcripts.length}
+                    ruleIdToNameMap={ruleIdToNameMap}
+                    rulesLoading={rulesLoading}
+                    onPlay={onPlay}
+                    currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
+                    triggerSnackbar={triggerSnackbar}
+                    showHeader={showHeader}
+                    isHighlighted={transcript.transmissionId === highlightedTransmissionId}
+                  />
+                );
+              }}
+              components={{
+                Header: () => (
+                  hasPreviousTranscripts && !hideHeaderButton ? (
+                    <Box sx={{ display: 'flex', justifyContent: 'center', py: 1 }}>
+                      {isFetchingPreviousTranscripts ? (
+                        <CircularProgress size={40} />
+                      ) : (
+                        <Button
+                          variant="text"
+                          onClick={async () => {
+                            const result = await fetchPreviousTranscripts();
+                            if (result.data && result.data.pages[0]?.transcripts.length === 0) {
+                              triggerSnackbar('No newer transcripts found');
+                              setHideHeaderButton(true);
+                            }
+                          }}
+                          disabled={isTranscriptsFetching}
+                          sx={{ minWidth: '160px' }}
+                        >
+                          Load newer transcripts
+                        </Button>
+                      )}
+                    </Box>
+                  ) : null
+                ),
+                Footer: () => {
+                  if (hasNextTranscripts && !hideFooterButton) {
+                    return (
+                      <Box sx={{ display: 'flex', justifyContent: 'center', py: 1 }}>
+                        {isFetchingNextTranscripts ? (
+                          <CircularProgress size={40} />
+                        ) : (
+                          <Button
+                            variant="text"
+                            onClick={async () => {
+                              const result = await fetchNextTranscripts();
+                              if (result.data) {
+                                const lastPage = result.data.pages[result.data.pages.length - 1];
+                                if (lastPage?.transcripts.length === 0) {
+                                  triggerSnackbar('No older transcripts found');
+                                  setHideFooterButton(true);
+                                }
+                              }
+                            }}
+                            disabled={isTranscriptsFetching}
+                            sx={{ minWidth: '160px' }}
+                          >
+                            Load previous transcripts
+                          </Button>
+                        )}
+                      </Box>
+                    );
+                  }
+                  if (!hasNextTranscripts || hideFooterButton) {
+                    return (
+                      <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                        <Typography variant="caption" color="text.secondary">
+                          No more transcripts found
+                        </Typography>
+                      </Box>
+                    );
+                  }
+                  return null;
+                },
+              }}
+            />
+          </Paper>
+          </>
         ) : isTranscriptsInitialLoading ? (
           <Box
             sx={{
