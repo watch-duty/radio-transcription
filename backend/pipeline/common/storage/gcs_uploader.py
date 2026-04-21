@@ -3,8 +3,8 @@
 import logging
 from collections.abc import Callable
 
-from google.cloud import storage
 import numpy as np
+from google.cloud import storage
 
 logger = logging.getLogger(__name__)
 

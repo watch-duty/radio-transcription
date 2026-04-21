@@ -7,23 +7,21 @@ import subprocess
 import tempfile
 import urllib.parse
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
+
 import numpy as np
-import scipy.signal as signal
 import soundfile as sf
 from google.cloud import storage
-
+from scipy import signal
 
 from backend.pipeline.common.constants import (
-    AUDIO_FORMAT,
     FLAC_COMPRESSION_LEVEL,
     M4A_BITRATE,
-    NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
 )
 from backend.pipeline.transcription.constants import (
-    BYTES_PER_SAMPLE_16BIT,
     DEFAULT_SED_FFT_SIZE,
     DEFAULT_SED_HOP_SIZE,
     HIGHPASS_FILTER_FREQ,
@@ -207,9 +205,9 @@ class AudioProcessor:
                 "pipe:1",  # Write to stdout
             ],
             input=audio_buffer.tobytes(),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             check=False,
+
         )
         if process.returncode != 0:
             logger.error(
@@ -249,8 +247,7 @@ class AudioProcessor:
                     temp_filename,  # Write to temp file
                 ],
                 input=audio_buffer.tobytes(),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 check=False,
             )
 
@@ -261,14 +258,13 @@ class AudioProcessor:
                 raise RuntimeError("Failed to export M4A via ffmpeg")
 
             with open(temp_filename, "rb") as f:
-                m4a_bytes = f.read()
-
-            return m4a_bytes
+                return f.read()
         finally:
             try:
-                os.unlink(temp_filename)
+                Path(temp_filename).unlink()
             except OSError:
                 pass
+
 
     def process_buffer(
         self, audio_buffer: np.ndarray

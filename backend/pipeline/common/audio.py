@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import io
 import logging
 import subprocess
 
@@ -10,7 +9,6 @@ from backend.pipeline.common.constants import (
     FLAC_COMPRESSION_LEVEL,
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
-    SAMPLE_WIDTH_16BIT,
 )
 
 logger = logging.getLogger(__name__)

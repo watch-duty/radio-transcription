@@ -45,8 +45,8 @@ class AudioStitchingStateMachine:
         if is_late_chunk:
             return self._process_late_chunk_independently(chunk_data, ctx)
 
-        chunk_duration_ms = int(CHUNK_DURATION_SECONDS * MS_PER_SECOND)
         actions: list[StateMachineAction] = []
+
 
         # 1. Detect if we skipped over a chunk (dropped audio)
         is_dropped_chunk = (

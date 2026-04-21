@@ -6,13 +6,9 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any, override
 
-import numpy as np
 import apache_beam as beam
+import numpy as np
 from apache_beam.metrics import Metrics
-from backend.pipeline.common.constants import (
-    MS_PER_SECOND,
-    SAMPLE_RATE_HZ,
-)
 from apache_beam.transforms.userstate import (
     BagRuntimeState,
     BagStateSpec,
@@ -24,7 +20,10 @@ from apache_beam.transforms.userstate import (
 )
 from apache_beam.utils.timestamp import Timestamp
 
-from backend.pipeline.common.constants import MS_PER_SECOND
+from backend.pipeline.common.constants import (
+    MS_PER_SECOND,
+    SAMPLE_RATE_HZ,
+)
 from backend.pipeline.common.storage.gcs_uploader import GCSAudioUploader
 from backend.pipeline.transcription.audio_processor import AudioProcessor
 from backend.pipeline.transcription.constants import (

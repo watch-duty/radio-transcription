@@ -20,11 +20,11 @@ if TYPE_CHECKING:
     import uuid
 
 import docker
+import numpy as np
 import psycopg
 import requests as sync_requests
 from google.cloud import storage
 from psycopg.rows import dict_row
-import numpy as np
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.waiting_utils import wait_for_logs
 from testcontainers.postgres import PostgresContainer

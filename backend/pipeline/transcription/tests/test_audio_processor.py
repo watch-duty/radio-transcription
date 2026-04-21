@@ -1,4 +1,3 @@
-import pytest
 
 """Unit tests for the audio processor."""
 
@@ -11,7 +10,6 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import soundfile as sf
 
-from backend.pipeline.common.constants import AUDIO_FORMAT, SAMPLE_RATE_HZ
 from backend.pipeline.transcription.audio_processor import AudioProcessor
 from backend.pipeline.transcription.datatypes import AudioChunkData, TimeRange
 from backend.pipeline.transcription.enums import VadType
@@ -44,7 +42,7 @@ class AudioProcessorTest(unittest.TestCase):
 
     def test_check_vad_raises_if_not_setup(self) -> None:
         """Ensures that attempting to evaluate VAD before setup() raises a clear runtime error."""
-        audio = np.zeros(int((1000) * 16), dtype=np.int16)
+        audio = np.zeros(((1000) * 16), dtype=np.int16)
         with self.assertRaises(RuntimeError):
             self.processor.check_vad(audio)
 
@@ -84,7 +82,7 @@ class AudioProcessorTest(unittest.TestCase):
         """Tests that check_vad returns False for white noise due to spectral flatness."""
         mock_vad_instance = MagicMock()
         mock_get_vad.return_value = mock_vad_instance
-        
+
         # Mock flatness to be high (noise)
         mock_compute_flatness.return_value = np.array([0.9])
 
@@ -111,7 +109,7 @@ class AudioProcessorTest(unittest.TestCase):
         mock_blob = MagicMock()
 
         # Create a tiny valid FLAC (100ms -> 1600 samples)
-        audio = np.zeros(int((100) * 16), dtype=np.int16)
+        audio = np.zeros(((100) * 16), dtype=np.int16)
         buf = io.BytesIO()
         sf.write(buf, audio, 16000, format="FLAC")
         flac_bytes = buf.getvalue()
@@ -137,7 +135,7 @@ class AudioProcessorTest(unittest.TestCase):
     def test_preprocess_audio_applies_bandpass(self) -> None:
         """Verifies that the audio preprocessing filters do not corrupt or truncate the np.ndarray structure."""
         # A 1-second audio segment with noise at different frequencies
-        audio = np.zeros(int((1000) * 16), dtype=np.int16)
+        audio = np.zeros(((1000) * 16), dtype=np.int16)
 
         # We can't easily assert exactly what the pydub filters did without evaluating frequency domains,
         # so we just assert it returns an np.ndarray and doesn't crash.
@@ -150,7 +148,7 @@ class AudioProcessorTest(unittest.TestCase):
     )
     def test_export_flac(self) -> None:
         """Tests that exporting to FLAC produces a valid byte array containing the expected `fLaC` header signature."""
-        audio = np.zeros(int((500) * 16), dtype=np.int16)
+        audio = np.zeros(((500) * 16), dtype=np.int16)
         flac_bytes = self.processor.export_flac(audio)
         self.assertIsInstance(flac_bytes, bytes)
         self.assertTrue(flac_bytes.startswith(b"fLaC"))
@@ -160,7 +158,7 @@ class AudioProcessorTest(unittest.TestCase):
     )
     def test_export_m4a(self) -> None:
         """Tests that exporting to M4A produces a valid byte array with valid ftyp header."""
-        audio = np.zeros(int((500) * 16), dtype=np.int16)
+        audio = np.zeros(((500) * 16), dtype=np.int16)
         m4a_bytes = self.processor.export_m4a(audio)
         self.assertIsInstance(m4a_bytes, bytes)
         self.assertTrue(len(m4a_bytes) > 0)
@@ -193,7 +191,7 @@ class AudioProcessorTest(unittest.TestCase):
         mock_blob = MagicMock()
 
         # Create a tiny valid FLAC
-        audio = np.zeros(int((100) * 16), dtype=np.int16)
+        audio = np.zeros(((100) * 16), dtype=np.int16)
         buf = io.BytesIO()
         sf.write(buf, audio, 16000, format="FLAC")
         flac_bytes = buf.getvalue()

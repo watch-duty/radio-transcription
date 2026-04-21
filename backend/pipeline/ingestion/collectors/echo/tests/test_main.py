@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import io
 import shutil
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 from google.api_core.exceptions import NotFound
-import numpy as np
 
 from backend.pipeline.common.audio import convert_to_flac
 from backend.pipeline.ingestion.collectors.echo.main import (

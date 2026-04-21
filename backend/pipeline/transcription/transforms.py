@@ -4,12 +4,6 @@ import logging
 from collections.abc import Iterator
 from typing import Any, override
 
-from backend.pipeline.transcription.resources import (
-    SHARED_RESOURCE_HANDLE,
-    SharedResources,
-)
-
-
 import apache_beam as beam
 from apache_beam.io.gcp.pubsub import PubsubMessage
 from apache_beam.metrics import Metrics
@@ -53,6 +47,10 @@ from backend.pipeline.transcription.datatypes import (
     StitchAudioConfig,
     TimeRange,
     TranscriptionResult,
+)
+from backend.pipeline.transcription.resources import (
+    SHARED_RESOURCE_HANDLE,
+    SharedResources,
 )
 from backend.pipeline.transcription.sequence_buffer import SequenceBuffer
 from backend.pipeline.transcription.utils import generate_transmission_id

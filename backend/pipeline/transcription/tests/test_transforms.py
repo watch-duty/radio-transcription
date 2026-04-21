@@ -1,14 +1,12 @@
-import pytest
 
 """Tests for the StitchAudioFn, TranscribeAudioFn, and related transformations."""
 
-import threading
-import time
 import unittest
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import apache_beam as beam
+import numpy as np
 from apache_beam.io.gcp.pubsub import PubsubMessage
 from apache_beam.options.pipeline_options import (
     PipelineOptions,
@@ -18,7 +16,6 @@ from apache_beam.testing.test_pipeline import TestPipeline as BeamTestPipeline
 from apache_beam.testing.test_stream import TestStream as BeamTestStream
 from apache_beam.testing.util import assert_that, equal_to
 from apache_beam.transforms.window import TimestampedValue
-import numpy as np
 
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.transcription.constants import DEAD_LETTER_QUEUE_TAG
@@ -656,7 +653,7 @@ class StitchAudioTest(unittest.TestCase):
             )
             return AudioChunkData(
                 start_ms=int(chunk_start * 1000),
-                audio=np.zeros(int((15000) * 16), dtype=np.int16),
+                audio=np.zeros(((15000) * 16), dtype=np.int16),
                 speech_segments=[
                     TimeRange(int(s * 1000), int(e * 1000))
                     for s, e in sed_map.get(filename, [])
@@ -800,7 +797,7 @@ class StitchAudioTest(unittest.TestCase):
             )
             return AudioChunkData(
                 start_ms=int(chunk_start * 1000),
-                audio=np.zeros(int((15000) * 16), dtype=np.int16),
+                audio=np.zeros(((15000) * 16), dtype=np.int16),
                 speech_segments=[
                     TimeRange(int(s * 1000), int(e * 1000))
                     for s, e in sed_map.get(filename, [])
@@ -966,7 +963,7 @@ class TranscribeAudioTest(unittest.TestCase):
         mock_processor_inst.process_buffer.return_value = (
             True,
             b"flac_bytes",
-            np.zeros(int((500) * 16), dtype=np.int16),
+            np.zeros(((500) * 16), dtype=np.int16),
         )
 
         config = get_test_transcribe_config(route_to_dlq=True)
@@ -981,7 +978,7 @@ class TranscribeAudioTest(unittest.TestCase):
                         "feed-123",
                         FlushRequest(
                             feed_id="feed-123",
-                            buffer=np.zeros(int((500) * 16), dtype=np.int16),
+                            buffer=np.zeros(((500) * 16), dtype=np.int16),
                             contributing_audio_uris=["gs://f/11111111.flac"],
                             time_range=TimeRange(
                                 start_ms=101000, end_ms=101500
@@ -1025,7 +1022,7 @@ class DownloadAudioTest(unittest.TestCase):
         mock_inst = mock_audio_processor.return_value
         mock_inst.download_audio_and_detect.return_value = AudioChunkData(
             start_ms=100000,
-            audio=np.zeros(int((1000) * 16), dtype=np.int16),
+            audio=np.zeros(((1000) * 16), dtype=np.int16),
             speech_segments=[],
             gcs_uri="gs://fake-bucket/100-11111111.flac",
         )
