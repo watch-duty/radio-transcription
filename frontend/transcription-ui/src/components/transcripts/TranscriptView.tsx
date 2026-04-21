@@ -9,6 +9,7 @@ import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
 import IconButton from '@mui/material/IconButton';
+import InputAdornment from '@mui/material/InputAdornment';
 import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
 import Paper from '@mui/material/Paper';
@@ -34,6 +35,7 @@ import {
   getSearchedStartTime,
   validateDuration,
 } from '../../utils/timeUtils';
+import AudioDisplay from '../audio/AudioDisplay';
 import DateTimePicker from '../common/DateTimePicker';
 import TranscriptRow from './TranscriptRow';
 
@@ -66,6 +68,9 @@ export function TranscriptView({
   const [searchedFeedId, setSearchedFeedId] = useState<string>(
     () => searchParams.get('feedId') || ''
   );
+  const [searchedDuration, setSearchedDuration] = useState<string | null>(() =>
+    searchParams.get('duration')
+  );
   const [searchedStartTime, setSearchedStartTime] = useState<Date | null>(() =>
     getSearchedStartTime(searchParams)
   );
@@ -77,6 +82,9 @@ export function TranscriptView({
 
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
+  const [highlightedTransmissionId, setHighlightedTransmissionId] = useState<
+    string | null
+  >(targetTransmissionId);
 
   const {
     data: feeds,
@@ -186,6 +194,14 @@ export function TranscriptView({
     setCurrentlyPlayingTransmissionId(transmissionId);
   };
 
+  const handleClipClick = (transmissionId: string) => {
+    const element = document.getElementById(`transcript-${transmissionId}`);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    setHighlightedTransmissionId(transmissionId);
+  };
+
   return (
     <Box
       sx={{
@@ -271,6 +287,7 @@ export function TranscriptView({
 
             setSearchedStartTime(calcStart);
             setSearchedEndTime(calcEnd);
+            setSearchedDuration(duration);
 
             const newParams: Record<string, string> = { feedId: feedId.trim() };
             if (timestamp) newParams.timestamp = timestamp.getTime().toString();
@@ -340,25 +357,27 @@ export function TranscriptView({
       </Box>
       <Box sx={{ display: 'flex', gap: 2, mb: 3, width: '40%' }}>
         <DateTimePicker
-          label="Timestamp"
+          label="Timestamp (optional)"
           dateTime={timestamp}
           setDateTime={setTimestamp}
           width="100%"
-          helperText="(Optional) Pick a date and time to search around"
         />
         <TextField
-          label="Duration (minutes)"
+          label="Duration (optional)"
           size="small"
           type="number"
           value={duration ?? ''}
           onChange={(e) => setDuration(e.target.value)}
           error={!isDurationValid}
-          helperText={
-            !isDurationValid
-              ? 'Must be a positive number'
-              : '(Optional) Duration to search around the timestamp'
-          }
+          helperText={!isDurationValid && 'Must be a positive number'}
           sx={{ width: '100%' }}
+          slotProps={{
+            input: {
+              endAdornment: (
+                <InputAdornment position="end">minutes</InputAdornment>
+              ),
+            },
+          }}
         />
         <Button
           variant="outlined"
@@ -378,6 +397,13 @@ export function TranscriptView({
           Clear
         </Button>
       </Box>
+
+      <AudioDisplay
+        transcripts={transcripts}
+        currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
+        onClipClick={handleClipClick}
+        userDuration={searchedDuration}
+      />
 
       <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
         {transcripts.length > 0 ? (
@@ -407,7 +433,7 @@ export function TranscriptView({
                   triggerSnackbar={triggerSnackbar}
                   showHeader={showHeader}
                   isHighlighted={
-                    transcript.transmissionId === targetTransmissionId
+                    transcript.transmissionId === highlightedTransmissionId
                   }
                 />
               );
