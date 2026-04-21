@@ -10,6 +10,7 @@ import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
 import IconButton from '@mui/material/IconButton';
 import List from '@mui/material/List';
+import InputAdornment from '@mui/material/InputAdornment';
 import ListItem from '@mui/material/ListItem';
 import Paper from '@mui/material/Paper';
 import TextField from '@mui/material/TextField';
@@ -351,25 +352,25 @@ export function TranscriptView({
       </Box>
       <Box sx={{ display: 'flex', gap: 2, mb: 3, width: '40%' }}>
         <DateTimePicker
-          label="Timestamp"
+          label="Timestamp (optional)"
           dateTime={timestamp}
           setDateTime={setTimestamp}
           width="100%"
-          helperText="(Optional) Pick a date and time to search around"
         />
         <TextField
-          label="Duration (minutes)"
+          label="Duration (optional)"
           size="small"
           type="number"
           value={duration ?? ''}
           onChange={(e) => setDuration(e.target.value)}
           error={!isDurationValid}
-          helperText={
-            !isDurationValid
-              ? 'Must be a positive number'
-              : '(Optional) Duration to search around the timestamp'
-          }
+          helperText={!isDurationValid && 'Must be a positive number'}
           sx={{ width: '100%' }}
+          slotProps={{
+            input: {
+              endAdornment: <InputAdornment position="end">minutes</InputAdornment>,
+            },
+          }}
         />
         <Button
           variant="outlined"
