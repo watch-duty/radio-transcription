@@ -211,6 +211,10 @@ known-first-party = ["backend", "local_dev"]
   "S113",   # requests.* require timeout=
   "T201",   # `print()` found
 ]
+"scripts/**.py" = [
+  "INP001", # Implicit namespaces (scripts dir is not a package)
+  "T201",   # `print()` found (CLI scripts write to stdout/stderr)
+]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
