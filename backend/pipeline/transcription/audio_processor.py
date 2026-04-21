@@ -110,11 +110,11 @@ class AudioProcessor:
         blob.download_to_file(in_mem_file)
         in_mem_file.seek(0)
 
-        samples, sr = sf.read(in_mem_file, dtype='int16')
+        samples, sr = sf.read(in_mem_file, dtype="int16")
         if samples.ndim > 1:
             samples = np.mean(samples, axis=1).astype(np.int16)
 
-        speech_segments = self.sed_detector.detect(samples, sample_rate=sr)
+        speech_segments = self.sed_detector.detect(samples)
 
         return AudioChunkData(
             start_ms=start_ms,
@@ -138,9 +138,7 @@ class AudioProcessor:
         # 2. Improve robustness by preventing the neural network from hallucinating false-positive speech on uniform white noise (radio squelch).
         # 1. Mathematical Heuristics (Pre-Filters)
         # Convert to float32 normalized array for DSP analysis
-        audio_data = (
-            audio_buffer.astype(np.float32) / INT16_MAX_FLOAT
-        )
+        audio_data = audio_buffer.astype(np.float32) / INT16_MAX_FLOAT
         rms_energy = compute_rms_energy(audio_data)
         if rms_energy < VAD_RMS_SILENCE_THRESHOLD:  # Below noise floor
             logger.info(
@@ -150,6 +148,7 @@ class AudioProcessor:
 
         mean_flatness = compute_spectral_flatness(
             audio_data,
+            sample_rate=SAMPLE_RATE_HZ,
             n_fft=DEFAULT_SED_FFT_SIZE,
             hop_length=DEFAULT_SED_HOP_SIZE,
         )
@@ -165,27 +164,36 @@ class AudioProcessor:
     def preprocess_audio(self, audio_buffer: np.ndarray) -> np.ndarray:
         """Applies native bandpass filtering to remove rumble and static."""
         import scipy.signal as signal
+
         nyq = 0.5 * SAMPLE_RATE_HZ
         high = HIGHPASS_FILTER_FREQ / nyq
         low = LOWPASS_FILTER_FREQ / nyq
-        b, a = signal.butter(4, [high, low], btype='band')
+        b, a = signal.butter(4, [high, low], btype="band")
         filtered = signal.lfilter(b, a, audio_buffer)
         return filtered.astype(np.int16)
 
-    def export_flac(self, audio_buffer: np.ndarray, sample_rate: int = SAMPLE_RATE_HZ) -> bytes:
+    def export_flac(
+        self, audio_buffer: np.ndarray, sample_rate: int = SAMPLE_RATE_HZ
+    ) -> bytes:
         """Exports a NumPy array to FLAC bytes using ffmpeg."""
         import subprocess
 
         process = subprocess.run(
             [
                 "ffmpeg",
-                "-f", "s16le",
-                "-ar", str(SAMPLE_RATE_HZ),     # Force 16kHz
-                "-ac", "1",                    # Mono
-                "-i", "pipe:0",                # Read from stdin
-                "-f", "flac",                  # Output format
-                "-compression_level", FLAC_COMPRESSION_LEVEL,
-                "pipe:1"                       # Write to stdout
+                "-f",
+                "s16le",
+                "-ar",
+                str(SAMPLE_RATE_HZ),  # Force 16kHz
+                "-ac",
+                "1",  # Mono
+                "-i",
+                "pipe:0",  # Read from stdin
+                "-f",
+                "flac",  # Output format
+                "-compression_level",
+                FLAC_COMPRESSION_LEVEL,
+                "pipe:1",  # Write to stdout
             ],
             input=audio_buffer.tobytes(),
             stdout=subprocess.PIPE,
@@ -193,36 +201,49 @@ class AudioProcessor:
             check=False,
         )
         if process.returncode != 0:
-            logger.error(f"ffmpeg error during FLAC export: {process.stderr.decode()}")
+            logger.error(
+                f"ffmpeg error during FLAC export: {process.stderr.decode()}"
+            )
             raise RuntimeError("Failed to export FLAC via ffmpeg")
         return process.stdout
 
-    def export_m4a(self, audio_buffer: np.ndarray, sample_rate: int = SAMPLE_RATE_HZ) -> bytes:
+    def export_m4a(
+        self, audio_buffer: np.ndarray, sample_rate: int = SAMPLE_RATE_HZ
+    ) -> bytes:
         """Exports a NumPy array to M4A (AAC) bytes using ffmpeg via stdin/stdout."""
         import subprocess
 
         process = subprocess.run(
             [
                 "ffmpeg",
-                "-f", "s16le",                 # Input format: 16-bit signed little-endian PCM
-                "-ar", str(SAMPLE_RATE_HZ),    # Force 16kHz
-                "-ac", "1",                    # Input channels (mono)
-                "-i", "pipe:0",                # Read from stdin
-                "-f", "ipod",                  # Output format: M4A/MP4 container
-                "-c:a", "aac",                 # Output codec: AAC
-                "-b:a", M4A_BITRATE,           # Output bitrate from constant
-                "pipe:1"                       # Write to stdout
+                "-f",
+                "s16le",  # Input format: 16-bit signed little-endian PCM
+                "-ar",
+                str(SAMPLE_RATE_HZ),  # Force 16kHz
+                "-ac",
+                "1",  # Input channels (mono)
+                "-i",
+                "pipe:0",  # Read from stdin
+                "-f",
+                "ipod",  # Output format: M4A/MP4 container
+                "-c:a",
+                "aac",  # Output codec: AAC
+                "-b:a",
+                M4A_BITRATE,  # Output bitrate from constant
+                "pipe:1",  # Write to stdout
             ],
             input=audio_buffer.tobytes(),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False,
         )
-        
+
         if process.returncode != 0:
-            logger.error(f"ffmpeg error during M4A export: {process.stderr.decode()}")
+            logger.error(
+                f"ffmpeg error during M4A export: {process.stderr.decode()}"
+            )
             raise RuntimeError("Failed to export M4A via ffmpeg")
-            
+
         return process.stdout
 
     def process_buffer(

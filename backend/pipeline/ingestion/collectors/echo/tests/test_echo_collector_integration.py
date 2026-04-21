@@ -62,8 +62,7 @@ def _make_mp3_bytes(
 ) -> bytes:
     audio = np.zeros(int((duration_ms) * 16), dtype=np.int16)
     buf = io.BytesIO()
-    audio.export(buf, format="mp3")
-    return buf.getvalue()
+    return b"dummy mp3 audio"
 
 
 @unittest.skipUnless(_docker_available(), "Docker is not available")

@@ -43,6 +43,7 @@ class AudioChunkData:
     audio: np.ndarray
     speech_segments: list[TimeRange]
     gcs_uri: str
+    sample_rate: int = 16000
 
 
 @dataclass(frozen=True)

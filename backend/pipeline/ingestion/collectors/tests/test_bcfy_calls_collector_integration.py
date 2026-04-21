@@ -49,7 +49,8 @@ def _make_flac_bytes() -> bytes:
     segment = np.zeros(int((1000) * 16), dtype=np.int16)
     buf = io.BytesIO()
     import soundfile as sf
-        sf.write(buf, segment, 16000, format="FLAC")
+
+    sf.write(buf, segment, 16000, format="FLAC")
     return buf.getvalue()
 
 

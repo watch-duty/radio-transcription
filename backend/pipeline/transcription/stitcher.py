@@ -9,6 +9,10 @@ from typing import Any, override
 import numpy as np
 import apache_beam as beam
 from apache_beam.metrics import Metrics
+from backend.pipeline.common.constants import (
+    MS_PER_SECOND,
+    SAMPLE_RATE_HZ,
+)
 from apache_beam.transforms.userstate import (
     BagRuntimeState,
     BagStateSpec,

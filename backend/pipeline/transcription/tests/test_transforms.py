@@ -1,3 +1,5 @@
+import pytest
+
 """Tests for the StitchAudioFn, TranscribeAudioFn, and related transformations."""
 
 import threading
@@ -205,8 +207,7 @@ class AddEventTimestampTest(unittest.TestCase):
 
 
 class BypassStitchingTest(unittest.TestCase):
-    import pytest
-    @pytest.mark.skip(reason='numpy migration')
+    @pytest.mark.skip(reason="numpy migration")
     def test_bypass_stitching_maps_correctly(self) -> None:
         """Verifies that BypassStitchingFn correctly maps AudioChunkData to FlushRequest."""
         feed_id = "test-feed"
@@ -406,8 +407,7 @@ class OrderRestorerTest(unittest.TestCase):
 
 class StitchAudioTest(unittest.TestCase):
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
-    import pytest
-    @pytest.mark.skip(reason='numpy migration')
+    @pytest.mark.skip(reason="numpy migration")
     def test_stitching_and_silence_flush_logic(
         self, mock_audio_processor: MagicMock
     ) -> None:
@@ -1084,8 +1084,7 @@ class StitchAudioTest(unittest.TestCase):
 class TranscribeAudioTest(unittest.TestCase):
     @patch("backend.pipeline.transcription.stitcher.get_transcriber")
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
-    import pytest
-    @pytest.mark.skip(reason='numpy migration')
+    @pytest.mark.skip(reason="numpy migration")
     def test_dlq_routing(
         self, mock_audio_processor: MagicMock, mock_get_transcriber: MagicMock
     ) -> None:
@@ -1246,8 +1245,7 @@ class TranscribeAudioTest(unittest.TestCase):
 
 class DownloadAudioTest(unittest.TestCase):
     @patch("backend.pipeline.transcription.transforms.AudioProcessor")
-    import pytest
-    @pytest.mark.skip(reason='numpy migration')
+    @pytest.mark.skip(reason="numpy migration")
     def test_download_audio_timestamp_injection(
         self, mock_audio_processor: MagicMock
     ) -> None:

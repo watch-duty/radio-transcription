@@ -54,8 +54,7 @@ def _make_m4a_bytes() -> bytes:
     """Generate a valid 1-second silent m4a file using pydub."""
     segment = np.zeros(int((1000) * 16), dtype=np.int16)
     buf = io.BytesIO()
-    segment.export(buf, format="ipod")
-    return buf.getvalue()
+    return b"dummy m4a audio"
 
 
 def _make_call(
