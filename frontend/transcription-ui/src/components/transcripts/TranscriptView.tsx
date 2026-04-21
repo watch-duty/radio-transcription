@@ -97,9 +97,7 @@ export function TranscriptView({
     refetchOnWindowFocus: false,
   });
 
-  /**
-   * Memoized selected feed object derived from the feedId state.
-   */
+  // Memoizing the feed ID to feed map so we don't have to recreate it on every render.
   const feedIdToFeedMap = useMemo(() => {
     if (!feeds) {
       return new Map<string, NonNullable<typeof feeds>[number]>();
@@ -107,6 +105,7 @@ export function TranscriptView({
     return new Map(feeds.map((f) => [f.id, f]));
   }, [feeds]);
 
+  // Memoizing the selected feed object derived from the feedId state.
   const selectedFeed = useMemo(() => {
     return feedIdToFeedMap.get(feedId) || null;
   }, [feedIdToFeedMap, feedId]);
@@ -240,18 +239,11 @@ export function TranscriptView({
           freeSolo={false}
           loading={feedsFetching}
           disabled={feedsFetching}
-          filterOptions={(options, { inputValue }) => {
-            const filtered = options.filter((option) => {
-              return (
-                option.name.toLowerCase().includes(inputValue.toLowerCase()) ||
-                option.id.toLowerCase().includes(inputValue.toLowerCase()) ||
-                option.externalId
-                  ?.toLowerCase()
-                  .includes(inputValue.toLowerCase())
-              );
-            });
-            return filtered;
-          }}
+          filterOptions={(options, { inputValue }) =>
+            options.filter((option) =>
+              option.name.toLowerCase().includes(inputValue.toLowerCase())
+            )
+          }
           renderInput={(params) => (
             <TextField {...params} label="Select a registered feed" />
           )}
@@ -259,10 +251,7 @@ export function TranscriptView({
             const { key, ...optionProps } = props;
             return (
               <Box key={key} component="li" {...optionProps}>
-                <Typography noWrap>
-                  {option.name}{' '}
-                  {option?.externalId ? `(${option.externalId})` : ''}
-                </Typography>
+                <Typography noWrap>{option.name}</Typography>
               </Box>
             );
           }}
