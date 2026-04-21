@@ -9,8 +9,8 @@ import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
 import IconButton from '@mui/material/IconButton';
-import List from '@mui/material/List';
 import InputAdornment from '@mui/material/InputAdornment';
+import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
 import Paper from '@mui/material/Paper';
 import TextField from '@mui/material/TextField';
@@ -35,9 +35,9 @@ import {
   getSearchedStartTime,
   validateDuration,
 } from '../../utils/timeUtils';
+import AudioDisplay from '../audio/AudioDisplay';
 import DateTimePicker from '../common/DateTimePicker';
 import TranscriptRow from './TranscriptRow';
-import AudioDisplay from '../audio/AudioDisplay';
 
 interface TranscriptViewProps {
   addAlert: (alert: AlertProps) => void;
@@ -79,8 +79,9 @@ export function TranscriptView({
 
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
-  const [highlightedTransmissionId, setHighlightedTransmissionId] =
-    useState<string | null>(targetTransmissionId);
+  const [highlightedTransmissionId, setHighlightedTransmissionId] = useState<
+    string | null
+  >(targetTransmissionId);
 
   const {
     data: feeds,
@@ -368,7 +369,9 @@ export function TranscriptView({
           sx={{ width: '100%' }}
           slotProps={{
             input: {
-              endAdornment: <InputAdornment position="end">minutes</InputAdornment>,
+              endAdornment: (
+                <InputAdornment position="end">minutes</InputAdornment>
+              ),
             },
           }}
         />

@@ -1,11 +1,13 @@
-import { useMemo, useState, useEffect } from 'react';
-import WavesurferPlayer from '@wavesurfer/react';
-import Box from '@mui/material/Box';
-import Typography from '@mui/material/Typography';
-import Paper from '@mui/material/Paper';
-import { useTheme } from '@mui/material/styles';
+import { useMemo, useState } from 'react';
+
 import WarningAmber from '@mui/icons-material/WarningAmber';
+import Box from '@mui/material/Box';
+import Paper from '@mui/material/Paper';
+import Typography from '@mui/material/Typography';
+import { useTheme } from '@mui/material/styles';
 import type { Transcript } from '@transcription/common';
+import WavesurferPlayer from '@wavesurfer/react';
+
 import { getAudioUrl } from '../../utils/audioUtils';
 
 interface AudioDisplayProps {
@@ -18,7 +20,11 @@ const MAX_WINDOW_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 
 const formatTime = (timestamp: number) => {
   const date = new Date(timestamp);
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  return date.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
 };
 
 export function AudioDisplay({
@@ -30,62 +36,85 @@ export function AudioDisplay({
 
   const [windowEndTime, setWindowEndTime] = useState<number | null>(null);
 
-  useEffect(() => {
-    if (transcripts.length > 0 && windowEndTime === null) {
-      setWindowEndTime(new Date(transcripts[0].endTimestamp).getTime());
-    }
-  }, [transcripts, windowEndTime]);
+  const [prevFirstTranscriptId, setPrevFirstTranscriptId] = useState<
+    string | null
+  >(null);
+  const [prevPlayingId, setPrevPlayingId] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!currentlyPlayingTransmissionId) return;
-    
-    const playingTranscript = transcripts.find(t => t.transmissionId === currentlyPlayingTransmissionId);
-    if (!playingTranscript) return;
-    
-    const tStart = new Date(playingTranscript.startTimestamp).getTime();
-    const tEnd = new Date(playingTranscript.endTimestamp).getTime();
-    
-    const currentEndTime = windowEndTime || (transcripts[0] ? new Date(transcripts[0].endTimestamp).getTime() : Date.now());
-    const currentStartTime = currentEndTime - MAX_WINDOW_DURATION_MS;
-    
-    // If playing transcript is out of bounds, shift window
-    if (tStart < currentStartTime || tEnd > currentEndTime) {
-      // Center it
-      const newEndTime = tStart + (MAX_WINDOW_DURATION_MS / 2);
-      setWindowEndTime(newEndTime);
+  const firstTranscript = transcripts[0];
+  const firstTranscriptId = firstTranscript?.transmissionId || null;
+  const firstTranscriptEndTimestamp = firstTranscript?.endTimestamp || null;
+
+  // Reset windowEndTime when first transcript changes
+  if (firstTranscriptId !== prevFirstTranscriptId) {
+    setPrevFirstTranscriptId(firstTranscriptId);
+    setWindowEndTime(
+      firstTranscriptEndTimestamp
+        ? new Date(firstTranscriptEndTimestamp).getTime()
+        : null
+    );
+    setPrevPlayingId(null); // Force re-check of bounds
+  }
+
+  const playingId = currentlyPlayingTransmissionId || null;
+
+  // Shift windowEndTime when playing transcript goes out of bounds
+  if (playingId !== prevPlayingId) {
+    setPrevPlayingId(playingId);
+    if (playingId) {
+      const playingTranscript = transcripts.find(
+        (t) => t.transmissionId === playingId
+      );
+      if (playingTranscript) {
+        const tStart = new Date(playingTranscript.startTimestamp).getTime();
+        const tEnd = new Date(playingTranscript.endTimestamp).getTime();
+
+        const currentEndTime =
+          windowEndTime ||
+          (firstTranscript
+            ? new Date(firstTranscript.endTimestamp).getTime()
+            : 0);
+        const currentStartTime = currentEndTime - MAX_WINDOW_DURATION_MS;
+
+        if (tStart < currentStartTime || tEnd > currentEndTime) {
+          const newEndTime = tStart + MAX_WINDOW_DURATION_MS / 2;
+          setWindowEndTime(newEndTime);
+        }
+      }
     }
-  }, [currentlyPlayingTransmissionId, transcripts, windowEndTime]);
+  }
 
   const { startTime, windowDuration, clips } = useMemo(() => {
     if (transcripts.length === 0) {
       return {
-        startTime: Date.now(),
+        startTime: 0,
         windowDuration: MAX_WINDOW_DURATION_MS,
         clips: [],
       };
     }
 
-    const mostRecentTime = windowEndTime || new Date(transcripts[0].endTimestamp).getTime();
+    const mostRecentTime =
+      windowEndTime || new Date(transcripts[0].endTimestamp).getTime();
     const windowDuration = MAX_WINDOW_DURATION_MS;
     const startTime = mostRecentTime - windowDuration;
 
     const clips = transcripts
-      .filter(t => {
+      .filter((t) => {
         const tStart = new Date(t.startTimestamp).getTime();
         const tEnd = new Date(t.endTimestamp).getTime();
         return tStart < startTime + windowDuration && tEnd > startTime;
       })
-      .map(t => {
+      .map((t) => {
         const tStart = new Date(t.startTimestamp).getTime();
         const tEnd = new Date(t.endTimestamp).getTime();
-        
+
         // Constrain to window bounds
         const visibleStart = Math.max(tStart, startTime);
         const visibleEnd = Math.min(tEnd, startTime + windowDuration);
-        
+
         const left = ((visibleStart - startTime) / windowDuration) * 100;
         const width = ((visibleEnd - visibleStart) / windowDuration) * 100;
-        
+
         const url = getAudioUrl(t.canonicalAudioUri);
 
         return {
@@ -112,7 +141,7 @@ export function AudioDisplay({
           position: 'relative',
         }}
       >
-        {clips.map(clip => (
+        {clips.map((clip) => (
           <Box
             key={clip.id}
             onClick={() => onClipClick?.(clip.id)}
@@ -124,7 +153,9 @@ export function AudioDisplay({
               bgcolor: clip.isPlaying ? 'rgba(0, 0, 0, 0.05)' : 'transparent',
               cursor: 'pointer',
               '&:hover': {
-                bgcolor: clip.isPlaying ? 'rgba(0, 0, 0, 0.1)' : 'rgba(0, 0, 0, 0.03)',
+                bgcolor: clip.isPlaying
+                  ? 'rgba(0, 0, 0, 0.1)'
+                  : 'rgba(0, 0, 0, 0.03)',
               },
             }}
           >
@@ -155,20 +186,31 @@ export function AudioDisplay({
           </Box>
         ))}
         {transcripts.length === 0 && (
-          <Box sx={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: '100%', textAlign: 'center' }}>
+          <Box
+            sx={{
+              position: 'absolute',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              width: '100%',
+              textAlign: 'center',
+            }}
+          >
             <Typography variant="body2" color="text.secondary">
               No transcripts loaded
             </Typography>
           </Box>
         )}
       </Paper>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 0.5 }}>
-        {Array.from({ length: 4 }).map((_, i) => (
-          <Typography key={i} variant="caption" color="text.secondary">
-            {formatTime(startTime + (i / 3) * windowDuration)}
-          </Typography>
-        ))}
-      </Box>
+      {transcripts.length > 0 && (
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 0.5 }}>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Typography key={i} variant="caption" color="text.secondary">
+              {formatTime(startTime + (i / 3) * windowDuration)}
+            </Typography>
+          ))}
+        </Box>
+      )}
     </Box>
   );
 }

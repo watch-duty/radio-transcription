@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import type { Transcript } from '@transcription/common';
+
 import { AudioDisplay } from './AudioDisplay';
 
 vi.mock('@wavesurfer/react', () => ({
   default: () => <div data-testid="wavesurfer-player" />,
 }));
-import type { Transcript } from '@transcription/common';
 
 describe('AudioDisplay', () => {
   afterEach(() => {
@@ -14,11 +16,11 @@ describe('AudioDisplay', () => {
   });
 
   it('should render empty state when no transcripts', () => {
-    render(<AudioDisplay transcripts={[]} currentlyPlayingTransmissionId={null} />);
+    render(
+      <AudioDisplay transcripts={[]} currentlyPlayingTransmissionId={null} />
+    );
     expect(screen.getByText('No transcripts loaded')).toBeTruthy();
   });
-
-
 
   it('should render transcripts when provided', () => {
     const mockTranscripts: Transcript[] = [
@@ -30,15 +32,23 @@ describe('AudioDisplay', () => {
         transcript: 'Test 1',
         canonicalAudioUri: 'audio1.flac',
         evaluationDecisions: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+        startAudioOffset: '0',
+        endAudioOffset: '0',
       },
     ];
 
     const { container } = render(
-      <AudioDisplay transcripts={mockTranscripts} currentlyPlayingTransmissionId={null} />
+      <AudioDisplay
+        transcripts={mockTranscripts}
+        currentlyPlayingTransmissionId={null}
+      />
     );
-    
+
     expect(screen.queryByText('No transcripts loaded')).toBeNull();
-    
+
     const paper = container.querySelector('.MuiPaper-root');
     expect(paper).toBeTruthy();
     expect(paper?.childNodes.length).toBeGreaterThan(0);
@@ -54,13 +64,21 @@ describe('AudioDisplay', () => {
         transcript: 'Test 1',
         canonicalAudioUri: 'audio1.flac',
         evaluationDecisions: ['rule1'],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+        startAudioOffset: '0',
+        endAudioOffset: '0',
       },
     ];
 
     render(
-      <AudioDisplay transcripts={mockTranscripts} currentlyPlayingTransmissionId={null} />
+      <AudioDisplay
+        transcripts={mockTranscripts}
+        currentlyPlayingTransmissionId={null}
+      />
     );
-    
+
     expect(screen.getByTestId('warning-icon')).toBeTruthy();
   });
 
@@ -74,6 +92,11 @@ describe('AudioDisplay', () => {
         transcript: 'Test 1',
         canonicalAudioUri: 'audio1.flac',
         evaluationDecisions: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+        startAudioOffset: '0',
+        endAudioOffset: '0',
       },
       {
         transmissionId: '2',
@@ -83,21 +106,97 @@ describe('AudioDisplay', () => {
         transcript: 'Test 2',
         canonicalAudioUri: 'audio2.flac',
         evaluationDecisions: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+        startAudioOffset: '0',
+        endAudioOffset: '0',
       },
     ];
 
     const { rerender } = render(
-      <AudioDisplay transcripts={mockTranscripts} currentlyPlayingTransmissionId={null} />
+      <AudioDisplay
+        transcripts={mockTranscripts}
+        currentlyPlayingTransmissionId={null}
+      />
     );
 
-    const labelsBefore = screen.getAllByText(/\d{2}:\d{2}/).map(el => el.textContent);
+    const labelsBefore = screen
+      .getAllByText(/\d{2}:\d{2}/)
+      .map((el) => el.textContent);
 
     rerender(
-      <AudioDisplay transcripts={mockTranscripts} currentlyPlayingTransmissionId="2" />
+      <AudioDisplay
+        transcripts={mockTranscripts}
+        currentlyPlayingTransmissionId="2"
+      />
     );
 
     await waitFor(() => {
-      const labelsAfter = screen.getAllByText(/\d{2}:\d{2}/).map(el => el.textContent);
+      const labelsAfter = screen
+        .getAllByText(/\d{2}:\d{2}/)
+        .map((el) => el.textContent);
+      expect(labelsAfter).not.toEqual(labelsBefore);
+    });
+  });
+
+  it('should reset window when transcripts[0] changes', async () => {
+    const mockTranscripts1: Transcript[] = [
+      {
+        transmissionId: '1',
+        feedId: 'feed1',
+        startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
+        endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
+        transcript: 'Test 1',
+        canonicalAudioUri: 'audio1.flac',
+        evaluationDecisions: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+        startAudioOffset: '0',
+        endAudioOffset: '0',
+      },
+    ];
+
+    const mockTranscripts2: Transcript[] = [
+      {
+        transmissionId: '2',
+        feedId: 'feed2',
+        startTimestamp: new Date('2026-04-20T10:00:00Z').toISOString(),
+        endTimestamp: new Date('2026-04-20T10:00:05Z').toISOString(),
+        transcript: 'Test 2',
+        canonicalAudioUri: 'audio2.flac',
+        evaluationDecisions: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+        startAudioOffset: '0',
+        endAudioOffset: '0',
+      },
+    ];
+
+    const { rerender } = render(
+      <AudioDisplay
+        transcripts={mockTranscripts1}
+        currentlyPlayingTransmissionId={null}
+      />
+    );
+
+    const labelsBefore = screen
+      .getAllByText(/\d{2}:\d{2}/)
+      .map((el) => el.textContent);
+
+    rerender(
+      <AudioDisplay
+        transcripts={mockTranscripts2}
+        currentlyPlayingTransmissionId={null}
+      />
+    );
+
+    await waitFor(() => {
+      const labelsAfter = screen
+        .getAllByText(/\d{2}:\d{2}/)
+        .map((el) => el.textContent);
       expect(labelsAfter).not.toEqual(labelsBefore);
     });
   });

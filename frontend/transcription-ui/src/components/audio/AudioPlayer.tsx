@@ -5,6 +5,7 @@ import { Howl } from 'howler';
 import PauseIcon from '@mui/icons-material/Pause';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import IconButton from '@mui/material/IconButton';
+
 import { getAudioUrl } from '../../utils/audioUtils';
 
 export interface AudioPlayerProps {
