@@ -7,7 +7,7 @@ WORKDIR /app
 
 ENV PYTHONPATH=/app
 
-# 1. Install system dependencies (ffmpeg required by pydub for MP3→FLAC conversion)
+# 1. Install system dependencies (ffmpeg/ffprobe required by get_audio_duration)
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
