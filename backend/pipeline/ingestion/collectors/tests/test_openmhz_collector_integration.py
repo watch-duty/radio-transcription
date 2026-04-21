@@ -53,7 +53,6 @@ def _make_m4a_bytes() -> bytes:
     return b"dummy m4a audio"
 
 
-
 def _make_call(
     call_id: str = "abc",
     length_sec: int = 5,

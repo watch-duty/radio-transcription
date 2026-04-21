@@ -1,6 +1,5 @@
 """A framework-agnostic state machine isolating sequential audio transmission boundary logic."""
 
-
 from backend.pipeline.transcription.datatypes import (
     AppendBufferAction,
     AudioChunkData,
@@ -43,7 +42,6 @@ class AudioStitchingStateMachine:
             return self._process_late_chunk_independently(chunk_data, ctx)
 
         actions: list[StateMachineAction] = []
-
 
         # 1. Detect if we skipped over a chunk (dropped audio)
         is_dropped_chunk = (

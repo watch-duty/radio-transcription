@@ -61,7 +61,6 @@ def _make_mp3_bytes(
     return b"dummy mp3 audio"
 
 
-
 @unittest.skipUnless(_docker_available(), "Docker is not available")
 @unittest.skipUnless(_ffmpeg_available(), "ffmpeg is not available")
 class TestEchoCollectorIntegration(unittest.TestCase):
@@ -219,8 +218,6 @@ class TestEchoCollectorIntegration(unittest.TestCase):
             patch.object(echo_main, "STAGING_BUCKET", _STAGING_BUCKET),
             patch.object(echo_main, "get_audio_duration", return_value=15000),
         ):
-
-
             echo_main._handle(event)
 
     # -- Tests ------------------------------------------------------------

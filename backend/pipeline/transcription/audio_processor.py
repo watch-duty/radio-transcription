@@ -181,9 +181,7 @@ class AudioProcessor:
         filtered = signal.lfilter(b, a, audio_buffer)
         return filtered.astype(np.int16)
 
-    def export_flac(
-        self, audio_buffer: np.ndarray
-    ) -> bytes:
+    def export_flac(self, audio_buffer: np.ndarray) -> bytes:
         """Exports a NumPy array to FLAC bytes using ffmpeg."""
         process = subprocess.run(
             [
@@ -205,7 +203,6 @@ class AudioProcessor:
             input=audio_buffer.tobytes(),
             capture_output=True,
             check=False,
-
         )
         if process.returncode != 0:
             logger.error(
@@ -215,9 +212,7 @@ class AudioProcessor:
             raise RuntimeError(msg)
         return process.stdout
 
-    def export_m4a(
-        self, audio_buffer: np.ndarray
-    ) -> bytes:
+    def export_m4a(self, audio_buffer: np.ndarray) -> bytes:
         """Exports a NumPy array to M4A (AAC) bytes using ffmpeg via a temporary file."""
         with tempfile.NamedTemporaryFile(
             suffix=".m4a", delete=False
@@ -264,7 +259,6 @@ class AudioProcessor:
                 Path(temp_filename).unlink()
             except OSError:
                 pass
-
 
     def process_buffer(
         self, audio_buffer: np.ndarray

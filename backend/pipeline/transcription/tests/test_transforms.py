@@ -1,4 +1,3 @@
-
 """Tests for the StitchAudioFn, TranscribeAudioFn, and related transformations."""
 
 import unittest
@@ -397,8 +396,6 @@ class OrderRestorerTest(unittest.TestCase):
                     ]
                 ),
             )
-
-
 
 
 class StitchAudioTest(unittest.TestCase):
@@ -945,10 +942,6 @@ class StitchAudioTest(unittest.TestCase):
             )
 
 
-
-
-
-
 class TranscribeAudioTest(unittest.TestCase):
     @patch("backend.pipeline.transcription.stitcher.get_transcriber")
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
@@ -1009,8 +1002,6 @@ class TranscribeAudioTest(unittest.TestCase):
             assert_that(
                 results[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ"
             )
-
-
 
 
 class DownloadAudioTest(unittest.TestCase):

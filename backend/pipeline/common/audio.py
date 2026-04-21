@@ -55,7 +55,6 @@ def convert_to_flac(audio_bytes: bytes, input_format: str) -> bytes:
     return process.stdout
 
 
-
 def get_audio_duration(audio_bytes: bytes) -> int:
     """Calculate duration of audio bytes using ffprobe.
 

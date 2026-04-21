@@ -1,4 +1,3 @@
-
 """Unit tests for the audio processor."""
 
 import io
@@ -75,7 +74,9 @@ class AudioProcessorTest(unittest.TestCase):
         mock_vad_instance.evaluate.assert_called_once()
 
     @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
-    @patch("backend.pipeline.transcription.audio_processor.compute_spectral_flatness")
+    @patch(
+        "backend.pipeline.transcription.audio_processor.compute_spectral_flatness"
+    )
     @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
     def test_check_vad_drops_static(
         self,
@@ -99,7 +100,6 @@ class AudioProcessorTest(unittest.TestCase):
         self.assertFalse(result)
         # VAD evaluate should NOT be called because it should be dropped by heuristic
         mock_vad_instance.evaluate.assert_not_called()
-
 
     @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
     @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
@@ -134,7 +134,6 @@ class AudioProcessorTest(unittest.TestCase):
 
         # Assert
         self.assertEqual(result.duration_ms, 100)  # 1600 / 16 = 100
-
 
     def test_preprocess_audio_applies_bandpass(self) -> None:
         """Verifies that the audio preprocessing filters do not corrupt or truncate the np.ndarray structure."""
