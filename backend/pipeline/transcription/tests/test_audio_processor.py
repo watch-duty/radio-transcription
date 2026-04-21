@@ -58,9 +58,24 @@ class AudioProcessorTest(unittest.TestCase):
 
     @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
     @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
-    @pytest.mark.skip(reason="pydub removed, Sine not available")
-    def test_check_vad_evaluates_speech(self) -> None:
-        pass
+    def test_check_vad_evaluates_speech(
+        self, mock_get_vad: MagicMock, mock_get_gcs: MagicMock
+    ) -> None:
+        """Tests that check_vad returns True when VAD detects speech."""
+        mock_vad_instance = MagicMock()
+        mock_vad_instance.evaluate.return_value = True
+        mock_get_vad.return_value = mock_vad_instance
+
+        self.processor.setup()
+
+        # Generate 1 second of 440Hz sine wave at 16kHz
+        t = np.linspace(0, 1, 16000, endpoint=False)
+        audio = (np.sin(2 * np.pi * 440 * t) * 32767).astype(np.int16)
+
+        result = self.processor.check_vad(audio)
+        self.assertTrue(result)
+        mock_vad_instance.evaluate.assert_called_once()
+
 
     def test_preprocess_audio_applies_bandpass(self) -> None:
         """Verifies that the audio preprocessing filters do not corrupt or truncate the np.ndarray structure."""

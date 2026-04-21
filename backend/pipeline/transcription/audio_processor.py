@@ -145,10 +145,12 @@ class AudioProcessor:
         # Convert to float32 normalized array for DSP analysis
         audio_data = audio_buffer.astype(np.float32) / INT16_MAX_FLOAT
         rms_energy = compute_rms_energy(audio_data)
-        if rms_energy < VAD_RMS_SILENCE_THRESHOLD:  # Below noise floor
+        mean_rms = np.mean(rms_energy)
+        if mean_rms < VAD_RMS_SILENCE_THRESHOLD:  # Below noise floor
             logger.info(
-                f"VAD Heuristic: Dropped near-silence (RMS Energy: {rms_energy:.5f})"
+                f"VAD Heuristic: Dropped near-silence (RMS Energy: {mean_rms:.5f})"
             )
+
             return False
 
         mean_flatness = compute_spectral_flatness(
@@ -157,10 +159,12 @@ class AudioProcessor:
             n_fft=DEFAULT_SED_FFT_SIZE,
             hop_length=DEFAULT_SED_HOP_SIZE,
         )
-        if mean_flatness > VAD_FLATNESS_NOISE_THRESHOLD:  # Featureless static
+        mean_flatness_val = np.mean(mean_flatness)
+        if mean_flatness_val > VAD_FLATNESS_NOISE_THRESHOLD:  # Featureless static
             logger.info(
-                f"VAD Heuristic: Dropped static (Flatness: {mean_flatness:.3f})"
+                f"VAD Heuristic: Dropped static (Flatness: {mean_flatness_val:.3f})"
             )
+
             return False
 
         # 2. Neural Evaluation (Final Authority)
