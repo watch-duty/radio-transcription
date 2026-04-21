@@ -87,6 +87,7 @@ export function TranscriptRow({
           gap: 2,
           py: 1.5,
           bgcolor: isHighlighted ? 'action.selected' : 'inherit',
+          scrollMarginTop: theme.spacing(5),
         }}
       >
         <Box
