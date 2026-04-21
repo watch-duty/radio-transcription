@@ -36,6 +36,23 @@ interface FeedCreateBackend extends BaseFeedBackend {
   external_id: string;
 }
 
+function getSourceUrl(
+  sourceType: SourceType,
+  sourceFeedId: string | undefined
+): string | undefined {
+  if (!sourceFeedId) return undefined;
+  switch (sourceType) {
+    case 'bcfy_feeds':
+      return `https://partner.broadcastify.com/${sourceFeedId}`;
+    case 'bcfy_calls':
+      return `https://www.broadcastify.com/calls/tg/${sourceFeedId.replace(/-/g, '/')}`;
+    case 'openmhz':
+      return `https://openmhz.com/system/${sourceFeedId}`;
+    case 'echo':
+      return undefined;
+  }
+}
+
 function convertFeedBackend(response: FeedBackend): Feed {
   return {
     id: response.id,
@@ -43,6 +60,7 @@ function convertFeedBackend(response: FeedBackend): Feed {
     sourceType: response.source_type,
     sourceFeedId: response.source_feed_id,
     externalId: response.external_id,
+    sourceUrl: getSourceUrl(response.source_type, response.source_feed_id),
   };
 }
 

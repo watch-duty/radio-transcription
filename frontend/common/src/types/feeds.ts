@@ -9,6 +9,7 @@ export interface Feed extends BaseFeed {
   id: string;
   sourceFeedId?: string;
   externalId?: string;
+  sourceUrl?: string;
 }
 
 export interface FeedCreate extends BaseFeed {

@@ -2,6 +2,7 @@ import { Fragment } from 'react';
 
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import LinkIcon from '@mui/icons-material/Link';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import ListItem from '@mui/material/ListItem';
@@ -25,6 +26,7 @@ interface TranscriptRowProps {
   triggerSnackbar: (message: string) => void;
   showHeader: boolean;
   isHighlighted?: boolean;
+  sourceUrl?: string;
 }
 
 export function TranscriptRow({
@@ -38,6 +40,7 @@ export function TranscriptRow({
   triggerSnackbar,
   showHeader,
   isHighlighted = false,
+  sourceUrl,
 }: TranscriptRowProps) {
   const theme = useTheme();
   const currentDate = new Date(transcript.startTimestamp);
@@ -151,6 +154,20 @@ export function TranscriptRow({
               <LinkIcon fontSize="small" />
             </IconButton>
           </Tooltip>
+          {sourceUrl && (
+            <Tooltip title="Open source feed">
+              <IconButton
+                size="small"
+                aria-label="open source feed"
+                component="a"
+                href={sourceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <OpenInNewIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          )}
         </Box>
       </ListItem>
     </Fragment>

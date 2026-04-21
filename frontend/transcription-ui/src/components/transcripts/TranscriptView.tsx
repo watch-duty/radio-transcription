@@ -159,6 +159,11 @@ export function TranscriptView({
     return new Map(rules.map((rule) => [rule.ruleId, rule.ruleName]));
   }, [rules]);
 
+  const feedIdToSourceUrl = useMemo(() => {
+    if (!feeds) return new Map<string, string | undefined>();
+    return new Map(feeds.map((feed) => [feed.id, feed.sourceUrl]));
+  }, [feeds]);
+
   /**
    * Effect for handling rules errors.
    */
@@ -409,6 +414,7 @@ export function TranscriptView({
                   isHighlighted={
                     transcript.transmissionId === targetTransmissionId
                   }
+                  sourceUrl={feedIdToSourceUrl.get(transcript.feedId)}
                 />
               );
             })}

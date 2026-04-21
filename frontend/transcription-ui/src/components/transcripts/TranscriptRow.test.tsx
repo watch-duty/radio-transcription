@@ -104,6 +104,52 @@ describe('TranscriptRow', () => {
     expect(mockTriggerSnackbar).toHaveBeenCalledWith('Transcript copied');
   });
 
+  it('renders open source feed link when sourceUrl is provided', () => {
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          transcript={mockTranscript}
+          index={0}
+          totalTranscripts={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onPlay={mockOnPlay}
+          currentlyPlayingTransmissionId={null}
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+          sourceUrl="https://openmhz.com/system/some-feed"
+        />
+      </MemoryRouter>
+    );
+
+    const link = screen.getByLabelText('open source feed');
+    expect(link).toBeTruthy();
+    expect((link as HTMLAnchorElement).href).toBe(
+      'https://openmhz.com/system/some-feed'
+    );
+    expect((link as HTMLAnchorElement).target).toBe('_blank');
+  });
+
+  it('does not render open source feed link when sourceUrl is not provided', () => {
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          transcript={mockTranscript}
+          index={0}
+          totalTranscripts={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onPlay={mockOnPlay}
+          currentlyPlayingTransmissionId={null}
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+        />
+      </MemoryRouter>
+    );
+
+    expect(screen.queryByLabelText('open source feed')).toBeNull();
+  });
+
   it('triggers copy deeplink action successfully', () => {
     render(
       <MemoryRouter>
