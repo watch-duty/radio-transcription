@@ -75,10 +75,25 @@ def extract_required_env(tree: ast.AST, source_path: Path) -> list[str]:
     return found
 
 
+def _is_test_file(py_file: Path, service_dir: Path) -> bool:
+    """Return True if ``py_file`` looks like a test file.
+
+    A test that mocks ``_require_env("FAKE_VAR")`` would otherwise contaminate
+    the runtime contract with the mock var name.
+    """
+    rel_parts = py_file.relative_to(service_dir).parts
+    if any(part in {"tests", "test"} for part in rel_parts):
+        return True
+    name = py_file.name
+    return name.startswith("test_") or name.endswith("_test.py")
+
+
 def scan_service_dir(service_dir: Path) -> list[str]:
     """Return the sorted, de-duplicated set of required env vars in ``service_dir``."""
     required: set[str] = set()
     for py_file in sorted(service_dir.rglob("*.py")):
+        if _is_test_file(py_file, service_dir):
+            continue
         try:
             source = py_file.read_text(encoding="utf-8")
         except OSError as exc:
