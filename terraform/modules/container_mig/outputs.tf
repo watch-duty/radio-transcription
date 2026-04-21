@@ -12,3 +12,13 @@ output "instance_template_id" {
   description = "The full resource ID of the instance template."
   value       = google_compute_instance_template.this.id
 }
+
+output "name" {
+  description = "The name of the managed instance group (for use in gcloud commands)."
+  value       = google_compute_region_instance_group_manager.this.name
+}
+
+output "region" {
+  description = "The region of the managed instance group (for use in gcloud commands)."
+  value       = google_compute_region_instance_group_manager.this.region
+}
