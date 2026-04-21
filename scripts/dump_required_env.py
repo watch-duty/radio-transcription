@@ -11,6 +11,14 @@ every required env var has a value set in terraform's ``container_env``.
 
 Fails fast if ``_require_env(ARG)`` is called with anything other than a string
 literal — a non-literal would hide the contract from static analysis.
+
+Note for maintainers: adding a new service under ``backend/pipeline/<name>/``
+means this script will automatically pick it up, but Gate 1a in the
+deployment repo won't actually check it until ``<name>`` is added to
+``SERVICE_TO_RESOURCE_ADDRESS`` in
+``radio-transcription-deployment/scripts/verify_required_env.py`` (the
+mapping from service → ``google_compute_instance_template`` resource
+address). Until then, the verifier emits a ``[WARN]`` and skips the service.
 """
 
 from __future__ import annotations
@@ -38,20 +46,31 @@ def extract_required_env(tree: ast.AST, source_path: Path) -> list[str]:
         )
         if not is_require_env:
             continue
-        if not node.args:
-            msg = f"{source_path}:{node.lineno}: _require_env() called with no arguments"
-            raise ValueError(msg)
-        first = node.args[0]
+        # Accept either positional (_require_env("X")) or keyword
+        # (_require_env(name="X")) call forms. The signature is
+        # `_require_env(name: str)`, so kwarg usage is valid Python and
+        # callers do write it occasionally.
+        if node.args:
+            name_node: ast.AST = node.args[0]
+        else:
+            name_kw = next((k for k in node.keywords if k.arg == "name"), None)
+            if name_kw is None:
+                msg = (
+                    f"{source_path}:{node.lineno}: _require_env() called with "
+                    "no positional argument and no `name=...` keyword"
+                )
+                raise ValueError(msg)
+            name_node = name_kw.value
         if not (
-            isinstance(first, ast.Constant) and isinstance(first.value, str)
+            isinstance(name_node, ast.Constant) and isinstance(name_node.value, str)
         ):
             msg = (
-                f"{source_path}:{node.lineno}: _require_env() first argument "
-                f"must be a string literal (got {ast.dump(first)}). "
+                f"{source_path}:{node.lineno}: _require_env() name argument "
+                f"must be a string literal (got {ast.dump(name_node)}). "
                 "Non-literals hide the contract from static analysis."
             )
             raise TypeError(msg)
-        found.append(first.value)
+        found.append(name_node.value)
     return found
 
 
