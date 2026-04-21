@@ -35,7 +35,9 @@ describe('TranscriptView', () => {
     vi.clearAllMocks();
     mockAddAlert.mockClear();
     // Default mock for listFeeds to prevent errors on mount
-    vi.mocked(listFeeds).mockResolvedValue([]);
+    vi.mocked(listFeeds).mockResolvedValue([
+      { id: 'feed123', name: 'feed123', sourceType: 'bcfy_feeds' as const },
+    ]);
   });
 
   afterEach(() => {
@@ -48,9 +50,7 @@ describe('TranscriptView', () => {
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
     );
-    expect(
-      screen.getByLabelText(/Select a registered feed or enter a feed ID/i)
-    ).toBeTruthy();
+    expect(screen.getByLabelText(/Select a registered feed/i)).toBeTruthy();
     expect(screen.getByRole('button', { name: /Fetch/i })).toBeTruthy();
   });
 
@@ -66,13 +66,13 @@ describe('TranscriptView', () => {
       </MemoryRouter>
     );
 
-    const input = screen.getByLabelText(
-      /Select a registered feed or enter a feed ID/i
-    );
+    const input = screen.getByLabelText(/Select a registered feed/i);
     await waitFor(() => {
       expect((input as HTMLInputElement).disabled).toBe(false);
     });
     fireEvent.change(input, { target: { value: 'feed123' } });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
 
     const button = screen.getByRole('button', { name: /Fetch/i });
     fireEvent.click(button);
@@ -112,14 +112,14 @@ describe('TranscriptView', () => {
       </MemoryRouter>
     );
 
-    const input = screen.getByLabelText(
-      /Select a registered feed or enter a feed ID/i
-    );
+    const input = screen.getByLabelText(/Select a registered feed/i);
     await waitFor(() => {
       expect((input as HTMLInputElement).disabled).toBe(false);
     });
 
     fireEvent.change(input, { target: { value: 'feed123' } });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
 
     const button = screen.getByRole('button', { name: /Fetch/i });
     fireEvent.click(button);
@@ -138,13 +138,13 @@ describe('TranscriptView', () => {
       </MemoryRouter>
     );
 
-    const input = screen.getByLabelText(
-      /Select a registered feed or enter a feed ID/i
-    );
+    const input = screen.getByLabelText(/Select a registered feed/i);
     await waitFor(() => {
       expect((input as HTMLInputElement).disabled).toBe(false);
     });
     fireEvent.change(input, { target: { value: 'feed123' } });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
 
     const button = screen.getByRole('button', { name: /Fetch/i });
     fireEvent.click(button);
@@ -229,13 +229,13 @@ describe('TranscriptView', () => {
       </MemoryRouter>
     );
 
-    const input = screen.getByLabelText(
-      /Select a registered feed or enter a feed ID/i
-    );
+    const input = screen.getByLabelText(/Select a registered feed/i);
     await waitFor(() => {
       expect((input as HTMLInputElement).disabled).toBe(false);
     });
     fireEvent.change(input, { target: { value: 'feed123' } });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
 
     const button = screen.getByRole('button', { name: /Fetch/i });
     fireEvent.click(button);
@@ -295,13 +295,13 @@ describe('TranscriptView', () => {
       </MemoryRouter>
     );
 
-    const input = screen.getByLabelText(
-      /Select a registered feed or enter a feed ID/i
-    );
+    const input = screen.getByLabelText(/Select a registered feed/i);
     await waitFor(() => {
       expect((input as HTMLInputElement).disabled).toBe(false);
     });
     fireEvent.change(input, { target: { value: 'feed123' } });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
 
     const button = screen.getByRole('button', { name: /Fetch/i });
     fireEvent.click(button);
@@ -350,13 +350,13 @@ describe('TranscriptView', () => {
       </MemoryRouter>
     );
 
-    const input = screen.getByLabelText(
-      /Select a registered feed or enter a feed ID/i
-    );
+    const input = screen.getByLabelText(/Select a registered feed/i);
     await waitFor(() => {
       expect((input as HTMLInputElement).disabled).toBe(false);
     });
     fireEvent.change(input, { target: { value: 'feed123' } });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
 
     const button = screen.getByRole('button', { name: /Fetch/i });
     fireEvent.click(button);
@@ -400,13 +400,13 @@ describe('TranscriptView', () => {
       </MemoryRouter>
     );
 
-    const input = screen.getByLabelText(
-      /Select a registered feed or enter a feed ID/i
-    );
+    const input = screen.getByLabelText(/Select a registered feed/i);
     await waitFor(() => {
       expect((input as HTMLInputElement).disabled).toBe(false);
     });
     fireEvent.change(input, { target: { value: 'feed123' } });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
 
     const button = screen.getByRole('button', { name: /Fetch/i });
     fireEvent.click(button);
