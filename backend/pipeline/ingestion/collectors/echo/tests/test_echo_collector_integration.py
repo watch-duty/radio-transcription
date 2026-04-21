@@ -220,8 +220,9 @@ class TestEchoCollectorIntegration(unittest.TestCase):
             patch.object(echo_main, "feed_store", store),
             patch.object(echo_main, "RAW_AUDIO_TOPIC", _RAW_AUDIO_TOPIC),
             patch.object(echo_main, "STAGING_BUCKET", _STAGING_BUCKET),
-            patch("backend.pipeline.common.audio.get_audio_duration", return_value=15000),
+            patch.object(echo_main, "get_audio_duration", return_value=15000),
         ):
+
 
             echo_main._handle(event)
 

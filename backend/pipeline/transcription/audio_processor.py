@@ -184,7 +184,7 @@ class AudioProcessor:
         return filtered.astype(np.int16)
 
     def export_flac(
-        self, audio_buffer: np.ndarray, sample_rate: int = SAMPLE_RATE_HZ
+        self, audio_buffer: np.ndarray
     ) -> bytes:
         """Exports a NumPy array to FLAC bytes using ffmpeg."""
         process = subprocess.run(
@@ -217,7 +217,7 @@ class AudioProcessor:
         return process.stdout
 
     def export_m4a(
-        self, audio_buffer: np.ndarray, sample_rate: int = SAMPLE_RATE_HZ
+        self, audio_buffer: np.ndarray
     ) -> bytes:
         """Exports a NumPy array to M4A (AAC) bytes using ffmpeg via a temporary file."""
         with tempfile.NamedTemporaryFile(
@@ -233,7 +233,7 @@ class AudioProcessor:
                     "-f",
                     "s16le",  # Input format: 16-bit signed little-endian PCM
                     "-ar",
-                    str(sample_rate),  # Force 16kHz
+                    str(SAMPLE_RATE_HZ),  # Force 16kHz
                     "-ac",
                     "1",  # Input channels (mono)
                     "-i",
