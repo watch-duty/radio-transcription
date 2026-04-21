@@ -68,6 +68,9 @@ export function TranscriptView({
   const [searchedFeedId, setSearchedFeedId] = useState<string>(
     () => searchParams.get('feedId') || ''
   );
+  const [searchedDuration, setSearchedDuration] = useState<string | null>(
+    () => searchParams.get('duration')
+  );
   const [searchedStartTime, setSearchedStartTime] = useState<Date | null>(() =>
     getSearchedStartTime(searchParams)
   );
@@ -284,6 +287,7 @@ export function TranscriptView({
 
             setSearchedStartTime(calcStart);
             setSearchedEndTime(calcEnd);
+            setSearchedDuration(duration);
 
             const newParams: Record<string, string> = { feedId: feedId.trim() };
             if (timestamp) newParams.timestamp = timestamp.getTime().toString();
@@ -398,6 +402,7 @@ export function TranscriptView({
         transcripts={transcripts}
         currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
         onClipClick={handleClipClick}
+        userDuration={searchedDuration}
       />
 
       <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>

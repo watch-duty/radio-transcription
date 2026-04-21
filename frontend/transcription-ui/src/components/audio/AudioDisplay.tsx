@@ -14,6 +14,7 @@ interface AudioDisplayProps {
   transcripts: Transcript[];
   currentlyPlayingTransmissionId: string | null;
   onClipClick?: (transmissionId: string) => void;
+  userDuration?: string | null;
 }
 
 const MAX_WINDOW_DURATION_MS = 15 * 60 * 1000; // 15 minutes
@@ -31,6 +32,7 @@ export function AudioDisplay({
   transcripts,
   currentlyPlayingTransmissionId,
   onClipClick,
+  userDuration,
 }: AudioDisplayProps) {
   const theme = useTheme();
 
@@ -40,6 +42,17 @@ export function AudioDisplay({
     string | null
   >(null);
   const [prevPlayingId, setPrevPlayingId] = useState<string | null>(null);
+  const [prevUserDuration, setPrevUserDuration] = useState<string | null>(
+    userDuration ?? null
+  );
+
+  const windowDurationMs = useMemo(() => {
+    if (!userDuration) return MAX_WINDOW_DURATION_MS;
+    const parsed = parseFloat(userDuration);
+    if (isNaN(parsed) || parsed <= 0) return MAX_WINDOW_DURATION_MS;
+    const userMs = parsed * 2 * 60 * 1000;
+    return Math.min(MAX_WINDOW_DURATION_MS, userMs);
+  }, [userDuration]);
 
   const firstTranscript = transcripts[0];
   const firstTranscriptId = firstTranscript?.transmissionId || null;
@@ -59,8 +72,12 @@ export function AudioDisplay({
   const playingId = currentlyPlayingTransmissionId || null;
 
   // Shift windowEndTime when playing transcript goes out of bounds
-  if (playingId !== prevPlayingId) {
+  if (
+    playingId !== prevPlayingId ||
+    (userDuration ?? null) !== prevUserDuration
+  ) {
     setPrevPlayingId(playingId);
+    setPrevUserDuration(userDuration ?? null);
     if (playingId) {
       const playingTranscript = transcripts.find(
         (t) => t.transmissionId === playingId
@@ -74,10 +91,10 @@ export function AudioDisplay({
           (firstTranscript
             ? new Date(firstTranscript.endTimestamp).getTime()
             : 0);
-        const currentStartTime = currentEndTime - MAX_WINDOW_DURATION_MS;
+        const currentStartTime = currentEndTime - windowDurationMs;
 
         if (tStart < currentStartTime || tEnd > currentEndTime) {
-          const newEndTime = tStart + MAX_WINDOW_DURATION_MS / 2;
+          const newEndTime = tStart + windowDurationMs / 2;
           setWindowEndTime(newEndTime);
         }
       }
@@ -89,14 +106,14 @@ export function AudioDisplay({
     if (transcripts.length === 0) {
       return {
         startTime: 0,
-        windowDuration: MAX_WINDOW_DURATION_MS,
+        windowDuration: windowDurationMs,
         clips: [],
       };
     }
 
     const mostRecentTime =
       windowEndTime || new Date(transcripts[0].endTimestamp).getTime();
-    const windowDuration = MAX_WINDOW_DURATION_MS;
+    const windowDuration = windowDurationMs;
     const startTime = mostRecentTime - windowDuration;
 
     // Filter for transcripts that overlap with the current visible time window
@@ -131,7 +148,7 @@ export function AudioDisplay({
       });
 
     return { startTime, windowDuration, clips };
-  }, [transcripts, currentlyPlayingTransmissionId, windowEndTime]);
+  }, [transcripts, currentlyPlayingTransmissionId, windowEndTime, windowDurationMs]);
 
   return (
     <Box sx={{ width: '100%', mb: 2 }}>

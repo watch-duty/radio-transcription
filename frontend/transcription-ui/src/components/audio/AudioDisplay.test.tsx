@@ -200,4 +200,60 @@ describe('AudioDisplay', () => {
       expect(labelsAfter).not.toEqual(labelsBefore);
     });
   });
+  it('should adjust window duration based on userDuration capped at 15 minutes', async () => {
+    const mockTranscripts: Transcript[] = [
+      {
+        transmissionId: '1',
+        feedId: 'feed1',
+        startTimestamp: new Date('2026-04-20T09:15:00Z').toISOString(),
+        endTimestamp: new Date('2026-04-20T09:15:00Z').toISOString(),
+        transcript: 'Test 1',
+        canonicalAudioUri: 'audio1.flac',
+        evaluationDecisions: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+        startAudioOffset: '0',
+        endAudioOffset: '0',
+      },
+    ];
+
+    const { rerender } = render(
+      <AudioDisplay
+        transcripts={mockTranscripts}
+        currentlyPlayingTransmissionId={null}
+        userDuration="5"
+      />
+    );
+
+    const labels5 = screen
+      .getAllByText(/\d{2}:\d{2}/)
+      .map((el) => el.textContent || '');
+    expect(labels5.length).toBe(4);
+    const [h0, m0] = labels5[0].split(':').map(Number);
+    const [h3, m3] = labels5[3].split(':').map(Number);
+    let diff5 = (h3 * 60 + m3) - (h0 * 60 + m0);
+    if (diff5 < 0) diff5 += 24 * 60;
+    expect(diff5).toBe(10);
+
+    rerender(
+      <AudioDisplay
+        transcripts={mockTranscripts}
+        currentlyPlayingTransmissionId={null}
+        userDuration="30"
+      />
+    );
+
+    await waitFor(() => {
+      const labels30 = screen
+        .getAllByText(/\d{2}:\d{2}/)
+        .map((el) => el.textContent || '');
+      expect(labels30.length).toBe(4);
+      const [h0_30, m0_30] = labels30[0].split(':').map(Number);
+      const [h3_30, m3_30] = labels30[3].split(':').map(Number);
+      let diff30 = (h3_30 * 60 + m3_30) - (h0_30 * 60 + m0_30);
+      if (diff30 < 0) diff30 += 24 * 60;
+      expect(diff30).toBe(15);
+    });
+  });
 });
