@@ -108,15 +108,16 @@ class AudioProcessor:
         blob.download_to_file(in_mem_file)
         in_mem_file.seek(0)
 
-        samples, _ = sf.read(in_mem_file, dtype='int16')
+        samples, sr = sf.read(in_mem_file, dtype='int16')
         if samples.ndim > 1:
             samples = np.mean(samples, axis=1).astype(np.int16)
 
-        speech_segments = self.sed_detector.detect(samples)
+        speech_segments = self.sed_detector.detect(samples, sample_rate=sr)
 
         return AudioChunkData(
             start_ms=start_ms,
             audio=samples,
+            sample_rate=sr,
             speech_segments=speech_segments,
             gcs_uri=gcs_path,
         )
@@ -169,13 +170,13 @@ class AudioProcessor:
         filtered = signal.lfilter(b, a, audio_buffer)
         return filtered.astype(np.int16)
 
-    def export_flac(self, audio_buffer: np.ndarray) -> bytes:
+    def export_flac(self, audio_buffer: np.ndarray, sample_rate: int = SAMPLE_RATE_HZ) -> bytes:
         """Exports a NumPy array to FLAC bytes."""
         buf = io.BytesIO()
-        sf.write(buf, audio_buffer, SAMPLE_RATE_HZ, format="FLAC")
+        sf.write(buf, audio_buffer, sample_rate, format="FLAC")
         return buf.getvalue()
 
-    def export_m4a(self, audio_buffer: np.ndarray) -> bytes:
+    def export_m4a(self, audio_buffer: np.ndarray, sample_rate: int = SAMPLE_RATE_HZ) -> bytes:
         """Exports a NumPy array to M4A (AAC) bytes using ffmpeg via stdin/stdout."""
         import subprocess
 
@@ -183,12 +184,12 @@ class AudioProcessor:
             [
                 "ffmpeg",
                 "-f", "s16le",                 # Input format: 16-bit signed little-endian PCM
-                "-ar", str(SAMPLE_RATE_HZ),    # Input sample rate
+                "-ar", str(sample_rate),       # Input sample rate
                 "-ac", "1",                    # Input channels (mono)
                 "-i", "pipe:0",                # Read from stdin
                 "-f", "ipod",                  # Output format: M4A/MP4 container
                 "-c:a", "aac",                 # Output codec: AAC
-                "-b:a", "32k",                 # Output bitrate
+                "-q:a", "2",                   # VBR quality (instead of fixed bitrate)
                 "pipe:1"                       # Write to stdout
             ],
             input=audio_buffer.tobytes(),
