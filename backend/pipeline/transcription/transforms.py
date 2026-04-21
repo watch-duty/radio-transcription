@@ -4,6 +4,12 @@ import logging
 from collections.abc import Iterator
 from typing import Any, override
 
+from backend.pipeline.transcription.resources import (
+    SHARED_RESOURCE_HANDLE,
+    SharedResources,
+)
+
+
 import apache_beam as beam
 from apache_beam.io.gcp.pubsub import PubsubMessage
 from apache_beam.metrics import Metrics
@@ -448,12 +454,8 @@ class DownloadAudioFn(beam.DoFn):
     @override
     def setup(self) -> None:
         """Instantiates the Google Cloud Storage client lazily on the executing worker."""
-        from backend.pipeline.transcription.resources import (  # noqa: PLC0415
-            SHARED_RESOURCE_HANDLE,
-            SharedResources,
-        )
-
         self.shared_resources = SHARED_RESOURCE_HANDLE.acquire(SharedResources)
+
         self.audio_processor = AudioProcessor(
             self.config.vad_type,
             self.config.vad_config,

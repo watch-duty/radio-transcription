@@ -2,13 +2,18 @@
 
 import io
 import logging
+import os
+import subprocess
+import tempfile
 import urllib.parse
 from collections.abc import Callable
 from typing import Any
 
 import numpy as np
+import scipy.signal as signal
 import soundfile as sf
 from google.cloud import storage
+
 
 from backend.pipeline.common.constants import (
     AUDIO_FORMAT,
@@ -172,8 +177,6 @@ class AudioProcessor:
 
     def preprocess_audio(self, audio_buffer: np.ndarray) -> np.ndarray:
         """Applies native bandpass filtering to remove rumble and static."""
-        import scipy.signal as signal
-
         nyq = 0.5 * SAMPLE_RATE_HZ
         high = HIGHPASS_FILTER_FREQ / nyq
         low = LOWPASS_FILTER_FREQ / nyq
@@ -185,8 +188,6 @@ class AudioProcessor:
         self, audio_buffer: np.ndarray, sample_rate: int = SAMPLE_RATE_HZ
     ) -> bytes:
         """Exports a NumPy array to FLAC bytes using ffmpeg."""
-        import subprocess
-
         process = subprocess.run(
             [
                 "ffmpeg",
@@ -220,10 +221,6 @@ class AudioProcessor:
         self, audio_buffer: np.ndarray, sample_rate: int = SAMPLE_RATE_HZ
     ) -> bytes:
         """Exports a NumPy array to M4A (AAC) bytes using ffmpeg via a temporary file."""
-        import os
-        import subprocess
-        import tempfile
-
         with tempfile.NamedTemporaryFile(suffix=".m4a", delete=False) as temp_file:
             temp_filename = temp_file.name
 
