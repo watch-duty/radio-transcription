@@ -111,10 +111,7 @@ export function TranscriptRow({
             minWidth: 'max-content',
           }}
         >
-          <Typography
-            variant="caption"
-            color="text.secondary"
-          >
+          <Typography variant="caption" color="text.secondary">
             {currentDate.toLocaleTimeString([], {
               hour: '2-digit',
               minute: '2-digit',
@@ -132,7 +129,8 @@ export function TranscriptRow({
               (new Date(transcript.endTimestamp).getTime() -
                 new Date(transcript.startTimestamp).getTime()) /
                 1000
-            )} sec
+            )}{' '}
+            sec
           </Typography>
         </Box>
         <AudioPlayer
