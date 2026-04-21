@@ -176,29 +176,32 @@ class AudioProcessor:
         return buf.getvalue()
 
     def export_m4a(self, audio_buffer: np.ndarray) -> bytes:
-        """Exports a NumPy array to M4A (AAC) bytes using ffmpeg."""
-        import tempfile
+        """Exports a NumPy array to M4A (AAC) bytes using ffmpeg via stdin/stdout."""
         import subprocess
-        import os
+
+        process = subprocess.run(
+            [
+                "ffmpeg",
+                "-f", "s16le",                 # Input format: 16-bit signed little-endian PCM
+                "-ar", str(SAMPLE_RATE_HZ),    # Input sample rate
+                "-ac", "1",                    # Input channels (mono)
+                "-i", "pipe:0",                # Read from stdin
+                "-f", "ipod",                  # Output format: M4A/MP4 container
+                "-c:a", "aac",                 # Output codec: AAC
+                "-b:a", "32k",                 # Output bitrate
+                "pipe:1"                       # Write to stdout
+            ],
+            input=audio_buffer.tobytes(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
         
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as wav_file:
-            wav_path = wav_file.name
-            sf.write(wav_path, audio_buffer, SAMPLE_RATE_HZ)
-    
-        m4a_path = wav_path.replace(".wav", ".m4a")
-        try:
-            subprocess.run(
-                ["ffmpeg", "-y", "-i", wav_path, "-c:a", "aac", "-b:a", "32k", "-ar", "16000", "-ac", "1", m4a_path],
-                check=True,
-                capture_output=True,
-            )
-            with open(m4a_path, "rb") as f:
-                return f.read()
-        finally:
-            if os.path.exists(wav_path):
-                os.remove(wav_path)
-            if os.path.exists(m4a_path):
-                os.remove(m4a_path)
+        if process.returncode != 0:
+            logger.error(f"ffmpeg error during M4A export: {process.stderr.decode()}")
+            raise RuntimeError("Failed to export M4A via ffmpeg")
+            
+        return process.stdout
 
     def process_buffer(
         self, audio_buffer: np.ndarray
