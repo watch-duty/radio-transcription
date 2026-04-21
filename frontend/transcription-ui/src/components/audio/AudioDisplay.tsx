@@ -84,6 +84,7 @@ export function AudioDisplay({
     }
   }
 
+  // Calculates the visible time window bounds and processes transcripts into positioned clips for the waveform display.
   const { startTime, windowDuration, clips } = useMemo(() => {
     if (transcripts.length === 0) {
       return {
@@ -98,12 +99,14 @@ export function AudioDisplay({
     const windowDuration = MAX_WINDOW_DURATION_MS;
     const startTime = mostRecentTime - windowDuration;
 
+    // Filter for transcripts that overlap with the current visible time window
     const clips = transcripts
       .filter((t) => {
         const tStart = new Date(t.startTimestamp).getTime();
         const tEnd = new Date(t.endTimestamp).getTime();
         return tStart < startTime + windowDuration && tEnd > startTime;
       })
+      // Map filtered transcripts to clip objects with calculated positioning and display properties
       .map((t) => {
         const tStart = new Date(t.startTimestamp).getTime();
         const tEnd = new Date(t.endTimestamp).getTime();
