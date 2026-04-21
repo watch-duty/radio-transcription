@@ -35,6 +35,7 @@ def convert_to_flac(audio_bytes: bytes, input_format: str) -> bytes:
             "-ar", str(SAMPLE_RATE_HZ),
             "-ac", str(NUM_AUDIO_CHANNELS),
             "-sample_fmt", "s16",
+            "-compression_level", "5",
             "pipe:1"
         ],
         input=audio_bytes,

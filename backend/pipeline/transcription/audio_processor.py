@@ -171,10 +171,29 @@ class AudioProcessor:
         return filtered.astype(np.int16)
 
     def export_flac(self, audio_buffer: np.ndarray, sample_rate: int = SAMPLE_RATE_HZ) -> bytes:
-        """Exports a NumPy array to FLAC bytes."""
-        buf = io.BytesIO()
-        sf.write(buf, audio_buffer, sample_rate, format="FLAC")
-        return buf.getvalue()
+        """Exports a NumPy array to FLAC bytes using ffmpeg."""
+        import subprocess
+
+        process = subprocess.run(
+            [
+                "ffmpeg",
+                "-f", "s16le",
+                "-ar", "16000",                 # Force 16kHz
+                "-ac", "1",                    # Mono
+                "-i", "pipe:0",                # Read from stdin
+                "-f", "flac",                  # Output format
+                "-compression_level", "5",     # Compression level 5
+                "pipe:1"                       # Write to stdout
+            ],
+            input=audio_buffer.tobytes(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if process.returncode != 0:
+            logger.error(f"ffmpeg error during FLAC export: {process.stderr.decode()}")
+            raise RuntimeError("Failed to export FLAC via ffmpeg")
+        return process.stdout
 
     def export_m4a(self, audio_buffer: np.ndarray, sample_rate: int = SAMPLE_RATE_HZ) -> bytes:
         """Exports a NumPy array to M4A (AAC) bytes using ffmpeg via stdin/stdout."""
@@ -184,12 +203,12 @@ class AudioProcessor:
             [
                 "ffmpeg",
                 "-f", "s16le",                 # Input format: 16-bit signed little-endian PCM
-                "-ar", str(sample_rate),       # Input sample rate
+                "-ar", "16000",                # Force 16kHz
                 "-ac", "1",                    # Input channels (mono)
                 "-i", "pipe:0",                # Read from stdin
                 "-f", "ipod",                  # Output format: M4A/MP4 container
                 "-c:a", "aac",                 # Output codec: AAC
-                "-q:a", "1",                   # VBR quality (instead of fixed bitrate)
+                "-b:a", "32k",                 # Output bitrate 32k
                 "pipe:1"                       # Write to stdout
             ],
             input=audio_buffer.tobytes(),
