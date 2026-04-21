@@ -62,7 +62,8 @@ def extract_required_env(tree: ast.AST, source_path: Path) -> list[str]:
                 raise ValueError(msg)
             name_node = name_kw.value
         if not (
-            isinstance(name_node, ast.Constant) and isinstance(name_node.value, str)
+            isinstance(name_node, ast.Constant)
+            and isinstance(name_node.value, str)
         ):
             msg = (
                 f"{source_path}:{node.lineno}: _require_env() name argument "
