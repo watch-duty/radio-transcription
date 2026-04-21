@@ -76,6 +76,64 @@ class AudioProcessorTest(unittest.TestCase):
         self.assertTrue(result)
         mock_vad_instance.evaluate.assert_called_once()
 
+    @patch("backend.pipeline.transcription.audio_processor.compute_spectral_flatness")
+    @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
+    def test_check_vad_drops_static(
+        self, mock_get_vad: MagicMock, mock_compute_flatness: MagicMock
+    ) -> None:
+        """Tests that check_vad returns False for white noise due to spectral flatness."""
+        mock_vad_instance = MagicMock()
+        mock_get_vad.return_value = mock_vad_instance
+        
+        # Mock flatness to be high (noise)
+        mock_compute_flatness.return_value = np.array([0.9])
+
+        self.processor.setup()
+
+        # Audio data doesn't matter much now because we mock the DSP output
+        audio = np.zeros(16000, dtype=np.int16)
+
+        result = self.processor.check_vad(audio)
+        self.assertFalse(result)
+        # VAD evaluate should NOT be called because it should be dropped by heuristic
+        mock_vad_instance.evaluate.assert_not_called()
+
+
+    @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
+    @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
+    def test_download_audio_and_detect_calculates_duration(
+        self, mock_get_vad: MagicMock, mock_get_gcs: MagicMock
+    ) -> None:
+        """Tests that download_audio_and_detect calculates duration when not provided."""
+        self.processor.setup()
+        self.processor.gcs_client = MagicMock()
+        mock_bucket = MagicMock()
+        mock_blob = MagicMock()
+
+        # Create a tiny valid FLAC (100ms -> 1600 samples)
+        audio = np.zeros(int((100) * 16), dtype=np.int16)
+        buf = io.BytesIO()
+        sf.write(buf, audio, 16000, format="FLAC")
+        flac_bytes = buf.getvalue()
+
+        def download_to_file(f: io.BytesIO, **kwargs: object) -> None:
+            f.write(flac_bytes)
+
+        mock_blob.download_to_file = download_to_file
+        mock_bucket.get_blob.return_value = mock_blob
+        self.processor.gcs_client.bucket.return_value = mock_bucket
+
+        # Act
+        result = self.processor.download_audio_and_detect(
+            "gs://fake-bucket/100-11111111-1111-1111-1111-111111111111.flac",
+            100000,
+            # duration_ms omitted
+        )
+
+        # Assert
+        self.assertEqual(result.duration_ms, 100)  # 1600 / 16 = 100
+
+
     def test_preprocess_audio_applies_bandpass(self) -> None:
         """Verifies that the audio preprocessing filters do not corrupt or truncate the np.ndarray structure."""
         # A 1-second audio segment with noise at different frequencies
