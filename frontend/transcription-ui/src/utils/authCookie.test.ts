@@ -69,6 +69,7 @@ describe('authCookie', () => {
       expect(written).toContain('auth_token=');
       expect(written).toContain('path=/');
       expect(written).toContain('SameSite=Strict');
+      expect(written).toContain('Secure');
       expect(written).toContain('expires=');
       cookieSetter.mockRestore();
     });

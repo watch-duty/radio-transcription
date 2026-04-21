@@ -55,12 +55,12 @@ export function setAuthToken(token: string): void {
   const expiresAttr = exp
     ? `; expires=${new Date(exp * 1000).toUTCString()}`
     : '';
-  document.cookie = `${COOKIE_NAME}=${token}; path=/; SameSite=Strict${expiresAttr}`;
+  document.cookie = `${COOKIE_NAME}=${token}; path=/; SameSite=Strict; Secure${expiresAttr}`;
 }
 
 /**
  * Removes the `auth_token` cookie.
  */
 export function clearAuthToken(): void {
-  document.cookie = `${COOKIE_NAME}=; path=/; SameSite=Strict; max-age=0`;
+  document.cookie = `${COOKIE_NAME}=; path=/; SameSite=Strict; Secure; max-age=0`;
 }
