@@ -79,10 +79,18 @@ def _is_test_file(py_file: Path, service_dir: Path) -> bool:
     """Return True if ``py_file`` looks like a test file.
 
     A test that mocks ``_require_env("FAKE_VAR")`` would otherwise contaminate
-    the runtime contract with the mock var name.
+    the runtime contract with the mock var name. Match both filename and
+    directory patterns: ``test_foo.py``, ``foo_test.py``, anything under a
+    ``tests/``, ``test/``, ``test_helpers/``, etc.
     """
     rel_parts = py_file.relative_to(service_dir).parts
-    if any(part in {"tests", "test"} for part in rel_parts):
+    dir_parts = rel_parts[:-1]  # exclude the filename itself
+    if any(
+        part in {"tests", "test"}
+        or part.startswith("test_")
+        or part.endswith("_test")
+        for part in dir_parts
+    ):
         return True
     name = py_file.name
     return name.startswith("test_") or name.endswith("_test.py")
