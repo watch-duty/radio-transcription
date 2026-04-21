@@ -38,6 +38,7 @@ describe('FeedsController', () => {
     sourceType: 'openmhz',
     sourceFeedId: 'src_123',
     externalId: 'ext_123',
+    sourceUrl: 'https://openmhz.com/system/src_123',
   };
 
   describe('listFeeds', () => {
@@ -149,6 +150,57 @@ describe('FeedsController', () => {
       expect(mockNotFound).toHaveBeenCalledWith(404, {
         message: 'Feed feed_123 not found',
       });
+    });
+  });
+
+  describe('sourceUrl computation', () => {
+    async function listFeedsWithSourceType(
+      sourceType: string,
+      sourceFeedId: string | undefined
+    ) {
+      mockRequest.mockResolvedValueOnce({
+        data: [
+          {
+            id: 'feed_1',
+            name: 'Feed',
+            source_type: sourceType,
+            source_feed_id: sourceFeedId,
+          },
+        ],
+      });
+      const controller = new FeedsController();
+      const [feed] = await controller.listFeeds();
+      return feed.sourceUrl;
+    }
+
+    it('bcfy_feeds produces the partner.broadcastify.com URL', async () => {
+      const url = await listFeedsWithSourceType('bcfy_feeds', '12345');
+      expect(url).toBe('https://partner.broadcastify.com/12345');
+    });
+
+    it('bcfy_calls replaces hyphens with slashes in the URL', async () => {
+      const url = await listFeedsWithSourceType('bcfy_calls', '12-345-678');
+      expect(url).toBe('https://www.broadcastify.com/calls/tg/12/345/678');
+    });
+
+    it('bcfy_calls with no hyphens in sourceFeedId', async () => {
+      const url = await listFeedsWithSourceType('bcfy_calls', '12345');
+      expect(url).toBe('https://www.broadcastify.com/calls/tg/12345');
+    });
+
+    it('openmhz produces the openmhz.com URL', async () => {
+      const url = await listFeedsWithSourceType('openmhz', 'my-system');
+      expect(url).toBe('https://openmhz.com/system/my-system');
+    });
+
+    it('echo always produces undefined', async () => {
+      const url = await listFeedsWithSourceType('echo', 'some-id');
+      expect(url).toBeUndefined();
+    });
+
+    it('produces undefined when sourceFeedId is absent', async () => {
+      const url = await listFeedsWithSourceType('bcfy_feeds', undefined);
+      expect(url).toBeUndefined();
     });
   });
 });
