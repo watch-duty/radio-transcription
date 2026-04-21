@@ -58,7 +58,7 @@ class AudioProcessorTest(unittest.TestCase):
 
     @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
     @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
-    @pytest.mark.skip(reason='pydub removed, Sine not available')
+    @pytest.mark.skip(reason="pydub removed, Sine not available")
     def test_check_vad_evaluates_speech(self) -> None:
         pass
 
@@ -125,7 +125,7 @@ class AudioProcessorTest(unittest.TestCase):
         # Create a tiny valid FLAC
         audio = np.zeros(int((100) * 16), dtype=np.int16)
         buf = io.BytesIO()
-        sf.write(buf, format=AUDIO_FORMAT)
+        sf.write(buf, audio, 16000, format="FLAC")
         flac_bytes = buf.getvalue()
 
         def download_to_file(f: io.BytesIO, **kwargs: object) -> None:
@@ -147,7 +147,7 @@ class AudioProcessorTest(unittest.TestCase):
         self.assertIsInstance(result, AudioChunkData)
         self.assertEqual(result.start_ms, 5000)
         self.assertIsInstance(result.audio, np.ndarray)
-        self.assertAlmostEqual(result.audio.duration_seconds, 0.1, places=2)
+        self.assertAlmostEqual(len(result.audio) / 16000.0, 0.1, places=2)
         self.assertEqual(result.speech_segments, [TimeRange(5000, 7000)])
         processor.gcs_client.bucket.assert_called_with("my-bucket")
         mock_bucket.get_blob.assert_called_with("audio/feed1/12345.flac")
