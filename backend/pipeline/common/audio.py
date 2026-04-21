@@ -16,15 +16,14 @@ logger = logging.getLogger(__name__)
 
 
 def convert_to_flac(audio_bytes: bytes, input_format: str) -> bytes:
-    """Convert audio to canonical FLAC format (16 kHz, 16-bit, mono).
+    """Convert audio to FLAC format, retaining its original sample rate.
 
     Args:
         audio_bytes: Raw audio bytes in any supported format.
         input_format: Input audio format (e.g. ``"mp3"``, ``"wav"``).
 
     Returns:
-        FLAC-encoded bytes at the pipeline's canonical sample rate,
-        channel count, and bit depth.
+        FLAC-encoded bytes at the original sample rate, mono, and 16-bit depth.
     """
     process = subprocess.run(
         [
