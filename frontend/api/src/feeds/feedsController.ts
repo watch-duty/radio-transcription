@@ -53,6 +53,17 @@ function getSourceUrl(
   }
 }
 
+function getArchiveUrl(
+  sourceType: SourceType,
+  sourceFeedId: string | undefined
+): string | undefined {
+  if (!sourceFeedId) return undefined;
+  if (sourceType === 'bcfy_feeds') {
+    return `https://www.broadcastify.com/archives/feed/${sourceFeedId}`;
+  }
+  return undefined;
+}
+
 function convertFeedBackend(response: FeedBackend): Feed {
   return {
     id: response.id,
@@ -61,6 +72,7 @@ function convertFeedBackend(response: FeedBackend): Feed {
     sourceFeedId: response.source_feed_id,
     externalId: response.external_id,
     sourceUrl: getSourceUrl(response.source_type, response.source_feed_id),
+    archiveUrl: getArchiveUrl(response.source_type, response.source_feed_id),
   };
 }
 

@@ -150,6 +150,52 @@ describe('TranscriptRow', () => {
     expect(screen.queryByLabelText('open source feed')).toBeNull();
   });
 
+  it('renders open feed archives link when archiveUrl is provided', () => {
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          transcript={mockTranscript}
+          index={0}
+          totalTranscripts={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onPlay={mockOnPlay}
+          currentlyPlayingTransmissionId={null}
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+          archiveUrl="https://www.broadcastify.com/archives/feed/12345"
+        />
+      </MemoryRouter>
+    );
+
+    const link = screen.getByLabelText('open feed archives');
+    expect(link).toBeTruthy();
+    expect((link as HTMLAnchorElement).href).toBe(
+      'https://www.broadcastify.com/archives/feed/12345'
+    );
+    expect((link as HTMLAnchorElement).target).toBe('_blank');
+  });
+
+  it('does not render open feed archives link when archiveUrl is not provided', () => {
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          transcript={mockTranscript}
+          index={0}
+          totalTranscripts={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onPlay={mockOnPlay}
+          currentlyPlayingTransmissionId={null}
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+        />
+      </MemoryRouter>
+    );
+
+    expect(screen.queryByLabelText('open feed archives')).toBeNull();
+  });
+
   it('triggers copy deeplink action successfully', () => {
     render(
       <MemoryRouter>
