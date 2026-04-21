@@ -42,7 +42,9 @@ def extract_required_env(tree: ast.AST, source_path: Path) -> list[str]:
             msg = f"{source_path}:{node.lineno}: _require_env() called with no arguments"
             raise ValueError(msg)
         first = node.args[0]
-        if not (isinstance(first, ast.Constant) and isinstance(first.value, str)):
+        if not (
+            isinstance(first, ast.Constant) and isinstance(first.value, str)
+        ):
             msg = (
                 f"{source_path}:{node.lineno}: _require_env() first argument "
                 f"must be a string literal (got {ast.dump(first)}). "
@@ -95,7 +97,8 @@ def _default_pipeline_root() -> Path:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "--pipeline-root",
@@ -107,7 +110,13 @@ def main() -> int:
 
     try:
         result = dump_pipeline_required_env(args.pipeline_root)
-    except (TypeError, ValueError, SyntaxError, FileNotFoundError, OSError) as exc:
+    except (
+        TypeError,
+        ValueError,
+        SyntaxError,
+        FileNotFoundError,
+        OSError,
+    ) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
