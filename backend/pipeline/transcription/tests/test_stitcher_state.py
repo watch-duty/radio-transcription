@@ -57,7 +57,6 @@ def mock_audio_chunk(
     )
 
 
-
 class AudioStitchingStateMachineTest(unittest.TestCase):
     def setUp(self) -> None:
         self.config = get_test_stitch_config(significant_gap_ms=3000)

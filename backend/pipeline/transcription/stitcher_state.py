@@ -164,8 +164,7 @@ class AudioStitchingStateMachine:
             )
             is_chopped_at_end = (
                 last_segment is not None
-                and last_segment.end_ms
-                >= chunk_data.duration_ms
+                and last_segment.end_ms >= chunk_data.duration_ms
             )
 
             raw_actions.append(

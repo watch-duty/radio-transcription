@@ -12,7 +12,6 @@ dependencies = [
     "protobuf>=5.29.6",
     "crcmod>=1.7",
     "ten-vad>=1.0.6.8",
-    "audioop-lts>=0.2.1",
     "numpy>=2.2.6",
     "scipy>=1.17.1",
     "pydantic>=2.12.5",

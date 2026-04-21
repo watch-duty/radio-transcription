@@ -498,7 +498,6 @@ class TranscribeAudioFn(beam.DoFn):
             raise RuntimeError(msg)
 
         if request.buffer is None or request.buffer.size == 0:
-
             return None
 
         success, flac_bytes, processed_audio = (

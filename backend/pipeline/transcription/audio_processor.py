@@ -133,7 +133,6 @@ class AudioProcessor:
             duration_ms=duration_ms,
         )
 
-
     def check_vad(self, audio_buffer: np.ndarray) -> bool:
         """Evaluates audio buffer with TenVAD and returns True if speech is detected."""
         if self.vad is None:
@@ -165,7 +164,9 @@ class AudioProcessor:
             hop_length=DEFAULT_SED_HOP_SIZE,
         )
         mean_flatness_val = np.mean(mean_flatness)
-        if mean_flatness_val > VAD_FLATNESS_NOISE_THRESHOLD:  # Featureless static
+        if (
+            mean_flatness_val > VAD_FLATNESS_NOISE_THRESHOLD
+        ):  # Featureless static
             logger.info(
                 f"VAD Heuristic: Dropped static (Flatness: {mean_flatness_val:.3f})"
             )
@@ -221,7 +222,9 @@ class AudioProcessor:
         self, audio_buffer: np.ndarray, sample_rate: int = SAMPLE_RATE_HZ
     ) -> bytes:
         """Exports a NumPy array to M4A (AAC) bytes using ffmpeg via a temporary file."""
-        with tempfile.NamedTemporaryFile(suffix=".m4a", delete=False) as temp_file:
+        with tempfile.NamedTemporaryFile(
+            suffix=".m4a", delete=False
+        ) as temp_file:
             temp_filename = temp_file.name
 
         try:
@@ -266,7 +269,6 @@ class AudioProcessor:
                 os.unlink(temp_filename)
             except OSError:
                 pass
-
 
     def process_buffer(
         self, audio_buffer: np.ndarray

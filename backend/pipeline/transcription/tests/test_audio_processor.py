@@ -76,7 +76,6 @@ class AudioProcessorTest(unittest.TestCase):
         self.assertTrue(result)
         mock_vad_instance.evaluate.assert_called_once()
 
-
     def test_preprocess_audio_applies_bandpass(self) -> None:
         """Verifies that the audio preprocessing filters do not corrupt or truncate the np.ndarray structure."""
         # A 1-second audio segment with noise at different frequencies
@@ -87,7 +86,6 @@ class AudioProcessorTest(unittest.TestCase):
         processed = self.processor.preprocess_audio(audio)
         self.assertIsInstance(processed, np.ndarray)
         self.assertEqual(len(processed), len(audio))
-
 
     @unittest.skipIf(
         shutil.which("ffmpeg") is None, "ffmpeg is required for pydub I/O tests"

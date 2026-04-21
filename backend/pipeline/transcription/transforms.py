@@ -234,8 +234,6 @@ class BypassStitchingFn(beam.DoFn):
         duration_ms = chunk_data.duration_ms
         end_ms = start_ms + duration_ms
 
-
-
         transmission_id = generate_transmission_id(feed_id, start_ms, end_ms)
 
         yield (
@@ -483,7 +481,6 @@ class DownloadAudioFn(beam.DoFn):
             chunk_data = self.audio_processor.download_audio_and_detect(
                 gcs_path, start_ms
             )
-
 
             yield (feed_id, DownloadedChunkPayload(gcs_path, chunk_data))
         except FileNotFoundError:

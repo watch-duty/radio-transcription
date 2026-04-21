@@ -47,8 +47,6 @@ class AudioChunkData:
     sample_rate: int = 16000
 
 
-
-
 @dataclass(frozen=True)
 class ChunkMetadata:
     """Metadata for an audio chunk before download."""
