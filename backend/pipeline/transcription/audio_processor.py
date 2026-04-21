@@ -189,7 +189,7 @@ class AudioProcessor:
                 "-i", "pipe:0",                # Read from stdin
                 "-f", "ipod",                  # Output format: M4A/MP4 container
                 "-c:a", "aac",                 # Output codec: AAC
-                "-q:a", "2",                   # VBR quality (instead of fixed bitrate)
+                "-q:a", "1",                   # VBR quality (instead of fixed bitrate)
                 "pipe:1"                       # Write to stdout
             ],
             input=audio_buffer.tobytes(),
