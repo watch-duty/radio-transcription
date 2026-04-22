@@ -28,7 +28,9 @@ class TestSloContractLiterals(unittest.TestCase):
     """Pin the exact string values of every SLI-vocabulary constant."""
 
     def test_event_type_chunk_ingested_literal(self) -> None:
-        self.assertEqual(slo_contract.EVENT_TYPE_CHUNK_INGESTED, "chunk_ingested")
+        self.assertEqual(
+            slo_contract.EVENT_TYPE_CHUNK_INGESTED, "chunk_ingested"
+        )
 
     def test_event_type_call_download_failed_literal(self) -> None:
         self.assertEqual(
@@ -124,7 +126,9 @@ class TestSloContractDriftCanary(unittest.TestCase):
         `event_type` log extra before this plan migrates it. Must match
         exactly — any divergence silently breaks the Terraform alert.
         """
-        self.assertEqual(slo_contract.EVENT_TYPE_FEED_QUARANTINED, "feed_quarantined")
+        self.assertEqual(
+            slo_contract.EVENT_TYPE_FEED_QUARANTINED, "feed_quarantined"
+        )
 
 
 if __name__ == "__main__":
