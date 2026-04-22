@@ -150,3 +150,43 @@ class TestConfigure(unittest.TestCase):
         quarantine_telemetry.configure(None)
 
         self.assertIsNone(quarantine_telemetry._client)
+
+
+class TestFeedQuarantinedGoldenFile(unittest.IsolatedAsyncioTestCase):
+    """D-13: feed_quarantined emit's json_fields key-set matches the golden file.
+
+    A PR that adds, removes, or renames a key in the emit's json_fields dict
+    without updating tests/golden/feed_quarantined.json fails this test.
+    Key-set equality only — no value comparison per D-12.
+    """
+
+    def tearDown(self) -> None:
+        quarantine_telemetry._client = None
+
+    async def test_json_fields_keys_match_golden(self) -> None:
+        import json  # noqa: PLC0415 -- keep import local to this test
+        import pathlib  # noqa: PLC0415
+
+        golden_path = (
+            pathlib.Path(__file__).parent / "golden" / "feed_quarantined.json"
+        )
+        with golden_path.open(encoding="utf-8") as fh:
+            golden = json.load(fh)
+
+        quarantine_telemetry.configure(None)
+        with self.assertLogs(
+            "backend.pipeline.ingestion.quarantine_telemetry",
+            level=logging.ERROR,
+        ) as cm:
+            await quarantine_telemetry.emit_quarantine_event(
+                feed_id="abc-123",
+                feed_name="Test Feed",
+                source_type="bcfy_feeds",
+            )
+
+        self.assertEqual(len(cm.records), 1)
+        record = cm.records[0]
+        self.assertEqual(
+            set(record.json_fields.keys()),
+            set(golden["expected_keys"]),
+        )
