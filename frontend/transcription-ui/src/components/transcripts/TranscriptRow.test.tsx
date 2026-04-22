@@ -54,6 +54,7 @@ describe('TranscriptRow', () => {
     );
 
     expect(screen.getByText('This is a test transcription')).toBeTruthy();
+    expect(screen.getByText('5 sec')).toBeTruthy();
     // The date should NOT be rendered
     expect(screen.queryByText(/Monday/i)).toBeNull();
   });

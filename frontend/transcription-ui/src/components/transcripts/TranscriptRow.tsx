@@ -103,19 +103,36 @@ export function TranscriptRow({
             rulesLoading={rulesLoading}
           />
         </Box>
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{ minWidth: 'max-content' }}
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'flex-end',
+            minWidth: 'max-content',
+          }}
         >
-          {currentDate.toLocaleTimeString([], {
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-            timeZoneName: 'short',
-            hour12: false,
-          })}
-        </Typography>
+          <Typography variant="caption" color="text.secondary">
+            {currentDate.toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+              timeZoneName: 'short',
+              hour12: false,
+            })}
+          </Typography>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ opacity: 0.8 }}
+          >
+            {Math.round(
+              (new Date(transcript.endTimestamp).getTime() -
+                new Date(transcript.startTimestamp).getTime()) /
+                1000
+            )}{' '}
+            sec
+          </Typography>
+        </Box>
         <AudioPlayer
           audioUri={transcript.canonicalAudioUri}
           transmissionId={transcript.transmissionId}

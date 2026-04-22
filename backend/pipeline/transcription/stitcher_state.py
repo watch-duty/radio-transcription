@@ -1,9 +1,5 @@
 """A framework-agnostic state machine isolating sequential audio transmission boundary logic."""
 
-from backend.pipeline.common.constants import (
-    CHUNK_DURATION_SECONDS,
-    MS_PER_SECOND,
-)
 from backend.pipeline.transcription.datatypes import (
     AppendBufferAction,
     AudioChunkData,
@@ -45,7 +41,6 @@ class AudioStitchingStateMachine:
         if is_late_chunk:
             return self._process_late_chunk_independently(chunk_data, ctx)
 
-        chunk_duration_ms = int(CHUNK_DURATION_SECONDS * MS_PER_SECOND)
         actions: list[StateMachineAction] = []
 
         # 1. Detect if we skipped over a chunk (dropped audio)
@@ -79,8 +74,9 @@ class AudioStitchingStateMachine:
 
         # 3. Always update the expected contiguous start time for the NEXT chunk
         ctx.expected_next_chunk_start_ms = (
-            chunk_data.start_ms + chunk_duration_ms
+            chunk_data.start_ms + chunk_data.duration_ms
         )
+
         actions.append(UpdateStateAction())
         return actions
 
@@ -163,9 +159,9 @@ class AudioStitchingStateMachine:
             )
             is_chopped_at_end = (
                 last_segment is not None
-                and last_segment.end_ms
-                >= int(CHUNK_DURATION_SECONDS * MS_PER_SECOND)
+                and last_segment.end_ms >= chunk_data.duration_ms
             )
+
             raw_actions.append(
                 self._flush_current_transmission(
                     "Flushing isolated late-arriving audio chunk",
@@ -231,7 +227,13 @@ class AudioStitchingStateMachine:
         is_max_duration_exceeded = (
             ctx.transmission_start_time_ms is not None
             and (
-                (file_start_ms + len(chunk_data.audio))
+                (
+                    file_start_ms
+                    + (
+                        len(chunk_data.audio)
+                        // (chunk_data.sample_rate // 1000)
+                    )
+                )
                 - ctx.transmission_start_time_ms
             )
             >= self.config.max_transmission_duration_ms
@@ -251,11 +253,17 @@ class AudioStitchingStateMachine:
                 target_post_roll_end = (
                     ctx.last_segment_end_time_ms + self.config.vad_post_roll_ms
                 ) - file_start_ms
-                append_end = min(len(chunk_data.audio), target_post_roll_end)
+                append_end = min(
+                    (len(chunk_data.audio) // (chunk_data.sample_rate // 1000)),
+                    target_post_roll_end,
+                )
                 if append_end > 0:
                     actions.append(
                         AppendBufferAction(
-                            audio_buffer=chunk_data.audio[0:append_end]
+                            audio_buffer=chunk_data.audio[
+                                0 : append_end
+                                * (chunk_data.sample_rate // 1000)
+                            ]
                         )
                     )
                     ctx.buffer_duration_ms += append_end
@@ -294,7 +302,10 @@ class AudioStitchingStateMachine:
         actions.append(UpdateStateAction())
         expected_stale_deadline_ms = (
             ctx.last_segment_end_time_ms
-            or (chunk_data.start_ms + len(chunk_data.audio))
+            or (
+                chunk_data.start_ms
+                + (len(chunk_data.audio) // (chunk_data.sample_rate // 1000))
+            )
         ) + self.config.stale_timeout_ms
         actions.append(
             ScheduleStaleTimerAction(deadline_ms=expected_stale_deadline_ms)
@@ -309,13 +320,15 @@ class AudioStitchingStateMachine:
                 ctx.last_segment_end_time_ms + self.config.vad_post_roll_ms
             )
             append_end = min(
-                len(chunk_data.audio),
+                (len(chunk_data.audio) // (chunk_data.sample_rate // 1000)),
                 max(0, target_post_roll_end - file_start_ms),
             )
             if append_end > 0:
                 actions.append(
                     AppendBufferAction(
-                        audio_buffer=chunk_data.audio[0:append_end]
+                        audio_buffer=chunk_data.audio[
+                            0 : append_end * (chunk_data.sample_rate // 1000)
+                        ]
                     )
                 )
                 ctx.buffer_duration_ms += append_end
@@ -356,7 +369,11 @@ class AudioStitchingStateMachine:
             if 0 <= append_start < append_end:
                 actions.append(
                     AppendBufferAction(
-                        audio_buffer=chunk_data.audio[append_start:append_end]
+                        audio_buffer=chunk_data.audio[
+                            append_start
+                            * (chunk_data.sample_rate // 1000) : append_end
+                            * (chunk_data.sample_rate // 1000)
+                        ]
                     )
                 )
                 ctx.buffer_duration_ms += append_end - append_start
@@ -442,14 +459,18 @@ class AudioStitchingStateMachine:
 
             # Target end for this segment's append is global_end_ms + vad_post_roll_ms
             append_end = min(
-                len(chunk_data.audio),
+                (len(chunk_data.audio) // (chunk_data.sample_rate // 1000)),
                 global_end_ms + self.config.vad_post_roll_ms,
             )
 
             if append_end > append_start:
                 actions.append(
                     AppendBufferAction(
-                        audio_buffer=chunk_data.audio[append_start:append_end]
+                        audio_buffer=chunk_data.audio[
+                            append_start
+                            * (chunk_data.sample_rate // 1000) : append_end
+                            * (chunk_data.sample_rate // 1000)
+                        ]
                     )
                 )
                 audio_append_cursor_ms = append_end
