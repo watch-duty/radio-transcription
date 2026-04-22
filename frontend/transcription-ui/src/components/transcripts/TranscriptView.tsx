@@ -535,9 +535,13 @@ export function TranscriptView({
       >
         {transcripts.length > 0 ? (
           <>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-              {(selectedFeed?.sourceUrl || selectedFeed?.archiveUrl) ? (
-                <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
+            <Box
+              sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}
+            >
+              {selectedFeed?.sourceUrl || selectedFeed?.archiveUrl ? (
+                <Box
+                  sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2 }}
+                >
                   {selectedFeed.sourceUrl && (
                     <Link
                       href={selectedFeed.sourceUrl}
