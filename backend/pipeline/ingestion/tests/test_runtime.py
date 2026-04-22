@@ -101,6 +101,7 @@ def _make_settings(**overrides) -> mock.MagicMock:
         # port 1 when a test exercises _main().
         "health_check_port": 8080,
         "health_check_startup_grace_sec": 120.0,
+        "metric_reporter_interval_sec": 60.0,
     }
     defaults.update(overrides)
     m = mock.MagicMock()
