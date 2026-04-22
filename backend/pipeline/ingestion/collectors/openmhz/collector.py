@@ -130,6 +130,8 @@ async def openmhz_collector(
                     short_name, url_base, shutdown_event
                 ) as events:
                     async for call in events:
+                        # SLO: receipt_time stamp — OpenMHZ WS event arrived
+                        receipt_time = datetime.datetime.now(datetime.UTC)
                         consecutive_ws_failures = 0
 
                         if call.length_sec == 0:
@@ -154,6 +156,7 @@ async def openmhz_collector(
                             chunk_end_time=call.time
                             + datetime.timedelta(seconds=call.length_sec),
                             session_id=connection_session_id,
+                            receipt_time=receipt_time,
                         )
             except Exception:
                 logger.warning(

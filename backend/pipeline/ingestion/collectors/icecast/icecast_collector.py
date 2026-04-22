@@ -179,6 +179,8 @@ async def capture_icecast_stream(  # noqa: PLR0915
                 if current_segment.exists() and (
                     next_segment.exists() or process_done
                 ):
+                    # SLO: receipt_time stamp — Icecast segment finalized, bytes available
+                    receipt_time = _now_utc()
                     segment_bytes = await asyncio.to_thread(
                         current_segment.read_bytes
                     )
@@ -200,6 +202,7 @@ async def capture_icecast_stream(  # noqa: PLR0915
                             chunk_start_time=chunk_start_time,
                             chunk_end_time=chunk_end_time,
                             session_id=session_id,
+                            receipt_time=receipt_time,
                         )
 
                         last_activity_time = time.monotonic()

@@ -252,3 +252,39 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(results), 2)
         self.assertNotEqual(results[0].session_id, results[1].session_id)
+
+
+class TestOpenmhzReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
+    """RCPT-03: OpenMHZ stamps receipt_time at WS event arrival."""
+
+    @patch(f"{_COL_MOD}.websocket_transport")
+    @patch(f"{_COL_MOD}._download_m4a")
+    @patch(f"{_COL_MOD}.datetime")
+    async def test_stamps_receipt_time_at_event_arrival(
+        self,
+        mock_datetime: MagicMock,
+        mock_download: AsyncMock,
+        mock_transport: MagicMock,
+    ) -> None:
+        fixed_time = datetime.datetime(
+            2026, 4, 22, 12, 0, 0, tzinfo=datetime.UTC
+        )
+        # Let timedelta / UTC pass through to the real module.
+        mock_datetime.datetime.now.return_value = fixed_time
+        mock_datetime.UTC = datetime.UTC
+        mock_datetime.timedelta = datetime.timedelta
+
+        call = _make_call(call_id="c1", length_sec=5)
+        mock_transport.side_effect = lambda *a, **kw: _mock_transport([call])
+        mock_download.return_value = b"m4a"
+
+        shutdown = asyncio.Event()
+        results = []
+        async for chunk in openmhz_collector(
+            _TEST_FEED, shutdown, "https://api.openmhz.com/"
+        ):
+            results.append(chunk)
+            shutdown.set()
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].receipt_time, fixed_time)
