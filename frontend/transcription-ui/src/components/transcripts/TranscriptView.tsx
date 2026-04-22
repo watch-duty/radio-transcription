@@ -181,16 +181,6 @@ export function TranscriptView({
     return new Map(rules.map((rule) => [rule.ruleId, rule.ruleName]));
   }, [rules]);
 
-  const feedIdToSourceUrl = useMemo(() => {
-    if (!feeds) return new Map<string, string | undefined>();
-    return new Map(feeds.map((feed) => [feed.id, feed.sourceUrl]));
-  }, [feeds]);
-
-  const feedIdToArchiveUrl = useMemo(() => {
-    if (!feeds) return new Map<string, string | undefined>();
-    return new Map(feeds.map((feed) => [feed.id, feed.archiveUrl]));
-  }, [feeds]);
-
   /**
    * Effect for handling rules errors.
    */
@@ -225,6 +215,10 @@ export function TranscriptView({
     }
     setHighlightedTransmissionId(transmissionId);
   };
+
+  const searchedFeed = feedIdToFeedMap.get(searchedFeedId);
+  const searchedFeedSourceUrl = searchedFeed?.sourceUrl;
+  const searchedFeedArchiveUrl = searchedFeed?.archiveUrl;
 
   return (
     <Box
@@ -422,52 +416,50 @@ export function TranscriptView({
         userDuration={searchedDuration}
       />
 
-      {searchedFeedId &&
-        (feedIdToSourceUrl.get(searchedFeedId) ||
-          feedIdToArchiveUrl.get(searchedFeedId)) && (
-          <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
-            {feedIdToSourceUrl.get(searchedFeedId) && (
-              <Typography
-                component="a"
-                href={feedIdToSourceUrl.get(searchedFeedId)}
-                target="_blank"
-                rel="noopener noreferrer"
-                variant="body2"
-                sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 0.5,
-                  textDecoration: 'none',
-                  color: 'primary.main',
-                  '&:hover': { textDecoration: 'underline' },
-                }}
-              >
-                <LinkIcon fontSize="small" />
-                original source link
-              </Typography>
-            )}
-            {feedIdToArchiveUrl.get(searchedFeedId) && (
-              <Typography
-                component="a"
-                href={feedIdToArchiveUrl.get(searchedFeedId)}
-                target="_blank"
-                rel="noopener noreferrer"
-                variant="body2"
-                sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 0.5,
-                  textDecoration: 'none',
-                  color: 'primary.main',
-                  '&:hover': { textDecoration: 'underline' },
-                }}
-              >
-                <InventoryIcon fontSize="small" />
-                archives
-              </Typography>
-            )}
-          </Box>
-        )}
+      {searchedFeedId && (searchedFeedSourceUrl || searchedFeedArchiveUrl) && (
+        <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
+          {searchedFeedSourceUrl && (
+            <Typography
+              component="a"
+              href={searchedFeedSourceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              variant="body2"
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 0.5,
+                textDecoration: 'none',
+                color: 'primary.main',
+                '&:hover': { textDecoration: 'underline' },
+              }}
+            >
+              <LinkIcon fontSize="small" />
+              original source link
+            </Typography>
+          )}
+          {searchedFeedArchiveUrl && (
+            <Typography
+              component="a"
+              href={searchedFeedArchiveUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              variant="body2"
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 0.5,
+                textDecoration: 'none',
+                color: 'primary.main',
+                '&:hover': { textDecoration: 'underline' },
+              }}
+            >
+              <InventoryIcon fontSize="small" />
+              archives
+            </Typography>
+          )}
+        </Box>
+      )}
 
       <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
         {transcripts.length > 0 ? (
