@@ -51,10 +51,12 @@ async def emit_quarantine_event(
         logger.error(
             "Feed quarantined",
             extra={
-                "event_type": EVENT_TYPE_FEED_QUARANTINED,
-                "feed_id": feed_id,
-                "feed_name": feed_name,
-                "source_type": source_type,
+                "json_fields": {
+                    "event_type": EVENT_TYPE_FEED_QUARANTINED,
+                    "feed_id": feed_id,
+                    "feed_name": feed_name,
+                    "source_type": source_type,
+                },
             },
         )
     except Exception:  # noqa: S110
