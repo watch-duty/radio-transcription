@@ -69,6 +69,10 @@ describe('AudioPlayer', () => {
   it('updates UI to pause when playing', () => {
     render(<AudioPlayer {...defaultProps} />);
 
+    // Click to initialize
+    const button = screen.getByLabelText('play');
+    fireEvent.click(button);
+
     // Simulate onplay event
     act(() => {
       mockCapturedOptions.onplay?.();
@@ -80,19 +84,27 @@ describe('AudioPlayer', () => {
   it('calls pause when clicked while playing', () => {
     render(<AudioPlayer {...defaultProps} />);
 
+    // Click to initialize
+    const button = screen.getByLabelText('play');
+    fireEvent.click(button);
+
     // Simulate playing state
     act(() => {
       mockCapturedOptions.onplay?.();
     });
 
-    const button = screen.getByLabelText('pause');
-    fireEvent.click(button);
+    const pauseButton = screen.getByLabelText('pause');
+    fireEvent.click(pauseButton);
 
     expect(mockHowlInstance.pause).toHaveBeenCalled();
   });
 
   it('stops audio when another transmission starts playing', () => {
     const { rerender } = render(<AudioPlayer {...defaultProps} />);
+
+    // Click to initialize
+    const button = screen.getByLabelText('play');
+    fireEvent.click(button);
 
     // Simulate playing
     act(() => {
@@ -109,6 +121,10 @@ describe('AudioPlayer', () => {
 
   it('unloads sound on unmount', () => {
     const { unmount } = render(<AudioPlayer {...defaultProps} />);
+
+    // Click to initialize
+    const button = screen.getByLabelText('play');
+    fireEvent.click(button);
 
     unmount();
 

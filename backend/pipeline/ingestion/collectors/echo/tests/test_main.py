@@ -2,28 +2,18 @@
 
 from __future__ import annotations
 
-import io
-import shutil
-import subprocess
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
-import numpy as np
 import pytest
-import soundfile as sf
 from google.api_core.exceptions import NotFound
-from scipy.io import wavfile
 
-from backend.pipeline.common.audio import convert_to_flac
 from backend.pipeline.ingestion.collectors.echo.main import (
     _handle,
     _parse_timestamp,
 )
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
-
-_FAKE_FLAC = b"fLaC" + b"\x00" * 64
-_ffmpeg_available = shutil.which("ffmpeg") is not None
 
 
 # ---------------------------------------------------------------------------
@@ -64,81 +54,6 @@ class TestParseTimestamp:
 
 
 # ---------------------------------------------------------------------------
-# convert_to_flac (shared in backend.pipeline.common.audio)
-# ---------------------------------------------------------------------------
-@pytest.mark.skipif(not _ffmpeg_available, reason="ffmpeg not available")
-class TestConvertToFlac:
-    def _make_audio_bytes(
-        self, *, sample_rate: int = 16000, duration_ms: int = 1000
-    ) -> bytes:
-        """Generate a valid silent FLAC for testing."""
-        num_samples = int(duration_ms * sample_rate / 1000)
-        audio = np.zeros(num_samples, dtype=np.int16)
-        buf = io.BytesIO()
-        sf.write(buf, audio, sample_rate, format="FLAC")
-        return buf.getvalue()
-
-    def test_converts_to_flac(self) -> None:
-        input_bytes = self._make_audio_bytes(sample_rate=16000)
-        flac_bytes = convert_to_flac(input_bytes, "flac")
-
-        assert len(flac_bytes) > 0
-        assert flac_bytes[:4] == b"fLaC"
-
-        # Convert FLAC back to WAV using ffmpeg to verify content
-        process = subprocess.run(
-            [
-                "ffmpeg",
-                "-i",
-                "pipe:0",
-                "-f",
-                "wav",
-                "pipe:1",
-            ],
-            input=flac_bytes,
-            capture_output=True,
-            check=True,
-        )
-        wav_bytes = process.stdout
-
-        buf = io.BytesIO(wav_bytes)
-        sr, data = wavfile.read(buf)
-        assert sr == 16000
-        assert len(data.shape) == 1  # Mono
-
-    def test_upsamples_from_8khz(self) -> None:
-        input_bytes = self._make_audio_bytes(sample_rate=8000)
-        flac_bytes = convert_to_flac(input_bytes, "flac")
-
-        # Convert FLAC back to WAV using ffmpeg to verify content
-        process = subprocess.run(
-            [
-                "ffmpeg",
-                "-i",
-                "pipe:0",
-                "-f",
-                "wav",
-                "pipe:1",
-            ],
-            input=flac_bytes,
-            capture_output=True,
-            check=True,
-        )
-        wav_bytes = process.stdout
-
-        buf = io.BytesIO(wav_bytes)
-        sr, data = wavfile.read(buf)
-        assert sr == 16000  # Upsampled to 16kHz!
-        assert len(data.shape) == 1  # Mono
-
-    def test_output_is_valid_flac(self) -> None:
-        input_bytes = self._make_audio_bytes(sample_rate=16000)
-        flac_bytes = convert_to_flac(input_bytes, "flac")
-        assert len(flac_bytes) > 0
-        assert flac_bytes[:4] == b"fLaC"
-
-
-# ---------------------------------------------------------------------------
 # _handle (sync handler)
 # ---------------------------------------------------------------------------
 class TestHandle:
@@ -169,10 +84,6 @@ class TestHandle:
             patch(
                 "backend.pipeline.ingestion.collectors.echo.main.get_audio_duration"
             ) as mock_get_duration,
-            patch(
-                "backend.pipeline.ingestion.collectors.echo.main.convert_to_flac",
-                return_value=b"fLaC",
-            ),
         ):
             mock_pubsub.get_publisher.return_value = mock_publisher
             mock_gcs.bucket.return_value.blob.return_value.download_as_bytes.return_value = b"mp3-placeholder"
@@ -255,7 +166,7 @@ class TestHandle:
 
         _handle(self._make_event())
 
-        # Verify FLAC uploaded
+        # Verify MP3 uploaded
         gcs = _patch_globals["gcs"]
         upload_call = (
             gcs.bucket.return_value.blob.return_value.upload_from_string
