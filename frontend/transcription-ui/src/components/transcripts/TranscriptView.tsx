@@ -11,10 +11,7 @@ import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
 import IconButton from '@mui/material/IconButton';
-import InputAdornment from '@mui/material/InputAdornment';
 import Link from '@mui/material/Link';
-import List from '@mui/material/List';
-import ListItem from '@mui/material/ListItem';
 import Paper from '@mui/material/Paper';
 import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
@@ -105,8 +102,8 @@ export function TranscriptView({
 
   // Memoizing the selected feed object derived from the feedId state.
   const selectedFeed = useMemo(() => {
-    return feedIdToFeedMap.get(feedId) || null;
-  }, [feedIdToFeedMap, feedId]);
+    return feedIdToFeedMap.get(searchedFeedId) || null;
+  }, [feedIdToFeedMap, searchedFeedId]);
 
   /**
    * Effect for handling feeds errors.
@@ -343,10 +340,6 @@ export function TranscriptView({
     setHighlightedTransmissionId(transmissionId);
   };
 
-  const searchedFeed = feedIdToFeedMap.get(searchedFeedId);
-  const searchedFeedSourceUrl = searchedFeed?.sourceUrl;
-  const searchedFeedArchiveUrl = searchedFeed?.archiveUrl;
-
   return (
     <Box
       sx={{
@@ -481,10 +474,9 @@ export function TranscriptView({
           color="primary"
           onClick={() => {
             setTimestamp(null);
-            // Remove timestamp and duration from search params to reset
+            // Remove timestamp from search params to reset
             const nextParams = new URLSearchParams(searchParams);
             nextParams.delete('timestamp');
-            nextParams.delete('duration');
             setSearchParams(nextParams);
           }}
           disabled={!timestamp}
@@ -543,7 +535,45 @@ export function TranscriptView({
       >
         {transcripts.length > 0 ? (
           <>
-            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+              {(selectedFeed?.sourceUrl || selectedFeed?.archiveUrl) ? (
+                <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
+                  {selectedFeed.sourceUrl && (
+                    <Link
+                      href={selectedFeed.sourceUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      variant="body2"
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 0.5,
+                      }}
+                    >
+                      <LinkIcon fontSize="small" />
+                      Original source link
+                    </Link>
+                  )}
+                  {selectedFeed.archiveUrl && (
+                    <Link
+                      href={selectedFeed.archiveUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      variant="body2"
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 0.5,
+                      }}
+                    >
+                      <InventoryIcon fontSize="small" />
+                      Archives
+                    </Link>
+                  )}
+                </Box>
+              ) : (
+                <Box />
+              )}
               {(!hasPreviousTranscripts || hideHeaderButton) && (
                 <Button
                   size="small"
