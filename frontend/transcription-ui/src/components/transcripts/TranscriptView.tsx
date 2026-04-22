@@ -414,7 +414,7 @@ export function TranscriptView({
           Clear
         </Button>
       </Box>
-      
+
       <AudioDisplay
         transcripts={transcripts}
         currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
