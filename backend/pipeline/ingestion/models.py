@@ -85,12 +85,20 @@ class CapturedChunk:
             stores it but never generates or interprets it. ``None`` triggers a
             fallback UUID in the runtime (transitional — all collectors should
             set this).
+        receipt_time: UTC-timezone-aware datetime stamped by the capture function
+            at the moment the upstream-source event arrived at the collector
+            (segment finalization for Icecast, WS event arrival for OpenMHZ,
+            per-call iteration for bcfy_calls). ``None`` propagates silently:
+            the downstream latency-emitting log (Phase 2) emits
+            ``processing_latency_sec: null`` when unset. Required to be
+            tz-aware UTC when set.
     """
 
     audio_bytes: bytes
     chunk_start_time: datetime.datetime
     chunk_end_time: datetime.datetime
     session_id: str | None = None
+    receipt_time: datetime.datetime | None = None
 
 
 if TYPE_CHECKING:

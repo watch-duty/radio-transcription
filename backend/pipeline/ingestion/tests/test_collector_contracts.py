@@ -6,9 +6,12 @@ registry includes it in these tests with zero extra boilerplate.
 
 from __future__ import annotations
 
+import dataclasses
+import datetime
 import inspect
 import unittest
 
+from backend.pipeline.ingestion.models import CapturedChunk
 from backend.pipeline.ingestion.router import _COLLECTORS
 
 
@@ -32,3 +35,36 @@ class TestCollectorContracts(unittest.TestCase):
                     f"{getattr(fn, '__name__', fn)} return annotation {ret!r} "
                     f"does not mention CapturedChunk",
                 )
+
+
+class TestCapturedChunkReceiptTime(unittest.TestCase):
+    """RCPT-01: CapturedChunk has optional UTC receipt_time field."""
+
+    def test_default_is_none(self) -> None:
+        now = datetime.datetime.now(datetime.UTC)
+        chunk = CapturedChunk(
+            audio_bytes=b"x",
+            chunk_start_time=now,
+            chunk_end_time=now,
+        )
+        self.assertIsNone(chunk.receipt_time)
+
+    def test_explicit_receipt_time_preserved(self) -> None:
+        now = datetime.datetime.now(datetime.UTC)
+        chunk = CapturedChunk(
+            audio_bytes=b"x",
+            chunk_start_time=now,
+            chunk_end_time=now,
+            receipt_time=now,
+        )
+        self.assertEqual(chunk.receipt_time, now)
+
+    def test_is_frozen(self) -> None:
+        now = datetime.datetime.now(datetime.UTC)
+        chunk = CapturedChunk(
+            audio_bytes=b"x",
+            chunk_start_time=now,
+            chunk_end_time=now,
+        )
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            chunk.receipt_time = now  # type: ignore[misc]
