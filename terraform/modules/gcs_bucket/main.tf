@@ -13,7 +13,7 @@ resource "google_storage_bucket" "this" {
 
   dynamic "cors" {
     for_each = var.cors
-    
+
     content {
       origin          = cors.value.origin
       method          = cors.value.method
