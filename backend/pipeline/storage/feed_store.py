@@ -169,7 +169,7 @@ class FeedStore:
         return LeasedFeed(
             id=row["id"],
             name=row["name"],
-            external_id=row["external_id"],
+            external_id=row.get("external_id"),
             source_type=source_type,
             last_processed_filename=row["last_processed_filename"],
             last_bookmark_time=row["last_bookmark_time"],
