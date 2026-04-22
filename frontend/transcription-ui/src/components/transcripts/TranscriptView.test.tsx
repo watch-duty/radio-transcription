@@ -437,6 +437,234 @@ describe('TranscriptView', () => {
     resolveTranscripts({ transcripts: [], nextToken: undefined });
   });
 
+  it('shows source url link for searched feed when sourceUrl is available', async () => {
+    const mockFeeds = [
+      {
+        id: 'feed123',
+        name: 'Feed 123',
+        sourceType: 'bcfy_feeds' as const,
+        sourceUrl: 'https://partner.broadcastify.com/12345',
+      },
+    ];
+    vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
+    vi.mocked(listTranscripts).mockResolvedValueOnce({
+      transcripts: [],
+      nextToken: undefined,
+    });
+
+    renderWithQueryClient(
+      <MemoryRouter initialEntries={['/?feedId=feed123']}>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      const link = screen.getByText(/original source link/i);
+      expect(link).toBeTruthy();
+      expect(link.getAttribute('href')).toBe(
+        'https://partner.broadcastify.com/12345'
+      );
+    });
+  });
+
+  it('shows archive url link for searched feed when archiveUrl is available', async () => {
+    const mockFeeds = [
+      {
+        id: 'feed123',
+        name: 'Feed 123',
+        sourceType: 'bcfy_feeds' as const,
+        archiveUrl: 'https://www.broadcastify.com/archives/feed/12345',
+      },
+    ];
+    vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
+    vi.mocked(listTranscripts).mockResolvedValueOnce({
+      transcripts: [],
+      nextToken: undefined,
+    });
+
+    renderWithQueryClient(
+      <MemoryRouter initialEntries={['/?feedId=feed123']}>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      const link = screen.getByText(/archives/i);
+      expect(link).toBeTruthy();
+      expect(link.getAttribute('href')).toBe(
+        'https://www.broadcastify.com/archives/feed/12345'
+      );
+    });
+  });
+
+  it('shows both source url and archive url links when feed has both', async () => {
+    const mockFeeds = [
+      {
+        id: 'feed123',
+        name: 'Feed 123',
+        sourceType: 'bcfy_feeds' as const,
+        sourceUrl: 'https://partner.broadcastify.com/12345',
+        archiveUrl: 'https://www.broadcastify.com/archives/feed/12345',
+      },
+    ];
+    vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
+    vi.mocked(listTranscripts).mockResolvedValueOnce({
+      transcripts: [],
+      nextToken: undefined,
+    });
+
+    renderWithQueryClient(
+      <MemoryRouter initialEntries={['/?feedId=feed123']}>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/original source link/i)).toBeTruthy();
+      expect(screen.getByText(/archives/i)).toBeTruthy();
+    });
+  });
+
+  it('does not show source or archive url links when feed has neither', async () => {
+    const mockFeeds = [
+      {
+        id: 'feed123',
+        name: 'Feed 123',
+        sourceType: 'echo' as const,
+      },
+    ];
+    vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
+    vi.mocked(listTranscripts).mockResolvedValueOnce({
+      transcripts: [],
+      nextToken: undefined,
+    });
+
+    renderWithQueryClient(
+      <MemoryRouter initialEntries={['/?feedId=feed123']}>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('No transcripts found.')).toBeTruthy();
+    });
+
+    expect(screen.queryByText(/original source link/i)).toBeNull();
+    expect(screen.queryByText(/archives/i)).toBeNull();
+  });
+
+  it('does not show source or archive url links before a search is performed', async () => {
+    const mockFeeds = [
+      {
+        id: 'feed123',
+        name: 'Feed 123',
+        sourceType: 'bcfy_feeds' as const,
+        sourceUrl: 'https://partner.broadcastify.com/12345',
+        archiveUrl: 'https://www.broadcastify.com/archives/feed/12345',
+      },
+    ];
+    vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
+
+    renderWithQueryClient(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(listFeeds).toHaveBeenCalledTimes(1);
+    });
+
+    expect(screen.queryByText(/original source link/i)).toBeNull();
+    expect(screen.queryByText(/archives/i)).toBeNull();
+  });
+
+  it('does not show url links when searched feed id does not match any known feed', async () => {
+    const mockFeeds = [
+      {
+        id: 'other-feed',
+        name: 'Other Feed',
+        sourceType: 'bcfy_feeds' as const,
+        sourceUrl: 'https://partner.broadcastify.com/99999',
+        archiveUrl: 'https://www.broadcastify.com/archives/feed/99999',
+      },
+    ];
+    vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
+    vi.mocked(listTranscripts).mockResolvedValueOnce({
+      transcripts: [],
+      nextToken: undefined,
+    });
+
+    renderWithQueryClient(
+      <MemoryRouter initialEntries={['/?feedId=unknown-feed']}>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('No transcripts found.')).toBeTruthy();
+    });
+
+    expect(screen.queryByText(/original source link/i)).toBeNull();
+    expect(screen.queryByText(/archives/i)).toBeNull();
+  });
+
+  it('source url link opens in a new tab', async () => {
+    const mockFeeds = [
+      {
+        id: 'feed123',
+        name: 'Feed 123',
+        sourceType: 'bcfy_feeds' as const,
+        sourceUrl: 'https://partner.broadcastify.com/12345',
+      },
+    ];
+    vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
+    vi.mocked(listTranscripts).mockResolvedValueOnce({
+      transcripts: [],
+      nextToken: undefined,
+    });
+
+    renderWithQueryClient(
+      <MemoryRouter initialEntries={['/?feedId=feed123']}>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      const link = screen.getByText(/original source link/i);
+      expect(link.getAttribute('target')).toBe('_blank');
+      expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+    });
+  });
+
+  it('archive url link opens in a new tab', async () => {
+    const mockFeeds = [
+      {
+        id: 'feed123',
+        name: 'Feed 123',
+        sourceType: 'bcfy_feeds' as const,
+        archiveUrl: 'https://www.broadcastify.com/archives/feed/12345',
+      },
+    ];
+    vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
+    vi.mocked(listTranscripts).mockResolvedValueOnce({
+      transcripts: [],
+      nextToken: undefined,
+    });
+
+    renderWithQueryClient(
+      <MemoryRouter initialEntries={['/?feedId=feed123']}>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      const link = screen.getByText(/archives/i);
+      expect(link.getAttribute('target')).toBe('_blank');
+      expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+    });
+  });
+
   it('scrolls to highlighted transcript when transmissionId is in search params', async () => {
     const mockScrollIntoView = vi.fn();
     window.HTMLElement.prototype.scrollIntoView = mockScrollIntoView;

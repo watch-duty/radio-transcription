@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 
+import InventoryIcon from '@mui/icons-material/Inventory';
 import LinkIcon from '@mui/icons-material/Link';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import type { AlertProps } from '@mui/material/Alert';
@@ -10,6 +11,7 @@ import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
 import IconButton from '@mui/material/IconButton';
 import InputAdornment from '@mui/material/InputAdornment';
+import Link from '@mui/material/Link';
 import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
 import Paper from '@mui/material/Paper';
@@ -215,6 +217,10 @@ export function TranscriptView({
     setHighlightedTransmissionId(transmissionId);
   };
 
+  const searchedFeed = feedIdToFeedMap.get(searchedFeedId);
+  const searchedFeedSourceUrl = searchedFeed?.sourceUrl;
+  const searchedFeedArchiveUrl = searchedFeed?.archiveUrl;
+
   return (
     <Box
       sx={{
@@ -410,6 +416,43 @@ export function TranscriptView({
         onClipClick={handleClipClick}
         userDuration={searchedDuration}
       />
+
+      {searchedFeedId && (searchedFeedSourceUrl || searchedFeedArchiveUrl) && (
+        <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
+          {searchedFeedSourceUrl && (
+            <Link
+              href={searchedFeedSourceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              variant="body2"
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 0.5,
+              }}
+            >
+              <LinkIcon fontSize="small" />
+              Original source link
+            </Link>
+          )}
+          {searchedFeedArchiveUrl && (
+            <Link
+              href={searchedFeedArchiveUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              variant="body2"
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 0.5,
+              }}
+            >
+              <InventoryIcon fontSize="small" />
+              Archives
+            </Link>
+          )}
+        </Box>
+      )}
 
       <Box
         sx={{
