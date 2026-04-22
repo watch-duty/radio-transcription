@@ -342,9 +342,9 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         self._run_handler(self._make_cloud_event(name))
 
         # Verify MP3 still valid
-        mp3_path = f"echo/{feed_id}/20260326/idempotent_20260326_143022.mp3"
-        downloaded_bytes = self._download_staged(mp3_path)
-        self.assertEqual(downloaded_bytes, _make_mp3_bytes())
+        flac_path = f"echo/{feed_id}/20260326/idempotent_20260326_143022.flac"
+        downloaded_bytes = self._download_staged(flac_path)
+        self.assertEqual(downloaded_bytes, b"fLaC")
 
         # Both invocations publish — second upload skipped via
         # if_generation_match=0 but we always proceed to publish.

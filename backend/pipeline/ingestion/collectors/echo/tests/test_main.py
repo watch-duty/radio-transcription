@@ -169,6 +169,10 @@ class TestHandle:
             patch(
                 "backend.pipeline.ingestion.collectors.echo.main.get_audio_duration"
             ) as mock_get_duration,
+            patch(
+                "backend.pipeline.ingestion.collectors.echo.main.convert_to_flac",
+                return_value=b"fLaC",
+            ),
         ):
             mock_pubsub.get_publisher.return_value = mock_publisher
             mock_gcs.bucket.return_value.blob.return_value.download_as_bytes.return_value = b"mp3-placeholder"
