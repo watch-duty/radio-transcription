@@ -324,9 +324,7 @@ class TestOpenmhzCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(len(emits), 1)
         rec = emits[0]
-        self.assertEqual(
-            rec.json_fields["event_type"], "call_download_failed"
-        )
+        self.assertEqual(rec.json_fields["event_type"], "call_download_failed")
         self.assertEqual(rec.json_fields["feed_id"], str(_TEST_FEED["id"]))
         self.assertEqual(
             rec.json_fields["source_type"], _TEST_FEED["source_type"]

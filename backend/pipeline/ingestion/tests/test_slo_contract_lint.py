@@ -146,9 +146,7 @@ class TestEmitMarkerCount(unittest.TestCase):
         icecast_dir = _COLLECTORS_DIR / "icecast"
         if not icecast_dir.exists():
             self.skipTest(f"{icecast_dir} absent")
-        count, _ = self._count_matches(
-            _CALL_DL_FAILED_EMIT_RE, icecast_dir
-        )
+        count, _ = self._count_matches(_CALL_DL_FAILED_EMIT_RE, icecast_dir)
         self.assertEqual(
             count,
             0,
