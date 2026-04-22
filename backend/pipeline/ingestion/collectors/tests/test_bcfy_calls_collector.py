@@ -1159,9 +1159,7 @@ class TestCaptureBcfyCallsReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
         mock_datetime.UTC = datetime.UTC
         mock_datetime.datetime.fromtimestamp = datetime.datetime.fromtimestamp
         mock_fetch.return_value = {
-            "calls": [
-                {"url": "http://a.mp3", "start_ts": 1000, "end_ts": 2000}
-            ]
+            "calls": [{"url": "http://a.mp3", "start_ts": 1000, "end_ts": 2000}]
         }
         mock_download.return_value = b"flac"
 
