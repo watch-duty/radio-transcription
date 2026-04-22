@@ -89,7 +89,7 @@ class TestConvertToFlac:
             f.write(flac_bytes)
             temp_path = f.name
         try:
-            data, sr = sf.read(temp_path)
+            data, sr = sf.read(temp_path, frames=16000)
             assert sr == 16000
             assert len(data.shape) == 1  # Mono
         finally:
@@ -103,7 +103,7 @@ class TestConvertToFlac:
             f.write(flac_bytes)
             temp_path = f.name
         try:
-            data, sr = sf.read(temp_path)
+            data, sr = sf.read(temp_path, frames=16000)
             assert sr == 16000  # Upsampled to 16kHz!
             assert len(data.shape) == 1  # Mono
         finally:
