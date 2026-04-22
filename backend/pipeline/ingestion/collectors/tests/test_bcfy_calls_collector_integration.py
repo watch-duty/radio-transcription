@@ -407,11 +407,15 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """Feed without source_feed_id -> ValueError, no GCS/DB writes."""
-        await self._insert_feed("no-id-feed", source_feed_id=None)
+        # Insert a valid feed
+        feed_id = await self._insert_feed("no-id-feed")
         feed = await self.store.lease_feed(self.worker_id)
         if feed is None:
             msg = "Expected a LeasedFeed, got None"
             raise AssertionError(msg)
+
+        # Mock missing source_feed_id on the loaded feed object
+        feed["source_feed_id"] = None
 
         shutdown = asyncio.Event()
         with self.assertRaises(ValueError, msg="missing source_feed_id"):
@@ -420,7 +424,7 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             ):
                 pass
 
-        row = await self._get_feed_row(feed["id"])
+        row = await self._get_feed_row(feed_id)
         self.assertEqual(row["status"], "active")
         self.assertIsNone(row["last_processed_filename"])
 

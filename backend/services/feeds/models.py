@@ -24,7 +24,7 @@ class FeedCreate(FeedBase):
 
 class Feed(FeedBase):
     id: uuid.UUID
-    source_feed_id: str | None = None
-    external_id: str | None = None
+    source_feed_id: str
+    external_id: str
 
     model_config = ConfigDict(from_attributes=True)
