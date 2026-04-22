@@ -1,0 +1,259 @@
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import type { Transcript } from '@transcription/common';
+
+import { AudioDisplay } from './AudioDisplay';
+
+vi.mock('@wavesurfer/react', () => ({
+  default: () => <div data-testid="wavesurfer-player" />,
+}));
+
+describe('AudioDisplay', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('should render empty state when no transcripts', () => {
+    render(
+      <AudioDisplay transcripts={[]} currentlyPlayingTransmissionId={null} />
+    );
+    expect(screen.getByText('No transcripts loaded')).toBeTruthy();
+  });
+
+  it('should render transcripts when provided', () => {
+    const mockTranscripts: Transcript[] = [
+      {
+        transmissionId: '1',
+        feedId: 'feed1',
+        startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
+        endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
+        transcript: 'Test 1',
+        canonicalAudioUri: 'audio1.flac',
+        evaluationDecisions: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+        startAudioOffset: '0',
+        endAudioOffset: '0',
+      },
+    ];
+
+    const { container } = render(
+      <AudioDisplay
+        transcripts={mockTranscripts}
+        currentlyPlayingTransmissionId={null}
+      />
+    );
+
+    expect(screen.queryByText('No transcripts loaded')).toBeNull();
+
+    const paper = container.querySelector('.MuiPaper-root');
+    expect(paper).toBeTruthy();
+    expect(paper?.childNodes.length).toBeGreaterThan(0);
+  });
+
+  it('should render warning icon when transcript has evaluation decisions', () => {
+    const mockTranscripts: Transcript[] = [
+      {
+        transmissionId: '1',
+        feedId: 'feed1',
+        startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
+        endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
+        transcript: 'Test 1',
+        canonicalAudioUri: 'audio1.flac',
+        evaluationDecisions: ['rule1'],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+        startAudioOffset: '0',
+        endAudioOffset: '0',
+      },
+    ];
+
+    render(
+      <AudioDisplay
+        transcripts={mockTranscripts}
+        currentlyPlayingTransmissionId={null}
+      />
+    );
+
+    expect(screen.getByTestId('warning-icon')).toBeTruthy();
+  });
+
+  it('should shift window when playing transmission is outside window', async () => {
+    const mockTranscripts: Transcript[] = [
+      {
+        transmissionId: '1',
+        feedId: 'feed1',
+        startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
+        endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
+        transcript: 'Test 1',
+        canonicalAudioUri: 'audio1.flac',
+        evaluationDecisions: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+        startAudioOffset: '0',
+        endAudioOffset: '0',
+      },
+      {
+        transmissionId: '2',
+        feedId: 'feed1',
+        startTimestamp: new Date('2026-04-20T08:40:00Z').toISOString(),
+        endTimestamp: new Date('2026-04-20T08:40:05Z').toISOString(),
+        transcript: 'Test 2',
+        canonicalAudioUri: 'audio2.flac',
+        evaluationDecisions: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+        startAudioOffset: '0',
+        endAudioOffset: '0',
+      },
+    ];
+
+    const { rerender } = render(
+      <AudioDisplay
+        transcripts={mockTranscripts}
+        currentlyPlayingTransmissionId={null}
+      />
+    );
+
+    const labelsBefore = screen
+      .getAllByText(/\d{2}:\d{2}/)
+      .map((el) => el.textContent);
+
+    rerender(
+      <AudioDisplay
+        transcripts={mockTranscripts}
+        currentlyPlayingTransmissionId="2"
+      />
+    );
+
+    await waitFor(() => {
+      const labelsAfter = screen
+        .getAllByText(/\d{2}:\d{2}/)
+        .map((el) => el.textContent);
+      expect(labelsAfter).not.toEqual(labelsBefore);
+    });
+  });
+
+  it('should reset window when transcripts[0] changes', async () => {
+    const mockTranscripts1: Transcript[] = [
+      {
+        transmissionId: '1',
+        feedId: 'feed1',
+        startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
+        endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
+        transcript: 'Test 1',
+        canonicalAudioUri: 'audio1.flac',
+        evaluationDecisions: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+        startAudioOffset: '0',
+        endAudioOffset: '0',
+      },
+    ];
+
+    const mockTranscripts2: Transcript[] = [
+      {
+        transmissionId: '2',
+        feedId: 'feed2',
+        startTimestamp: new Date('2026-04-20T10:00:00Z').toISOString(),
+        endTimestamp: new Date('2026-04-20T10:00:05Z').toISOString(),
+        transcript: 'Test 2',
+        canonicalAudioUri: 'audio2.flac',
+        evaluationDecisions: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+        startAudioOffset: '0',
+        endAudioOffset: '0',
+      },
+    ];
+
+    const { rerender } = render(
+      <AudioDisplay
+        transcripts={mockTranscripts1}
+        currentlyPlayingTransmissionId={null}
+      />
+    );
+
+    const labelsBefore = screen
+      .getAllByText(/\d{2}:\d{2}/)
+      .map((el) => el.textContent);
+
+    rerender(
+      <AudioDisplay
+        transcripts={mockTranscripts2}
+        currentlyPlayingTransmissionId={null}
+      />
+    );
+
+    await waitFor(() => {
+      const labelsAfter = screen
+        .getAllByText(/\d{2}:\d{2}/)
+        .map((el) => el.textContent);
+      expect(labelsAfter).not.toEqual(labelsBefore);
+    });
+  });
+  it('should adjust window duration based on userDuration capped at 15 minutes', async () => {
+    const mockTranscripts: Transcript[] = [
+      {
+        transmissionId: '1',
+        feedId: 'feed1',
+        startTimestamp: new Date('2026-04-20T09:15:00Z').toISOString(),
+        endTimestamp: new Date('2026-04-20T09:15:00Z').toISOString(),
+        transcript: 'Test 1',
+        canonicalAudioUri: 'audio1.flac',
+        evaluationDecisions: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+        startAudioOffset: '0',
+        endAudioOffset: '0',
+      },
+    ];
+
+    const { rerender } = render(
+      <AudioDisplay
+        transcripts={mockTranscripts}
+        currentlyPlayingTransmissionId={null}
+        userDuration="5"
+      />
+    );
+
+    const labels5 = screen
+      .getAllByText(/\d{2}:\d{2}/)
+      .map((el) => el.textContent || '');
+    expect(labels5.length).toBe(4);
+    const [h0, m0] = labels5[0].split(':').map(Number);
+    const [h3, m3] = labels5[3].split(':').map(Number);
+    let diff5 = h3 * 60 + m3 - (h0 * 60 + m0);
+    if (diff5 < 0) diff5 += 24 * 60;
+    expect(diff5).toBe(10);
+
+    rerender(
+      <AudioDisplay
+        transcripts={mockTranscripts}
+        currentlyPlayingTransmissionId={null}
+        userDuration="30"
+      />
+    );
+
+    await waitFor(() => {
+      const labels30 = screen
+        .getAllByText(/\d{2}:\d{2}/)
+        .map((el) => el.textContent || '');
+      expect(labels30.length).toBe(4);
+      const [h0_30, m0_30] = labels30[0].split(':').map(Number);
+      const [h3_30, m3_30] = labels30[3].split(':').map(Number);
+      let diff30 = h3_30 * 60 + m3_30 - (h0_30 * 60 + m0_30);
+      if (diff30 < 0) diff30 += 24 * 60;
+      expect(diff30).toBe(15);
+    });
+  });
+});

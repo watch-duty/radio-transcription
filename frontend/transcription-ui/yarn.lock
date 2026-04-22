@@ -2150,6 +2150,11 @@
     convert-source-map "^2.0.0"
     tinyrainbow "^3.1.0"
 
+"@wavesurfer/react@^1.0.12":
+  version "1.0.12"
+  resolved "https://registry.yarnpkg.com/@wavesurfer/react/-/react-1.0.12.tgz#a93ea1cf52e7e645184c5ee68cb269939a3752e4"
+  integrity sha512-BNHpz2ryKNVvJdxB47pCPUsNCsjb2pZRysg82M5djIiw0vsiSJwdlt5jaAfDo3vd5IWrcoK9OiPQKO9ZEVNpDQ==
+
 acorn-jsx@^5.3.2:
   version "5.3.2"
   resolved "https://registry.npmjs.org/acorn-jsx/-/acorn-jsx-5.3.2.tgz"
@@ -5284,6 +5289,11 @@ w3c-xmlserializer@^5.0.0:
   integrity sha512-o8qghlI8NZHU1lLPrpi2+Uq7abh4GGPpYANlalzWxyWteJOCsr/P+oPBA49TOLu5FTZO4d3F9MnWJfiMo4BkmA==
   dependencies:
     xml-name-validator "^5.0.0"
+
+wavesurfer.js@^7.12.6:
+  version "7.12.6"
+  resolved "https://registry.yarnpkg.com/wavesurfer.js/-/wavesurfer.js-7.12.6.tgz#745ad21bf51ca005e523093118eb01feb61cfb1f"
+  integrity sha512-zSxPgOFprtyJ31ppHQF0+E9jAmjAhi1rR36yIW6h1GOYdpRxDe6mbkYtlChqLK0Iz8ROBweiEFw2zus7tDFibA==
 
 web-streams-polyfill@^3.0.3:
   version "3.3.3"
