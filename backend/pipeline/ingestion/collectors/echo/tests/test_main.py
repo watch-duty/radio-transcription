@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import io
 import shutil
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
+import soundfile as sf
 from google.api_core.exceptions import NotFound
 
 from backend.pipeline.common.audio import convert_to_flac
@@ -63,43 +66,40 @@ class TestParseTimestamp:
 # ---------------------------------------------------------------------------
 @pytest.mark.skipif(not _ffmpeg_available, reason="ffmpeg not available")
 class TestConvertToFlac:
-    def _make_mp3_bytes(
-        self, *, sample_rate: int = 8000, duration_ms: int = 1000
+    def _make_audio_bytes(
+        self, *, sample_rate: int = 16000, duration_ms: int = 1000
     ) -> bytes:
-        """Generate a minimal MP3 for testing."""
-        return b"dummy mp3 audio"
+        """Generate a valid silent FLAC for testing."""
+        num_samples = int(duration_ms * sample_rate / 1000)
+        audio = np.zeros(num_samples, dtype=np.int16)
+        buf = io.BytesIO()
+        sf.write(buf, audio, sample_rate, format="FLAC")
+        return buf.getvalue()
 
-    @patch("backend.pipeline.common.audio.subprocess.run")
-    def test_converts_to_flac(self, mock_run: MagicMock) -> None:
-        mock_process = MagicMock()
-        mock_process.returncode = 0
-        mock_process.stdout = b"fLaC"
-        mock_run.return_value = mock_process
+    def test_converts_to_flac(self) -> None:
+        input_bytes = self._make_audio_bytes(sample_rate=16000)
+        flac_bytes = convert_to_flac(input_bytes, "flac")
 
-        mp3_bytes = self._make_mp3_bytes()
-        flac_bytes = convert_to_flac(mp3_bytes, "mp3")
-        assert flac_bytes == b"fLaC"
+        assert len(flac_bytes) > 0
+        assert flac_bytes[:4] == b"fLaC"
 
-    @patch("backend.pipeline.common.audio.subprocess.run")
-    def test_upsamples_from_8khz(self, mock_run: MagicMock) -> None:
-        mock_process = MagicMock()
-        mock_process.returncode = 0
-        mock_process.stdout = b"fLaC"
-        mock_run.return_value = mock_process
+        buf = io.BytesIO(flac_bytes)
+        data, sr = sf.read(buf)
+        assert sr == 16000
+        assert len(data.shape) == 1  # Mono
 
-        mp3_bytes = self._make_mp3_bytes(sample_rate=8000)
-        flac_bytes = convert_to_flac(mp3_bytes, "mp3")
-        assert flac_bytes == b"fLaC"
+    def test_upsamples_from_8khz(self) -> None:
+        input_bytes = self._make_audio_bytes(sample_rate=8000)
+        flac_bytes = convert_to_flac(input_bytes, "flac")
 
-    @patch("backend.pipeline.common.audio.subprocess.run")
-    def test_output_is_valid_flac(self, mock_run: MagicMock) -> None:
-        mock_process = MagicMock()
-        mock_process.returncode = 0
-        mock_process.stdout = b"fLaC"
-        mock_run.return_value = mock_process
+        buf = io.BytesIO(flac_bytes)
+        data, sr = sf.read(buf)
+        assert sr == 16000  # Upsampled to 16kHz!
+        assert len(data.shape) == 1  # Mono
 
-        mp3_bytes = self._make_mp3_bytes()
-        flac_bytes = convert_to_flac(mp3_bytes, "mp3")
+    def test_output_is_valid_flac(self) -> None:
+        input_bytes = self._make_audio_bytes(sample_rate=16000)
+        flac_bytes = convert_to_flac(input_bytes, "flac")
         assert len(flac_bytes) > 0
         assert flac_bytes[:4] == b"fLaC"
 
