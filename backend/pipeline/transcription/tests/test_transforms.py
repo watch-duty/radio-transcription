@@ -17,7 +17,6 @@ from apache_beam.testing.util import assert_that, equal_to
 from apache_beam.transforms.window import TimestampedValue
 
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
-from backend.pipeline.schema_types.transcribed_audio_pb2 import TranscribedAudio
 from backend.pipeline.transcription.constants import DEAD_LETTER_QUEUE_TAG
 from backend.pipeline.transcription.datatypes import (
     AudioChunkData,
@@ -1081,6 +1080,9 @@ class SerializeAndEnrichTest(unittest.TestCase):
             )
 
             def assert_results(msgs):
+                from backend.pipeline.schema_types.transcribed_audio_pb2 import (  # noqa: PLC0415
+                    TranscribedAudio,
+                )
 
                 assert len(msgs) == 1
                 msg = msgs[0]
