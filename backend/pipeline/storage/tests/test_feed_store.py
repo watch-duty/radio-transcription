@@ -401,6 +401,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
             {
                 "id": _FEED_ID,
                 "name": "Feed A",
+                "external_id": "ext-id",
                 "source_type": "bcfy_feeds",
                 "last_processed_filename": None,
                 "last_bookmark_time": None,
@@ -410,6 +411,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
             {
                 "id": _FEED_ID_B,
                 "name": "Feed B",
+                "external_id": "ext-id",
                 "source_type": "bcfy_feeds",
                 "last_processed_filename": "gs://bucket/path",
                 "last_bookmark_time": None,
