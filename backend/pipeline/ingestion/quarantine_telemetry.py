@@ -13,10 +13,12 @@ from __future__ import annotations
 import logging
 
 from backend.pipeline.common.clients.monitoring_client import MonitoringClient
+from backend.pipeline.ingestion.slo_contract import (
+    EVENT_TYPE_FEED_QUARANTINED,
+    METRIC_TYPE_QUARANTINE_EVENTS,
+)
 
 logger = logging.getLogger(__name__)
-
-_METRIC_TYPE = "custom.googleapis.com/feeds/quarantine_events"
 
 _client: MonitoringClient | None = None
 
@@ -49,7 +51,7 @@ async def emit_quarantine_event(
         logger.error(
             "Feed quarantined",
             extra={
-                "event_type": "feed_quarantined",
+                "event_type": EVENT_TYPE_FEED_QUARANTINED,
                 "feed_id": feed_id,
                 "feed_name": feed_name,
                 "source_type": source_type,
@@ -63,7 +65,7 @@ async def emit_quarantine_event(
 
     try:
         await _client.write_time_series(
-            metric_type=_METRIC_TYPE,
+            metric_type=METRIC_TYPE_QUARANTINE_EVENTS,
             labels={
                 "feed_id": feed_id,
                 "feed_name": feed_name,
