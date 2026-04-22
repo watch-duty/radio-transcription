@@ -225,6 +225,53 @@ class TestTerraformSnapshotMatchesSloContract(unittest.TestCase):
             slo_contract.METRIC_LABEL_ALLOWLIST,
         )
 
+    def test_monitored_resource_type_matches(self) -> None:
+        self.assertEqual(
+            self.snapshot["monitored_resource_type"],
+            slo_contract.MONITORED_RESOURCE_TYPE,
+        )
+
+    def test_snapshot_is_not_stale(self) -> None:
+        """D-27: source_commit date triggers warn at 60 days, fail at 90 days.
+
+        Accepts both the canonical ISO-dashed format
+        (HAND_EXTRACTED_YYYY-MM-DD) and the legacy underscore format
+        (HAND_EXTRACTED_YYYY_MM_DD) via .replace("_", "-") on the date
+        portion. Failure message points to scripts/README.md for the
+        refresh procedure (authored in plan 04-03).
+        """
+        tag = self.snapshot["source_commit"]
+        if not tag.startswith(_SOURCE_COMMIT_PREFIX):
+            self.fail(
+                f"source_commit must start with "
+                f"{_SOURCE_COMMIT_PREFIX!r}: {tag!r}"
+            )
+        # Tolerate legacy underscore-dated format by normalising to ISO.
+        date_str = tag[len(_SOURCE_COMMIT_PREFIX) :].replace("_", "-")
+        try:
+            snapshot_date = datetime.strptime(date_str, "%Y-%m-%d").replace(
+                tzinfo=UTC
+            )
+        except ValueError:
+            self.fail(
+                f"source_commit date unparseable: {date_str!r} — "
+                f"expected 'HAND_EXTRACTED_YYYY-MM-DD'"
+            )
+        age_days = (datetime.now(UTC) - snapshot_date).days
+        if age_days > _STALENESS_FAIL_DAYS:
+            self.fail(
+                f"Snapshot is {age_days} days old "
+                f"(>{_STALENESS_FAIL_DAYS}) — refresh from ops-team "
+                f"Terraform repo and update source_commit. "
+                f"See scripts/README.md."
+            )
+        if age_days > _STALENESS_WARN_DAYS:
+            logging.getLogger(__name__).warning(
+                "Snapshot is %d days old (>%d) — refresh recommended soon",
+                age_days,
+                _STALENESS_WARN_DAYS,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
