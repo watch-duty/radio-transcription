@@ -77,12 +77,12 @@ services:
   rules-management:
     build:
       context: .
-      dockerfile: backend/pipeline/rules/Dockerfile
+      dockerfile: backend/services/rules/Dockerfile
     ports:
       - "8086:8086"
     env_file:
       - ./local_dev/LOCAL.env
-    command: ["uvicorn", "backend.pipeline.rules.main:app", "--host", "0.0.0.0", "--port", "8086"]
+    command: ["uvicorn", "backend.services.rules.main:app", "--host", "0.0.0.0", "--port", "8086"]
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8086))"]
       interval: 5s
