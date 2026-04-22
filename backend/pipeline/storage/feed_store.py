@@ -499,8 +499,8 @@ class FeedStore:
         """Reset a feed to active status with zero failure count.
 
         Sets ``status = 'active'`` and ``failure_count = 0`` for the given
-        feed. Fetches and returns the updated feed, or ``None`` if no feed
-        with that ID exists.
+        feed and returns the updated feed, or ``None`` if no feed with that
+        ID exists.
 
         Args:
             feed_id: UUID of the feed to reset.
@@ -512,4 +512,4 @@ class FeedStore:
         row = await self._pool.fetchrow(RESET_FEED_SQL, feed_id)
         if row is None:
             return None
-        return await self.get_feed(feed_id)
+        return self._row_to_feed(row)

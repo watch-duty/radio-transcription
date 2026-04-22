@@ -179,9 +179,15 @@ WHERE id = $1
 """
 
 RESET_FEED_SQL = """\
-UPDATE feeds
-SET status = 'active'::feed_status,
-    failure_count = 0
-WHERE id = $1
-RETURNING id
+WITH updated AS (
+    UPDATE feeds
+    SET status = 'active'::feed_status,
+        failure_count = 0
+    WHERE id = $1
+    RETURNING id, name, source_type, status, failure_count, worker_id,
+              last_heartbeat, last_processed_filename, last_bookmark_time, created_at
+)
+SELECT u.*, fp.source_feed_id, fp.external_id
+FROM updated u
+JOIN feed_properties fp ON fp.feed_id = u.id
 """
