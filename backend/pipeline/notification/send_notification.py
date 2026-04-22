@@ -85,6 +85,7 @@ def convert_to_notification(
         playback_audio_uri=evaluated_transcribed_audio.playback_audio_uri,
         feed_name=evaluated_transcribed_audio.feed_name,
         app_url=app_url,
+        external_id=evaluated_transcribed_audio.external_id,
     )
     if evaluated_transcribed_audio.start_timestamp.seconds:
         notification.start_timestamp.CopyFrom(

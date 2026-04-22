@@ -203,6 +203,7 @@ def publish_audio_chunk_sync(
     topic_path: str,
     feed_id: str,
     feed_name: str,
+    external_id: str,
     gcs_uri: str,
     session_id: str,
     start_timestamp: datetime.datetime,
@@ -218,6 +219,7 @@ def publish_audio_chunk_sync(
     audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
     audio_chunk_msg.session_id = session_id
     audio_chunk_msg.feed_name = feed_name
+    audio_chunk_msg.external_id = external_id
     audio_chunk_msg.duration_ms = duration_ms
 
     attrs: dict[str, str] = {
@@ -242,6 +244,7 @@ async def publish_audio_chunk(
     topic_path: str,
     feed_id: str,
     feed_name: str,
+    external_id: str,
     gcs_uri: str,
     session_id: str,
     start_timestamp: datetime.datetime,
@@ -258,6 +261,7 @@ async def publish_audio_chunk(
     audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
     audio_chunk_msg.session_id = session_id
     audio_chunk_msg.feed_name = feed_name
+    audio_chunk_msg.external_id = external_id
     audio_chunk_msg.duration_ms = duration_ms
 
     attrs: dict[str, str] = {

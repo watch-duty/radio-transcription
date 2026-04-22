@@ -20,6 +20,7 @@ _WORKER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _LEASE_ROW = {
     "id": _FEED_ID,
     "name": "My Feed",
+    "external_id": "ext-id",
     "source_type": "bcfy_feeds",
     "last_processed_filename": None,
     "last_bookmark_time": None,
@@ -55,6 +56,7 @@ class TestLeaseFeed(unittest.IsolatedAsyncioTestCase):
         expected: LeasedFeed = {
             "id": _FEED_ID,
             "name": "My Feed",
+            "external_id": "ext-id",
             "source_type": SourceType.BCFY_FEEDS,
             "last_processed_filename": None,
             "last_bookmark_time": None,
@@ -399,6 +401,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
             {
                 "id": _FEED_ID,
                 "name": "Feed A",
+                "external_id": "ext-id",
                 "source_type": "bcfy_feeds",
                 "last_processed_filename": None,
                 "last_bookmark_time": None,
@@ -408,6 +411,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
             {
                 "id": _FEED_ID_B,
                 "name": "Feed B",
+                "external_id": "ext-id",
                 "source_type": "bcfy_feeds",
                 "last_processed_filename": "gs://bucket/path",
                 "last_bookmark_time": None,

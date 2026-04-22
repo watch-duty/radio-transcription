@@ -32,7 +32,7 @@ leased AS (
 )
 SELECT leased.id, leased.name, leased.source_type,
        leased.last_processed_filename, leased.last_bookmark_time,
-       leased.fencing_token, fpi.source_feed_id
+       leased.fencing_token, fpi.source_feed_id, fpi.external_id
 FROM leased
 JOIN feed_properties fpi ON fpi.feed_id = leased.id
 """
@@ -115,7 +115,7 @@ leased AS (
 )
 SELECT leased.id, leased.name, leased.source_type,
        leased.last_processed_filename, leased.last_bookmark_time,
-       leased.fencing_token, fpi.source_feed_id
+       leased.fencing_token, fpi.source_feed_id, fpi.external_id
 FROM leased
 JOIN feed_properties fpi ON fpi.feed_id = leased.id
 """

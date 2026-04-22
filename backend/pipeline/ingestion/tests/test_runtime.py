@@ -38,6 +38,7 @@ def _make_captured_chunk(audio_bytes: bytes) -> CapturedChunk:
 _FEED = LeasedFeed(
     id=_FEED_ID,
     name="Test Feed",
+    external_id="ext-id",
     source_type=SourceType.BCFY_FEEDS,
     last_processed_filename=None,
     last_bookmark_time=None,
@@ -343,13 +344,14 @@ class TestProcessFeedTimestamps(unittest.IsolatedAsyncioTestCase):
             mock_publish.assert_called_once()
             _, args, kwargs = mock_publish.mock_calls[0]
 
-            self.assertEqual(len(args), 5)
+            self.assertEqual(len(args), 6)
             self.assertEqual(
                 args[1], rt._normalizer_settings.continuous_pubsub_topic_path
             )
             self.assertEqual(args[2], str(_FEED["id"]))
             self.assertEqual(args[3], "Test Feed")
-            self.assertTrue(args[4].startswith("gs://"))
+            self.assertEqual(args[4], "ext-id")
+            self.assertTrue(args[5].startswith("gs://"))
 
             self.assertIn("start_timestamp", kwargs)
             self.assertIsNotNone(kwargs["start_timestamp"])
@@ -439,6 +441,7 @@ class TestProcessFeedTopicRouting(unittest.IsolatedAsyncioTestCase):
         segmented_feed = LeasedFeed(
             id=_FEED_ID,
             name="Test Feed",
+            external_id="ext-id",
             source_type=SourceType.OPENMHZ,  # Not BCFY_FEEDS
             last_processed_filename=None,
             last_bookmark_time=None,
@@ -470,6 +473,7 @@ class TestProcessFeedTopicRouting(unittest.IsolatedAsyncioTestCase):
         segmented_feed = LeasedFeed(
             id=_FEED_ID,
             name="Test Feed",
+            external_id="ext-id",
             source_type=SourceType.OPENMHZ,
             last_processed_filename=None,
             last_bookmark_time=None,
