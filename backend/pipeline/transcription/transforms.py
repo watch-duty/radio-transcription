@@ -179,6 +179,9 @@ class SerializeAndEnrichFn(beam.DoFn):
     FEED_METADATA_SPEC = ReadModifyWriteStateSpec(
         "feed_metadata", beam.coders.PickleCoder()
     )
+    LAST_START_MS_SPEC = ReadModifyWriteStateSpec(
+        "last_start_ms", beam.coders.VarIntCoder()
+    )
 
     @override
     def process(
@@ -186,6 +189,9 @@ class SerializeAndEnrichFn(beam.DoFn):
         element: tuple[str, Any],
         feed_metadata_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
             FEED_METADATA_SPEC
+        ),
+        last_start_ms_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
+            LAST_START_MS_SPEC
         ),
     ) -> Iterator[PubsubMessage]:
         feed_id, value = element
@@ -198,6 +204,21 @@ class SerializeAndEnrichFn(beam.DoFn):
                 msg = f"Missing or incomplete feed metadata for feed_id: {feed_id}"
                 raise ValueError(msg)
             feed_name = metadata.feed_name
+
+            # Duplicate detection based on start time
+            last_start_ms = last_start_ms_state.read()
+            current_start_ms = value.time_range.start_ms
+
+            if (
+                last_start_ms is not None
+                and abs(current_start_ms - last_start_ms) < 100
+            ):
+                logger.warning(
+                    f"[{feed_id}] Potential growing/overlapping transmission detected! "
+                    f"Starts at nearly the same time ({current_start_ms}ms) as previous ({last_start_ms}ms)."
+                )
+
+            last_start_ms_state.write(current_start_ms)
 
             if value.start_audio_offset_ms is None:
                 msg = f"Missing start_audio_offset_ms for feed_id: {feed_id}"

@@ -1060,7 +1060,7 @@ class SerializeAndEnrichTest(unittest.TestCase):
         )
 
         with BeamTestPipeline(options=options) as p:
-            res = TranscriptionResult(
+            res1 = TranscriptionResult(
                 feed_id="test-feed",
                 contributing_audio_uris=["gs://bucket/1.flac"],
                 transcript="Hello world",
@@ -1070,9 +1070,20 @@ class SerializeAndEnrichTest(unittest.TestCase):
                 end_audio_offset_ms=200,
             )
 
+            res2 = TranscriptionResult(
+                feed_id="test-feed",
+                contributing_audio_uris=["gs://bucket/2.flac"],
+                transcript="Hello world again",
+                time_range=TimeRange(1000, 3000),
+                transmission_id="uuid-2",
+                start_audio_offset_ms=100,
+                end_audio_offset_ms=200,
+            )
+
             elements = [
                 ("test-feed", FeedMetadata(feed_name="Test Feed Name")),
-                ("test-feed", res),
+                ("test-feed", res1),
+                ("test-feed", res2),
             ]
 
             results = (
@@ -1084,12 +1095,20 @@ class SerializeAndEnrichTest(unittest.TestCase):
                     TranscribedAudio,
                 )
 
-                assert len(msgs) == 1
-                msg = msgs[0]
-                proto = TranscribedAudio()
-                proto.ParseFromString(msg.data)
-                assert proto.feed_id == "test-feed"
-                assert proto.feed_name == "Test Feed Name"
-                assert proto.transcript == "Hello world"
+                assert len(msgs) == 2
+
+                protos = []
+                for m in msgs:
+                    p = TranscribedAudio()
+                    p.ParseFromString(m.data)
+                    protos.append(p)
+
+                protos.sort(key=lambda p: p.transcript)
+
+                assert protos[0].transcript == "Hello world"
+                assert protos[0].feed_name == "Test Feed Name"
+
+                assert protos[1].transcript == "Hello world again"
+                assert protos[1].feed_name == "Test Feed Name"
 
             assert_that(results, assert_results)
