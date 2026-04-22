@@ -208,34 +208,48 @@ class AudioProcessor:
 
     def export_flac(self, audio_buffer: np.ndarray) -> bytes:
         """Exports a NumPy array to FLAC bytes using ffmpeg."""
-        process = subprocess.run(
-            [
-                "ffmpeg",
-                "-f",
-                "s16le",
-                "-ar",
-                str(SAMPLE_RATE_HZ),  # Force 16kHz
-                "-ac",
-                "1",  # Mono
-                "-i",
-                "pipe:0",  # Read from stdin
-                "-f",
-                "flac",  # Output format
-                "-compression_level",
-                FLAC_COMPRESSION_LEVEL,
-                "pipe:1",  # Write to stdout
-            ],
-            input=audio_buffer.tobytes(),
-            capture_output=True,
-            check=False,
-        )
-        if process.returncode != 0:
-            logger.error(
-                f"ffmpeg error during FLAC export: {process.stderr.decode()}"
+        with tempfile.NamedTemporaryFile(
+            suffix=".flac", delete=False
+        ) as temp_file:
+            temp_filename = temp_file.name
+
+        try:
+            process = subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",  # Overwrite output file if it exists
+                    "-f",
+                    "s16le",
+                    "-ar",
+                    str(SAMPLE_RATE_HZ),  # Force 16kHz
+                    "-ac",
+                    "1",  # Mono
+                    "-i",
+                    "pipe:0",  # Read from stdin
+                    "-f",
+                    "flac",  # Output format
+                    "-compression_level",
+                    FLAC_COMPRESSION_LEVEL,
+                    temp_filename,  # Write to temp file
+                ],
+                input=audio_buffer.tobytes(),
+                capture_output=True,
+                check=False,
             )
-            msg = "Failed to export FLAC via ffmpeg"
-            raise RuntimeError(msg)
-        return process.stdout
+            if process.returncode != 0:
+                logger.error(
+                    f"ffmpeg error during FLAC export: {process.stderr.decode()}"
+                )
+                msg = "Failed to export FLAC via ffmpeg"
+                raise RuntimeError(msg)
+
+            with open(temp_filename, "rb") as f:
+                return f.read()
+        finally:
+            try:
+                Path(temp_filename).unlink()
+            except OSError:
+                pass
 
     def export_m4a(self, audio_buffer: np.ndarray) -> bytes:
         """Exports a NumPy array to M4A (AAC) bytes using ffmpeg via a temporary file."""
