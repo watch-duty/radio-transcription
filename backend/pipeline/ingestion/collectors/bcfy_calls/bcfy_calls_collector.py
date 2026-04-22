@@ -15,6 +15,9 @@ import aiohttp
 from google.cloud import secretmanager
 
 from backend.pipeline.ingestion.models import CapturedChunk
+from backend.pipeline.ingestion.slo_contract import (
+    EVENT_TYPE_CALL_DOWNLOAD_FAILED,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -394,6 +397,18 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                             receipt_time,
                         )
                         if not chunk:
+                            if not shutdown_event.is_set():
+                                # SLO: call_download_failed emit — bcfy_calls _create_chunk_from_call returned None
+                                logger.warning(
+                                    "Call download failed",
+                                    extra={
+                                        "json_fields": {
+                                            "event_type": EVENT_TYPE_CALL_DOWNLOAD_FAILED,
+                                            "feed_id": str(feed["id"]),
+                                            "source_type": feed["source_type"],
+                                        },
+                                    },
+                                )
                             continue
 
                         yield chunk
