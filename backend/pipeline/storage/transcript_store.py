@@ -178,6 +178,7 @@ class TranscriptStore:
         next_token: str | None = None,
         start_time: datetime.datetime | None = None,
         end_time: datetime.datetime | None = None,
+        order: str = "desc",
     ) -> PaginatedTranscripts:
         """Lists transcripts for a specific feed ID with pagination and time window."""
         try:
@@ -190,8 +191,15 @@ class TranscriptStore:
         if next_token:
             cursor_ts, cursor_uid = self._decode_cursor(next_token)
 
+        is_asc = order.lower() == "asc"
+        query = (
+            transcript_queries.GET_TRANSCRIPTS_BY_FEED_ASC_SQL
+            if is_asc
+            else transcript_queries.GET_TRANSCRIPTS_BY_FEED_SQL
+        )
+
         rows = await self._pool.fetch(
-            transcript_queries.GET_TRANSCRIPTS_BY_FEED_SQL,
+            query,
             uid,
             cursor_ts,
             cursor_uid,
@@ -220,6 +228,7 @@ class TranscriptStore:
         next_token: str | None = None,
         start_time: datetime.datetime | None = None,
         end_time: datetime.datetime | None = None,
+        order: str = "desc",
     ) -> PaginatedTranscripts:
         """Lists all transcripts with pagination and time window."""
         cursor_ts = None
@@ -227,8 +236,15 @@ class TranscriptStore:
         if next_token:
             cursor_ts, cursor_uid = self._decode_cursor(next_token)
 
+        is_asc = order.lower() == "asc"
+        query = (
+            transcript_queries.LIST_TRANSCRIPTS_ASC_SQL
+            if is_asc
+            else transcript_queries.LIST_TRANSCRIPTS_SQL
+        )
+
         rows = await self._pool.fetch(
-            transcript_queries.LIST_TRANSCRIPTS_SQL,
+            query,
             cursor_ts,
             cursor_uid,
             start_time,

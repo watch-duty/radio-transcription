@@ -93,10 +93,11 @@ async def list_transcripts(
     next_token: str | None = None,
     start_time: datetime.datetime | None = None,
     end_time: datetime.datetime | None = None,
+    order: str = "desc",
 ) -> ListTranscriptsResponse:
     """List transcripts, optionally filtered by feed ID, with pagination and time window.
 
-    Transcripts are returned in reverse chronological order (newest first).
+    Transcripts are returned in chronological or reverse chronological order.
     Pagination uses keyset pagination via `next_token`.
     """
     service: TranscriptService = request.app.state.transcript_service
@@ -108,12 +109,14 @@ async def list_transcripts(
                 next_token=next_token,
                 start_time=start_time,
                 end_time=end_time,
+                order=order,
             )
         return await service.list_transcripts(
             limit=limit,
             next_token=next_token,
             start_time=start_time,
             end_time=end_time,
+            order=order,
         )
     except ValueError as e:
         raise HTTPException(

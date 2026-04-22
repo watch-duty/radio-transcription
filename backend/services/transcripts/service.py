@@ -60,6 +60,7 @@ class TranscriptService:
         next_token: str | None = None,
         start_time: datetime.datetime | None = None,
         end_time: datetime.datetime | None = None,
+        order: str = "desc",
     ) -> ListTranscriptsResponse:
         """Lists all transcripts with pagination and time window."""
         result = await self._store.list_transcripts(
@@ -67,6 +68,7 @@ class TranscriptService:
             next_token=next_token,
             start_time=start_time,
             end_time=end_time,
+            order=order,
         )
         return ListTranscriptsResponse(
             transcripts=[
@@ -87,6 +89,7 @@ class TranscriptService:
         next_token: str | None = None,
         start_time: datetime.datetime | None = None,
         end_time: datetime.datetime | None = None,
+        order: str = "desc",
     ) -> ListTranscriptsResponse:
         """Lists transcripts filtered by feed ID with pagination and time window."""
         result = await self._store.list_transcripts_by_feed_id(
@@ -95,6 +98,7 @@ class TranscriptService:
             next_token=next_token,
             start_time=start_time,
             end_time=end_time,
+            order=order,
         )
         return ListTranscriptsResponse(
             transcripts=[
