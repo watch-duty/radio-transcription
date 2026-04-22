@@ -11,6 +11,7 @@ import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
 import IconButton from '@mui/material/IconButton';
 import InputAdornment from '@mui/material/InputAdornment';
+import Link from '@mui/material/Link';
 import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
 import Paper from '@mui/material/Paper';
@@ -419,8 +420,7 @@ export function TranscriptView({
       {searchedFeedId && (searchedFeedSourceUrl || searchedFeedArchiveUrl) && (
         <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
           {searchedFeedSourceUrl && (
-            <Typography
-              component="a"
+            <Link
               href={searchedFeedSourceUrl}
               target="_blank"
               rel="noopener noreferrer"
@@ -429,18 +429,14 @@ export function TranscriptView({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 0.5,
-                textDecoration: 'none',
-                color: 'primary.main',
-                '&:hover': { textDecoration: 'underline' },
               }}
             >
               <LinkIcon fontSize="small" />
-              original source link
-            </Typography>
+              Original source link
+            </Link>
           )}
           {searchedFeedArchiveUrl && (
-            <Typography
-              component="a"
+            <Link
               href={searchedFeedArchiveUrl}
               target="_blank"
               rel="noopener noreferrer"
@@ -449,14 +445,11 @@ export function TranscriptView({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 0.5,
-                textDecoration: 'none',
-                color: 'primary.main',
-                '&:hover': { textDecoration: 'underline' },
               }}
             >
               <InventoryIcon fontSize="small" />
-              archives
-            </Typography>
+              Archives
+            </Link>
           )}
         </Box>
       )}
