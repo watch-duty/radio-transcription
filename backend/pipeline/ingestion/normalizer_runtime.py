@@ -16,7 +16,11 @@ from aiohttp import web
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
-from backend.pipeline.ingestion import health_server, quarantine_telemetry
+from backend.pipeline.ingestion import (
+    health_server,
+    metric_reporter,
+    quarantine_telemetry,
+)
 from backend.pipeline.ingestion.health_server import HealthState
 from backend.pipeline.ingestion.models import CapturedChunk
 from backend.pipeline.ingestion.retry import (
@@ -124,6 +128,11 @@ class NormalizerRuntime:
         # by reference to _feed_tasks so len() reflects live leasing state.
         self._health_state = HealthState(feed_tasks=self._feed_tasks)
         self._health_runner: web.AppRunner | None = None
+        # Strong reference for the periodic active_feed_count reporter task
+        # (Pitfall 7). None when the metadata probe fails (off-GCE, transient
+        # flake, etc.) -- see _main() below. Set exactly once in _main(),
+        # cancelled first in _shutdown_sequence (Pitfall 4 ordering).
+        self._metric_reporter_task: asyncio.Task | None = None
 
     # -- Entry point ------------------------------------------------------
 
