@@ -11,6 +11,17 @@ resource "google_storage_bucket" "this" {
     retention_duration_seconds = var.enable_soft_delete ? 7 * 24 * 60 * 60 : 0
   }
 
+  dynamic "cors" {
+    for_each = var.cors
+    
+    content {
+      origin        = cors.value.origin
+      method        = cors.value.method
+      response_header = cors.value.response_header
+      max_age_seconds = cors.value.max_age_seconds
+    }
+  }
+
   dynamic "lifecycle_rule" {
     for_each = var.lifecycle_rules
     content {
