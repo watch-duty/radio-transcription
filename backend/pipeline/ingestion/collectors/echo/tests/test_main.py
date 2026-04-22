@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import io
 import shutil
+import tempfile
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -83,19 +85,29 @@ class TestConvertToFlac:
         assert len(flac_bytes) > 0
         assert flac_bytes[:4] == b"fLaC"
 
-        buf = io.BytesIO(flac_bytes)
-        data, sr = sf.read(buf, frames=16000)
-        assert sr == 16000
-        assert len(data.shape) == 1  # Mono
+        with tempfile.NamedTemporaryFile(suffix=".flac", delete=False) as f:
+            f.write(flac_bytes)
+            temp_path = f.name
+        try:
+            data, sr = sf.read(temp_path)
+            assert sr == 16000
+            assert len(data.shape) == 1  # Mono
+        finally:
+            Path(temp_path).unlink()
 
     def test_upsamples_from_8khz(self) -> None:
         input_bytes = self._make_audio_bytes(sample_rate=8000)
         flac_bytes = convert_to_flac(input_bytes, "flac")
 
-        buf = io.BytesIO(flac_bytes)
-        data, sr = sf.read(buf, frames=16000)
-        assert sr == 16000  # Upsampled to 16kHz!
-        assert len(data.shape) == 1  # Mono
+        with tempfile.NamedTemporaryFile(suffix=".flac", delete=False) as f:
+            f.write(flac_bytes)
+            temp_path = f.name
+        try:
+            data, sr = sf.read(temp_path)
+            assert sr == 16000  # Upsampled to 16kHz!
+            assert len(data.shape) == 1  # Mono
+        finally:
+            Path(temp_path).unlink()
 
     def test_output_is_valid_flac(self) -> None:
         input_bytes = self._make_audio_bytes(sample_rate=16000)
