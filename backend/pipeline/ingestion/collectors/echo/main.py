@@ -19,7 +19,7 @@ import functions_framework
 from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
 
-from backend.pipeline.common.audio import get_audio_duration
+from backend.pipeline.common.audio import convert_to_flac, get_audio_duration
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.gcp_helper import publish_audio_chunk_sync
 from backend.pipeline.common.logging import setup_logging
@@ -144,25 +144,28 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
         # if_generation_match=0 skips redundant writes but we
         # always proceed to publish (prior invocation may have crashed after upload).
         date_dir = parts[1]
-        mp3_path = f"echo/{feed['id']}/{date_dir}/{Path(name).name}"
-        staging_uri = f"gs://{STAGING_BUCKET}/{mp3_path}"
-        blob = gcs_client.bucket(STAGING_BUCKET).blob(mp3_path)
+        # Convert MP3 to FLAC before uploading to staging
+        flac_bytes = convert_to_flac(mp3_bytes, "mp3")
+
+        flac_path = f"echo/{feed['id']}/{date_dir}/{Path(name).stem}.flac"
+        staging_uri = f"gs://{STAGING_BUCKET}/{flac_path}"
+        blob = gcs_client.bucket(STAGING_BUCKET).blob(flac_path)
         try:
             blob.upload_from_string(
-                mp3_bytes,
-                content_type="audio/mpeg",
+                flac_bytes,
+                content_type="audio/flac",
                 if_generation_match=0,
             )
         except PreconditionFailed:
-            logger.info("MP3 already exists, skipping upload: %s", staging_uri)
+            logger.info("FLAC already exists, skipping upload: %s", staging_uri)
 
         # Publish AudioChunk with deterministic session_id for dedup.
         feed_id_str = str(feed["id"])
         session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, staging_uri))
         publisher = pubsub_client.get_publisher()
 
-        # Calculate duration of audio bytes using shared helper
-        duration_ms = get_audio_duration(mp3_bytes)
+        # Calculate duration of audio bytes using shared helper (now using valid FLAC!)
+        duration_ms = get_audio_duration(flac_bytes)
 
         publish_audio_chunk_sync(
             publisher,

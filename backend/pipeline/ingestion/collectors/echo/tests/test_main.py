@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import io
 import shutil
-import tempfile
+import subprocess
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 import soundfile as sf
 from google.api_core.exceptions import NotFound
+from scipy.io import wavfile
 
 from backend.pipeline.common.audio import convert_to_flac
 from backend.pipeline.ingestion.collectors.echo.main import (
@@ -85,29 +85,51 @@ class TestConvertToFlac:
         assert len(flac_bytes) > 0
         assert flac_bytes[:4] == b"fLaC"
 
-        with tempfile.NamedTemporaryFile(suffix=".flac", delete=False) as f:
-            f.write(flac_bytes)
-            temp_path = f.name
-        try:
-            data, sr = sf.read(temp_path, frames=16000)
-            assert sr == 16000
-            assert len(data.shape) == 1  # Mono
-        finally:
-            Path(temp_path).unlink()
+        # Convert FLAC back to WAV using ffmpeg to verify content
+        process = subprocess.run(
+            [
+                "ffmpeg",
+                "-i",
+                "pipe:0",
+                "-f",
+                "wav",
+                "pipe:1",
+            ],
+            input=flac_bytes,
+            capture_output=True,
+            check=True,
+        )
+        wav_bytes = process.stdout
+
+        buf = io.BytesIO(wav_bytes)
+        sr, data = wavfile.read(buf)
+        assert sr == 16000
+        assert len(data.shape) == 1  # Mono
 
     def test_upsamples_from_8khz(self) -> None:
         input_bytes = self._make_audio_bytes(sample_rate=8000)
         flac_bytes = convert_to_flac(input_bytes, "flac")
 
-        with tempfile.NamedTemporaryFile(suffix=".flac", delete=False) as f:
-            f.write(flac_bytes)
-            temp_path = f.name
-        try:
-            data, sr = sf.read(temp_path, frames=16000)
-            assert sr == 16000  # Upsampled to 16kHz!
-            assert len(data.shape) == 1  # Mono
-        finally:
-            Path(temp_path).unlink()
+        # Convert FLAC back to WAV using ffmpeg to verify content
+        process = subprocess.run(
+            [
+                "ffmpeg",
+                "-i",
+                "pipe:0",
+                "-f",
+                "wav",
+                "pipe:1",
+            ],
+            input=flac_bytes,
+            capture_output=True,
+            check=True,
+        )
+        wav_bytes = process.stdout
+
+        buf = io.BytesIO(wav_bytes)
+        sr, data = wavfile.read(buf)
+        assert sr == 16000  # Upsampled to 16kHz!
+        assert len(data.shape) == 1  # Mono
 
     def test_output_is_valid_flac(self) -> None:
         input_bytes = self._make_audio_bytes(sample_rate=16000)
