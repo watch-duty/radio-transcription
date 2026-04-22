@@ -177,3 +177,11 @@ DELETE_FEED_SQL = """\
 DELETE FROM feeds
 WHERE id = $1
 """
+
+RESET_FEED_SQL = """\
+UPDATE feeds
+SET status = 'active'::feed_status,
+    failure_count = 0
+WHERE id = $1
+RETURNING id
+"""

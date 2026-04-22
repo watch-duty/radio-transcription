@@ -15,6 +15,7 @@ from backend.pipeline.storage.feed_queries import (
     RELEASE_FEEDS_BATCH_SQL,
     RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
     REPORT_FAILURE_SQL,
+    RESET_FEED_SQL,
     UPDATE_PROGRESS_SQL,
 )
 
@@ -493,3 +494,22 @@ class FeedStore:
         """
         result = await self._pool.execute(DELETE_FEED_SQL, feed_id)
         return result == "DELETE 1"
+
+    async def reset_feed(self, feed_id: uuid.UUID) -> Feed | None:
+        """Reset a feed to active status with zero failure count.
+
+        Sets ``status = 'active'`` and ``failure_count = 0`` for the given
+        feed. Fetches and returns the updated feed, or ``None`` if no feed
+        with that ID exists.
+
+        Args:
+            feed_id: UUID of the feed to reset.
+
+        Returns:
+            The updated ``Feed`` dict, or ``None`` if the feed was not found.
+
+        """
+        row = await self._pool.fetchrow(RESET_FEED_SQL, feed_id)
+        if row is None:
+            return None
+        return await self.get_feed(feed_id)
