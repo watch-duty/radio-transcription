@@ -243,6 +243,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             {
                 "id": uuid.uuid4(),
                 "name": "incomplete-feed",
+                "external_id": "ext-id",
                 "source_type": "icecast",
                 "last_processed_filename": None,
                 "last_bookmark_time": None,
