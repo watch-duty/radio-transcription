@@ -30,11 +30,14 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(cm.records), 1)
         record = cm.records[0]
-        # extra fields are set dynamically on LogRecord by the logger
-        self.assertEqual(getattr(record, "event_type"), "feed_quarantined")  # noqa: B009
-        self.assertEqual(getattr(record, "feed_id"), "abc-123")  # noqa: B009
-        self.assertEqual(getattr(record, "feed_name"), "Test Feed")  # noqa: B009
-        self.assertEqual(getattr(record, "source_type"), "bcfy_feeds")  # noqa: B009
+        # D-11: emit uses extra={"json_fields": {...}} — LogRecord stores the
+        # wrapped dict as record.json_fields. The CloudLoggingHandler flattens
+        # it identically to flat extras in production (Cloud Logging payload
+        # shape unchanged), but in-repo assertions read the wrapped key.
+        self.assertEqual(record.json_fields["event_type"], "feed_quarantined")
+        self.assertEqual(record.json_fields["feed_id"], "abc-123")
+        self.assertEqual(record.json_fields["feed_name"], "Test Feed")
+        self.assertEqual(record.json_fields["source_type"], "bcfy_feeds")
 
     async def test_calls_write_time_series_when_configured(self) -> None:
         """Metric is written when a project ID is configured."""
