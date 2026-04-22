@@ -2,7 +2,7 @@
 
 import logging
 from collections.abc import Iterator
-from typing import Any, override
+from typing import Any, Union, override
 
 import apache_beam as beam
 from apache_beam.io.gcp.pubsub import PubsubMessage
@@ -169,6 +169,10 @@ class AddEventTimestamp(beam.DoFn):
                 )
 
 
+@beam.typehints.with_input_types(
+    tuple[str, Union[FeedMetadata, TranscriptionResult]]
+)
+@beam.typehints.with_output_types(PubsubMessage)
 class SerializeAndEnrichFn(beam.DoFn):
     """Stores feed metadata in state and enriches the final TranscribedAudio message."""
 
