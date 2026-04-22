@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 
+import InventoryIcon from '@mui/icons-material/Inventory';
 import LinkIcon from '@mui/icons-material/Link';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import type { AlertProps } from '@mui/material/Alert';
@@ -388,6 +389,53 @@ export function TranscriptView({
           Clear
         </Button>
       </Box>
+
+      {searchedFeedId &&
+        (feedIdToSourceUrl.get(searchedFeedId) ||
+          feedIdToArchiveUrl.get(searchedFeedId)) && (
+          <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
+            {feedIdToSourceUrl.get(searchedFeedId) && (
+              <Typography
+                component="a"
+                href={feedIdToSourceUrl.get(searchedFeedId)}
+                target="_blank"
+                rel="noopener noreferrer"
+                variant="body2"
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 0.5,
+                  textDecoration: 'none',
+                  color: 'primary.main',
+                  '&:hover': { textDecoration: 'underline' },
+                }}
+              >
+                <LinkIcon fontSize="small" />
+                original source link
+              </Typography>
+            )}
+            {feedIdToArchiveUrl.get(searchedFeedId) && (
+              <Typography
+                component="a"
+                href={feedIdToArchiveUrl.get(searchedFeedId)}
+                target="_blank"
+                rel="noopener noreferrer"
+                variant="body2"
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 0.5,
+                  textDecoration: 'none',
+                  color: 'primary.main',
+                  '&:hover': { textDecoration: 'underline' },
+                }}
+              >
+                <InventoryIcon />
+                archives
+              </Typography>
+            )}
+          </Box>
+        )}
 
       <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
         {transcripts.length > 0 ? (
