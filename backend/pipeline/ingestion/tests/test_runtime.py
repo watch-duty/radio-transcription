@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import time
 import unittest
 import uuid
 from unittest import mock
@@ -1408,6 +1409,139 @@ class TestMetricReporterLifecycle(unittest.IsolatedAsyncioTestCase):
             healthz_idx,
             f"reporter must cancel before healthz cleanup, got order={call_order}",
         )
+
+    async def test_healthz_returns_200_while_reporter_alive(self) -> None:
+        """HEALTHZ-01 / D-24: /healthz serves 200 with a live reporter task.
+
+        Boots the mocked _main() stack with the REAL health_server.start
+        (not patched) so an aiohttp AppRunner binds to an OS-assigned
+        ephemeral port. Patches metric_reporter.reporter_loop with a stub
+        that signals it has entered + awaits indefinitely, so the reporter
+        task is known-alive when the test issues a real HTTP GET against
+        /healthz. Asserts status 200 + body shape + status=healthy. Then
+        releases the leasing-loop stub via probe_done so _main() returns
+        cleanly.
+
+        The during-alive assertion is the coupling check: a future refactor
+        that starved /healthz on the same event loop as the reporter would
+        hang this request and trip the 2s timeout. The existing
+        test_shutdown_cancels_reporter_before_healthz_cleanup covers the
+        shutdown-order coupling; this test covers the steady-state coupling.
+        """
+        rt = _make_runtime(
+            google_cloud_project="test-project",
+            health_check_port=0,  # OS-assigned ephemeral port
+        )
+
+        reporter_started = asyncio.Event()
+        probe_done = asyncio.Event()
+
+        async def _reporter_loop_stub(**_kwargs: object) -> None:
+            reporter_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                raise
+
+        async def _leasing_loop_stub() -> None:
+            # Wait for the reporter task to be known-alive, then hold the
+            # server open until the test's HTTP GET completes and signals
+            # probe_done. This keeps _main() from falling into
+            # _shutdown_sequence mid-probe.
+            await reporter_started.wait()
+            await probe_done.wait()
+
+        with (
+            mock.patch.object(rt, "_leasing_loop", new=_leasing_loop_stub),
+            mock.patch.object(rt, "_shutdown_sequence", new=mock.AsyncMock()),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.create_pool_with_retry",
+                new_callable=mock.AsyncMock,
+                return_value=mock.MagicMock(spec=asyncpg.Pool),
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.FeedStore",
+            ),
+            mock.patch("threading.Thread"),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.metric_reporter.configure"
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.metric_reporter.resolve_gce_resource_labels",
+                new_callable=mock.AsyncMock,
+                return_value={
+                    "project_id": "test-project",
+                    "instance_id": "1234567890",
+                    "zone": "us-central1-a",
+                },
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.metric_reporter.reporter_loop",
+                new=_reporter_loop_stub,
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.quarantine_telemetry.configure"
+            ),
+            # Intentionally NOT patched:
+            # backend.pipeline.ingestion.normalizer_runtime.health_server.start
+            # — the real aiohttp server must bind so we can probe it.
+        ):
+            main_task = asyncio.create_task(rt._main())
+            try:
+                # Wait deterministically for the reporter task to be known
+                # alive (the stub sets reporter_started when it enters).
+                await asyncio.wait_for(reporter_started.wait(), timeout=2.0)
+
+                self.assertIsNotNone(rt._metric_reporter_task)
+                assert rt._metric_reporter_task is not None  # type narrow
+                self.assertFalse(rt._metric_reporter_task.done())
+
+                # Force /healthz into the startup-grace path so the test
+                # asserts status=healthy without depending on a heartbeat
+                # stamp having happened.
+                rt._health_state.startup_time = time.monotonic()
+
+                self.assertIsNotNone(rt._health_runner)
+                assert rt._health_runner is not None  # type narrow
+                addresses = rt._health_runner.addresses
+                self.assertTrue(
+                    addresses,
+                    f"health runner has no addresses: {addresses}",
+                )
+                port = addresses[0][1]
+                self.assertIsInstance(port, int)
+                self.assertGreater(port, 0)
+
+                # The assertion — a real HTTP GET against the live server
+                # while the reporter task is alive on the same event loop.
+                async with aiohttp.ClientSession() as session:
+                    async with asyncio.timeout(2.0):
+                        async with session.get(
+                            f"http://127.0.0.1:{port}/healthz"
+                        ) as resp:
+                            self.assertEqual(resp.status, 200)
+                            body = await resp.json()
+
+                self.assertEqual(
+                    set(body.keys()),
+                    {"status", "active_feeds", "last_heartbeat_age_sec"},
+                )
+                self.assertEqual(body["status"], "healthy")
+            finally:
+                # Release the leasing loop stub so _main() can return.
+                probe_done.set()
+                await asyncio.wait_for(main_task, timeout=3.0)
+                # Clean up the lingering reporter task — _shutdown_sequence
+                # is mocked (AsyncMock) so it won't have cancelled for us.
+                if (
+                    rt._metric_reporter_task is not None
+                    and not rt._metric_reporter_task.done()
+                ):
+                    rt._metric_reporter_task.cancel()
+                    try:
+                        await rt._metric_reporter_task
+                    except asyncio.CancelledError:
+                        pass
 
 
 if __name__ == "__main__":
