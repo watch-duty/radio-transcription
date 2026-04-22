@@ -4,6 +4,7 @@ import unittest
 from unittest import mock
 
 from google.api_core.exceptions import GoogleAPIError
+from google.cloud import monitoring_v3
 
 from backend.pipeline.common.clients import monitoring_client
 
@@ -120,3 +121,128 @@ class TestMonitoringClient(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(GoogleAPIError):
             await client.write_time_series("t", {}, 1)
+
+    @mock.patch(
+        "backend.pipeline.common.clients.monitoring_client.monitoring_v3"
+    )
+    async def test_default_resource_is_global_with_project_id(
+        self,
+        mock_monitoring: mock.MagicMock,
+    ) -> None:
+        """Backward-compat: omitting the new kwargs writes resource.type='global' and resource.labels={'project_id': ...}.
+
+        This test locks the shipped quarantine-caller behavior (no resource_type,
+        no resource_labels passed) — the D-19 backward-compat contract.
+        """
+        mock_async_client = mock.AsyncMock()
+        mock_monitoring.MetricServiceAsyncClient.return_value = (
+            mock_async_client
+        )
+        # Use a real TimeSeries so the client populates resource.type / labels
+        # for inspection.
+        real_series = monitoring_v3.TimeSeries()
+        mock_monitoring.TimeSeries.return_value = real_series
+        # Point and TimeInterval must be real protos because the client
+        # assigns `series.points = [point]` on the real TimeSeries, which
+        # proto-plus type-checks against the actual Point message class.
+        mock_monitoring.Point.side_effect = monitoring_v3.Point
+        mock_monitoring.TimeInterval.side_effect = monitoring_v3.TimeInterval
+
+        client = monitoring_client.MonitoringClient("my-project")
+        await client.write_time_series(
+            metric_type="custom.googleapis.com/test",
+            labels={"k": "v"},
+            value=1,
+        )
+
+        self.assertEqual(real_series.resource.type, "global")
+        self.assertEqual(
+            dict(real_series.resource.labels),
+            {"project_id": "my-project"},
+        )
+
+    @mock.patch(
+        "backend.pipeline.common.clients.monitoring_client.monitoring_v3"
+    )
+    async def test_gce_instance_resource_with_full_labels(
+        self,
+        mock_monitoring: mock.MagicMock,
+    ) -> None:
+        """Passing resource_type='gce_instance' + full resource_labels writes them verbatim.
+
+        This test locks the D-19 new path used by metric_reporter.py (plan 03-02).
+        """
+        mock_async_client = mock.AsyncMock()
+        mock_monitoring.MetricServiceAsyncClient.return_value = (
+            mock_async_client
+        )
+        real_series = monitoring_v3.TimeSeries()
+        mock_monitoring.TimeSeries.return_value = real_series
+        # Point and TimeInterval must be real protos because the client
+        # assigns `series.points = [point]` on the real TimeSeries, which
+        # proto-plus type-checks against the actual Point message class.
+        mock_monitoring.Point.side_effect = monitoring_v3.Point
+        mock_monitoring.TimeInterval.side_effect = monitoring_v3.TimeInterval
+
+        client = monitoring_client.MonitoringClient("my-project")
+        await client.write_time_series(
+            metric_type="custom.googleapis.com/ingestion/active_feed_count",
+            labels={},
+            value=42,
+            resource_type="gce_instance",
+            resource_labels={
+                "project_id": "my-project",
+                "instance_id": "1234567890",
+                "zone": "us-central1-a",
+            },
+        )
+
+        self.assertEqual(real_series.resource.type, "gce_instance")
+        self.assertEqual(
+            dict(real_series.resource.labels),
+            {
+                "project_id": "my-project",
+                "instance_id": "1234567890",
+                "zone": "us-central1-a",
+            },
+        )
+
+    @mock.patch(
+        "backend.pipeline.common.clients.monitoring_client.monitoring_v3"
+    )
+    async def test_partial_resource_labels_does_not_inject_project_id(
+        self,
+        mock_monitoring: mock.MagicMock,
+    ) -> None:
+        """When caller supplies resource_labels, we do NOT auto-inject project_id.
+
+        Locks the D-19 invariant: caller owns the full label dict. Passing
+        resource_labels={'instance_id': 'i1'} alone means the emitted labels
+        are EXACTLY {'instance_id': 'i1'} — no implicit mutations.
+        """
+        mock_async_client = mock.AsyncMock()
+        mock_monitoring.MetricServiceAsyncClient.return_value = (
+            mock_async_client
+        )
+        real_series = monitoring_v3.TimeSeries()
+        mock_monitoring.TimeSeries.return_value = real_series
+        # Point and TimeInterval must be real protos because the client
+        # assigns `series.points = [point]` on the real TimeSeries, which
+        # proto-plus type-checks against the actual Point message class.
+        mock_monitoring.Point.side_effect = monitoring_v3.Point
+        mock_monitoring.TimeInterval.side_effect = monitoring_v3.TimeInterval
+
+        client = monitoring_client.MonitoringClient("my-project")
+        await client.write_time_series(
+            metric_type="custom.googleapis.com/test",
+            labels={},
+            value=1,
+            resource_type="gce_instance",
+            resource_labels={"instance_id": "i1"},
+        )
+
+        self.assertEqual(real_series.resource.type, "gce_instance")
+        self.assertEqual(
+            dict(real_series.resource.labels),
+            {"instance_id": "i1"},
+        )
