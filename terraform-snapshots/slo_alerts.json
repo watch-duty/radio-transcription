@@ -1,0 +1,15 @@
+{
+  "_note": "Hand-extracted snapshot of ops-team Terraform alert-filter strings. Phase 4 VERIFY-01 compares values emitted by backend/pipeline/ingestion/slo_contract.py against this file. Manually refresh at phase-landing time from the ops-team Terraform repo. Keep in git so CI can read it.",
+  "event_types": [
+    "chunk_ingested",
+    "call_download_failed",
+    "feed_quarantined"
+  ],
+  "metric_types": [
+    "custom.googleapis.com/ingestion/active_feed_count",
+    "custom.googleapis.com/feeds/quarantine_events"
+  ],
+  "logger_path": "backend.pipeline.ingestion",
+  "metric_labels": ["instance_id", "zone"],
+  "source_commit": "HAND_EXTRACTED_2026_04_22"
+}
