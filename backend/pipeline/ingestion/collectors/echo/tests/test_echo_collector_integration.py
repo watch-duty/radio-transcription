@@ -217,7 +217,6 @@ class TestEchoCollectorIntegration(unittest.TestCase):
             patch.object(echo_main, "RAW_AUDIO_TOPIC", _RAW_AUDIO_TOPIC),
             patch.object(echo_main, "STAGING_BUCKET", _STAGING_BUCKET),
             patch.object(echo_main, "get_audio_duration", return_value=15000),
-            patch.object(echo_main, "convert_to_flac", return_value=b"fLaC"),
         ):
             echo_main._handle(event)
 
@@ -228,14 +227,14 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         channel = "fire-ca_almaden"
         feed_id = self._insert_echo_feed(channel)
         name = f"{channel}/20260326/fire_20260326_143022.mp3"
-        self._upload_mp3(name)
+        uploaded_bytes = self._upload_mp3(name)
 
         self._run_handler(self._make_cloud_event(name))
 
-        # Verify FLAC in staging bucket
-        flac_path = f"echo/{feed_id}/20260326/fire_20260326_143022.flac"
-        downloaded_bytes = self._download_staged(flac_path)
-        self.assertEqual(downloaded_bytes, b"fLaC")
+        # Verify MP3 in staging bucket
+        mp3_path = f"echo/{feed_id}/20260326/fire_20260326_143022.mp3"
+        downloaded_bytes = self._download_staged(mp3_path)
+        self.assertEqual(downloaded_bytes, uploaded_bytes)
 
         # Verify AudioChunk published with correct attributes
         self.mock_publisher.publish.assert_called_once()
@@ -342,9 +341,9 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         self._run_handler(self._make_cloud_event(name))
 
         # Verify MP3 still valid
-        flac_path = f"echo/{feed_id}/20260326/idempotent_20260326_143022.flac"
-        downloaded_bytes = self._download_staged(flac_path)
-        self.assertEqual(downloaded_bytes, b"fLaC")
+        mp3_path = f"echo/{feed_id}/20260326/idempotent_20260326_143022.mp3"
+        downloaded_bytes = self._download_staged(mp3_path)
+        self.assertEqual(downloaded_bytes, _make_mp3_bytes())
 
         # Both invocations publish — second upload skipped via
         # if_generation_match=0 but we always proceed to publish.

@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import soundfile as sf
 from google.cloud import storage
 from scipy import signal
 
@@ -111,7 +110,33 @@ class AudioProcessor:
         blob.download_to_file(in_mem_file)
         in_mem_file.seek(0)
 
-        samples, sr = sf.read(in_mem_file, dtype="int16")
+        # Use ffmpeg to decode audio to raw PCM in memory (handles MP3, FLAC, etc.)
+        process = subprocess.run(
+            [
+                "ffmpeg",
+                "-i",
+                "pipe:0",  # Read from stdin
+                "-f",
+                "s16le",  # Output raw 16-bit PCM
+                "-ac",
+                "1",  # Force mono
+                "-ar",
+                "16000",  # Force 16kHz
+                "pipe:1",  # Write to stdout
+            ],
+            input=in_mem_file.getvalue(),
+            capture_output=True,
+            check=False,
+        )
+        if process.returncode != 0:
+            logger.error(
+                f"ffmpeg error during audio decode: {process.stderr.decode()}"
+            )
+            msg = "Failed to decode audio via ffmpeg"
+            raise RuntimeError(msg)
+
+        samples = np.frombuffer(process.stdout, dtype=np.int16)
+        sr = 16000
         if samples.ndim > 1:
             samples = np.mean(samples, axis=1).astype(np.int16)
 
