@@ -11,5 +11,6 @@
   ],
   "logger_path": "backend.pipeline.ingestion",
   "metric_labels": ["instance_id", "zone"],
-  "source_commit": "HAND_EXTRACTED_2026_04_22"
+  "monitored_resource_type": "gce_instance",
+  "source_commit": "HAND_EXTRACTED_2026-04-22"
 }
