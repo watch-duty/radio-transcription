@@ -25,6 +25,7 @@ import logging
 import pathlib
 import re
 import unittest
+from datetime import UTC, datetime
 
 from backend.pipeline.ingestion import slo_contract
 
@@ -38,6 +39,14 @@ _CHUNK_INGESTED_EMIT_RE = re.compile(r"# SLO: chunk_ingested emit")
 _EXPECTED_STAMP_COUNT = 3
 _EXPECTED_CALL_DL_FAILED_EMIT_COUNT = 2
 _EXPECTED_CHUNK_INGESTED_EMIT_COUNT = 1
+
+# Phase 4 D-27: source_commit staleness thresholds (days). Tunable without
+# re-reading the test body. Canonical format is HAND_EXTRACTED_YYYY-MM-DD
+# (ISO-dashed); the parser tolerates legacy HAND_EXTRACTED_YYYY_MM_DD via
+# `.replace("_", "-")`.
+_STALENESS_WARN_DAYS = 60
+_STALENESS_FAIL_DAYS = 90
+_SOURCE_COMMIT_PREFIX = "HAND_EXTRACTED_"
 
 
 class TestReceiptTimeStampMarkerCount(unittest.TestCase):
