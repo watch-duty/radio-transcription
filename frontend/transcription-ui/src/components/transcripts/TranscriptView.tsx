@@ -462,7 +462,7 @@ export function TranscriptView({
                   '&:hover': { textDecoration: 'underline' },
                 }}
               >
-                <InventoryIcon />
+                <InventoryIcon fontSize="small" />
                 archives
               </Typography>
             )}
@@ -499,8 +499,6 @@ export function TranscriptView({
                   isHighlighted={
                     transcript.transmissionId === highlightedTransmissionId
                   }
-                  sourceUrl={feedIdToSourceUrl.get(transcript.feedId)}
-                  archiveUrl={feedIdToArchiveUrl.get(transcript.feedId)}
                 />
               );
             })}
