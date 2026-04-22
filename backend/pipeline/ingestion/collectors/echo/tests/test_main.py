@@ -84,7 +84,7 @@ class TestConvertToFlac:
         assert flac_bytes[:4] == b"fLaC"
 
         buf = io.BytesIO(flac_bytes)
-        data, sr = sf.read(buf)
+        data, sr = sf.read(buf, frames=16000)
         assert sr == 16000
         assert len(data.shape) == 1  # Mono
 
@@ -93,7 +93,7 @@ class TestConvertToFlac:
         flac_bytes = convert_to_flac(input_bytes, "flac")
 
         buf = io.BytesIO(flac_bytes)
-        data, sr = sf.read(buf)
+        data, sr = sf.read(buf, frames=16000)
         assert sr == 16000  # Upsampled to 16kHz!
         assert len(data.shape) == 1  # Mono
 
