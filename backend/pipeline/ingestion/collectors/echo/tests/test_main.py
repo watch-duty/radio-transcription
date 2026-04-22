@@ -255,14 +255,14 @@ class TestHandle:
 
         _handle(self._make_event())
 
-        # Verify MP3 uploaded
+        # Verify FLAC uploaded
         gcs = _patch_globals["gcs"]
         upload_call = (
             gcs.bucket.return_value.blob.return_value.upload_from_string
         )
         upload_call.assert_called_once()
         uploaded_bytes = upload_call.call_args[0][0]
-        assert uploaded_bytes == b"mp3-placeholder"
+        assert uploaded_bytes == b"fLaC"
 
         # Verify AudioChunk published
         pub = _patch_globals["publisher"]
