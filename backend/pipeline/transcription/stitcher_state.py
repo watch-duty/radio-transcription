@@ -1,5 +1,7 @@
 """A framework-agnostic state machine isolating sequential audio transmission boundary logic."""
 
+import logging
+
 from backend.pipeline.transcription.datatypes import (
     AppendBufferAction,
     AudioChunkData,
@@ -12,6 +14,8 @@ from backend.pipeline.transcription.datatypes import (
     TimeRange,
     UpdateStateAction,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AudioStitchingStateMachine:
@@ -131,6 +135,11 @@ class AudioStitchingStateMachine:
         self, chunk_data: AudioChunkData, ctx: StitcherContext
     ) -> list[StateMachineAction]:
         """Flushes a late-arriving chunk immediately as an independent short transmission."""
+        logger.info(
+            "[%s] Processing late/overlapping chunk independently: %s",
+            ctx.feed_id,
+            ctx.current_gcs_uri,
+        )
         # Create a detached context to prevent state corruption of the leading edge
 
         temp_ctx = StitcherContext(
