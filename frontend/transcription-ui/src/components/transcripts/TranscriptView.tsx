@@ -454,56 +454,78 @@ export function TranscriptView({
         </Box>
       )}
 
-      <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
+      <Box
+        sx={{
+          flexGrow: 1,
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
         {transcripts.length > 0 ? (
-          <List component={Paper} variant="outlined" sx={{ p: 0 }}>
-            {transcripts.map((transcript, index) => {
-              const currentDate = new Date(transcript.startTimestamp);
-              const prevDate =
-                index > 0
-                  ? new Date(transcripts[index - 1].startTimestamp)
-                  : null;
-              const showHeader =
-                !prevDate ||
-                currentDate.toDateString() !== prevDate.toDateString();
+          <Paper
+            variant="outlined"
+            sx={{
+              display: 'flex',
+              flexDirection: 'column',
+              flexGrow: 1,
+              minHeight: 0,
+              overflow: 'hidden',
+            }}
+          >
+            <Box sx={{ overflowY: 'auto', flexGrow: 1 }}>
+              <List sx={{ p: 0 }}>
+                {transcripts.map((transcript, index) => {
+                  const currentDate = new Date(transcript.startTimestamp);
+                  const prevDate =
+                    index > 0
+                      ? new Date(transcripts[index - 1].startTimestamp)
+                      : null;
+                  const showHeader =
+                    !prevDate ||
+                    currentDate.toDateString() !== prevDate.toDateString();
 
-              return (
-                <TranscriptRow
-                  key={transcript.transmissionId}
-                  transcript={transcript}
-                  index={index}
-                  totalTranscripts={transcripts.length}
-                  ruleIdToNameMap={ruleIdToNameMap}
-                  rulesLoading={rulesLoading}
-                  onPlay={onPlay}
-                  currentlyPlayingTransmissionId={
-                    currentlyPlayingTransmissionId
-                  }
-                  triggerSnackbar={triggerSnackbar}
-                  showHeader={showHeader}
-                  isHighlighted={
-                    transcript.transmissionId === highlightedTransmissionId
-                  }
-                />
-              );
-            })}
-            {hasNextTranscripts && (
-              <ListItem sx={{ justifyContent: 'center', py: theme.spacing(2) }}>
-                <Button
-                  variant="outlined"
-                  onClick={() => fetchNextTranscripts()}
-                  disabled={isTranscriptsFetching}
-                  sx={{ minWidth: '160px' }}
-                >
-                  {isTranscriptsFetching ? (
-                    <CircularProgress size={24} color="inherit" />
-                  ) : (
-                    'Load More'
-                  )}
-                </Button>
-              </ListItem>
-            )}
-          </List>
+                  return (
+                    <TranscriptRow
+                      key={transcript.transmissionId}
+                      transcript={transcript}
+                      index={index}
+                      totalTranscripts={transcripts.length}
+                      ruleIdToNameMap={ruleIdToNameMap}
+                      rulesLoading={rulesLoading}
+                      onPlay={onPlay}
+                      currentlyPlayingTransmissionId={
+                        currentlyPlayingTransmissionId
+                      }
+                      triggerSnackbar={triggerSnackbar}
+                      showHeader={showHeader}
+                      isHighlighted={
+                        transcript.transmissionId === highlightedTransmissionId
+                      }
+                    />
+                  );
+                })}
+                {hasNextTranscripts && (
+                  <ListItem
+                    sx={{ justifyContent: 'center', py: theme.spacing(2) }}
+                  >
+                    <Button
+                      variant="outlined"
+                      onClick={() => fetchNextTranscripts()}
+                      disabled={isTranscriptsFetching}
+                      sx={{ minWidth: '160px' }}
+                    >
+                      {isTranscriptsFetching ? (
+                        <CircularProgress size={24} color="inherit" />
+                      ) : (
+                        'Load More'
+                      )}
+                    </Button>
+                  </ListItem>
+                )}
+              </List>
+            </Box>
+          </Paper>
         ) : isTranscriptsInitialLoading ? (
           <Box
             sx={{

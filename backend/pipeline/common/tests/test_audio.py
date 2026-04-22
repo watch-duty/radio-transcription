@@ -1,10 +1,7 @@
-import io
 import shutil
 import subprocess
 import unittest
 from unittest.mock import MagicMock, patch
-
-from pydub import AudioSegment
 
 from backend.pipeline.common.audio import get_audio_duration
 
@@ -18,17 +15,27 @@ def _make_headerless_lame_mp3(duration_ms: int) -> bytes:
     MP3 with no Xing/Info frame, so ``ffprobe -i -`` reports
     ``duration=N/A``. See ``get_audio_duration`` for the workaround.
     """
-    audio = AudioSegment.silent(
-        duration=duration_ms, frame_rate=8000
-    ).set_channels(1)
-    buf = io.BytesIO()
-    audio.export(
-        buf,
-        format="mp3",
-        codec="libmp3lame",
-        parameters=["-write_xing", "0"],
+    process = subprocess.run(
+        [
+            "ffmpeg",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=8000:cl=mono",
+            "-t",
+            str(duration_ms / 1000.0),
+            "-c:a",
+            "libmp3lame",
+            "-write_xing",
+            "0",
+            "-f",
+            "mp3",
+            "pipe:1",
+        ],
+        capture_output=True,
+        check=True,
     )
-    return buf.getvalue()
+    return process.stdout
 
 
 class TestAudioUtils(unittest.TestCase):
