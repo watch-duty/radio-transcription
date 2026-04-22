@@ -756,13 +756,27 @@ class NormalizerRuntime:
 
     async def _shutdown_sequence(self) -> None:
         """
-        Orderly teardown: stop /healthz HTTP server, cancel feed tasks,
-        stop heartbeat thread, close GCS client and database pools.
+        Orderly teardown: cancel metric reporter, stop /healthz HTTP server,
+        cancel feed tasks, stop heartbeat thread, close GCS client and
+        database pools.
         """
         logger.info(
             "Shutting down -- %d active feed tasks",
             len(self._feed_tasks),
         )
+        # Cancel the active_feed_count reporter FIRST (Pitfall 4 +
+        # 03-CONTEXT.md D-23). The reporter's gRPC teardown must finish
+        # before the rest of the cleanup chain runs; otherwise a mid-flight
+        # write_time_series would race with Pub/Sub + pool close and could
+        # leak a CLOSE_WAIT socket. asyncio.CancelledError is consumed
+        # because we initiated the cancel -- this is not an error signal.
+        if self._metric_reporter_task is not None:
+            self._metric_reporter_task.cancel()
+            try:
+                await self._metric_reporter_task
+            except asyncio.CancelledError:
+                pass
+
         # Stop the /healthz listener early so external probes get a clean
         # connection refusal (port closed) rather than hanging on a socket
         # whose event loop is about to drain.
