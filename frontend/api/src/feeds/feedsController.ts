@@ -50,6 +50,8 @@ function getSourceUrl(
       return `https://openmhz.com/system/${sourceFeedId}`;
     case 'echo':
       return undefined;
+    default:
+      throw new Error(`Unsupported source type: ${sourceType}`);
   }
 }
 

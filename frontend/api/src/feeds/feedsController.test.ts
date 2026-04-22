@@ -39,6 +39,7 @@ describe('FeedsController', () => {
     sourceFeedId: 'src_123',
     externalId: 'ext_123',
     sourceUrl: 'https://openmhz.com/system/src_123',
+    archiveUrl: undefined,
   };
 
   describe('listFeeds', () => {
