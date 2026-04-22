@@ -60,10 +60,19 @@ function getArchiveUrl(
   sourceFeedId: string | undefined
 ): string | undefined {
   if (!sourceFeedId) return undefined;
-  if (sourceType === 'bcfy_feeds') {
-    return `https://www.broadcastify.com/archives/feed/${sourceFeedId}`;
+
+  switch (sourceType) {
+    case 'bcfy_feeds':
+      return `https://www.broadcastify.com/archives/feed/${sourceFeedId}`;
+    case 'bcfy_calls':
+      return `https://www.broadcastify.com/calls/tg/${sourceFeedId.replace(/-/g, '/')}/archives`;
+    case 'openmhz':
+      return undefined;
+    case 'echo':
+      return undefined;
+    default:
+      throw new Error(`Unsupported source type: ${sourceType}`);
   }
-  return undefined;
 }
 
 function convertFeedBackend(response: FeedBackend): Feed {

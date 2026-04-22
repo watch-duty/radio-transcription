@@ -230,9 +230,9 @@ describe('FeedsController', () => {
       expect(url).toBe('https://www.broadcastify.com/archives/feed/12345');
     });
 
-    it('bcfy_calls produces undefined', async () => {
+    it('bcfy_calls produces the archives URL', async () => {
       const url = await listFeedsArchiveUrl('bcfy_calls', '12345');
-      expect(url).toBeUndefined();
+      expect(url).toBe('https://www.broadcastify.com/calls/tg/12345/archives');
     });
 
     it('openmhz produces undefined', async () => {
