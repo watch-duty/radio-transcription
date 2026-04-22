@@ -1201,5 +1201,214 @@ class TestProcessFeedPublishAttributes(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["source_type"], _FEED["source_type"])
 
 
+class TestMetricReporterLifecycle(unittest.IsolatedAsyncioTestCase):
+    """Lifecycle tests for the active_feed_count reporter task.
+
+    Per 03-CONTEXT.md:
+    - D-22 / METRIC-02: reporter is spawned iff resolve_gce_resource_labels
+      returns a dict; otherwise reporter stays dormant.
+    - Pitfall 4: reporter is cancelled FIRST in _shutdown_sequence, before
+      the existing /healthz cleanup.
+    - Pitfall 7: task handle is stored on self._metric_reporter_task
+      (strong reference).
+    """
+
+    async def test_reporter_task_spawned_when_labels_resolved(self) -> None:
+        """_main() spawns the reporter task when metadata probe succeeds."""
+        rt = _make_runtime(google_cloud_project="test-project")
+
+        # Event-based deterministic sync: reporter_loop signals it has been
+        # entered, so the test can assert kwargs + cancel it cleanly without
+        # any bare asyncio.sleep(0) yield.
+        reporter_started = asyncio.Event()
+        captured_kwargs: dict[str, object] = {}
+
+        async def _noop_reporter_loop(**kwargs: object) -> None:
+            captured_kwargs.update(kwargs)
+            reporter_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                raise
+
+        async def _stub_leasing_loop() -> None:
+            # Let the reporter task run to its first statement, then exit so
+            # _main() falls into _shutdown_sequence (which we've stubbed).
+            await reporter_started.wait()
+
+        with (
+            mock.patch.object(rt, "_leasing_loop", new=_stub_leasing_loop),
+            mock.patch.object(rt, "_shutdown_sequence", new=mock.AsyncMock()),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.create_pool_with_retry",
+                new_callable=mock.AsyncMock,
+                return_value=mock.MagicMock(spec=asyncpg.Pool),
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.FeedStore",
+            ),
+            mock.patch("threading.Thread"),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.metric_reporter.configure"
+            ) as mock_configure,
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.metric_reporter.resolve_gce_resource_labels",
+                new_callable=mock.AsyncMock,
+                return_value={
+                    "project_id": "test-project",
+                    "instance_id": "1234567890",
+                    "zone": "us-central1-a",
+                },
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.metric_reporter.reporter_loop",
+                new=_noop_reporter_loop,
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.health_server.start",
+                new_callable=mock.AsyncMock,
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.quarantine_telemetry.configure"
+            ),
+        ):
+            await rt._main()
+
+        # configure was called exactly once with the project ID from settings.
+        mock_configure.assert_called_once_with("test-project")
+
+        # The reporter task was spawned with the right name and kwargs.
+        self.assertIsNotNone(rt._metric_reporter_task)
+        assert rt._metric_reporter_task is not None  # narrow for type checker
+        self.assertEqual(rt._metric_reporter_task.get_name(), "metric_reporter")
+        self.assertIn("count_fn", captured_kwargs)
+        self.assertTrue(callable(captured_kwargs["count_fn"]))
+        self.assertEqual(
+            captured_kwargs["resource_labels"],
+            {
+                "project_id": "test-project",
+                "instance_id": "1234567890",
+                "zone": "us-central1-a",
+            },
+        )
+        self.assertEqual(captured_kwargs["interval_sec"], 60.0)
+        self.assertTrue(callable(captured_kwargs["sleep_fn"]))
+
+        # Clean up the lingering reporter task so asyncio doesn't warn.
+        rt._metric_reporter_task.cancel()
+        try:
+            await rt._metric_reporter_task
+        except asyncio.CancelledError:
+            pass
+
+    async def test_reporter_task_not_spawned_when_labels_none(self) -> None:
+        """_main() does NOT spawn the reporter when metadata probe returns None."""
+        rt = _make_runtime()
+
+        fake_reporter_loop = mock.AsyncMock()
+
+        with (
+            mock.patch.object(rt, "_leasing_loop", new_callable=mock.AsyncMock),
+            mock.patch.object(
+                rt, "_shutdown_sequence", new_callable=mock.AsyncMock
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.create_pool_with_retry",
+                new_callable=mock.AsyncMock,
+                return_value=mock.MagicMock(spec=asyncpg.Pool),
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.FeedStore",
+            ),
+            mock.patch("threading.Thread"),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.metric_reporter.configure"
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.metric_reporter.resolve_gce_resource_labels",
+                new_callable=mock.AsyncMock,
+                return_value=None,
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.metric_reporter.reporter_loop",
+                new=fake_reporter_loop,
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.health_server.start",
+                new_callable=mock.AsyncMock,
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.quarantine_telemetry.configure"
+            ),
+        ):
+            await rt._main()
+
+        # resolve_gce_resource_labels returned None → no task spawned.
+        self.assertIsNone(rt._metric_reporter_task)
+        fake_reporter_loop.assert_not_awaited()
+
+    async def test_shutdown_cancels_reporter_before_healthz_cleanup(
+        self,
+    ) -> None:
+        """_shutdown_sequence cancels the reporter BEFORE /healthz cleanup."""
+        rt = _make_runtime()
+        rt._shutdown = asyncio.Event()
+
+        # Record call order across cleanup hooks.
+        call_order: list[str] = []
+
+        # Event-based deterministic synchronization: the stub task signals
+        # when it has entered its wait, so the test can await that signal
+        # (no bare asyncio.sleep(0) yield).
+        started = asyncio.Event()
+
+        async def _stub_task() -> None:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                call_order.append("reporter_cancelled")
+                raise
+
+        rt._metric_reporter_task = asyncio.create_task(
+            _stub_task(), name="metric_reporter"
+        )
+        await started.wait()  # deterministic: stub is now awaiting inside try
+
+        async def _healthz_cleanup() -> None:
+            call_order.append("healthz_cleanup")
+
+        mock_health_runner = mock.MagicMock()
+        mock_health_runner.cleanup = _healthz_cleanup
+        rt._health_runner = mock_health_runner
+
+        # Stub the remaining shutdown dependencies so _shutdown_sequence
+        # runs end-to-end without touching real DB / GCP / threads.
+        rt._thread_stop = mock.MagicMock()
+        rt._heartbeat_thread = None  # skip thread.join path
+        rt._feed_tasks = {}  # no feed tasks to cancel
+        rt._store = mock.MagicMock()
+        rt._store.release_feeds_batch = mock.AsyncMock(return_value=0)
+        rt._pubsub_client = mock.MagicMock()
+        rt._pubsub_client.close = mock.AsyncMock()
+        rt._gcs_client = mock.MagicMock()
+        rt._gcs_client.close = mock.AsyncMock()
+        rt._heartbeat_pool = None
+        rt._data_pool = None
+
+        await rt._shutdown_sequence()
+
+        # Reporter must have been cancelled strictly before healthz cleanup.
+        self.assertIn("reporter_cancelled", call_order)
+        self.assertIn("healthz_cleanup", call_order)
+        reporter_idx = call_order.index("reporter_cancelled")
+        healthz_idx = call_order.index("healthz_cleanup")
+        self.assertLess(
+            reporter_idx,
+            healthz_idx,
+            f"reporter must cancel before healthz cleanup, got order={call_order}",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
