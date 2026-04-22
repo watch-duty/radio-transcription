@@ -6,6 +6,8 @@ SAMPLE_RATE_HZ = 16000
 NUM_AUDIO_CHANNELS = 1
 AUDIO_FORMAT = "flac"
 SAMPLE_WIDTH_16BIT = 2  # 16-bit PCM sample width in bytes
+FLAC_COMPRESSION_LEVEL = "5"
+M4A_BITRATE = "32k"
 
 # Google Cloud shared constants
 GCS_METADATA_SIZE_LIMIT = 8 * 1024  # 8 KiB in bytes

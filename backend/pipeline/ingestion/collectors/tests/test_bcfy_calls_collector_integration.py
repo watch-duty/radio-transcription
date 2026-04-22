@@ -9,8 +9,9 @@ from unittest.mock import AsyncMock, patch
 
 import asyncpg
 import docker
+import numpy as np
 import requests as sync_requests
-from pydub import AudioSegment
+import soundfile as sf
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.waiting_utils import wait_for_logs
 from testcontainers.postgres import PostgresContainer
@@ -46,9 +47,10 @@ def _docker_available() -> bool:
 
 def _make_flac_bytes() -> bytes:
     """Generate a valid 1-second silent FLAC file using pydub."""
-    segment = AudioSegment.silent(duration=1000, frame_rate=16000)
+    segment = np.zeros(((1000) * 16), dtype=np.int16)
     buf = io.BytesIO()
-    segment.export(buf, format="flac")
+
+    sf.write(buf, segment, 16000, format="FLAC")
     return buf.getvalue()
 
 

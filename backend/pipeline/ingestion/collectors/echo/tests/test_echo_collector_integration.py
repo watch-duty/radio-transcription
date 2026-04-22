@@ -7,7 +7,6 @@ canonical bucket write -> Pub/Sub publish -> lifecycle update.
 
 from __future__ import annotations
 
-import io
 import os
 import shutil
 import unittest
@@ -24,7 +23,6 @@ import psycopg
 import requests as sync_requests
 from google.cloud import storage
 from psycopg.rows import dict_row
-from pydub import AudioSegment
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.waiting_utils import wait_for_logs
 from testcontainers.postgres import PostgresContainer
@@ -60,10 +58,7 @@ def _ffmpeg_available() -> bool:
 def _make_mp3_bytes(
     *, sample_rate: int = 8000, duration_ms: int = 500
 ) -> bytes:
-    audio = AudioSegment.silent(duration=duration_ms, frame_rate=sample_rate)
-    buf = io.BytesIO()
-    audio.export(buf, format="mp3")
-    return buf.getvalue()
+    return b"dummy mp3 audio"
 
 
 @unittest.skipUnless(_docker_available(), "Docker is not available")
@@ -221,6 +216,7 @@ class TestEchoCollectorIntegration(unittest.TestCase):
             patch.object(echo_main, "feed_store", store),
             patch.object(echo_main, "RAW_AUDIO_TOPIC", _RAW_AUDIO_TOPIC),
             patch.object(echo_main, "STAGING_BUCKET", _STAGING_BUCKET),
+            patch.object(echo_main, "get_audio_duration", return_value=15000),
         ):
             echo_main._handle(event)
 

@@ -48,6 +48,10 @@ from backend.pipeline.transcription.datatypes import (
     TimeRange,
     TranscriptionResult,
 )
+from backend.pipeline.transcription.resources import (
+    SHARED_RESOURCE_HANDLE,
+    SharedResources,
+)
 from backend.pipeline.transcription.sequence_buffer import SequenceBuffer
 from backend.pipeline.transcription.utils import generate_transmission_id
 
@@ -225,7 +229,7 @@ class BypassStitchingFn(beam.DoFn):
         chunk_data = payload.chunk_data
 
         start_ms = chunk_data.start_ms
-        duration_ms = len(chunk_data.audio)
+        duration_ms = chunk_data.duration_ms
         end_ms = start_ms + duration_ms
 
         transmission_id = generate_transmission_id(feed_id, start_ms, end_ms)
@@ -446,12 +450,8 @@ class DownloadAudioFn(beam.DoFn):
     @override
     def setup(self) -> None:
         """Instantiates the Google Cloud Storage client lazily on the executing worker."""
-        from backend.pipeline.transcription.resources import (  # noqa: PLC0415
-            SHARED_RESOURCE_HANDLE,
-            SharedResources,
-        )
-
         self.shared_resources = SHARED_RESOURCE_HANDLE.acquire(SharedResources)
+
         self.audio_processor = AudioProcessor(
             self.config.vad_type,
             self.config.vad_config,
@@ -479,6 +479,7 @@ class DownloadAudioFn(beam.DoFn):
             chunk_data = self.audio_processor.download_audio_and_detect(
                 gcs_path, start_ms
             )
+
             yield (feed_id, DownloadedChunkPayload(gcs_path, chunk_data))
         except FileNotFoundError:
             logger.info(

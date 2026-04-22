@@ -3,8 +3,8 @@
 import logging
 from collections.abc import Callable
 
+import numpy as np
 from google.cloud import storage
-from pydub import AudioSegment
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +60,8 @@ class GCSAudioUploader:
         flac_path: str,
         m4a_path: str,
         flac_bytes: bytes,
-        processed_audio: AudioSegment,
-        export_m4a_fn: Callable[[AudioSegment], bytes],
+        processed_audio: np.ndarray,
+        export_m4a_fn: Callable[[np.ndarray], bytes],
     ) -> tuple[str, str]:
         """Uploads FLAC and M4A audio derivatives to GCS.
 
@@ -70,7 +70,7 @@ class GCSAudioUploader:
             flac_path: The GCS path for the FLAC file.
             m4a_path: The GCS path for the M4A file.
             flac_bytes: The lossless FLAC data.
-            processed_audio: The pydub AudioSegment for derivative generation.
+            processed_audio: The numpy array for derivative generation.
             export_m4a_fn: Function handle to perform the M4A encoding.
 
         Returns:
