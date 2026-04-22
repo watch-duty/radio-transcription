@@ -214,8 +214,11 @@ class SerializeAndEnrichFn(beam.DoFn):
                 and abs(current_start_ms - last_start_ms) < 100
             ):
                 logger.warning(
-                    f"[{feed_id}] Potential growing/overlapping transmission detected! "
-                    f"Starts at nearly the same time ({current_start_ms}ms) as previous ({last_start_ms}ms)."
+                    "[%s] Potential growing/overlapping transmission detected! "
+                    "Starts at nearly the same time (%dms) as previous (%dms).",
+                    feed_id,
+                    current_start_ms,
+                    last_start_ms,
                 )
 
             last_start_ms_state.write(current_start_ms)

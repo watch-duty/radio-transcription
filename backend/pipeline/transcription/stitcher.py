@@ -153,7 +153,10 @@ class StitchAudioFn(beam.DoFn):
         elif "Significant gap" in action.reason:
             self.silence_gap_flush_count.inc()
         logger.info(
-            f"{action.reason}. Flushing preceding continuous audio. Range: {action.speech_time_range}. URIs: {action.contributing_audio_uris}"
+            "%s. Flushing preceding continuous audio. Range: %s. URIs: %s",
+            action.reason,
+            action.speech_time_range,
+            action.contributing_audio_uris,
         )
 
         buffered_audio = action.isolated_audio_buffer or list(
@@ -167,7 +170,9 @@ class StitchAudioFn(beam.DoFn):
                 action.speech_time_range.end_ms,
             )
             logger.info(
-                f"Generated transmission_id: {transmission_id} for feed: {action.feed_id}"
+                "Generated transmission_id: %s for feed: %s",
+                transmission_id,
+                action.feed_id,
             )
 
             yield (
