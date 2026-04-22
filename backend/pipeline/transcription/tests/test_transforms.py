@@ -17,16 +17,19 @@ from apache_beam.testing.util import assert_that, equal_to
 from apache_beam.transforms.window import TimestampedValue
 
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
+from backend.pipeline.schema_types.transcribed_audio_pb2 import TranscribedAudio
 from backend.pipeline.transcription.constants import DEAD_LETTER_QUEUE_TAG
 from backend.pipeline.transcription.datatypes import (
     AudioChunkData,
     ChunkMetadata,
     DownloadedChunkPayload,
+    FeedMetadata,
     FlushRequest,
     OrderRestorerConfig,
     StitchAudioConfig,
     TimeRange,
     TranscribeAudioConfig,
+    TranscriptionResult,
 )
 from backend.pipeline.transcription.enums import TranscriberType, VadType
 from backend.pipeline.transcription.stitcher import (
@@ -40,6 +43,7 @@ from backend.pipeline.transcription.transforms import (
     DownloadAudioFn,
     ParseAndKeyFn,
     RestoreOrderFn,
+    SerializeAndEnrichFn,
 )
 
 
@@ -1045,5 +1049,45 @@ class DownloadAudioTest(unittest.TestCase):
                 assert payload.gcs_uri == "gs://fake-bucket/100-11111111.flac"
                 assert payload.chunk_data.start_ms == 100000
                 assert np.array_equal(payload.chunk_data.audio, expected_audio)
+
+            assert_that(results, assert_results)
+
+
+class SerializeAndEnrichTest(unittest.TestCase):
+    def test_serialize_and_enrich(self) -> None:
+        """Verifies that SerializeAndEnrichFn correctly stores feed_name and enriches the transcript."""
+        options = PipelineOptions(
+            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+        )
+
+        with BeamTestPipeline(options=options) as p:
+            res = TranscriptionResult(
+                feed_id="test-feed",
+                contributing_audio_uris=["gs://bucket/1.flac"],
+                transcript="Hello world",
+                time_range=TimeRange(1000, 2000),
+                transmission_id="uuid-1",
+                start_audio_offset_ms=100,
+                end_audio_offset_ms=200,
+            )
+
+            elements = [
+                ("test-feed", FeedMetadata(feed_name="Test Feed Name")),
+                ("test-feed", res),
+            ]
+
+            results = (
+                p | beam.Create(elements) | beam.ParDo(SerializeAndEnrichFn())
+            )
+
+            def assert_results(msgs):
+
+                assert len(msgs) == 1
+                msg = msgs[0]
+                proto = TranscribedAudio()
+                proto.ParseFromString(msg.data)
+                assert proto.feed_id == "test-feed"
+                assert proto.feed_name == "Test Feed Name"
+                assert proto.transcript == "Hello world"
 
             assert_that(results, assert_results)
