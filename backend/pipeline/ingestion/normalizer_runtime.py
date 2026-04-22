@@ -202,6 +202,7 @@ class NormalizerRuntime:
         self._heartbeat_thread.start()
 
         quarantine_telemetry.configure(settings.google_cloud_project)
+        metric_reporter.configure(settings.google_cloud_project)
 
         # Start /healthz HTTP server. Runs on the same event loop as the
         # leasing/heartbeat coroutines — this is load-bearing: if the loop is
@@ -210,6 +211,29 @@ class NormalizerRuntime:
             settings,
             self._health_state,
         )
+
+        # Resolve GCE resource labels and spawn the active_feed_count reporter.
+        # resolve_gce_resource_labels returns None off-GCE or on any metadata
+        # flake (logs one WARNING); reporter stays dormant and the worker
+        # proceeds normally. Strong reference on self._metric_reporter_task
+        # prevents Pitfall 7 (GC'd create_task). Spawn position: AFTER the
+        # /healthz server is live (so reporter can emit even if leasing stalls)
+        # and BEFORE _leasing_loop per ROADMAP.md Phase 3 SC#2.
+        resource_labels = await metric_reporter.resolve_gce_resource_labels(
+            settings,
+        )
+        if resource_labels is not None:
+            self._metric_reporter_task = asyncio.create_task(
+                metric_reporter.reporter_loop(
+                    count_fn=lambda: len(self._feed_tasks),
+                    resource_labels=resource_labels,
+                    interval_sec=settings.metric_reporter_interval_sec,
+                    sleep_fn=self._sleep_or_shutdown,
+                ),
+                name="metric_reporter",
+            )
+        # else: resolve_gce_resource_labels already logged one WARNING;
+        # reporter stays dormant. Worker continues into _leasing_loop.
 
         try:
             await self._leasing_loop()
