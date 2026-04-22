@@ -25,6 +25,7 @@ def _make_feed(name: str, source_feed_id: str | None) -> LeasedFeed:
     return LeasedFeed(
         id=TEST_FEED_ID,
         name=name,
+        external_id="ext-id",
         source_type=SourceType.BCFY_FEEDS,
         last_processed_filename=None,
         last_bookmark_time=None,

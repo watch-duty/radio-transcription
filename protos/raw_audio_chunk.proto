@@ -19,4 +19,7 @@ message AudioChunk {
   
   // The human-readable name of the radio feed as stored in the database.
   string feed_name = 5;
+
+  // The ID used for mapping feed ID within application
+  string external_id = 6;
 }
