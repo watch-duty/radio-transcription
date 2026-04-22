@@ -67,6 +67,17 @@ class TranscriptStore:
         if row["evaluation_decisions"]:
             msg.evaluation_decisions.extend(row["evaluation_decisions"])
 
+        if row["playback_audio_uri"]:
+            msg.playback_audio_uri = row["playback_audio_uri"]
+
+        if row["evaluation_errors"]:
+            msg.evaluation_errors.extend(
+                [
+                    EvaluatedTranscribedAudio.EvaluationErrorType.Value(e)
+                    for e in row["evaluation_errors"]
+                ]
+            )
+
         return msg
 
     def _decode_cursor(
@@ -128,6 +139,11 @@ class TranscriptStore:
                 start_offset,
                 end_offset,
                 list(transcript.evaluation_decisions),
+                transcript.playback_audio_uri or None,
+                [
+                    EvaluatedTranscribedAudio.EvaluationErrorType.Name(e)
+                    for e in transcript.evaluation_errors
+                ],
             )
         except asyncpg.exceptions.UniqueViolationError as e:
             raise AlreadyExistsError(str(transmission_id)) from e
