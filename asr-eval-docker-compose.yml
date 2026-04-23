@@ -55,3 +55,18 @@ services:
     volumes:
       - ./model:/app/model
     working_dir: /app
+
+  # FastAPI container running Canary-Qwen 2.5B on GPU
+  canary-qwen:
+    build:
+      context: .
+      dockerfile: model/models/canary_qwen/Dockerfile
+    ports:
+      - "8001:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
