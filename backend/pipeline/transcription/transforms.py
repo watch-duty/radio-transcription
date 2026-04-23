@@ -371,22 +371,12 @@ class RestoreOrderFn(beam.DoFn):
         self,
         element: tuple[str, ChunkMetadata],
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
-        session_id_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            SESSION_ID_SPEC
-        ),
-        expected_next_ts_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            EXPECTED_NEXT_TS_SPEC
-        ),
-        out_of_order_buffer_state: BagRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            OUT_OF_ORDER_BUFFER_SPEC
-        ),
-        timer_active_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            TIMER_ACTIVE_SPEC
-        ),
-        out_of_order_timer: RuntimeTimer = beam.DoFn.TimerParam(  # type: ignore # noqa: B008
-            OUT_OF_ORDER_TIMER_SPEC
-        ),
-    ) -> Iterator[Any]:
+        session_id_state: ReadModifyWriteRuntimeState = SESSION_ID_STATE,  # type: ignore
+        expected_next_ts_state: ReadModifyWriteRuntimeState = EXPECTED_NEXT_TS_STATE,  # type: ignore
+        out_of_order_buffer_state: BagRuntimeState = OUT_OF_ORDER_BUFFER_STATE,  # type: ignore
+        timer_active_state: ReadModifyWriteRuntimeState = TIMER_ACTIVE_STATE,  # type: ignore
+        out_of_order_timer: RuntimeTimer = OUT_OF_ORDER_TIMER,  # type: ignore
+    ) -> Iterator[window.TimestampedValue[tuple[str, tuple[str, str]]]]:
         """Ingests out-of-order chunks and orchestrates chronologically sorted yields."""
         feed_id, metadata = element
         gcs_path = metadata.gcs_uri
@@ -458,19 +448,11 @@ class RestoreOrderFn(beam.DoFn):
     def handle_gap_timeout(
         self,
         feed_id: str = beam.DoFn.KeyParam,  # type: ignore
-        session_id_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            SESSION_ID_SPEC
-        ),
-        expected_next_ts_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            EXPECTED_NEXT_TS_SPEC
-        ),
-        out_of_order_buffer_state: BagRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            OUT_OF_ORDER_BUFFER_SPEC
-        ),
-        timer_active_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            TIMER_ACTIVE_SPEC
-        ),
-    ) -> Iterator[Any]:
+        session_id_state: ReadModifyWriteRuntimeState = SESSION_ID_STATE,  # type: ignore
+        expected_next_ts_state: ReadModifyWriteRuntimeState = EXPECTED_NEXT_TS_STATE,  # type: ignore
+        out_of_order_buffer_state: BagRuntimeState = OUT_OF_ORDER_BUFFER_STATE,  # type: ignore
+        timer_active_state: ReadModifyWriteRuntimeState = TIMER_ACTIVE_STATE,  # type: ignore
+    ) -> Iterator[window.TimestampedValue[tuple[str, tuple[str, str]]]]:
         """Handles the gap timeout."""
         self.data_gaps_detected_counter.inc()
         timer_active_state.clear()

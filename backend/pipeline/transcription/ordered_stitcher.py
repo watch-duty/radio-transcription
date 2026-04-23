@@ -2,7 +2,6 @@ import logging
 import time
 from collections.abc import Iterator
 from dataclasses import replace
-from typing import cast
 
 import apache_beam as beam
 import numpy as np
@@ -112,14 +111,18 @@ class OrderedStitchAudioFn(beam.DoFn):
     OUT_OF_ORDER_BUFFER_SPEC = BagStateSpec(
         "out_of_order_buffer", beam.coders.PickleCoder()
     )
+    OUT_OF_ORDER_BUFFER_STATE = beam.DoFn.StateParam(OUT_OF_ORDER_BUFFER_SPEC)
 
     # From StitchAudioFn
     TRANSMISSION_BUFFER_SPEC = BagStateSpec(
         "transmission_buffer", beam.coders.PickleCoder()
     )
+    TRANSMISSION_BUFFER_STATE = beam.DoFn.StateParam(TRANSMISSION_BUFFER_SPEC)
+
     TRANSMISSION_CONTEXT_SPEC = ReadModifyWriteStateSpec(
         "transmission_context", beam.coders.PickleCoder()
     )
+    TRANSMISSION_CONTEXT_STATE = beam.DoFn.StateParam(TRANSMISSION_CONTEXT_SPEC)
 
     # --- Timers ---
 
@@ -127,14 +130,18 @@ class OrderedStitchAudioFn(beam.DoFn):
     OUT_OF_ORDER_TIMER_SPEC = TimerSpec(
         "out_of_order_timer", beam.TimeDomain.WATERMARK
     )
+    OUT_OF_ORDER_TIMER = beam.DoFn.TimerParam(OUT_OF_ORDER_TIMER_SPEC)
 
     # From StitchAudioFn
     STALE_TIMER_EVENT_SPEC = TimerSpec(
         "stale_timer_event", beam.TimeDomain.WATERMARK
     )
+    STALE_TIMER_EVENT_PARAM = beam.DoFn.TimerParam(STALE_TIMER_EVENT_SPEC)
+
     STALE_TIMER_PROC_SPEC = TimerSpec(
         "stale_timer_proc", beam.TimeDomain.REAL_TIME
     )
+    STALE_TIMER_PROC_PARAM = beam.DoFn.TimerParam(STALE_TIMER_PROC_SPEC)
 
     def __init__(
         self,
@@ -156,30 +163,17 @@ class OrderedStitchAudioFn(beam.DoFn):
         self,
         element: tuple[str, ChunkMetadata],
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
-        out_of_order_buffer_state: BagRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            OUT_OF_ORDER_BUFFER_SPEC
-        ),
-        transmission_buffer_state: BagRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            TRANSMISSION_BUFFER_SPEC
-        ),
-        transmission_context_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            TRANSMISSION_CONTEXT_SPEC
-        ),
-        out_of_order_timer: RuntimeTimer = beam.DoFn.TimerParam(  # type: ignore # noqa: B008
-            OUT_OF_ORDER_TIMER_SPEC
-        ),
-        stale_timer_event: RuntimeTimer = beam.DoFn.TimerParam(  # type: ignore # noqa: B008
-            STALE_TIMER_EVENT_SPEC
-        ),
-        stale_timer_proc: RuntimeTimer = beam.DoFn.TimerParam(  # type: ignore # noqa: B008
-            STALE_TIMER_PROC_SPEC
-        ),
+        out_of_order_buffer_state: BagRuntimeState = OUT_OF_ORDER_BUFFER_STATE,  # type: ignore
+        transmission_buffer_state: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
+        transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
+        out_of_order_timer: RuntimeTimer = OUT_OF_ORDER_TIMER,  # type: ignore
+        stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
+        stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
     ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
         """Processes incoming chunks, orders them, downloads audio, and stitches them."""
         feed_id, metadata = element
-        curr_context = cast(
-            "TransmissionContext",
-            transmission_context_state.read() or TransmissionContext(),
+        curr_context = (
+            transmission_context_state.read() or TransmissionContext()
         )
 
         # Session change detection
@@ -417,26 +411,15 @@ class OrderedStitchAudioFn(beam.DoFn):
     def handle_gap_timeout(
         self,
         feed_id: str = beam.DoFn.KeyParam,  # type: ignore
-        out_of_order_buffer_state: BagRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            OUT_OF_ORDER_BUFFER_SPEC
-        ),
-        transmission_buffer_state: BagRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            TRANSMISSION_BUFFER_SPEC
-        ),
-        transmission_context_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            TRANSMISSION_CONTEXT_SPEC
-        ),
-        stale_timer_event: RuntimeTimer = beam.DoFn.TimerParam(  # type: ignore # noqa: B008
-            STALE_TIMER_EVENT_SPEC
-        ),
-        stale_timer_proc: RuntimeTimer = beam.DoFn.TimerParam(  # type: ignore # noqa: B008
-            STALE_TIMER_PROC_SPEC
-        ),
+        out_of_order_buffer_state: BagRuntimeState = OUT_OF_ORDER_BUFFER_STATE,  # type: ignore
+        transmission_buffer_state: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
+        transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
+        stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
+        stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
     ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
         """Handles the gap timeout by advancing the expected sequence."""
-        curr_context = cast(
-            "TransmissionContext",
-            transmission_context_state.read() or TransmissionContext(),
+        curr_context = (
+            transmission_context_state.read() or TransmissionContext()
         )
         curr_context = replace(curr_context, order_timer_active=False)
         transmission_context_state.write(curr_context)
@@ -499,18 +482,10 @@ class OrderedStitchAudioFn(beam.DoFn):
     def handle_stale_transmission_event(
         self,
         key: str = beam.DoFn.KeyParam,  # type: ignore
-        transmission_buffer: BagRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            TRANSMISSION_BUFFER_SPEC
-        ),
-        transmission_context: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            TRANSMISSION_CONTEXT_SPEC
-        ),
-        stale_timer_event: RuntimeTimer = beam.DoFn.TimerParam(  # type: ignore # noqa: B008
-            STALE_TIMER_EVENT_SPEC
-        ),
-        stale_timer_proc: RuntimeTimer = beam.DoFn.TimerParam(  # type: ignore # noqa: B008
-            STALE_TIMER_PROC_SPEC
-        ),
+        transmission_buffer: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
+        transmission_context: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
+        stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
+        stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
     ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
         """Handles stale flushes triggered by event time."""
         timer_manager = StaleTimerManager(
@@ -524,18 +499,10 @@ class OrderedStitchAudioFn(beam.DoFn):
     def handle_stale_transmission_proc(
         self,
         key: str = beam.DoFn.KeyParam,  # type: ignore
-        transmission_buffer: BagRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            TRANSMISSION_BUFFER_SPEC
-        ),
-        transmission_context: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            TRANSMISSION_CONTEXT_SPEC
-        ),
-        stale_timer_event: RuntimeTimer = beam.DoFn.TimerParam(  # type: ignore # noqa: B008
-            STALE_TIMER_EVENT_SPEC
-        ),
-        stale_timer_proc: RuntimeTimer = beam.DoFn.TimerParam(  # type: ignore # noqa: B008
-            STALE_TIMER_PROC_SPEC
-        ),
+        transmission_buffer: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
+        transmission_context: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
+        stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
+        stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
     ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
         """Handles stale flushes triggered by processing time."""
         timer_manager = StaleTimerManager(
@@ -553,10 +520,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         timer_manager: StaleTimerManager,
     ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
         """Common logic for handling stale transmissions."""
-        curr_context = cast(
-            "TransmissionContext",
-            transmission_context.read() or TransmissionContext(),
-        )
+        curr_context = transmission_context.read() or TransmissionContext()
         start_time_ms = curr_context.stale_start_time_ms
         end_time_ms = curr_context.last_end_time_ms
         processed_uris = curr_context.contributing_audio_uris
