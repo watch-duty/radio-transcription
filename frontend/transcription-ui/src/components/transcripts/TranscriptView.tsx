@@ -77,8 +77,7 @@ export function TranscriptView({
   >(targetTransmissionId);
   const [hideFooterButton, setHideFooterButton] = useState(false);
   const [hideHeaderButton, setHideHeaderButton] = useState(false);
-  const [isAtTop, setIsAtTop] = useState(true);
-  const [isPolling, setIsPolling] = useState(false);
+
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const hasScrolledToTarget = useRef(false);
 
@@ -302,85 +301,6 @@ export function TranscriptView({
 
     return { groupCounts: counts, groupTitles: titles };
   }, [transcripts]);
-
-  const newestTimestamp = transcripts[0]?.startTimestamp;
-
-  const pollNewerTranscripts = useCallback(async () => {
-    if (!newestTimestamp || !searchedFeedId) return [];
-    const response = await listTranscripts(
-      searchedFeedId,
-      token!,
-      undefined,
-      undefined,
-      new Date(newestTimestamp).getTime()
-    );
-    return response.transcripts;
-  }, [newestTimestamp, searchedFeedId, token]);
-
-  const updateCacheWithNewTranscripts = useCallback(
-    (newTranscripts: Transcript[]) => {
-      queryClient.setQueryData<
-        InfiniteData<{
-          transcripts: Transcript[];
-          nextToken?: string;
-          startTime?: number;
-          endTime?: number;
-        }>
-      >(
-        ['listTranscripts', token, searchedFeedId, undefined, undefined],
-        (oldData) => {
-          if (!oldData) return oldData;
-
-          const existingIds = new Set(
-            oldData.pages.flatMap((p) =>
-              p.transcripts.map((t) => t.transmissionId)
-            )
-          );
-          const filteredNew = newTranscripts.filter(
-            (t) => !existingIds.has(t.transmissionId)
-          );
-
-          if (filteredNew.length === 0) return oldData;
-
-          const newPages = [...oldData.pages];
-          newPages[0] = {
-            ...newPages[0],
-            transcripts: [...filteredNew, ...newPages[0].transcripts],
-          };
-          return { ...oldData, pages: newPages };
-        }
-      );
-    },
-    [token, searchedFeedId, queryClient]
-  );
-
-  useEffect(() => {
-    if (searchedStartTime || !isAtTop || !newestTimestamp || !searchedFeedId)
-      return;
-
-    const interval = setInterval(async () => {
-      try {
-        setIsPolling(true);
-        const newTranscripts = await pollNewerTranscripts();
-        if (newTranscripts.length > 0) {
-          updateCacheWithNewTranscripts(newTranscripts);
-        }
-      } catch (error) {
-        console.error('Polling error:', error);
-      } finally {
-        setIsPolling(false);
-      }
-    }, 15000);
-
-    return () => clearInterval(interval);
-  }, [
-    searchedStartTime,
-    isAtTop,
-    newestTimestamp,
-    searchedFeedId,
-    pollNewerTranscripts,
-    updateCacheWithNewTranscripts,
-  ]);
 
   const {
     data: rules,
@@ -692,38 +612,7 @@ export function TranscriptView({
               ) : (
                 <Box />
               )}
-              {(!hasNewerTranscripts || hideHeaderButton) && (
-                <Button
-                  size="small"
-                  variant="text"
-                  onClick={async () => {
-                    setIsPolling(true);
-                    try {
-                      const newTranscripts = await pollNewerTranscripts();
-                      if (newTranscripts.length > 0) {
-                        updateCacheWithNewTranscripts(newTranscripts);
-                      } else {
-                        triggerSnackbar('No newer transcripts found');
-                      }
-                    } catch (error) {
-                      console.error('Manual refresh error:', error);
-                    } finally {
-                      setIsPolling(false);
-                    }
-                  }}
-                  disabled={isTranscriptsFetching || isPolling}
-                  startIcon={
-                    isPolling ? (
-                      <CircularProgress size={16} color="inherit" />
-                    ) : (
-                      <RefreshIcon />
-                    )
-                  }
-                  sx={{ textTransform: 'none' }}
-                >
-                  {isPolling ? 'Refreshing...' : 'Refresh (15s)'}
-                </Button>
-              )}
+
             </Box>
             <Paper
               variant="outlined"
@@ -739,7 +628,6 @@ export function TranscriptView({
                 ref={virtuosoRef}
                 groupCounts={groupCounts}
                 data={transcripts}
-                atTopStateChange={(atTop) => setIsAtTop(atTop)}
                 groupContent={(index) => {
                   const title = groupTitles[index];
                   return (
