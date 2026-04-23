@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 _TRACE_ID = contextvars.ContextVar("trace_id", default="")
 
 
-def set_trace_id(trace_id: str | None = None) -> str:
+def set_trace_id(trace_id: str | None = None) -> None:
     """Sets the trace ID for the current context.
 
     Returns the trace ID that was set.
@@ -21,7 +21,6 @@ def set_trace_id(trace_id: str | None = None) -> str:
     if trace_id is None:
         trace_id = str(uuid.uuid4())
     _TRACE_ID.set(trace_id)
-    return trace_id
 
 
 def get_trace_id() -> str:

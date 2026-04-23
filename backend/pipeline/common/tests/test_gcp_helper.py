@@ -9,6 +9,7 @@ from multidict import CIMultiDict, CIMultiDictProxy
 from yarl import URL
 
 from backend.pipeline.common import gcp_helper
+from backend.pipeline.common import logging as pipeline_logging
 from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
@@ -55,6 +56,9 @@ def _make_pubsub_client() -> tuple[MagicMock, MagicMock]:
 class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
     """Test suite for the upload_staged_audio function."""
 
+    async def asyncSetUp(self) -> None:
+        pipeline_logging.set_trace_id("dummy-trace-id")
+
     @patch("backend.pipeline.common.gcp_helper.datetime")
     async def test_upload_staged_audio_success(
         self,
@@ -90,7 +94,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             bucket,
             expected_object_name,
             audio_chunk,
-            metadata=None,
+            metadata={"trace_id": "dummy-trace-id"},
             content_type="audio/flac",
         )
         self.assertEqual(result, expected_path)
@@ -130,7 +134,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             bucket,
             expected_object_name,
             audio_chunk,
-            metadata=None,
+            metadata={"trace_id": "dummy-trace-id"},
             content_type="audio/flac",
         )
         self.assertEqual(result, expected_path)
@@ -245,7 +249,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             "test-bucket",
             expected_object_name,
             b"\x00\x01" * 100,
-            metadata=None,
+            metadata={"trace_id": "dummy-trace-id"},
             content_type="audio/flac",
             parameters={"ifGenerationMatch": "0"},
         )
@@ -254,6 +258,9 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
 
 class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
     """Tests for the upload_audio function."""
+
+    async def asyncSetUp(self) -> None:
+        pipeline_logging.set_trace_id("dummy-trace-id")
 
     async def test_upload_with_correct_bucket_and_object_name(self) -> None:
         mock_gcs_client, mock_storage = _make_gcs_client()
@@ -273,7 +280,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             bucket,
             object_name,
             audio,
-            metadata=None,
+            metadata={"trace_id": "dummy-trace-id"},
             content_type="audio/flac",
         )
         self.assertEqual(result, f"gs://{bucket}/{object_name}")
@@ -292,7 +299,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         metadata = call_kwargs.kwargs.get("metadata") or call_kwargs[1].get(
             "metadata"
         )
-        self.assertIsNone(metadata)
+        self.assertEqual(metadata, {"trace_id": "dummy-trace-id"})
 
     async def test_upload_with_if_generation_match(self) -> None:
         """ifGenerationMatch=0 is passed as parameters to storage.upload."""
@@ -310,7 +317,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             "bucket",
             "obj.flac",
             b"audio",
-            metadata=None,
+            metadata={"trace_id": "dummy-trace-id"},
             content_type="audio/flac",
             parameters={"ifGenerationMatch": "0"},
         )
@@ -379,6 +386,9 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
 class TestPublishAudioChunkSync(unittest.TestCase):
     """Test suite for the synchronous publish_audio_chunk_sync function."""
 
+    def setUp(self) -> None:
+        pipeline_logging.set_trace_id("dummy-trace-id")
+
     def test_sets_timestamp_ordering_key_and_attributes(self) -> None:
         mock_now = datetime.datetime(2026, 3, 5, 12, 0, tzinfo=datetime.UTC)
         mock_future = MagicMock()
@@ -396,7 +406,6 @@ class TestPublishAudioChunkSync(unittest.TestCase):
             session_id="test-session-1",
             start_timestamp=mock_now,
             duration_ms=15000,
-            trace_id="dummy-trace-id",
             source_type="echo",
         )
 
@@ -437,7 +446,6 @@ class TestPublishAudioChunkSync(unittest.TestCase):
                 2026, 3, 5, 12, 0, tzinfo=datetime.UTC
             ),
             duration_ms=15000,
-            trace_id="dummy-trace-id",
         )
 
         publish_kwargs = mock_publisher.publish.call_args.kwargs
@@ -466,7 +474,6 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
             session_id="test-session-1",
             start_timestamp=mock_now,
             duration_ms=15000,
-            trace_id="dummy-trace-id",
         )
 
         self.assertEqual(result, "message-123")

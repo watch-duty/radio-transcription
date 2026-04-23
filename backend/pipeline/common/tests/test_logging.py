@@ -58,7 +58,7 @@ class TestTraceId(TestCase):
         )
         filter_inst = pipeline_logging.TraceIdFilter()
         filter_inst.filter(record)
-        self.assertEqual(getattr(record, "trace_id"), trace_id)  # noqa: B009
+        self.assertEqual(record.trace_id, trace_id)  # type: ignore
 
     def test_set_trace_id_generate(self) -> None:
         returned_id = pipeline_logging.set_trace_id()
@@ -69,7 +69,7 @@ class TestTraceId(TestCase):
         )
         filter_inst = pipeline_logging.TraceIdFilter()
         filter_inst.filter(record)
-        self.assertEqual(getattr(record, "trace_id"), returned_id)  # noqa: B009
+        self.assertEqual(record.trace_id, returned_id)  # type: ignore
 
     def test_clear_trace_id(self) -> None:
         pipeline_logging.set_trace_id("test")
@@ -80,4 +80,4 @@ class TestTraceId(TestCase):
         )
         filter_inst = pipeline_logging.TraceIdFilter()
         filter_inst.filter(record)
-        self.assertEqual(getattr(record, "trace_id"), "")  # noqa: B009
+        self.assertEqual(record.trace_id, "")  # type: ignore

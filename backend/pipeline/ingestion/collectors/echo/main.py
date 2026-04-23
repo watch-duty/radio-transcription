@@ -176,7 +176,6 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
             session_id,
             start_ts,
             duration_ms=duration_ms,
-            trace_id=pipeline_logging.get_trace_id(),
             source_type="echo",
         )
 

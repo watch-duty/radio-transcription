@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
+from backend.pipeline.common import logging as pipeline_logging
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 
 if TYPE_CHECKING:
@@ -37,7 +38,6 @@ async def upload_staged_audio(
     fencing_token: int | None = None,
     extension: str = "flac",
     content_type: str = "audio/flac",
-    trace_id: str | None = None,
 ) -> str:
     """
     Upload an unnormalized audio chunk to GCS and return the object path.
@@ -94,7 +94,6 @@ async def upload_staged_audio(
         object_name,
         if_generation_match=0 if fencing_token is not None else None,
         content_type=content_type,
-        trace_id=trace_id,
     )
 
 
@@ -105,7 +104,6 @@ async def upload_audio(
     object_name: str,
     if_generation_match: int | None = None,
     content_type: str = "audio/flac",
-    trace_id: str | None = None,
 ) -> str:
     """
     Upload audio to GCS.
@@ -131,7 +129,7 @@ async def upload_audio(
     """
     storage = gcs_client.get_storage()
     upload_kwargs: dict[str, Any] = {
-        "metadata": {"trace_id": trace_id} if trace_id else None,
+        "metadata": {"trace_id": pipeline_logging.get_trace_id()},
         "content_type": content_type,
     }
     if if_generation_match is not None:
@@ -213,7 +211,6 @@ def publish_audio_chunk_sync(
     session_id: str,
     start_timestamp: datetime.datetime,
     duration_ms: int,
-    trace_id: str,
     source_type: str | None = None,
 ) -> str:
     """Publish an AudioChunk to Pub/Sub and return the message ID.
@@ -232,7 +229,7 @@ def publish_audio_chunk_sync(
         "feed_id": feed_id,
         "session_id": session_id,
         "gcs_uri": gcs_uri,
-        "trace_id": trace_id,
+        "trace_id": pipeline_logging.get_trace_id(),
     }
     if source_type is not None:
         attrs["source_type"] = source_type
@@ -256,7 +253,6 @@ async def publish_audio_chunk(
     session_id: str,
     start_timestamp: datetime.datetime,
     duration_ms: int,
-    trace_id: str,
     source_type: str | None = None,
 ) -> str:
     """Asynchronously publish an AudioChunk to Pub/Sub.
@@ -276,7 +272,7 @@ async def publish_audio_chunk(
         "feed_id": feed_id,
         "session_id": session_id,
         "gcs_uri": gcs_uri,
-        "trace_id": trace_id,
+        "trace_id": pipeline_logging.get_trace_id(),
     }
     if source_type is not None:
         attrs["source_type"] = source_type

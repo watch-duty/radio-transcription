@@ -385,7 +385,7 @@ class NormalizerRuntime:
                     )
                     raise TypeError(msg)  # noqa: TRY301
 
-                trace_id = pipeline_logging.set_trace_id()
+                pipeline_logging.set_trace_id()
 
                 # session_id is owned by the capture function. Fall back
                 # to a runtime-generated UUID during the transition period
@@ -410,7 +410,6 @@ class NormalizerRuntime:
                     fencing_token,
                     extension,
                     content_type,
-                    trace_id,
                     lease_lost=self._lease_lost,
                     shutdown=self._shutdown,
                     max_retries=settings.gcs_upload_max_retries,
@@ -441,7 +440,6 @@ class NormalizerRuntime:
                     session_id=session_id,
                     source_type=feed["source_type"],
                     duration_ms=duration_ms,
-                    trace_id=trace_id,
                 )
                 logger.info(
                     "Published message %s for feed %s", message_id, feed["name"]
