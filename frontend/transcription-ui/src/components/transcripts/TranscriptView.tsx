@@ -129,7 +129,30 @@ export function TranscriptView({
     isLoading: isTranscriptsInitialLoading,
     isFetching: isTranscriptsFetching,
     isSuccess: isTranscriptsSuccess,
-  } = useInfiniteQuery({
+  } = useInfiniteQuery<
+    {
+      transcripts: Transcript[];
+      nextToken?: string;
+      startTime?: number;
+      endTime?: number;
+      order?: 'asc' | 'desc';
+    },
+    Error,
+    InfiniteData<{
+      transcripts: Transcript[];
+      nextToken?: string;
+      startTime?: number;
+      endTime?: number;
+      order?: 'asc' | 'desc';
+    }>,
+    any[],
+    {
+      startTime?: number;
+      endTime?: number;
+      nextToken?: string;
+      order?: 'asc' | 'desc';
+    }
+  >({
     queryKey: [
       'listTranscripts',
       token,
@@ -138,10 +161,11 @@ export function TranscriptView({
       searchedEndTime?.getTime(),
     ],
     queryFn: async ({ pageParam }) => {
-      const { startTime, endTime, nextToken } = pageParam as {
+      const { startTime, endTime, nextToken, order } = pageParam as {
         startTime?: number;
         endTime?: number;
         nextToken?: string;
+        order?: 'asc' | 'desc';
       };
       const response = await listTranscripts(
         searchedFeedId,
@@ -149,39 +173,66 @@ export function TranscriptView({
         undefined,
         nextToken,
         startTime,
-        endTime
+        endTime,
+        order
       );
-      return { ...response, startTime, endTime };
+      
+      if (order === 'asc' && response.transcripts) {
+        response.transcripts.reverse();
+      }
+      
+      return { ...response, startTime, endTime, order };
     },
     initialPageParam: {
       startTime: searchedStartTime?.getTime() ?? undefined,
       endTime: searchedEndTime?.getTime() ?? undefined,
-    },
+      order: undefined,
+    } as { startTime?: number; endTime?: number; nextToken?: string; order?: 'asc' | 'desc' },
     getNextPageParam: (lastPage) => {
       if (lastPage.nextToken) {
         return {
           startTime: lastPage.startTime,
           endTime: lastPage.endTime,
           nextToken: lastPage.nextToken,
+          order: lastPage.order,
+        };
+      }
+      const oldestTranscript =
+        lastPage.transcripts?.[lastPage.transcripts.length - 1];
+      if (oldestTranscript) {
+        return {
+          endTime: new Date(oldestTranscript.startTimestamp).getTime() - 1,
+          order: 'desc' as const,
         };
       }
       if (lastPage.startTime !== undefined) {
         return {
-          startTime: lastPage.startTime - 30 * 60 * 1000,
           endTime: lastPage.startTime,
+          order: 'desc' as const,
         };
       }
       return undefined;
     },
     getPreviousPageParam: (firstPage) => {
-      if (firstPage.endTime !== undefined) {
-        const newStartTime = firstPage.endTime;
-        const newEndTime = firstPage.endTime + 30 * 60 * 1000;
-
-        if (newEndTime > Date.now()) {
+      const newestTranscript = firstPage.transcripts?.[0];
+      if (newestTranscript) {
+        const startTime = new Date(newestTranscript.startTimestamp).getTime() + 1;
+        if (startTime > Date.now()) {
           return undefined;
         }
-        return { startTime: newStartTime, endTime: newEndTime };
+        return {
+          startTime,
+          order: 'asc' as const,
+        };
+      }
+      if (firstPage.endTime !== undefined) {
+        if (firstPage.endTime > Date.now()) {
+          return undefined;
+        }
+        return {
+          startTime: firstPage.endTime,
+          order: 'asc' as const,
+        };
       }
       return undefined;
     },
@@ -415,11 +466,6 @@ export function TranscriptView({
         <Button
           variant="contained"
           onClick={() => {
-            // Three posibilites for querying:
-            // 1. If no timestamp is provided, we don't set those fields.
-            // 2. If only the timestamp is provided but no duration, we set the duration to the endTime but leave startTime empty so that we get all results prior to that time.
-            // 3. If both the timestamp and duration are provided, we apply the offset to the timestamp and set the start and end times.
-
             let calcStart: Date | null = null;
             let calcEnd: Date | null = null;
 
@@ -674,7 +720,7 @@ export function TranscriptView({
                               const result = await fetchPreviousTranscripts();
                               if (
                                 result.data &&
-                                result.data.pages[0]?.transcripts.length === 0
+                                (result.data.pages[0] as { transcripts: Transcript[] })?.transcripts.length === 0
                               ) {
                                 triggerSnackbar('No newer transcripts found');
                                 setHideHeaderButton(true);
@@ -709,7 +755,7 @@ export function TranscriptView({
                                   const lastPage =
                                     result.data.pages[
                                       result.data.pages.length - 1
-                                    ];
+                                    ] as { transcripts: Transcript[] };
                                   if (lastPage?.transcripts.length === 0) {
                                     triggerSnackbar(
                                       'No older transcripts found'
@@ -771,11 +817,6 @@ export function TranscriptView({
             <Typography color="textSecondary" align="center">
               No transcripts found.
             </Typography>
-            {(searchedStartTime || searchedEndTime) && (
-              <Typography color="textSecondary" align="center" sx={{ mt: 1 }}>
-                Try clearing the time filters to see recent transcripts.
-              </Typography>
-            )}
           </Box>
         ) : null}
       </Box>

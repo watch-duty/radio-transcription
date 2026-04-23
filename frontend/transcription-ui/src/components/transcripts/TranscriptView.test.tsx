@@ -46,6 +46,23 @@ vi.mock('react-virtuoso', () => ({
 describe('TranscriptView', () => {
   const mockAddAlert = vi.fn();
 
+  const mockTranscripts = [
+    {
+      feedId: 'feed123',
+      transmissionId: '1',
+      transcript: 'Hello',
+      canonicalAudioUri: 'gs:://foo.flac',
+      startTimestamp: '2026-04-10T12:00:00Z',
+      endTimestamp: '2026-04-10T12:00:05Z',
+      missingPriorContext: false,
+      missingPostContext: false,
+      sourceAudioUris: ['gs:://foo.flac'],
+      startAudioOffset: '0s',
+      endAudioOffset: '5s',
+      evaluationDecisions: [],
+    },
+  ];
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockAddAlert.mockClear();
@@ -388,7 +405,7 @@ describe('TranscriptView', () => {
     ];
     vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
     vi.mocked(listTranscripts).mockResolvedValueOnce({
-      transcripts: [],
+      transcripts: mockTranscripts,
       nextToken: undefined,
     });
 
@@ -418,7 +435,7 @@ describe('TranscriptView', () => {
     ];
     vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
     vi.mocked(listTranscripts).mockResolvedValueOnce({
-      transcripts: [],
+      transcripts: mockTranscripts,
       nextToken: undefined,
     });
 
@@ -449,7 +466,7 @@ describe('TranscriptView', () => {
     ];
     vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
     vi.mocked(listTranscripts).mockResolvedValueOnce({
-      transcripts: [],
+      transcripts: mockTranscripts,
       nextToken: undefined,
     });
 
@@ -560,7 +577,7 @@ describe('TranscriptView', () => {
     ];
     vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
     vi.mocked(listTranscripts).mockResolvedValueOnce({
-      transcripts: [],
+      transcripts: mockTranscripts,
       nextToken: undefined,
     });
 
@@ -588,7 +605,7 @@ describe('TranscriptView', () => {
     ];
     vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
     vi.mocked(listTranscripts).mockResolvedValueOnce({
-      transcripts: [],
+      transcripts: mockTranscripts,
       nextToken: undefined,
     });
 

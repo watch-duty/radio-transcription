@@ -6,14 +6,16 @@ export async function listTranscripts(
   limit?: number,
   nextToken?: string,
   startTime?: number,
-  endTime?: number
+  endTime?: number,
+  order?: 'asc' | 'desc'
 ): Promise<{ transcripts: Transcript[]; nextToken?: string }> {
   let url = `${import.meta.env.VITE_API_BASE_URL}/api/v1/transcripts/${feedId}`;
   const params = new URLSearchParams();
   if (limit) params.append('limit', limit.toString());
   if (nextToken) params.append('nextToken', nextToken);
-  if (startTime) params.append('startTime', new Date(startTime).toISOString());
-  if (endTime) params.append('endTime', new Date(endTime).toISOString());
+  if (startTime) params.append('startTime', startTime.toString());
+  if (endTime) params.append('endTime', endTime.toString());
+  if (order) params.append('order', order);
   if (params.toString()) {
     url += `?${params.toString()}`;
   }
