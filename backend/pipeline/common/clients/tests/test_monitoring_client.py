@@ -152,7 +152,7 @@ class TestMonitoringClient(unittest.IsolatedAsyncioTestCase):
 
         client = monitoring_client.MonitoringClient("my-project")
         await client.write_time_series(
-            metric_type="custom.googleapis.com/ingestion/active_feed_count",
+            metric_type="custom.googleapis.com/test/gce_resource",
             labels={},
             value=42,
             resource_type="gce_instance",
@@ -176,15 +176,13 @@ class TestMonitoringClient(unittest.IsolatedAsyncioTestCase):
     @mock.patch(
         "backend.pipeline.common.clients.monitoring_client.monitoring_v3"
     )
-    async def test_partial_resource_labels_does_not_inject_project_id(
+    async def test_caller_owned_labels_are_not_mutated(
         self,
         mock_monitoring: mock.MagicMock,
     ) -> None:
-        """When caller supplies resource_labels, we do NOT auto-inject project_id.
-
-        Locks the D-19 invariant: caller owns the full label dict. Passing
-        resource_labels={'instance_id': 'i1'} alone means the emitted labels
-        are EXACTLY {'instance_id': 'i1'} — no implicit mutations.
+        """Caller owns the full resource.labels dict — the client does not
+        add, remove, or mutate keys. Passing resource_labels={'instance_id': 'i1'}
+        alone means the emitted labels are EXACTLY {'instance_id': 'i1'}.
         """
         mock_async_client = mock.AsyncMock()
         mock_monitoring.MetricServiceAsyncClient.return_value = (

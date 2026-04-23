@@ -66,12 +66,10 @@ class TestSloContractDriftCanary(unittest.TestCase):
     def test_event_type_feed_quarantined_matches_shipped_quarantine_log(
         self,
     ) -> None:
-        """Pin the constant to the shipped literal to prevent drift when
-        quarantine_telemetry is migrated in the next task.
-
-        This is the value currently emitted at quarantine_telemetry.py's
-        `event_type` log extra before this plan migrates it. Must match
-        exactly — any divergence silently breaks the Terraform alert.
+        """Pin the constant to the feed_quarantined literal. Quarantine
+        telemetry imports this constant; any divergence between the
+        constant value and the ops-team Terraform alert filter would
+        silently break alerting.
         """
         self.assertEqual(
             slo_contract.EVENT_TYPE_FEED_QUARANTINED, "feed_quarantined"
