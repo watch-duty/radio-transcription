@@ -112,3 +112,23 @@ async def delete_feed(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Feed {feed_id} not found",
         )
+
+
+@app.post(
+    "/v1/feeds/{feed_id}/reset",
+    response_model=Feed,
+    tags=["feeds"],
+)
+async def reset_feed(
+    request: Request,
+    feed_id: str,
+) -> Feed:
+    """Reset a feed to unclaimed status with zero failure count."""
+    service: FeedService = request.app.state.feed_service
+    feed = await service.reset_feed(feed_id)
+    if not feed:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Feed {feed_id} not found",
+        )
+    return feed
