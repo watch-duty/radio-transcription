@@ -187,6 +187,7 @@ class StitchAudioFn(beam.DoFn):
                 FlushRequest(
                     buffer=np.concatenate(buffered_audio),
                     feed_id=action.feed_id,
+                    session_id=session_id,
                     contributing_audio_uris=action.contributing_audio_uris,
                     time_range=action.time_range,
                     missing_prior_context=action.missing_prior_context,
@@ -214,6 +215,7 @@ class StitchAudioFn(beam.DoFn):
     ) -> None:
         """Persists local Python state machine objects back to Apache Beam state API endpoints."""
         new_context = TransmissionContext(
+            session_id=ctx.session_id,
             last_end_time_ms=ctx.last_segment_end_time_ms,
             stale_start_time_ms=ctx.transmission_start_time_ms,
             contributing_audio_uris=ctx.contributing_audio_uris,
@@ -329,6 +331,7 @@ class StitchAudioFn(beam.DoFn):
         ctx = StitcherContext(
             feed_id=feed_id,
             current_gcs_uri=gcs_path,
+            session_id=session_id,
             contributing_audio_uris=curr_context.contributing_audio_uris.copy(),
             last_segment_end_time_ms=curr_context.last_end_time_ms,
             transmission_start_time_ms=curr_context.stale_start_time_ms,
@@ -438,6 +441,9 @@ class StitchAudioFn(beam.DoFn):
                     FlushRequest(
                         buffer=np.concatenate(audio_buffer),
                         feed_id=key,
+                        session_id=curr_context.session_id
+                        if curr_context.session_id is not None
+                        else "unknown-session",
                         contributing_audio_uris=processed_uris,
                         time_range=TimeRange(
                             start_ms=int(start_time_ms),
@@ -641,8 +647,22 @@ class TranscribeAudioFn(beam.DoFn):
 
         logger.info(f"TRANSCRIPT [{request.feed_id}]: {transcript}")
 
+        if request.start_audio_offset_ms is None:
+            msg = "Missing start_audio_offset_ms in FlushRequest"
+            raise ValueError(msg)
+        if request.end_audio_offset_ms is None:
+            msg = "Missing end_audio_offset_ms in FlushRequest"
+            raise ValueError(msg)
+        if canonical_audio_uri is None:
+            msg = "Missing canonical_audio_uri"
+            raise ValueError(msg)
+        if playback_audio_uri is None:
+            msg = "Missing playback_audio_uri"
+            raise ValueError(msg)
+
         return TranscriptionResult(
             feed_id=request.feed_id,
+            session_id=request.session_id,
             contributing_audio_uris=request.contributing_audio_uris,
             transcript=transcript,
             time_range=request.time_range,

@@ -54,6 +54,7 @@ def mock_audio_chunk(
         ],
         gcs_uri=gcs_uri,
         duration_ms=duration_ms,
+        sample_rate=16000,
     )
 
 
@@ -64,8 +65,17 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         self.ctx = StitcherContext(
             feed_id="test-feed-xyz",
             current_gcs_uri="gs://fake/init.flac",
+            session_id="fake-session",
             contributing_audio_uris=[],
             file_start_ms=0,
+            last_segment_end_time_ms=None,
+            transmission_start_time_ms=None,
+            buffer_start_time_ms=None,
+            missing_prior_context=False,
+            expected_next_chunk_start_ms=None,
+            start_audio_offset_ms=None,
+            end_audio_offset_ms=None,
+            buffer_duration_ms=0,
         )
 
     def _process(self, chunk: AudioChunkData) -> list[StateMachineAction]:

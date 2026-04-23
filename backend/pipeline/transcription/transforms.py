@@ -214,9 +214,10 @@ class SerializeAndEnrichFn(beam.DoFn):
                 and abs(current_start_ms - last_start_ms) < 100
             ):
                 logger.warning(
-                    "[%s] Potential growing/overlapping transmission detected! "
+                    "[%s / %s] Potential growing/overlapping transmission detected! "
                     "Starts at nearly the same time (%dms) as previous (%dms).",
                     feed_id,
+                    value.session_id,
                     current_start_ms,
                     last_start_ms,
                 )
@@ -224,7 +225,7 @@ class SerializeAndEnrichFn(beam.DoFn):
             last_start_ms_state.write(current_start_ms)
 
             if value.start_audio_offset_ms is None:
-                msg = f"Missing start_audio_offset_ms for feed_id: {feed_id}"
+                msg = f"Missing start_audio_offset_ms for feed_id: {feed_id} (session: {value.session_id})"
                 raise ValueError(msg)
             start_offset = Duration(
                 seconds=value.start_audio_offset_ms // MICROSECONDS_PER_MS,
@@ -233,7 +234,7 @@ class SerializeAndEnrichFn(beam.DoFn):
             )
 
             if value.end_audio_offset_ms is None:
-                msg = f"Missing end_audio_offset_ms for feed_id: {feed_id}"
+                msg = f"Missing end_audio_offset_ms for feed_id: {feed_id} (session: {value.session_id})"
                 raise ValueError(msg)
             end_offset = Duration(
                 seconds=value.end_audio_offset_ms // MICROSECONDS_PER_MS,
@@ -299,11 +300,14 @@ class BypassStitchingFn(beam.DoFn):
             FlushRequest(
                 buffer=chunk_data.audio,
                 feed_id=feed_id,
+                session_id=payload.session_id,
                 contributing_audio_uris=[gcs_path],
                 time_range=TimeRange(start_ms=start_ms, end_ms=end_ms),
                 transmission_id=transmission_id,
                 missing_prior_context=False,
                 missing_post_context=False,
+                start_audio_offset_ms=0,
+                end_audio_offset_ms=chunk_data.duration_ms,
             ),
         )
 

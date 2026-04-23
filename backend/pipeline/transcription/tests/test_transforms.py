@@ -217,6 +217,7 @@ class BypassStitchingTest(unittest.TestCase):
             speech_segments=[],
             gcs_uri=gcs_path,
             duration_ms=audio_len_ms,
+            sample_rate=16000,
         )
 
         element = (
@@ -451,6 +452,7 @@ class StitchAudioTest(unittest.TestCase):
                 ],
                 gcs_uri=path,
                 duration_ms=int(duration_s * 1000),
+                sample_rate=16000,
             )
 
         mock_processor_inst.download_audio_and_detect.side_effect = (
@@ -462,7 +464,9 @@ class StitchAudioTest(unittest.TestCase):
         )
         options.view_as(StandardOptions).streaming = True
 
-        config = get_test_stitch_config(significant_gap_ms=3000)
+        config = get_test_stitch_config(
+            significant_gap_ms=3000, stale_timeout_ms=1000
+        )
 
         with BeamTestPipeline(options=options) as p:
             test_stream = (
@@ -669,6 +673,7 @@ class StitchAudioTest(unittest.TestCase):
                 ],
                 gcs_uri=path,
                 duration_ms=15000,
+                sample_rate=16000,
             )
 
         mock_processor_inst.download_audio_and_detect.side_effect = (
@@ -678,7 +683,9 @@ class StitchAudioTest(unittest.TestCase):
             flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
         )
         options.view_as(StandardOptions).streaming = True
-        config = get_test_stitch_config(significant_gap_ms=3000)
+        config = get_test_stitch_config(
+            significant_gap_ms=3000, stale_timeout_ms=1000
+        )
 
         with BeamTestPipeline(options=options) as p:
             test_stream = (
@@ -816,6 +823,7 @@ class StitchAudioTest(unittest.TestCase):
                 ],
                 gcs_uri=path,
                 duration_ms=15000,
+                sample_rate=16000,
             )
 
         mock_processor_inst.download_audio_and_detect.side_effect = (
@@ -829,7 +837,9 @@ class StitchAudioTest(unittest.TestCase):
 
         # Set max duration to 30 seconds (2 full chunks).
         config = get_test_stitch_config(
-            max_transmission_duration_ms=30000, significant_gap_ms=29999
+            max_transmission_duration_ms=30000,
+            significant_gap_ms=29999,
+            stale_timeout_ms=1000,
         )
 
         with BeamTestPipeline(options=options) as p:
@@ -990,12 +1000,17 @@ class TranscribeAudioTest(unittest.TestCase):
                         "feed-123",
                         FlushRequest(
                             feed_id="feed-123",
+                            session_id="fake-session",
                             buffer=np.zeros(((500) * 16), dtype=np.int16),
                             contributing_audio_uris=["gs://f/11111111.flac"],
                             time_range=TimeRange(
                                 start_ms=101000, end_ms=101500
                             ),
                             transmission_id="test-uuid",
+                            missing_prior_context=False,
+                            missing_post_context=False,
+                            start_audio_offset_ms=0,
+                            end_audio_offset_ms=500,
                         ),
                     )
                 ]
@@ -1035,6 +1050,8 @@ class DownloadAudioTest(unittest.TestCase):
             audio=np.zeros(((1000) * 16), dtype=np.int16),
             speech_segments=[],
             gcs_uri="gs://fake-bucket/100-11111111.flac",
+            duration_ms=1000,
+            sample_rate=16000,
         )
 
         config = get_test_stitch_config()
@@ -1086,22 +1103,32 @@ class SerializeAndEnrichTest(unittest.TestCase):
         with BeamTestPipeline(options=options) as p:
             res1 = TranscriptionResult(
                 feed_id="test-feed",
+                session_id="fake-session",
                 contributing_audio_uris=["gs://bucket/1.flac"],
                 transcript="Hello world",
                 time_range=TimeRange(1000, 2000),
                 transmission_id="uuid-1",
+                missing_prior_context=False,
+                missing_post_context=False,
                 start_audio_offset_ms=100,
                 end_audio_offset_ms=200,
+                canonical_audio_uri="gs://bucket/1.flac",
+                playback_audio_uri="gs://bucket/1_playback.flac",
             )
 
             res2 = TranscriptionResult(
                 feed_id="test-feed",
+                session_id="fake-session",
                 contributing_audio_uris=["gs://bucket/2.flac"],
                 transcript="Hello world again",
                 time_range=TimeRange(1000, 3000),
                 transmission_id="uuid-2",
+                missing_prior_context=False,
+                missing_post_context=False,
                 start_audio_offset_ms=100,
                 end_audio_offset_ms=200,
+                canonical_audio_uri="gs://bucket/2.flac",
+                playback_audio_uri="gs://bucket/2_playback.flac",
             )
 
             elements = [
