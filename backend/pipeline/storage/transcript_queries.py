@@ -73,6 +73,22 @@ LIMIT $6
 """
 )
 
+GET_TRANSCRIPTS_BY_FEED_ASC_SQL = (
+    """\
+SELECT
+"""
+    + TRANSCRIPT_COLUMNS_SQL
+    + """\
+FROM transcripts
+WHERE feed_id = $1
+  AND ($2::timestamptz IS NULL OR end_timestamp > $2 OR (end_timestamp = $2 AND transmission_id > $3))
+  AND ($4::timestamptz IS NULL OR end_timestamp >= $4)
+  AND ($5::timestamptz IS NULL OR end_timestamp <= $5)
+ORDER BY end_timestamp ASC, transmission_id ASC
+LIMIT $6
+"""
+)
+
 # Fetches transcripts across all feeds, ordered from newest to oldest.
 # Keyset pagination: $1 (timestamp) and $2 (transmission_id) define the cursor.
 # We fetch records that are older than the cursor (i.e., strictly less than).
@@ -88,6 +104,21 @@ WHERE ($1::timestamptz IS NULL OR end_timestamp < $1 OR (end_timestamp = $1 AND 
   AND ($3::timestamptz IS NULL OR end_timestamp >= $3)
   AND ($4::timestamptz IS NULL OR end_timestamp <= $4)
 ORDER BY end_timestamp DESC, transmission_id DESC
+LIMIT $5
+"""
+)
+
+LIST_TRANSCRIPTS_ASC_SQL = (
+    """\
+SELECT
+"""
+    + TRANSCRIPT_COLUMNS_SQL
+    + """\
+FROM transcripts
+WHERE ($1::timestamptz IS NULL OR end_timestamp > $1 OR (end_timestamp = $1 AND transmission_id > $2))
+  AND ($3::timestamptz IS NULL OR end_timestamp >= $3)
+  AND ($4::timestamptz IS NULL OR end_timestamp <= $4)
+ORDER BY end_timestamp ASC, transmission_id ASC
 LIMIT $5
 """
 )
