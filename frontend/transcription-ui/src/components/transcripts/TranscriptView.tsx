@@ -88,8 +88,8 @@ export function TranscriptView({
   const [highlightedTransmissionId, setHighlightedTransmissionId] = useState<
     string | null
   >(targetTransmissionId);
-  const [hideFooterButton, setHideFooterButton] = useState(false);
-  const [hideHeaderButton, setHideHeaderButton] = useState(false);
+  const [hideLoadPreviousTranscriptsButton, setHideLoadPreviousTranscriptsButton] = useState(false);
+  const [hideLoadNewerTranscriptsButton, setHideLoadNewerTranscriptsButton] = useState(false);
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const hasScrolledToTarget = useRef(false);
@@ -449,8 +449,8 @@ export function TranscriptView({
 
             setSearchedStartTime(calcStart);
             setSearchedEndTime(calcEnd);
-            setHideFooterButton(false);
-            setHideHeaderButton(false);
+            setHideLoadPreviousTranscriptsButton(false);
+            setHideLoadNewerTranscriptsButton(false);
 
             if (!feedId) {
               return;
@@ -667,7 +667,7 @@ export function TranscriptView({
                 }}
                 components={{
                   Header: () =>
-                    hasNewerTranscripts && !hideHeaderButton ? (
+                    hasNewerTranscripts && !hideLoadNewerTranscriptsButton ? (
                       <Box
                         sx={{
                           display: 'flex',
@@ -691,7 +691,7 @@ export function TranscriptView({
                                 )?.transcripts.length === 0
                               ) {
                                 triggerSnackbar('No newer transcripts found');
-                                setHideHeaderButton(true);
+                                setHideLoadNewerTranscriptsButton(true);
                               }
                             }}
                             disabled={isTranscriptsFetching}
@@ -703,7 +703,7 @@ export function TranscriptView({
                       </Box>
                     ) : null,
                   Footer: () => {
-                    if (hasOlderTranscripts && !hideFooterButton) {
+                    if (hasOlderTranscripts && !hideLoadPreviousTranscriptsButton) {
                       return (
                         <Box
                           sx={{
@@ -727,7 +727,7 @@ export function TranscriptView({
                                     triggerSnackbar(
                                       'No older transcripts found'
                                     );
-                                    setHideFooterButton(true);
+                                    setHideLoadPreviousTranscriptsButton(true);
                                   }
                                 }
                               }}
@@ -740,7 +740,7 @@ export function TranscriptView({
                         </Box>
                       );
                     }
-                    if (!hasOlderTranscripts || hideFooterButton) {
+                    if (!hasOlderTranscripts || hideLoadPreviousTranscriptsButton) {
                       return (
                         <Box
                           sx={{
