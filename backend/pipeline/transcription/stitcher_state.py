@@ -128,7 +128,7 @@ class AudioStitchingStateMachine:
             missing_prior_context=ctx.missing_prior_context,
             missing_post_context=missing_post_context,
             start_audio_offset_ms=ctx.start_audio_offset_ms,
-            end_audio_offset_ms=None,
+            end_audio_offset_ms=end_ms - ctx.buffer_start_time_ms,
         )
 
     def _process_late_chunk_independently(

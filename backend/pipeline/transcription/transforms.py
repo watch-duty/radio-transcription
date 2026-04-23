@@ -224,30 +224,20 @@ class SerializeAndEnrichFn(beam.DoFn):
             last_start_ms_state.write(current_start_ms)
 
             if value.start_audio_offset_ms is None:
-                logger.warning(
-                    f"Missing start_audio_offset_ms for feed_id: {feed_id}. Defaulting to 0."
-                )
-                start_audio_offset_ms = 0
-            else:
-                start_audio_offset_ms = value.start_audio_offset_ms
-
+                msg = f"Missing start_audio_offset_ms for feed_id: {feed_id}"
+                raise ValueError(msg)
             start_offset = Duration(
-                seconds=start_audio_offset_ms // MICROSECONDS_PER_MS,
-                nanos=(start_audio_offset_ms % MICROSECONDS_PER_MS)
+                seconds=value.start_audio_offset_ms // MICROSECONDS_PER_MS,
+                nanos=(value.start_audio_offset_ms % MICROSECONDS_PER_MS)
                 * NANOS_PER_MS,
             )
 
             if value.end_audio_offset_ms is None:
-                logger.warning(
-                    f"Missing end_audio_offset_ms for feed_id: {feed_id}. Defaulting to 0."
-                )
-                end_audio_offset_ms = 0
-            else:
-                end_audio_offset_ms = value.end_audio_offset_ms
-
+                msg = f"Missing end_audio_offset_ms for feed_id: {feed_id}"
+                raise ValueError(msg)
             end_offset = Duration(
-                seconds=end_audio_offset_ms // MICROSECONDS_PER_MS,
-                nanos=(end_audio_offset_ms % MICROSECONDS_PER_MS)
+                seconds=value.end_audio_offset_ms // MICROSECONDS_PER_MS,
+                nanos=(value.end_audio_offset_ms % MICROSECONDS_PER_MS)
                 * NANOS_PER_MS,
             )
 
