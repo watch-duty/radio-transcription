@@ -41,6 +41,7 @@ _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 _FEED = LeasedFeed(
     id=_FEED_ID,
     name="Test Feed",
+    external_id="ext-id",
     source_type=SourceType.BCFY_FEEDS,
     last_processed_filename=None,
     last_bookmark_time=None,

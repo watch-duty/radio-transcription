@@ -1166,6 +1166,7 @@ class TestCaptureBcfyCallsReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
         feed = LeasedFeed(
             id=uuid.UUID("12345678-1234-5678-1234-567812345678"),
             name="test-bcfy-calls",
+            external_id="ext-id",
             source_type=SourceType.BCFY_CALLS,
             last_processed_filename=None,
             last_bookmark_time=None,
