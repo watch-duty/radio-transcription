@@ -42,6 +42,7 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
     async def test_calls_write_time_series_when_configured(self) -> None:
         """Metric is written when a project ID is configured."""
         mock_client = mock.AsyncMock()
+        mock_client.project_id = "test-project"
         quarantine_telemetry.configure("test-project")
         quarantine_telemetry._client = mock_client
 
@@ -59,6 +60,7 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
                 "source_type": "bcfy_feeds",
             },
             value=1,
+            resource_labels={"project_id": "test-project"},
         )
 
     async def test_skips_metric_when_not_configured(self) -> None:

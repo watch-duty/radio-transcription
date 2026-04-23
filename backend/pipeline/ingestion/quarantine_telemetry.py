@@ -74,6 +74,7 @@ async def emit_quarantine_event(
                 "source_type": source_type,
             },
             value=1,
+            resource_labels={"project_id": _client.project_id},
         )
     except Exception:
         try:

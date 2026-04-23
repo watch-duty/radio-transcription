@@ -18,7 +18,6 @@ from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.ingestion import (
     health_server,
-    metric_reporter,
     quarantine_telemetry,
 )
 from backend.pipeline.ingestion.health_server import HealthState
@@ -128,11 +127,6 @@ class NormalizerRuntime:
         # by reference to _feed_tasks so len() reflects live leasing state.
         self._health_state = HealthState(feed_tasks=self._feed_tasks)
         self._health_runner: web.AppRunner | None = None
-        # Strong reference for the periodic active_feed_count reporter task
-        # (Pitfall 7). None when the metadata probe fails (off-GCE, transient
-        # flake, etc.) -- see _main() below. Set exactly once in _main(),
-        # cancelled first in _shutdown_sequence (Pitfall 4 ordering).
-        self._metric_reporter_task: asyncio.Task | None = None
 
     # -- Entry point ------------------------------------------------------
 
@@ -202,7 +196,6 @@ class NormalizerRuntime:
         self._heartbeat_thread.start()
 
         quarantine_telemetry.configure(settings.google_cloud_project)
-        metric_reporter.configure(settings.google_cloud_project)
 
         # Start /healthz HTTP server. Runs on the same event loop as the
         # leasing/heartbeat coroutines — this is load-bearing: if the loop is
@@ -211,29 +204,6 @@ class NormalizerRuntime:
             settings,
             self._health_state,
         )
-
-        # Resolve GCE resource labels and spawn the active_feed_count reporter.
-        # resolve_gce_resource_labels returns None off-GCE or on any metadata
-        # flake (logs one WARNING); reporter stays dormant and the worker
-        # proceeds normally. Strong reference on self._metric_reporter_task
-        # prevents Pitfall 7 (GC'd create_task). Spawn position: AFTER the
-        # /healthz server is live (so reporter can emit even if leasing stalls)
-        # and BEFORE _leasing_loop per ROADMAP.md Phase 3 SC#2.
-        resource_labels = await metric_reporter.resolve_gce_resource_labels(
-            settings,
-        )
-        if resource_labels is not None:
-            self._metric_reporter_task = asyncio.create_task(
-                metric_reporter.reporter_loop(
-                    count_fn=lambda: len(self._feed_tasks),
-                    resource_labels=resource_labels,
-                    interval_sec=settings.metric_reporter_interval_sec,
-                    sleep_fn=self._sleep_or_shutdown,
-                ),
-                name="metric_reporter",
-            )
-        # else: resolve_gce_resource_labels already logged one WARNING;
-        # reporter stays dormant. Worker continues into _leasing_loop.
 
         try:
             await self._leasing_loop()
@@ -764,19 +734,6 @@ class NormalizerRuntime:
             "Shutting down -- %d active feed tasks",
             len(self._feed_tasks),
         )
-        # Cancel the active_feed_count reporter FIRST (Pitfall 4 +
-        # 03-CONTEXT.md D-23). The reporter's gRPC teardown must finish
-        # before the rest of the cleanup chain runs; otherwise a mid-flight
-        # write_time_series would race with Pub/Sub + pool close and could
-        # leak a CLOSE_WAIT socket. asyncio.CancelledError is consumed
-        # because we initiated the cancel -- this is not an error signal.
-        if self._metric_reporter_task is not None:
-            self._metric_reporter_task.cancel()
-            try:
-                await self._metric_reporter_task
-            except asyncio.CancelledError:
-                pass
-
         # Stop the /healthz listener early so external probes get a clean
         # connection refusal (port closed) rather than hanging on a socket
         # whose event loop is about to drain.

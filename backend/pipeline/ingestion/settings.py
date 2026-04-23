@@ -60,15 +60,6 @@ class NormalizerSettings:
             os.environ.get("HEARTBEAT_STALL_TIMEOUT_SEC", "45.0"),
         ),
     )
-    # Periodic interval for the active_feed_count GAUGE reporter (Phase 3).
-    # 60.0 s matches REQUIREMENTS.md METRIC-01 ("every 60 s"). Override via
-    # env var only for test/dev — shrinking below 10 s trips Cloud Monitoring's
-    # 1-point-per-5s-per-series hard limit (see research/STACK.md gotchas).
-    metric_reporter_interval_sec: float = field(
-        default_factory=lambda: float(
-            os.environ.get("METRIC_REPORTER_INTERVAL_SEC", "60.0"),
-        ),
-    )
     graceful_shutdown_timeout_sec: float = field(
         default_factory=lambda: float(
             os.environ.get("GRACEFUL_SHUTDOWN_TIMEOUT_SEC", "10.0"),
