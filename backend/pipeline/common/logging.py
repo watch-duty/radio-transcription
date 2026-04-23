@@ -14,10 +14,7 @@ _TRACE_ID = contextvars.ContextVar("trace_id", default="")
 
 
 def set_trace_id(trace_id: str | None = None) -> None:
-    """Sets the trace ID for the current context.
-
-    Returns the trace ID that was set.
-    """
+    """Sets the trace ID for the current context."""
     if trace_id is None:
         trace_id = str(uuid.uuid4())
     _TRACE_ID.set(trace_id)
