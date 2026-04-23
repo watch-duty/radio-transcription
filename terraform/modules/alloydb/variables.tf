@@ -144,11 +144,11 @@ variable "connection_pooling_enabled" {
 }
 
 variable "connection_pooling_flags" {
-  description = "Flags for Managed Connection Pooling configuration. Common keys: pool_mode (transaction|session), default_pool_size, max_client_conn, client_idle_timeout, query_wait_timeout."
+  description = "Flags for Managed Connection Pooling configuration. Common keys: pool_mode (transaction|session), default_pool_size, max_client_conn, client_idle_timeout, query_wait_timeout. The default default_pool_size=40 is a dev-safe baseline; prod-sized deployments (16-VM peak fleet per radio-transcription scaling plan §6) should override via this variable, typically to 160."
   type        = map(string)
   default = {
     pool_mode           = "transaction"
-    default_pool_size   = "160"
+    default_pool_size   = "40"
     max_client_conn     = "800"
     client_idle_timeout = "120"
   }
