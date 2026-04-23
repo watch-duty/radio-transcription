@@ -43,6 +43,7 @@ class AudioChunkData:
     audio: np.ndarray
     speech_segments: list[TimeRange]
     gcs_uri: str
+    trace_id: str
     duration_ms: int = 0
     sample_rate: int = 16000
 
@@ -54,6 +55,7 @@ class ChunkMetadata:
     gcs_uri: str
     session_id: str
     duration_ms: int
+    trace_id: str
 
 
 @dataclass(frozen=True)
@@ -80,6 +82,7 @@ class TranscriptionResult:
     transcript: str
     time_range: TimeRange
     transmission_id: str
+    trace_id: str
     missing_prior_context: bool = False
     missing_post_context: bool = False
     start_audio_offset_ms: int | None = None
@@ -106,6 +109,7 @@ class TransmissionContext:
     start_audio_offset_ms: int | None = None
     end_audio_offset_ms: int | None = None
     buffer_duration_ms: int = 0
+    trace_id: str | None = None
 
 
 @dataclass
@@ -126,6 +130,7 @@ class StitcherContext:
     start_audio_offset_ms: int | None = None
     end_audio_offset_ms: int | None = None
     buffer_duration_ms: int = 0
+    trace_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -188,6 +193,7 @@ class FlushRequest:
     contributing_audio_uris: list[str]
     time_range: TimeRange
     transmission_id: str
+    trace_id: str
     missing_prior_context: bool = False
     missing_post_context: bool = False
     start_audio_offset_ms: int | None = None
@@ -226,6 +232,7 @@ class FlushAction(StateMachineAction):
     missing_post_context: bool
     start_audio_offset_ms: int | None
     end_audio_offset_ms: int | None
+    trace_id: str
     clear_state: bool = True
     isolated_audio_buffer: list[np.ndarray] | None = None
 

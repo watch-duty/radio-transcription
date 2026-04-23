@@ -80,6 +80,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             feed,
             bucket,
             chunk_seq,
+            "dummy-trace-id",
         )
 
         # Assert
@@ -90,7 +91,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             bucket,
             expected_object_name,
             audio_chunk,
-            metadata=None,
+            metadata={"trace_id": "dummy-trace-id"},
             content_type="audio/flac",
         )
         self.assertEqual(result, expected_path)
@@ -120,6 +121,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             feed,
             bucket,
             chunk_seq,
+            "dummy-trace-id",
         )
 
         # Assert
@@ -130,7 +132,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             bucket,
             expected_object_name,
             audio_chunk,
-            metadata=None,
+            metadata={"trace_id": "dummy-trace-id"},
             content_type="audio/flac",
         )
         self.assertEqual(result, expected_path)
@@ -156,7 +158,12 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
         # Act & Assert
         with self.assertRaises(Exception) as context:
             await gcp_helper.upload_staged_audio(
-                mock_gcs_client, audio_chunk, feed, bucket, chunk_seq
+                mock_gcs_client,
+                audio_chunk,
+                feed,
+                bucket,
+                chunk_seq,
+                "dummy-trace-id",
             )
 
         self.assertIn("GCS upload failed", str(context.exception))
@@ -174,10 +181,10 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
 
         # Act - Upload twice with the same client
         await gcp_helper.upload_staged_audio(
-            mock_gcs_client, audio_chunk, feed, bucket, 1
+            mock_gcs_client, audio_chunk, feed, bucket, 1, "dummy-trace-id"
         )
         await gcp_helper.upload_staged_audio(
-            mock_gcs_client, audio_chunk, feed, bucket, 2
+            mock_gcs_client, audio_chunk, feed, bucket, 2, "dummy-trace-id"
         )
 
         # Assert - Both uploads went through the storage returned by the client
@@ -203,7 +210,12 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
 
         # Act
         result = await gcp_helper.upload_staged_audio(
-            mock_gcs_client, audio_chunk, feed, bucket, chunk_seq
+            mock_gcs_client,
+            audio_chunk,
+            feed,
+            bucket,
+            chunk_seq,
+            "dummy-trace-id",
         )
 
         # Assert
@@ -233,6 +245,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             feed,
             "test-bucket",
             42,
+            "dummy-trace-id",
             fencing_token=7,
         )
 
@@ -245,7 +258,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             "test-bucket",
             expected_object_name,
             b"\x00\x01" * 100,
-            metadata=None,
+            metadata={"trace_id": "dummy-trace-id"},
             content_type="audio/flac",
             parameters={"ifGenerationMatch": "0"},
         )
@@ -267,13 +280,14 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             audio,
             bucket,
             object_name,
+            "dummy-trace-id",
         )
 
         mock_storage.upload.assert_called_once_with(
             bucket,
             object_name,
             audio,
-            metadata=None,
+            metadata={"trace_id": "dummy-trace-id"},
             content_type="audio/flac",
         )
         self.assertEqual(result, f"gs://{bucket}/{object_name}")
@@ -286,6 +300,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             b"audio",
             "bucket",
             "obj.flac",
+            "",
         )
 
         call_kwargs = mock_storage.upload.call_args
@@ -303,6 +318,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             b"audio",
             "bucket",
             "obj.flac",
+            "dummy-trace-id",
             if_generation_match=0,
         )
 
@@ -310,7 +326,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             "bucket",
             "obj.flac",
             b"audio",
-            metadata=None,
+            metadata={"trace_id": "dummy-trace-id"},
             content_type="audio/flac",
             parameters={"ifGenerationMatch": "0"},
         )
@@ -331,6 +347,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             b"audio",
             "bucket",
             "obj.flac",
+            "dummy-trace-id",
             if_generation_match=0,
         )
 
@@ -352,6 +369,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
                 b"audio",
                 "bucket",
                 "obj.flac",
+                "dummy-trace-id",
             )
 
     async def test_upload_non_412_error_raises_with_precondition(self) -> None:
@@ -370,6 +388,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
                 b"audio",
                 "bucket",
                 "obj.flac",
+                "dummy-trace-id",
                 if_generation_match=0,
             )
 
@@ -396,6 +415,7 @@ class TestPublishAudioChunkSync(unittest.TestCase):
             session_id="test-session-1",
             start_timestamp=mock_now,
             duration_ms=15000,
+            trace_id="dummy-trace-id",
             source_type="echo",
         )
 
@@ -405,6 +425,7 @@ class TestPublishAudioChunkSync(unittest.TestCase):
         self.assertEqual(publish_args[0], "projects/test/topics/audio")
         self.assertEqual(publish_kwargs["feed_id"], "feed-42")
         self.assertEqual(publish_kwargs["source_type"], "echo")
+        self.assertEqual(publish_kwargs["trace_id"], "dummy-trace-id")
         self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
 
         chunk = AudioChunk()
@@ -435,6 +456,7 @@ class TestPublishAudioChunkSync(unittest.TestCase):
                 2026, 3, 5, 12, 0, tzinfo=datetime.UTC
             ),
             duration_ms=15000,
+            trace_id="dummy-trace-id",
         )
 
         publish_kwargs = mock_publisher.publish.call_args.kwargs
@@ -463,6 +485,7 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
             session_id="test-session-1",
             start_timestamp=mock_now,
             duration_ms=15000,
+            trace_id="dummy-trace-id",
         )
 
         self.assertEqual(result, "message-123")

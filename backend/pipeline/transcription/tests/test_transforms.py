@@ -170,6 +170,7 @@ class AddEventTimestampTest(unittest.TestCase):
         chunk = AudioChunk(
             gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
             session_id="mock-session-id",
+            trace_id="mock-trace-id",
         )
         chunk.start_timestamp.FromMicroseconds(1678886400000000)
         element = ("test-feed", chunk.SerializeToString())
@@ -186,6 +187,7 @@ class AddEventTimestampTest(unittest.TestCase):
                     gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
                     session_id="mock-session-id",
                     duration_ms=0,
+                    trace_id="mock-trace-id",
                 ),
             ),
         )
@@ -216,6 +218,7 @@ class BypassStitchingTest(unittest.TestCase):
             audio=np.zeros(int((audio_len_ms) * 16), dtype=np.int16),
             speech_segments=[],
             gcs_uri=gcs_path,
+            trace_id="dummy-trace-id",
             duration_ms=audio_len_ms,
         )
 
@@ -265,7 +268,10 @@ class OrderRestorerTest(unittest.TestCase):
                             (
                                 "feed-1",
                                 ChunkMetadata(
-                                    "gs://b/100-uuid1.flac", "session-A", 15000
+                                    "gs://b/100-uuid1.flac",
+                                    "session-A",
+                                    15000,
+                                    "trace-1",
                                 ),
                             ),
                             100,
@@ -279,7 +285,10 @@ class OrderRestorerTest(unittest.TestCase):
                             (
                                 "feed-1",
                                 ChunkMetadata(
-                                    "gs://b/130-uuid3.flac", "session-A", 15000
+                                    "gs://b/130-uuid3.flac",
+                                    "session-A",
+                                    15000,
+                                    "trace-3",
                                 ),
                             ),
                             130,
@@ -293,7 +302,10 @@ class OrderRestorerTest(unittest.TestCase):
                             (
                                 "feed-1",
                                 ChunkMetadata(
-                                    "gs://b/115-uuid2.flac", "session-A", 15000
+                                    "gs://b/115-uuid2.flac",
+                                    "session-A",
+                                    15000,
+                                    "trace-2",
                                 ),
                             ),
                             115,
@@ -343,6 +355,7 @@ class OrderRestorerTest(unittest.TestCase):
                                     "gs://b/100-11111111.flac",
                                     "session-A",
                                     15000,
+                                    "trace-1",
                                 ),
                             ),
                             100,
@@ -359,6 +372,7 @@ class OrderRestorerTest(unittest.TestCase):
                                     "gs://b/130-33333333.flac",
                                     "session-A",
                                     15000,
+                                    "trace-3",
                                 ),
                             ),
                             130,
@@ -377,6 +391,7 @@ class OrderRestorerTest(unittest.TestCase):
                                     "gs://b/115-22222222.flac",
                                     "session-A",
                                     15000,
+                                    "trace-2",
                                 ),
                             ),
                             115,
@@ -447,6 +462,7 @@ class StitchAudioTest(unittest.TestCase):
                     for s, e in sed_map.get(filename, [])
                 ],
                 gcs_uri=path,
+                trace_id="dummy-trace-id",
                 duration_ms=int(duration_s * 1000),
             )
 
@@ -659,6 +675,7 @@ class StitchAudioTest(unittest.TestCase):
                     for s, e in sed_map.get(filename, [])
                 ],
                 gcs_uri=path,
+                trace_id="dummy-trace-id",
                 duration_ms=15000,
             )
 
@@ -803,6 +820,7 @@ class StitchAudioTest(unittest.TestCase):
                     for s, e in sed_map.get(filename, [])
                 ],
                 gcs_uri=path,
+                trace_id="dummy-trace-id",
                 duration_ms=15000,
             )
 
@@ -980,6 +998,7 @@ class TranscribeAudioTest(unittest.TestCase):
                                 start_ms=101000, end_ms=101500
                             ),
                             transmission_id="test-uuid",
+                            trace_id="dummy-trace-id",
                         ),
                     )
                 ]
@@ -1019,6 +1038,7 @@ class DownloadAudioTest(unittest.TestCase):
             audio=np.zeros(((1000) * 16), dtype=np.int16),
             speech_segments=[],
             gcs_uri="gs://fake-bucket/100-11111111.flac",
+            trace_id="dummy-trace-id",
         )
 
         config = get_test_stitch_config()
@@ -1066,6 +1086,7 @@ class SerializeAndEnrichTest(unittest.TestCase):
                 transcript="Hello world",
                 time_range=TimeRange(1000, 2000),
                 transmission_id="uuid-1",
+                trace_id="trace-1",
                 start_audio_offset_ms=100,
                 end_audio_offset_ms=200,
             )
@@ -1076,6 +1097,7 @@ class SerializeAndEnrichTest(unittest.TestCase):
                 transcript="Hello world again",
                 time_range=TimeRange(1000, 3000),
                 transmission_id="uuid-2",
+                trace_id="trace-2",
                 start_audio_offset_ms=100,
                 end_audio_offset_ms=200,
             )

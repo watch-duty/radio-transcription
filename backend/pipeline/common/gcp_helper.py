@@ -34,10 +34,10 @@ async def upload_staged_audio(
     feed: LeasedFeed,
     bucket: str,
     chunk_seq: int,
+    trace_id: str,
     fencing_token: int | None = None,
     extension: str = "flac",
     content_type: str = "audio/flac",
-    trace_id: str | None = None,
 ) -> str:
     """
     Upload an unnormalized audio chunk to GCS and return the object path.
@@ -103,9 +103,9 @@ async def upload_audio(
     audio_chunk: bytes,
     bucket: str,
     object_name: str,
+    trace_id: str,
     if_generation_match: int | None = None,
     content_type: str = "audio/flac",
-    trace_id: str | None = None,
 ) -> str:
     """
     Upload audio to GCS.
@@ -213,8 +213,8 @@ def publish_audio_chunk_sync(
     session_id: str,
     start_timestamp: datetime.datetime,
     duration_ms: int,
+    trace_id: str,
     source_type: str | None = None,
-    trace_id: str | None = None,
 ) -> str:
     """Publish an AudioChunk to Pub/Sub and return the message ID.
 
@@ -227,6 +227,8 @@ def publish_audio_chunk_sync(
     audio_chunk_msg.feed_name = feed_name
     audio_chunk_msg.external_id = external_id
     audio_chunk_msg.duration_ms = duration_ms
+    if trace_id:
+        audio_chunk_msg.trace_id = trace_id
 
     attrs: dict[str, str] = {
         "feed_id": feed_id,
@@ -257,8 +259,8 @@ async def publish_audio_chunk(
     session_id: str,
     start_timestamp: datetime.datetime,
     duration_ms: int,
+    trace_id: str,
     source_type: str | None = None,
-    trace_id: str | None = None,
 ) -> str:
     """Asynchronously publish an AudioChunk to Pub/Sub.
 
@@ -272,6 +274,8 @@ async def publish_audio_chunk(
     audio_chunk_msg.feed_name = feed_name
     audio_chunk_msg.external_id = external_id
     audio_chunk_msg.duration_ms = duration_ms
+    if trace_id:
+        audio_chunk_msg.trace_id = trace_id
 
     attrs: dict[str, str] = {
         "feed_id": feed_id,

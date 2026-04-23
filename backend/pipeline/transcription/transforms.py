@@ -22,6 +22,7 @@ from apache_beam.utils.timestamp import Timestamp
 from google.protobuf.duration_pb2 import Duration  # type: ignore
 from google.protobuf.message import DecodeError
 
+from backend.pipeline.common import logging as pipeline_logging
 from backend.pipeline.common.constants import (
     MICROSECONDS_PER_MS,
     MS_PER_SECOND,
@@ -76,6 +77,9 @@ class ParseAndKeyFn(beam.DoFn):
         """Extracts the feed_id attribute from the payload to establish a routing key."""
         try:
             feed_id = element.attributes["feed_id"]
+            trace_id = element.attributes.get("trace_id")
+            pipeline_logging.set_trace_id(trace_id)
+
             yield (feed_id, element.data)
         except KeyError as e:
             msg = f"Missing required payload attribute: {e}"
@@ -163,6 +167,7 @@ class AddEventTimestamp(beam.DoFn):
                             chunk_proto.gcs_uri,
                             chunk_proto.session_id,
                             chunk_proto.duration_ms,
+                            chunk_proto.trace_id,
                         ),
                     ),
                     timestamp_sec,
@@ -199,6 +204,7 @@ class SerializeAndEnrichFn(beam.DoFn):
         if isinstance(value, FeedMetadata):
             feed_metadata_state.write(value)
         elif isinstance(value, TranscriptionResult):
+            pipeline_logging.set_trace_id(value.trace_id)
             metadata = feed_metadata_state.read()
             if not metadata or not metadata.feed_name:
                 msg = f"Missing or incomplete feed metadata for feed_id: {feed_id}"
@@ -260,9 +266,12 @@ class SerializeAndEnrichFn(beam.DoFn):
             proto.end_timestamp.FromMicroseconds(
                 value.time_range.end_ms * MICROSECONDS_PER_MS
             )
+            attrs = {}
+            if value.trace_id:
+                attrs["trace_id"] = value.trace_id
             yield PubsubMessage(
                 data=proto.SerializeToString(),
-                attributes={},
+                attributes=attrs,
                 ordering_key=value.feed_id,
             )
 
@@ -285,6 +294,7 @@ class BypassStitchingFn(beam.DoFn):
     ) -> Iterator[tuple[str, FlushRequest]]:
         """Maps the downloaded audio chunk directly into a FlushRequest."""
         feed_id, payload = element
+        pipeline_logging.set_trace_id(payload.chunk_data.trace_id)
         gcs_path = payload.gcs_uri
         chunk_data = payload.chunk_data
 
@@ -304,6 +314,7 @@ class BypassStitchingFn(beam.DoFn):
                 transmission_id=transmission_id,
                 missing_prior_context=False,
                 missing_post_context=False,
+                trace_id=chunk_data.trace_id,
             ),
         )
 
@@ -385,6 +396,7 @@ class RestoreOrderFn(beam.DoFn):
     ) -> Iterator[tuple[str, str]]:
         """Ingests out-of-order chunks and orchestrates chronologically sorted yields."""
         feed_id, metadata = element
+        pipeline_logging.set_trace_id(metadata.trace_id)
         gcs_path = metadata.gcs_uri
         incoming_session_id = metadata.session_id
         duration_ms = metadata.duration_ms
@@ -539,6 +551,7 @@ class DownloadAudioFn(beam.DoFn):
             chunk_data = self.audio_processor.download_audio_and_detect(
                 gcs_path, start_ms
             )
+            pipeline_logging.set_trace_id(chunk_data.trace_id)
 
             yield (feed_id, DownloadedChunkPayload(gcs_path, chunk_data))
         except FileNotFoundError:

@@ -160,6 +160,7 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
         feed_id_str = str(feed["id"])
         session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, staging_uri))
         publisher = pubsub_client.get_publisher()
+        trace_id = str(uuid.uuid4())
 
         # Calculate duration of audio bytes using shared helper
         duration_ms = get_audio_duration(mp3_bytes)
@@ -174,6 +175,7 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
             session_id,
             start_ts,
             duration_ms=duration_ms,
+            trace_id=trace_id,
             source_type="echo",
         )
 

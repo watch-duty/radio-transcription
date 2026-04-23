@@ -22,4 +22,7 @@ message AudioChunk {
 
   // The ID used for mapping the feed ID within the application.
   string external_id = 6;
+
+  // The trace ID for tracking the transmission's progress through the pipeline.
+  string trace_id = 7;
 }

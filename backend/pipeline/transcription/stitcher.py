@@ -187,6 +187,7 @@ class StitchAudioFn(beam.DoFn):
                     start_audio_offset_ms=action.start_audio_offset_ms,
                     end_audio_offset_ms=action.end_audio_offset_ms,
                     transmission_id=transmission_id,
+                    trace_id=action.trace_id,
                 ),
             )
         else:
@@ -215,6 +216,7 @@ class StitchAudioFn(beam.DoFn):
             end_audio_offset_ms=ctx.end_audio_offset_ms,
             buffer_start_time_ms=ctx.buffer_start_time_ms,
             buffer_duration_ms=ctx.buffer_duration_ms,
+            trace_id=ctx.trace_id,
         )
         transmission_context.write(new_context)
 
@@ -302,6 +304,7 @@ class StitchAudioFn(beam.DoFn):
             end_audio_offset_ms=curr_context.end_audio_offset_ms,
             buffer_start_time_ms=curr_context.buffer_start_time_ms,
             buffer_duration_ms=curr_context.buffer_duration_ms,
+            trace_id=curr_context.trace_id,
         )
 
         pipeline = AudioStitchingStateMachine(self.config)
@@ -401,10 +404,11 @@ class StitchAudioFn(beam.DoFn):
                             start_ms=int(start_time_ms),
                             end_ms=int(end_time_ms),
                         ),
+                        trace_id=curr_context.trace_id or "fallback-trace-id",
                         missing_prior_context=bool(
                             curr_context.missing_prior_context
                         ),
-                        missing_post_context=True,  # Flushed by timer cutoff, so we assume the tail is missing context.
+                        missing_post_context=True,
                         start_audio_offset_ms=curr_context.start_audio_offset_ms,
                         end_audio_offset_ms=curr_context.end_audio_offset_ms,
                         transmission_id=transmission_id,
@@ -568,6 +572,7 @@ class TranscribeAudioFn(beam.DoFn):
             transcript=transcript,
             time_range=request.time_range,
             transmission_id=request.transmission_id,
+            trace_id=request.trace_id,
             missing_prior_context=request.missing_prior_context,
             missing_post_context=request.missing_post_context,
             start_audio_offset_ms=request.start_audio_offset_ms,

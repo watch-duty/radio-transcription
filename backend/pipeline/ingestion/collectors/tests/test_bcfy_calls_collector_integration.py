@@ -248,6 +248,7 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 feed,
                 _TEST_BUCKET,
                 len(chunks_uploaded),
+                "dummy-trace-id",
             )
             ok = await self.store.update_feed_progress(
                 feed["id"],
@@ -326,7 +327,12 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             feed, shutdown, "http://api.example.com/"
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
-                self.gcs, chunk.audio_bytes, feed, _TEST_BUCKET, seq
+                self.gcs,
+                chunk.audio_bytes,
+                feed,
+                _TEST_BUCKET,
+                seq,
+                "dummy-trace-id",
             )
             await self.store.update_feed_progress(
                 feed["id"],

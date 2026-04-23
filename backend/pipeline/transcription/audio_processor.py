@@ -106,6 +106,12 @@ class AudioProcessor:
             logger.error(err_msg)
             raise FileNotFoundError(err_msg)
 
+        trace_id = blob.metadata.get("trace_id") if blob.metadata else None
+        if not trace_id:
+            import uuid
+
+            trace_id = str(uuid.uuid4())
+
         in_mem_file = io.BytesIO()
         blob.download_to_file(in_mem_file)
         in_mem_file.seek(0)
@@ -152,6 +158,7 @@ class AudioProcessor:
             speech_segments=speech_segments,
             gcs_uri=gcs_path,
             duration_ms=duration_ms,
+            trace_id=trace_id,
         )
 
     def check_vad(self, audio_buffer: np.ndarray) -> bool:
