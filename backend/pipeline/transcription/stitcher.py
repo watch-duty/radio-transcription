@@ -78,9 +78,15 @@ TRANSMISSION_CONTEXT_SPEC = ReadModifyWriteStateSpec(
 # A unified TransmissionContext dataclass encapsulating all scalar metadata (timestamps, UUIDs) for the current transmission.
 TRANSMISSION_CONTEXT_STATE = beam.DoFn.StateParam(TRANSMISSION_CONTEXT_SPEC)
 
-STALE_TIMER_SPEC = TimerSpec("stale_timer", beam.TimeDomain.WATERMARK)
-# A Beam Watermark timer. If no new data advances the watermark past its deadline, it fires to flush whatever audio is stranded in the TRANSMISSION_BUFFER.
-STALE_TIMER_PARAM = beam.DoFn.TimerParam(STALE_TIMER_SPEC)
+STALE_TIMER_EVENT_SPEC = TimerSpec(
+    "stale_timer_event", beam.TimeDomain.WATERMARK
+)
+# A Beam Watermark timer used during backfill to flush stranded audio based on data time.
+STALE_TIMER_EVENT_PARAM = beam.DoFn.TimerParam(STALE_TIMER_EVENT_SPEC)
+
+STALE_TIMER_PROC_SPEC = TimerSpec("stale_timer_proc", beam.TimeDomain.REAL_TIME)
+# A Processing Time timer used during streaming to flush stranded audio based on wall-clock time, avoiding noisy neighbor stalls.
+STALE_TIMER_PROC_PARAM = beam.DoFn.TimerParam(STALE_TIMER_PROC_SPEC)
 
 SEQUENTIAL_BARRIER_SPEC = ReadModifyWriteStateSpec(
     "sequential_barrier", beam.coders.BooleanCoder()
@@ -145,7 +151,8 @@ class StitchAudioFn(beam.DoFn):
         action: FlushAction,
         transmission_context: ReadModifyWriteRuntimeState,
         transmission_buffer: BagRuntimeState,
-        stale_timer: RuntimeTimer,
+        stale_timer_event: RuntimeTimer,
+        stale_timer_proc: RuntimeTimer,
     ) -> Iterator[tuple[str, FlushRequest]]:
         """Clears current internal state arrays and yields a compiled FlushRequest downstream."""
         if "Maximum transmission duration" in action.reason:
@@ -167,7 +174,6 @@ class StitchAudioFn(beam.DoFn):
             transmission_id = generate_transmission_id(
                 action.feed_id,
                 action.speech_time_range.start_ms,
-                action.speech_time_range.end_ms,
             )
             logger.info(
                 "Generated transmission_id: %s for feed: %s",
@@ -197,7 +203,8 @@ class StitchAudioFn(beam.DoFn):
         if action.clear_state:
             transmission_context.clear()
             transmission_buffer.clear()
-            stale_timer.clear()
+            stale_timer_event.clear()
+            stale_timer_proc.clear()
 
     def _apply_update_state_action(
         self,
@@ -227,15 +234,31 @@ class StitchAudioFn(beam.DoFn):
         transmission_buffer.add(action.audio_buffer)
 
     def _apply_schedule_stale_timer_action(
-        self, action: ScheduleStaleTimerAction, stale_timer: RuntimeTimer
+        self,
+        action: ScheduleStaleTimerAction,
+        stale_timer_event: RuntimeTimer,
+        stale_timer_proc: RuntimeTimer,
+        *,
+        is_backfill: bool,
     ) -> None:
-        """Re-registers the latency and expiration watermark timer based on expected event-time timestamps."""
-        if stale_timer is not None:
+        """Re-registers the latency and expiration timer based on mode."""
+        if is_backfill:
+            # In backfill mode, use Event Time (Watermark) timer
+            stale_timer_proc.clear()
             if action.deadline_ms > 0:
                 deadline_s = action.deadline_ms / MS_PER_SECOND
-                stale_timer.set(Timestamp(seconds=deadline_s))
+                stale_timer_event.set(Timestamp(seconds=deadline_s))
             else:
-                stale_timer.clear()
+                stale_timer_event.clear()
+        else:
+            # In streaming mode, use Processing Time timer
+            stale_timer_event.clear()
+            if action.deadline_ms > 0:
+                # Set timer relative to current wall-clock time
+                deadline_s = time.time() + self.config.stale_timeout_ms / 1000.0
+                stale_timer_proc.set(Timestamp(seconds=deadline_s))
+            else:
+                stale_timer_proc.clear()
 
     def _apply_state_actions(
         self,
@@ -243,9 +266,11 @@ class StitchAudioFn(beam.DoFn):
         actions: list[StateMachineAction],
         transmission_context: ReadModifyWriteRuntimeState,
         transmission_buffer: BagRuntimeState,
-        stale_timer: RuntimeTimer,
+        stale_timer_event: RuntimeTimer,
+        stale_timer_proc: RuntimeTimer,
         ctx: StitcherContext,
         gcs_path: str,
+        is_backfill: bool,
     ) -> Iterator[tuple[str, FlushRequest]]:
         """Routes individual StateMachineAction results to appropriate Apache Beam side-effects and emitters."""
         flush_count = sum(1 for a in actions if isinstance(a, FlushAction))
@@ -259,7 +284,8 @@ class StitchAudioFn(beam.DoFn):
                         action,
                         transmission_context,
                         transmission_buffer,
-                        stale_timer,
+                        stale_timer_event,
+                        stale_timer_proc,
                     )
                 case AppendBufferAction():
                     self._apply_append_buffer_action(
@@ -268,7 +294,12 @@ class StitchAudioFn(beam.DoFn):
                 case UpdateStateAction():
                     self._apply_update_state_action(transmission_context, ctx)
                 case ScheduleStaleTimerAction():
-                    self._apply_schedule_stale_timer_action(action, stale_timer)
+                    self._apply_schedule_stale_timer_action(
+                        action,
+                        stale_timer_event,
+                        stale_timer_proc,
+                        is_backfill=is_backfill,
+                    )
                 case DropAction(reason=reason):
                     logger.info(f"{reason}: {gcs_path}")
 
@@ -280,7 +311,9 @@ class StitchAudioFn(beam.DoFn):
         chunk_data: AudioChunkData,
         transmission_context: ReadModifyWriteRuntimeState,
         transmission_buffer: BagRuntimeState,
-        stale_timer: RuntimeTimer,
+        stale_timer_event: RuntimeTimer,
+        stale_timer_proc: RuntimeTimer,
+        is_backfill: bool,
     ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
         """Top-level executor managing chunk ingestion, VAD decoding, state persistence, and flush delegation."""
         file_start_ms = chunk_data.start_ms
@@ -315,9 +348,11 @@ class StitchAudioFn(beam.DoFn):
             actions=actions,
             transmission_context=transmission_context,
             transmission_buffer=transmission_buffer,
-            stale_timer=stale_timer,
+            stale_timer_event=stale_timer_event,
+            stale_timer_proc=stale_timer_proc,
             ctx=ctx,
             gcs_path=gcs_path,
+            is_backfill=is_backfill,
         )
 
     @override
@@ -326,12 +361,18 @@ class StitchAudioFn(beam.DoFn):
         element: tuple[str, DownloadedChunkPayload],
         transmission_buffer: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
-        stale_timer: RuntimeTimer = STALE_TIMER_PARAM,  # type: ignore
+        stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
+        stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
     ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
         """Delegates the incoming audio chunk to the internal state machine for evaluation."""
         key, payload = element
         gcs_path = payload.gcs_uri
         chunk_data = payload.chunk_data
+
+        current_wall_clock_time = time.time() * MS_PER_SECOND
+        chunk_event_time = chunk_data.start_ms
+        lateness = current_wall_clock_time - chunk_event_time
+        is_backfill = lateness >= 5 * 60 * MS_PER_SECOND  # 5 minutes in ms
 
         try:
             yield from self._process_audio_chunk(
@@ -340,7 +381,9 @@ class StitchAudioFn(beam.DoFn):
                 chunk_data=chunk_data,
                 transmission_context=transmission_context,
                 transmission_buffer=transmission_buffer,
-                stale_timer=stale_timer,
+                stale_timer_event=stale_timer_event,
+                stale_timer_proc=stale_timer_proc,
+                is_backfill=is_backfill,
             )
         except Exception as e:
             if not self.config.route_to_dlq:
@@ -354,21 +397,15 @@ class StitchAudioFn(beam.DoFn):
                 DEAD_LETTER_QUEUE_TAG, {"error": msg, "feed_id": key}
             )
 
-    @on_timer(STALE_TIMER_SPEC)
-    def handle_stale_transmission(
+    def _handle_stale_transmission(
         self,
-        key: str = beam.DoFn.KeyParam,  # type: ignore
-        transmission_buffer: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
-        transmission_context: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
-        stale_timer: RuntimeTimer = STALE_TIMER_PARAM,  # type: ignore
+        key: str,
+        transmission_buffer: BagRuntimeState,
+        transmission_context: ReadModifyWriteRuntimeState,
+        stale_timer_event: RuntimeTimer,
+        stale_timer_proc: RuntimeTimer,
     ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
-        """Invoked asynchronously by the Beam Runner when the event-time watermark.
-
-        passes the timestamp previously scheduled on the `stale_timer`. This provides a critical
-        safety net: if a radio feed abruptly drops offline, this timer guarantees that any
-        audio remaining in the buffer will eventually be flushed and transcribed, preventing
-        data loss from stranded state.
-        """
+        """Common logic for handling stale transmissions from both timers."""
         curr_context: TransmissionContext = (
             transmission_context.read() or TransmissionContext()
         )
@@ -388,7 +425,6 @@ class StitchAudioFn(beam.DoFn):
                 transmission_id = generate_transmission_id(
                     key,
                     int(start_time_ms),
-                    int(end_time_ms),
                 )
 
                 yield (
@@ -423,7 +459,44 @@ class StitchAudioFn(beam.DoFn):
 
         transmission_context.clear()
         transmission_buffer.clear()
-        stale_timer.clear()
+        stale_timer_event.clear()
+        stale_timer_proc.clear()
+
+    @on_timer(STALE_TIMER_EVENT_SPEC)
+    def handle_stale_transmission_event(
+        self,
+        key: str = beam.DoFn.KeyParam,  # type: ignore
+        transmission_buffer: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
+        transmission_context: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
+        stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
+        stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
+    ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
+        """Invoked when the event-time watermark passes the deadline."""
+        yield from self._handle_stale_transmission(
+            key,
+            transmission_buffer,
+            transmission_context,
+            stale_timer_event,
+            stale_timer_proc,
+        )
+
+    @on_timer(STALE_TIMER_PROC_SPEC)
+    def handle_stale_transmission_proc(
+        self,
+        key: str = beam.DoFn.KeyParam,  # type: ignore
+        transmission_buffer: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
+        transmission_context: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
+        stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
+        stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
+    ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
+        """Invoked when processing time passes the deadline."""
+        yield from self._handle_stale_transmission(
+            key,
+            transmission_buffer,
+            transmission_context,
+            stale_timer_event,
+            stale_timer_proc,
+        )
 
 
 @beam.typehints.with_input_types(tuple[str, FlushRequest])
