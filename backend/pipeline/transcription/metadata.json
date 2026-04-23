@@ -43,6 +43,12 @@
       "label": "Bypass Stitching",
       "helpText": "If true, bypasses stateful stitching and treats each audio chunk as a complete transmission.",
       "isOptional": true
+    },
+    {
+      "name": "vad_type",
+      "label": "VAD Type",
+      "helpText": "Type of Voice Activity Detection model to use. Defaults to ten_vad.",
+      "isOptional": true
     }
   ]
 }
