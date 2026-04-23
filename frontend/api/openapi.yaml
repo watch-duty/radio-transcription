@@ -266,6 +266,10 @@ components:
           type: string
         externalId:
           type: string
+        sourceUrl:
+          type: string
+        archiveUrl:
+          type: string
       required:
         - name
         - sourceType
