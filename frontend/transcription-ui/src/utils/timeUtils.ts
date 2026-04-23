@@ -24,3 +24,8 @@ export function getSearchedEndTime(searchParams: URLSearchParams): Date | null {
   }
   return null;
 }
+
+export function roundUpToNearestMinute(date: Date) {
+  const msInMinute = 60 * 1000;
+  return new Date(Math.ceil(date.getTime() / msInMinute) * msInMinute);
+}

@@ -33,8 +33,7 @@ import { listRules } from '../../service/listRules';
 import { listTranscripts } from '../../service/listTranscripts';
 import {
   getInitialTimestamp,
-  getSearchedEndTime,
-  getSearchedStartTime,
+  roundUpToNearestMinute,
 } from '../../utils/timeUtils';
 import AudioDisplay from '../audio/AudioDisplay';
 import DateTimePicker from '../common/DateTimePicker';
@@ -46,8 +45,7 @@ interface TranscriptViewProps {
 }
 
 type ListTranscriptsPage = {
-  startTime?: number;
-  endTime?: number;
+  timestamp?: number;
   nextToken?: string;
   order: 'asc' | 'desc';
 };
@@ -75,17 +73,14 @@ export function TranscriptView({
   const [feedId, setFeedId] = useState<string>(
     () => searchParams.get('feedId') || ''
   );
-  const [timestamp, setTimestamp] = useState<Date | null>(() =>
-    getInitialTimestamp(searchParams)
-  );
   const [searchedFeedId, setSearchedFeedId] = useState<string>(
     () => searchParams.get('feedId') || ''
   );
-  const [searchedStartTime, setSearchedStartTime] = useState<Date | null>(() =>
-    getSearchedStartTime(searchParams)
+  const [timestamp, setTimestamp] = useState<Date | null>(() =>
+    getInitialTimestamp(searchParams)
   );
-  const [searchedEndTime, setSearchedEndTime] = useState<Date | null>(() =>
-    getSearchedEndTime(searchParams)
+  const [searchedTimestamp, setSearchedTimestamp] = useState<Date | null>(() =>
+    getInitialTimestamp(searchParams)
   );
 
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
@@ -163,18 +158,17 @@ export function TranscriptView({
       'listTranscripts',
       token,
       searchedFeedId,
-      searchedStartTime?.getTime(),
-      searchedEndTime?.getTime(),
+      searchedTimestamp,
     ],
     queryFn: async ({ pageParam }) => {
-      const { startTime, endTime, nextToken, order } = pageParam;
+      const { timestamp, nextToken, order } = pageParam;
       const response = await listTranscripts(
         searchedFeedId,
         token,
-        undefined,
+        /*limit=*/undefined,
         nextToken,
-        startTime,
-        endTime,
+        /*startTime=*/order == 'asc' ? timestamp : undefined,
+        /*endTime=*/order == 'desc' ? timestamp : undefined,
         order
       );
 
@@ -185,68 +179,31 @@ export function TranscriptView({
         response.transcripts.reverse();
       }
 
-      return { ...response, startTime, endTime, order };
+      return { ...response, timestamp, order };
     },
     initialPageParam: {
-      startTime: searchedStartTime?.getTime() ?? undefined,
-      endTime: searchedEndTime?.getTime() ?? undefined,
+      timestamp: searchedTimestamp ? roundUpToNearestMinute(searchedTimestamp).getTime() : undefined,
       order: 'desc',
     },
     // The naming of getNextPageParam is a bit confusing here. What we're actually
     // doing is using this function to fetch the "previous" page in time, or more
     // accurately, the page before the last page returned by the API.
-    getNextPageParam: (lastPage) => {
-      if (lastPage.nextToken) {
-        return {
-          startTime: lastPage.startTime,
-          endTime: lastPage.endTime,
-          nextToken: lastPage.nextToken,
-          order: lastPage.order,
-        };
+    getNextPageParam: (page) => {
+      return {
+        timestamp: new Date(page.transcripts?.[page.transcripts.length - 1]?.startTimestamp).getTime() || undefined,
+        nextToken: page.nextToken,
+        order: 'desc'
       }
-      const oldestTranscript =
-        lastPage.transcripts?.[lastPage.transcripts.length - 1];
-      if (oldestTranscript) {
-        return {
-          // Substract 1ms to avoid getting the same transcript again
-          endTime: new Date(oldestTranscript.endTimestamp).getTime() - 1,
-          order: 'desc',
-        };
-      }
-      if (lastPage.startTime !== undefined) {
-        return {
-          endTime: lastPage.startTime,
-          order: 'desc',
-        };
-      }
-      return undefined;
     },
     // In contrast to getNextPageParam, getPreviousPageParam is used to fetch
     // the "next" page in time, or more accurately, the page after the first page
     // returned by the API.
-    getPreviousPageParam: (firstPage) => {
-      const newestTranscript = firstPage.transcripts?.[0];
-      if (newestTranscript) {
-        // Add 1ms to get the next transcript, as the current one ends at endTimestamp
-        const startTime = new Date(newestTranscript.endTimestamp).getTime() + 1;
-        if (startTime > Date.now()) {
-          return undefined;
-        }
-        return {
-          startTime,
-          order: 'asc',
-        };
+    getPreviousPageParam: (page) => {
+      return {
+        timestamp: new Date(page.transcripts?.[0]?.startTimestamp).getTime() || undefined,
+        nextToken: page.nextToken,
+        order: 'asc'
       }
-      if (firstPage.endTime !== undefined) {
-        if (firstPage.endTime > Date.now()) {
-          return undefined;
-        }
-        return {
-          startTime: firstPage.endTime,
-          order: 'asc',
-        };
-      }
-      return undefined;
     },
     enabled: !!searchedFeedId,
     refetchOnWindowFocus: false,
@@ -444,16 +401,6 @@ export function TranscriptView({
         <Button
           variant="contained"
           onClick={() => {
-            let calcStart: Date | null = null;
-            let calcEnd: Date | null = null;
-
-            if (timestamp) {
-              calcStart = new Date(timestamp.getTime() - 15 * 60 * 1000);
-              calcEnd = new Date(timestamp.getTime() + 15 * 60 * 1000);
-            }
-
-            setSearchedStartTime(calcStart);
-            setSearchedEndTime(calcEnd);
             setHideLoadPreviousTranscriptsButton(false);
             setHideLoadNewerTranscriptsButton(false);
 
@@ -465,22 +412,18 @@ export function TranscriptView({
             if (timestamp) newParams.timestamp = timestamp.getTime().toString();
             setSearchParams(newParams);
 
-            if (
-              searchedFeedId === feedId &&
-              searchedStartTime?.getTime() === calcStart?.getTime() &&
-              searchedEndTime?.getTime() === calcEnd?.getTime()
-            ) {
+            if (searchedFeedId === feedId) {
               queryClient.resetQueries({
                 queryKey: [
                   'listTranscripts',
                   token,
                   searchedFeedId,
-                  calcStart?.getTime(),
-                  calcEnd?.getTime(),
+                  searchedTimestamp
                 ],
               });
             } else {
               setSearchedFeedId(feedId);
+              setSearchedTimestamp(timestamp);
             }
           }}
           disabled={feedsFetching || isTranscriptsInitialLoading || !feedId}
