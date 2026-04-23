@@ -237,7 +237,7 @@ class TestChunkIngestedEmit(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(records), 1)
         rec = records[0]
         self.assertEqual(rec.json_fields["processing_latency_sec"], 0.0)
-        self.assertIs(rec.json_fields["latency_clamped"], True)
+        self.assertTrue(rec.json_fields["latency_clamped"])
 
         golden = json.loads(
             (_GOLDEN_DIR / "chunk_ingested_clamped.json").read_text(),

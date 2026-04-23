@@ -335,7 +335,7 @@ class TestOpenmhzCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
 
         golden = json.loads(
             (
-                pathlib.Path(__file__).resolve().parents[2]
+                pathlib.Path(__file__).resolve().parents[2]  # noqa: ASYNC240 -- sync file read in test is fine
                 / "tests"
                 / "golden"
                 / "call_download_failed.json"
@@ -392,7 +392,6 @@ class TestOpenmhzCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
         async def _download_then_shut(*args, **kwargs):
             # Simulate: shutdown gets set DURING the download, download returns None
             shutdown.set()
-            return None
 
         mock_download.side_effect = _download_then_shut
 

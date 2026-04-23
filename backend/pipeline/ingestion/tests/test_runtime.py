@@ -1227,10 +1227,9 @@ class TestMetricReporterLifecycle(unittest.IsolatedAsyncioTestCase):
         async def _noop_reporter_loop(**kwargs: object) -> None:
             captured_kwargs.update(kwargs)
             reporter_started.set()
-            try:
-                await asyncio.Event().wait()
-            except asyncio.CancelledError:
-                raise
+            # CancelledError propagates naturally when the task is cancelled
+            # from _shutdown_sequence — no explicit handler needed.
+            await asyncio.Event().wait()
 
         async def _stub_leasing_loop() -> None:
             # Let the reporter task run to its first statement, then exit so
@@ -1438,10 +1437,9 @@ class TestMetricReporterLifecycle(unittest.IsolatedAsyncioTestCase):
 
         async def _reporter_loop_stub(**_kwargs: object) -> None:
             reporter_started.set()
-            try:
-                await asyncio.Event().wait()
-            except asyncio.CancelledError:
-                raise
+            # CancelledError propagates naturally when the test cancels the
+            # reporter task via _shutdown_sequence — no handler needed.
+            await asyncio.Event().wait()
 
         async def _leasing_loop_stub() -> None:
             # Wait for the reporter task to be known-alive, then hold the

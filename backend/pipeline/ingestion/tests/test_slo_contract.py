@@ -71,7 +71,8 @@ class TestMetricLabelAllowlist(unittest.TestCase):
 
     def test_is_frozenset_instance(self) -> None:
         """Must be a frozenset — downstream Phase 3 reporter relies on
-        immutability to prevent accidental label-set mutation."""
+        immutability to prevent accidental label-set mutation.
+        """
         self.assertIsInstance(slo_contract.METRIC_LABEL_ALLOWLIST, frozenset)
 
     def test_equals_expected_members(self) -> None:
@@ -82,7 +83,8 @@ class TestMetricLabelAllowlist(unittest.TestCase):
 
     def test_excludes_forbidden_labels(self) -> None:
         """Labels that would blow the cardinality budget must NOT be in
-        the allowlist (cardinality constraint in PROJECT.md)."""
+        the allowlist (cardinality constraint in PROJECT.md).
+        """
         self.assertNotIn("feed_id", slo_contract.METRIC_LABEL_ALLOWLIST)
         self.assertNotIn("source_type", slo_contract.METRIC_LABEL_ALLOWLIST)
 

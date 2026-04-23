@@ -1,14 +1,13 @@
 """Shared SLI/SLO contract constants for the ingestion pipeline.
 
 Single source of truth for every string literal that the ops-team Terraform
-alert-filter side matches against. ANY drift between this module and the
-Terraform snapshot at `terraform-snapshots/slo_alerts.json` is a bug — Phase 4
-VERIFY-01 pre-flight asserts string equality between this module and that
-snapshot on every CI run.
+alert-filter side matches against. Any rename here MUST be coordinated with
+the ops-team Terraform repo (separate from this repo) — a silent rename will
+break alert filters without any in-repo test failure.
 
 DO NOT inline these literals at emit sites. Import them.
 
-Constants (per .planning/phases/01-data-contract-shared-constants/01-CONTEXT.md D-03):
+Constants:
     EVENT_TYPE_CHUNK_INGESTED:      structured-log event_type for Phase 2 LOG-01
     EVENT_TYPE_CALL_DOWNLOAD_FAILED: structured-log event_type for Phase 2 LOG-02
     EVENT_TYPE_FEED_QUARANTINED:    structured-log event_type for existing

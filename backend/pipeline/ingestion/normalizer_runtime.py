@@ -793,8 +793,9 @@ class NormalizerRuntime:
                     exc_info=True,
                 )
 
-        # Stop heartbeat FIRST to prevent it from seeing released feeds as
-        # fence violations during the teardown window.
+        # Stop the heartbeat thread before cancelling feed tasks: once feeds
+        # are released the heartbeat would otherwise see them as fence
+        # violations during the teardown window.
         self._thread_stop.set()
 
         # asyncio.to_thread avoids blocking the event loop during join().

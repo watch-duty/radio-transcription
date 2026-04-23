@@ -89,9 +89,9 @@ class CapturedChunk:
             at the moment the upstream-source event arrived at the collector
             (segment finalization for Icecast, WS event arrival for OpenMHZ,
             per-call iteration for bcfy_calls). ``None`` propagates silently:
-            the downstream latency-emitting log (Phase 2) emits
-            ``processing_latency_sec: null`` when unset. Required to be
-            tz-aware UTC when set.
+            the downstream latency-emitting log OMITS ``processing_latency_sec``
+            entirely from the payload when unset (the key is absent, not null).
+            Required to be tz-aware UTC when set.
     """
 
     audio_bytes: bytes

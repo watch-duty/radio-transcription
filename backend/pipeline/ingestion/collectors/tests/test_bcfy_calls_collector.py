@@ -1276,7 +1276,7 @@ class TestBcfyCallsCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
 
         golden = _json.loads(
             (
-                _pathlib.Path(__file__).resolve().parents[2]
+                _pathlib.Path(__file__).resolve().parents[2]  # noqa: ASYNC240 -- sync file read in test is fine
                 / "tests"
                 / "golden"
                 / "call_download_failed.json"
@@ -1376,7 +1376,7 @@ class TestBcfyCallsCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
         mock_fetch: AsyncMock,
         mock_jwt: MagicMock,
     ) -> None:
-        """shutdown set while chunk creation fails → no emit."""
+        """Shutdown set while chunk creation fails → no emit."""
         mock_jwt.return_value = "tok"
 
         shutdown = asyncio.Event()
@@ -1384,7 +1384,6 @@ class TestBcfyCallsCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
         async def _create_then_shut(*a, **kw):
             # shutdown set BEFORE create returns None to suppress emit
             shutdown.set()
-            return None
 
         mock_create.side_effect = _create_then_shut
         mock_fetch.return_value = {
