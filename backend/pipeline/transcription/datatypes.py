@@ -54,6 +54,9 @@ class ChunkMetadata:
     gcs_uri: str
     session_id: str
     duration_ms: int
+    feed_id: str = ""
+    timestamp_ms: int = 0
+    feed_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -69,6 +72,8 @@ class DownloadedChunkPayload:
 
     gcs_uri: str
     chunk_data: AudioChunkData
+    feed_name: str = ""
+    feed_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -80,6 +85,7 @@ class TranscriptionResult:
     transcript: str
     time_range: TimeRange
     transmission_id: str
+    feed_name: str = ""
     missing_prior_context: bool = False
     missing_post_context: bool = False
     start_audio_offset_ms: int | None = None
@@ -106,6 +112,7 @@ class TransmissionContext:
     start_audio_offset_ms: int | None = None
     end_audio_offset_ms: int | None = None
     buffer_duration_ms: int = 0
+    feed_name: str = ""
 
 
 @dataclass
@@ -113,6 +120,7 @@ class StitcherContext:
     """Groups context variables for processing a chunk to reduce function arguments."""
 
     feed_id: str
+    feed_name: str
     # The fully qualified GCS URI of the raw audio file currently being parsed.
     current_gcs_uri: str
     # Ordered list of URIs that have been accumulated into the current transmission buffer thus far.
@@ -188,6 +196,7 @@ class FlushRequest:
     contributing_audio_uris: list[str]
     time_range: TimeRange
     transmission_id: str
+    feed_name: str
     missing_prior_context: bool = False
     missing_post_context: bool = False
     start_audio_offset_ms: int | None = None
@@ -219,6 +228,7 @@ class FlushAction(StateMachineAction):
 
     reason: str
     feed_id: str
+    feed_name: str
     time_range: TimeRange
     speech_time_range: TimeRange
     contributing_audio_uris: list[str]

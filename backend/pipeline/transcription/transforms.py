@@ -1,23 +1,13 @@
 """Apache Beam DoFns for mapping incoming stream messages and downloading audio chunks."""
 
 import logging
-from collections.abc import Iterator
-from typing import Any, Union, override
+from collections.abc import Iterable, Iterator
+from typing import Any, override
 
 import apache_beam as beam
 from apache_beam.io.gcp.pubsub import PubsubMessage
 from apache_beam.metrics import Metrics
 from apache_beam.transforms import window
-from apache_beam.transforms.timeutil import TimeDomain
-from apache_beam.transforms.userstate import (
-    BagRuntimeState,
-    BagStateSpec,
-    ReadModifyWriteRuntimeState,
-    ReadModifyWriteStateSpec,
-    RuntimeTimer,
-    TimerSpec,
-    on_timer,
-)
 from apache_beam.utils.timestamp import Timestamp
 from google.protobuf.duration_pb2 import Duration  # type: ignore
 from google.protobuf.message import DecodeError
@@ -37,14 +27,12 @@ from backend.pipeline.schema_types.transcribed_audio_pb2 import (
 from backend.pipeline.transcription.audio_processor import AudioProcessor
 from backend.pipeline.transcription.constants import (
     DEAD_LETTER_QUEUE_TAG,
-    DEFAULT_FLOAT_TOLERANCE_MS,
 )
 from backend.pipeline.transcription.datatypes import (
     ChunkMetadata,
     DownloadedChunkPayload,
     FeedMetadata,
     FlushRequest,
-    OrderRestorerConfig,
     StitchAudioConfig,
     TimeRange,
     TranscriptionResult,
@@ -53,7 +41,6 @@ from backend.pipeline.transcription.resources import (
     SHARED_RESOURCE_HANDLE,
     SharedResources,
 )
-from backend.pipeline.transcription.sequence_buffer import SequenceBuffer
 from backend.pipeline.transcription.utils import generate_transmission_id
 
 logger = logging.getLogger(__name__)
@@ -155,60 +142,39 @@ class AddEventTimestamp(beam.DoFn):
                 timestamp_sec = chunk_proto.start_timestamp.seconds + (
                     chunk_proto.start_timestamp.nanos / NANOS_PER_SECOND
                 )
+                timestamp_ms = int(timestamp_sec * MS_PER_SECOND)
 
                 yield window.TimestampedValue(
                     (
-                        feed_id,
+                        chunk_proto.session_id,
                         ChunkMetadata(
-                            chunk_proto.gcs_uri,
-                            chunk_proto.session_id,
-                            chunk_proto.duration_ms,
+                            gcs_uri=chunk_proto.gcs_uri,
+                            session_id=chunk_proto.session_id,
+                            duration_ms=chunk_proto.duration_ms,
+                            feed_id=feed_id,
+                            timestamp_ms=timestamp_ms,
+                            feed_name=chunk_proto.feed_name,
                         ),
                     ),
                     timestamp_sec,
                 )
 
 
-@beam.typehints.with_input_types(
-    tuple[str, Union[FeedMetadata, TranscriptionResult]]
-)
-@beam.typehints.with_output_types(PubsubMessage)
-class SerializeAndEnrichFn(beam.DoFn):
-    """Stores feed metadata in state and enriches the final TranscribedAudio message."""
-
-    FEED_METADATA_SPEC = ReadModifyWriteStateSpec(
-        "feed_metadata", beam.coders.PickleCoder()
-    )
-    LAST_START_MS_SPEC = ReadModifyWriteStateSpec(
-        "last_start_ms", beam.coders.VarIntCoder()
-    )
+@beam.typehints.with_input_types(tuple[str, Iterable[ChunkMetadata]])
+@beam.typehints.with_output_types(tuple[str, ChunkMetadata])
+class SortAndEmitFn(beam.DoFn):
+    """Sorts buffered chunks by timestamp and emits them in order."""
 
     @override
     def process(
-        self,
-        element: tuple[str, Any],
-        feed_metadata_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            FEED_METADATA_SPEC
-        ),
-        last_start_ms_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            LAST_START_MS_SPEC
-        ),
-    ) -> Iterator[PubsubMessage]:
-        feed_id, value = element
+        self, element: tuple[str, Iterable[ChunkMetadata]]
+    ) -> Iterator[tuple[str, ChunkMetadata]]:
+        _session_id, chunks = element
+        sorted_chunks = sorted(chunks, key=lambda c: c.timestamp_ms)
 
-        if isinstance(value, FeedMetadata):
-            feed_metadata_state.write(value)
-        elif isinstance(value, TranscriptionResult):
-            metadata = feed_metadata_state.read()
-            if not metadata or not metadata.feed_name:
-                msg = f"Missing or incomplete feed metadata for feed_id: {feed_id}"
-                raise ValueError(msg)
-            feed_name = metadata.feed_name
-
-            # Duplicate detection based on start time
-            last_start_ms = last_start_ms_state.read()
-            current_start_ms = value.time_range.start_ms
-
+        last_start_ms = None
+        for chunk in sorted_chunks:
+            current_start_ms = chunk.timestamp_ms
             if (
                 last_start_ms is not None
                 and abs(current_start_ms - last_start_ms) < 100
@@ -216,55 +182,67 @@ class SerializeAndEnrichFn(beam.DoFn):
                 logger.warning(
                     "[%s] Potential growing/overlapping transmission detected! "
                     "Starts at nearly the same time (%dms) as previous (%dms).",
-                    feed_id,
+                    chunk.feed_id,
                     current_start_ms,
                     last_start_ms,
                 )
+            last_start_ms = current_start_ms
+            yield (chunk.feed_id, chunk)
 
-            last_start_ms_state.write(current_start_ms)
 
-            if value.start_audio_offset_ms is None:
-                msg = f"Missing start_audio_offset_ms for feed_id: {feed_id}"
-                raise ValueError(msg)
-            start_offset = Duration(
-                seconds=value.start_audio_offset_ms // MICROSECONDS_PER_MS,
-                nanos=(value.start_audio_offset_ms % MICROSECONDS_PER_MS)
-                * NANOS_PER_MS,
-            )
+@beam.typehints.with_input_types(TranscriptionResult)
+@beam.typehints.with_output_types(PubsubMessage)
+class SerializeAndEnrichFn(beam.DoFn):
+    """Enriches the final TranscribedAudio message with feed metadata."""
 
-            if value.end_audio_offset_ms is None:
-                msg = f"Missing end_audio_offset_ms for feed_id: {feed_id}"
-                raise ValueError(msg)
-            end_offset = Duration(
-                seconds=value.end_audio_offset_ms // MICROSECONDS_PER_MS,
-                nanos=(value.end_audio_offset_ms % MICROSECONDS_PER_MS)
-                * NANOS_PER_MS,
-            )
+    @override
+    def process(self, element: TranscriptionResult) -> Iterator[PubsubMessage]:
+        value = element
+        feed_id = value.feed_id
+        feed_name = value.feed_name
 
-            proto = TranscribedAudio(
-                feed_id=value.feed_id,
-                source_audio_uris=value.contributing_audio_uris,
-                transmission_id=value.transmission_id,
-                transcript=value.transcript,
-                missing_prior_context=value.missing_prior_context,
-                missing_post_context=value.missing_post_context,
-                start_audio_offset=start_offset,
-                end_audio_offset=end_offset,
-                canonical_audio_uri=value.canonical_audio_uri,
-                playback_audio_uri=value.playback_audio_uri,
-                feed_name=feed_name,
-            )
-            proto.start_timestamp.FromMicroseconds(
-                value.time_range.start_ms * MICROSECONDS_PER_MS
-            )
-            proto.end_timestamp.FromMicroseconds(
-                value.time_range.end_ms * MICROSECONDS_PER_MS
-            )
-            yield PubsubMessage(
-                data=proto.SerializeToString(),
-                attributes={},
-                ordering_key=value.feed_id,
-            )
+        if value.start_audio_offset_ms is None:
+            msg = f"Missing start_audio_offset_ms for feed_id: {feed_id}"
+            raise ValueError(msg)
+        start_offset = Duration(
+            seconds=value.start_audio_offset_ms // MICROSECONDS_PER_MS,
+            nanos=(value.start_audio_offset_ms % MICROSECONDS_PER_MS)
+            * NANOS_PER_MS,
+        )
+
+        if value.end_audio_offset_ms is None:
+            msg = f"Missing end_audio_offset_ms for feed_id: {feed_id}"
+            raise ValueError(msg)
+        end_offset = Duration(
+            seconds=value.end_audio_offset_ms // MICROSECONDS_PER_MS,
+            nanos=(value.end_audio_offset_ms % MICROSECONDS_PER_MS)
+            * NANOS_PER_MS,
+        )
+
+        proto = TranscribedAudio(
+            feed_id=value.feed_id,
+            source_audio_uris=value.contributing_audio_uris,
+            transmission_id=value.transmission_id,
+            transcript=value.transcript,
+            missing_prior_context=value.missing_prior_context,
+            missing_post_context=value.missing_post_context,
+            start_audio_offset=start_offset,
+            end_audio_offset=end_offset,
+            canonical_audio_uri=value.canonical_audio_uri,
+            playback_audio_uri=value.playback_audio_uri,
+            feed_name=feed_name,
+        )
+        proto.start_timestamp.FromMicroseconds(
+            value.time_range.start_ms * MICROSECONDS_PER_MS
+        )
+        proto.end_timestamp.FromMicroseconds(
+            value.time_range.end_ms * MICROSECONDS_PER_MS
+        )
+        yield PubsubMessage(
+            data=proto.SerializeToString(),
+            attributes={},
+            ordering_key=value.feed_id,
+        )
 
 
 @beam.typehints.with_input_types(tuple[str, DownloadedChunkPayload])
@@ -302,6 +280,7 @@ class BypassStitchingFn(beam.DoFn):
                 contributing_audio_uris=[gcs_path],
                 time_range=TimeRange(start_ms=start_ms, end_ms=end_ms),
                 transmission_id=transmission_id,
+                feed_name=payload.feed_name,
                 missing_prior_context=False,
                 missing_post_context=False,
             ),
@@ -309,193 +288,6 @@ class BypassStitchingFn(beam.DoFn):
 
 
 @beam.typehints.with_input_types(tuple[str, ChunkMetadata])
-@beam.typehints.with_output_types(tuple[str, str])
-class RestoreOrderFn(beam.DoFn):
-    """A stateful DoFn that buffers out-of-order chunks and emits them in strict chronological order.
-
-    It acts as a thin wrapper around the SequenceBuffer framework-agnostic domain class.
-    """
-
-    SESSION_ID_SPEC = ReadModifyWriteStateSpec(
-        "session_id", beam.coders.StrUtf8Coder()
-    )
-    SESSION_ID_STATE = beam.DoFn.StateParam(SESSION_ID_SPEC)
-
-    OUT_OF_ORDER_BUFFER_SPEC = BagStateSpec(
-        "out_of_order_buffer",
-        beam.coders.PickleCoder(),
-    )
-    # A bag state holding chunks that have arrived earlier than their expected chronological sequence.
-    OUT_OF_ORDER_BUFFER_STATE = beam.DoFn.StateParam(OUT_OF_ORDER_BUFFER_SPEC)
-
-    EXPECTED_NEXT_TS_SPEC = ReadModifyWriteStateSpec(
-        "expected_next_ts", beam.coders.VarIntCoder()
-    )
-    # Tracks the exact chronological timestamp (ms) of the next chunk we must receive before emitting anything downstream.
-    EXPECTED_NEXT_TS_STATE = beam.DoFn.StateParam(EXPECTED_NEXT_TS_SPEC)
-
-    TIMER_ACTIVE_SPEC = ReadModifyWriteStateSpec(
-        "timer_active", beam.coders.BooleanCoder()
-    )
-    # Boolean flag ensuring we only ever have a single active processing-time timer scheduled across the buffer.
-    TIMER_ACTIVE_STATE = beam.DoFn.StateParam(TIMER_ACTIVE_SPEC)
-
-    OUT_OF_ORDER_TIMER_SPEC = TimerSpec(
-        "out_of_order_timer", TimeDomain.WATERMARK
-    )
-    # A real-time (processing time) timer that acts as a maximum allowed wait period for missing chunks.
-    OUT_OF_ORDER_TIMER = beam.DoFn.TimerParam(OUT_OF_ORDER_TIMER_SPEC)
-
-    def __init__(self, config: OrderRestorerConfig) -> None:
-        """Binds the OrderRestorerConfig and initializes Beam metrics counters."""
-        self.config = config
-        self.chunks_buffered_out_of_order = Metrics.counter(
-            self.__class__, "chunks_buffered_out_of_order"
-        )
-        self.data_gaps_detected_counter = Metrics.counter(
-            self.__class__, "data_gaps_detected"
-        )
-        self.session_resets_counter = Metrics.counter(
-            self.__class__, "session_resets"
-        )
-        self.chunks_processed_late = Metrics.counter(
-            self.__class__, "chunks_processed_late"
-        )
-
-    @override
-    def process(  # type: ignore[override]
-        self,
-        element: tuple[str, ChunkMetadata],
-        timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
-        session_id_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            SESSION_ID_SPEC
-        ),
-        expected_next_ts_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            EXPECTED_NEXT_TS_SPEC
-        ),
-        out_of_order_buffer_state: BagRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            OUT_OF_ORDER_BUFFER_SPEC
-        ),
-        timer_active_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            TIMER_ACTIVE_SPEC
-        ),
-        out_of_order_timer: RuntimeTimer = beam.DoFn.TimerParam(  # type: ignore # noqa: B008
-            OUT_OF_ORDER_TIMER_SPEC
-        ),
-    ) -> Iterator[tuple[str, str]]:
-        """Ingests out-of-order chunks and orchestrates chronologically sorted yields."""
-        feed_id, metadata = element
-        gcs_path = metadata.gcs_uri
-        incoming_session_id = metadata.session_id
-        duration_ms = metadata.duration_ms
-        current_ts_ms = int(float(timestamp) * MS_PER_SECOND)
-
-        current_session_id = session_id_state.read()
-        expected_next_ts = expected_next_ts_state.read()
-
-        if current_session_id != incoming_session_id:
-            logger.info(
-                f"[{feed_id}] Session ID changed from {current_session_id} to {incoming_session_id}. Resetting state."
-            )
-            self.session_resets_counter.inc()
-            session_id_state.write(incoming_session_id)
-            expected_next_ts_state.clear()
-            expected_next_ts = None
-            out_of_order_buffer_state.clear()
-            if timer_active_state.read():
-                out_of_order_timer.clear()
-            timer_active_state.clear()
-
-        sequence_buffer = SequenceBuffer(self.config)
-        buffer_elements = list(out_of_order_buffer_state.read())
-
-        (
-            new_expected_next_ts,
-            new_buffer_elements,
-            elements_to_emit,
-            was_late,
-            was_buffered,
-        ) = sequence_buffer.process_chunk(
-            current_ts_ms=current_ts_ms,
-            gcs_uri=gcs_path,
-            expected_next_ts=expected_next_ts,
-            buffer_elements=buffer_elements,
-            chunk_duration_ms=duration_ms,
-        )
-
-        if was_late:
-            self.chunks_processed_late.inc()
-        if was_buffered:
-            self.chunks_buffered_out_of_order.inc()
-
-        expected_next_ts_state.write(new_expected_next_ts)
-        out_of_order_buffer_state.clear()
-        for chunk in new_buffer_elements:
-            out_of_order_buffer_state.add(chunk)
-
-        for gcs_uri in elements_to_emit:
-            yield (feed_id, gcs_uri)
-
-        # Handle Timer for Gap Timeout
-        if new_buffer_elements and not timer_active_state.read():
-            deadline = timestamp + (
-                self.config.out_of_order_timeout_ms / float(MS_PER_SECOND)
-            )
-            out_of_order_timer.set(deadline)
-            timer_active_state.write(True)  # noqa: FBT003
-        elif not new_buffer_elements and timer_active_state.read():
-            out_of_order_timer.clear()
-            timer_active_state.clear()
-
-    @on_timer(OUT_OF_ORDER_TIMER_SPEC)
-    def handle_gap_timeout(
-        self,
-        feed_id: str = beam.DoFn.KeyParam,  # type: ignore
-        expected_next_ts_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            EXPECTED_NEXT_TS_SPEC
-        ),
-        out_of_order_buffer_state: BagRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            OUT_OF_ORDER_BUFFER_SPEC
-        ),
-        timer_active_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            TIMER_ACTIVE_SPEC
-        ),
-    ) -> Iterator[tuple[str, str]]:
-        """Handles the gap timeout."""
-        self.data_gaps_detected_counter.inc()
-        timer_active_state.clear()
-
-        buffer_elements = list(out_of_order_buffer_state.read())
-        if buffer_elements:
-            sorted_elements = sorted(buffer_elements)
-            new_expected = sorted_elements[0].timestamp_ms
-
-            logger.warning(
-                f"[{feed_id}] Gap timeout! Advancing expected from {expected_next_ts_state.read()} to {new_expected}."
-            )
-
-            expected_next_ts_state.write(new_expected)
-
-            sequence_buffer = SequenceBuffer(self.config)
-
-            new_expected_next_ts, new_buffer_elements, elements_to_emit = (
-                sequence_buffer.drain_ready_elements(
-                    expected_next_ts=new_expected,
-                    buffer_elements=buffer_elements,
-                    epsilon_ms=DEFAULT_FLOAT_TOLERANCE_MS,
-                )
-            )
-
-            expected_next_ts_state.write(new_expected_next_ts)
-            out_of_order_buffer_state.clear()
-            for chunk in new_buffer_elements:
-                out_of_order_buffer_state.add(chunk)
-
-            for gcs_uri in elements_to_emit:
-                yield (feed_id, gcs_uri)
-
-
-@beam.typehints.with_input_types(tuple[str, str])
 @beam.typehints.with_output_types(tuple[str, DownloadedChunkPayload])
 class DownloadAudioFn(beam.DoFn):
     """A stateless DoFn that downloads audio chunks from GCS based on the provided GCS URI."""
@@ -522,13 +314,14 @@ class DownloadAudioFn(beam.DoFn):
     @override
     def process(  # type: ignore[override] # pyright: ignore[reportIncompatibleMethodOverride]
         self,
-        element: tuple[str, str],
+        element: tuple[str, ChunkMetadata],
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
     ) -> Iterator[
         tuple[str, DownloadedChunkPayload] | beam.pvalue.TaggedOutput
     ]:
         """Downloads the raw audio bytes from GCS and passes them to the acoustic processor."""
-        feed_id, gcs_path = element
+        session_id, metadata = element
+        gcs_path = metadata.gcs_uri
         if not self.audio_processor:
             msg = "AudioProcessor not initialized. setup() must be called."
             raise RuntimeError(msg)
@@ -540,7 +333,15 @@ class DownloadAudioFn(beam.DoFn):
                 gcs_path, start_ms
             )
 
-            yield (feed_id, DownloadedChunkPayload(gcs_path, chunk_data))
+            yield (
+                session_id,
+                DownloadedChunkPayload(
+                    gcs_uri=gcs_path,
+                    chunk_data=chunk_data,
+                    feed_name=metadata.feed_name,
+                    feed_id=metadata.feed_id,
+                ),
+            )
         except FileNotFoundError:
             logger.info(
                 "GCS object not found yet. Re-raising to NACK Pub/Sub message."
@@ -550,11 +351,14 @@ class DownloadAudioFn(beam.DoFn):
             if self.config.route_to_dlq:
                 self.dlq_count.inc()
                 logger.exception(
-                    "Error downloading %s for feed %s", gcs_path, feed_id
+                    "Error downloading %s for feed %s",
+                    gcs_path,
+                    metadata.feed_id,
                 )
                 msg = str(e)
                 yield beam.pvalue.TaggedOutput(
-                    DEAD_LETTER_QUEUE_TAG, {"error": msg, "feed_id": feed_id}
+                    DEAD_LETTER_QUEUE_TAG,
+                    {"error": msg, "feed_id": metadata.feed_id},
                 )
             else:
                 raise

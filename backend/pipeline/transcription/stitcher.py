@@ -2,7 +2,7 @@
 
 import logging
 import time
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from typing import Any, override
 
@@ -187,6 +187,7 @@ class StitchAudioFn(beam.DoFn):
                     start_audio_offset_ms=action.start_audio_offset_ms,
                     end_audio_offset_ms=action.end_audio_offset_ms,
                     transmission_id=transmission_id,
+                    feed_name=action.feed_name,
                 ),
             )
         else:
@@ -215,6 +216,7 @@ class StitchAudioFn(beam.DoFn):
             end_audio_offset_ms=ctx.end_audio_offset_ms,
             buffer_start_time_ms=ctx.buffer_start_time_ms,
             buffer_duration_ms=ctx.buffer_duration_ms,
+            feed_name=ctx.feed_name,
         )
         transmission_context.write(new_context)
 
@@ -277,6 +279,7 @@ class StitchAudioFn(beam.DoFn):
         *,
         feed_id: str,
         gcs_path: str,
+        feed_name: str,
         chunk_data: AudioChunkData,
         transmission_context: ReadModifyWriteRuntimeState,
         transmission_buffer: BagRuntimeState,
@@ -291,6 +294,7 @@ class StitchAudioFn(beam.DoFn):
 
         ctx = StitcherContext(
             feed_id=feed_id,
+            feed_name=feed_name,
             current_gcs_uri=gcs_path,
             contributing_audio_uris=curr_context.contributing_audio_uris.copy(),
             last_segment_end_time_ms=curr_context.last_end_time_ms,
@@ -337,6 +341,7 @@ class StitchAudioFn(beam.DoFn):
             yield from self._process_audio_chunk(
                 feed_id=key,
                 gcs_path=gcs_path,
+                feed_name=payload.feed_name,
                 chunk_data=chunk_data,
                 transmission_context=transmission_context,
                 transmission_buffer=transmission_buffer,
@@ -408,6 +413,7 @@ class StitchAudioFn(beam.DoFn):
                         start_audio_offset_ms=curr_context.start_audio_offset_ms,
                         end_audio_offset_ms=curr_context.end_audio_offset_ms,
                         transmission_id=transmission_id,
+                        feed_name=curr_context.feed_name,
                     ),
                 )
             except Exception as e:
@@ -424,6 +430,125 @@ class StitchAudioFn(beam.DoFn):
         transmission_context.clear()
         transmission_buffer.clear()
         stale_timer.clear()
+
+
+@beam.typehints.with_input_types(tuple[str, Iterable[DownloadedChunkPayload]])
+@beam.typehints.with_output_types(tuple[str, FlushRequest])
+class StatelessStitchAudioFn(beam.DoFn):
+    """A stateless DoFn that stitches audio chunks together based on session grouping."""
+
+    def __init__(self, config: StitchAudioConfig) -> None:
+        self.config = config
+        self.stitching_time_ms = Metrics.distribution(
+            "StatelessStitchAudioFn", "stitching_time_ms"
+        )
+        self.silence_gap_flush_count = Metrics.counter(
+            "StatelessStitchAudioFn", "silence_gap_flush_count"
+        )
+        self.max_duration_flush_count = Metrics.counter(
+            "StatelessStitchAudioFn", "max_duration_flush_count"
+        )
+
+    def process(
+        self, element: tuple[str, Iterable[DownloadedChunkPayload]]
+    ) -> Iterator[tuple[str, FlushRequest]]:
+        _session_id, chunks = element
+
+        # Sort chunks by timestamp
+        sorted_chunks = sorted(chunks, key=lambda c: c.chunk_data.start_ms)
+
+        state_machine = AudioStitchingStateMachine(self.config)
+
+        buffer = []
+        ctx = StitcherContext(
+            feed_id="",
+            feed_name="",
+            current_gcs_uri="",
+            contributing_audio_uris=[],
+            file_start_ms=0,
+        )
+
+        for chunk in sorted_chunks:
+            ctx.feed_id = chunk.feed_id
+            ctx.feed_name = chunk.feed_name
+            ctx.current_gcs_uri = chunk.gcs_uri
+            ctx.file_start_ms = chunk.chunk_data.start_ms
+
+            start_time = time.time()
+            actions = state_machine.process_chunk(chunk.chunk_data, ctx)
+            stitching_duration = int((time.time() - start_time) * MS_PER_SECOND)
+            self.stitching_time_ms.update(stitching_duration)
+
+            for action in actions:
+                if isinstance(action, AppendBufferAction):
+                    buffer.append(action.audio_buffer)
+                elif isinstance(action, FlushAction):
+                    if "Maximum transmission duration" in action.reason:
+                        self.max_duration_flush_count.inc()
+                    elif "Significant gap" in action.reason:
+                        self.silence_gap_flush_count.inc()
+
+                    yield (
+                        action.feed_id,
+                        FlushRequest(
+                            buffer=np.concatenate(buffer)
+                            if buffer
+                            else np.array([]),
+                            feed_id=action.feed_id,
+                            contributing_audio_uris=action.contributing_audio_uris,
+                            time_range=action.time_range,
+                            transmission_id=generate_transmission_id(
+                                action.feed_id,
+                                action.speech_time_range.start_ms,
+                                action.speech_time_range.end_ms,
+                            ),
+                            feed_name=action.feed_name,
+                            missing_prior_context=action.missing_prior_context,
+                            missing_post_context=action.missing_post_context,
+                            start_audio_offset_ms=action.start_audio_offset_ms,
+                            end_audio_offset_ms=action.end_audio_offset_ms,
+                        ),
+                    )
+                    if action.clear_state:
+                        buffer = []
+                        ctx.transmission_start_time_ms = None
+                        ctx.buffer_start_time_ms = None
+                        ctx.contributing_audio_uris.clear()
+                        ctx.start_audio_offset_ms = None
+                        ctx.buffer_duration_ms = 0
+                elif isinstance(action, DropAction):
+                    logger.info(f"Dropped: {action.reason}")
+
+        # Force flush at the end of the session
+        if buffer and ctx.transmission_start_time_ms is not None:
+            if ctx.buffer_start_time_ms is None:
+                msg = "buffer_start_time_ms is None"
+                raise ValueError(msg)
+            if ctx.last_segment_end_time_ms is None:
+                msg = "last_segment_end_time_ms is None"
+                raise ValueError(msg)
+            yield (
+                ctx.feed_id,
+                FlushRequest(
+                    buffer=np.concatenate(buffer) if buffer else np.array([]),
+                    feed_id=ctx.feed_id,
+                    contributing_audio_uris=ctx.contributing_audio_uris.copy(),
+                    time_range=TimeRange(
+                        start_ms=ctx.buffer_start_time_ms,
+                        end_ms=ctx.last_segment_end_time_ms,
+                    ),
+                    transmission_id=generate_transmission_id(
+                        ctx.feed_id,
+                        ctx.transmission_start_time_ms,
+                        ctx.last_segment_end_time_ms,
+                    ),
+                    feed_name=ctx.feed_name,
+                    missing_prior_context=ctx.missing_prior_context,
+                    missing_post_context=True,
+                    start_audio_offset_ms=ctx.start_audio_offset_ms,
+                    end_audio_offset_ms=ctx.end_audio_offset_ms,
+                ),
+            )
 
 
 @beam.typehints.with_input_types(tuple[str, FlushRequest])
@@ -568,6 +693,7 @@ class TranscribeAudioFn(beam.DoFn):
             transcript=transcript,
             time_range=request.time_range,
             transmission_id=request.transmission_id,
+            feed_name=request.feed_name,
             missing_prior_context=request.missing_prior_context,
             missing_post_context=request.missing_post_context,
             start_audio_offset_ms=request.start_audio_offset_ms,

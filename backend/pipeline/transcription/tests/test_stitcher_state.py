@@ -63,6 +63,7 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         self.state_machine = AudioStitchingStateMachine(self.config)
         self.ctx = StitcherContext(
             feed_id="test-feed-xyz",
+            feed_name="Test Feed Name",
             current_gcs_uri="gs://fake/init.flac",
             contributing_audio_uris=[],
             file_start_ms=0,

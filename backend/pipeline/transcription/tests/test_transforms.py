@@ -22,9 +22,7 @@ from backend.pipeline.transcription.datatypes import (
     AudioChunkData,
     ChunkMetadata,
     DownloadedChunkPayload,
-    FeedMetadata,
     FlushRequest,
-    OrderRestorerConfig,
     StitchAudioConfig,
     TimeRange,
     TranscribeAudioConfig,
@@ -32,6 +30,7 @@ from backend.pipeline.transcription.datatypes import (
 )
 from backend.pipeline.transcription.enums import TranscriberType, VadType
 from backend.pipeline.transcription.stitcher import (
+    StatelessStitchAudioFn,
     StitchAudioFn,
     TranscribeAudioFn,
 )
@@ -41,8 +40,8 @@ from backend.pipeline.transcription.transforms import (
     BypassStitchingFn,
     DownloadAudioFn,
     ParseAndKeyFn,
-    RestoreOrderFn,
     SerializeAndEnrichFn,
+    SortAndEmitFn,
 )
 
 
@@ -181,11 +180,14 @@ class AddEventTimestampTest(unittest.TestCase):
         self.assertEqual(
             result[0].value,  # type: ignore
             (
-                "test-feed",
+                "mock-session-id",
                 ChunkMetadata(
                     gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
                     session_id="mock-session-id",
                     duration_ms=0,
+                    feed_id="test-feed",
+                    timestamp_ms=1678886400000,
+                    feed_name="",
                 ),
             ),
         )
@@ -219,7 +221,15 @@ class BypassStitchingTest(unittest.TestCase):
             duration_ms=audio_len_ms,
         )
 
-        element = (feed_id, DownloadedChunkPayload(gcs_path, chunk_data))
+        element = (
+            feed_id,
+            DownloadedChunkPayload(
+                gcs_uri=gcs_path,
+                chunk_data=chunk_data,
+                feed_name="test-feed-name",
+                feed_id=feed_id,
+            ),
+        )
 
         fn = BypassStitchingFn()
         result = list(fn.process(element))
@@ -230,6 +240,7 @@ class BypassStitchingTest(unittest.TestCase):
         flush_request = result[0][1]
         self.assertIsInstance(flush_request, FlushRequest)
         self.assertEqual(flush_request.feed_id, feed_id)
+        self.assertEqual(flush_request.feed_name, "test-feed-name")
         self.assertEqual(flush_request.contributing_audio_uris, [gcs_path])
         self.assertEqual(flush_request.time_range.start_ms, 1000)
         self.assertEqual(flush_request.time_range.end_ms, 1000 + audio_len_ms)
@@ -238,167 +249,34 @@ class BypassStitchingTest(unittest.TestCase):
         self.assertIsNotNone(flush_request.transmission_id)
 
 
-class OrderRestorerTest(unittest.TestCase):
-    def test_restore_order_buffers_and_releases(self) -> None:
-        """Verifies that structurally disordered data streams correctly buffer elements in-memory to artificially re-align and emit chronologically."""
-        config = OrderRestorerConfig(out_of_order_timeout_ms=5000)
+class SortAndEmitTest(unittest.TestCase):
+    def test_sort_and_emit(self) -> None:
+        """Verifies that SortAndEmitFn correctly sorts chunks by timestamp."""
+        chunks = [
+            ChunkMetadata(
+                "gs://b/130.flac", "session-A", 15000, "feed-1", 130000
+            ),
+            ChunkMetadata(
+                "gs://b/100.flac", "session-A", 15000, "feed-1", 100000
+            ),
+            ChunkMetadata(
+                "gs://b/115.flac", "session-A", 15000, "feed-1", 115000
+            ),
+        ]
 
-        options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+        element = ("session-A", chunks)
+
+        fn = SortAndEmitFn()
+        result = list(fn.process(element))
+
+        self.assertEqual(
+            result,
+            [
+                ("feed-1", chunks[1]),
+                ("feed-1", chunks[2]),
+                ("feed-1", chunks[0]),
+            ],
         )
-        with BeamTestPipeline(options=options) as p:
-            # Emit chunk 1, then chunk 3. Chunk 3 should be buffered.
-            # Then emit chunk 2. Chunk 2 and 3 should be released.
-            test_stream = (
-                BeamTestStream(
-                    coder=beam.coders.TupleCoder(
-                        (
-                            beam.coders.StrUtf8Coder(),
-                            beam.coders.PickleCoder(),
-                        )
-                    )
-                )
-                .advance_watermark_to(100)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-1",
-                                ChunkMetadata(
-                                    "gs://b/100-uuid1.flac", "session-A", 15000
-                                ),
-                            ),
-                            100,
-                        )
-                    ]
-                )
-                .advance_watermark_to(130)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-1",
-                                ChunkMetadata(
-                                    "gs://b/130-uuid3.flac", "session-A", 15000
-                                ),
-                            ),
-                            130,
-                        )
-                    ]
-                )
-                .advance_watermark_to(140)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-1",
-                                ChunkMetadata(
-                                    "gs://b/115-uuid2.flac", "session-A", 15000
-                                ),
-                            ),
-                            115,
-                        )
-                    ]
-                )
-                .advance_watermark_to_infinity()
-            )
-
-            restored = p | test_stream | beam.ParDo(RestoreOrderFn(config))
-
-            assert_that(
-                restored,
-                equal_to(
-                    [
-                        ("feed-1", "gs://b/100-uuid1.flac"),
-                        ("feed-1", "gs://b/115-uuid2.flac"),
-                        ("feed-1", "gs://b/130-uuid3.flac"),
-                    ]
-                ),
-            )
-
-    def test_restore_order_yields_late_chunks(self) -> None:
-        """Verifies that profoundly late stream elements exceeding the operational buffering timeout are explicitly yielded independently without corrupting stream progression."""
-        config = OrderRestorerConfig(out_of_order_timeout_ms=5000)
-
-        options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
-        )
-        with BeamTestPipeline(options=options) as p:
-            test_stream = (
-                BeamTestStream(
-                    coder=beam.coders.TupleCoder(
-                        (
-                            beam.coders.StrUtf8Coder(),
-                            beam.coders.PickleCoder(),
-                        )
-                    )
-                )
-                .advance_watermark_to(100)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-1",
-                                ChunkMetadata(
-                                    "gs://b/100-11111111.flac",
-                                    "session-A",
-                                    15000,
-                                ),
-                            ),
-                            100,
-                        )
-                    ]
-                )
-                .advance_watermark_to(130)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-1",
-                                ChunkMetadata(
-                                    "gs://b/130-33333333.flac",
-                                    "session-A",
-                                    15000,
-                                ),
-                            ),
-                            130,
-                        )
-                    ]
-                )
-                # After 5 seconds (5000ms), the order restorer timed out waiting for 115.
-                .advance_watermark_to(10000)
-                # Now the late chunk arrives
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-1",
-                                ChunkMetadata(
-                                    "gs://b/115-22222222.flac",
-                                    "session-A",
-                                    15000,
-                                ),
-                            ),
-                            115,
-                        )
-                    ]
-                )
-                .advance_watermark_to_infinity()
-            )
-
-            restored = p | test_stream | beam.ParDo(RestoreOrderFn(config))
-
-            # The current behavior explicitly yields it out of order downstream
-            assert_that(
-                restored,
-                equal_to(
-                    [
-                        ("feed-1", "gs://b/100-11111111.flac"),
-                        ("feed-1", "gs://b/130-33333333.flac"),
-                        ("feed-1", "gs://b/115-22222222.flac"),
-                    ]
-                ),
-            )
 
 
 class StitchAudioTest(unittest.TestCase):
@@ -980,6 +858,7 @@ class TranscribeAudioTest(unittest.TestCase):
                                 start_ms=101000, end_ms=101500
                             ),
                             transmission_id="test-uuid",
+                            feed_name="Test Feed Name",
                         ),
                     )
                 ]
@@ -1030,8 +909,20 @@ class DownloadAudioTest(unittest.TestCase):
             elements = (
                 p
                 | beam.Create(
-                    [("feed-123", "gs://fake-bucket/100-11111111.flac")]
-                ).with_output_types(tuple[str, str])
+                    [
+                        (
+                            "feed-123",
+                            ChunkMetadata(
+                                gcs_uri="gs://fake-bucket/100-11111111.flac",
+                                session_id="session-A",
+                                duration_ms=15000,
+                                feed_id="feed-123",
+                                timestamp_ms=100000,
+                                feed_name="Test Feed Name",
+                            ),
+                        )
+                    ]
+                ).with_output_types(tuple[str, ChunkMetadata])
                 | beam.Map(lambda x: TimestampedValue(x, 100))
             )
 
@@ -1066,6 +957,7 @@ class SerializeAndEnrichTest(unittest.TestCase):
                 transcript="Hello world",
                 time_range=TimeRange(1000, 2000),
                 transmission_id="uuid-1",
+                feed_name="Test Feed Name",
                 start_audio_offset_ms=100,
                 end_audio_offset_ms=200,
             )
@@ -1076,14 +968,14 @@ class SerializeAndEnrichTest(unittest.TestCase):
                 transcript="Hello world again",
                 time_range=TimeRange(1000, 3000),
                 transmission_id="uuid-2",
+                feed_name="Test Feed Name",
                 start_audio_offset_ms=100,
                 end_audio_offset_ms=200,
             )
 
             elements = [
-                ("test-feed", FeedMetadata(feed_name="Test Feed Name")),
-                ("test-feed", res1),
-                ("test-feed", res2),
+                res1,
+                res2,
             ]
 
             results = (
@@ -1112,3 +1004,51 @@ class SerializeAndEnrichTest(unittest.TestCase):
                 assert protos[1].feed_name == "Test Feed Name"
 
             assert_that(results, assert_results)
+
+
+class StatelessStitchAudioTest(unittest.TestCase):
+    @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
+    def test_stateless_stitching(self, mock_audio_processor: MagicMock) -> None:
+        """Verifies that StatelessStitchAudioFn correctly stitches chunks."""
+        mock_processor_inst = mock_audio_processor.return_value
+        mock_processor_inst.check_vad.return_value = True
+        mock_processor_inst.preprocess_audio.side_effect = lambda x: x
+        mock_processor_inst.export_flac.return_value = b"flac_bytes"
+
+        config = get_test_stitch_config(significant_gap_ms=3000)
+
+        chunks = [
+            DownloadedChunkPayload(
+                gcs_uri="gs://b/100.flac",
+                chunk_data=AudioChunkData(
+                    start_ms=100000,
+                    audio=np.zeros(((15000) * 16), dtype=np.int16),
+                    speech_segments=[TimeRange(12500, 15000)],
+                    gcs_uri="gs://b/100.flac",
+                    duration_ms=15000,
+                ),
+                feed_name="test-feed",
+                feed_id="feed-123",
+            ),
+            DownloadedChunkPayload(
+                gcs_uri="gs://b/115.flac",
+                chunk_data=AudioChunkData(
+                    start_ms=115000,
+                    audio=np.zeros(((15000) * 16), dtype=np.int16),
+                    speech_segments=[TimeRange(0, 2500)],
+                    gcs_uri="gs://b/115.flac",
+                    duration_ms=15000,
+                ),
+                feed_name="test-feed",
+                feed_id="feed-123",
+            ),
+        ]
+
+        element = ("session-A", chunks)
+
+        fn = StatelessStitchAudioFn(config=config)
+        result = list(fn.process(element))
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0][0], "feed-123")
+        self.assertIsInstance(result[0][1], FlushRequest)

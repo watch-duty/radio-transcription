@@ -18,6 +18,7 @@ from apache_beam.options.pipeline_options import (
     PipelineOptions,
     StandardOptions,
 )
+from apache_beam.transforms import window
 
 from backend.pipeline.transcription.constants import (
     DEAD_LETTER_QUEUE_TAG,
@@ -30,22 +31,19 @@ from backend.pipeline.transcription.constants import (
     MAIN_TAG,
 )
 from backend.pipeline.transcription.datatypes import (
-    OrderRestorerConfig,
     StitchAudioConfig,
     TranscribeAudioConfig,
 )
 from backend.pipeline.transcription.options import TranscriptionOptions
 from backend.pipeline.transcription.stitcher import (
-    StitchAudioFn,
+    StatelessStitchAudioFn,
     TranscribeAudioFn,
 )
 from backend.pipeline.transcription.transforms import (
     AddEventTimestamp,
     BypassStitchingFn,
     DownloadAudioFn,
-    ExtractFeedMetadataFn,
     ParseAndKeyFn,
-    RestoreOrderFn,
     SerializeAndEnrichFn,
 )
 
@@ -99,26 +97,11 @@ def get_pipeline(
         ParseAndKeyFn()
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
-    # Extract feed metadata for enrichment
-    feed_metadata = parsed[MAIN_TAG] | "ExtractFeedMetadata" >> beam.ParDo(
-        ExtractFeedMetadataFn()
-    )
-
     timestamped = parsed[MAIN_TAG] | "AddTimestamp" >> beam.ParDo(
         AddEventTimestamp()
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
-    # Order chunks based on event timestamps to ensure chronological processing
-    restored = timestamped.main | "RestoreOrder" >> beam.ParDo(
-        RestoreOrderFn(
-            config=OrderRestorerConfig(
-                out_of_order_timeout_ms=options.out_of_order_timeout_ms
-                or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
-            )
-        )
-    )
-
-    # Claim-check: Download the raw bytes for ordered chunks currently just passing as URIs
+    # Claim-check: Download the raw bytes for chunks
     download_config = StitchAudioConfig(
         project_id=pipeline_options.view_as(GoogleCloudOptions).project,
         vad_type=options.vad_type,
@@ -134,9 +117,18 @@ def get_pipeline(
         if options.route_to_dlq is not None
         else True,
     )
-    downloaded_chunks = restored | "DownloadAudio" >> beam.ParDo(
+
+    downloaded_chunks = timestamped.main | "DownloadAudio" >> beam.ParDo(
         DownloadAudioFn(config=download_config)
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+
+    # Group chunks by session_id using a session window
+    stale_timeout = options.stale_timeout_ms or DEFAULT_STALE_TIMEOUT_MS
+    windowed = downloaded_chunks.main | "WindowBySession" >> beam.WindowInto(
+        window.Sessions(gap_size=stale_timeout / 1000)
+    )
+
+    grouped = windowed | "GroupBySession" >> beam.GroupByKey()
 
     # Core pipeline logic: State buffers audio across multiple chunks, flushing only on silence or timeout.
     if options.bypass_stitching:
@@ -144,13 +136,9 @@ def get_pipeline(
             BypassStitchingFn()
         )
     else:
-        stitching_results = (
-            downloaded_chunks.main
-            | "StitchAudio"
-            >> beam.ParDo(StitchAudioFn(config=download_config)).with_outputs(
-                DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG
-            )
-        )
+        stitching_results = grouped | "StitchAudio" >> beam.ParDo(
+            StatelessStitchAudioFn(config=download_config)
+        ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
         stitching_main = stitching_results.main
 
     transcripts = stitching_main | "TranscribeAudio" >> beam.ParDo(
@@ -169,19 +157,8 @@ def get_pipeline(
         )
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
-    # Key transcripts by feed_id
-    keyed_transcripts = transcripts.main | "KeyTranscripts" >> beam.Map(
-        lambda res: (res.feed_id, res)
-    )
-
-    # Flatten with feed metadata
-    combined_for_enrichment = (
-        feed_metadata,
-        keyed_transcripts,
-    ) | "FlattenForEnrichment" >> beam.Flatten()
-
     # Convert the native TranscriptionResult into a serialized Protobuf and wrap in a Pub/Sub message
-    serialized = combined_for_enrichment | "SerializeAndEnrich" >> beam.ParDo(
+    serialized = transcripts.main | "SerializeAndEnrich" >> beam.ParDo(
         SerializeAndEnrichFn()
     )
     serialized | "WriteToPubSub" >> WriteToPubSub(

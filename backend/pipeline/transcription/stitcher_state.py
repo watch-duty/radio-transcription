@@ -116,6 +116,7 @@ class AudioStitchingStateMachine:
         return FlushAction(
             reason=reason,
             feed_id=ctx.feed_id,
+            feed_name=ctx.feed_name,
             contributing_audio_uris=ctx.contributing_audio_uris.copy(),
             time_range=TimeRange(
                 start_ms=ctx.buffer_start_time_ms,
@@ -144,6 +145,7 @@ class AudioStitchingStateMachine:
 
         temp_ctx = StitcherContext(
             feed_id=ctx.feed_id,
+            feed_name=ctx.feed_name,
             current_gcs_uri=ctx.current_gcs_uri,
             contributing_audio_uris=[],
             file_start_ms=chunk_data.start_ms,
@@ -191,6 +193,7 @@ class AudioStitchingStateMachine:
                         FlushAction(
                             reason=action.reason,
                             feed_id=action.feed_id,
+                            feed_name=action.feed_name,
                             time_range=action.time_range,
                             speech_time_range=action.speech_time_range,
                             contributing_audio_uris=action.contributing_audio_uris,
