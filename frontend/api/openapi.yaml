@@ -28,6 +28,8 @@ components:
           type: array
         canonicalAudioUri:
           type: string
+        playbackAudioUri:
+          type: string
         startAudioOffset:
           type: string
         endAudioOffset:
@@ -46,6 +48,7 @@ components:
         - missingPostContext
         - sourceAudioUris
         - canonicalAudioUri
+        - playbackAudioUri
         - startAudioOffset
         - endAudioOffset
         - evaluationDecisions
@@ -75,6 +78,11 @@ components:
           type: string
         endTime:
           type: string
+        order:
+          type: string
+          enum:
+            - asc
+            - desc
       type: object
       additionalProperties: false
     ScopeLevel:
@@ -364,6 +372,14 @@ paths:
           required: false
           schema:
             type: string
+        - in: query
+          name: order
+          required: false
+          schema:
+            type: string
+            enum:
+              - asc
+              - desc
       x-google-backend: radio-transcription-api
   /api/v1/rules:
     get:
