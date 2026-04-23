@@ -197,7 +197,7 @@ class TranscriptStore:
         if next_token:
             cursor_ts, cursor_uid = self._decode_cursor(next_token)
 
-        is_asc = order.lower() == "asc"
+        is_asc = order == SortOrder.ASC or order == "asc"
         query = (
             transcript_queries.GET_TRANSCRIPTS_BY_FEED_ASC_SQL
             if is_asc
@@ -242,7 +242,7 @@ class TranscriptStore:
         if next_token:
             cursor_ts, cursor_uid = self._decode_cursor(next_token)
 
-        is_asc = order.lower() == "asc"
+        is_asc = order == SortOrder.ASC or order == "asc"
         query = (
             transcript_queries.LIST_TRANSCRIPTS_ASC_SQL
             if is_asc

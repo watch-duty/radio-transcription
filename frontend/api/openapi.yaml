@@ -266,6 +266,10 @@ components:
           type: string
         externalId:
           type: string
+        sourceUrl:
+          type: string
+        archiveUrl:
+          type: string
       required:
         - name
         - sourceType
@@ -300,11 +304,6 @@ components:
         implicit:
           authorizationUrl: ""
           scopes: {}
-      x-google-auth:
-        issuer: https://accounts.google.com
-        jwksUri: https://www.googleapis.com/oauth2/v3/certs
-        audiences:
-          - ${google_auth_client_id}
 info:
   title: radio-transcription-api
   version: 1.0.0
@@ -653,8 +652,6 @@ paths:
       x-google-backend: radio-transcription-api
 servers:
   - url: https://${radio_transcription_api_service_name}/
-    x-google-endpoint:
-      allowCors: true
 x-google-api-management:
   backends:
     radio-transcription-api:
