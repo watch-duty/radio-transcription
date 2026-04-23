@@ -109,13 +109,13 @@ def get_test_transcribe_config(**kwargs: Any) -> TranscribeAudioConfig:
 
 class ParseAndKeyTimestampTest(unittest.TestCase):
     def test_parse_and_key_success(self) -> None:
-        """Verifies that well-formed Pub/Sub messages containing a serialized AudioChunk and feed_id are correctly unmarshalled and keyed by feed."""
-        chunk = AudioChunk(gcs_uri="gs://test-bucket/path/to/test.flac")
-        chunk.start_timestamp.FromMicroseconds(123456789000)
-        mock_msg = PubsubMessage(
-            chunk.SerializeToString(),
-            {"feed_id": "test-feed"},
+        """Verifies that well-formed Pub/Sub messages containing a serialized AudioChunk with a feed_id proto field are correctly unmarshalled and keyed by feed."""
+        chunk = AudioChunk(
+            gcs_uri="gs://test-bucket/path/to/test.flac",
+            feed_id="test-feed",
         )
+        chunk.start_timestamp.FromMicroseconds(123456789000)
+        mock_msg = PubsubMessage(chunk.SerializeToString(), {})
         options = PipelineOptions(
             flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
         )
@@ -136,12 +136,11 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             )
 
     def test_parse_and_key_dlq(self) -> None:
-        """Verifies that incoming data missing a critical routing attribute like 'feed_id' is gracefully intercepted and routed to the Dead Letter Queue."""
-        chunk = AudioChunk(gcs_uri="gs://test-bucket/path/to/test.flac")
-        mock_msg = PubsubMessage(
-            chunk.SerializeToString(),
-            {},  # Missing feed_id
-        )
+        """Verifies that incoming data with a missing feed_id in the AudioChunk proto is gracefully intercepted and routed to the Dead Letter Queue."""
+        chunk = AudioChunk(
+            gcs_uri="gs://test-bucket/path/to/test.flac"
+        )  # feed_id intentionally omitted
+        mock_msg = PubsubMessage(chunk.SerializeToString(), {})
         options = PipelineOptions(
             flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
         )
@@ -155,7 +154,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
 
                 assert len(elements) == 1
                 assert (
-                    "Missing required payload attribute" in elements[0]["error"]
+                    "Missing required feed_id" in elements[0]["error"]
                 )
 
             assert_that(parsed.main, equal_to([]), label="CheckEmptyMain")

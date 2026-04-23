@@ -62,9 +62,9 @@ logger = logging.getLogger(__name__)
 @beam.typehints.with_input_types(PubsubMessage)
 @beam.typehints.with_output_types(tuple[str, bytes])
 class ParseAndKeyFn(beam.DoFn):
-    """Extracts the feed_id and builds the GCS URI from Pub/Sub attributes.
+    """Extracts the feed_id from the AudioChunk proto payload.
 
-    Routes messages missing required attributes to the DLQ.
+    Routes messages that cannot be decoded or are missing a feed_id to the DLQ.
     Yields a tuple of `(feed_id, payload)` to establish a deterministic routing key
     for all subsequent stateful operations (like stitching) on that feed.
     """
@@ -73,20 +73,30 @@ class ParseAndKeyFn(beam.DoFn):
     def process(
         self, element: PubsubMessage, *args: Any, **kwargs: Any
     ) -> Iterator[tuple[str, bytes] | beam.pvalue.TaggedOutput]:
-        """Extracts the feed_id attribute from the payload to establish a routing key."""
+        """Extracts the feed_id from the proto payload to establish a routing key."""
+        chunk_proto = AudioChunk()
         try:
-            feed_id = element.attributes["feed_id"]
-            yield (feed_id, element.data)
-        except KeyError as e:
-            msg = f"Missing required payload attribute: {e}"
+            chunk_proto.ParseFromString(element.data)
+        except DecodeError as e:
+            msg = f"Failed to parse AudioChunk proto: {e}"
             logger.exception(msg)
             yield beam.pvalue.TaggedOutput(
                 DEAD_LETTER_QUEUE_TAG,
-                {
-                    "error": msg,
-                    "attributes": dict(element.attributes),
-                },
+                {"error": msg},
             )
+            return
+
+        feed_id = chunk_proto.feed_id
+        if not feed_id:
+            msg = "Missing required feed_id in AudioChunk proto"
+            logger.error(msg)
+            yield beam.pvalue.TaggedOutput(
+                DEAD_LETTER_QUEUE_TAG,
+                {"error": msg},
+            )
+            return
+
+        yield (feed_id, element.data)
 
 
 @beam.typehints.with_input_types(tuple[str, bytes])
