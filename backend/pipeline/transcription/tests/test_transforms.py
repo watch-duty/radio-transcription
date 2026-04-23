@@ -1081,7 +1081,13 @@ class SerializeAndEnrichTest(unittest.TestCase):
             )
 
             elements = [
-                ("test-feed", FeedMetadata(feed_name="Test Feed Name")),
+                (
+                    "test-feed",
+                    FeedMetadata(
+                        feed_name="Test Feed Name",
+                        external_id="test-external-id",
+                    ),
+                ),
                 ("test-feed", res1),
                 ("test-feed", res2),
             ]
@@ -1107,8 +1113,10 @@ class SerializeAndEnrichTest(unittest.TestCase):
 
                 assert protos[0].transcript == "Hello world"
                 assert protos[0].feed_name == "Test Feed Name"
+                assert protos[0].external_id == "test-external-id"
 
                 assert protos[1].transcript == "Hello world again"
                 assert protos[1].feed_name == "Test Feed Name"
+                assert protos[1].external_id == "test-external-id"
 
             assert_that(results, assert_results)
