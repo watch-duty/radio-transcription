@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any, override
 
 import apache_beam as beam
+import numpy as np
 from apache_beam.metrics import Metrics
 from apache_beam.transforms.userstate import (
     BagRuntimeState,
@@ -19,7 +20,10 @@ from apache_beam.transforms.userstate import (
 )
 from apache_beam.utils.timestamp import Timestamp
 
-from backend.pipeline.common.constants import MS_PER_SECOND
+from backend.pipeline.common.constants import (
+    MS_PER_SECOND,
+    SAMPLE_RATE_HZ,
+)
 from backend.pipeline.common.storage.gcs_uploader import GCSAudioUploader
 from backend.pipeline.transcription.audio_processor import AudioProcessor
 from backend.pipeline.transcription.constants import (
@@ -148,7 +152,12 @@ class StitchAudioFn(beam.DoFn):
             self.max_duration_flush_count.inc()
         elif "Significant gap" in action.reason:
             self.silence_gap_flush_count.inc()
-        logger.info(f"{action.reason}. Flushing preceding continuous audio.")
+        logger.info(
+            "%s. Flushing preceding continuous audio. Range: %s. URIs: %s",
+            action.reason,
+            action.speech_time_range,
+            action.contributing_audio_uris,
+        )
 
         buffered_audio = action.isolated_audio_buffer or list(
             transmission_buffer.read()
@@ -160,11 +169,16 @@ class StitchAudioFn(beam.DoFn):
                 action.speech_time_range.start_ms,
                 action.speech_time_range.end_ms,
             )
+            logger.info(
+                "Generated transmission_id: %s for feed: %s",
+                transmission_id,
+                action.feed_id,
+            )
 
             yield (
                 action.feed_id,
                 FlushRequest(
-                    buffer=sum(buffered_audio[1:], buffered_audio[0]),
+                    buffer=np.concatenate(buffered_audio),
                     feed_id=action.feed_id,
                     contributing_audio_uris=action.contributing_audio_uris,
                     time_range=action.time_range,
@@ -380,7 +394,7 @@ class StitchAudioFn(beam.DoFn):
                 yield (
                     key,
                     FlushRequest(
-                        buffer=sum(audio_buffer[1:], audio_buffer[0]),
+                        buffer=np.concatenate(audio_buffer),
                         feed_id=key,
                         contributing_audio_uris=processed_uris,
                         time_range=TimeRange(
@@ -492,7 +506,7 @@ class TranscribeAudioFn(beam.DoFn):
             msg = "Transcriber not initialized. setup() must be called."
             raise RuntimeError(msg)
 
-        if not request.buffer or len(request.buffer) == 0:
+        if request.buffer is None or request.buffer.size == 0:
             return None
 
         success, flac_bytes, processed_audio = (
@@ -506,7 +520,7 @@ class TranscribeAudioFn(beam.DoFn):
             return None
 
         self.vad_speech_count.inc()
-        duration_sec = len(processed_audio) / float(MS_PER_SECOND)
+        duration_sec = len(processed_audio) / float(SAMPLE_RATE_HZ)
         self.speech_duration_sec_dist.update(int(duration_sec))
 
         if not self.config.canonical_audio_bucket:

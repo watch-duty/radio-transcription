@@ -17,6 +17,7 @@ from urllib.parse import urlencode, urljoin
 from backend.pipeline.common.constants import (
     AUDIO_FORMAT,
     CHUNK_DURATION_SECONDS,
+    FLAC_COMPRESSION_LEVEL,
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
 )
@@ -305,7 +306,7 @@ async def _create_ffmpeg_process(
         "-ar", str(SAMPLE_RATE_HZ),
         "-sample_fmt", SAMPLE_FORMAT,
         "-ac", str(NUM_AUDIO_CHANNELS),
-        "-compression_level", "0",
+        "-compression_level", FLAC_COMPRESSION_LEVEL,
         "-f", "segment",
         "-segment_time", str(CHUNK_DURATION_SECONDS),
         "-segment_format", AUDIO_FORMAT,

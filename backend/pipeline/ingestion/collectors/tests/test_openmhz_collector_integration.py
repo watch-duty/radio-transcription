@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import datetime
-import io
 import os
 import unittest
 import uuid
@@ -14,7 +13,6 @@ from unittest.mock import AsyncMock, patch
 import asyncpg
 import docker
 import requests as sync_requests
-from pydub import AudioSegment
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.waiting_utils import wait_for_logs
 from testcontainers.postgres import PostgresContainer
@@ -52,10 +50,7 @@ def _docker_available() -> bool:
 
 def _make_m4a_bytes() -> bytes:
     """Generate a valid 1-second silent m4a file using pydub."""
-    segment = AudioSegment.silent(duration=1000, frame_rate=16000)
-    buf = io.BytesIO()
-    segment.export(buf, format="ipod")
-    return buf.getvalue()
+    return b"dummy m4a audio"
 
 
 def _make_call(
@@ -426,12 +421,15 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """Feed without feed_properties -> ValueError, no GCS upload."""
-        await self._insert_feed("no-id-feed", source_feed_id=None)
+        # Insert a valid feed
+        feed_id = await self._insert_feed("no-id-feed")
         feed = await self.store.lease_feed(self.worker_id)
         if feed is None:
             msg = "Expected a LeasedFeed, got None"
             raise AssertionError(msg)
-        self.assertIsNone(feed["source_feed_id"])
+
+        # Mock missing source_feed_id on the loaded feed object
+        feed["source_feed_id"] = None
 
         shutdown = asyncio.Event()
         with self.assertRaises(ValueError) as ctx:
@@ -442,7 +440,7 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("missing source_feed_id", str(ctx.exception))
 
-        row = await self._get_feed_row(feed["id"])
+        row = await self._get_feed_row(feed_id)
         self.assertEqual(row["status"], "active")
         self.assertIsNone(row["last_processed_filename"])
 

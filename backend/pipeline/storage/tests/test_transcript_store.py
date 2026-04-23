@@ -30,6 +30,8 @@ _TRANSCRIPT_ROW = {
     "start_audio_offset": datetime.timedelta(seconds=5),
     "end_audio_offset": datetime.timedelta(seconds=10),
     "evaluation_decisions": ["rule-1"],
+    "playback_audio_uri": None,
+    "evaluation_errors": [],
     "created_at": datetime.datetime(2026, 1, 1, 0, 2, tzinfo=datetime.UTC),
 }
 

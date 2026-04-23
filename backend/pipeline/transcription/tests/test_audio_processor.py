@@ -6,10 +6,9 @@ import shutil
 import unittest
 from unittest.mock import MagicMock, patch
 
-from pydub import AudioSegment
-from pydub.generators import Sine
+import numpy as np
+import soundfile as sf
 
-from backend.pipeline.common.constants import AUDIO_FORMAT, SAMPLE_RATE_HZ
 from backend.pipeline.transcription.audio_processor import AudioProcessor
 from backend.pipeline.transcription.datatypes import AudioChunkData, TimeRange
 from backend.pipeline.transcription.enums import VadType
@@ -42,7 +41,7 @@ class AudioProcessorTest(unittest.TestCase):
 
     def test_check_vad_raises_if_not_setup(self) -> None:
         """Ensures that attempting to evaluate VAD before setup() raises a clear runtime error."""
-        audio = AudioSegment.silent(duration=1000)
+        audio = np.zeros(((1000) * 16), dtype=np.int16)
         with self.assertRaises(RuntimeError):
             self.processor.check_vad(audio)
 
@@ -59,41 +58,100 @@ class AudioProcessorTest(unittest.TestCase):
     def test_check_vad_evaluates_speech(
         self, mock_get_vad: MagicMock, mock_get_gcs: MagicMock
     ) -> None:
-        """Tests that the processor correctly forwards raw audio bytes to the configured VAD plugin and returns its result."""
+        """Tests that check_vad returns True when VAD detects speech."""
         mock_vad_instance = MagicMock()
         mock_vad_instance.evaluate.return_value = True
         mock_get_vad.return_value = mock_vad_instance
 
         self.processor.setup()
 
-        # Generate a Sine wave so it bypasses both the new RMS silence gate
-        # and the Spectral Flatness noise gate (pure tone = highly structured)
-        audio = Sine(440).to_audio_segment(duration=1000)
-        result = self.processor.check_vad(audio)
+        # Generate 1 second of 440Hz sine wave at 16kHz
+        t = np.linspace(0, 1, 16000, endpoint=False)
+        audio = (np.sin(2 * np.pi * 440 * t) * 32767).astype(np.int16)
 
+        result = self.processor.check_vad(audio)
         self.assertTrue(result)
         mock_vad_instance.evaluate.assert_called_once()
-        args, kwargs = mock_vad_instance.evaluate.call_args
-        self.assertIsInstance(args[0], bytes)
-        self.assertEqual(kwargs["sample_rate"], SAMPLE_RATE_HZ)
+
+    @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
+    @patch(
+        "backend.pipeline.transcription.audio_processor.compute_spectral_flatness"
+    )
+    @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
+    def test_check_vad_drops_static(
+        self,
+        mock_get_vad: MagicMock,
+        mock_compute_flatness: MagicMock,
+        mock_get_gcs: MagicMock,
+    ) -> None:
+        """Tests that check_vad returns False for white noise due to spectral flatness."""
+        mock_vad_instance = MagicMock()
+        mock_get_vad.return_value = mock_vad_instance
+
+        # Mock flatness to be high (noise)
+        mock_compute_flatness.return_value = np.array([0.9])
+
+        self.processor.setup()
+
+        # Audio data doesn't matter much now because we mock the DSP output
+        audio = np.zeros(16000, dtype=np.int16)
+
+        result = self.processor.check_vad(audio)
+        self.assertFalse(result)
+        # VAD evaluate should NOT be called because it should be dropped by heuristic
+        mock_vad_instance.evaluate.assert_not_called()
+
+    @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
+    @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
+    def test_download_audio_and_detect_calculates_duration(
+        self, mock_get_vad: MagicMock, mock_get_gcs: MagicMock
+    ) -> None:
+        """Tests that download_audio_and_detect calculates duration when not provided."""
+        self.processor.setup()
+        self.processor.gcs_client = MagicMock()
+        mock_bucket = MagicMock()
+        mock_blob = MagicMock()
+
+        # Create a tiny valid FLAC (100ms -> 1600 samples)
+        audio = np.zeros(((100) * 16), dtype=np.int16)
+        buf = io.BytesIO()
+        sf.write(buf, audio, 16000, format="FLAC")
+        flac_bytes = buf.getvalue()
+
+        def download_to_file(f: io.BytesIO, **kwargs: object) -> None:
+            f.write(flac_bytes)
+
+        mock_blob.download_to_file = download_to_file
+        mock_bucket.get_blob.return_value = mock_blob
+        self.processor.gcs_client.bucket.return_value = mock_bucket
+
+        # Act
+        result = self.processor.download_audio_and_detect(
+            "gs://fake-bucket/100-11111111-1111-1111-1111-111111111111.flac",
+            100000,
+            # duration_ms omitted
+        )
+
+        # Assert
+        self.assertEqual(result.duration_ms, 100)  # 1600 / 16 = 100
 
     def test_preprocess_audio_applies_bandpass(self) -> None:
-        """Verifies that the audio preprocessing filters do not corrupt or truncate the AudioSegment structure."""
+        """Verifies that the audio preprocessing filters do not corrupt or truncate the np.ndarray structure."""
         # A 1-second audio segment with noise at different frequencies
-        audio = AudioSegment.silent(duration=1000)
+        audio = np.zeros(((1000) * 16), dtype=np.int16)
 
         # We can't easily assert exactly what the pydub filters did without evaluating frequency domains,
-        # so we just assert it returns an AudioSegment and doesn't crash.
+        # so we just assert it returns an np.ndarray and doesn't crash.
         processed = self.processor.preprocess_audio(audio)
-        self.assertIsInstance(processed, AudioSegment)
-        self.assertEqual(len(processed), 1000)
+        self.assertIsInstance(processed, np.ndarray)
+        self.assertEqual(len(processed), len(audio))
 
     @unittest.skipIf(
         shutil.which("ffmpeg") is None, "ffmpeg is required for pydub I/O tests"
     )
     def test_export_flac(self) -> None:
         """Tests that exporting to FLAC produces a valid byte array containing the expected `fLaC` header signature."""
-        audio = AudioSegment.silent(duration=500)
+        audio = np.zeros(((500) * 16), dtype=np.int16)
         flac_bytes = self.processor.export_flac(audio)
         self.assertIsInstance(flac_bytes, bytes)
         self.assertTrue(flac_bytes.startswith(b"fLaC"))
@@ -103,7 +161,7 @@ class AudioProcessorTest(unittest.TestCase):
     )
     def test_export_m4a(self) -> None:
         """Tests that exporting to M4A produces a valid byte array with valid ftyp header."""
-        audio = AudioSegment.silent(duration=500)
+        audio = np.zeros(((500) * 16), dtype=np.int16)
         m4a_bytes = self.processor.export_m4a(audio)
         self.assertIsInstance(m4a_bytes, bytes)
         self.assertTrue(len(m4a_bytes) > 0)
@@ -136,9 +194,9 @@ class AudioProcessorTest(unittest.TestCase):
         mock_blob = MagicMock()
 
         # Create a tiny valid FLAC
-        audio = AudioSegment.silent(duration=100)
+        audio = np.zeros(((100) * 16), dtype=np.int16)
         buf = io.BytesIO()
-        audio.export(buf, format=AUDIO_FORMAT)
+        sf.write(buf, audio, 16000, format="FLAC")
         flac_bytes = buf.getvalue()
 
         def download_to_file(f: io.BytesIO, **kwargs: object) -> None:
@@ -159,8 +217,8 @@ class AudioProcessorTest(unittest.TestCase):
 
         self.assertIsInstance(result, AudioChunkData)
         self.assertEqual(result.start_ms, 5000)
-        self.assertIsInstance(result.audio, AudioSegment)
-        self.assertAlmostEqual(result.audio.duration_seconds, 0.1, places=2)
+        self.assertIsInstance(result.audio, np.ndarray)
+        self.assertAlmostEqual(len(result.audio) / 16000.0, 0.1, places=2)
         self.assertEqual(result.speech_segments, [TimeRange(5000, 7000)])
         processor.gcs_client.bucket.assert_called_with("my-bucket")
         mock_bucket.get_blob.assert_called_with("audio/feed1/12345.flac")

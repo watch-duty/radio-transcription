@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 
+import InventoryIcon from '@mui/icons-material/Inventory';
 import LinkIcon from '@mui/icons-material/Link';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import type { AlertProps } from '@mui/material/Alert';
@@ -10,6 +11,7 @@ import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
 import IconButton from '@mui/material/IconButton';
 import InputAdornment from '@mui/material/InputAdornment';
+import Link from '@mui/material/Link';
 import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
 import Paper from '@mui/material/Paper';
@@ -215,6 +217,10 @@ export function TranscriptView({
     setHighlightedTransmissionId(transmissionId);
   };
 
+  const searchedFeed = feedIdToFeedMap.get(searchedFeedId);
+  const searchedFeedSourceUrl = searchedFeed?.sourceUrl;
+  const searchedFeedArchiveUrl = searchedFeed?.archiveUrl;
+
   return (
     <Box
       sx={{
@@ -411,56 +417,115 @@ export function TranscriptView({
         userDuration={searchedDuration}
       />
 
-      <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
-        {transcripts.length > 0 ? (
-          <List component={Paper} variant="outlined" sx={{ p: 0 }}>
-            {transcripts.map((transcript, index) => {
-              const currentDate = new Date(transcript.startTimestamp);
-              const prevDate =
-                index > 0
-                  ? new Date(transcripts[index - 1].startTimestamp)
-                  : null;
-              const showHeader =
-                !prevDate ||
-                currentDate.toDateString() !== prevDate.toDateString();
+      {searchedFeedId && (searchedFeedSourceUrl || searchedFeedArchiveUrl) && (
+        <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
+          {searchedFeedSourceUrl && (
+            <Link
+              href={searchedFeedSourceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              variant="body2"
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 0.5,
+              }}
+            >
+              <LinkIcon fontSize="small" />
+              Original source link
+            </Link>
+          )}
+          {searchedFeedArchiveUrl && (
+            <Link
+              href={searchedFeedArchiveUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              variant="body2"
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 0.5,
+              }}
+            >
+              <InventoryIcon fontSize="small" />
+              Archives
+            </Link>
+          )}
+        </Box>
+      )}
 
-              return (
-                <TranscriptRow
-                  key={transcript.transmissionId}
-                  transcript={transcript}
-                  index={index}
-                  totalTranscripts={transcripts.length}
-                  ruleIdToNameMap={ruleIdToNameMap}
-                  rulesLoading={rulesLoading}
-                  onPlay={onPlay}
-                  currentlyPlayingTransmissionId={
-                    currentlyPlayingTransmissionId
-                  }
-                  triggerSnackbar={triggerSnackbar}
-                  showHeader={showHeader}
-                  isHighlighted={
-                    transcript.transmissionId === highlightedTransmissionId
-                  }
-                />
-              );
-            })}
-            {hasNextTranscripts && (
-              <ListItem sx={{ justifyContent: 'center', py: theme.spacing(2) }}>
-                <Button
-                  variant="outlined"
-                  onClick={() => fetchNextTranscripts()}
-                  disabled={isTranscriptsFetching}
-                  sx={{ minWidth: '160px' }}
-                >
-                  {isTranscriptsFetching ? (
-                    <CircularProgress size={24} color="inherit" />
-                  ) : (
-                    'Load More'
-                  )}
-                </Button>
-              </ListItem>
-            )}
-          </List>
+      <Box
+        sx={{
+          flexGrow: 1,
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        {transcripts.length > 0 ? (
+          <Paper
+            variant="outlined"
+            sx={{
+              display: 'flex',
+              flexDirection: 'column',
+              flexGrow: 1,
+              minHeight: 0,
+              overflow: 'hidden',
+            }}
+          >
+            <Box sx={{ overflowY: 'auto', flexGrow: 1 }}>
+              <List sx={{ p: 0 }}>
+                {transcripts.map((transcript, index) => {
+                  const currentDate = new Date(transcript.startTimestamp);
+                  const prevDate =
+                    index > 0
+                      ? new Date(transcripts[index - 1].startTimestamp)
+                      : null;
+                  const showHeader =
+                    !prevDate ||
+                    currentDate.toDateString() !== prevDate.toDateString();
+
+                  return (
+                    <TranscriptRow
+                      key={transcript.transmissionId}
+                      transcript={transcript}
+                      index={index}
+                      totalTranscripts={transcripts.length}
+                      ruleIdToNameMap={ruleIdToNameMap}
+                      rulesLoading={rulesLoading}
+                      onPlay={onPlay}
+                      currentlyPlayingTransmissionId={
+                        currentlyPlayingTransmissionId
+                      }
+                      triggerSnackbar={triggerSnackbar}
+                      showHeader={showHeader}
+                      isHighlighted={
+                        transcript.transmissionId === highlightedTransmissionId
+                      }
+                    />
+                  );
+                })}
+                {hasNextTranscripts && (
+                  <ListItem
+                    sx={{ justifyContent: 'center', py: theme.spacing(2) }}
+                  >
+                    <Button
+                      variant="outlined"
+                      onClick={() => fetchNextTranscripts()}
+                      disabled={isTranscriptsFetching}
+                      sx={{ minWidth: '160px' }}
+                    >
+                      {isTranscriptsFetching ? (
+                        <CircularProgress size={24} color="inherit" />
+                      ) : (
+                        'Load More'
+                      )}
+                    </Button>
+                  </ListItem>
+                )}
+              </List>
+            </Box>
+          </Paper>
         ) : isTranscriptsInitialLoading ? (
           <Box
             sx={{

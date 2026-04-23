@@ -54,6 +54,7 @@ class TestSendNotification(TestCase):
             transmission_id="1234",
             source_audio_uris=["gs://foo/bar.flac"],
             feed_name="asdf",
+            external_id="ext-id",
         )
         evaluated_payload.start_audio_offset.seconds = 10
         raw_data = base64.b64encode(evaluated_payload.SerializeToString())
@@ -75,6 +76,7 @@ class TestSendNotification(TestCase):
             transmission_id="1234",
             source_audio_uris=["gs://foo/bar.flac"],
             feed_name="asdf",
+            external_id="ext-id",
             app_url="https://app.example.com?feedId=&transmissionId=1234&duration=5",
         )
         expected_notification.start_audio_offset.seconds = 10

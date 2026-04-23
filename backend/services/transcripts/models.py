@@ -18,6 +18,8 @@ class Transcript(BaseModel):
     start_audio_offset: str | None = None
     end_audio_offset: str | None = None
     evaluation_decisions: list[str] = []
+    playback_audio_uri: str | None = None
+    evaluation_errors: list[str] = []
 
 
 class ListTranscriptsResponse(BaseModel):

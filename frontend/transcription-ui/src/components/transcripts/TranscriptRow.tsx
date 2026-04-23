@@ -45,19 +45,37 @@ export function TranscriptRow({
   return (
     <Fragment>
       {showHeader && (
-        <ListItem sx={{ py: 0.5, bgcolor: 'action.hover' }}>
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            sx={{ fontWeight: 'bold' }}
+        <ListItem
+          sx={{
+            position: 'sticky',
+            top: 0,
+            zIndex: 1,
+            py: 0,
+            px: 0,
+            bgcolor: 'background.paper',
+          }}
+        >
+          <Box
+            sx={{
+              width: '100%',
+              py: 0.5,
+              px: 2,
+              bgcolor: 'action.hover',
+            }}
           >
-            {currentDate.toLocaleDateString([], {
-              weekday: 'long',
-              month: 'long',
-              day: 'numeric',
-              year: 'numeric',
-            })}
-          </Typography>
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ fontWeight: 'bold' }}
+            >
+              {currentDate.toLocaleDateString([], {
+                weekday: 'long',
+                month: 'long',
+                day: 'numeric',
+                year: 'numeric',
+              })}
+            </Typography>
+          </Box>
         </ListItem>
       )}
       <ListItem
@@ -69,6 +87,7 @@ export function TranscriptRow({
           gap: 2,
           py: 1.5,
           bgcolor: isHighlighted ? 'action.selected' : 'inherit',
+          scrollMarginTop: theme.spacing(5),
         }}
       >
         <Box
@@ -85,19 +104,36 @@ export function TranscriptRow({
             rulesLoading={rulesLoading}
           />
         </Box>
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{ minWidth: 'max-content' }}
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'flex-end',
+            minWidth: 'max-content',
+          }}
         >
-          {currentDate.toLocaleTimeString([], {
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-            timeZoneName: 'short',
-            hour12: false,
-          })}
-        </Typography>
+          <Typography variant="caption" color="text.secondary">
+            {currentDate.toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+              timeZoneName: 'short',
+              hour12: false,
+            })}
+          </Typography>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ opacity: 0.8 }}
+          >
+            {Math.round(
+              (new Date(transcript.endTimestamp).getTime() -
+                new Date(transcript.startTimestamp).getTime()) /
+                1000
+            )}{' '}
+            sec
+          </Typography>
+        </Box>
         <AudioPlayer
           audioUri={transcript.canonicalAudioUri}
           transmissionId={transcript.transmissionId}

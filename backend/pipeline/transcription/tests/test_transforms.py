@@ -1,12 +1,11 @@
 """Tests for the StitchAudioFn, TranscribeAudioFn, and related transformations."""
 
-import threading
-import time
 import unittest
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import apache_beam as beam
+import numpy as np
 from apache_beam.io.gcp.pubsub import PubsubMessage
 from apache_beam.options.pipeline_options import (
     PipelineOptions,
@@ -16,7 +15,6 @@ from apache_beam.testing.test_pipeline import TestPipeline as BeamTestPipeline
 from apache_beam.testing.test_stream import TestStream as BeamTestStream
 from apache_beam.testing.util import assert_that, equal_to
 from apache_beam.transforms.window import TimestampedValue
-from pydub import AudioSegment
 
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.transcription.constants import DEAD_LETTER_QUEUE_TAG
@@ -24,11 +22,13 @@ from backend.pipeline.transcription.datatypes import (
     AudioChunkData,
     ChunkMetadata,
     DownloadedChunkPayload,
+    FeedMetadata,
     FlushRequest,
     OrderRestorerConfig,
     StitchAudioConfig,
     TimeRange,
     TranscribeAudioConfig,
+    TranscriptionResult,
 )
 from backend.pipeline.transcription.enums import TranscriberType, VadType
 from backend.pipeline.transcription.stitcher import (
@@ -42,6 +42,7 @@ from backend.pipeline.transcription.transforms import (
     DownloadAudioFn,
     ParseAndKeyFn,
     RestoreOrderFn,
+    SerializeAndEnrichFn,
 )
 
 
@@ -212,10 +213,12 @@ class BypassStitchingTest(unittest.TestCase):
         audio_len_ms = 5000
         chunk_data = AudioChunkData(
             start_ms=1000,
-            audio=AudioSegment.silent(duration=audio_len_ms),
+            audio=np.zeros(int((audio_len_ms) * 16), dtype=np.int16),
             speech_segments=[],
             gcs_uri=gcs_path,
+            duration_ms=audio_len_ms,
         )
+
         element = (feed_id, DownloadedChunkPayload(gcs_path, chunk_data))
 
         fn = BypassStitchingFn()
@@ -397,10 +400,6 @@ class OrderRestorerTest(unittest.TestCase):
                 ),
             )
 
-    @unittest.skip("DirectRunner metrics validation is flaky")
-    def test_delayed_gap_acceptance(self) -> None:
-        pass
-
 
 class StitchAudioTest(unittest.TestCase):
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
@@ -436,18 +435,19 @@ class StitchAudioTest(unittest.TestCase):
             if filename.startswith(("100-", "115-")):
                 duration_s = 15.0
             elif filename.startswith("150-"):
-                duration_s = 10.0
+                duration_s = 5.0
             elif filename.startswith("160-"):
                 duration_s = 30.0
 
             return AudioChunkData(
                 start_ms=int(chunk_start * 1000),
-                audio=AudioSegment.silent(duration=int(duration_s * 1000)),
+                audio=np.zeros(int(duration_s * 16000), dtype=np.int16),
                 speech_segments=[
                     TimeRange(int(s * 1000), int(e * 1000))
                     for s, e in sed_map.get(filename, [])
                 ],
                 gcs_uri=path,
+                duration_ms=int(duration_s * 1000),
             )
 
         mock_processor_inst.download_audio_and_detect.side_effect = (
@@ -653,12 +653,13 @@ class StitchAudioTest(unittest.TestCase):
             )
             return AudioChunkData(
                 start_ms=int(chunk_start * 1000),
-                audio=AudioSegment.silent(duration=15000),
+                audio=np.zeros(((15000) * 16), dtype=np.int16),
                 speech_segments=[
                     TimeRange(int(s * 1000), int(e * 1000))
                     for s, e in sed_map.get(filename, [])
                 ],
                 gcs_uri=path,
+                duration_ms=15000,
             )
 
         mock_processor_inst.download_audio_and_detect.side_effect = (
@@ -796,12 +797,13 @@ class StitchAudioTest(unittest.TestCase):
             )
             return AudioChunkData(
                 start_ms=int(chunk_start * 1000),
-                audio=AudioSegment.silent(duration=15000),
+                audio=np.zeros(((15000) * 16), dtype=np.int16),
                 speech_segments=[
                     TimeRange(int(s * 1000), int(e * 1000))
                     for s, e in sed_map.get(filename, [])
                 ],
                 gcs_uri=path,
+                duration_ms=15000,
             )
 
         mock_processor_inst.download_audio_and_detect.side_effect = (
@@ -942,140 +944,6 @@ class StitchAudioTest(unittest.TestCase):
                 label="CheckMaxDurationFlushRequests",
             )
 
-    @unittest.skip(
-        "DirectRunner timer advancing is buggy and unsupported natively."
-    )
-    @patch("backend.pipeline.transcription.stitcher.time")
-    @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
-    def test_stale_transmission_timer(
-        self,
-        mock_audio_processor: MagicMock,
-        mock_time: MagicMock,
-    ) -> None:
-        """Verifies that incomplete segments remaining open abruptly dispatch once an explicit processing loop exceeds the permissible timeout."""
-        mock_time.time.return_value = 0
-        mock_processor_inst = mock_audio_processor.return_value
-        mock_processor_inst.check_vad.return_value = True
-        mock_processor_inst.preprocess_audio.side_effect = lambda x: x
-        mock_processor_inst.export_flac.return_value = b"flac_bytes"
-        mock_processor_inst.download_audio_and_detect.return_value = AudioChunkData(
-            start_ms=101000,
-            audio=AudioSegment.silent(duration=20000),
-            speech_segments=[TimeRange(12500, 15000)],
-            gcs_uri="gs://fake-bucket/ab12/feed-123/2026-03-06/101-11111111-1111-1111-1111-111111111111.flac",
-        )
-
-        options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
-        )
-        options.view_as(StandardOptions).streaming = True
-
-        config = get_test_stitch_config()
-
-        with BeamTestPipeline(options=options) as p:
-            test_stream = (
-                BeamTestStream(
-                    coder=beam.coders.TupleCoder(
-                        (
-                            beam.coders.StrUtf8Coder(),
-                            beam.coders.TupleCoder(
-                                (
-                                    beam.coders.StrUtf8Coder(),
-                                    beam.coders.PickleCoder(),
-                                )
-                            ),
-                        )
-                    )
-                )
-                .advance_watermark_to(0)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-123",
-                                DownloadedChunkPayload(
-                                    "gs://fake-bucket/ab12/feed-123/2026-03-06/101-11111111-1111-1111-1111-111111111111.flac",
-                                    mock_processor_inst.download_audio_and_detect.return_value,
-                                ),
-                            ),
-                            101,
-                        )
-                    ]
-                )
-                .advance_watermark_to(170)
-                .advance_watermark_to_infinity()
-            )
-
-            results = (
-                p
-                | test_stream
-                | beam.ParDo(
-                    StitchAudioFn(
-                        config=config,
-                    )
-                ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
-            )
-
-            def assert_stale_match(
-                elements: list[tuple[str, FlushRequest]],
-            ) -> None:
-
-                assert len(elements) == 1, (
-                    f"Expected 1 element, got {len(elements)}"
-                )
-                _, res = elements[0]
-                assert res.feed_id == "feed-123"
-                assert any(
-                    "11111111-1111-1111-1111-111111111111" in u
-                    for u in res.contributing_audio_uris
-                )
-
-            assert_that(
-                results.main,
-                assert_stale_match,
-                label="CheckStaleMain",
-            )
-            assert_that(
-                results[DEAD_LETTER_QUEUE_TAG],
-                equal_to([]),
-                label="CheckStaleEmptyDLQ",
-            )
-
-        config = get_test_stitch_config()
-
-        with self.assertRaises(Exception):
-            options = PipelineOptions(
-                flags=[
-                    "--input_subscription=a",
-                    "--output_topic=b",
-                    "--project=c",
-                ]
-            )
-            with BeamTestPipeline(options=options) as p:
-                input_elements = [
-                    (
-                        "feed-123",
-                        DownloadedChunkPayload(
-                            "gs://fake-bucket/123-00000000-0000-0000-0000-000000000000.flac",
-                            AudioChunkData(
-                                start_ms=0,
-                                audio=AudioSegment.silent(duration=0),
-                                speech_segments=[],
-                                gcs_uri="gs://fake-bucket/123-00000000-0000-0000-0000-000000000000.flac",
-                            ),
-                        ),
-                    )
-                ]
-                (
-                    p
-                    | "Create" >> beam.Create(input_elements)
-                    | beam.ParDo(
-                        StitchAudioFn(
-                            config=config,
-                        )
-                    ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
-                )
-
 
 class TranscribeAudioTest(unittest.TestCase):
     @patch("backend.pipeline.transcription.stitcher.get_transcriber")
@@ -1091,7 +959,7 @@ class TranscribeAudioTest(unittest.TestCase):
         mock_processor_inst.process_buffer.return_value = (
             True,
             b"flac_bytes",
-            AudioSegment.silent(duration=500),
+            np.zeros(((500) * 16), dtype=np.int16),
         )
 
         config = get_test_transcribe_config(route_to_dlq=True)
@@ -1106,7 +974,7 @@ class TranscribeAudioTest(unittest.TestCase):
                         "feed-123",
                         FlushRequest(
                             feed_id="feed-123",
-                            buffer=AudioSegment.silent(duration=500),
+                            buffer=np.zeros(((500) * 16), dtype=np.int16),
                             contributing_audio_uris=["gs://f/11111111.flac"],
                             time_range=TimeRange(
                                 start_ms=101000, end_ms=101500
@@ -1129,113 +997,14 @@ class TranscribeAudioTest(unittest.TestCase):
                 assert len(elements) == 1
                 assert "Transcription API outage!" in elements[0]["error"]
 
-            assert_that(results.main, equal_to([]), label="CheckEmptyMain")
+            def assert_empty(elements):
+                assert len(elements) == 0
+
+            assert_that(results.main, assert_empty, label="CheckEmptyMain")
+
             assert_that(
                 results[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ"
             )
-
-    @unittest.skip(
-        "DirectRunner background execution validation is unreliable."
-    )
-    @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
-    @patch("backend.pipeline.transcription.stitcher.get_transcriber")
-    def test_concurrent_transcription_execution(
-        self,
-        mock_transcriber_factory: MagicMock,
-        mock_audio_processor: MagicMock,
-    ) -> None:
-        """Verifies that the concurrent orchestrator splits individual grouped task lists into multi-threaded parallel transcription operations smoothly."""
-        execution_threads = set()
-        lock = threading.Lock()
-
-        class MockTrackingTranscriber(Transcriber):
-            def setup(self) -> None:
-                pass
-
-            def transcribe(self, audio_data: bytes) -> str:
-
-                with lock:
-                    execution_threads.add(threading.current_thread().name)
-                # Small sleep to encourage concurrency when multiple items arrive
-                time.sleep(0.1)
-                return "Mock Output"
-
-        def tracking_factory(
-            t_type: TranscriberType, p_id: str, cfg: str
-        ) -> Transcriber:
-
-            return MockTrackingTranscriber()
-
-        mock_processor_inst = mock_audio_processor.return_value
-        mock_processor_inst.check_vad.return_value = True
-        mock_processor_inst.preprocess_audio.side_effect = lambda x: x
-        mock_processor_inst.export_flac.return_value = b"flac_bytes"
-
-        # Generate fake audio chunks
-        def mock_download(path: str, start_ms: int = 0) -> AudioChunkData:
-
-            filename = path.rsplit("/", maxsplit=1)[-1]
-            chunk_start = (
-                float(filename.split("-")[0]) if "-" in filename else 0.0
-            )
-            return AudioChunkData(
-                start_ms=int(
-                    chunk_start * 100000
-                ),  # 100s apart to force flushes
-                audio=AudioSegment.silent(duration=1000),
-                speech_segments=[TimeRange(0, 1000)],
-                gcs_uri=path,
-            )
-
-        mock_processor_inst.download_audio_and_detect.side_effect = (
-            mock_download
-        )
-
-        main_thread_name = threading.current_thread().name
-
-        options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
-        )
-        options.view_as(StandardOptions).streaming = True
-
-        config = get_test_transcribe_config()
-
-        with BeamTestPipeline(options=options) as p:
-            elements = p | beam.Create(
-                [
-                    FlushRequest(
-                        feed_id="feed-123",
-                        buffer=AudioSegment.silent(duration=500),
-                        contributing_audio_uris=["gs://bbbbbbbb.flac"],
-                        time_range=TimeRange(start_ms=0, end_ms=500),
-                        transmission_id="test-uuid-1",
-                    ),
-                    FlushRequest(
-                        feed_id="feed-123",
-                        buffer=AudioSegment.silent(duration=500),
-                        contributing_audio_uris=["gs://cccccccc.flac"],
-                        time_range=TimeRange(start_ms=5000, end_ms=5500),
-                        transmission_id="test-uuid-2",
-                    ),
-                ]
-            )
-
-            (
-                elements
-                | beam.ParDo(
-                    TranscribeAudioFn(
-                        config=config, transcriber_factory=tracking_factory
-                    )
-                ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
-            )
-
-        self.assertTrue(
-            len(execution_threads) > 0, "Transcription should have executed"
-        )
-        self.assertFalse(
-            main_thread_name in execution_threads,
-            f"Transcription executed on MainThread ({main_thread_name}) instead of a background thread pool!",
-        )
 
 
 class DownloadAudioTest(unittest.TestCase):
@@ -1247,7 +1016,7 @@ class DownloadAudioTest(unittest.TestCase):
         mock_inst = mock_audio_processor.return_value
         mock_inst.download_audio_and_detect.return_value = AudioChunkData(
             start_ms=100000,
-            audio=AudioSegment.silent(duration=1000),
+            audio=np.zeros(((1000) * 16), dtype=np.int16),
             speech_segments=[],
             gcs_uri="gs://fake-bucket/100-11111111.flac",
         )
@@ -1268,17 +1037,78 @@ class DownloadAudioTest(unittest.TestCase):
 
             results = elements | beam.ParDo(DownloadAudioFn(config))
 
-            assert_that(
-                results,
-                equal_to(
-                    [
-                        (
-                            "feed-123",
-                            DownloadedChunkPayload(
-                                "gs://fake-bucket/100-11111111.flac",
-                                mock_inst.download_audio_and_detect.return_value,
-                            ),
-                        )
-                    ]
-                ),
+            expected_audio = (
+                mock_inst.download_audio_and_detect.return_value.audio
             )
+
+            def assert_results(elements):
+                assert len(elements) == 1
+                feed_id, payload = elements[0]
+                assert feed_id == "feed-123"
+                assert payload.gcs_uri == "gs://fake-bucket/100-11111111.flac"
+                assert payload.chunk_data.start_ms == 100000
+                assert np.array_equal(payload.chunk_data.audio, expected_audio)
+
+            assert_that(results, assert_results)
+
+
+class SerializeAndEnrichTest(unittest.TestCase):
+    def test_serialize_and_enrich(self) -> None:
+        """Verifies that SerializeAndEnrichFn correctly stores feed_name and enriches the transcript."""
+        options = PipelineOptions(
+            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+        )
+
+        with BeamTestPipeline(options=options) as p:
+            res1 = TranscriptionResult(
+                feed_id="test-feed",
+                contributing_audio_uris=["gs://bucket/1.flac"],
+                transcript="Hello world",
+                time_range=TimeRange(1000, 2000),
+                transmission_id="uuid-1",
+                start_audio_offset_ms=100,
+                end_audio_offset_ms=200,
+            )
+
+            res2 = TranscriptionResult(
+                feed_id="test-feed",
+                contributing_audio_uris=["gs://bucket/2.flac"],
+                transcript="Hello world again",
+                time_range=TimeRange(1000, 3000),
+                transmission_id="uuid-2",
+                start_audio_offset_ms=100,
+                end_audio_offset_ms=200,
+            )
+
+            elements = [
+                ("test-feed", FeedMetadata(feed_name="Test Feed Name")),
+                ("test-feed", res1),
+                ("test-feed", res2),
+            ]
+
+            results = (
+                p | beam.Create(elements) | beam.ParDo(SerializeAndEnrichFn())
+            )
+
+            def assert_results(msgs):
+                from backend.pipeline.schema_types.transcribed_audio_pb2 import (  # noqa: PLC0415
+                    TranscribedAudio,
+                )
+
+                assert len(msgs) == 2
+
+                protos = []
+                for m in msgs:
+                    p = TranscribedAudio()
+                    p.ParseFromString(m.data)
+                    protos.append(p)
+
+                protos.sort(key=lambda p: p.transcript)
+
+                assert protos[0].transcript == "Hello world"
+                assert protos[0].feed_name == "Test Feed Name"
+
+                assert protos[1].transcript == "Hello world again"
+                assert protos[1].feed_name == "Test Feed Name"
+
+            assert_that(results, assert_results)

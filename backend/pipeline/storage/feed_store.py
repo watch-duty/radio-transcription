@@ -54,6 +54,7 @@ class LeasedFeed(TypedDict):
 
     id: uuid.UUID
     name: str
+    external_id: str
     source_type: SourceType
     last_processed_filename: str | None
     last_bookmark_time: datetime.datetime | None
@@ -168,6 +169,7 @@ class FeedStore:
         return LeasedFeed(
             id=row["id"],
             name=row["name"],
+            external_id=row["external_id"],
             source_type=source_type,
             last_processed_filename=row["last_processed_filename"],
             last_bookmark_time=row["last_bookmark_time"],
@@ -412,6 +414,7 @@ class FeedStore:
                 LeasedFeed(
                     id=row["id"],
                     name=row["name"],
+                    external_id=row["external_id"],
                     source_type=source_type,
                     last_processed_filename=row["last_processed_filename"],
                     last_bookmark_time=row["last_bookmark_time"],

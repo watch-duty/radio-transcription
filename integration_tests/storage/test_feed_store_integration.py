@@ -32,9 +32,9 @@ async def _insert_feed(
     worker_id: uuid.UUID | None = None,
     last_heartbeat_age_seconds: int | None = None,
     source_feed_id: str | None = None,
-    external_id: str | None = None,
+    external_id: str = "ext_default",
 ) -> uuid.UUID:
-    """Insert a feed row and optionally a feed properties row."""
+    """Insert a feed row and its properties row."""
     heartbeat_expr = "NULL"
     if last_heartbeat_age_seconds is not None:
         heartbeat_expr = (
@@ -53,14 +53,18 @@ async def _insert_feed(
         str(worker_id) if worker_id else None,
     )
 
-    if source_feed_id is not None and external_id is not None:
-        await pool.execute(
-            "INSERT INTO feed_properties (feed_id, source_feed_id, external_id) "
-            "VALUES ($1::uuid, $2, $3)",
-            str(feed_id),
-            source_feed_id,
-            external_id,
-        )
+    # Ensure unique source_feed_id if not provided
+    if source_feed_id is None:
+        source_feed_id = f"src_{uuid.uuid4().hex[:8]}"
+
+    await pool.execute(
+        "INSERT INTO feed_properties (feed_id, source_feed_id, external_id, source_type) "
+        "VALUES ($1::uuid, $2, $3, $4)",
+        str(feed_id),
+        source_feed_id,
+        external_id,
+        source_type,
+    )
 
     return feed_id
 
