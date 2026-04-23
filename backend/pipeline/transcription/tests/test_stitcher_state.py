@@ -54,6 +54,7 @@ def mock_audio_chunk(
         ],
         gcs_uri=gcs_uri,
         duration_ms=duration_ms,
+        sample_rate=16000,
     )
 
 
@@ -64,8 +65,17 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         self.ctx = StitcherContext(
             feed_id="test-feed-xyz",
             current_gcs_uri="gs://fake/init.flac",
+            session_id="fake-session",
             contributing_audio_uris=[],
             file_start_ms=0,
+            last_segment_end_time_ms=None,
+            transmission_start_time_ms=None,
+            buffer_start_time_ms=None,
+            missing_prior_context=False,
+            expected_next_chunk_start_ms=None,
+            start_audio_offset_ms=None,
+            end_audio_offset_ms=None,
+            buffer_duration_ms=0,
         )
 
     def _process(self, chunk: AudioChunkData) -> list[StateMachineAction]:
@@ -194,3 +204,29 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         )
         self.assertTrue(flush_action.missing_prior_context)
         self.assertFalse(flush_action.missing_post_context)
+
+    def test_process_speech_segments_avoids_overlap(self) -> None:
+        """Verifies that _process_speech_segments avoids overlap by updating actual_start_ms."""
+        # Chunk speech from 1.0s to 12.0s.
+        chunk = mock_audio_chunk(0, 15000, [(1.0, 12.0)])
+
+        # Mock context having processed audio ending at 5000ms (5.0s) in absolute time!
+        self.ctx.last_segment_end_time_ms = 5000
+
+        # Expected actions should only append audio starting from 5.0s offset in chunk!
+        actions = self.state_machine._process_speech_segments(chunk, self.ctx)
+
+        # Verify that buffer append action only has audio size equivalent to 7000ms (12.0s - 5.0s) + post-roll (500ms).
+        append_action = next(
+            (a for a in actions if isinstance(a, AppendBufferAction)), None
+        )
+        self.assertIsNotNone(append_action)
+        assert append_action is not None
+
+        # Buffer duration ms updated by (global_end_ms + post_roll) - max(0, global_start - pre_roll).
+        # global_end=12000. post_roll=500. global_start=updated to 5000. pre_roll=500.
+        # append_end = min(15000, 12000 + 500) = 12500.
+        # append_start = max(0, 5000 - 500) = 4500.
+        # Expected append_end - append_start = 12500 - 4500 = 8000ms.
+        # Size is 8000 * 16 = 128000 samples.
+        self.assertEqual(append_action.audio_buffer.size, (8000 * 16))
