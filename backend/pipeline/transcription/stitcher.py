@@ -175,6 +175,7 @@ class StitchAudioFn(beam.DoFn):
             transmission_id = generate_transmission_id(
                 session_id,
                 action.speech_time_range.start_ms,
+                action.speech_time_range.end_ms,
             )
             logger.info(
                 "Generated transmission_id: %s for feed: %s",
@@ -434,6 +435,7 @@ class StitchAudioFn(beam.DoFn):
                 transmission_id = generate_transmission_id(
                     key,
                     int(start_time_ms),
+                    int(end_time_ms),
                 )
 
                 yield (
