@@ -632,6 +632,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         self.feed = {
             "id": uuid.uuid4(),
             "name": "test-feed",
+            "external_id": "ext-id",
             "source_type": SourceType.BCFY_CALLS,
             "last_processed_filename": None,
             "last_bookmark_time": datetime.datetime(
@@ -1194,6 +1195,7 @@ class TestBcfyCallsCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
         self.feed: dict[str, object] = {
             "id": self.feed_uuid,
             "name": "test-bcfy",
+            "external_id": "ext-id",
             "source_type": SourceType.BCFY_CALLS,
             "last_processed_filename": None,
             "last_bookmark_time": None,
