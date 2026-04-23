@@ -153,9 +153,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             def assert_dlq(elements: list[dict[str, Any]]) -> None:
 
                 assert len(elements) == 1
-                assert (
-                    "Missing required feed_id" in elements[0]["error"]
-                )
+                assert "Missing required feed_id" in elements[0]["error"]
 
             assert_that(parsed.main, equal_to([]), label="CheckEmptyMain")
             assert_that(
