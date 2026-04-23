@@ -248,7 +248,8 @@ export function TranscriptView({
   });
 
   const transcripts = useMemo(
-    () => listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? [],
+    () =>
+      listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? [],
     [listTranscriptsResponse]
   );
 

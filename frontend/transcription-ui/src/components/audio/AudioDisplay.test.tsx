@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import type { Transcript } from '@transcription/common';
 
+import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { AudioDisplay } from './AudioDisplay';
 
 vi.mock('@wavesurfer/react', () => ({
@@ -258,9 +259,9 @@ describe('AudioDisplay', () => {
       expect(labels30.length).toBe(4);
       const [h0_30, m0_30] = labels30[0].split(':').map(Number);
       const [h3_30, m3_30] = labels30[3].split(':').map(Number);
-      let diff30 = h3_30 * 60 + m3_30 - (h0_30 * 60 + m0_30);
-      if (diff30 < 0) diff30 += 24 * 60;
-      expect(diff30).toBe(30);
+      let diff = h3_30 * 60 + m3_30 - (h0_30 * 60 + m0_30);
+      if (diff < 0) diff += 24 * 60;
+      expect(diff).toBe(MAX_WINDOW_DURATION_MS);
     });
   });
 });

@@ -14,10 +14,12 @@ import TranscriptView from './TranscriptView';
 
 const renderTranscriptView = (ui: ReactElement) => {
   return renderWithQueryClient(
-    <VirtuosoMockContext.Provider value={{ viewportHeight: 1000, itemHeight: 100 }}>
+    <VirtuosoMockContext.Provider
+      value={{ viewportHeight: 1000, itemHeight: 100 }}
+    >
       {ui}
     </VirtuosoMockContext.Provider>
-  )
+  );
 };
 
 // Mock the services

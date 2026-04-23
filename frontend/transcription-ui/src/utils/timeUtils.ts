@@ -1,3 +1,5 @@
+export const MAX_WINDOW_DURATION_MS = 30 * 60 * 1000; // 30 minutes
+
 export function getInitialTimestamp(
   searchParams: URLSearchParams
 ): Date | null {
