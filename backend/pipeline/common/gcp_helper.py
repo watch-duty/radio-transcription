@@ -131,7 +131,7 @@ async def upload_audio(
     """
     storage = gcs_client.get_storage()
     upload_kwargs: dict[str, Any] = {
-        "metadata": {"trace_id": trace_id} if trace_id else None,
+        "metadata": {"trace_id": trace_id},
         "content_type": content_type,
     }
     if if_generation_match is not None:
