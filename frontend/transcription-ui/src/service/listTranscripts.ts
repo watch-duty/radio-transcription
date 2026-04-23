@@ -1,3 +1,5 @@
+import type { Transcript } from '@transcription/common';
+
 export async function listTranscripts(
   feedId: string,
   token: string,

@@ -4,7 +4,7 @@ import base64
 import datetime
 import uuid
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 import asyncpg
 import asyncpg.exceptions
@@ -17,7 +17,7 @@ from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
 from . import transcript_queries
 
 
-class SortOrder(str, Enum):
+class SortOrder(StrEnum):
     ASC = "asc"
     DESC = "desc"
 

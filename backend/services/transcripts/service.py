@@ -8,10 +8,9 @@ from google.protobuf import json_format
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
+from backend.pipeline.storage.transcript_store import SortOrder, TranscriptStore
 
 from .models import ListTranscriptsResponse, Transcript
-
-from backend.pipeline.storage.transcript_store import SortOrder, TranscriptStore
 
 if TYPE_CHECKING:
     import datetime
