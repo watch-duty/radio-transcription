@@ -44,3 +44,14 @@ services:
     command: ["jupyter", "notebook", "--ip=0.0.0.0", "--NotebookApp.token=''", "--NotebookApp.password=''"]
     volumes:
       - ./model:/home/jovyan
+
+  # FastAPI container running Qwen3-ASR on CPU
+  qwen-asr-cpu:
+    build:
+      context: .
+      dockerfile: model/models/qwen/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./model:/app/model
+    working_dir: /app
