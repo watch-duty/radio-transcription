@@ -93,6 +93,8 @@ class TestEchoCollectorIntegration(unittest.TestCase):
             autocommit=True,
         ) as conn:
             for sql_file in sorted(_SQL_DIR.glob("*.sql")):
+                if "pg_cron" in sql_file.name:
+                    continue  # pg_cron extension is production-only (AlloyDB flag)
                 conn.execute(sql_file.read_bytes())
 
         # --- Fake GCS Server ---
