@@ -1,6 +1,7 @@
 import logging
 from unittest import TestCase, mock
 
+from backend.pipeline.common import logging as pipeline_logging
 from backend.pipeline.common.logging import setup_logging
 
 
@@ -44,3 +45,39 @@ class TestLogging(TestCase):
             # Second call should do nothing (idempotency)
             setup_logging()
             mock_basic_config.assert_called_once()
+
+
+class TestTraceId(TestCase):
+    def test_set_trace_id_explicit(self) -> None:
+        trace_id = "test-trace-id"
+        returned_id = pipeline_logging.set_trace_id(trace_id)
+        self.assertEqual(returned_id, trace_id)
+
+        record = logging.LogRecord(
+            "test", logging.INFO, "test.py", 1, "msg", (), None
+        )
+        filter_inst = pipeline_logging.TraceIdFilter()
+        filter_inst.filter(record)
+        self.assertEqual(getattr(record, "trace_id"), trace_id)  # noqa: B009
+
+    def test_set_trace_id_generate(self) -> None:
+        returned_id = pipeline_logging.set_trace_id()
+        self.assertTrue(returned_id)
+
+        record = logging.LogRecord(
+            "test", logging.INFO, "test.py", 1, "msg", (), None
+        )
+        filter_inst = pipeline_logging.TraceIdFilter()
+        filter_inst.filter(record)
+        self.assertEqual(getattr(record, "trace_id"), returned_id)  # noqa: B009
+
+    def test_clear_trace_id(self) -> None:
+        pipeline_logging.set_trace_id("test")
+        pipeline_logging.set_trace_id("")
+
+        record = logging.LogRecord(
+            "test", logging.INFO, "test.py", 1, "msg", (), None
+        )
+        filter_inst = pipeline_logging.TraceIdFilter()
+        filter_inst.filter(record)
+        self.assertEqual(getattr(record, "trace_id"), "")  # noqa: B009
