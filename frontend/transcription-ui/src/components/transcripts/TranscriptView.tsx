@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { GroupedVirtuoso, type VirtuosoHandle } from 'react-virtuoso';
 
@@ -12,6 +12,7 @@ import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
 import IconButton from '@mui/material/IconButton';
 import Link from '@mui/material/Link';
+import ListItem from '@mui/material/ListItem';
 import Paper from '@mui/material/Paper';
 import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
@@ -631,13 +632,14 @@ export function TranscriptView({
                 groupContent={(index) => {
                   const title = groupTitles[index];
                   return (
-                    <Box
+                    <ListItem
                       sx={{
-                        width: '100%',
-                        bgcolor: 'background.paper',
                         position: 'sticky',
                         top: 0,
                         zIndex: 1,
+                        py: 0,
+                        px: 0,
+                        bgcolor: 'background.paper',
                       }}
                     >
                       <Box
@@ -656,7 +658,7 @@ export function TranscriptView({
                           {title}
                         </Typography>
                       </Box>
-                    </Box>
+                    </ListItem>
                   );
                 }}
                 itemContent={(index, groupIndex, transcript) => {
