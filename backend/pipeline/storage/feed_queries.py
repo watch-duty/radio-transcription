@@ -181,8 +181,10 @@ WHERE id = $1
 RESET_FEED_SQL = """\
 WITH updated AS (
     UPDATE feeds
-    SET status = 'active'::feed_status,
-        failure_count = 0
+    SET status = 'unclaimed'::feed_status,
+        failure_count = 0,
+        worker_id = NULL,
+        last_heartbeat = NOW()
     WHERE id = $1
     RETURNING id, name, source_type, status, failure_count, worker_id,
               last_heartbeat, last_processed_filename, last_bookmark_time, created_at

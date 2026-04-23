@@ -54,7 +54,7 @@ class FeedService:
         return await self._store.delete_feed(uid)
 
     async def reset_feed(self, feed_id: str) -> Feed | None:
-        """Resets a feed to active status with zero failure count."""
+        """Resets a feed after failed or quarantined - sets it to unclaimed status with zero failure count."""
         try:
             uid = uuid.UUID(feed_id)
         except ValueError:

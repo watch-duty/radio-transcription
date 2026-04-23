@@ -123,7 +123,7 @@ async def reset_feed(
     request: Request,
     feed_id: str,
 ) -> Feed:
-    """Reset a feed to active status with zero failure count."""
+    """Reset a feed to unclaimed status with zero failure count."""
     service: FeedService = request.app.state.feed_service
     feed = await service.reset_feed(feed_id)
     if not feed:
