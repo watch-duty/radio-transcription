@@ -613,7 +613,6 @@ export function TranscriptView({
               ) : (
                 <Box />
               )}
-
             </Box>
             <Paper
               variant="outlined"
