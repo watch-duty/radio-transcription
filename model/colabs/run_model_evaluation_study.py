@@ -52,15 +52,21 @@ def transcribe_audio_with_model(audio_file_path: str, endpoint_url: str, prompt:
     else:
         raise RuntimeError(f"FastAPI inference failed with status code {response.status_code}: {response.text}")
 
-def run_pipeline(gcp_project_id: str, gcs_manifest_uri: str, gcs_bucket: str, project_name: str, experiment_name: str, model_endpoints: dict[str, str], prompt: str = None):
+def run_pipeline(gcp_project_id: str, gcs_manifest_uri: str, gcs_bucket: str, project_name: str, experiment_name: str, model_endpoints: dict[str, str], selected_model: str, prompt: str = None):
     """
-    Runs the transcription evaluation pipeline concurrently for multiple models.
+    Runs the transcription evaluation pipeline for a selected model.
     Outputs will be saved dynamically under:
     gs://{GCS_BUCKET}/transcripts/{PROJECT_NAME}_audio/{MODEL_NAME}/{EXPERIMENT_NAME}/
     """
     storage_client = storage.Client(project=gcp_project_id)
     manifest_data = download_jsonl_manifest(storage_client, gcs_manifest_uri)
     print("\n--- Processing each audio entry ---")
+
+    if selected_model not in model_endpoints:
+        raise ValueError(f"Selected model '{selected_model}' not found in model_endpoints.")
+
+    endpoint_url = model_endpoints[selected_model]
+    model_name = selected_model
 
     for i, entry in enumerate(manifest_data):
         audio_gcs_uri = entry["audio_filepath"]
@@ -73,27 +79,26 @@ def run_pipeline(gcp_project_id: str, gcs_manifest_uri: str, gcs_bucket: str, pr
         print(f"Downloading {audio_blob_path} from GCS to {local_audio_path}")
         download_blob_to_file(storage_client, audio_bucket, audio_blob_path, local_audio_path)
 
-        for model_name, endpoint_url in model_endpoints.items():
-            print(f"Transcribing with {model_name}: {local_audio_file_name}...")
-            try:
-                transcription_result = transcribe_audio_with_model(local_audio_path, endpoint_url, prompt)
-            except Exception as e:
-                print(f"Error during transcription for {model_name}: {e}")
-                transcription_result = "[ERROR]"
+        print(f"Transcribing with {model_name}: {local_audio_file_name}...")
+        try:
+            transcription_result = transcribe_audio_with_model(local_audio_path, endpoint_url, prompt)
+        except Exception as e:
+            print(f"Error during transcription for {model_name}: {e}")
+            transcription_result = "[ERROR]"
 
-            local_result_file_name = f"{os.path.splitext(local_audio_file_name)[0]}.txt"
-            local_result_path = f"./{local_result_file_name}"
-            with open(local_result_path, "w") as f:
-                f.write(transcription_result)
+        local_result_file_name = f"{os.path.splitext(local_audio_file_name)[0]}.txt"
+        local_result_path = f"./{local_result_file_name}"
+        with open(local_result_path, "w") as f:
+            f.write(transcription_result)
 
-            result_gcs_blob_path = f"transcripts/{project_name}_audio/{model_name}/{experiment_name}/{local_result_file_name}"
-            print(f"Uploading {model_name} result from {local_result_path} to gs://{gcs_bucket}/{result_gcs_blob_path}")
-            upload_file_to_blob(storage_client, gcs_bucket, result_gcs_blob_path, local_result_path)
+        result_gcs_blob_path = f"transcripts/{project_name}_audio/{model_name}/{experiment_name}/{local_result_file_name}"
+        print(f"Uploading {model_name} result from {local_result_path} to gs://{gcs_bucket}/{result_gcs_blob_path}")
+        upload_file_to_blob(storage_client, gcs_bucket, result_gcs_blob_path, local_result_path)
 
-            os.remove(local_result_path)
-            print(f"Cleaned up local result file: {local_result_path}")
+        os.remove(local_result_path)
+        print(f"Cleaned up local result file: {local_result_path}")
 
         os.remove(local_audio_path)
         print(f"Cleaned up local audio file: {local_audio_path}")
 
-    print("\n--- All entries processed for all models ---")
+    print(f"\n--- All entries processed for model {model_name} ---")
