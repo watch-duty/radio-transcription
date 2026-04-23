@@ -20,6 +20,7 @@ from apache_beam.options.pipeline_options import (
 )
 from apache_beam.transforms import trigger, window
 
+from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
 from backend.pipeline.transcription.constants import (
     DEAD_LETTER_QUEUE_TAG,
     DEFAULT_MAX_TRANSMISSION_DURATION_MS,
@@ -127,9 +128,11 @@ def get_pipeline(
     windowed = downloaded_chunks.main | "WindowBySession" >> beam.WindowInto(
         window.Sessions(gap_size=stale_timeout / 1000),
         trigger=trigger.AfterWatermark(
-            early=trigger.AfterProcessingTime(stale_timeout / 1000)
+            early=trigger.AfterProcessingTime(CHUNK_DURATION_SECONDS),
+            late=trigger.AfterCount(1),
         ),
         accumulation_mode=trigger.AccumulationMode.DISCARDING,
+        allowed_lateness=60,
     )
 
     grouped = windowed | "GroupBySession" >> beam.GroupByKey()
