@@ -9,6 +9,7 @@ from backend.pipeline.common.env import is_gcp_env
 
 logger = logging.getLogger(__name__)
 
+# ContextVar is isolated between concurrent runs
 _TRACE_ID = contextvars.ContextVar("trace_id", default="")
 
 
