@@ -409,7 +409,15 @@ class AudioStitchingStateMachine:
         audio_append_cursor_ms: int | None = None
 
         for segment in chunk_data.speech_segments:
-            global_start_ms = segment.start_ms
+            # Calculate where to start to avoid overlap
+            actual_start_ms = segment.start_ms
+            if ctx.last_segment_end_time_ms is not None:
+                actual_start_ms = max(
+                    actual_start_ms,
+                    ctx.last_segment_end_time_ms - file_start_ms,
+                )
+
+            global_start_ms = actual_start_ms
             global_end_ms = segment.end_ms
 
             # 1. Check if the gap between the last speech segment and this new one
