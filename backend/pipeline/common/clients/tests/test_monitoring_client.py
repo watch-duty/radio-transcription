@@ -4,6 +4,7 @@ import unittest
 from unittest import mock
 
 from google.api_core.exceptions import GoogleAPIError
+from google.cloud import monitoring_v3
 
 from backend.pipeline.common.clients import monitoring_client
 
@@ -42,6 +43,7 @@ class TestMonitoringClient(unittest.IsolatedAsyncioTestCase):
             metric_type="custom.googleapis.com/test",
             labels={"k": "v"},
             value=1,
+            resource_labels={"project_id": "test-project"},
         )
 
         mock_monitoring.MetricServiceAsyncClient.assert_called_once()
@@ -68,6 +70,7 @@ class TestMonitoringClient(unittest.IsolatedAsyncioTestCase):
             metric_type="custom.googleapis.com/feeds/quarantine_events",
             labels={"feed_id": "abc", "feed_name": "X"},
             value=42,
+            resource_labels={"project_id": "my-project"},
         )
 
         mock_async_client.create_time_series.assert_awaited_once()
@@ -92,8 +95,12 @@ class TestMonitoringClient(unittest.IsolatedAsyncioTestCase):
         mock_monitoring.TimeInterval.return_value = mock.MagicMock()
 
         client = monitoring_client.MonitoringClient("p")
-        await client.write_time_series("t", {}, 1)
-        await client.write_time_series("t", {}, 2)
+        await client.write_time_series(
+            "t", {}, 1, resource_labels={"project_id": "p"}
+        )
+        await client.write_time_series(
+            "t", {}, 2, resource_labels={"project_id": "p"}
+        )
 
         mock_monitoring.MetricServiceAsyncClient.assert_called_once()
 
@@ -119,4 +126,87 @@ class TestMonitoringClient(unittest.IsolatedAsyncioTestCase):
         client = monitoring_client.MonitoringClient("p")
 
         with self.assertRaises(GoogleAPIError):
-            await client.write_time_series("t", {}, 1)
+            await client.write_time_series(
+                "t", {}, 1, resource_labels={"project_id": "p"}
+            )
+
+    @mock.patch(
+        "backend.pipeline.common.clients.monitoring_client.monitoring_v3"
+    )
+    async def test_gce_instance_resource_with_full_labels(
+        self,
+        mock_monitoring: mock.MagicMock,
+    ) -> None:
+        """Passing resource_type='gce_instance' + full resource_labels writes them verbatim."""
+        mock_async_client = mock.AsyncMock()
+        mock_monitoring.MetricServiceAsyncClient.return_value = (
+            mock_async_client
+        )
+        real_series = monitoring_v3.TimeSeries()
+        mock_monitoring.TimeSeries.return_value = real_series
+        # Point and TimeInterval must be real protos because the client
+        # assigns `series.points = [point]` on the real TimeSeries, which
+        # proto-plus type-checks against the actual Point message class.
+        mock_monitoring.Point.side_effect = monitoring_v3.Point
+        mock_monitoring.TimeInterval.side_effect = monitoring_v3.TimeInterval
+
+        client = monitoring_client.MonitoringClient("my-project")
+        await client.write_time_series(
+            metric_type="custom.googleapis.com/test/gce_resource",
+            labels={},
+            value=42,
+            resource_type="gce_instance",
+            resource_labels={
+                "project_id": "my-project",
+                "instance_id": "1234567890",
+                "zone": "us-central1-a",
+            },
+        )
+
+        self.assertEqual(real_series.resource.type, "gce_instance")
+        self.assertEqual(
+            dict(real_series.resource.labels),
+            {
+                "project_id": "my-project",
+                "instance_id": "1234567890",
+                "zone": "us-central1-a",
+            },
+        )
+
+    @mock.patch(
+        "backend.pipeline.common.clients.monitoring_client.monitoring_v3"
+    )
+    async def test_caller_owned_labels_are_not_mutated(
+        self,
+        mock_monitoring: mock.MagicMock,
+    ) -> None:
+        """Caller owns the full resource.labels dict — the client does not
+        add, remove, or mutate keys. Passing resource_labels={'instance_id': 'i1'}
+        alone means the emitted labels are EXACTLY {'instance_id': 'i1'}.
+        """
+        mock_async_client = mock.AsyncMock()
+        mock_monitoring.MetricServiceAsyncClient.return_value = (
+            mock_async_client
+        )
+        real_series = monitoring_v3.TimeSeries()
+        mock_monitoring.TimeSeries.return_value = real_series
+        # Point and TimeInterval must be real protos because the client
+        # assigns `series.points = [point]` on the real TimeSeries, which
+        # proto-plus type-checks against the actual Point message class.
+        mock_monitoring.Point.side_effect = monitoring_v3.Point
+        mock_monitoring.TimeInterval.side_effect = monitoring_v3.TimeInterval
+
+        client = monitoring_client.MonitoringClient("my-project")
+        await client.write_time_series(
+            metric_type="custom.googleapis.com/test",
+            labels={},
+            value=1,
+            resource_type="gce_instance",
+            resource_labels={"instance_id": "i1"},
+        )
+
+        self.assertEqual(real_series.resource.type, "gce_instance")
+        self.assertEqual(
+            dict(real_series.resource.labels),
+            {"instance_id": "i1"},
+        )

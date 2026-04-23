@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import unittest
+from typing import Any, cast
 from unittest import mock
 
 from backend.pipeline.ingestion import quarantine_telemetry
@@ -29,16 +30,20 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(len(cm.records), 1)
-        record = cm.records[0]
-        # extra fields are set dynamically on LogRecord by the logger
-        self.assertEqual(getattr(record, "event_type"), "feed_quarantined")  # noqa: B009
-        self.assertEqual(getattr(record, "feed_id"), "abc-123")  # noqa: B009
-        self.assertEqual(getattr(record, "feed_name"), "Test Feed")  # noqa: B009
-        self.assertEqual(getattr(record, "source_type"), "bcfy_feeds")  # noqa: B009
+        record = cast("Any", cm.records[0])
+        # D-11: emit uses extra={"json_fields": {...}} — LogRecord stores the
+        # wrapped dict as getattr(record, "json_fields"). The CloudLoggingHandler flattens
+        # it identically to flat extras in production (Cloud Logging payload
+        # shape unchanged), but in-repo assertions read the wrapped key.
+        self.assertEqual(record.json_fields["event_type"], "feed_quarantined")
+        self.assertEqual(record.json_fields["feed_id"], "abc-123")
+        self.assertEqual(record.json_fields["feed_name"], "Test Feed")
+        self.assertEqual(record.json_fields["source_type"], "bcfy_feeds")
 
     async def test_calls_write_time_series_when_configured(self) -> None:
         """Metric is written when a project ID is configured."""
         mock_client = mock.AsyncMock()
+        mock_client.project_id = "test-project"
         quarantine_telemetry.configure("test-project")
         quarantine_telemetry._client = mock_client
 
@@ -56,6 +61,7 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
                 "source_type": "bcfy_feeds",
             },
             value=1,
+            resource_labels={"project_id": "test-project"},
         )
 
     async def test_skips_metric_when_not_configured(self) -> None:
@@ -147,3 +153,43 @@ class TestConfigure(unittest.TestCase):
         quarantine_telemetry.configure(None)
 
         self.assertIsNone(quarantine_telemetry._client)
+
+
+class TestFeedQuarantinedGoldenFile(unittest.IsolatedAsyncioTestCase):
+    """D-13: feed_quarantined emit's json_fields key-set matches the golden file.
+
+    A PR that adds, removes, or renames a key in the emit's json_fields dict
+    without updating tests/golden/feed_quarantined.json fails this test.
+    Key-set equality only — no value comparison per D-12.
+    """
+
+    def tearDown(self) -> None:
+        quarantine_telemetry._client = None
+
+    async def test_json_fields_keys_match_golden(self) -> None:
+        import json  # noqa: PLC0415 -- keep import local to this test
+        import pathlib  # noqa: PLC0415
+
+        golden_path = (
+            pathlib.Path(__file__).parent / "golden" / "feed_quarantined.json"
+        )
+        with golden_path.open(encoding="utf-8") as fh:
+            golden = json.load(fh)
+
+        quarantine_telemetry.configure(None)
+        with self.assertLogs(
+            "backend.pipeline.ingestion.quarantine_telemetry",
+            level=logging.ERROR,
+        ) as cm:
+            await quarantine_telemetry.emit_quarantine_event(
+                feed_id="abc-123",
+                feed_name="Test Feed",
+                source_type="bcfy_feeds",
+            )
+
+        self.assertEqual(len(cm.records), 1)
+        record = cast("Any", cm.records[0])
+        self.assertEqual(
+            set(record.json_fields.keys()),
+            set(golden["expected_keys"]),
+        )

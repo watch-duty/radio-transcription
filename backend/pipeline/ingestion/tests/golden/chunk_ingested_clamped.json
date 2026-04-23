@@ -1,0 +1,12 @@
+{
+  "event": "chunk_ingested",
+  "case": "clock-skew — stamped but raw latency was negative",
+  "expected_keys": [
+    "event_type",
+    "feed_id",
+    "latency_clamped",
+    "processing_latency_sec",
+    "source_type"
+  ],
+  "_note": "D-15: latency_clamped present (only as True — never False) when clamp fires. processing_latency_sec is the clamped-to-0.0 value. Keys alphabetized (D-12)."
+}

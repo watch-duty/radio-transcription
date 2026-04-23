@@ -5,7 +5,7 @@ import datetime
 import os
 import unittest
 import uuid
-from typing import cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
@@ -437,7 +437,12 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
         result = {"url": "http://1", "start_ts": 1000, "end_ts": 2000}
 
         chunk = await bcfy_calls_collector._create_chunk_from_call(
-            self.session, result, "http://1", self.shutdown, "test-session"
+            self.session,
+            result,
+            "http://1",
+            self.shutdown,
+            "test-session",
+            datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
         )
 
         assert chunk is not None
@@ -465,7 +470,12 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
         ) as mock_datetime:
             mock_datetime.now.return_value = fixed_now
             chunk = await bcfy_calls_collector._create_chunk_from_call(
-                self.session, result, "http://1", self.shutdown, "test-session"
+                self.session,
+                result,
+                "http://1",
+                self.shutdown,
+                "test-session",
+                datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
             )
 
         assert chunk is not None
@@ -485,7 +495,12 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
         result = {"url": "http://1", "start_ts": 1000, "end_ts": 2000}
 
         chunk = await bcfy_calls_collector._create_chunk_from_call(
-            self.session, result, "http://1", self.shutdown, "test-session"
+            self.session,
+            result,
+            "http://1",
+            self.shutdown,
+            "test-session",
+            datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
         )
 
         self.assertIsNone(chunk)
@@ -501,7 +516,12 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(RuntimeError, "CDN rate limit"):
             await bcfy_calls_collector._create_chunk_from_call(
-                self.session, result, "http://1", self.shutdown, "test-session"
+                self.session,
+                result,
+                "http://1",
+                self.shutdown,
+                "test-session",
+                datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
             )
 
     @patch(
@@ -516,10 +536,40 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
         result = {"url": "http://1"}
 
         chunk = await bcfy_calls_collector._create_chunk_from_call(
-            self.session, result, "http://1", self.shutdown, "test-session"
+            self.session,
+            result,
+            "http://1",
+            self.shutdown,
+            "test-session",
+            datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
         )
 
         self.assertIsNone(chunk)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._download_audio",
+        new_callable=AsyncMock,
+    )
+    async def test_receipt_time_preserved_through_chunk(
+        self, mock_dl: AsyncMock
+    ) -> None:
+        """RCPT-04: receipt_time passed through to the yielded CapturedChunk."""
+        mock_dl.return_value = b"flac"
+        result = {"url": "http://1", "start_ts": 1000, "end_ts": 2000}
+        rt = datetime.datetime(2026, 4, 22, 12, 0, 0, tzinfo=datetime.UTC)
+
+        chunk = await bcfy_calls_collector._create_chunk_from_call(
+            self.session,
+            result,
+            "http://1",
+            self.shutdown,
+            "test-session",
+            rt,
+        )
+
+        assert chunk is not None
+        self.assertEqual(chunk.receipt_time, rt)
 
 
 class TestHandleLoopFailure(unittest.IsolatedAsyncioTestCase):
@@ -582,6 +632,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         self.feed = {
             "id": uuid.uuid4(),
             "name": "test-feed",
+            "external_id": "ext-id",
             "source_type": SourceType.BCFY_CALLS,
             "last_processed_filename": None,
             "last_bookmark_time": datetime.datetime(
@@ -1071,3 +1122,298 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         for chunk in chunks:
             self.assertIsNotNone(chunk.session_id)
         self.assertEqual(chunks[0].session_id, chunks[1].session_id)
+
+
+class TestCaptureBcfyCallsReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
+    """RCPT-04: capture_bcfy_calls stamps receipt_time per-call iteration."""
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._get_jwt_token",
+        return_value="tok",
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._fetch_calls",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._download_audio",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector.datetime"
+    )
+    async def test_stamps_receipt_time_on_yielded_chunk(
+        self,
+        mock_datetime: MagicMock,
+        mock_download: AsyncMock,
+        mock_fetch: AsyncMock,
+        _mock_jwt: MagicMock,
+    ) -> None:
+        fixed_time = datetime.datetime(
+            2026, 4, 22, 12, 0, 0, tzinfo=datetime.UTC
+        )
+        mock_datetime.datetime.now.return_value = fixed_time
+        mock_datetime.UTC = datetime.UTC
+        mock_datetime.datetime.fromtimestamp = datetime.datetime.fromtimestamp
+        mock_fetch.return_value = {
+            "calls": [{"url": "http://a.mp3", "start_ts": 1000, "end_ts": 2000}]
+        }
+        mock_download.return_value = b"flac"
+
+        feed = LeasedFeed(
+            id=uuid.UUID("12345678-1234-5678-1234-567812345678"),
+            name="test-bcfy-calls",
+            external_id="ext-id",
+            source_type=SourceType.BCFY_CALLS,
+            last_processed_filename=None,
+            last_bookmark_time=None,
+            fencing_token=1,
+            source_feed_id="sid",
+        )
+        shutdown = asyncio.Event()
+
+        results = []
+        async for chunk in bcfy_calls_collector.capture_bcfy_calls(
+            cast("LeasedFeed", feed), shutdown, "https://api.example/"
+        ):
+            results.append(chunk)
+            shutdown.set()
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].receipt_time, fixed_time)
+
+
+class TestBcfyCallsCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
+    """LOG-02: bcfy_calls emits call_download_failed at _create_chunk_from_call caller."""
+
+    def setUp(self) -> None:
+        self.feed_uuid = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        self.feed: dict[str, object] = {
+            "id": self.feed_uuid,
+            "name": "test-bcfy",
+            "external_id": "ext-id",
+            "source_type": SourceType.BCFY_CALLS,
+            "last_processed_filename": None,
+            "last_bookmark_time": None,
+            "fencing_token": 1,
+            "source_feed_id": "sid",
+        }
+        self.leased_feed = cast("LeasedFeed", self.feed)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._create_chunk_from_call",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_emits_call_download_failed_on_terminal_failure(
+        self,
+        mock_sleep: AsyncMock,
+        mock_create: AsyncMock,
+        mock_fetch: AsyncMock,
+        mock_jwt: MagicMock,
+    ) -> None:
+        """_create_chunk_from_call returns None → emit WARNING log."""
+        mock_jwt.return_value = "tok"
+        mock_create.return_value = None  # simulate download failure
+
+        shutdown = asyncio.Event()
+
+        fetch_calls = 0
+
+        async def _fetch_side_effect(*args, **kwargs):
+            nonlocal fetch_calls
+            fetch_calls += 1
+            if fetch_calls == 1:
+                return {
+                    "calls": [
+                        {
+                            "url": "https://x/c.mp3",
+                            "start_ts": 1_700_000_000,
+                            "end_ts": 1_700_000_010,
+                        }
+                    ],
+                    "lastPos": 1_700_000_010,
+                }
+            shutdown.set()
+            return {"calls": []}
+
+        mock_fetch.side_effect = _fetch_side_effect
+        mock_sleep.return_value = False
+
+        with self.assertLogs(
+            "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector",
+            level="WARNING",
+        ) as cm:
+            async for _ in bcfy_calls_collector.capture_bcfy_calls(
+                self.leased_feed, shutdown, "https://api.bcfy/"
+            ):
+                pass
+
+        emits = [
+            r for r in cm.records if r.getMessage() == "Call download failed"
+        ]
+        self.assertEqual(len(emits), 1)
+        rec = cast("Any", emits[0])
+        self.assertEqual(rec.json_fields["event_type"], "call_download_failed")
+        self.assertEqual(rec.json_fields["feed_id"], str(self.feed_uuid))
+        self.assertEqual(
+            rec.json_fields["source_type"], self.feed["source_type"]
+        )
+        # Golden match
+        import json as _json  # noqa: PLC0415
+        import pathlib as _pathlib  # noqa: PLC0415
+
+        golden = _json.loads(
+            (
+                _pathlib.Path(__file__).resolve().parents[2]  # noqa: ASYNC240 -- sync file read in test is fine
+                / "tests"
+                / "golden"
+                / "call_download_failed.json"
+            ).read_text()
+        )
+        self.assertEqual(
+            set(rec.json_fields.keys()),
+            set(golden["expected_keys"]),
+        )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._create_chunk_from_call",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_no_emit_on_successful_chunk_creation(
+        self,
+        mock_sleep: AsyncMock,
+        mock_create: AsyncMock,
+        mock_fetch: AsyncMock,
+        mock_jwt: MagicMock,
+    ) -> None:
+        """_create_chunk_from_call returns a CapturedChunk → no emit."""
+        mock_jwt.return_value = "tok"
+        now = datetime.datetime.now(datetime.UTC)
+        chunk_ok = bcfy_calls_collector.CapturedChunk(
+            audio_bytes=b"x",
+            chunk_start_time=now,
+            chunk_end_time=now + datetime.timedelta(seconds=10),
+            session_id="sid",
+            receipt_time=now,
+        )
+        mock_create.return_value = chunk_ok
+
+        shutdown = asyncio.Event()
+        mock_fetch.return_value = {
+            "calls": [
+                {
+                    "url": "https://x/c.mp3",
+                    "start_ts": 1_700_000_000,
+                    "end_ts": 1_700_000_010,
+                }
+            ],
+            "lastPos": 1_700_000_010,
+        }
+
+        async def _sleep_side_effect(*args, **kwargs) -> bool:
+            shutdown.set()
+            return True
+
+        mock_sleep.side_effect = _sleep_side_effect
+
+        with self.assertLogs(
+            "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector",
+            level="WARNING",
+        ) as cm:
+            # Placeholder WARNING so assertLogs captures something regardless of emit.
+            bcfy_calls_collector.logger.warning("_test_placeholder_")
+            async for _ in bcfy_calls_collector.capture_bcfy_calls(
+                self.leased_feed, shutdown, "https://api.bcfy/"
+            ):
+                shutdown.set()
+
+        emits = [
+            r for r in cm.records if r.getMessage() == "Call download failed"
+        ]
+        self.assertEqual(emits, [])
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._create_chunk_from_call",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_no_emit_during_shutdown(
+        self,
+        mock_sleep: AsyncMock,
+        mock_create: AsyncMock,
+        mock_fetch: AsyncMock,
+        mock_jwt: MagicMock,
+    ) -> None:
+        """Shutdown set while chunk creation fails → no emit."""
+        mock_jwt.return_value = "tok"
+
+        shutdown = asyncio.Event()
+
+        async def _create_then_shut(*a, **kw):
+            # shutdown set BEFORE create returns None to suppress emit
+            shutdown.set()
+
+        mock_create.side_effect = _create_then_shut
+        mock_fetch.return_value = {
+            "calls": [
+                {
+                    "url": "https://x/c.mp3",
+                    "start_ts": 1_700_000_000,
+                    "end_ts": 1_700_000_010,
+                }
+            ],
+            "lastPos": 1_700_000_010,
+        }
+        mock_sleep.return_value = True
+
+        with self.assertLogs(
+            "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector",
+            level="WARNING",
+        ) as cm:
+            # Placeholder WARNING so assertLogs captures something regardless of emit.
+            bcfy_calls_collector.logger.warning("_test_placeholder_")
+            async for _ in bcfy_calls_collector.capture_bcfy_calls(
+                self.leased_feed, shutdown, "https://api.bcfy/"
+            ):
+                pass
+
+        emits = [
+            r for r in cm.records if r.getMessage() == "Call download failed"
+        ]
+        self.assertEqual(emits, [])

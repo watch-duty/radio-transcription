@@ -15,6 +15,9 @@ import aiohttp
 from google.cloud import secretmanager
 
 from backend.pipeline.ingestion.models import CapturedChunk
+from backend.pipeline.ingestion.slo_contract import (
+    EVENT_TYPE_CALL_DOWNLOAD_FAILED,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -265,6 +268,7 @@ async def _create_chunk_from_call(
     audio_url: str,
     shutdown_event: asyncio.Event,
     session_id: str,
+    receipt_time: datetime.datetime,
 ) -> CapturedChunk | None:
     """Download audio for a single call and wrap it in a CapturedChunk."""
     try:
@@ -298,6 +302,7 @@ async def _create_chunk_from_call(
         chunk_start_time=chunk_start_time,
         chunk_end_time=chunk_end_time,
         session_id=session_id,
+        receipt_time=receipt_time,
     )
 
 
@@ -376,6 +381,9 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                         if shutdown_event.is_set():
                             break
 
+                        # SLO: receipt_time stamp — bcfy_calls per-call iteration
+                        receipt_time = datetime.datetime.now(datetime.UTC)
+
                         audio_url = result.get("url")
                         if not audio_url or audio_url in seen_urls:
                             continue
@@ -386,8 +394,21 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                             audio_url,
                             shutdown_event,
                             connection_session_id,
+                            receipt_time,
                         )
                         if not chunk:
+                            if not shutdown_event.is_set():
+                                # SLO: call_download_failed emit — bcfy_calls _create_chunk_from_call returned None
+                                logger.warning(
+                                    "Call download failed",
+                                    extra={
+                                        "json_fields": {
+                                            "event_type": EVENT_TYPE_CALL_DOWNLOAD_FAILED,
+                                            "feed_id": str(feed["id"]),
+                                            "source_type": feed["source_type"],
+                                        },
+                                    },
+                                )
                             continue
 
                         yield chunk

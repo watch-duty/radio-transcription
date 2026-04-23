@@ -1,0 +1,11 @@
+{
+  "event": "chunk_ingested",
+  "case": "common — stamped with non-negative latency",
+  "expected_keys": [
+    "event_type",
+    "feed_id",
+    "processing_latency_sec",
+    "source_type"
+  ],
+  "_note": "D-13/D-15/D-16: expected json_fields keys when receipt_time is set AND raw latency is non-negative. latency_clamped is absent (D-15: only emitted as True). Keys alphabetized (D-12)."
+}

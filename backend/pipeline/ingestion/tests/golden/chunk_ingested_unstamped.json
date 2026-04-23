@@ -1,0 +1,10 @@
+{
+  "event": "chunk_ingested",
+  "case": "no receipt_time — collector didn't stamp",
+  "expected_keys": [
+    "event_type",
+    "feed_id",
+    "source_type"
+  ],
+  "_note": "D-16: processing_latency_sec ABSENT when receipt_time is None (NOT emitted as explicit null). latency_clamped also absent. Keys alphabetized (D-12)."
+}
