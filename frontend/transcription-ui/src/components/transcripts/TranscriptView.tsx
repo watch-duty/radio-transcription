@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
-import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
+import { GroupedVirtuoso, type VirtuosoHandle } from 'react-virtuoso';
 
 import InventoryIcon from '@mui/icons-material/Inventory';
 import LinkIcon from '@mui/icons-material/Link';
@@ -80,6 +80,7 @@ export function TranscriptView({
   const [isAtTop, setIsAtTop] = useState(true);
   const [isPolling, setIsPolling] = useState(false);
   const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const hasScrolledToTarget = useRef(false);
 
   const {
     data: feeds,
@@ -102,6 +103,10 @@ export function TranscriptView({
 
   // Memoizing the selected feed object derived from the searchedFeedId state.
   const selectedFeed = useMemo(() => {
+    return feedIdToFeedMap.get(feedId) || null;
+  }, [feedIdToFeedMap, feedId]);
+
+  const searchedFeed = useMemo(() => {
     return feedIdToFeedMap.get(searchedFeedId) || null;
   }, [feedIdToFeedMap, searchedFeedId]);
 
@@ -197,8 +202,8 @@ export function TranscriptView({
       nextToken?: string;
       order?: 'asc' | 'desc';
     },
-    // The naming of getNextPageParam is a bit confusing here. What we're actually 
-    // doing is using this function to fetch the "previous" page in time, or more 
+    // The naming of getNextPageParam is a bit confusing here. What we're actually
+    // doing is using this function to fetch the "previous" page in time, or more
     // accurately, the page before the last page returned by the API.
     getNextPageParam: (lastPage) => {
       if (lastPage.nextToken) {
@@ -226,8 +231,8 @@ export function TranscriptView({
       }
       return undefined;
     },
-    // In contrast to getNextPageParam, getPreviousPageParam is used to fetch 
-    // the "next" page in time, or more accurately, the page after the first page 
+    // In contrast to getNextPageParam, getPreviousPageParam is used to fetch
+    // the "next" page in time, or more accurately, the page after the first page
     // returned by the API.
     getPreviousPageParam: (firstPage) => {
       const newestTranscript = firstPage.transcripts?.[0];
@@ -262,6 +267,39 @@ export function TranscriptView({
       listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? [],
     [listTranscriptsResponse]
   );
+
+  const { groupCounts, groupTitles } = useMemo(() => {
+    const counts: number[] = [];
+    const titles: string[] = [];
+    let currentTitle = '';
+    let currentCount = 0;
+
+    transcripts.forEach((t) => {
+      const dateStr = new Date(t.startTimestamp).toLocaleDateString([], {
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric',
+      });
+
+      if (dateStr !== currentTitle) {
+        if (currentCount > 0) {
+          counts.push(currentCount);
+        }
+        currentTitle = dateStr;
+        titles.push(dateStr);
+        currentCount = 1;
+      } else {
+        currentCount++;
+      }
+    });
+
+    if (currentCount > 0) {
+      counts.push(currentCount);
+    }
+
+    return { groupCounts: counts, groupTitles: titles };
+  }, [transcripts]);
 
   const newestTimestamp = transcripts[0]?.startTimestamp;
 
@@ -380,12 +418,29 @@ export function TranscriptView({
   }, [rulesError, addAlert]);
 
   useEffect(() => {
-    if (isTranscriptsSuccess && targetTransmissionId) {
-      const element = document.getElementById(
-        `transcript-${targetTransmissionId}`
+    hasScrolledToTarget.current = false;
+  }, [targetTransmissionId]);
+
+  useEffect(() => {
+    if (
+      isTranscriptsSuccess &&
+      targetTransmissionId &&
+      transcripts.length > 0 &&
+      !hasScrolledToTarget.current
+    ) {
+      const index = transcripts.findIndex(
+        (t) => t.transmissionId === targetTransmissionId
       );
-      if (element) {
-        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (index !== -1) {
+        const timer = setTimeout(() => {
+          virtuosoRef.current?.scrollToIndex({
+            index,
+            align: 'center',
+            behavior: 'smooth',
+          });
+          hasScrolledToTarget.current = true;
+        }, 100);
+        return () => clearTimeout(timer);
       }
     }
   }, [isTranscriptsSuccess, targetTransmissionId, transcripts]);
@@ -401,7 +456,7 @@ export function TranscriptView({
     if (index !== -1) {
       virtuosoRef.current?.scrollToIndex({
         index,
-        align: 'start',
+        align: 'center',
         behavior: 'smooth',
       });
     }
@@ -601,13 +656,13 @@ export function TranscriptView({
             <Box
               sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}
             >
-              {selectedFeed?.sourceUrl || selectedFeed?.archiveUrl ? (
+              {searchedFeed?.sourceUrl || searchedFeed?.archiveUrl ? (
                 <Box
                   sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2 }}
                 >
-                  {selectedFeed.sourceUrl && (
+                  {searchedFeed.sourceUrl && (
                     <Link
-                      href={selectedFeed.sourceUrl}
+                      href={searchedFeed.sourceUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       variant="body2"
@@ -621,9 +676,9 @@ export function TranscriptView({
                       Original source link
                     </Link>
                   )}
-                  {selectedFeed.archiveUrl && (
+                  {searchedFeed.archiveUrl && (
                     <Link
-                      href={selectedFeed.archiveUrl}
+                      href={searchedFeed.archiveUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       variant="body2"
@@ -684,20 +739,43 @@ export function TranscriptView({
                 overflow: 'hidden',
               }}
             >
-              <Virtuoso
+              <GroupedVirtuoso
                 ref={virtuosoRef}
+                groupCounts={groupCounts}
                 data={transcripts}
                 atTopStateChange={(atTop) => setIsAtTop(atTop)}
-                itemContent={(index, transcript) => {
-                  const currentDate = new Date(transcript.startTimestamp);
-                  const prevDate =
-                    index > 0
-                      ? new Date(transcripts[index - 1].startTimestamp)
-                      : null;
-                  const showHeader =
-                    !prevDate ||
-                    currentDate.toDateString() !== prevDate.toDateString();
-
+                groupContent={(index) => {
+                  const title = groupTitles[index];
+                  return (
+                    <Box
+                      sx={{
+                        width: '100%',
+                        bgcolor: 'background.paper',
+                        position: 'sticky',
+                        top: 0,
+                        zIndex: 1,
+                      }}
+                    >
+                      <Box
+                        sx={{
+                          width: '100%',
+                          py: 0.5,
+                          px: 2,
+                          bgcolor: 'action.hover',
+                        }}
+                      >
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ fontWeight: 'bold' }}
+                        >
+                          {title}
+                        </Typography>
+                      </Box>
+                    </Box>
+                  );
+                }}
+                itemContent={(index, groupIndex, transcript) => {
                   return (
                     <TranscriptRow
                       key={transcript.transmissionId}
@@ -711,7 +789,7 @@ export function TranscriptView({
                         currentlyPlayingTransmissionId
                       }
                       triggerSnackbar={triggerSnackbar}
-                      showHeader={showHeader}
+                      showHeader={false}
                       isHighlighted={
                         transcript.transmissionId === highlightedTransmissionId
                       }

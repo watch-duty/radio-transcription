@@ -29,19 +29,94 @@ vi.mock('@wavesurfer/react', () => ({
   default: () => <div data-testid="wavesurfer-player" />,
 }));
 
-vi.mock('react-virtuoso', () => ({
-  Virtuoso: ({
-    data,
-    itemContent,
-  }: {
-    data: unknown[];
-    itemContent: (index: number, item: unknown) => React.ReactNode;
-  }) => (
-    <div data-testid="virtuoso">
-      {data.map((item: unknown, index: number) => itemContent(index, item))}
-    </div>
-  ),
-}));
+const mockScrollToIndex = vi.fn();
+
+interface MockVirtuosoHandle {
+  scrollToIndex: (location: unknown) => void;
+}
+
+interface MockVirtuosoProps {
+  data?: unknown[];
+  itemContent: (index: number, data: unknown) => React.ReactNode;
+}
+
+interface MockGroupedVirtuosoProps {
+  data?: unknown[];
+  groupCounts?: number[];
+  groupContent?: (index: number) => React.ReactNode;
+  itemContent?: (
+    index: number,
+    groupIndex: number,
+    data: unknown,
+    context: unknown
+  ) => React.ReactNode;
+  components?: {
+    Header?: React.ComponentType;
+    Footer?: React.ComponentType;
+  };
+}
+
+vi.mock('react-virtuoso', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { forwardRef, useImperativeHandle } = require('react');
+
+  const Virtuoso = forwardRef<MockVirtuosoHandle, MockVirtuosoProps>(
+    ({ data, itemContent }, ref) => {
+      useImperativeHandle(ref, () => ({
+        scrollToIndex: mockScrollToIndex,
+      }));
+      return (
+        <div data-testid="virtuoso">
+          {(data || []).map((item, index) => itemContent(index, item))}
+        </div>
+      );
+    }
+  );
+
+  const GroupedVirtuoso = forwardRef<
+    MockVirtuosoHandle,
+    MockGroupedVirtuosoProps
+  >(({ data, groupCounts, groupContent, itemContent, components }, ref) => {
+    useImperativeHandle(ref, () => ({
+      scrollToIndex: mockScrollToIndex,
+    }));
+
+    let flatIndex = 0;
+    return (
+      <div data-testid="grouped-virtuoso">
+        {components?.Header && <components.Header />}
+        {(groupCounts || []).flatMap((count: number, groupIndex: number) => {
+          const items = [];
+          if (groupContent) {
+            items.push(
+              <div key={`group-${groupIndex}`} data-testid="group-header">
+                {groupContent(groupIndex)}
+              </div>
+            );
+          }
+          for (let i = 0; i < count; i++) {
+            const item = data?.[flatIndex];
+            if (itemContent) {
+              items.push(
+                <div key={`item-${groupIndex}-${i}`} data-testid="group-item">
+                  {itemContent(flatIndex, groupIndex, item, undefined)}
+                </div>
+              );
+            }
+            flatIndex++;
+          }
+          return items;
+        })}
+        {components?.Footer && <components.Footer />}
+      </div>
+    );
+  });
+
+  return {
+    Virtuoso,
+    GroupedVirtuoso,
+  };
+});
 
 describe('TranscriptView', () => {
   const mockAddAlert = vi.fn();
@@ -623,8 +698,7 @@ describe('TranscriptView', () => {
   });
 
   it('scrolls to highlighted transcript when transmissionId is in search params', async () => {
-    const mockScrollIntoView = vi.fn();
-    window.HTMLElement.prototype.scrollIntoView = mockScrollIntoView;
+    mockScrollToIndex.mockClear();
 
     const mockTranscripts = [
       {
@@ -661,9 +735,150 @@ describe('TranscriptView', () => {
       expect(screen.getByText('Hello target')).toBeTruthy();
     });
 
-    // Verify scrollIntoView was called
+    // Verify scrollToIndex was called
     await waitFor(() => {
-      expect(mockScrollIntoView).toHaveBeenCalled();
+      expect(mockScrollToIndex).toHaveBeenCalledWith(
+        expect.objectContaining({
+          index: 0,
+          align: 'center',
+        })
+      );
+    });
+  });
+
+  it('passes correct params to listTranscripts when loading older transcripts', async () => {
+    const initialTranscripts = [
+      {
+        feedId: 'feed123',
+        transmissionId: '1',
+        transcript: 'Transcript 1',
+        canonicalAudioUri: 'gs:://foo.flac',
+        startTimestamp: '2026-04-10T12:00:00Z',
+        endTimestamp: '2026-04-10T12:00:05Z',
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: ['gs:://foo.flac'],
+        startAudioOffset: '0s',
+        endAudioOffset: '5s',
+        evaluationDecisions: [],
+      },
+    ];
+
+    vi.mocked(listTranscripts)
+      .mockResolvedValueOnce({
+        transcripts: initialTranscripts,
+        nextToken: undefined,
+      })
+      .mockResolvedValueOnce({
+        transcripts: [],
+        nextToken: undefined,
+      });
+
+    renderWithQueryClient(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    const input = screen.getByLabelText(/Select a registered feed/i);
+    await waitFor(() => {
+      expect((input as HTMLInputElement).disabled).toBe(false);
+    });
+    fireEvent.change(input, { target: { value: 'feed123' } });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    const button = screen.getByRole('button', { name: /Fetch/i });
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(screen.getByText('Transcript 1')).toBeTruthy();
+    });
+
+    const loadMoreButton = screen.getByRole('button', {
+      name: /Load previous transcripts/i,
+    });
+    fireEvent.click(loadMoreButton);
+
+    await waitFor(() => {
+      expect(listTranscripts).toHaveBeenCalledTimes(2);
+      expect(listTranscripts).toHaveBeenLastCalledWith(
+        'feed123',
+        'fake-token',
+        undefined,
+        undefined,
+        undefined,
+        new Date('2026-04-10T12:00:05Z').getTime() - 1,
+        'desc'
+      );
+    });
+  });
+
+  it('passes correct params to listTranscripts when loading newer transcripts', async () => {
+    const initialTranscripts = [
+      {
+        feedId: 'feed123',
+        transmissionId: '1',
+        transcript: 'Transcript 1',
+        canonicalAudioUri: 'gs:://foo.flac',
+        startTimestamp: '2026-04-10T12:00:00Z',
+        endTimestamp: '2026-04-10T12:00:05Z',
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: ['gs:://foo.flac'],
+        startAudioOffset: '0s',
+        endAudioOffset: '5s',
+        evaluationDecisions: [],
+      },
+    ];
+
+    vi.mocked(listTranscripts)
+      .mockResolvedValueOnce({
+        transcripts: initialTranscripts,
+        nextToken: undefined,
+      })
+      .mockResolvedValueOnce({
+        transcripts: [],
+        nextToken: undefined,
+      });
+
+    renderWithQueryClient(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    const input = screen.getByLabelText(/Select a registered feed/i);
+    await waitFor(() => {
+      expect((input as HTMLInputElement).disabled).toBe(false);
+    });
+    fireEvent.change(input, { target: { value: 'feed123' } });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    const button = screen.getByRole('button', { name: /Fetch/i });
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(screen.getByText('Transcript 1')).toBeTruthy();
+    });
+
+    const loadNewerButton = screen.getByRole('button', {
+      name: /Load newer transcripts/i,
+    });
+    fireEvent.click(loadNewerButton);
+
+    await waitFor(() => {
+      expect(listTranscripts).toHaveBeenCalledTimes(2);
+      expect(listTranscripts).toHaveBeenLastCalledWith(
+        'feed123',
+        'fake-token',
+        undefined,
+        undefined,
+        new Date('2026-04-10T12:00:05Z').getTime() + 1,
+        undefined,
+        'asc'
+      );
     });
   });
 });
