@@ -141,6 +141,7 @@ describe('TranscriptView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAddAlert.mockClear();
+    vi.useFakeTimers();
     // Default mock for listFeeds to prevent errors on mount
     vi.mocked(listFeeds).mockResolvedValue([
       { id: 'feed123', name: 'feed123', sourceType: 'bcfy_feeds' as const },
@@ -149,6 +150,7 @@ describe('TranscriptView', () => {
 
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
   });
 
   it('renders search field and fetch button', () => {

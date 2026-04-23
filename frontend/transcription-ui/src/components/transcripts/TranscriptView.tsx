@@ -355,13 +355,7 @@ export function TranscriptView({
   );
 
   useEffect(() => {
-    if (
-      import.meta.env.MODE === 'test' ||
-      searchedStartTime ||
-      !isAtTop ||
-      !newestTimestamp ||
-      !searchedFeedId
-    )
+    if (searchedStartTime || !isAtTop || !newestTimestamp || !searchedFeedId)
       return;
 
     const interval = setInterval(async () => {
