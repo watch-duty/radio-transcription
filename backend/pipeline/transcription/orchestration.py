@@ -35,7 +35,10 @@ from backend.pipeline.transcription.datatypes import (
     TranscribeAudioConfig,
 )
 from backend.pipeline.transcription.options import TranscriptionOptions
-from backend.pipeline.transcription.ordered_stitcher import OrderedStitchAudioFn
+from backend.pipeline.transcription.ordered_stitcher import (
+    OrderedBypassFn,
+    OrderedStitchAudioFn,
+)
 from backend.pipeline.transcription.stitcher import (
     TranscribeAudioFn,
 )
@@ -154,7 +157,7 @@ def get_pipeline(
             timestamped.main
             | "OrderedBypassStitch"
             >> beam.ParDo(
-                OrderedStitchAudioFn(
+                OrderedBypassFn(
                     order_config=order_config,
                     stitch_config=stitching_config,
                 )
