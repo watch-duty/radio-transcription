@@ -97,6 +97,70 @@ class StaleTimerManager:
         self.proc_timer.clear()
 
 
+def process_ordering(
+    element: tuple[str, ChunkMetadata],
+    timestamp: Timestamp,
+    curr_context: TransmissionContext,
+    out_of_order_buffer_state: BagRuntimeState,
+    out_of_order_timer: RuntimeTimer,
+    order_config: OrderRestorerConfig,
+) -> tuple[list[BufferedChunk], TransmissionContext, bool]:
+    """Handles session change detection and chronological ordering via SequenceBuffer."""
+    feed_id, metadata = element
+    session_changed = False
+
+    # Session change detection
+    if curr_context.session_id != metadata.session_id:
+        logging.getLogger(__name__).info(
+            f"[{feed_id}] Session ID changed from {curr_context.session_id} to {metadata.session_id}. Resetting state."
+        )
+        session_changed = True
+        out_of_order_buffer_state.clear()
+        out_of_order_timer.clear()
+        curr_context = TransmissionContext(session_id=metadata.session_id)
+
+    sequence_buffer = SequenceBuffer(order_config)
+    buffer_elements = list(out_of_order_buffer_state.read())
+    current_ts_ms = int(float(timestamp) * MS_PER_SECOND)
+
+    # Process chunk through jitter buffer
+    (
+        new_expected_next_ts,
+        new_buffer_elements,
+        elements_to_emit,
+        _was_late,
+        _was_buffered,
+    ) = sequence_buffer.process_chunk(
+        current_ts_ms=current_ts_ms,
+        gcs_uri=metadata.gcs_uri,
+        expected_next_ts=curr_context.expected_next_chunk_start_ms,
+        buffer_elements=buffer_elements,
+        chunk_duration_ms=metadata.duration_ms,
+    )
+
+    # Update jitter buffer state
+    curr_context = replace(
+        curr_context, expected_next_chunk_start_ms=new_expected_next_ts
+    )
+
+    out_of_order_buffer_state.clear()
+    for chunk in new_buffer_elements:
+        out_of_order_buffer_state.add(chunk)
+
+    # Handle Timer for Gap Timeout
+    if new_buffer_elements and not curr_context.order_timer_active:
+        deadline = timestamp + (
+            order_config.out_of_order_timeout_ms / float(MS_PER_SECOND)
+        )
+        out_of_order_timer.set(deadline)
+        curr_context = replace(curr_context, order_timer_active=True)
+    elif not new_buffer_elements and curr_context.order_timer_active:
+        out_of_order_timer.clear()
+        curr_context = replace(curr_context, order_timer_active=False)
+
+    return elements_to_emit, curr_context, session_changed
+
+
 @beam.typehints.with_input_types(tuple[str, ChunkMetadata])
 @beam.typehints.with_output_types(tuple[str, FlushRequest])
 class OrderedStitchAudioFn(beam.DoFn):
@@ -171,69 +235,30 @@ class OrderedStitchAudioFn(beam.DoFn):
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
     ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
         """Processes incoming chunks, orders them, downloads audio, and stitches them."""
-        feed_id, metadata = element
+        feed_id, _metadata = element
+        current_ts_ms = int(float(timestamp) * MS_PER_SECOND)
         curr_context = (
             transmission_context_state.read() or TransmissionContext()
         )
 
-        # Session change detection
-        if curr_context.session_id != metadata.session_id:
-            logger.info(
-                f"[{feed_id}] Session changed from {curr_context.session_id} to {metadata.session_id}. Resetting state."
-            )
-            # Clear all state
-            out_of_order_buffer_state.clear()
+        # Handle session change and ordering via helper function
+        elements_to_emit, curr_context, session_changed = process_ordering(
+            element,
+            timestamp,
+            curr_context,
+            out_of_order_buffer_state,
+            out_of_order_timer,
+            self.order_config,
+        )
+
+        if session_changed:
+            # Also clear stitching state!
             transmission_buffer_state.clear()
-            transmission_context_state.clear()
-            out_of_order_timer.clear()
             stale_timer_event.clear()
             stale_timer_proc.clear()
 
-            # Initialize new context
-            curr_context = TransmissionContext(session_id=metadata.session_id)
-            transmission_context_state.write(curr_context)
-
-        sequence_buffer = SequenceBuffer(self.order_config)
-        buffer_elements = list(out_of_order_buffer_state.read())
-        current_ts_ms = int(float(timestamp) * MS_PER_SECOND)
-
-        # Process chunk through jitter buffer
-        (
-            new_expected_next_ts,
-            new_buffer_elements,
-            elements_to_emit,
-            _was_late,
-            _was_buffered,
-        ) = sequence_buffer.process_chunk(
-            current_ts_ms=current_ts_ms,
-            gcs_uri=metadata.gcs_uri,
-            expected_next_ts=curr_context.expected_next_chunk_start_ms,
-            buffer_elements=buffer_elements,
-            chunk_duration_ms=metadata.duration_ms,
-        )
-
-        # Update jitter buffer state
-        curr_context = replace(
-            curr_context, expected_next_chunk_start_ms=new_expected_next_ts
-        )
+        # Always write updated context!
         transmission_context_state.write(curr_context)
-
-        out_of_order_buffer_state.clear()
-        for chunk in new_buffer_elements:
-            out_of_order_buffer_state.add(chunk)
-
-        # Handle Timer for Gap Timeout (from RestoreOrderFn)
-        if new_buffer_elements and not curr_context.order_timer_active:
-            deadline = timestamp + (
-                self.order_config.out_of_order_timeout_ms / float(MS_PER_SECOND)
-            )
-            out_of_order_timer.set(deadline)
-            curr_context = replace(curr_context, order_timer_active=True)
-            transmission_context_state.write(curr_context)
-        elif not new_buffer_elements and curr_context.order_timer_active:
-            out_of_order_timer.clear()
-            curr_context = replace(curr_context, order_timer_active=False)
-            transmission_context_state.write(curr_context)
 
         # Handle ready elements (Download and Stitch!)
         if elements_to_emit:
@@ -597,3 +622,176 @@ class OrderedStitchAudioFn(beam.DoFn):
         transmission_context.clear()
         transmission_buffer.clear()
         timer_manager.clear()
+
+
+@beam.typehints.with_input_types(tuple[str, ChunkMetadata])
+@beam.typehints.with_output_types(tuple[str, FlushRequest])
+class OrderedBypassFn(beam.DoFn):
+    """A stateful Beam DoFn that handles chronological ordering and downloading,
+    but bypasses the stitching state machine, yielding FlushRequests immediately.
+    """
+
+    OUT_OF_ORDER_BUFFER_SPEC = BagStateSpec(
+        "out_of_order_buffer", beam.coders.PickleCoder()
+    )
+    OUT_OF_ORDER_BUFFER_STATE = beam.DoFn.StateParam(OUT_OF_ORDER_BUFFER_SPEC)
+
+    TRANSMISSION_CONTEXT_SPEC = ReadModifyWriteStateSpec(
+        "transmission_context", beam.coders.PickleCoder()
+    )
+    TRANSMISSION_CONTEXT_STATE = beam.DoFn.StateParam(TRANSMISSION_CONTEXT_SPEC)
+
+    OUT_OF_ORDER_TIMER_SPEC = TimerSpec(
+        "out_of_order_timer", beam.TimeDomain.WATERMARK
+    )
+    OUT_OF_ORDER_TIMER = beam.DoFn.TimerParam(OUT_OF_ORDER_TIMER_SPEC)
+
+    def __init__(
+        self,
+        order_config: OrderRestorerConfig,
+        stitch_config: StitchAudioConfig,
+    ) -> None:
+        self.order_config = order_config
+        self.stitch_config = stitch_config
+        self.audio_processor: AudioProcessor | None = None
+
+    def setup(self) -> None:
+        self.audio_processor = AudioProcessor(
+            self.stitch_config.vad_type,
+            self.stitch_config.vad_config,
+            shared_resources=SHARED_RESOURCE_HANDLE.acquire(SharedResources),
+        )
+        self.audio_processor.setup()
+
+    def process(
+        self,
+        element: tuple[str, ChunkMetadata],
+        timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
+        out_of_order_buffer_state: BagRuntimeState = OUT_OF_ORDER_BUFFER_STATE,  # type: ignore
+        transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
+        out_of_order_timer: RuntimeTimer = OUT_OF_ORDER_TIMER,  # type: ignore
+    ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
+        """Processes incoming chunks, orders them, and yields FlushRequests immediately."""
+        feed_id, _metadata = element
+        curr_context = (
+            transmission_context_state.read() or TransmissionContext()
+        )
+
+        # Handle session change and ordering via helper function
+        elements_to_emit, curr_context, _session_changed = process_ordering(
+            element,
+            timestamp,
+            curr_context,
+            out_of_order_buffer_state,
+            out_of_order_timer,
+            self.order_config,
+        )
+
+        # Always write updated context!
+        transmission_context_state.write(curr_context)
+
+        if elements_to_emit:
+            yield from self._download_and_yield(
+                elements_to_emit, feed_id, curr_context.session_id or "unknown"
+            )
+
+    def _download_and_yield(
+        self,
+        elements_to_emit: list[BufferedChunk],
+        feed_id: str,
+        session_id: str,
+    ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
+        if not self.audio_processor:
+            msg = "AudioProcessor not initialized. setup() must be called."
+            raise RuntimeError(msg)
+
+        for chunk in elements_to_emit:
+            try:
+                chunk_data = self.audio_processor.download_audio_and_detect(
+                    chunk.gcs_uri, chunk.timestamp_ms
+                )
+
+                yield (
+                    feed_id,
+                    FlushRequest(
+                        buffer=chunk_data.audio,
+                        feed_id=feed_id,
+                        session_id=session_id,
+                        contributing_audio_uris=[chunk.gcs_uri],
+                        time_range=TimeRange(
+                            start_ms=chunk.timestamp_ms,
+                            end_ms=chunk.timestamp_ms + chunk_data.duration_ms,
+                        ),
+                        missing_prior_context=False,
+                        missing_post_context=False,
+                        start_audio_offset_ms=0,
+                        end_audio_offset_ms=None,
+                        transmission_id=generate_transmission_id(
+                            session_id,
+                            chunk.timestamp_ms,
+                            chunk.timestamp_ms + chunk_data.duration_ms,
+                        ),
+                    ),
+                )
+            except Exception as e:
+                logging.getLogger(__name__).exception(
+                    f"Error processing chunk {chunk.gcs_uri} for feed {feed_id}"
+                )
+                yield beam.pvalue.TaggedOutput(
+                    DEAD_LETTER_QUEUE_TAG,
+                    {"error": str(e), "feed_id": feed_id},
+                )
+
+    @on_timer(OUT_OF_ORDER_TIMER_SPEC)
+    def handle_gap_timeout(
+        self,
+        feed_id: str = beam.DoFn.KeyParam,  # type: ignore
+        out_of_order_buffer_state: BagRuntimeState = OUT_OF_ORDER_BUFFER_STATE,  # type: ignore
+        transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
+        out_of_order_timer: RuntimeTimer = OUT_OF_ORDER_TIMER,  # type: ignore
+    ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
+        """Handles the gap timeout by advancing the expected sequence."""
+        curr_context = (
+            transmission_context_state.read() or TransmissionContext()
+        )
+        curr_context = replace(curr_context, order_timer_active=False)
+        transmission_context_state.write(curr_context)
+
+        buffer_elements = list(out_of_order_buffer_state.read())
+        if buffer_elements:
+            sorted_elements = sorted(buffer_elements)
+            new_expected = sorted_elements[0].timestamp_ms
+
+            logging.getLogger(__name__).warning(
+                f"[{feed_id}] Gap timeout! Advancing expected from {curr_context.expected_next_chunk_start_ms} to {new_expected}."
+            )
+
+            curr_context = replace(
+                curr_context,
+                expected_next_chunk_start_ms=new_expected,
+                missing_prior_context=True,
+            )
+            transmission_context_state.write(curr_context)
+
+            sequence_buffer = SequenceBuffer(self.order_config)
+
+            new_expected_next_ts, new_buffer_elements, elements_to_emit = (
+                sequence_buffer.drain_ready_elements(
+                    expected_next_ts=new_expected,
+                    buffer_elements=buffer_elements,
+                    epsilon_ms=DEFAULT_FLOAT_TOLERANCE_MS,
+                )
+            )
+
+            curr_context = replace(
+                curr_context, expected_next_chunk_start_ms=new_expected_next_ts
+            )
+            transmission_context_state.write(curr_context)
+
+            out_of_order_buffer_state.clear()
+            for chunk in new_buffer_elements:
+                out_of_order_buffer_state.add(chunk)
+
+            yield from self._download_and_yield(
+                elements_to_emit, feed_id, curr_context.session_id or "unknown"
+            )
