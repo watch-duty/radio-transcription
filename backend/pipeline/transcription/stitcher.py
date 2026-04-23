@@ -9,6 +9,7 @@ from typing import Any, override
 import apache_beam as beam
 import numpy as np
 from apache_beam.metrics import Metrics
+from apache_beam.transforms import trigger
 from apache_beam.transforms.userstate import (
     BagRuntimeState,
     BagStateSpec,
@@ -452,10 +453,21 @@ class StatelessStitchAudioFn(beam.DoFn):
             "StatelessStitchAudioFn", "max_duration_flush_count"
         )
 
-    def process(
-        self, element: tuple[str, Iterable[DownloadedChunkPayload]]
+    def process(  # noqa: PLR0912
+        self,
+        element: tuple[str, Iterable[DownloadedChunkPayload]],
+        pane_info: Any = beam.DoFn.PaneInfoParam,
     ) -> Iterator[tuple[str, FlushRequest]]:
         _session_id, chunks = element
+
+        if pane_info is beam.DoFn.PaneInfoParam:
+            is_early = False
+            is_late = False
+            is_last = True
+        else:
+            is_early = pane_info.timing == trigger.PaneInfoTiming.EARLY  # type: ignore
+            is_late = pane_info.timing == trigger.PaneInfoTiming.LATE  # type: ignore
+            is_last = pane_info.is_last  # type: ignore
 
         # Sort chunks by timestamp
         sorted_chunks = sorted(chunks, key=lambda c: c.chunk_data.start_ms)
@@ -506,8 +518,10 @@ class StatelessStitchAudioFn(beam.DoFn):
                                 action.speech_time_range.end_ms,
                             ),
                             feed_metadata=action.feed_metadata,
-                            missing_prior_context=action.missing_prior_context,
-                            missing_post_context=action.missing_post_context,
+                            missing_prior_context=action.missing_prior_context
+                            or is_late,
+                            missing_post_context=action.missing_post_context
+                            or is_early,
                             start_audio_offset_ms=action.start_audio_offset_ms,
                             end_audio_offset_ms=action.end_audio_offset_ms,
                         ),
@@ -541,8 +555,8 @@ class StatelessStitchAudioFn(beam.DoFn):
                         ctx.last_segment_end_time_ms,
                     ),
                     feed_metadata=ctx.feed_metadata,
-                    missing_prior_context=ctx.missing_prior_context,
-                    missing_post_context=True,
+                    missing_prior_context=ctx.missing_prior_context or is_late,
+                    missing_post_context=is_early or not is_last,
                     start_audio_offset_ms=ctx.start_audio_offset_ms,
                     end_audio_offset_ms=ctx.end_audio_offset_ms,
                 ),

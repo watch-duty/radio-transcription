@@ -18,7 +18,7 @@ from apache_beam.options.pipeline_options import (
     PipelineOptions,
     StandardOptions,
 )
-from apache_beam.transforms import window
+from apache_beam.transforms import trigger, window
 
 from backend.pipeline.transcription.constants import (
     DEAD_LETTER_QUEUE_TAG,
@@ -125,7 +125,11 @@ def get_pipeline(
     # Group chunks by session_id using a session window
     stale_timeout = options.stale_timeout_ms or DEFAULT_STALE_TIMEOUT_MS
     windowed = downloaded_chunks.main | "WindowBySession" >> beam.WindowInto(
-        window.Sessions(gap_size=stale_timeout / 1000)
+        window.Sessions(gap_size=stale_timeout / 1000),
+        trigger=trigger.AfterWatermark(
+            early=trigger.AfterProcessingTime(stale_timeout / 1000)
+        ),
+        accumulation_mode=trigger.AccumulationMode.DISCARDING,
     )
 
     grouped = windowed | "GroupBySession" >> beam.GroupByKey()
