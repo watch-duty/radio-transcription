@@ -20,6 +20,7 @@ import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import {
   type InfiniteData,
+  type QueryKey,
   useInfiniteQuery,
   useQuery,
   useQueryClient,
@@ -43,6 +44,17 @@ interface TranscriptViewProps {
   addAlert: (alert: AlertProps) => void;
   triggerSnackbar: (message: string) => void;
 }
+
+type ListTranscriptsPage = {
+  startTime?: number;
+  endTime?: number;
+  nextToken?: string;
+  order: 'asc' | 'desc';
+};
+
+type ListTranscriptsData = {
+  transcripts: Transcript[];
+} & ListTranscriptsPage;
 
 export function TranscriptView({
   addAlert,
@@ -136,29 +148,11 @@ export function TranscriptView({
     isFetching: isTranscriptsFetching, // isFetching is any load, which we use to show that we're loading additional data
     isSuccess: isTranscriptsSuccess,
   } = useInfiniteQuery<
-    {
-      transcripts: Transcript[];
-      nextToken?: string;
-      startTime?: number;
-      endTime?: number;
-      order?: 'asc' | 'desc';
-    },
+    ListTranscriptsData,
     Error,
-    InfiniteData<{
-      transcripts: Transcript[];
-      nextToken?: string;
-      startTime?: number;
-      endTime?: number;
-      order?: 'asc' | 'desc';
-    }>,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    any[],
-    {
-      startTime?: number;
-      endTime?: number;
-      nextToken?: string;
-      order?: 'asc' | 'desc';
-    }
+    InfiniteData<ListTranscriptsData>,
+    QueryKey,
+    ListTranscriptsPage
   >({
     queryKey: [
       'listTranscripts',
@@ -168,12 +162,7 @@ export function TranscriptView({
       searchedEndTime?.getTime(),
     ],
     queryFn: async ({ pageParam }) => {
-      const { startTime, endTime, nextToken, order } = pageParam as {
-        startTime?: number;
-        endTime?: number;
-        nextToken?: string;
-        order?: 'asc' | 'desc';
-      };
+      const { startTime, endTime, nextToken, order } = pageParam;
       const response = await listTranscripts(
         searchedFeedId,
         token!,
@@ -196,12 +185,7 @@ export function TranscriptView({
     initialPageParam: {
       startTime: searchedStartTime?.getTime() ?? undefined,
       endTime: searchedEndTime?.getTime() ?? undefined,
-      order: undefined,
-    } as {
-      startTime?: number;
-      endTime?: number;
-      nextToken?: string;
-      order?: 'asc' | 'desc';
+      order: 'desc',
     },
     // The naming of getNextPageParam is a bit confusing here. What we're actually
     // doing is using this function to fetch the "previous" page in time, or more
@@ -221,13 +205,13 @@ export function TranscriptView({
         return {
           // Substract 1ms to avoid getting the same transcript again
           endTime: new Date(oldestTranscript.endTimestamp).getTime() - 1,
-          order: 'desc' as const,
+          order: 'desc',
         };
       }
       if (lastPage.startTime !== undefined) {
         return {
           endTime: lastPage.startTime,
-          order: 'desc' as const,
+          order: 'desc',
         };
       }
       return undefined;
@@ -245,7 +229,7 @@ export function TranscriptView({
         }
         return {
           startTime,
-          order: 'asc' as const,
+          order: 'asc',
         };
       }
       if (firstPage.endTime !== undefined) {
@@ -254,7 +238,7 @@ export function TranscriptView({
         }
         return {
           startTime: firstPage.endTime,
-          order: 'asc' as const,
+          order: 'asc',
         };
       }
       return undefined;
@@ -264,8 +248,7 @@ export function TranscriptView({
   });
 
   const transcripts = useMemo(
-    () =>
-      listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? [],
+    () => listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? [],
     [listTranscriptsResponse]
   );
 
@@ -627,7 +610,6 @@ export function TranscriptView({
               <GroupedVirtuoso
                 ref={virtuosoRef}
                 groupCounts={groupCounts}
-                data={transcripts}
                 groupContent={(index) => {
                   const title = groupTitles[index];
                   return (
@@ -660,7 +642,8 @@ export function TranscriptView({
                     </ListItem>
                   );
                 }}
-                itemContent={(index, _groupIndex, transcript) => {
+                itemContent={(index) => {
+                  const transcript = transcripts[index];
                   return (
                     <TranscriptRow
                       key={transcript.transmissionId}

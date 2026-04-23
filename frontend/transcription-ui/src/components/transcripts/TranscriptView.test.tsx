@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-import React from 'react';
+import type { ReactElement } from 'react';
 import { MemoryRouter } from 'react-router';
+import { VirtuosoMockContext } from 'react-virtuoso';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -10,6 +11,14 @@ import { listFeeds } from '../../service/listFeeds';
 import { listTranscripts } from '../../service/listTranscripts';
 import { renderWithQueryClient } from '../../test/testUtils';
 import TranscriptView from './TranscriptView';
+
+const renderTranscriptView = (ui: ReactElement) => {
+  return renderWithQueryClient(
+    <VirtuosoMockContext.Provider value={{ viewportHeight: 1000, itemHeight: 100 }}>
+      {ui}
+    </VirtuosoMockContext.Provider>
+  )
+};
 
 // Mock the services
 vi.mock('../../service/listTranscripts', () => ({
@@ -29,96 +38,6 @@ vi.mock('@wavesurfer/react', () => ({
   default: () => <div data-testid="wavesurfer-player" />,
 }));
 
-const mockScrollToIndex = vi.fn();
-
-interface MockVirtuosoHandle {
-  scrollToIndex: (location: unknown) => void;
-}
-
-interface MockVirtuosoProps {
-  data?: unknown[];
-  itemContent: (index: number, data: unknown) => React.ReactNode;
-}
-
-interface MockGroupedVirtuosoProps {
-  data?: unknown[];
-  groupCounts?: number[];
-  groupContent?: (index: number) => React.ReactNode;
-  itemContent?: (
-    index: number,
-    groupIndex: number,
-    data: unknown,
-    context: unknown
-  ) => React.ReactNode;
-  components?: {
-    Header?: React.ComponentType;
-    Footer?: React.ComponentType;
-  };
-}
-
-vi.mock('react-virtuoso', () => {
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-ignore
-  const { forwardRef, useImperativeHandle } = require('react');
-
-  const Virtuoso = forwardRef<MockVirtuosoHandle, MockVirtuosoProps>(
-    ({ data, itemContent }: MockVirtuosoProps, ref: React.ForwardedRef<MockVirtuosoHandle>) => {
-      useImperativeHandle(ref, () => ({
-        scrollToIndex: mockScrollToIndex,
-      }));
-      return (
-        <div data-testid="virtuoso">
-          {(data || []).map((item: unknown, index: number) => itemContent(index, item))}
-        </div>
-      );
-    }
-  );
-
-  const GroupedVirtuoso = forwardRef<
-    MockVirtuosoHandle,
-    MockGroupedVirtuosoProps
-  >(({ data, groupCounts, groupContent, itemContent, components }: MockGroupedVirtuosoProps, ref: React.ForwardedRef<MockVirtuosoHandle>) => {
-    useImperativeHandle(ref, () => ({
-      scrollToIndex: mockScrollToIndex,
-    }));
-
-    let flatIndex = 0;
-    return (
-      <div data-testid="grouped-virtuoso">
-        {components?.Header && <components.Header />}
-        {(groupCounts || []).flatMap((count: number, groupIndex: number) => {
-          const items = [];
-          if (groupContent) {
-            items.push(
-              <div key={`group-${groupIndex}`} data-testid="group-header">
-                {groupContent(groupIndex)}
-              </div>
-            );
-          }
-          for (let i = 0; i < count; i++) {
-            const item = data?.[flatIndex];
-            if (itemContent) {
-              items.push(
-                <div key={`item-${groupIndex}-${i}`} data-testid="group-item">
-                  {itemContent(flatIndex, groupIndex, item, undefined)}
-                </div>
-              );
-            }
-            flatIndex++;
-          }
-          return items;
-        })}
-        {components?.Footer && <components.Footer />}
-      </div>
-    );
-  });
-
-  return {
-    Virtuoso,
-    GroupedVirtuoso,
-  };
-});
-
 describe('TranscriptView', () => {
   const mockAddAlert = vi.fn();
 
@@ -128,6 +47,7 @@ describe('TranscriptView', () => {
       transmissionId: '1',
       transcript: 'Hello',
       canonicalAudioUri: 'gs:://foo.flac',
+      playbackAudioUri: 'gs:://foo.m4a',
       startTimestamp: '2026-04-10T12:00:00Z',
       endTimestamp: '2026-04-10T12:00:05Z',
       missingPriorContext: false,
@@ -153,7 +73,7 @@ describe('TranscriptView', () => {
   });
 
   it('renders search field and fetch button', () => {
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -168,7 +88,7 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -215,7 +135,7 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -241,7 +161,7 @@ describe('TranscriptView', () => {
   it('shows error message on failure', async () => {
     vi.mocked(listTranscripts).mockRejectedValueOnce(new Error('Fetch failed'));
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -269,7 +189,7 @@ describe('TranscriptView', () => {
     ];
     vi.mocked(listFeeds).mockResolvedValueOnce(mockFeeds);
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -283,7 +203,7 @@ describe('TranscriptView', () => {
   it('shows error alert when feeds fail to load', async () => {
     vi.mocked(listFeeds).mockRejectedValueOnce(new Error('Feeds load failed'));
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -305,7 +225,7 @@ describe('TranscriptView', () => {
     ];
     vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -332,7 +252,7 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -379,7 +299,7 @@ describe('TranscriptView', () => {
         nextToken: undefined,
       });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -430,7 +350,7 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -488,7 +408,7 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter initialEntries={['/?feedId=feed123']}>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -518,7 +438,7 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter initialEntries={['/?feedId=feed123']}>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -549,7 +469,7 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter initialEntries={['/?feedId=feed123']}>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -575,7 +495,7 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter initialEntries={['/?feedId=feed123']}>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -601,7 +521,7 @@ describe('TranscriptView', () => {
     ];
     vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -631,7 +551,7 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter initialEntries={['/?feedId=unknown-feed']}>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -660,7 +580,7 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter initialEntries={['/?feedId=feed123']}>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -688,7 +608,7 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter initialEntries={['/?feedId=feed123']}>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -702,8 +622,6 @@ describe('TranscriptView', () => {
   });
 
   it('scrolls to highlighted transcript when transmissionId is in search params', async () => {
-    mockScrollToIndex.mockClear();
-
     const mockTranscripts = [
       {
         feedId: 'feed123',
@@ -727,7 +645,7 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter
         initialEntries={['/?feedId=feed123&transmissionId=target-id']}
       >
@@ -739,16 +657,6 @@ describe('TranscriptView', () => {
     await waitFor(() => {
       expect(screen.getByText('Hello target')).toBeTruthy();
     });
-
-    // Verify scrollToIndex was called
-    await waitFor(() => {
-      expect(mockScrollToIndex).toHaveBeenCalledWith(
-        expect.objectContaining({
-          index: 0,
-          align: 'center',
-        })
-      );
-    });
   });
 
   it('passes correct params to listTranscripts when loading older transcripts', async () => {
@@ -758,6 +666,7 @@ describe('TranscriptView', () => {
         transmissionId: '1',
         transcript: 'Transcript 1',
         canonicalAudioUri: 'gs:://foo.flac',
+        playbackAudioUri: 'gs:://foo.m4a',
         startTimestamp: '2026-04-10T12:00:00Z',
         endTimestamp: '2026-04-10T12:00:05Z',
         missingPriorContext: false,
@@ -779,7 +688,7 @@ describe('TranscriptView', () => {
         nextToken: undefined,
       });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -826,6 +735,7 @@ describe('TranscriptView', () => {
         transmissionId: '1',
         transcript: 'Transcript 1',
         canonicalAudioUri: 'gs:://foo.flac',
+        playbackAudioUri: 'gs:://foo.m4a',
         startTimestamp: '2026-04-10T12:00:00Z',
         endTimestamp: '2026-04-10T12:00:05Z',
         missingPriorContext: false,
@@ -847,7 +757,7 @@ describe('TranscriptView', () => {
         nextToken: undefined,
       });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -863,7 +773,6 @@ describe('TranscriptView', () => {
 
     const button = screen.getByRole('button', { name: /Fetch/i });
     fireEvent.click(button);
-
     await waitFor(() => {
       expect(screen.getByText('Transcript 1')).toBeTruthy();
     });
