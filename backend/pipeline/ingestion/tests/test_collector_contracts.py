@@ -67,4 +67,4 @@ class TestCapturedChunkReceiptTime(unittest.TestCase):
             chunk_end_time=now,
         )
         with self.assertRaises(dataclasses.FrozenInstanceError):
-            chunk.receipt_time = now  # type: ignore[misc]
+            chunk.receipt_time = now  # type: ignore[misc]  # ty: ignore[invalid-assignment]

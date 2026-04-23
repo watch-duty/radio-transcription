@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import unittest
+from typing import Any, cast
 from unittest import mock
 
 from backend.pipeline.ingestion import quarantine_telemetry
@@ -29,9 +30,9 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(len(cm.records), 1)
-        record = cm.records[0]
+        record = cast("Any", cm.records[0])
         # D-11: emit uses extra={"json_fields": {...}} — LogRecord stores the
-        # wrapped dict as record.json_fields. The CloudLoggingHandler flattens
+        # wrapped dict as getattr(record, "json_fields"). The CloudLoggingHandler flattens
         # it identically to flat extras in production (Cloud Logging payload
         # shape unchanged), but in-repo assertions read the wrapped key.
         self.assertEqual(record.json_fields["event_type"], "feed_quarantined")
@@ -187,7 +188,7 @@ class TestFeedQuarantinedGoldenFile(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(len(cm.records), 1)
-        record = cm.records[0]
+        record = cast("Any", cm.records[0])
         self.assertEqual(
             set(record.json_fields.keys()),
             set(golden["expected_keys"]),

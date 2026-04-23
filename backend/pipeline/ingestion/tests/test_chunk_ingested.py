@@ -22,6 +22,7 @@ import logging
 import pathlib
 import unittest
 import uuid
+from typing import Any, cast
 from unittest import mock
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
@@ -204,7 +205,7 @@ class TestChunkIngestedEmit(unittest.IsolatedAsyncioTestCase):
         records = await self._emit_records(chunk)
 
         self.assertEqual(len(records), 1)
-        rec = records[0]
+        rec = cast("Any", records[0])
         self.assertEqual(rec.levelname, "INFO")
         self.assertTrue(rec.name.startswith("backend.pipeline.ingestion."))
         self.assertEqual(rec.json_fields["event_type"], "chunk_ingested")
@@ -236,7 +237,7 @@ class TestChunkIngestedEmit(unittest.IsolatedAsyncioTestCase):
         records = await self._emit_records(chunk)
 
         self.assertEqual(len(records), 1)
-        rec = records[0]
+        rec = cast("Any", records[0])
         self.assertEqual(rec.json_fields["processing_latency_sec"], 0.0)
         self.assertTrue(rec.json_fields["latency_clamped"])
 
@@ -255,7 +256,7 @@ class TestChunkIngestedEmit(unittest.IsolatedAsyncioTestCase):
         records = await self._emit_records(chunk)
 
         self.assertEqual(len(records), 1)
-        rec = records[0]
+        rec = cast("Any", records[0])
         self.assertNotIn("processing_latency_sec", rec.json_fields)
         self.assertNotIn("latency_clamped", rec.json_fields)
         self.assertEqual(rec.json_fields["event_type"], "chunk_ingested")

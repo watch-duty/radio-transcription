@@ -5,7 +5,7 @@ import datetime
 import os
 import unittest
 import uuid
-from typing import cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
@@ -1267,7 +1267,7 @@ class TestBcfyCallsCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
             r for r in cm.records if r.getMessage() == "Call download failed"
         ]
         self.assertEqual(len(emits), 1)
-        rec = emits[0]
+        rec = cast("Any", emits[0])
         self.assertEqual(rec.json_fields["event_type"], "call_download_failed")
         self.assertEqual(rec.json_fields["feed_id"], str(self.feed_uuid))
         self.assertEqual(
@@ -1286,7 +1286,8 @@ class TestBcfyCallsCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
             ).read_text()
         )
         self.assertEqual(
-            set(rec.json_fields.keys()), set(golden["expected_keys"])
+            set(rec.json_fields.keys()),
+            set(golden["expected_keys"]),
         )
 
     @patch(

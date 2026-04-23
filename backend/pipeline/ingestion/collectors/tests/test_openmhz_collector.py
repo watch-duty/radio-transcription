@@ -5,7 +5,7 @@ import contextlib
 import datetime
 import unittest
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 if TYPE_CHECKING:
@@ -325,11 +325,12 @@ class TestOpenmhzCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
             r for r in cm.records if r.getMessage() == "Call download failed"
         ]
         self.assertEqual(len(emits), 1)
-        rec = emits[0]
+        rec = cast("Any", emits[0])
         self.assertEqual(rec.json_fields["event_type"], "call_download_failed")
         self.assertEqual(rec.json_fields["feed_id"], str(_TEST_FEED["id"]))
         self.assertEqual(
-            rec.json_fields["source_type"], _TEST_FEED["source_type"]
+            rec.json_fields["source_type"],
+            _TEST_FEED["source_type"],
         )
         # Golden match
         import json  # noqa: PLC0415
@@ -344,7 +345,8 @@ class TestOpenmhzCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
             ).read_text()
         )
         self.assertEqual(
-            set(rec.json_fields.keys()), set(golden["expected_keys"])
+            set(rec.json_fields.keys()),
+            set(golden["expected_keys"]),
         )
 
     @patch(f"{_COL_MOD}.websocket_transport")
