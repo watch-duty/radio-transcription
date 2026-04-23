@@ -84,6 +84,8 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 database="postgres",
             )
             for sql_file in sorted(_SQL_DIR.glob("*.sql")):
+                if "pg_cron" in sql_file.name:
+                    continue  # pg_cron extension is production-only (AlloyDB flag)
                 await conn.execute(sql_file.read_text())
             await conn.close()
 

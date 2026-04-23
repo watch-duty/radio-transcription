@@ -214,9 +214,10 @@ class SerializeAndEnrichFn(beam.DoFn):
                 and abs(current_start_ms - last_start_ms) < 100
             ):
                 logger.warning(
-                    "[%s] Potential growing/overlapping transmission detected! "
+                    "[%s / %s] Potential growing/overlapping transmission detected! "
                     "Starts at nearly the same time (%dms) as previous (%dms).",
                     feed_id,
+                    value.session_id,
                     current_start_ms,
                     last_start_ms,
                 )
@@ -224,7 +225,7 @@ class SerializeAndEnrichFn(beam.DoFn):
             last_start_ms_state.write(current_start_ms)
 
             if value.start_audio_offset_ms is None:
-                msg = f"Missing start_audio_offset_ms for feed_id: {feed_id}"
+                msg = f"Missing start_audio_offset_ms for feed_id: {feed_id} (session: {value.session_id})"
                 raise ValueError(msg)
             start_offset = Duration(
                 seconds=value.start_audio_offset_ms // MICROSECONDS_PER_MS,
@@ -233,7 +234,7 @@ class SerializeAndEnrichFn(beam.DoFn):
             )
 
             if value.end_audio_offset_ms is None:
-                msg = f"Missing end_audio_offset_ms for feed_id: {feed_id}"
+                msg = f"Missing end_audio_offset_ms for feed_id: {feed_id} (session: {value.session_id})"
                 raise ValueError(msg)
             end_offset = Duration(
                 seconds=value.end_audio_offset_ms // MICROSECONDS_PER_MS,
@@ -299,17 +300,20 @@ class BypassStitchingFn(beam.DoFn):
             FlushRequest(
                 buffer=chunk_data.audio,
                 feed_id=feed_id,
+                session_id=payload.session_id,
                 contributing_audio_uris=[gcs_path],
                 time_range=TimeRange(start_ms=start_ms, end_ms=end_ms),
                 transmission_id=transmission_id,
                 missing_prior_context=False,
                 missing_post_context=False,
+                start_audio_offset_ms=0,
+                end_audio_offset_ms=chunk_data.duration_ms,
             ),
         )
 
 
 @beam.typehints.with_input_types(tuple[str, ChunkMetadata])
-@beam.typehints.with_output_types(tuple[str, str])
+@beam.typehints.with_output_types(tuple[str, tuple[str, str]])
 class RestoreOrderFn(beam.DoFn):
     """A stateful DoFn that buffers out-of-order chunks and emits them in strict chronological order.
 
@@ -382,7 +386,7 @@ class RestoreOrderFn(beam.DoFn):
         out_of_order_timer: RuntimeTimer = beam.DoFn.TimerParam(  # type: ignore # noqa: B008
             OUT_OF_ORDER_TIMER_SPEC
         ),
-    ) -> Iterator[tuple[str, str]]:
+    ) -> Iterator[tuple[str, tuple[str, str]]]:
         """Ingests out-of-order chunks and orchestrates chronologically sorted yields."""
         feed_id, metadata = element
         gcs_path = metadata.gcs_uri
@@ -434,7 +438,7 @@ class RestoreOrderFn(beam.DoFn):
             out_of_order_buffer_state.add(chunk)
 
         for gcs_uri in elements_to_emit:
-            yield (feed_id, gcs_uri)
+            yield (feed_id, (incoming_session_id, gcs_uri))
 
         # Handle Timer for Gap Timeout
         if new_buffer_elements and not timer_active_state.read():
@@ -451,6 +455,9 @@ class RestoreOrderFn(beam.DoFn):
     def handle_gap_timeout(
         self,
         feed_id: str = beam.DoFn.KeyParam,  # type: ignore
+        session_id_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
+            SESSION_ID_SPEC
+        ),
         expected_next_ts_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
             EXPECTED_NEXT_TS_SPEC
         ),
@@ -460,7 +467,7 @@ class RestoreOrderFn(beam.DoFn):
         timer_active_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
             TIMER_ACTIVE_SPEC
         ),
-    ) -> Iterator[tuple[str, str]]:
+    ) -> Iterator[tuple[str, tuple[str, str]]]:
         """Handles the gap timeout."""
         self.data_gaps_detected_counter.inc()
         timer_active_state.clear()
@@ -491,11 +498,12 @@ class RestoreOrderFn(beam.DoFn):
             for chunk in new_buffer_elements:
                 out_of_order_buffer_state.add(chunk)
 
+            session_id = session_id_state.read()
             for gcs_uri in elements_to_emit:
-                yield (feed_id, gcs_uri)
+                yield (feed_id, (session_id, gcs_uri))
 
 
-@beam.typehints.with_input_types(tuple[str, str])
+@beam.typehints.with_input_types(tuple[str, tuple[str, str]])
 @beam.typehints.with_output_types(tuple[str, DownloadedChunkPayload])
 class DownloadAudioFn(beam.DoFn):
     """A stateless DoFn that downloads audio chunks from GCS based on the provided GCS URI."""
@@ -522,13 +530,13 @@ class DownloadAudioFn(beam.DoFn):
     @override
     def process(  # type: ignore[override] # pyright: ignore[reportIncompatibleMethodOverride]
         self,
-        element: tuple[str, str],
+        element: tuple[str, tuple[str, str]],
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
     ) -> Iterator[
         tuple[str, DownloadedChunkPayload] | beam.pvalue.TaggedOutput
     ]:
         """Downloads the raw audio bytes from GCS and passes them to the acoustic processor."""
-        feed_id, gcs_path = element
+        feed_id, (session_id, gcs_path) = element
         if not self.audio_processor:
             msg = "AudioProcessor not initialized. setup() must be called."
             raise RuntimeError(msg)
@@ -540,7 +548,10 @@ class DownloadAudioFn(beam.DoFn):
                 gcs_path, start_ms
             )
 
-            yield (feed_id, DownloadedChunkPayload(gcs_path, chunk_data))
+            yield (
+                feed_id,
+                DownloadedChunkPayload(gcs_path, chunk_data, session_id),
+            )
         except FileNotFoundError:
             logger.info(
                 "GCS object not found yet. Re-raising to NACK Pub/Sub message."

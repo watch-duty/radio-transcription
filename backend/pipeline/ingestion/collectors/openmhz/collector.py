@@ -14,6 +14,9 @@ from backend.pipeline.ingestion.collectors.openmhz._ws_transport import (
     websocket_transport,
 )
 from backend.pipeline.ingestion.models import CapturedChunk
+from backend.pipeline.ingestion.slo_contract import (
+    EVENT_TYPE_CALL_DOWNLOAD_FAILED,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -130,6 +133,8 @@ async def openmhz_collector(
                     short_name, url_base, shutdown_event
                 ) as events:
                     async for call in events:
+                        # SLO: receipt_time stamp — OpenMHZ WS event arrived
+                        receipt_time = datetime.datetime.now(datetime.UTC)
                         consecutive_ws_failures = 0
 
                         if call.length_sec == 0:
@@ -139,6 +144,18 @@ async def openmhz_collector(
                             download_session, call.url, shutdown_event
                         )
                         if m4a_bytes is None:
+                            if not shutdown_event.is_set():
+                                # SLO: call_download_failed emit — OpenMHZ _download_m4a returned None
+                                logger.warning(
+                                    "Call download failed",
+                                    extra={
+                                        "json_fields": {
+                                            "event_type": EVENT_TYPE_CALL_DOWNLOAD_FAILED,
+                                            "feed_id": str(feed["id"]),
+                                            "source_type": feed["source_type"],
+                                        },
+                                    },
+                                )
                             continue
 
                         logger.debug(
@@ -154,6 +171,7 @@ async def openmhz_collector(
                             chunk_end_time=call.time
                             + datetime.timedelta(seconds=call.length_sec),
                             session_id=connection_session_id,
+                            receipt_time=receipt_time,
                         )
             except Exception:
                 logger.warning(

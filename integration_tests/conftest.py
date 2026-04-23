@@ -55,8 +55,11 @@ def postgres_container() -> Generator[dict[str, Any]]:
             password="postgres",
             database="postgres",
         )
-        # Apply schema files in order
-        sql_files = sorted(_SQL_DIR.glob("*.sql"))
+        # Apply schema files in order, skipping pg_cron (extension is
+        # production-only; requires alloydb.enable_pg_cron=on database flag).
+        sql_files = sorted(
+            f for f in _SQL_DIR.glob("*.sql") if "pg_cron" not in f.name
+        )
         for sql_file in sql_files:
             await conn.execute(sql_file.read_text())
         await conn.close()

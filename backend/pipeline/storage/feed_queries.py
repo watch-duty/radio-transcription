@@ -71,7 +71,7 @@ RELEASE_FEED_SQL = """\
 UPDATE feeds
 SET worker_id = NULL,
     status = 'unclaimed'::feed_status,
-    last_heartbeat = NOW()
+    unclaimed_since = NOW()
 WHERE id = $1 AND worker_id = $2 AND fencing_token = $3
 """
 
@@ -79,7 +79,7 @@ RELEASE_FEEDS_BATCH_SQL = """\
 UPDATE feeds
 SET worker_id = NULL,
     status = 'unclaimed'::feed_status,
-    last_heartbeat = NOW()
+    unclaimed_since = NOW()
 WHERE worker_id = $1 AND status = 'active'::feed_status
 """
 
