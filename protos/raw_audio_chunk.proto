@@ -22,4 +22,7 @@ message AudioChunk {
 
   // The ID used for mapping the feed ID within the application.
   string external_id = 6;
+
+  // The unique identifier of the radio feed (formatted as a RFC 4122 UUID).
+  string feed_id = 7;
 }
