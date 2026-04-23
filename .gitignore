@@ -77,3 +77,6 @@ dist/
 # Python Tools
 .pytest_cache/
 .ruff_cache/
+
+# GSD workflow (user chose commit_docs=false on 2026-04-21)
+.planning/
