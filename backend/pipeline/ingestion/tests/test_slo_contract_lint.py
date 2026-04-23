@@ -237,8 +237,7 @@ class TestTerraformSnapshotMatchesSloContract(unittest.TestCase):
         Accepts both the canonical ISO-dashed format
         (HAND_EXTRACTED_YYYY-MM-DD) and the legacy underscore format
         (HAND_EXTRACTED_YYYY_MM_DD) via .replace("_", "-") on the date
-        portion. Failure message points to scripts/README.md for the
-        refresh procedure (authored in plan 04-03).
+        portion.
         """
         tag = self.snapshot["source_commit"]
         if not tag.startswith(_SOURCE_COMMIT_PREFIX):
@@ -262,8 +261,7 @@ class TestTerraformSnapshotMatchesSloContract(unittest.TestCase):
             self.fail(
                 f"Snapshot is {age_days} days old "
                 f"(>{_STALENESS_FAIL_DAYS}) — refresh from ops-team "
-                f"Terraform repo and update source_commit. "
-                f"See scripts/README.md."
+                f"Terraform repo and update source_commit."
             )
         if age_days > _STALENESS_WARN_DAYS:
             logging.getLogger(__name__).warning(
