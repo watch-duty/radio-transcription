@@ -127,7 +127,7 @@ export function TranscriptView({
     data: listTranscriptsResponse,
     fetchNextPage: fetchOlderTranscripts,
     hasNextPage: hasOlderTranscripts,
-    fetchPreviousPage: fetchNewerTrnscripts,
+    fetchPreviousPage: fetchNewerTranscripts,
     hasPreviousPage: hasNewerTranscripts,
     isFetchingNextPage: isFetchingOlderTranscripts,
     isFetchingPreviousPage: isFetchingNewerTranscripts,
@@ -660,7 +660,7 @@ export function TranscriptView({
                     </ListItem>
                   );
                 }}
-                itemContent={(index, groupIndex, transcript) => {
+                itemContent={(index, _groupIndex, transcript) => {
                   return (
                     <TranscriptRow
                       key={transcript.transmissionId}
@@ -697,7 +697,7 @@ export function TranscriptView({
                           <Button
                             variant="text"
                             onClick={async () => {
-                              const result = await fetchNewerTrnscripts();
+                              const result = await fetchNewerTranscripts();
                               if (
                                 result.data &&
                                 (

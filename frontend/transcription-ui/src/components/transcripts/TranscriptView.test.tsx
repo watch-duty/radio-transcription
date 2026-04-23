@@ -57,17 +57,18 @@ interface MockGroupedVirtuosoProps {
 }
 
 vi.mock('react-virtuoso', () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-ignore
   const { forwardRef, useImperativeHandle } = require('react');
 
   const Virtuoso = forwardRef<MockVirtuosoHandle, MockVirtuosoProps>(
-    ({ data, itemContent }, ref) => {
+    ({ data, itemContent }: MockVirtuosoProps, ref: React.ForwardedRef<MockVirtuosoHandle>) => {
       useImperativeHandle(ref, () => ({
         scrollToIndex: mockScrollToIndex,
       }));
       return (
         <div data-testid="virtuoso">
-          {(data || []).map((item, index) => itemContent(index, item))}
+          {(data || []).map((item: unknown, index: number) => itemContent(index, item))}
         </div>
       );
     }
@@ -76,7 +77,7 @@ vi.mock('react-virtuoso', () => {
   const GroupedVirtuoso = forwardRef<
     MockVirtuosoHandle,
     MockGroupedVirtuosoProps
-  >(({ data, groupCounts, groupContent, itemContent, components }, ref) => {
+  >(({ data, groupCounts, groupContent, itemContent, components }: MockGroupedVirtuosoProps, ref: React.ForwardedRef<MockVirtuosoHandle>) => {
     useImperativeHandle(ref, () => ({
       scrollToIndex: mockScrollToIndex,
     }));
