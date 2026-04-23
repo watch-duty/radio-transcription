@@ -4,6 +4,7 @@ import base64
 import datetime
 import uuid
 from dataclasses import dataclass
+from enum import Enum
 
 import asyncpg
 import asyncpg.exceptions
@@ -14,6 +15,11 @@ from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
 )
 
 from . import transcript_queries
+
+
+class SortOrder(str, Enum):
+    ASC = "asc"
+    DESC = "desc"
 
 
 @dataclass
@@ -178,7 +184,7 @@ class TranscriptStore:
         next_token: str | None = None,
         start_time: datetime.datetime | None = None,
         end_time: datetime.datetime | None = None,
-        order: str = "desc",
+        order: SortOrder | str = SortOrder.DESC,
     ) -> PaginatedTranscripts:
         """Lists transcripts for a specific feed ID with pagination and time window."""
         try:
@@ -228,7 +234,7 @@ class TranscriptStore:
         next_token: str | None = None,
         start_time: datetime.datetime | None = None,
         end_time: datetime.datetime | None = None,
-        order: str = "desc",
+        order: SortOrder | str = SortOrder.DESC,
     ) -> PaginatedTranscripts:
         """Lists all transcripts with pagination and time window."""
         cursor_ts = None

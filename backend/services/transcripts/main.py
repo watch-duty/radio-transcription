@@ -11,7 +11,7 @@ from backend.pipeline.storage.connection import (
     close_pool,
     create_pool_with_retry,
 )
-from backend.pipeline.storage.transcript_store import TranscriptStore
+from backend.pipeline.storage.transcript_store import SortOrder, TranscriptStore
 
 from .models import ListTranscriptsResponse, Transcript
 from .service import TranscriptService
@@ -93,7 +93,7 @@ async def list_transcripts(
     next_token: str | None = None,
     start_time: datetime.datetime | None = None,
     end_time: datetime.datetime | None = None,
-    order: str = "desc",
+    order: SortOrder = SortOrder.DESC,
 ) -> ListTranscriptsResponse:
     """List transcripts, optionally filtered by feed ID, with pagination and time window.
 

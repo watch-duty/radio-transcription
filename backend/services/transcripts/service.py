@@ -11,10 +11,10 @@ from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
 
 from .models import ListTranscriptsResponse, Transcript
 
+from backend.pipeline.storage.transcript_store import SortOrder, TranscriptStore
+
 if TYPE_CHECKING:
     import datetime
-
-    from backend.pipeline.storage.transcript_store import TranscriptStore
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ class TranscriptService:
         next_token: str | None = None,
         start_time: datetime.datetime | None = None,
         end_time: datetime.datetime | None = None,
-        order: str = "desc",
+        order: SortOrder | str = SortOrder.DESC,
     ) -> ListTranscriptsResponse:
         """Lists all transcripts with pagination and time window."""
         result = await self._store.list_transcripts(
@@ -89,7 +89,7 @@ class TranscriptService:
         next_token: str | None = None,
         start_time: datetime.datetime | None = None,
         end_time: datetime.datetime | None = None,
-        order: str = "desc",
+        order: SortOrder | str = SortOrder.DESC,
     ) -> ListTranscriptsResponse:
         """Lists transcripts filtered by feed ID with pagination and time window."""
         result = await self._store.list_transcripts_by_feed_id(
