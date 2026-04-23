@@ -144,12 +144,13 @@ variable "connection_pooling_enabled" {
 }
 
 variable "connection_pooling_flags" {
-  description = "Flags for Managed Connection Pooling configuration. Common keys: pool_mode (transaction|session), max_pool_size, max_client_connections, query_wait_timeout."
+  description = "Flags for Managed Connection Pooling configuration. Common keys: pool_mode (transaction|session), default_pool_size, max_client_conn, client_idle_timeout, query_wait_timeout."
   type        = map(string)
   default = {
-    pool_mode              = "transaction"
-    max_pool_size          = "8"
-    max_client_connections = "800"
+    pool_mode           = "transaction"
+    default_pool_size   = "160"
+    max_client_conn     = "800"
+    client_idle_timeout = "120"
   }
 }
 
