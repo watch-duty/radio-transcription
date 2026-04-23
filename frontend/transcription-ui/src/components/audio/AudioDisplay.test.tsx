@@ -261,7 +261,7 @@ describe('AudioDisplay', () => {
       const [h3_30, m3_30] = labels30[3].split(':').map(Number);
       let diff = h3_30 * 60 + m3_30 - (h0_30 * 60 + m0_30);
       if (diff < 0) diff += 24 * 60;
-      expect(diff).toBe(MAX_WINDOW_DURATION_MS);
+      expect(diff).toBe(MAX_WINDOW_DURATION_MS / 60 / 1000);
     });
   });
 });

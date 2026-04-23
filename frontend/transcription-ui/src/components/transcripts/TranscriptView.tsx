@@ -62,6 +62,11 @@ export function TranscriptView({
 }: TranscriptViewProps) {
   const theme = useTheme();
   const { token } = useAuth();
+
+  if (!token) {
+    return null;
+  }
+
   const queryClient = useQueryClient();
 
   const [searchParams, setSearchParams] = useSearchParams();
@@ -100,7 +105,7 @@ export function TranscriptView({
     isFetching: feedsFetching,
   } = useQuery({
     queryKey: ['listFeeds', token],
-    queryFn: () => listFeeds(token!),
+    queryFn: () => listFeeds(token),
     enabled: !!token,
     refetchOnWindowFocus: false,
   });
@@ -165,7 +170,7 @@ export function TranscriptView({
       const { startTime, endTime, nextToken, order } = pageParam;
       const response = await listTranscripts(
         searchedFeedId,
-        token!,
+        token,
         undefined,
         nextToken,
         startTime,
