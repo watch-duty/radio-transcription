@@ -169,7 +169,6 @@ class StitchAudioFn(beam.DoFn):
             transmission_id = generate_transmission_id(
                 action.feed_id,
                 action.speech_time_range.start_ms,
-                action.speech_time_range.end_ms,
             )
             logger.info(
                 "Generated transmission_id: %s for feed: %s",
@@ -397,7 +396,6 @@ class StitchAudioFn(beam.DoFn):
                 transmission_id = generate_transmission_id(
                     key,
                     int(start_time_ms),
-                    int(end_time_ms),
                 )
 
                 yield (
@@ -513,9 +511,8 @@ class StatelessStitchAudioFn(beam.DoFn):
                             contributing_audio_uris=action.contributing_audio_uris,
                             time_range=action.time_range,
                             transmission_id=generate_transmission_id(
-                                action.feed_id,
+                                _session_id,
                                 action.speech_time_range.start_ms,
-                                action.speech_time_range.end_ms,
                             ),
                             feed_metadata=action.feed_metadata,
                             missing_prior_context=action.missing_prior_context
@@ -550,9 +547,8 @@ class StatelessStitchAudioFn(beam.DoFn):
                         end_ms=ctx.last_segment_end_time_ms,
                     ),
                     transmission_id=generate_transmission_id(
-                        ctx.feed_id,
+                        _session_id,
                         ctx.transmission_start_time_ms,
-                        ctx.last_segment_end_time_ms,
                     ),
                     feed_metadata=ctx.feed_metadata,
                     missing_prior_context=ctx.missing_prior_context or is_late,

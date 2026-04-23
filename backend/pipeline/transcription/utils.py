@@ -29,10 +29,7 @@ class ConfigBase(pydantic.BaseModel):
             raise ValueError(msg) from e
 
 
-def generate_transmission_id(feed_id: str, start_ms: int, end_ms: int) -> str:
-    """Creates a deterministic UUID string using uuid5 to ensure pipeline retries produce the exact same ID.
-
-    Uses raw VAD start and end times to ensure stability across pre-roll/post-roll configuration changes.
-    """
-    deterministic_id = f"{feed_id}_{start_ms}_{end_ms}"
+def generate_transmission_id(session_id: str, start_ms: int) -> str:
+    """Creates a deterministic UUID string using uuid5 to ensure pipeline retries produce the exact same ID."""
+    deterministic_id = f"{session_id}_{start_ms}"
     return str(uuid.uuid5(uuid.NAMESPACE_OID, deterministic_id))
