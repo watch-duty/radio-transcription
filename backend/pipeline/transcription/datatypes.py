@@ -110,6 +110,7 @@ class TransmissionContext:
     missing_post_context: bool = False
     buffer_duration_ms: int = 0
     order_timer_active: bool = False
+    out_of_order_buffer: list[BufferedChunk] = field(default_factory=list)
 
 
 @dataclass

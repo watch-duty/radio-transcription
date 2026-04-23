@@ -101,7 +101,6 @@ def process_ordering(
     element: tuple[str, ChunkMetadata],
     timestamp: Timestamp,
     curr_context: TransmissionContext,
-    out_of_order_buffer_state: BagRuntimeState,
     out_of_order_timer: RuntimeTimer,
     order_config: OrderRestorerConfig,
 ) -> tuple[list[BufferedChunk], TransmissionContext, bool]:
@@ -115,12 +114,11 @@ def process_ordering(
             f"[{feed_id}] Session ID changed from {curr_context.session_id} to {metadata.session_id}. Resetting state."
         )
         session_changed = True
-        out_of_order_buffer_state.clear()
         out_of_order_timer.clear()
         curr_context = TransmissionContext(session_id=metadata.session_id)
 
     sequence_buffer = SequenceBuffer(order_config)
-    buffer_elements = list(out_of_order_buffer_state.read())
+    buffer_elements = curr_context.out_of_order_buffer
     current_ts_ms = int(float(timestamp) * MS_PER_SECOND)
 
     # Process chunk through jitter buffer
@@ -140,12 +138,10 @@ def process_ordering(
 
     # Update jitter buffer state
     curr_context = replace(
-        curr_context, expected_next_chunk_start_ms=new_expected_next_ts
+        curr_context,
+        expected_next_chunk_start_ms=new_expected_next_ts,
+        out_of_order_buffer=new_buffer_elements,
     )
-
-    out_of_order_buffer_state.clear()
-    for chunk in new_buffer_elements:
-        out_of_order_buffer_state.add(chunk)
 
     # Handle Timer for Gap Timeout
     if new_buffer_elements and not curr_context.order_timer_active:
@@ -170,12 +166,6 @@ class OrderedStitchAudioFn(beam.DoFn):
     """
 
     # --- State Specs ---
-
-    # From RestoreOrderFn
-    OUT_OF_ORDER_BUFFER_SPEC = BagStateSpec(
-        "out_of_order_buffer", beam.coders.PickleCoder()
-    )
-    OUT_OF_ORDER_BUFFER_STATE = beam.DoFn.StateParam(OUT_OF_ORDER_BUFFER_SPEC)
 
     # From StitchAudioFn
     TRANSMISSION_BUFFER_SPEC = BagStateSpec(
@@ -227,7 +217,6 @@ class OrderedStitchAudioFn(beam.DoFn):
         self,
         element: tuple[str, ChunkMetadata],
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
-        out_of_order_buffer_state: BagRuntimeState = OUT_OF_ORDER_BUFFER_STATE,  # type: ignore
         transmission_buffer_state: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         out_of_order_timer: RuntimeTimer = OUT_OF_ORDER_TIMER,  # type: ignore
@@ -246,7 +235,6 @@ class OrderedStitchAudioFn(beam.DoFn):
             element,
             timestamp,
             curr_context,
-            out_of_order_buffer_state,
             out_of_order_timer,
             self.order_config,
         )
@@ -462,7 +450,6 @@ class OrderedStitchAudioFn(beam.DoFn):
     def handle_gap_timeout(
         self,
         feed_id: str = beam.DoFn.KeyParam,  # type: ignore
-        out_of_order_buffer_state: BagRuntimeState = OUT_OF_ORDER_BUFFER_STATE,  # type: ignore
         transmission_buffer_state: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
@@ -475,7 +462,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         curr_context = replace(curr_context, order_timer_active=False)
         transmission_context_state.write(curr_context)
 
-        buffer_elements = list(out_of_order_buffer_state.read())
+        buffer_elements = curr_context.out_of_order_buffer
         if buffer_elements:
             sorted_elements = sorted(buffer_elements)
             new_expected = sorted_elements[0].timestamp_ms
@@ -502,13 +489,11 @@ class OrderedStitchAudioFn(beam.DoFn):
             )
 
             curr_context = replace(
-                curr_context, expected_next_chunk_start_ms=new_expected_next_ts
+                curr_context,
+                expected_next_chunk_start_ms=new_expected_next_ts,
+                out_of_order_buffer=new_buffer_elements,
             )
             transmission_context_state.write(curr_context)
-
-            out_of_order_buffer_state.clear()
-            for chunk in new_buffer_elements:
-                out_of_order_buffer_state.add(chunk)
 
             # Handle ready elements
             if elements_to_emit:
@@ -631,11 +616,6 @@ class OrderedBypassFn(beam.DoFn):
     but bypasses the stitching state machine, yielding FlushRequests immediately.
     """
 
-    OUT_OF_ORDER_BUFFER_SPEC = BagStateSpec(
-        "out_of_order_buffer", beam.coders.PickleCoder()
-    )
-    OUT_OF_ORDER_BUFFER_STATE = beam.DoFn.StateParam(OUT_OF_ORDER_BUFFER_SPEC)
-
     TRANSMISSION_CONTEXT_SPEC = ReadModifyWriteStateSpec(
         "transmission_context", beam.coders.PickleCoder()
     )
@@ -667,7 +647,6 @@ class OrderedBypassFn(beam.DoFn):
         self,
         element: tuple[str, ChunkMetadata],
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
-        out_of_order_buffer_state: BagRuntimeState = OUT_OF_ORDER_BUFFER_STATE,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         out_of_order_timer: RuntimeTimer = OUT_OF_ORDER_TIMER,  # type: ignore
     ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
@@ -682,7 +661,6 @@ class OrderedBypassFn(beam.DoFn):
             element,
             timestamp,
             curr_context,
-            out_of_order_buffer_state,
             out_of_order_timer,
             self.order_config,
         )
@@ -746,7 +724,6 @@ class OrderedBypassFn(beam.DoFn):
     def handle_gap_timeout(
         self,
         feed_id: str = beam.DoFn.KeyParam,  # type: ignore
-        out_of_order_buffer_state: BagRuntimeState = OUT_OF_ORDER_BUFFER_STATE,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         out_of_order_timer: RuntimeTimer = OUT_OF_ORDER_TIMER,  # type: ignore
     ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
@@ -757,7 +734,7 @@ class OrderedBypassFn(beam.DoFn):
         curr_context = replace(curr_context, order_timer_active=False)
         transmission_context_state.write(curr_context)
 
-        buffer_elements = list(out_of_order_buffer_state.read())
+        buffer_elements = curr_context.out_of_order_buffer
         if buffer_elements:
             sorted_elements = sorted(buffer_elements)
             new_expected = sorted_elements[0].timestamp_ms
@@ -784,13 +761,11 @@ class OrderedBypassFn(beam.DoFn):
             )
 
             curr_context = replace(
-                curr_context, expected_next_chunk_start_ms=new_expected_next_ts
+                curr_context,
+                expected_next_chunk_start_ms=new_expected_next_ts,
+                out_of_order_buffer=new_buffer_elements,
             )
             transmission_context_state.write(curr_context)
-
-            out_of_order_buffer_state.clear()
-            for chunk in new_buffer_elements:
-                out_of_order_buffer_state.add(chunk)
 
             yield from self._download_and_yield(
                 elements_to_emit, feed_id, curr_context.session_id or "unknown"
