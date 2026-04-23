@@ -16,7 +16,7 @@ class MonitoringClient:
     """
 
     def __init__(self, project_id: str) -> None:
-        self._project_id = project_id
+        self.project_id = project_id
         self._client: monitoring_v3.MetricServiceAsyncClient | None = None
 
     def _get_client(self) -> monitoring_v3.MetricServiceAsyncClient:
@@ -30,15 +30,26 @@ class MonitoringClient:
         metric_type: str,
         labels: dict[str, str],
         value: int,
+        *,
+        resource_type: str = "global",
+        resource_labels: dict[str, str],
     ) -> None:
-        """Write a single GAUGE INT64 data point to Cloud Monitoring."""
+        """Write a single GAUGE INT64 data point to Cloud Monitoring.
+
+        Args:
+            metric_type: e.g. ``custom.googleapis.com/feeds/quarantine_events``.
+            labels: metric labels (callers enforce allowlist; cardinality-sensitive).
+            value: int64 GAUGE value.
+            resource_type: monitored-resource type. Defaults to ``"global"``.
+                Pass ``"gce_instance"`` for per-VM metrics.
+            resource_labels: resource labels (required). Caller owns the full
+                label dict — the client does not inject any defaults.
+        """
         series = monitoring_v3.TimeSeries()
         series.metric.type = metric_type
         series.metric.labels.update(labels)
-        # "global" tracks the feed state regardless of which worker instance
-        # recorded it.  Use "gce_instance" if per-worker attribution is needed.
-        series.resource.type = "global"
-        series.resource.labels["project_id"] = self._project_id
+        series.resource.type = resource_type
+        series.resource.labels.update(resource_labels)
 
         now = time.time()
         point = monitoring_v3.Point()
@@ -52,6 +63,6 @@ class MonitoringClient:
         series.points = [point]
 
         await self._get_client().create_time_series(
-            name=f"projects/{self._project_id}",
+            name=f"projects/{self.project_id}",
             time_series=[series],
         )

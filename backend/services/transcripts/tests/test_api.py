@@ -10,7 +10,10 @@ from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
-from backend.pipeline.storage.transcript_store import PaginatedTranscripts
+from backend.pipeline.storage.transcript_store import (
+    PaginatedTranscripts,
+    SortOrder,
+)
 from backend.services.transcripts.main import app
 from backend.services.transcripts.service import TranscriptService
 
@@ -167,6 +170,7 @@ class TestTranscriptsAPI(unittest.TestCase):
             next_token=None,
             start_time=None,
             end_time=None,
+            order=SortOrder.DESC,
         )
 
     def test_delete_transcript_success(self) -> None:

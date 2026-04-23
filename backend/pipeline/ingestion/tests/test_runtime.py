@@ -57,9 +57,15 @@ def _mock_pubsub_publish(message_id: str = "test-message-id") -> mock._patch:
 
 
 def _mock_upload_audio(gcs_path: str = "gs://b/p") -> mock._patch:
-    """Patch upload_audio to return a deterministic GCS path."""
+    """Patch upload_staged_audio to return a deterministic GCS path.
+
+    _process_feed calls gcp_helper.upload_staged_audio (the entry point
+    the production pipeline uses), not the inner gcp_helper.upload_audio.
+    Patch the entry point directly so tests assert behavior at the same
+    boundary the code actually invokes.
+    """
     return mock.patch(
-        "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.upload_audio",
+        "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.upload_staged_audio",
         new_callable=mock.AsyncMock,
         return_value=gcs_path,
     )
@@ -941,7 +947,7 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
 
         with (
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.upload_audio",
+                "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.upload_staged_audio",
                 upload_mock,
             ),
             _mock_pubsub_publish(),
@@ -968,7 +974,7 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
 
         with (
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.upload_audio",
+                "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.upload_staged_audio",
                 mock.AsyncMock(return_value="gs://b/p"),
             ),
             _mock_pubsub_publish(),
@@ -1001,7 +1007,7 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
 
         with (
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.upload_audio",
+                "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.upload_staged_audio",
                 mock.AsyncMock(return_value="gs://b/p"),
             ),
             _mock_pubsub_publish(),

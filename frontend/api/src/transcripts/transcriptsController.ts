@@ -59,6 +59,7 @@ export class ListTranscriptsQueryParams {
   nextToken?: string;
   startTime?: string;
   endTime?: string;
+  order?: 'asc' | 'desc';
 }
 
 @Route('api/v1/transcripts')
@@ -81,6 +82,7 @@ export class TranscriptsController extends Controller {
       if (query.nextToken) queryParams.append('next_token', query.nextToken);
       if (query.startTime) queryParams.append('start_time', query.startTime);
       if (query.endTime) queryParams.append('end_time', query.endTime);
+      if (query.order) queryParams.append('order', query.order);
 
       const auth = new GoogleAuth();
       const client = await auth.getIdTokenClient(TRANSCRIPTS_API_URL!);

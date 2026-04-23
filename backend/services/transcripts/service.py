@@ -8,13 +8,12 @@ from google.protobuf import json_format
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
+from backend.pipeline.storage.transcript_store import SortOrder, TranscriptStore
 
 from .models import ListTranscriptsResponse, Transcript
 
 if TYPE_CHECKING:
     import datetime
-
-    from backend.pipeline.storage.transcript_store import TranscriptStore
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +59,7 @@ class TranscriptService:
         next_token: str | None = None,
         start_time: datetime.datetime | None = None,
         end_time: datetime.datetime | None = None,
+        order: SortOrder | str = SortOrder.DESC,
     ) -> ListTranscriptsResponse:
         """Lists all transcripts with pagination and time window."""
         result = await self._store.list_transcripts(
@@ -67,6 +67,7 @@ class TranscriptService:
             next_token=next_token,
             start_time=start_time,
             end_time=end_time,
+            order=order,
         )
         return ListTranscriptsResponse(
             transcripts=[
@@ -87,6 +88,7 @@ class TranscriptService:
         next_token: str | None = None,
         start_time: datetime.datetime | None = None,
         end_time: datetime.datetime | None = None,
+        order: SortOrder | str = SortOrder.DESC,
     ) -> ListTranscriptsResponse:
         """Lists transcripts filtered by feed ID with pagination and time window."""
         result = await self._store.list_transcripts_by_feed_id(
@@ -95,6 +97,7 @@ class TranscriptService:
             next_token=next_token,
             start_time=start_time,
             end_time=end_time,
+            order=order,
         )
         return ListTranscriptsResponse(
             transcripts=[

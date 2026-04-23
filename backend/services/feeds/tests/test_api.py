@@ -116,6 +116,34 @@ class TestFeedsAPI(unittest.TestCase):
         response = self.client.delete(f"/v1/feeds/{feed_id}")
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
+    def test_reset_feed_success(self) -> None:
+        """Test resetting a feed successfully."""
+        feed_id = uuid.uuid4()
+        mock_feed = Feed(
+            id=feed_id,
+            name="Test Feed",
+            source_type=SourceType.BCFY_FEEDS,
+            source_feed_id="123",
+            external_id="ext_123",
+        )
+        self.mock_service.reset_feed.return_value = mock_feed
+
+        response = self.client.post(f"/v1/feeds/{feed_id}/reset")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertEqual(data["id"], str(feed_id))
+        self.mock_service.reset_feed.assert_called_once_with(str(feed_id))
+
+    def test_reset_feed_not_found(self) -> None:
+        """Test resetting a non-existent feed returns 404."""
+        feed_id = uuid.uuid4()
+        self.mock_service.reset_feed.return_value = None
+
+        response = self.client.post(f"/v1/feeds/{feed_id}/reset")
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
 
 if __name__ == "__main__":
     unittest.main()
