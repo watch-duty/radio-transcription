@@ -68,3 +68,14 @@ variable "enable_soft_delete" {
   type        = bool
   default     = true
 }
+
+variable "cors" {
+  description = "A list of CORS rules to apply to the bucket."
+  type = list(object({
+    origin          = list(string)
+    method          = optional(list(string))
+    response_header = optional(list(string))
+    max_age_seconds = optional(number)
+  }))
+  default = []
+}

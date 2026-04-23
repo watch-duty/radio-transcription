@@ -43,9 +43,10 @@ from backend.pipeline.transcription.transforms import (
     AddEventTimestamp,
     BypassStitchingFn,
     DownloadAudioFn,
+    ExtractFeedMetadataFn,
     ParseAndKeyFn,
     RestoreOrderFn,
-    SerializeToPubSubMessageFn,
+    SerializeAndEnrichFn,
 )
 
 logger = logging.getLogger(__name__)
@@ -97,6 +98,11 @@ def get_pipeline(
     parsed = messages | "ParseAndKey" >> beam.ParDo(
         ParseAndKeyFn()
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+
+    # Extract feed metadata for enrichment
+    feed_metadata = parsed[MAIN_TAG] | "ExtractFeedMetadata" >> beam.ParDo(
+        ExtractFeedMetadataFn()
+    )
 
     timestamped = parsed[MAIN_TAG] | "AddTimestamp" >> beam.ParDo(
         AddEventTimestamp()
@@ -163,9 +169,20 @@ def get_pipeline(
         )
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
+    # Key transcripts by feed_id
+    keyed_transcripts = transcripts.main | "KeyTranscripts" >> beam.Map(
+        lambda res: (res.feed_id, res)
+    )
+
+    # Flatten with feed metadata
+    combined_for_enrichment = (
+        feed_metadata,
+        keyed_transcripts,
+    ) | "FlattenForEnrichment" >> beam.Flatten()
+
     # Convert the native TranscriptionResult into a serialized Protobuf and wrap in a Pub/Sub message
-    serialized = transcripts.main | "Serialize" >> beam.ParDo(
-        SerializeToPubSubMessageFn()
+    serialized = combined_for_enrichment | "SerializeAndEnrich" >> beam.ParDo(
+        SerializeAndEnrichFn()
     )
     serialized | "WriteToPubSub" >> WriteToPubSub(
         topic=options.output_topic,

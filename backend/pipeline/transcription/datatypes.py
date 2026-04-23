@@ -57,6 +57,13 @@ class ChunkMetadata:
 
 
 @dataclass(frozen=True)
+class FeedMetadata:
+    """Metadata about a feed, used for enriching the output."""
+
+    feed_name: str
+
+
+@dataclass(frozen=True)
 class DownloadedChunkPayload:
     """Payload for a downloaded audio chunk with its metadata."""
 

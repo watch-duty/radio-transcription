@@ -491,13 +491,15 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """Feed without icecast properties -> ValueError, no GCS upload."""
-        # Insert feed WITHOUT source_feed_id (no feed_properties row)
-        await self._insert_feed("no-url-feed", source_feed_id=None)
+        # Insert a valid feed
+        feed_id = await self._insert_feed("no-url-feed")
         feed = await self.store.lease_feed(self.worker_id)
         if feed is None:
             msg = "Expected a LeasedFeed, got None"
             raise AssertionError(msg)
-        self.assertIsNone(feed["source_feed_id"])
+
+        # Mock missing source_feed_id on the loaded feed object
+        feed["source_feed_id"] = None
 
         shutdown = asyncio.Event()
         with self.assertRaises(ValueError) as ctx:
@@ -511,7 +513,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertIn("missing source_feed_id", str(ctx.exception))
 
         # Assert: DB state unchanged (still active, no bookmark)
-        row = await self._get_feed_row(feed["id"])
+        row = await self._get_feed_row(feed_id)
         self.assertEqual(row["status"], "active")
         self.assertIsNone(row["last_processed_filename"])
         self.assertIsNone(row["last_bookmark_time"])

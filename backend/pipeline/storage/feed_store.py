@@ -15,6 +15,7 @@ from backend.pipeline.storage.feed_queries import (
     RELEASE_FEEDS_BATCH_SQL,
     RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
     REPORT_FAILURE_SQL,
+    RESET_FEED_SQL,
     UPDATE_PROGRESS_SQL,
 )
 
@@ -54,6 +55,7 @@ class LeasedFeed(TypedDict):
 
     id: uuid.UUID
     name: str
+    external_id: str
     source_type: SourceType
     last_processed_filename: str | None
     last_bookmark_time: datetime.datetime | None
@@ -168,6 +170,7 @@ class FeedStore:
         return LeasedFeed(
             id=row["id"],
             name=row["name"],
+            external_id=row["external_id"],
             source_type=source_type,
             last_processed_filename=row["last_processed_filename"],
             last_bookmark_time=row["last_bookmark_time"],
@@ -412,6 +415,7 @@ class FeedStore:
                 LeasedFeed(
                     id=row["id"],
                     name=row["name"],
+                    external_id=row["external_id"],
                     source_type=source_type,
                     last_processed_filename=row["last_processed_filename"],
                     last_bookmark_time=row["last_bookmark_time"],
@@ -490,3 +494,22 @@ class FeedStore:
         """
         result = await self._pool.execute(DELETE_FEED_SQL, feed_id)
         return result == "DELETE 1"
+
+    async def reset_feed(self, feed_id: uuid.UUID) -> Feed | None:
+        """Reset a feed to an unclaimed, unassigned state.
+
+        Sets ``status = 'unclaimed'``, ``failure_count = 0``, clears
+        ``worker_id``, and updates ``last_heartbeat`` for the given feed.
+        Returns the updated feed, or ``None`` if no feed with that ID exists.
+
+        Args:
+            feed_id: UUID of the feed to reset.
+
+        Returns:
+            The updated ``Feed`` dict, or ``None`` if the feed was not found.
+
+        """
+        row = await self._pool.fetchrow(RESET_FEED_SQL, feed_id)
+        if row is None:
+            return None
+        return self._row_to_feed(row)

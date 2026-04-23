@@ -20,6 +20,7 @@ _WORKER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _LEASE_ROW = {
     "id": _FEED_ID,
     "name": "My Feed",
+    "external_id": "ext-id",
     "source_type": "bcfy_feeds",
     "last_processed_filename": None,
     "last_bookmark_time": None,
@@ -55,6 +56,7 @@ class TestLeaseFeed(unittest.IsolatedAsyncioTestCase):
         expected: LeasedFeed = {
             "id": _FEED_ID,
             "name": "My Feed",
+            "external_id": "ext-id",
             "source_type": SourceType.BCFY_FEEDS,
             "last_processed_filename": None,
             "last_bookmark_time": None,
@@ -399,6 +401,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
             {
                 "id": _FEED_ID,
                 "name": "Feed A",
+                "external_id": "ext-id",
                 "source_type": "bcfy_feeds",
                 "last_processed_filename": None,
                 "last_bookmark_time": None,
@@ -408,6 +411,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
             {
                 "id": _FEED_ID_B,
                 "name": "Feed B",
+                "external_id": "ext-id",
                 "source_type": "bcfy_feeds",
                 "last_processed_filename": "gs://bucket/path",
                 "last_bookmark_time": None,
@@ -735,6 +739,45 @@ class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
         result = await store.delete_feed(_FEED_ID)
 
         self.assertFalse(result)
+
+
+class TestResetFeed(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.reset_feed."""
+
+    async def test_reset_succeeds(self) -> None:
+        """The feed is reset successfully."""
+        row = {
+            "id": _FEED_ID,
+            "name": "My Feed",
+            "source_type": "bcfy_feeds",
+            "status": "quarantined",
+            "failure_count": 5,
+            "worker_id": None,
+            "last_heartbeat": None,
+            "last_processed_filename": None,
+            "last_bookmark_time": None,
+            "created_at": datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
+            "source_feed_id": "123",
+            "external_id": "ext_123",
+        }
+        pool = _make_pool(fetchrow_result=row)
+        store = FeedStore(pool)
+
+        result = await store.reset_feed(_FEED_ID)
+
+        self.assertIsNotNone(result)
+        pool.fetchrow.assert_called_once_with(
+            feed_queries.RESET_FEED_SQL, _FEED_ID
+        )
+
+    async def test_reset_fails_when_not_found(self) -> None:
+        """None is returned when no feed is found."""
+        pool = _make_pool(fetchrow_result=None)
+        store = FeedStore(pool)
+
+        result = await store.reset_feed(_FEED_ID)
+
+        self.assertIsNone(result)
 
 
 if __name__ == "__main__":

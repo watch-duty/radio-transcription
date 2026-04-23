@@ -32,9 +32,9 @@ leased AS (
 )
 SELECT leased.id, leased.name, leased.source_type,
        leased.last_processed_filename, leased.last_bookmark_time,
-       leased.fencing_token, fpi.source_feed_id
+       leased.fencing_token, fpi.source_feed_id, fpi.external_id
 FROM leased
-LEFT JOIN feed_properties fpi ON fpi.feed_id = leased.id
+JOIN feed_properties fpi ON fpi.feed_id = leased.id
 """
 
 UPDATE_PROGRESS_SQL = """\
@@ -115,9 +115,9 @@ leased AS (
 )
 SELECT leased.id, leased.name, leased.source_type,
        leased.last_processed_filename, leased.last_bookmark_time,
-       leased.fencing_token, fpi.source_feed_id
+       leased.fencing_token, fpi.source_feed_id, fpi.external_id
 FROM leased
-LEFT JOIN feed_properties fpi ON fpi.feed_id = leased.id
+JOIN feed_properties fpi ON fpi.feed_id = leased.id
 """
 
 REPORT_FAILURE_SQL = """\
@@ -159,7 +159,7 @@ SELECT f.id, f.name, f.source_type, f.status, f.failure_count,
        f.last_bookmark_time, f.created_at,
        fp.source_feed_id, fp.external_id
 FROM feeds f
-LEFT JOIN feed_properties fp ON f.id = fp.feed_id
+JOIN feed_properties fp ON f.id = fp.feed_id
 WHERE f.id = $1
 """
 
@@ -169,11 +169,27 @@ SELECT f.id, f.name, f.source_type, f.status, f.failure_count,
        f.last_bookmark_time, f.created_at,
        fp.source_feed_id, fp.external_id
 FROM feeds f
-LEFT JOIN feed_properties fp ON f.id = fp.feed_id
+JOIN feed_properties fp ON f.id = fp.feed_id
 ORDER BY f.created_at DESC
 """
 
 DELETE_FEED_SQL = """\
 DELETE FROM feeds
 WHERE id = $1
+"""
+
+RESET_FEED_SQL = """\
+WITH updated AS (
+    UPDATE feeds
+    SET status = 'unclaimed'::feed_status,
+        failure_count = 0,
+        worker_id = NULL,
+        last_heartbeat = NOW()
+    WHERE id = $1
+    RETURNING id, name, source_type, status, failure_count, worker_id,
+              last_heartbeat, last_processed_filename, last_bookmark_time, created_at
+)
+SELECT u.*, fp.source_feed_id, fp.external_id
+FROM updated u
+JOIN feed_properties fp ON fp.feed_id = u.id
 """

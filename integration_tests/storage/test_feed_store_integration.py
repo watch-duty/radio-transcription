@@ -32,9 +32,9 @@ async def _insert_feed(
     worker_id: uuid.UUID | None = None,
     last_heartbeat_age_seconds: int | None = None,
     source_feed_id: str | None = None,
-    external_id: str | None = None,
+    external_id: str = "ext_default",
 ) -> uuid.UUID:
-    """Insert a feed row and optionally a feed properties row."""
+    """Insert a feed row and its properties row."""
     heartbeat_expr = "NULL"
     if last_heartbeat_age_seconds is not None:
         heartbeat_expr = (
@@ -53,14 +53,18 @@ async def _insert_feed(
         str(worker_id) if worker_id else None,
     )
 
-    if source_feed_id is not None and external_id is not None:
-        await pool.execute(
-            "INSERT INTO feed_properties (feed_id, source_feed_id, external_id) "
-            "VALUES ($1::uuid, $2, $3)",
-            str(feed_id),
-            source_feed_id,
-            external_id,
-        )
+    # Ensure unique source_feed_id if not provided
+    if source_feed_id is None:
+        source_feed_id = f"src_{uuid.uuid4().hex[:8]}"
+
+    await pool.execute(
+        "INSERT INTO feed_properties (feed_id, source_feed_id, external_id, source_type) "
+        "VALUES ($1::uuid, $2, $3, $4)",
+        str(feed_id),
+        source_feed_id,
+        external_id,
+        source_type,
+    )
 
     return feed_id
 
@@ -759,3 +763,41 @@ async def test_delete_feed_returns_false_if_not_found(store: FeedStore) -> None:
     """delete_feed returns False for non-existent ID."""
     result = await store.delete_feed(uuid.uuid4())
     assert result is False
+
+
+# -- Tests: reset_feed ------------------------------------------------
+
+
+async def test_reset_feed_succeeds(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """reset_feed sets status to unclaimed, failure_count to 0, and clears worker_id."""
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool,
+        "Quarantined Feed",
+        status="quarantined",
+        failure_count=5,
+        worker_id=worker,
+        last_heartbeat_age_seconds=1000,
+    )
+
+    feed = await store.reset_feed(feed_id)
+
+    assert feed is not None
+    assert feed["id"] == feed_id
+    assert feed["status"] == "unclaimed"
+    assert feed["failure_count"] == 0
+    assert feed["worker_id"] is None
+
+    # Verify DB state
+    row = await _get_feed_status(db_pool, feed_id)
+    assert row["status"] == "unclaimed"
+    assert row["failure_count"] == 0
+    assert row["worker_id"] is None
+
+
+async def test_reset_feed_returns_none_if_not_found(store: FeedStore) -> None:
+    """reset_feed returns None for non-existent ID."""
+    result = await store.reset_feed(uuid.uuid4())
+    assert result is None
