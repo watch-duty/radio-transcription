@@ -61,10 +61,6 @@ export function TranscriptView({
   const theme = useTheme();
   const { token } = useAuth();
 
-  if (!token) {
-    return null;
-  }
-
   const queryClient = useQueryClient();
 
   const [searchParams, setSearchParams] = useSearchParams();
@@ -88,7 +84,8 @@ export function TranscriptView({
   const [highlightedTransmissionId, setHighlightedTransmissionId] = useState<
     string | null
   >(targetTransmissionId);
-  const [hideLoadNewerTranscriptsButton, setHideLoadNewerTranscriptsButton] = useState(false);
+  const [hideLoadNewerTranscriptsButton, setHideLoadNewerTranscriptsButton] =
+    useState(false);
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const hasScrolledToTarget = useRef(false);
@@ -99,7 +96,7 @@ export function TranscriptView({
     isFetching: feedsFetching,
   } = useQuery({
     queryKey: ['listFeeds', token],
-    queryFn: () => listFeeds(token),
+    queryFn: () => listFeeds(token!),
     enabled: !!token,
     refetchOnWindowFocus: false,
   });
@@ -153,23 +150,20 @@ export function TranscriptView({
     QueryKey,
     ListTranscriptsPage
   >({
-    queryKey: [
-      'listTranscripts',
-      token,
-      searchedFeedId,
-      searchedTimestamp,
-    ],
+    queryKey: ['listTranscripts', token, searchedFeedId, searchedTimestamp],
     queryFn: async ({ pageParam }) => {
       const { nextToken, order } = pageParam;
-      const originalTimestampMs = searchedTimestamp ? roundUpToNearestMinute(searchedTimestamp).getTime() : undefined;
+      const originalTimestampMs = searchedTimestamp
+        ? roundUpToNearestMinute(searchedTimestamp).getTime()
+        : undefined;
 
       const response = await listTranscripts(
         searchedFeedId,
-        token,
-        /*limit=*/undefined,
+        token ?? '',
+        /*limit=*/ undefined,
         nextToken,
-        /*startTime=*/order === 'asc' ? originalTimestampMs : undefined,
-        /*endTime=*/order === 'desc' ? originalTimestampMs : undefined,
+        /*startTime=*/ order === 'asc' ? originalTimestampMs : undefined,
+        /*endTime=*/ order === 'desc' ? originalTimestampMs : undefined,
         order
       );
 
@@ -187,7 +181,9 @@ export function TranscriptView({
     },
     getNextPageParam: (page) => {
       if (page.order !== 'desc') return undefined;
-      return page.nextToken ? { order: 'desc', nextToken: page.nextToken } : undefined;
+      return page.nextToken
+        ? { order: 'desc', nextToken: page.nextToken }
+        : undefined;
     },
     getPreviousPageParam: (page) => {
       if (!searchedTimestamp) return undefined;
@@ -197,7 +193,7 @@ export function TranscriptView({
         nextToken: page.order === 'asc' ? page.nextToken : undefined,
       };
     },
-    enabled: !!searchedFeedId,
+    enabled: !!token && !!searchedFeedId,
     refetchOnWindowFocus: false,
   });
 
@@ -247,7 +243,7 @@ export function TranscriptView({
     isLoading: rulesLoading,
   } = useQuery({
     queryKey: ['listRules', token],
-    queryFn: () => listRules(token!),
+    queryFn: () => listRules(token ?? ''),
     enabled: !!token,
     refetchOnWindowFocus: false,
   });
@@ -317,6 +313,10 @@ export function TranscriptView({
     }
     setHighlightedTransmissionId(transmissionId);
   };
+
+  if (!token) {
+    return null;
+  }
 
   return (
     <Box
@@ -413,7 +413,7 @@ export function TranscriptView({
                   'listTranscripts',
                   token,
                   searchedFeedId,
-                  searchedTimestamp
+                  searchedTimestamp,
                 ],
               });
             } else {
