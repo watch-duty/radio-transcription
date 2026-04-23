@@ -69,6 +69,7 @@ class DownloadedChunkPayload:
 
     gcs_uri: str
     chunk_data: AudioChunkData
+    session_id: str
 
 
 @dataclass(frozen=True)

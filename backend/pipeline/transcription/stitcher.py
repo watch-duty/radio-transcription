@@ -153,6 +153,7 @@ class StitchAudioFn(beam.DoFn):
         transmission_buffer: BagRuntimeState,
         stale_timer_event: RuntimeTimer,
         stale_timer_proc: RuntimeTimer,
+        session_id: str,
     ) -> Iterator[tuple[str, FlushRequest]]:
         """Clears current internal state arrays and yields a compiled FlushRequest downstream."""
         if "Maximum transmission duration" in action.reason:
@@ -172,7 +173,7 @@ class StitchAudioFn(beam.DoFn):
         if buffered_audio:
             # Create a deterministic UUID using our shared helper so that Beam retries produce the exact same ID
             transmission_id = generate_transmission_id(
-                action.feed_id,
+                session_id,
                 action.speech_time_range.start_ms,
             )
             logger.info(
@@ -271,6 +272,7 @@ class StitchAudioFn(beam.DoFn):
         ctx: StitcherContext,
         gcs_path: str,
         is_backfill: bool,
+        session_id: str,
     ) -> Iterator[tuple[str, FlushRequest]]:
         """Routes individual StateMachineAction results to appropriate Apache Beam side-effects and emitters."""
         flush_count = sum(1 for a in actions if isinstance(a, FlushAction))
@@ -286,6 +288,7 @@ class StitchAudioFn(beam.DoFn):
                         transmission_buffer,
                         stale_timer_event,
                         stale_timer_proc,
+                        session_id=session_id,
                     )
                 case AppendBufferAction():
                     self._apply_append_buffer_action(
@@ -314,6 +317,7 @@ class StitchAudioFn(beam.DoFn):
         stale_timer_event: RuntimeTimer,
         stale_timer_proc: RuntimeTimer,
         is_backfill: bool,
+        session_id: str,
     ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
         """Top-level executor managing chunk ingestion, VAD decoding, state persistence, and flush delegation."""
         file_start_ms = chunk_data.start_ms
@@ -353,6 +357,7 @@ class StitchAudioFn(beam.DoFn):
             ctx=ctx,
             gcs_path=gcs_path,
             is_backfill=is_backfill,
+            session_id=session_id,
         )
 
     @override
@@ -384,6 +389,7 @@ class StitchAudioFn(beam.DoFn):
                 stale_timer_event=stale_timer_event,
                 stale_timer_proc=stale_timer_proc,
                 is_backfill=is_backfill,
+                session_id=payload.session_id,
             )
         except Exception as e:
             if not self.config.route_to_dlq:

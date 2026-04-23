@@ -219,7 +219,10 @@ class BypassStitchingTest(unittest.TestCase):
             duration_ms=audio_len_ms,
         )
 
-        element = (feed_id, DownloadedChunkPayload(gcs_path, chunk_data))
+        element = (
+            feed_id,
+            DownloadedChunkPayload(gcs_path, chunk_data, "fake-session"),
+        )
 
         fn = BypassStitchingFn()
         result = list(fn.process(element))
@@ -309,9 +312,9 @@ class OrderRestorerTest(unittest.TestCase):
                 restored,
                 equal_to(
                     [
-                        ("feed-1", "gs://b/100-uuid1.flac"),
-                        ("feed-1", "gs://b/115-uuid2.flac"),
-                        ("feed-1", "gs://b/130-uuid3.flac"),
+                        ("feed-1", ("session-A", "gs://b/100-uuid1.flac")),
+                        ("feed-1", ("session-A", "gs://b/115-uuid2.flac")),
+                        ("feed-1", ("session-A", "gs://b/130-uuid3.flac")),
                     ]
                 ),
             )
@@ -393,9 +396,9 @@ class OrderRestorerTest(unittest.TestCase):
                 restored,
                 equal_to(
                     [
-                        ("feed-1", "gs://b/100-11111111.flac"),
-                        ("feed-1", "gs://b/130-33333333.flac"),
-                        ("feed-1", "gs://b/115-22222222.flac"),
+                        ("feed-1", ("session-A", "gs://b/100-11111111.flac")),
+                        ("feed-1", ("session-A", "gs://b/130-33333333.flac")),
+                        ("feed-1", ("session-A", "gs://b/115-22222222.flac")),
                     ]
                 ),
             )
@@ -482,6 +485,7 @@ class StitchAudioTest(unittest.TestCase):
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/100-11111111-1111-1111-1111-111111111111.flac"
                                     ),
+                                    "fake-session",
                                 ),
                             ),
                             100,
@@ -499,6 +503,7 @@ class StitchAudioTest(unittest.TestCase):
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/115-22222222-2222-2222-2222-222222222222.flac"
                                     ),
+                                    "fake-session",
                                 ),
                             ),
                             115,
@@ -516,6 +521,7 @@ class StitchAudioTest(unittest.TestCase):
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/130-33333333-3333-3333-3333-333333333333.flac"
                                     ),
+                                    "fake-session",
                                 ),
                             ),
                             130,
@@ -533,6 +539,7 @@ class StitchAudioTest(unittest.TestCase):
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/150-44444444-4444-4444-4444-444444444444.flac"
                                     ),
+                                    "fake-session",
                                 ),
                             ),
                             150,
@@ -550,6 +557,7 @@ class StitchAudioTest(unittest.TestCase):
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/160-55555555-5555-5555-5555-555555555555.flac"
                                     ),
+                                    "fake-session",
                                 ),
                             ),
                             160,
@@ -567,6 +575,7 @@ class StitchAudioTest(unittest.TestCase):
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-123/2026-03-06/190-66666666-6666-6666-6666-666666666666.flac"
                                     ),
+                                    "fake-session",
                                 ),
                             ),
                             190,
@@ -692,6 +701,7 @@ class StitchAudioTest(unittest.TestCase):
                                     mock_download(
                                         "gs://fake-bucket/100-11111111-1111-1111-1111-111111111111.flac"
                                     ),
+                                    "fake-session",
                                 ),
                             ),
                             100,
@@ -709,6 +719,7 @@ class StitchAudioTest(unittest.TestCase):
                                     mock_download(
                                         "gs://fake-bucket/130-33333333-3333-3333-3333-333333333333.flac"
                                     ),
+                                    "fake-session",
                                 ),
                             ),
                             130,
@@ -726,6 +737,7 @@ class StitchAudioTest(unittest.TestCase):
                                     mock_download(
                                         "gs://fake-bucket/115-22222222-2222-2222-2222-222222222222.flac"
                                     ),
+                                    "fake-session",
                                 ),
                             ),
                             140,
@@ -841,6 +853,7 @@ class StitchAudioTest(unittest.TestCase):
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-max/2026-03-06/100-77777777-7777-7777-7777-777777777777.flac"
                                     ),
+                                    "fake-session",
                                 ),
                             ),
                             100,
@@ -858,6 +871,7 @@ class StitchAudioTest(unittest.TestCase):
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-max/2026-03-06/115-88888888-8888-8888-8888-888888888888.flac"
                                     ),
+                                    "fake-session",
                                 ),
                             ),
                             115,
@@ -875,6 +889,7 @@ class StitchAudioTest(unittest.TestCase):
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-max/2026-03-06/130-99999999-9999-9999-9999-999999999999.flac"
                                     ),
+                                    "fake-session",
                                 ),
                             ),
                             130,
@@ -892,6 +907,7 @@ class StitchAudioTest(unittest.TestCase):
                                     mock_download(
                                         "gs://fake-bucket/ab12/feed-max/2026-03-06/160-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac"
                                     ),
+                                    "fake-session",
                                 ),
                             ),
                             160,
@@ -1030,8 +1046,16 @@ class DownloadAudioTest(unittest.TestCase):
             elements = (
                 p
                 | beam.Create(
-                    [("feed-123", "gs://fake-bucket/100-11111111.flac")]
-                ).with_output_types(tuple[str, str])
+                    [
+                        (
+                            "feed-123",
+                            (
+                                "fake-session",
+                                "gs://fake-bucket/100-11111111.flac",
+                            ),
+                        )
+                    ]
+                ).with_output_types(tuple[str, tuple[str, str]])
                 | beam.Map(lambda x: TimestampedValue(x, 100))
             )
 
