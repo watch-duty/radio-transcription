@@ -726,8 +726,9 @@ class NormalizerRuntime:
 
     async def _shutdown_sequence(self) -> None:
         """
-        Orderly teardown: stop /healthz HTTP server, cancel feed tasks,
-        stop heartbeat thread, close GCS client and database pools.
+        Orderly teardown: cancel metric reporter, stop /healthz HTTP server,
+        cancel feed tasks, stop heartbeat thread, close GCS client and
+        database pools.
         """
         logger.info(
             "Shutting down -- %d active feed tasks",
