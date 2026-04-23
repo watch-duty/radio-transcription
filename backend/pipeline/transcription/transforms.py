@@ -394,7 +394,7 @@ class RestoreOrderFn(beam.DoFn):
         out_of_order_timer: RuntimeTimer = beam.DoFn.TimerParam(  # type: ignore # noqa: B008
             OUT_OF_ORDER_TIMER_SPEC
         ),
-    ) -> Iterator[tuple[str, tuple[str, str]]]:
+    ) -> Iterator[Any]:
         """Ingests out-of-order chunks and orchestrates chronologically sorted yields."""
         feed_id, metadata = element
         gcs_path = metadata.gcs_uri
@@ -445,8 +445,11 @@ class RestoreOrderFn(beam.DoFn):
         for chunk in new_buffer_elements:
             out_of_order_buffer_state.add(chunk)
 
-        for gcs_uri in elements_to_emit:
-            yield (feed_id, (incoming_session_id, gcs_uri))
+        for chunk in elements_to_emit:
+            yield window.TimestampedValue(
+                (feed_id, (incoming_session_id, chunk.gcs_uri)),
+                Timestamp(seconds=chunk.timestamp_ms / 1000.0),
+            )
 
         # Handle Timer for Gap Timeout
         if new_buffer_elements and not timer_active_state.read():
@@ -475,7 +478,7 @@ class RestoreOrderFn(beam.DoFn):
         timer_active_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
             TIMER_ACTIVE_SPEC
         ),
-    ) -> Iterator[tuple[str, tuple[str, str]]]:
+    ) -> Iterator[Any]:
         """Handles the gap timeout."""
         self.data_gaps_detected_counter.inc()
         timer_active_state.clear()
@@ -507,8 +510,11 @@ class RestoreOrderFn(beam.DoFn):
                 out_of_order_buffer_state.add(chunk)
 
             session_id = session_id_state.read()
-            for gcs_uri in elements_to_emit:
-                yield (feed_id, (session_id, gcs_uri))
+            for chunk in elements_to_emit:
+                yield window.TimestampedValue(
+                    (feed_id, (session_id, chunk.gcs_uri)),
+                    Timestamp(seconds=chunk.timestamp_ms / 1000.0),
+                )
 
 
 @beam.typehints.with_input_types(tuple[str, tuple[str, str]])

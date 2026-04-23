@@ -154,7 +154,6 @@ class AudioStitchingStateMachine:
             buffer_start_time_ms=None,
             expected_next_chunk_start_ms=None,
             start_audio_offset_ms=None,
-            end_audio_offset_ms=None,
             buffer_duration_ms=0,
         )
 

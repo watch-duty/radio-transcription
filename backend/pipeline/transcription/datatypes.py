@@ -110,6 +110,7 @@ class TransmissionContext:
     missing_prior_context: bool = False
     missing_post_context: bool = False
     buffer_duration_ms: int = 0
+    order_timer_active: bool = False
 
 
 @dataclass
@@ -129,7 +130,7 @@ class StitcherContext:
     missing_prior_context: bool
     expected_next_chunk_start_ms: int | None
     start_audio_offset_ms: int | None
-    end_audio_offset_ms: int | None
+    end_audio_offset_ms: int | None = None
     buffer_duration_ms: int = 0
 
 
@@ -154,6 +155,7 @@ class StitchAudioConfig:
     vad_pre_roll_ms: int
     vad_post_roll_ms: int
     route_to_dlq: bool = True
+    backfill_lateness_threshold_ms: int = 5000
 
     def __post_init__(self) -> None:
         """Validates the dataclass variables."""
@@ -234,6 +236,7 @@ class FlushAction(StateMachineAction):
     end_audio_offset_ms: int
     clear_state: bool = True
     isolated_audio_buffer: list[np.ndarray] = field(default_factory=list)
+    isolated_audio_buffer_uris: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
