@@ -336,6 +336,32 @@ class OrderedStitchAudioFn(beam.DoFn):
                     chunk.gcs_uri, chunk.timestamp_ms
                 )
 
+                if self.stitch_config.bypass_stitching:
+                    yield (
+                        feed_id,
+                        FlushRequest(
+                            buffer=chunk_data.audio,
+                            feed_id=feed_id,
+                            session_id=curr_context.session_id or "unknown",
+                            contributing_audio_uris=[chunk.gcs_uri],
+                            time_range=TimeRange(
+                                start_ms=chunk.timestamp_ms,
+                                end_ms=chunk.timestamp_ms
+                                + chunk_data.duration_ms,
+                            ),
+                            missing_prior_context=False,
+                            missing_post_context=False,
+                            start_audio_offset_ms=0,
+                            end_audio_offset_ms=None,
+                            transmission_id=generate_transmission_id(
+                                curr_context.session_id or "unknown",
+                                chunk.timestamp_ms,
+                                chunk.timestamp_ms + chunk_data.duration_ms,
+                            ),
+                        ),
+                    )
+                    continue
+
                 payload = DownloadedChunkPayload(
                     chunk.gcs_uri,
                     chunk_data,

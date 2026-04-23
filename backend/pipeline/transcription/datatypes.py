@@ -155,6 +155,7 @@ class StitchAudioConfig:
     vad_post_roll_ms: int
     route_to_dlq: bool = True
     backfill_lateness_threshold_ms: int = 5000
+    bypass_stitching: bool = False
 
     def __post_init__(self) -> None:
         """Validates the dataclass variables."""

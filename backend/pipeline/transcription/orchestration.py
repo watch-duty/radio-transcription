@@ -41,11 +41,8 @@ from backend.pipeline.transcription.stitcher import (
 )
 from backend.pipeline.transcription.transforms import (
     AddEventTimestamp,
-    BypassStitchingFn,
-    DownloadAudioFn,
     ExtractFeedMetadataFn,
     ParseAndKeyFn,
-    RestoreOrderFn,
     SerializeAndEnrichFn,
 )
 
@@ -108,6 +105,8 @@ def get_pipeline(
         AddEventTimestamp()
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
+    dlq_list = []
+
     # Claim-check: Download the raw bytes for ordered chunks currently just passing as URIs
     download_config = StitchAudioConfig(
         project_id=pipeline_options.view_as(GoogleCloudOptions).project,
@@ -127,23 +126,43 @@ def get_pipeline(
 
     # Core pipeline logic: State buffers audio across multiple chunks, flushing only on silence or timeout.
     if options.bypass_stitching:
-        # Order chunks based on event timestamps to ensure chronological processing
-        restored = timestamped.main | "RestoreOrder" >> beam.ParDo(
-            RestoreOrderFn(
-                config=OrderRestorerConfig(
-                    out_of_order_timeout_ms=options.out_of_order_timeout_ms
-                    or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
+        stitching_config = StitchAudioConfig(
+            project_id=pipeline_options.view_as(GoogleCloudOptions).project,
+            vad_type=options.vad_type,
+            vad_config=options.vad_config,
+            significant_gap_ms=options.significant_gap_ms
+            or DEFAULT_SIGNIFICANT_GAP_MS,
+            stale_timeout_ms=options.stale_timeout_ms
+            or DEFAULT_STALE_TIMEOUT_MS,
+            max_transmission_duration_ms=options.max_transmission_duration_ms
+            or DEFAULT_MAX_TRANSMISSION_DURATION_MS,
+            vad_pre_roll_ms=options.vad_pre_roll_ms or DEFAULT_VAD_PRE_ROLL_MS,
+            vad_post_roll_ms=options.vad_post_roll_ms
+            or DEFAULT_VAD_POST_ROLL_MS,
+            route_to_dlq=options.route_to_dlq
+            if options.route_to_dlq is not None
+            else True,
+            bypass_stitching=True,
+        )
+
+        order_config = OrderRestorerConfig(
+            out_of_order_timeout_ms=options.out_of_order_timeout_ms
+            or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
+        )
+
+        stitching_results = (
+            timestamped.main
+            | "OrderedBypassStitch"
+            >> beam.ParDo(
+                OrderedStitchAudioFn(
+                    order_config=order_config,
+                    stitch_config=stitching_config,
                 )
-            )
+            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
         )
 
-        downloaded_chunks = restored | "DownloadAudio" >> beam.ParDo(
-            DownloadAudioFn(config=download_config)
-        ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
-
-        stitching_main = downloaded_chunks.main | "BypassStitch" >> beam.ParDo(
-            BypassStitchingFn()
-        )
+        stitching_main = stitching_results.main
+        dlq_list.append(stitching_results[DEAD_LETTER_QUEUE_TAG])
     else:
         # New merged path: Handles both ordering and stitching in a single DoFn
         stitching_results = (
@@ -203,10 +222,6 @@ def get_pipeline(
         timestamped[DEAD_LETTER_QUEUE_TAG],
         transcripts[DEAD_LETTER_QUEUE_TAG],
     ]
-    if options.bypass_stitching:
-        dlq_list.append(downloaded_chunks[DEAD_LETTER_QUEUE_TAG])
-    else:
-        dlq_list.append(stitching_results[DEAD_LETTER_QUEUE_TAG])
 
     dlq_combined = tuple(dlq_list) | "FlattenDlqs" >> beam.Flatten()
 
