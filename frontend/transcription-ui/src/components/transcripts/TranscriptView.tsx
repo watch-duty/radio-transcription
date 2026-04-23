@@ -119,12 +119,12 @@ export function TranscriptView({
 
   const {
     data: listTranscriptsResponse,
-    fetchNextPage: fetchNextTranscripts,
-    hasNextPage: hasNextTranscripts,
-    fetchPreviousPage: fetchPreviousTranscripts,
-    hasPreviousPage: hasPreviousTranscripts,
-    isFetchingNextPage: isFetchingNextTranscripts,
-    isFetchingPreviousPage: isFetchingPreviousTranscripts,
+    fetchNextPage: fetchOlderTranscripts,
+    hasNextPage: hasOlderTranscripts,
+    fetchPreviousPage: fetchNewerTrnscripts,
+    hasPreviousPage: hasNewerTranscripts,
+    isFetchingNextPage: isFetchingOlderTranscripts,
+    isFetchingPreviousPage: isFetchingNewerTranscripts,
     error: transcriptsError,
     isLoading: isTranscriptsInitialLoading, // isLoading is the first load, which we use to show the main loading spinner
     isFetching: isTranscriptsFetching, // isFetching is any load, which we use to show that we're loading additional data
@@ -178,6 +178,9 @@ export function TranscriptView({
         order
       );
 
+      // The API returns transcripts in ascending order, meaning that the first transcript in
+      // the list is the oldest in time. However, in order to display them in the proper
+      // order (newest in time at the top), we need to reverse the transcripts.
       if (order === 'asc' && response.transcripts) {
         response.transcripts.reverse();
       }
@@ -194,6 +197,9 @@ export function TranscriptView({
       nextToken?: string;
       order?: 'asc' | 'desc';
     },
+    // The naming of getNextPageParam is a bit confusing here. What we're actually 
+    // doing is using this function to fetch the "previous" page in time, or more 
+    // accurately, the page before the last page returned by the API.
     getNextPageParam: (lastPage) => {
       if (lastPage.nextToken) {
         return {
@@ -220,6 +226,9 @@ export function TranscriptView({
       }
       return undefined;
     },
+    // In contrast to getNextPageParam, getPreviousPageParam is used to fetch 
+    // the "next" page in time, or more accurately, the page after the first page 
+    // returned by the API.
     getPreviousPageParam: (firstPage) => {
       const newestTranscript = firstPage.transcripts?.[0];
       if (newestTranscript) {
@@ -256,7 +265,7 @@ export function TranscriptView({
 
   const newestTimestamp = transcripts[0]?.startTimestamp;
 
-  const fetchNewerTranscripts = useCallback(async () => {
+  const pollNewerTranscripts = useCallback(async () => {
     if (!newestTimestamp || !searchedFeedId) return [];
     const response = await listTranscripts(
       searchedFeedId,
@@ -318,7 +327,7 @@ export function TranscriptView({
     const interval = setInterval(async () => {
       try {
         setIsPolling(true);
-        const newTranscripts = await fetchNewerTranscripts();
+        const newTranscripts = await pollNewerTranscripts();
         if (newTranscripts.length > 0) {
           updateCacheWithNewTranscripts(newTranscripts);
         }
@@ -335,7 +344,7 @@ export function TranscriptView({
     isAtTop,
     newestTimestamp,
     searchedFeedId,
-    fetchNewerTranscripts,
+    pollNewerTranscripts,
     updateCacheWithNewTranscripts,
   ]);
 
@@ -632,14 +641,14 @@ export function TranscriptView({
               ) : (
                 <Box />
               )}
-              {(!hasPreviousTranscripts || hideHeaderButton) && (
+              {(!hasNewerTranscripts || hideHeaderButton) && (
                 <Button
                   size="small"
                   variant="text"
                   onClick={async () => {
                     setIsPolling(true);
                     try {
-                      const newTranscripts = await fetchNewerTranscripts();
+                      const newTranscripts = await pollNewerTranscripts();
                       if (newTranscripts.length > 0) {
                         updateCacheWithNewTranscripts(newTranscripts);
                       } else {
@@ -711,7 +720,7 @@ export function TranscriptView({
                 }}
                 components={{
                   Header: () =>
-                    hasPreviousTranscripts && !hideHeaderButton ? (
+                    hasNewerTranscripts && !hideHeaderButton ? (
                       <Box
                         sx={{
                           display: 'flex',
@@ -719,13 +728,13 @@ export function TranscriptView({
                           py: 1,
                         }}
                       >
-                        {isFetchingPreviousTranscripts ? (
+                        {isFetchingNewerTranscripts ? (
                           <CircularProgress size={40} />
                         ) : (
                           <Button
                             variant="text"
                             onClick={async () => {
-                              const result = await fetchPreviousTranscripts();
+                              const result = await fetchNewerTrnscripts();
                               if (
                                 result.data &&
                                 (
@@ -747,7 +756,7 @@ export function TranscriptView({
                       </Box>
                     ) : null,
                   Footer: () => {
-                    if (hasNextTranscripts && !hideFooterButton) {
+                    if (hasOlderTranscripts && !hideFooterButton) {
                       return (
                         <Box
                           sx={{
@@ -756,13 +765,13 @@ export function TranscriptView({
                             py: 1,
                           }}
                         >
-                          {isFetchingNextTranscripts ? (
+                          {isFetchingOlderTranscripts ? (
                             <CircularProgress size={40} />
                           ) : (
                             <Button
                               variant="text"
                               onClick={async () => {
-                                const result = await fetchNextTranscripts();
+                                const result = await fetchOlderTranscripts();
                                 if (result.data) {
                                   const lastPage = result.data.pages[
                                     result.data.pages.length - 1
@@ -784,7 +793,7 @@ export function TranscriptView({
                         </Box>
                       );
                     }
-                    if (!hasNextTranscripts || hideFooterButton) {
+                    if (!hasOlderTranscripts || hideFooterButton) {
                       return (
                         <Box
                           sx={{
