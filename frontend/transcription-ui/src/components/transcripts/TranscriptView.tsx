@@ -101,11 +101,12 @@ export function TranscriptView({
     return new Map(feeds.map((f) => [f.id, f]));
   }, [feeds]);
 
-  // Memoizing the selected feed object derived from the searchedFeedId state.
+  // Memoizing the selected feed object derived from the feedId state.
   const selectedFeed = useMemo(() => {
     return feedIdToFeedMap.get(feedId) || null;
   }, [feedIdToFeedMap, feedId]);
 
+  // Memoizing the selected feed object derived from the searchedFeedId state.
   const searchedFeed = useMemo(() => {
     return feedIdToFeedMap.get(searchedFeedId) || null;
   }, [feedIdToFeedMap, searchedFeedId]);
