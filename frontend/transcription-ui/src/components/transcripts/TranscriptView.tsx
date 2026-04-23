@@ -269,6 +269,7 @@ export function TranscriptView({
     [listTranscriptsResponse]
   );
 
+  // This is used to group transcripts by date and display them in the UI.
   const { groupCounts, groupTitles } = useMemo(() => {
     const counts: number[] = [];
     const titles: string[] = [];
