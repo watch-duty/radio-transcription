@@ -74,8 +74,8 @@ class ParseAndKeyFn(beam.DoFn):
         self, element: PubsubMessage, *args: Any, **kwargs: Any
     ) -> Iterator[tuple[str, bytes] | beam.pvalue.TaggedOutput]:
         """Extracts the feed_id from the proto payload to establish a routing key."""
-        chunk_proto = AudioChunk()
         try:
+            chunk_proto = AudioChunk()
             chunk_proto.ParseFromString(element.data)
         except DecodeError as e:
             msg = f"Failed to parse AudioChunk proto: {e}"
