@@ -396,6 +396,7 @@ class TestPublishAudioChunkSync(unittest.TestCase):
             session_id="test-session-1",
             start_timestamp=mock_now,
             duration_ms=15000,
+            trace_id="dummy-trace-id",
             source_type="echo",
         )
 
@@ -405,6 +406,7 @@ class TestPublishAudioChunkSync(unittest.TestCase):
         self.assertEqual(publish_args[0], "projects/test/topics/audio")
         self.assertEqual(publish_kwargs["feed_id"], "feed-42")
         self.assertEqual(publish_kwargs["source_type"], "echo")
+        self.assertEqual(publish_kwargs["trace_id"], "dummy-trace-id")
         self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
 
         chunk = AudioChunk()
@@ -435,6 +437,7 @@ class TestPublishAudioChunkSync(unittest.TestCase):
                 2026, 3, 5, 12, 0, tzinfo=datetime.UTC
             ),
             duration_ms=15000,
+            trace_id="dummy-trace-id",
         )
 
         publish_kwargs = mock_publisher.publish.call_args.kwargs
@@ -463,6 +466,7 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
             session_id="test-session-1",
             start_timestamp=mock_now,
             duration_ms=15000,
+            trace_id="dummy-trace-id",
         )
 
         self.assertEqual(result, "message-123")

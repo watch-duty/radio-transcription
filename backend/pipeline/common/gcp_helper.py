@@ -213,8 +213,8 @@ def publish_audio_chunk_sync(
     session_id: str,
     start_timestamp: datetime.datetime,
     duration_ms: int,
+    trace_id: str,
     source_type: str | None = None,
-    trace_id: str | None = None,
 ) -> str:
     """Publish an AudioChunk to Pub/Sub and return the message ID.
 
@@ -232,9 +232,8 @@ def publish_audio_chunk_sync(
         "feed_id": feed_id,
         "session_id": session_id,
         "gcs_uri": gcs_uri,
+        "trace_id": trace_id,
     }
-    if trace_id:
-        attrs["trace_id"] = trace_id
     if source_type is not None:
         attrs["source_type"] = source_type
 
@@ -257,8 +256,8 @@ async def publish_audio_chunk(
     session_id: str,
     start_timestamp: datetime.datetime,
     duration_ms: int,
+    trace_id: str,
     source_type: str | None = None,
-    trace_id: str | None = None,
 ) -> str:
     """Asynchronously publish an AudioChunk to Pub/Sub.
 
@@ -277,9 +276,8 @@ async def publish_audio_chunk(
         "feed_id": feed_id,
         "session_id": session_id,
         "gcs_uri": gcs_uri,
+        "trace_id": trace_id,
     }
-    if trace_id:
-        attrs["trace_id"] = trace_id
     if source_type is not None:
         attrs["source_type"] = source_type
 

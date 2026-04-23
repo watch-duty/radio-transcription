@@ -24,6 +24,11 @@ def set_trace_id(trace_id: str | None = None) -> str:
     return trace_id
 
 
+def get_trace_id() -> str:
+    """Returns the trace ID for the current context."""
+    return _TRACE_ID.get()
+
+
 class TraceIdFilter(logging.Filter):
     """A logging filter that injects the trace ID into the log record."""
 

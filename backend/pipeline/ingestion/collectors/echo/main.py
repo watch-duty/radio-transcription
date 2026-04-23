@@ -19,6 +19,7 @@ import functions_framework
 from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
 
+from backend.pipeline.common import logging as pipeline_logging
 from backend.pipeline.common.audio import get_audio_duration
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.gcp_helper import publish_audio_chunk_sync
@@ -65,6 +66,7 @@ feed_store: SyncFeedStore | None = None
 def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
     """Sync entry point for Eventarc GCS OBJECT_FINALIZE events."""
     global gcs_client, pubsub_client, feed_store  # noqa: PLW0603
+    pipeline_logging.set_trace_id()
     if not STAGING_BUCKET:
         msg = "AUDIO_STAGING_BUCKET environment variable is not set"
         raise RuntimeError(msg)
@@ -174,6 +176,7 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
             session_id,
             start_ts,
             duration_ms=duration_ms,
+            trace_id=pipeline_logging.get_trace_id(),
             source_type="echo",
         )
 
