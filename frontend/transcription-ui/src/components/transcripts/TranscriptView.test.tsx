@@ -683,7 +683,7 @@ describe('TranscriptView', () => {
     vi.mocked(listTranscripts)
       .mockResolvedValueOnce({
         transcripts: initialTranscripts,
-        nextToken: undefined,
+        nextToken: 'next-token-123',
       })
       .mockResolvedValueOnce({
         transcripts: [],
@@ -691,21 +691,10 @@ describe('TranscriptView', () => {
       });
 
     renderTranscriptView(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/?feedId=feed123']}>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
     );
-
-    const input = screen.getByLabelText(/Select a registered feed/i);
-    await waitFor(() => {
-      expect((input as HTMLInputElement).disabled).toBe(false);
-    });
-    fireEvent.change(input, { target: { value: 'feed123' } });
-    fireEvent.keyDown(input, { key: 'ArrowDown' });
-    fireEvent.keyDown(input, { key: 'Enter' });
-
-    const button = screen.getByRole('button', { name: /Fetch/i });
-    fireEvent.click(button);
 
     await waitFor(() => {
       expect(screen.getByText('Transcript 1')).toBeTruthy();
@@ -722,15 +711,16 @@ describe('TranscriptView', () => {
         'feed123',
         'fake-token',
         undefined,
+        'next-token-123',
         undefined,
         undefined,
-        new Date('2026-04-10T12:00:05Z').getTime() - 1,
         'desc'
       );
     });
   });
 
   it('passes correct params to listTranscripts when loading newer transcripts', async () => {
+    const testTimestamp = new Date('2026-04-10T12:00:00Z').getTime();
     const initialTranscripts = [
       {
         feedId: 'feed123',
@@ -760,21 +750,11 @@ describe('TranscriptView', () => {
       });
 
     renderTranscriptView(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[`/?feedId=feed123&timestamp=${testTimestamp}`]}>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
     );
 
-    const input = screen.getByLabelText(/Select a registered feed/i);
-    await waitFor(() => {
-      expect((input as HTMLInputElement).disabled).toBe(false);
-    });
-    fireEvent.change(input, { target: { value: 'feed123' } });
-    fireEvent.keyDown(input, { key: 'ArrowDown' });
-    fireEvent.keyDown(input, { key: 'Enter' });
-
-    const button = screen.getByRole('button', { name: /Fetch/i });
-    fireEvent.click(button);
     await waitFor(() => {
       expect(screen.getByText('Transcript 1')).toBeTruthy();
     });
@@ -791,7 +771,7 @@ describe('TranscriptView', () => {
         'fake-token',
         undefined,
         undefined,
-        new Date('2026-04-10T12:00:05Z').getTime() + 1,
+        testTimestamp,
         undefined,
         'asc'
       );

@@ -88,7 +88,6 @@ export function TranscriptView({
   const [highlightedTransmissionId, setHighlightedTransmissionId] = useState<
     string | null
   >(targetTransmissionId);
-  const [hideLoadPreviousTranscriptsButton, setHideLoadPreviousTranscriptsButton] = useState(false);
   const [hideLoadNewerTranscriptsButton, setHideLoadNewerTranscriptsButton] = useState(false);
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
@@ -161,14 +160,16 @@ export function TranscriptView({
       searchedTimestamp,
     ],
     queryFn: async ({ pageParam }) => {
-      const { timestamp, nextToken, order } = pageParam;
+      const { nextToken, order } = pageParam;
+      const originalTimestampMs = searchedTimestamp ? roundUpToNearestMinute(searchedTimestamp).getTime() : undefined;
+
       const response = await listTranscripts(
         searchedFeedId,
         token,
         /*limit=*/undefined,
         nextToken,
-        /*startTime=*/order == 'asc' ? timestamp : undefined,
-        /*endTime=*/order == 'desc' ? timestamp : undefined,
+        /*startTime=*/order === 'asc' ? originalTimestampMs : undefined,
+        /*endTime=*/order === 'desc' ? originalTimestampMs : undefined,
         order
       );
 
@@ -179,31 +180,22 @@ export function TranscriptView({
         response.transcripts.reverse();
       }
 
-      return { ...response, timestamp, order };
+      return { ...response, timestamp: originalTimestampMs, order };
     },
     initialPageParam: {
-      timestamp: searchedTimestamp ? roundUpToNearestMinute(searchedTimestamp).getTime() : undefined,
       order: 'desc',
     },
-    // The naming of getNextPageParam is a bit confusing here. What we're actually
-    // doing is using this function to fetch the "previous" page in time, or more
-    // accurately, the page before the last page returned by the API.
     getNextPageParam: (page) => {
-      return {
-        timestamp: new Date(page.transcripts?.[page.transcripts.length - 1]?.startTimestamp).getTime() || undefined,
-        nextToken: page.nextToken,
-        order: 'desc'
-      }
+      if (page.order !== 'desc') return undefined;
+      return page.nextToken ? { order: 'desc', nextToken: page.nextToken } : undefined;
     },
-    // In contrast to getNextPageParam, getPreviousPageParam is used to fetch
-    // the "next" page in time, or more accurately, the page after the first page
-    // returned by the API.
     getPreviousPageParam: (page) => {
+      if (!searchedTimestamp) return undefined;
+      if (page.order === 'asc' && !page.nextToken) return undefined;
       return {
-        timestamp: new Date(page.transcripts?.[0]?.startTimestamp).getTime() || undefined,
-        nextToken: page.nextToken,
-        order: 'asc'
-      }
+        order: 'asc',
+        nextToken: page.order === 'asc' ? page.nextToken : undefined,
+      };
     },
     enabled: !!searchedFeedId,
     refetchOnWindowFocus: false,
@@ -401,7 +393,6 @@ export function TranscriptView({
         <Button
           variant="contained"
           onClick={() => {
-            setHideLoadPreviousTranscriptsButton(false);
             setHideLoadNewerTranscriptsButton(false);
 
             if (!feedId) {
@@ -409,7 +400,11 @@ export function TranscriptView({
             }
 
             const newParams: Record<string, string> = { feedId: feedId.trim() };
-            if (timestamp) newParams.timestamp = timestamp.getTime().toString();
+            if (timestamp) {
+              newParams.timestamp = timestamp.getTime().toString();
+            } else {
+              setSearchedTimestamp(timestamp);
+            }
             setSearchParams(newParams);
 
             if (searchedFeedId === feedId) {
@@ -651,7 +646,7 @@ export function TranscriptView({
                       </Box>
                     ) : null,
                   Footer: () => {
-                    if (hasOlderTranscripts && !hideLoadPreviousTranscriptsButton) {
+                    if (hasOlderTranscripts) {
                       return (
                         <Box
                           sx={{
@@ -665,20 +660,7 @@ export function TranscriptView({
                           ) : (
                             <Button
                               variant="text"
-                              onClick={async () => {
-                                const result = await fetchOlderTranscripts();
-                                if (result.data) {
-                                  const lastPage = result.data.pages[
-                                    result.data.pages.length - 1
-                                  ] as { transcripts: Transcript[] };
-                                  if (lastPage?.transcripts.length === 0) {
-                                    triggerSnackbar(
-                                      'No older transcripts found'
-                                    );
-                                    setHideLoadPreviousTranscriptsButton(true);
-                                  }
-                                }
-                              }}
+                              onClick={() => fetchOlderTranscripts()}
                               disabled={isTranscriptsFetching}
                               sx={{ minWidth: '160px' }}
                             >
@@ -688,22 +670,19 @@ export function TranscriptView({
                         </Box>
                       );
                     }
-                    if (!hasOlderTranscripts || hideLoadPreviousTranscriptsButton) {
-                      return (
-                        <Box
-                          sx={{
-                            display: 'flex',
-                            justifyContent: 'center',
-                            py: 2,
-                          }}
-                        >
-                          <Typography variant="caption" color="text.secondary">
-                            No more transcripts found
-                          </Typography>
-                        </Box>
-                      );
-                    }
-                    return null;
+                    return (
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          justifyContent: 'center',
+                          py: 2,
+                        }}
+                      >
+                        <Typography variant="caption" color="text.secondary">
+                          No more transcripts found
+                        </Typography>
+                      </Box>
+                    );
                   },
                 }}
               />
