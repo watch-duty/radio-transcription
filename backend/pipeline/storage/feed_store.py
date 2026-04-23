@@ -496,11 +496,11 @@ class FeedStore:
         return result == "DELETE 1"
 
     async def reset_feed(self, feed_id: uuid.UUID) -> Feed | None:
-        """Reset a feed to unclaimed status with zero failure count.
+        """Reset a feed to an unclaimed, unassigned state.
 
-        Sets ``status = 'unclaimed'`` and ``failure_count = 0`` for the given
-        feed and returns the updated feed, or ``None`` if no feed with that
-        ID exists.
+        Sets ``status = 'unclaimed'``, ``failure_count = 0``, clears
+        ``worker_id``, and updates ``last_heartbeat`` for the given feed.
+        Returns the updated feed, or ``None`` if no feed with that ID exists.
 
         Args:
             feed_id: UUID of the feed to reset.
