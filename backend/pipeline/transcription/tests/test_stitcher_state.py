@@ -6,6 +6,7 @@ from backend.pipeline.transcription.datatypes import (
     AppendBufferAction,
     AudioChunkData,
     DropAction,
+    FeedMetadata,
     FlushAction,
     ScheduleStaleTimerAction,
     StateMachineAction,
@@ -63,10 +64,10 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         self.state_machine = AudioStitchingStateMachine(self.config)
         self.ctx = StitcherContext(
             feed_id="test-feed-xyz",
-            feed_name="Test Feed Name",
             current_gcs_uri="gs://fake/init.flac",
             contributing_audio_uris=[],
             file_start_ms=0,
+            feed_metadata=FeedMetadata(feed_name="Test Feed Name"),
         )
 
     def _process(self, chunk: AudioChunkData) -> list[StateMachineAction]:

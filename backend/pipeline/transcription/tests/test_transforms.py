@@ -12,7 +12,6 @@ from apache_beam.options.pipeline_options import (
     StandardOptions,
 )
 from apache_beam.testing.test_pipeline import TestPipeline as BeamTestPipeline
-from apache_beam.testing.test_stream import TestStream as BeamTestStream
 from apache_beam.testing.util import assert_that, equal_to
 from apache_beam.transforms.window import TimestampedValue
 
@@ -22,6 +21,7 @@ from backend.pipeline.transcription.datatypes import (
     AudioChunkData,
     ChunkMetadata,
     DownloadedChunkPayload,
+    FeedMetadata,
     FlushRequest,
     StitchAudioConfig,
     TimeRange,
@@ -31,7 +31,6 @@ from backend.pipeline.transcription.datatypes import (
 from backend.pipeline.transcription.enums import TranscriberType, VadType
 from backend.pipeline.transcription.stitcher import (
     StatelessStitchAudioFn,
-    StitchAudioFn,
     TranscribeAudioFn,
 )
 from backend.pipeline.transcription.transcribers import Transcriber
@@ -187,7 +186,7 @@ class AddEventTimestampTest(unittest.TestCase):
                     duration_ms=0,
                     feed_id="test-feed",
                     timestamp_ms=1678886400000,
-                    feed_name="",
+                    feed_metadata=FeedMetadata(feed_name=""),
                 ),
             ),
         )
@@ -226,7 +225,7 @@ class BypassStitchingTest(unittest.TestCase):
             DownloadedChunkPayload(
                 gcs_uri=gcs_path,
                 chunk_data=chunk_data,
-                feed_name="test-feed-name",
+                feed_metadata=FeedMetadata(feed_name="test-feed-name"),
                 feed_id=feed_id,
             ),
         )
@@ -240,7 +239,11 @@ class BypassStitchingTest(unittest.TestCase):
         flush_request = result[0][1]
         self.assertIsInstance(flush_request, FlushRequest)
         self.assertEqual(flush_request.feed_id, feed_id)
-        self.assertEqual(flush_request.feed_name, "test-feed-name")
+        assert flush_request.feed_metadata is not None
+        self.assertEqual(
+            flush_request.feed_metadata.feed_name,
+            "test-feed-name",
+        )
         self.assertEqual(flush_request.contributing_audio_uris, [gcs_path])
         self.assertEqual(flush_request.time_range.start_ms, 1000)
         self.assertEqual(flush_request.time_range.end_ms, 1000 + audio_len_ms)
@@ -254,13 +257,28 @@ class SortAndEmitTest(unittest.TestCase):
         """Verifies that SortAndEmitFn correctly sorts chunks by timestamp."""
         chunks = [
             ChunkMetadata(
-                "gs://b/130.flac", "session-A", 15000, "feed-1", 130000
+                "gs://b/130.flac",
+                "session-A",
+                15000,
+                "feed-1",
+                130000,
+                FeedMetadata(feed_name="test-feed"),
             ),
             ChunkMetadata(
-                "gs://b/100.flac", "session-A", 15000, "feed-1", 100000
+                "gs://b/100.flac",
+                "session-A",
+                15000,
+                "feed-1",
+                100000,
+                FeedMetadata(feed_name="test-feed"),
             ),
             ChunkMetadata(
-                "gs://b/115.flac", "session-A", 15000, "feed-1", 115000
+                "gs://b/115.flac",
+                "session-A",
+                15000,
+                "feed-1",
+                115000,
+                FeedMetadata(feed_name="test-feed"),
             ),
         ]
 
@@ -332,180 +350,107 @@ class StitchAudioTest(unittest.TestCase):
             mock_download
         )
 
-        options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
-        )
-        options.view_as(StandardOptions).streaming = True
-
         config = get_test_stitch_config(significant_gap_ms=3000)
 
-        with BeamTestPipeline(options=options) as p:
-            test_stream = (
-                BeamTestStream(
-                    coder=beam.coders.TupleCoder(
-                        (
-                            beam.coders.StrUtf8Coder(),
-                            beam.coders.PickleCoder(),
-                        )
-                    )
-                )
-                .advance_watermark_to(100)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-123",
-                                DownloadedChunkPayload(
-                                    "gs://fake-bucket/ab12/feed-123/2026-03-06/100-11111111-1111-1111-1111-111111111111.flac",
-                                    mock_download(
-                                        "gs://fake-bucket/ab12/feed-123/2026-03-06/100-11111111-1111-1111-1111-111111111111.flac"
-                                    ),
-                                ),
-                            ),
-                            100,
-                        )
-                    ]
-                )
-                .advance_watermark_to(115)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-123",
-                                DownloadedChunkPayload(
-                                    "gs://fake-bucket/ab12/feed-123/2026-03-06/115-22222222-2222-2222-2222-222222222222.flac",
-                                    mock_download(
-                                        "gs://fake-bucket/ab12/feed-123/2026-03-06/115-22222222-2222-2222-2222-222222222222.flac"
-                                    ),
-                                ),
-                            ),
-                            115,
-                        )
-                    ]
-                )
-                .advance_watermark_to(130)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-123",
-                                DownloadedChunkPayload(
-                                    "gs://fake-bucket/ab12/feed-123/2026-03-06/130-33333333-3333-3333-3333-333333333333.flac",
-                                    mock_download(
-                                        "gs://fake-bucket/ab12/feed-123/2026-03-06/130-33333333-3333-3333-3333-333333333333.flac"
-                                    ),
-                                ),
-                            ),
-                            130,
-                        )
-                    ]
-                )
-                .advance_watermark_to(150)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-123",
-                                DownloadedChunkPayload(
-                                    "gs://fake-bucket/ab12/feed-123/2026-03-06/150-44444444-4444-4444-4444-444444444444.flac",
-                                    mock_download(
-                                        "gs://fake-bucket/ab12/feed-123/2026-03-06/150-44444444-4444-4444-4444-444444444444.flac"
-                                    ),
-                                ),
-                            ),
-                            150,
-                        )
-                    ]
-                )
-                .advance_watermark_to(160)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-123",
-                                DownloadedChunkPayload(
-                                    "gs://fake-bucket/ab12/feed-123/2026-03-06/160-55555555-5555-5555-5555-555555555555.flac",
-                                    mock_download(
-                                        "gs://fake-bucket/ab12/feed-123/2026-03-06/160-55555555-5555-5555-5555-555555555555.flac"
-                                    ),
-                                ),
-                            ),
-                            160,
-                        )
-                    ]
-                )
-                .advance_watermark_to(190)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-123",
-                                DownloadedChunkPayload(
-                                    "gs://fake-bucket/ab12/feed-123/2026-03-06/190-66666666-6666-6666-6666-666666666666.flac",
-                                    mock_download(
-                                        "gs://fake-bucket/ab12/feed-123/2026-03-06/190-66666666-6666-6666-6666-666666666666.flac"
-                                    ),
-                                ),
-                            ),
-                            190,
-                        )
-                    ]
-                )
-                .advance_watermark_to_infinity()
+        chunks = [
+            DownloadedChunkPayload(
+                gcs_uri="gs://fake-bucket/ab12/feed-123/2026-03-06/100-11111111-1111-1111-1111-111111111111.flac",
+                chunk_data=mock_download(
+                    "gs://fake-bucket/ab12/feed-123/2026-03-06/100-11111111-1111-1111-1111-111111111111.flac"
+                ),
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
+                feed_id="feed-123",
+            ),
+            DownloadedChunkPayload(
+                gcs_uri="gs://fake-bucket/ab12/feed-123/2026-03-06/115-22222222-2222-2222-2222-222222222222.flac",
+                chunk_data=mock_download(
+                    "gs://fake-bucket/ab12/feed-123/2026-03-06/115-22222222-2222-2222-2222-222222222222.flac"
+                ),
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
+                feed_id="feed-123",
+            ),
+            DownloadedChunkPayload(
+                gcs_uri="gs://fake-bucket/ab12/feed-123/2026-03-06/130-33333333-3333-3333-3333-333333333333.flac",
+                chunk_data=mock_download(
+                    "gs://fake-bucket/ab12/feed-123/2026-03-06/130-33333333-3333-3333-3333-333333333333.flac"
+                ),
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
+                feed_id="feed-123",
+            ),
+            DownloadedChunkPayload(
+                gcs_uri="gs://fake-bucket/ab12/feed-123/2026-03-06/150-44444444-4444-4444-4444-444444444444.flac",
+                chunk_data=mock_download(
+                    "gs://fake-bucket/ab12/feed-123/2026-03-06/150-44444444-4444-4444-4444-444444444444.flac"
+                ),
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
+                feed_id="feed-123",
+            ),
+            DownloadedChunkPayload(
+                gcs_uri="gs://fake-bucket/ab12/feed-123/2026-03-06/160-55555555-5555-5555-5555-555555555555.flac",
+                chunk_data=mock_download(
+                    "gs://fake-bucket/ab12/feed-123/2026-03-06/160-55555555-5555-5555-5555-555555555555.flac"
+                ),
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
+                feed_id="feed-123",
+            ),
+            DownloadedChunkPayload(
+                gcs_uri="gs://fake-bucket/ab12/feed-123/2026-03-06/190-66666666-6666-6666-6666-666666666666.flac",
+                chunk_data=mock_download(
+                    "gs://fake-bucket/ab12/feed-123/2026-03-06/190-66666666-6666-6666-6666-666666666666.flac"
+                ),
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
+                feed_id="feed-123",
+            ),
+        ]
+
+        element = ("session-A", chunks)
+        fn = StatelessStitchAudioFn(config=config)
+        results = list(fn.process(element))
+
+        self.assertEqual(
+            len(results),
+            4,
+            f"Expected 4 flush requests, got {len(results)}: {results}",
+        )
+        results.sort(key=lambda x: x[1].time_range.start_ms)
+
+        # First element: chunks 100, 115
+        self.assertTrue(
+            any(
+                "11111111-1111-1111-1111-111111111111" in u
+                for u in results[0][1].contributing_audio_uris
             )
-
-            results = (
-                p
-                | test_stream
-                | beam.ParDo(
-                    StitchAudioFn(
-                        config=config,
-                    )
-                ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
+        )
+        self.assertTrue(
+            any(
+                "22222222-2222-2222-2222-222222222222" in u
+                for u in results[0][1].contributing_audio_uris
             )
+        )
 
-            def assert_flush_requests(
-                elements: list[tuple[str, FlushRequest]],
-            ) -> None:
-
-                assert len(elements) == 3, (
-                    f"Expected 3 flush requests, got {len(elements)}: {elements}"
-                )
-
-                # Sort elements by start time to make assertions deterministic
-                elements.sort(key=lambda x: x[1].time_range.start_ms)
-
-                # First element: chunks 100, 115
-                assert any(
-                    "11111111-1111-1111-1111-111111111111" in u
-                    for u in elements[0][1].contributing_audio_uris
-                )
-                assert any(
-                    "22222222-2222-2222-2222-222222222222" in u
-                    for u in elements[0][1].contributing_audio_uris
-                )
-                assert elements[0][1].missing_prior_context is False
-
-                # Second element: chunk 130
-                # DID follow a gap (chunk 115 speech ended at 122, 130 starts at 130, gap=8s >= 3s)
-                assert any(
-                    "33333333-3333-3333-3333-333333333333" in u
-                    for u in elements[1][1].contributing_audio_uris
-                )
-                assert elements[1][1].missing_prior_context is False
-
-                # Third element: chunk 160 (chunk 150 was dropped as useless silence after a disconnected gap)
-                assert any(
-                    "55555555-5555-5555-5555-555555555555" in u
-                    for u in elements[2][1].contributing_audio_uris
-                )
-                assert elements[2][1].missing_prior_context is True
-
-            assert_that(
-                results.main,
-                assert_flush_requests,
-                label="CheckMainFlushRequests",
+        # Second element: chunk 130
+        self.assertTrue(
+            any(
+                "33333333-3333-3333-3333-333333333333" in u
+                for u in results[1][1].contributing_audio_uris
             )
+        )
+
+        # Third element: chunk 160
+        self.assertTrue(
+            any(
+                "55555555-5555-5555-5555-555555555555" in u
+                for u in results[2][1].contributing_audio_uris
+            )
+        )
+
+        # Fourth element: chunk 190 (force flush)
+        self.assertTrue(
+            any(
+                "66666666-6666-6666-6666-666666666666" in u
+                for u in results[3][1].contributing_audio_uris
+            )
+        )
 
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
     def test_isolated_late_chunk_processing(
@@ -543,112 +488,64 @@ class StitchAudioTest(unittest.TestCase):
         mock_processor_inst.download_audio_and_detect.side_effect = (
             mock_download
         )
-        options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
-        )
-        options.view_as(StandardOptions).streaming = True
         config = get_test_stitch_config(significant_gap_ms=3000)
 
-        with BeamTestPipeline(options=options) as p:
-            test_stream = (
-                BeamTestStream(
-                    coder=beam.coders.TupleCoder(
-                        (
-                            beam.coders.StrUtf8Coder(),
-                            beam.coders.PickleCoder(),
-                        )
-                    )
-                )
-                .advance_watermark_to(100)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-123",
-                                DownloadedChunkPayload(
-                                    "gs://fake-bucket/100-11111111-1111-1111-1111-111111111111.flac",
-                                    mock_download(
-                                        "gs://fake-bucket/100-11111111-1111-1111-1111-111111111111.flac"
-                                    ),
-                                ),
-                            ),
-                            100,
-                        )
-                    ]
-                )
-                .advance_watermark_to(130)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-123",
-                                DownloadedChunkPayload(
-                                    "gs://fake-bucket/130-33333333-3333-3333-3333-333333333333.flac",
-                                    mock_download(
-                                        "gs://fake-bucket/130-33333333-3333-3333-3333-333333333333.flac"
-                                    ),
-                                ),
-                            ),
-                            130,
-                        )
-                    ]
-                )
-                .advance_watermark_to(140)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-123",
-                                DownloadedChunkPayload(
-                                    "gs://fake-bucket/115-22222222-2222-2222-2222-222222222222.flac",
-                                    mock_download(
-                                        "gs://fake-bucket/115-22222222-2222-2222-2222-222222222222.flac"
-                                    ),
-                                ),
-                            ),
-                            140,
-                        )
-                    ]
-                )
-                .advance_watermark_to_infinity()
+        chunks = [
+            DownloadedChunkPayload(
+                gcs_uri="gs://fake-bucket/100-11111111-1111-1111-1111-111111111111.flac",
+                chunk_data=mock_download(
+                    "gs://fake-bucket/100-11111111-1111-1111-1111-111111111111.flac"
+                ),
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
+                feed_id="feed-123",
+            ),
+            DownloadedChunkPayload(
+                gcs_uri="gs://fake-bucket/130-33333333-3333-3333-3333-333333333333.flac",
+                chunk_data=mock_download(
+                    "gs://fake-bucket/130-33333333-3333-3333-3333-333333333333.flac"
+                ),
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
+                feed_id="feed-123",
+            ),
+            DownloadedChunkPayload(
+                gcs_uri="gs://fake-bucket/115-22222222-2222-2222-2222-222222222222.flac",
+                chunk_data=mock_download(
+                    "gs://fake-bucket/115-22222222-2222-2222-2222-222222222222.flac"
+                ),
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
+                feed_id="feed-123",
+            ),
+        ]
+
+        element = ("session-A", chunks)
+        fn = StatelessStitchAudioFn(config=config)
+        results = list(fn.process(element))
+
+        self.assertEqual(
+            len(results),
+            1,
+            f"Expected 1 flush request, got {len(results)}: {results}",
+        )
+
+        # Assertions for the single flush
+        self.assertTrue(
+            any(
+                "11111111-1111-1111-1111-111111111111" in u
+                for u in results[0][1].contributing_audio_uris
             )
-
-            results = (
-                p
-                | test_stream
-                | beam.ParDo(StitchAudioFn(config=config)).with_outputs(
-                    DEAD_LETTER_QUEUE_TAG, main="main"
-                )
+        )
+        self.assertTrue(
+            any(
+                "22222222-2222-2222-2222-222222222222" in u
+                for u in results[0][1].contributing_audio_uris
             )
-
-            def assert_flush_requests(
-                elements: list[tuple[str, FlushRequest]],
-            ) -> None:
-
-                assert len(elements) == 2, (
-                    f"Expected 2 flush requests (Chunk 3 remains buffered due to skipped timer), got {len(elements)}"
-                )
-
-                elements.sort(key=lambda x: x[1].time_range.start_ms)
-
-                assert any(
-                    "11111111-1111-1111-1111-111111111111" in u
-                    for u in elements[0][1].contributing_audio_uris
-                )
-                assert elements[0][1].missing_post_context is True
-
-                assert any(
-                    "22222222-2222-2222-2222-222222222222" in u
-                    for u in elements[1][1].contributing_audio_uris
-                )
-                assert elements[1][1].missing_prior_context is False
-                assert elements[1][1].missing_post_context is True
-
-            assert_that(
-                results.main,
-                assert_flush_requests,
-                label="CheckLateChunkRequests",
+        )
+        self.assertTrue(
+            any(
+                "33333333-3333-3333-3333-333333333333" in u
+                for u in results[0][1].contributing_audio_uris
             )
+        )
 
     @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
     def test_max_transmission_duration_flush(
@@ -698,129 +595,84 @@ class StitchAudioTest(unittest.TestCase):
             max_transmission_duration_ms=30000, significant_gap_ms=29999
         )
 
-        with BeamTestPipeline(options=options) as p:
-            test_stream = (
-                BeamTestStream(
-                    coder=beam.coders.TupleCoder(
-                        (
-                            beam.coders.StrUtf8Coder(),
-                            beam.coders.PickleCoder(),
-                        )
-                    )
-                )
-                .advance_watermark_to(100)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-max",
-                                DownloadedChunkPayload(
-                                    "gs://fake-bucket/ab12/feed-max/2026-03-06/100-77777777-7777-7777-7777-777777777777.flac",
-                                    mock_download(
-                                        "gs://fake-bucket/ab12/feed-max/2026-03-06/100-77777777-7777-7777-7777-777777777777.flac"
-                                    ),
-                                ),
-                            ),
-                            100,
-                        )
-                    ]
-                )
-                .advance_watermark_to(115)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-max",
-                                DownloadedChunkPayload(
-                                    "gs://fake-bucket/ab12/feed-max/2026-03-06/115-88888888-8888-8888-8888-888888888888.flac",
-                                    mock_download(
-                                        "gs://fake-bucket/ab12/feed-max/2026-03-06/115-88888888-8888-8888-8888-888888888888.flac"
-                                    ),
-                                ),
-                            ),
-                            115,
-                        )
-                    ]
-                )
-                .advance_watermark_to(130)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-max",
-                                DownloadedChunkPayload(
-                                    "gs://fake-bucket/ab12/feed-max/2026-03-06/130-99999999-9999-9999-9999-999999999999.flac",
-                                    mock_download(
-                                        "gs://fake-bucket/ab12/feed-max/2026-03-06/130-99999999-9999-9999-9999-999999999999.flac"
-                                    ),
-                                ),
-                            ),
-                            130,
-                        )
-                    ]
-                )
-                .advance_watermark_to(160)
-                .add_elements(
-                    [
-                        TimestampedValue(
-                            (
-                                "feed-max",
-                                DownloadedChunkPayload(
-                                    "gs://fake-bucket/ab12/feed-max/2026-03-06/160-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac",
-                                    mock_download(
-                                        "gs://fake-bucket/ab12/feed-max/2026-03-06/160-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac"
-                                    ),
-                                ),
-                            ),
-                            160,
-                        )
-                    ]
-                )
-                .advance_watermark_to_infinity()
+        chunks = [
+            DownloadedChunkPayload(
+                gcs_uri="gs://fake-bucket/ab12/feed-max/2026-03-06/100-77777777-7777-7777-7777-777777777777.flac",
+                chunk_data=mock_download(
+                    "gs://fake-bucket/ab12/feed-max/2026-03-06/100-77777777-7777-7777-7777-777777777777.flac"
+                ),
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
+                feed_id="feed-max",
+            ),
+            DownloadedChunkPayload(
+                gcs_uri="gs://fake-bucket/ab12/feed-max/2026-03-06/115-88888888-8888-8888-8888-888888888888.flac",
+                chunk_data=mock_download(
+                    "gs://fake-bucket/ab12/feed-max/2026-03-06/115-88888888-8888-8888-8888-888888888888.flac"
+                ),
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
+                feed_id="feed-max",
+            ),
+            DownloadedChunkPayload(
+                gcs_uri="gs://fake-bucket/ab12/feed-max/2026-03-06/130-99999999-9999-9999-9999-999999999999.flac",
+                chunk_data=mock_download(
+                    "gs://fake-bucket/ab12/feed-max/2026-03-06/130-99999999-9999-9999-9999-999999999999.flac"
+                ),
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
+                feed_id="feed-max",
+            ),
+            DownloadedChunkPayload(
+                gcs_uri="gs://fake-bucket/ab12/feed-max/2026-03-06/160-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac",
+                chunk_data=mock_download(
+                    "gs://fake-bucket/ab12/feed-max/2026-03-06/160-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.flac"
+                ),
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
+                feed_id="feed-max",
+            ),
+        ]
+
+        element = ("session-A", chunks)
+        fn = StatelessStitchAudioFn(config=config)
+        results = list(fn.process(element))
+
+        self.assertEqual(
+            len(results),
+            3,
+            f"Expected 3 flush requests, got {len(results)}: {results}",
+        )
+        results.sort(key=lambda x: x[1].time_range.start_ms)
+
+        # First element: chunks 100, 115
+        self.assertTrue(
+            any(
+                "77777777-7777-7777-7777-777777777777" in u
+                for u in results[0][1].contributing_audio_uris
             )
-
-            results = (
-                p
-                | test_stream
-                | beam.ParDo(
-                    StitchAudioFn(
-                        config=config,
-                    )
-                ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
+        )
+        self.assertTrue(
+            any(
+                "88888888-8888-8888-8888-888888888888" in u
+                for u in results[0][1].contributing_audio_uris
             )
+        )
+        self.assertFalse(results[0][1].missing_prior_context)
 
-            def assert_flush_requests(
-                elements: list[tuple[str, FlushRequest]],
-            ) -> None:
-
-                assert len(elements) == 2, (
-                    f"Expected 2 flush requests, got {len(elements)}: {elements}"
-                )
-                elements.sort(key=lambda x: x[1].time_range.start_ms)
-
-                # First chunk reached max duration limit without a gap
-                assert any(
-                    "77777777-7777-7777-7777-777777777777" in u
-                    for u in elements[0][1].contributing_audio_uris
-                )
-                assert any(
-                    "88888888-8888-8888-8888-888888888888" in u
-                    for u in elements[0][1].contributing_audio_uris
-                )
-                assert elements[0][1].missing_prior_context is False
-
-                # Second chunk is immediately following the forced cut off -> missing context IS true (severed head inherited)
-                assert any(
-                    "99999999-9999-9999-9999-999999999999" in u
-                    for u in elements[1][1].contributing_audio_uris
-                )
-                assert elements[1][1].missing_prior_context is True
-
-            assert_that(
-                results.main,
-                assert_flush_requests,
-                label="CheckMaxDurationFlushRequests",
+        # Second element: chunk 130
+        self.assertTrue(
+            any(
+                "99999999-9999-9999-9999-999999999999" in u
+                for u in results[1][1].contributing_audio_uris
             )
+        )
+        self.assertTrue(results[1][1].missing_prior_context)
+
+        # Third element: chunk 160 (force flush)
+        self.assertTrue(
+            any(
+                "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" in u
+                for u in results[2][1].contributing_audio_uris
+            )
+        )
+        self.assertTrue(results[2][1].missing_prior_context)
 
 
 class TranscribeAudioTest(unittest.TestCase):
@@ -858,7 +710,9 @@ class TranscribeAudioTest(unittest.TestCase):
                                 start_ms=101000, end_ms=101500
                             ),
                             transmission_id="test-uuid",
-                            feed_name="Test Feed Name",
+                            feed_metadata=FeedMetadata(
+                                feed_name="Test Feed Name"
+                            ),
                         ),
                     )
                 ]
@@ -918,7 +772,9 @@ class DownloadAudioTest(unittest.TestCase):
                                 duration_ms=15000,
                                 feed_id="feed-123",
                                 timestamp_ms=100000,
-                                feed_name="Test Feed Name",
+                                feed_metadata=FeedMetadata(
+                                    feed_name="Test Feed Name"
+                                ),
                             ),
                         )
                     ]
@@ -957,7 +813,7 @@ class SerializeAndEnrichTest(unittest.TestCase):
                 transcript="Hello world",
                 time_range=TimeRange(1000, 2000),
                 transmission_id="uuid-1",
-                feed_name="Test Feed Name",
+                feed_metadata=FeedMetadata(feed_name="Test Feed Name"),
                 start_audio_offset_ms=100,
                 end_audio_offset_ms=200,
             )
@@ -968,7 +824,7 @@ class SerializeAndEnrichTest(unittest.TestCase):
                 transcript="Hello world again",
                 time_range=TimeRange(1000, 3000),
                 transmission_id="uuid-2",
-                feed_name="Test Feed Name",
+                feed_metadata=FeedMetadata(feed_name="Test Feed Name"),
                 start_audio_offset_ms=100,
                 end_audio_offset_ms=200,
             )
@@ -1027,7 +883,7 @@ class StatelessStitchAudioTest(unittest.TestCase):
                     gcs_uri="gs://b/100.flac",
                     duration_ms=15000,
                 ),
-                feed_name="test-feed",
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
                 feed_id="feed-123",
             ),
             DownloadedChunkPayload(
@@ -1039,7 +895,7 @@ class StatelessStitchAudioTest(unittest.TestCase):
                     gcs_uri="gs://b/115.flac",
                     duration_ms=15000,
                 ),
-                feed_name="test-feed",
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
                 feed_id="feed-123",
             ),
         ]

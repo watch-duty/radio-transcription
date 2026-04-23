@@ -34,6 +34,7 @@ from backend.pipeline.transcription.datatypes import (
     AudioChunkData,
     DownloadedChunkPayload,
     DropAction,
+    FeedMetadata,
     FlushAction,
     FlushRequest,
     ScheduleStaleTimerAction,
@@ -187,7 +188,7 @@ class StitchAudioFn(beam.DoFn):
                     start_audio_offset_ms=action.start_audio_offset_ms,
                     end_audio_offset_ms=action.end_audio_offset_ms,
                     transmission_id=transmission_id,
-                    feed_name=action.feed_name,
+                    feed_metadata=action.feed_metadata,
                 ),
             )
         else:
@@ -216,7 +217,7 @@ class StitchAudioFn(beam.DoFn):
             end_audio_offset_ms=ctx.end_audio_offset_ms,
             buffer_start_time_ms=ctx.buffer_start_time_ms,
             buffer_duration_ms=ctx.buffer_duration_ms,
-            feed_name=ctx.feed_name,
+            feed_metadata=ctx.feed_metadata,
         )
         transmission_context.write(new_context)
 
@@ -294,12 +295,12 @@ class StitchAudioFn(beam.DoFn):
 
         ctx = StitcherContext(
             feed_id=feed_id,
-            feed_name=feed_name,
             current_gcs_uri=gcs_path,
             contributing_audio_uris=curr_context.contributing_audio_uris.copy(),
+            file_start_ms=file_start_ms,
+            feed_metadata=FeedMetadata(feed_name=feed_name),
             last_segment_end_time_ms=curr_context.last_end_time_ms,
             transmission_start_time_ms=curr_context.stale_start_time_ms,
-            file_start_ms=file_start_ms,
             missing_prior_context=curr_context.missing_prior_context,
             expected_next_chunk_start_ms=curr_context.expected_next_chunk_start_ms,
             start_audio_offset_ms=curr_context.start_audio_offset_ms,
@@ -341,7 +342,9 @@ class StitchAudioFn(beam.DoFn):
             yield from self._process_audio_chunk(
                 feed_id=key,
                 gcs_path=gcs_path,
-                feed_name=payload.feed_name,
+                feed_name=payload.feed_metadata.feed_name
+                if payload.feed_metadata
+                else "",
                 chunk_data=chunk_data,
                 transmission_context=transmission_context,
                 transmission_buffer=transmission_buffer,
@@ -413,7 +416,7 @@ class StitchAudioFn(beam.DoFn):
                         start_audio_offset_ms=curr_context.start_audio_offset_ms,
                         end_audio_offset_ms=curr_context.end_audio_offset_ms,
                         transmission_id=transmission_id,
-                        feed_name=curr_context.feed_name,
+                        feed_metadata=curr_context.feed_metadata,
                     ),
                 )
             except Exception as e:
@@ -462,7 +465,7 @@ class StatelessStitchAudioFn(beam.DoFn):
         buffer = []
         ctx = StitcherContext(
             feed_id="",
-            feed_name="",
+            feed_metadata=None,
             current_gcs_uri="",
             contributing_audio_uris=[],
             file_start_ms=0,
@@ -470,7 +473,7 @@ class StatelessStitchAudioFn(beam.DoFn):
 
         for chunk in sorted_chunks:
             ctx.feed_id = chunk.feed_id
-            ctx.feed_name = chunk.feed_name
+            ctx.feed_metadata = chunk.feed_metadata
             ctx.current_gcs_uri = chunk.gcs_uri
             ctx.file_start_ms = chunk.chunk_data.start_ms
 
@@ -502,7 +505,7 @@ class StatelessStitchAudioFn(beam.DoFn):
                                 action.speech_time_range.start_ms,
                                 action.speech_time_range.end_ms,
                             ),
-                            feed_name=action.feed_name,
+                            feed_metadata=action.feed_metadata,
                             missing_prior_context=action.missing_prior_context,
                             missing_post_context=action.missing_post_context,
                             start_audio_offset_ms=action.start_audio_offset_ms,
@@ -511,11 +514,6 @@ class StatelessStitchAudioFn(beam.DoFn):
                     )
                     if action.clear_state:
                         buffer = []
-                        ctx.transmission_start_time_ms = None
-                        ctx.buffer_start_time_ms = None
-                        ctx.contributing_audio_uris.clear()
-                        ctx.start_audio_offset_ms = None
-                        ctx.buffer_duration_ms = 0
                 elif isinstance(action, DropAction):
                     logger.info(f"Dropped: {action.reason}")
 
@@ -542,7 +540,7 @@ class StatelessStitchAudioFn(beam.DoFn):
                         ctx.transmission_start_time_ms,
                         ctx.last_segment_end_time_ms,
                     ),
-                    feed_name=ctx.feed_name,
+                    feed_metadata=ctx.feed_metadata,
                     missing_prior_context=ctx.missing_prior_context,
                     missing_post_context=True,
                     start_audio_offset_ms=ctx.start_audio_offset_ms,
@@ -687,13 +685,17 @@ class TranscribeAudioFn(beam.DoFn):
 
         logger.info(f"TRANSCRIPT [{request.feed_id}]: {transcript}")
 
+        if not request.feed_metadata:
+            msg = f"Missing feed metadata for feed_id: {request.feed_id}"
+            raise ValueError(msg)
+
         return TranscriptionResult(
             feed_id=request.feed_id,
             contributing_audio_uris=request.contributing_audio_uris,
             transcript=transcript,
             time_range=request.time_range,
             transmission_id=request.transmission_id,
-            feed_name=request.feed_name,
+            feed_metadata=request.feed_metadata,
             missing_prior_context=request.missing_prior_context,
             missing_post_context=request.missing_post_context,
             start_audio_offset_ms=request.start_audio_offset_ms,

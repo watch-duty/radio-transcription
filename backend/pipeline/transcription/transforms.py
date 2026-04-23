@@ -153,7 +153,9 @@ class AddEventTimestamp(beam.DoFn):
                             duration_ms=chunk_proto.duration_ms,
                             feed_id=feed_id,
                             timestamp_ms=timestamp_ms,
-                            feed_name=chunk_proto.feed_name,
+                            feed_metadata=FeedMetadata(
+                                feed_name=chunk_proto.feed_name
+                            ),
                         ),
                     ),
                     timestamp_sec,
@@ -199,7 +201,10 @@ class SerializeAndEnrichFn(beam.DoFn):
     def process(self, element: TranscriptionResult) -> Iterator[PubsubMessage]:
         value = element
         feed_id = value.feed_id
-        feed_name = value.feed_name
+        if not value.feed_metadata or not value.feed_metadata.feed_name:
+            msg = f"Missing or incomplete feed metadata for feed_id: {feed_id}"
+            raise ValueError(msg)
+        feed_name = value.feed_metadata.feed_name
 
         if value.start_audio_offset_ms is None:
             msg = f"Missing start_audio_offset_ms for feed_id: {feed_id}"
@@ -280,7 +285,7 @@ class BypassStitchingFn(beam.DoFn):
                 contributing_audio_uris=[gcs_path],
                 time_range=TimeRange(start_ms=start_ms, end_ms=end_ms),
                 transmission_id=transmission_id,
-                feed_name=payload.feed_name,
+                feed_metadata=payload.feed_metadata,
                 missing_prior_context=False,
                 missing_post_context=False,
             ),
@@ -338,7 +343,7 @@ class DownloadAudioFn(beam.DoFn):
                 DownloadedChunkPayload(
                     gcs_uri=gcs_path,
                     chunk_data=chunk_data,
-                    feed_name=metadata.feed_name,
+                    feed_metadata=metadata.feed_metadata,
                     feed_id=metadata.feed_id,
                 ),
             )
