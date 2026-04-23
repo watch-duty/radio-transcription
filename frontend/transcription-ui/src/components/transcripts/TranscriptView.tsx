@@ -126,8 +126,8 @@ export function TranscriptView({
     isFetchingNextPage: isFetchingNextTranscripts,
     isFetchingPreviousPage: isFetchingPreviousTranscripts,
     error: transcriptsError,
-    isLoading: isTranscriptsInitialLoading,
-    isFetching: isTranscriptsFetching,
+    isLoading: isTranscriptsInitialLoading, // isLoading is the first load, which we use to show the main loading spinner
+    isFetching: isTranscriptsFetching, // isFetching is any load, which we use to show that we're loading additional data
     isSuccess: isTranscriptsSuccess,
   } = useInfiniteQuery<
     {
@@ -145,6 +145,7 @@ export function TranscriptView({
       endTime?: number;
       order?: 'asc' | 'desc';
     }>,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     any[],
     {
       startTime?: number;
@@ -176,18 +177,23 @@ export function TranscriptView({
         endTime,
         order
       );
-      
+
       if (order === 'asc' && response.transcripts) {
         response.transcripts.reverse();
       }
-      
+
       return { ...response, startTime, endTime, order };
     },
     initialPageParam: {
       startTime: searchedStartTime?.getTime() ?? undefined,
       endTime: searchedEndTime?.getTime() ?? undefined,
       order: undefined,
-    } as { startTime?: number; endTime?: number; nextToken?: string; order?: 'asc' | 'desc' },
+    } as {
+      startTime?: number;
+      endTime?: number;
+      nextToken?: string;
+      order?: 'asc' | 'desc';
+    },
     getNextPageParam: (lastPage) => {
       if (lastPage.nextToken) {
         return {
@@ -201,7 +207,8 @@ export function TranscriptView({
         lastPage.transcripts?.[lastPage.transcripts.length - 1];
       if (oldestTranscript) {
         return {
-          endTime: new Date(oldestTranscript.startTimestamp).getTime() - 1,
+          // Substract 1ms to avoid getting the same transcript again
+          endTime: new Date(oldestTranscript.endTimestamp).getTime() - 1,
           order: 'desc' as const,
         };
       }
@@ -216,7 +223,8 @@ export function TranscriptView({
     getPreviousPageParam: (firstPage) => {
       const newestTranscript = firstPage.transcripts?.[0];
       if (newestTranscript) {
-        const startTime = new Date(newestTranscript.startTimestamp).getTime() + 1;
+        // Add 1ms to get the next transcript, as the current one ends at endTimestamp
+        const startTime = new Date(newestTranscript.endTimestamp).getTime() + 1;
         if (startTime > Date.now()) {
           return undefined;
         }
@@ -720,7 +728,11 @@ export function TranscriptView({
                               const result = await fetchPreviousTranscripts();
                               if (
                                 result.data &&
-                                (result.data.pages[0] as { transcripts: Transcript[] })?.transcripts.length === 0
+                                (
+                                  result.data.pages[0] as {
+                                    transcripts: Transcript[];
+                                  }
+                                )?.transcripts.length === 0
                               ) {
                                 triggerSnackbar('No newer transcripts found');
                                 setHideHeaderButton(true);
@@ -752,10 +764,9 @@ export function TranscriptView({
                               onClick={async () => {
                                 const result = await fetchNextTranscripts();
                                 if (result.data) {
-                                  const lastPage =
-                                    result.data.pages[
-                                      result.data.pages.length - 1
-                                    ] as { transcripts: Transcript[] };
+                                  const lastPage = result.data.pages[
+                                    result.data.pages.length - 1
+                                  ] as { transcripts: Transcript[] };
                                   if (lastPage?.transcripts.length === 0) {
                                     triggerSnackbar(
                                       'No older transcripts found'
