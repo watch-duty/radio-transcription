@@ -235,19 +235,19 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         # Chunk 1: Speech from 1.0s to 15.0s (full length)
         chunk1 = mock_audio_chunk(0, 15000, [(1.0, 15.0)], "gs://fake/1.flac")
         actions1 = self._process(chunk1)
-        
+
         self.assertTrue(any(isinstance(a, AppendBufferAction) for a in actions1))
         self.assertFalse(any(isinstance(a, FlushAction) for a in actions1))
-        
+
         # Chunk 2: Starts at 15.0s. Speech from 0.0s to 5.0s.
         chunk2 = mock_audio_chunk(15000, 15000, [(0.0, 5.0)], "gs://fake/2.flac")
         actions2 = self._process(chunk2)
-        
+
         # Should NOT flush Chunk 1!
         self.assertFalse(any(isinstance(a, FlushAction) for a in actions2))
         # Should append Chunk 2 audio!
         self.assertTrue(any(isinstance(a, AppendBufferAction) for a in actions2))
-        
+
         # Contributing URIs should have both!
         self.assertIn("gs://fake/1.flac", self.ctx.contributing_audio_uris)
         self.assertIn("gs://fake/2.flac", self.ctx.contributing_audio_uris)

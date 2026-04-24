@@ -419,14 +419,14 @@ class OrderedBypassTest(unittest.TestCase):
         chunk_data.duration_ms = 1000
         chunk_data.audio = np.zeros(16000, dtype=np.int16)
         mock_processor_inst.download_audio_and_detect.return_value = chunk_data
-    
+
         order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
         stitch_config = get_test_stitch_config()
-    
+
         options = PipelineOptions(
             flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
         )
-        
+
         metadata = ChunkMetadata(
             gcs_uri="gs://test-bucket/path/to/test.flac",
             session_id="mock-session-id",
@@ -473,7 +473,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
     ) -> None:
         """Verifies that OrderedStitchAudioFn flushes buffered audio when the stale timer fires."""
         mock_processor_inst = mock_audio_processor.return_value
-        
+
         chunk_data = AudioChunkData(
             start_ms=100000,
             audio=np.zeros(16000, dtype=np.int16),
@@ -492,7 +492,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
         options = PipelineOptions(
             flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
         )
-        
+
         metadata = ChunkMetadata(
             gcs_uri="gs://test-bucket/path/to/test.flac",
             session_id="mock-session-id",
@@ -537,7 +537,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
     ) -> None:
         """Verifies that OrderedStitchAudioFn buffers out-of-order chunks and emits them in order."""
         mock_processor_inst = mock_audio_processor.return_value
-        
+
         def download_side_effect(gcs_uri, timestamp_ms):
             if "chunk1" in gcs_uri:
                 return AudioChunkData(
@@ -548,7 +548,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                     gcs_uri=gcs_uri,
                     duration_ms=1000,
                 )
-            elif "chunk2" in gcs_uri:
+            if "chunk2" in gcs_uri:
                 return AudioChunkData(
                     start_ms=101000,
                     audio=np.ones(16000, dtype=np.int16) * 2,
@@ -557,16 +557,15 @@ class OrderedStitchAudioTest(unittest.TestCase):
                     gcs_uri=gcs_uri,
                     duration_ms=1000,
                 )
-            else:
-                return AudioChunkData(
-                    start_ms=102000,
-                    audio=np.ones(16000, dtype=np.int16) * 3,
-                    sample_rate=16000,
-                    speech_segments=[TimeRange(0, 1000)],
-                    gcs_uri=gcs_uri,
-                    duration_ms=1000,
-                )
-                
+            return AudioChunkData(
+                start_ms=102000,
+                audio=np.ones(16000, dtype=np.int16) * 3,
+                sample_rate=16000,
+                speech_segments=[TimeRange(0, 1000)],
+                gcs_uri=gcs_uri,
+                duration_ms=1000,
+            )
+
         mock_processor_inst.download_audio_and_detect.side_effect = download_side_effect
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
         mock_processor_inst.check_vad.return_value = True
@@ -577,21 +576,21 @@ class OrderedStitchAudioTest(unittest.TestCase):
         options = PipelineOptions(
             flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
         )
-        
+
         metadata_chunk1 = ChunkMetadata(
             gcs_uri="gs://test-bucket/path/to/chunk1.flac",
             session_id="mock-session-id",
             duration_ms=1000,
             feed_metadata=FeedMetadata(feed_name="mock-feed", external_id="mock-external-id"),
         )
-        
+
         metadata_chunk2 = ChunkMetadata(
             gcs_uri="gs://test-bucket/path/to/chunk2.flac",
             session_id="mock-session-id",
             duration_ms=1000,
             feed_metadata=FeedMetadata(feed_name="mock-feed", external_id="mock-external-id"),
         )
-        
+
         metadata_chunk3 = ChunkMetadata(
             gcs_uri="gs://test-bucket/path/to/chunk3.flac",
             session_id="mock-session-id",
@@ -633,7 +632,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 assert len(msgs) == 2
                 for feed_id, request in msgs:
                     assert feed_id == "test-feed-ooo"
-                
+
                 lengths = [len(request.buffer) for feed_id, request in msgs]
                 assert 32000 in lengths
                 assert 16000 in lengths
