@@ -135,7 +135,7 @@ export function AudioDisplay({
         const left = ((visibleStart - startTime) / windowDuration) * 100;
         const width = ((visibleEnd - visibleStart) / windowDuration) * 100;
 
-        const url = getAudioUrl(t.canonicalAudioUri);
+        const url = getAudioUrl(t.playbackAudioUri);
 
         return {
           id: t.transmissionId,
