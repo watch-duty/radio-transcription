@@ -225,7 +225,12 @@ def publish_audio_chunk_sync(
     )
     audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
 
-    attrs: dict[str, str] = {}
+    attrs: dict[str, str] = {
+        "feed_id": feed_id,
+        "session_id": session_id,
+        "gcs_uri": gcs_uri,
+        "timestamp_ms": str(int(start_timestamp.timestamp() * 1000)),
+    }
     if source_type is not None:
         attrs["source_type"] = source_type
 
@@ -266,7 +271,12 @@ async def publish_audio_chunk(
     )
     audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
 
-    attrs: dict[str, str] = {}
+    attrs: dict[str, str] = {
+        "feed_id": feed_id,
+        "session_id": session_id,
+        "gcs_uri": gcs_uri,
+        "timestamp_ms": str(int(start_timestamp.timestamp() * 1000)),
+    }
     if source_type is not None:
         attrs["source_type"] = source_type
 

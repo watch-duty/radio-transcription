@@ -6,18 +6,15 @@ from typing import Any, Union, override
 
 import apache_beam as beam
 from apache_beam.io.gcp.pubsub import PubsubMessage
-from apache_beam.transforms import window
 from apache_beam.transforms.userstate import (
     ReadModifyWriteRuntimeState,
     ReadModifyWriteStateSpec,
 )
 from google.protobuf.duration_pb2 import Duration  # type: ignore
-from google.protobuf.message import DecodeError
 
 from backend.pipeline.common.constants import (
     MICROSECONDS_PER_MS,
     NANOS_PER_MS,
-    NANOS_PER_SECOND,
 )
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import (
     AudioChunk,
@@ -38,25 +35,50 @@ logger = logging.getLogger(__name__)
 
 
 @beam.typehints.with_input_types(PubsubMessage)
-@beam.typehints.with_output_types(tuple[str, bytes])
+@beam.typehints.with_output_types(tuple[str, ChunkMetadata])
 class ParseAndKeyFn(beam.DoFn):
-    """Extracts the feed_id and builds the GCS URI from Pub/Sub attributes.
+    """Extracts the feed_id, parses the protobuf, and builds ChunkMetadata.
 
-    Routes messages missing required attributes to the DLQ.
-    Yields a tuple of `(feed_id, payload)` to establish a deterministic routing key
-    for all subsequent stateful operations (like stitching) on that feed.
+    Routes messages missing required attributes or with invalid payload to the DLQ.
+    Yields a tuple of `(feed_id, ChunkMetadata)` to establish a deterministic routing key
+    for all subsequent stateful operations on that feed.
     """
 
     @override
     def process(
         self, element: PubsubMessage, *args: Any, **kwargs: Any
-    ) -> Iterator[tuple[str, bytes] | beam.pvalue.TaggedOutput]:
-        """Extracts the feed_id attribute from the payload to establish a routing key."""
+    ) -> Iterator[tuple[str, ChunkMetadata] | beam.pvalue.TaggedOutput]:
+        """Extracts the feed_id and parses the protobuf payload."""
+
+        def _raise(msg: str) -> None:
+            raise ValueError(msg)
+
         try:
             feed_id = element.attributes["feed_id"]
-            yield (feed_id, element.data)
-        except KeyError as e:
-            msg = f"Missing required payload attribute: {e}"
+            chunk_proto = AudioChunk()
+            chunk_proto.ParseFromString(element.data)
+
+            if not chunk_proto.gcs_uri:
+                msg = "AudioChunk missing required gcs_uri"
+                _raise(msg)
+            if not chunk_proto.session_id:
+                msg = "AudioChunk missing required session_id"
+                _raise(msg)
+            if not chunk_proto.feed_name:
+                msg = "AudioChunk missing required feed_name"
+                _raise(msg)
+
+            yield (
+                feed_id,
+                ChunkMetadata(
+                    gcs_uri=chunk_proto.gcs_uri,
+                    session_id=chunk_proto.session_id,
+                    duration_ms=chunk_proto.duration_ms,
+                    feed_name=chunk_proto.feed_name,
+                ),
+            )
+        except Exception as e:
+            msg = f"Failed to parse or validate payload: {e}"
             logger.exception(msg)
             yield beam.pvalue.TaggedOutput(
                 DEAD_LETTER_QUEUE_TAG,
@@ -67,90 +89,17 @@ class ParseAndKeyFn(beam.DoFn):
             )
 
 
-@beam.typehints.with_input_types(tuple[str, bytes])
+@beam.typehints.with_input_types(tuple[str, ChunkMetadata])
 @beam.typehints.with_output_types(tuple[str, FeedMetadata])
 class ExtractFeedMetadataFn(beam.DoFn):
-    """Extracts feed metadata from the serialized AudioChunk proto."""
+    """Extracts feed metadata from the ChunkMetadata."""
 
     @override
     def process(
-        self, element: tuple[str, bytes]
+        self, element: tuple[str, ChunkMetadata]
     ) -> Iterator[tuple[str, FeedMetadata]]:
-        feed_id, chunk_bytes = element
-        chunk_proto = AudioChunk()
-        chunk_proto.ParseFromString(chunk_bytes)
-        yield (
-            feed_id,
-            FeedMetadata(
-                feed_name=chunk_proto.feed_name,
-                external_id=chunk_proto.external_id,
-            ),
-        )
-
-
-@beam.typehints.with_input_types(tuple[str, bytes])
-@beam.typehints.with_output_types(tuple[str, ChunkMetadata])
-class AddEventTimestamp(beam.DoFn):
-    """Extracts the event timestamp directly from the `AudioChunk` protobuf.
-
-    Assigns it as the Beam windowing `TimestampedValue`, yielding the GCS URI.
-    This guarantees that all downstream Watermarks and Timers accurately respect
-    the chronological ordering of the hardware audio events.
-    """
-
-    @override
-    def process(
-        self,
-        element: tuple[str, bytes],
-        *args: Any,
-        **kwargs: Any,
-    ) -> Iterator[tuple[str, ChunkMetadata] | beam.pvalue.TaggedOutput]:
-        """Extracts the original hardware timestamp and assigns it to Beam's event timeline."""
-        feed_id, chunk_data = element
-
-        chunk_proto = AudioChunk()
-        try:
-            chunk_proto.ParseFromString(chunk_data)
-        except DecodeError as e:
-            msg = f"Failed to parse AudioChunk proto: {e}"
-            yield beam.pvalue.TaggedOutput(
-                DEAD_LETTER_QUEUE_TAG, {"error": msg, "feed_id": feed_id}
-            )
-        else:
-            if not chunk_proto.HasField("start_timestamp"):
-                msg = f"AudioChunk missing required start_timestamp: {chunk_proto.gcs_uri}"
-                yield beam.pvalue.TaggedOutput(
-                    DEAD_LETTER_QUEUE_TAG, {"error": msg, "feed_id": feed_id}
-                )
-            elif not chunk_proto.gcs_uri:
-                msg = (
-                    f"AudioChunk missing required gcs_uri (feed_id: {feed_id})"
-                )
-                yield beam.pvalue.TaggedOutput(
-                    DEAD_LETTER_QUEUE_TAG, {"error": msg, "feed_id": feed_id}
-                )
-            elif not chunk_proto.session_id:
-                msg = f"AudioChunk missing required session_id: {chunk_proto.gcs_uri}"
-                yield beam.pvalue.TaggedOutput(
-                    DEAD_LETTER_QUEUE_TAG, {"error": msg, "feed_id": feed_id}
-                )
-            else:
-                # Convert google.protobuf.Timestamp to unix float timestamp for Beam Windowing
-                timestamp_sec = chunk_proto.start_timestamp.seconds + (
-                    chunk_proto.start_timestamp.nanos / NANOS_PER_SECOND
-                )
-
-                yield window.TimestampedValue(
-                    (
-                        feed_id,
-                        ChunkMetadata(
-                            chunk_proto.gcs_uri,
-                            chunk_proto.session_id,
-                            chunk_proto.duration_ms,
-                        ),
-                    ),
-                    timestamp_sec,
-                )
+        feed_id, chunk = element
+        yield (feed_id, FeedMetadata(feed_name=chunk.feed_name))
 
 
 @beam.typehints.with_input_types(

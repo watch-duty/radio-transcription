@@ -41,7 +41,6 @@ from backend.pipeline.transcription.stateful_transforms import (
     TranscribeAudioFn,
 )
 from backend.pipeline.transcription.transforms import (
-    AddEventTimestamp,
     ExtractFeedMetadataFn,
     ParseAndKeyFn,
     SerializeAndEnrichFn,
@@ -91,6 +90,7 @@ def get_pipeline(
         subscription=options.input_subscription,
         id_label=options.id_label or None,
         with_attributes=True,
+        timestamp_attribute="timestamp_ms",
     )
     # Group incoming messages into Key-Value pairs: (feed_id, gs://uri/to/audio)
     parsed = messages | "ParseAndKey" >> beam.ParDo(
@@ -101,10 +101,6 @@ def get_pipeline(
     feed_metadata = parsed[MAIN_TAG] | "ExtractFeedMetadata" >> beam.ParDo(
         ExtractFeedMetadataFn()
     )
-
-    timestamped = parsed[MAIN_TAG] | "AddTimestamp" >> beam.ParDo(
-        AddEventTimestamp()
-    ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
     dlq_list = []
 
@@ -151,34 +147,30 @@ def get_pipeline(
             or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
         )
 
-        stitching_results = (
-            timestamped.main
-            | "OrderedBypassStitch"
-            >> beam.ParDo(
-                OrderedBypassFn(
-                    order_config=order_config,
-                    stitch_config=stitching_config,
-                )
-            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
-        )
+        stitching_results = parsed[
+            MAIN_TAG
+        ] | "OrderedBypassStitch" >> beam.ParDo(
+            OrderedBypassFn(
+                order_config=order_config,
+                stitch_config=stitching_config,
+            )
+        ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
         stitching_main = stitching_results.main
         dlq_list.append(stitching_results[DEAD_LETTER_QUEUE_TAG])
     else:
         # New merged path: Handles both ordering and stitching in a single DoFn
-        stitching_results = (
-            timestamped.main
-            | "OrderedStitchAudio"
-            >> beam.ParDo(
-                OrderedStitchAudioFn(
-                    order_config=OrderRestorerConfig(
-                        out_of_order_timeout_ms=options.out_of_order_timeout_ms
-                        or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
-                    ),
-                    stitch_config=download_config,
-                )
-            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
-        )
+        stitching_results = parsed[
+            MAIN_TAG
+        ] | "OrderedStitchAudio" >> beam.ParDo(
+            OrderedStitchAudioFn(
+                order_config=OrderRestorerConfig(
+                    out_of_order_timeout_ms=options.out_of_order_timeout_ms
+                    or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
+                ),
+                stitch_config=download_config,
+            )
+        ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
         stitching_main = stitching_results.main
 
     transcripts = stitching_main | "TranscribeAudio" >> beam.ParDo(
@@ -220,7 +212,6 @@ def get_pipeline(
     # Route all DLQ (Dead Letter Queue) outputs from intermediate steps to a dedicated topic
     dlq_list = [
         parsed[DEAD_LETTER_QUEUE_TAG],
-        timestamped[DEAD_LETTER_QUEUE_TAG],
         transcripts[DEAD_LETTER_QUEUE_TAG],
     ]
 

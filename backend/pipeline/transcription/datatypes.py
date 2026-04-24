@@ -54,6 +54,7 @@ class ChunkMetadata:
     gcs_uri: str
     session_id: str
     duration_ms: int
+    feed_name: str
 
 
 @dataclass(frozen=True)
