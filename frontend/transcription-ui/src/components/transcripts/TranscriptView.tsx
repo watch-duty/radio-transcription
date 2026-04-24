@@ -112,10 +112,7 @@ export function TranscriptView({
     return feedIdToFeedMap.get(feedId) || null;
   }, [feedIdToFeedMap, feedId]);
 
-  // Memoizing the selected feed object derived from the searchedFeedId state.
-  const searchedFeed = useMemo(() => {
-    return feedIdToFeedMap.get(searchedFeedId) || null;
-  }, [feedIdToFeedMap, searchedFeedId]);
+  const searchedFeed = feedIdToFeedMap.get(searchedFeedId) || null;
 
   /**
    * Effect for handling feeds errors.
