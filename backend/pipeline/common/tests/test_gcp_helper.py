@@ -9,7 +9,6 @@ from multidict import CIMultiDict, CIMultiDictProxy
 from yarl import URL
 
 from backend.pipeline.common import gcp_helper
-from backend.pipeline.common import logging as pipeline_logging
 from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
@@ -57,7 +56,19 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
     """Test suite for the upload_staged_audio function."""
 
     async def asyncSetUp(self) -> None:
-        pipeline_logging.set_trace_id("dummy-trace-id")
+        self.mock_span = MagicMock()
+        self.mock_span_context = MagicMock()
+        self.mock_span_context.is_valid = True
+        self.mock_span_context.trace_id = 1
+        self.mock_span.get_span_context.return_value = self.mock_span_context
+
+        self.patcher = patch(
+            "opentelemetry.trace.get_current_span", return_value=self.mock_span
+        )
+        self.patcher.start()
+
+    async def asyncTearDown(self) -> None:
+        self.patcher.stop()
 
     @patch("backend.pipeline.common.gcp_helper.datetime")
     async def test_upload_staged_audio_success(
@@ -94,7 +105,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             bucket,
             expected_object_name,
             audio_chunk,
-            metadata={"trace_id": "dummy-trace-id"},
+            metadata={"trace_id": "00000000000000000000000000000001"},
             content_type="audio/flac",
         )
         self.assertEqual(result, expected_path)
@@ -134,7 +145,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             bucket,
             expected_object_name,
             audio_chunk,
-            metadata={"trace_id": "dummy-trace-id"},
+            metadata={"trace_id": "00000000000000000000000000000001"},
             content_type="audio/flac",
         )
         self.assertEqual(result, expected_path)
@@ -249,7 +260,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             "test-bucket",
             expected_object_name,
             b"\x00\x01" * 100,
-            metadata={"trace_id": "dummy-trace-id"},
+            metadata={"trace_id": "00000000000000000000000000000001"},
             content_type="audio/flac",
             parameters={"ifGenerationMatch": "0"},
         )
@@ -260,7 +271,19 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
     """Tests for the upload_audio function."""
 
     async def asyncSetUp(self) -> None:
-        pipeline_logging.set_trace_id("dummy-trace-id")
+        self.mock_span = MagicMock()
+        self.mock_span_context = MagicMock()
+        self.mock_span_context.is_valid = True
+        self.mock_span_context.trace_id = 1
+        self.mock_span.get_span_context.return_value = self.mock_span_context
+
+        self.patcher = patch(
+            "opentelemetry.trace.get_current_span", return_value=self.mock_span
+        )
+        self.patcher.start()
+
+    async def asyncTearDown(self) -> None:
+        self.patcher.stop()
 
     async def test_upload_with_correct_bucket_and_object_name(self) -> None:
         mock_gcs_client, mock_storage = _make_gcs_client()
@@ -280,7 +303,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             bucket,
             object_name,
             audio,
-            metadata={"trace_id": "dummy-trace-id"},
+            metadata={"trace_id": "00000000000000000000000000000001"},
             content_type="audio/flac",
         )
         self.assertEqual(result, f"gs://{bucket}/{object_name}")
@@ -299,7 +322,9 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         metadata = call_kwargs.kwargs.get("metadata") or call_kwargs[1].get(
             "metadata"
         )
-        self.assertEqual(metadata, {"trace_id": "dummy-trace-id"})
+        self.assertEqual(
+            metadata, {"trace_id": "00000000000000000000000000000001"}
+        )
 
     async def test_upload_with_if_generation_match(self) -> None:
         """ifGenerationMatch=0 is passed as parameters to storage.upload."""
@@ -317,7 +342,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             "bucket",
             "obj.flac",
             b"audio",
-            metadata={"trace_id": "dummy-trace-id"},
+            metadata={"trace_id": "00000000000000000000000000000001"},
             content_type="audio/flac",
             parameters={"ifGenerationMatch": "0"},
         )
@@ -387,7 +412,19 @@ class TestPublishAudioChunkSync(unittest.TestCase):
     """Test suite for the synchronous publish_audio_chunk_sync function."""
 
     def setUp(self) -> None:
-        pipeline_logging.set_trace_id("dummy-trace-id")
+        self.mock_span = MagicMock()
+        self.mock_span_context = MagicMock()
+        self.mock_span_context.is_valid = True
+        self.mock_span_context.trace_id = 1
+        self.mock_span.get_span_context.return_value = self.mock_span_context
+
+        self.patcher = patch(
+            "opentelemetry.trace.get_current_span", return_value=self.mock_span
+        )
+        self.patcher.start()
+
+    def tearDown(self) -> None:
+        self.patcher.stop()
 
     def test_sets_timestamp_ordering_key_and_attributes(self) -> None:
         mock_now = datetime.datetime(2026, 3, 5, 12, 0, tzinfo=datetime.UTC)
@@ -415,7 +452,9 @@ class TestPublishAudioChunkSync(unittest.TestCase):
         self.assertEqual(publish_args[0], "projects/test/topics/audio")
         self.assertEqual(publish_kwargs["feed_id"], "feed-42")
         self.assertEqual(publish_kwargs["source_type"], "echo")
-        self.assertEqual(publish_kwargs["trace_id"], "dummy-trace-id")
+        self.assertEqual(
+            publish_kwargs["trace_id"], "00000000000000000000000000000001"
+        )
         self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
 
         chunk = AudioChunk()

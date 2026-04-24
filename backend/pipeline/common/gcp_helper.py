@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
+from opentelemetry import trace
 
 from backend.pipeline.common import logging as pipeline_logging
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
     from backend.pipeline.storage.feed_store import LeasedFeed
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 # -----------------------------------------------------------------------------
 # Private helper functions
@@ -71,30 +73,31 @@ async def upload_staged_audio(
         ValueError: If encoded metadata size exceeds GCS metadata limits.
 
     """
-    timestamp = datetime.datetime.now(tz=datetime.UTC).strftime(
-        "%Y%m%dT%H%M%SZ",
-    )
-    # Token-qualified paths give each lease holder a unique namespace.
-    # GCS ifGenerationMatch is per-object OCC — it cannot enforce "reject
-    # if token < max_seen."  Putting the token in the path sidesteps this:
-    # different lease holders write to different paths, so a zombie can
-    # never overwrite the current holder's objects.
-    if fencing_token is not None:
-        object_name = (
-            f"{feed['source_type']}/{feed['id']}/"
-            f"token-{fencing_token}/{timestamp}_{chunk_seq}.{extension}"
+    with tracer.start_as_current_span("upload_staged_audio"):
+        timestamp = datetime.datetime.now(tz=datetime.UTC).strftime(
+            "%Y%m%dT%H%M%SZ",
         )
-    else:
-        object_name = f"{feed['source_type']}/{feed['id']}/{timestamp}_{chunk_seq}.{extension}"
+        # Token-qualified paths give each lease holder a unique namespace.
+        # GCS ifGenerationMatch is per-object OCC — it cannot enforce "reject
+        # if token < max_seen."  Putting the token in the path sidesteps this:
+        # different lease holders write to different paths, so a zombie can
+        # never overwrite the current holder's objects.
+        if fencing_token is not None:
+            object_name = (
+                f"{feed['source_type']}/{feed['id']}/"
+                f"token-{fencing_token}/{timestamp}_{chunk_seq}.{extension}"
+            )
+        else:
+            object_name = f"{feed['source_type']}/{feed['id']}/{timestamp}_{chunk_seq}.{extension}"
 
-    return await upload_audio(
-        gcs_client,
-        audio_chunk,
-        bucket,
-        object_name,
-        if_generation_match=0 if fencing_token is not None else None,
-        content_type=content_type,
-    )
+        return await upload_audio(
+            gcs_client,
+            audio_chunk,
+            bucket,
+            object_name,
+            if_generation_match=0 if fencing_token is not None else None,
+            content_type=content_type,
+        )
 
 
 async def upload_audio(
@@ -129,7 +132,7 @@ async def upload_audio(
     """
     storage = gcs_client.get_storage()
     upload_kwargs: dict[str, Any] = {
-        "metadata": {"trace_id": pipeline_logging.get_trace_id()},
+        "metadata": {"trace_id": pipeline_logging.get_current_trace_id()},
         "content_type": content_type,
     }
     if if_generation_match is not None:
@@ -229,17 +232,18 @@ def publish_audio_chunk_sync(
         "feed_id": feed_id,
         "session_id": session_id,
         "gcs_uri": gcs_uri,
-        "trace_id": pipeline_logging.get_trace_id(),
+        "trace_id": pipeline_logging.get_current_trace_id(),
     }
     if source_type is not None:
         attrs["source_type"] = source_type
 
-    future = publisher.publish(
-        topic_path,
-        audio_chunk_msg.SerializeToString(),
-        ordering_key=feed_id,
-        **attrs,
-    )
+    with tracer.start_as_current_span("publish_raw_audio_chunk"):
+        future = publisher.publish(
+            topic_path,
+            audio_chunk_msg.SerializeToString(),
+            ordering_key=feed_id,
+            **attrs,
+        )
     return future.result()
 
 
@@ -272,15 +276,16 @@ async def publish_audio_chunk(
         "feed_id": feed_id,
         "session_id": session_id,
         "gcs_uri": gcs_uri,
-        "trace_id": pipeline_logging.get_trace_id(),
+        "trace_id": pipeline_logging.get_current_trace_id(),
     }
     if source_type is not None:
         attrs["source_type"] = source_type
 
-    future = publisher.publish(
-        topic_path,
-        audio_chunk_msg.SerializeToString(),
-        ordering_key=feed_id,
-        **attrs,
-    )
-    return await asyncio.wrap_future(future)
+    with tracer.start_as_current_span("publish_raw_audio_chunk"):
+        future = publisher.publish(
+            topic_path,
+            audio_chunk_msg.SerializeToString(),
+            ordering_key=feed_id,
+            **attrs,
+        )
+        return await asyncio.wrap_future(future)

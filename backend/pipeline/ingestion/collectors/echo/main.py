@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING
 import functions_framework
 from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
+from opentelemetry import trace
 
-from backend.pipeline.common import logging as pipeline_logging
 from backend.pipeline.common.audio import get_audio_duration
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.gcp_helper import publish_audio_chunk_sync
@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
 setup_logging()
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -66,21 +67,24 @@ feed_store: SyncFeedStore | None = None
 def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
     """Sync entry point for Eventarc GCS OBJECT_FINALIZE events."""
     global gcs_client, pubsub_client, feed_store  # noqa: PLW0603
-    pipeline_logging.set_trace_id()
-    if not STAGING_BUCKET:
-        msg = "AUDIO_STAGING_BUCKET environment variable is not set"
-        raise RuntimeError(msg)
-    if not RAW_AUDIO_TOPIC:
-        msg = "RAW_AUDIO_TOPIC environment variable is not set"
-        raise RuntimeError(msg)
-    if gcs_client is None:
-        gcs_client = storage.Client()
-        logger.info("Echo ingestion initialized (bucket=%s)", STAGING_BUCKET)
-    if pubsub_client is None:
-        pubsub_client = PubSubClient()
-    if feed_store is None:
-        feed_store = SyncFeedStore(connect_db)
-    _handle(cloud_event)
+
+    with tracer.start_as_current_span("echo_ingestion"):
+        if not STAGING_BUCKET:
+            msg = "AUDIO_STAGING_BUCKET environment variable is not set"
+            raise RuntimeError(msg)
+        if not RAW_AUDIO_TOPIC:
+            msg = "RAW_AUDIO_TOPIC environment variable is not set"
+            raise RuntimeError(msg)
+        if gcs_client is None:
+            gcs_client = storage.Client()
+            logger.info(
+                "Echo ingestion initialized (bucket=%s)", STAGING_BUCKET
+            )
+        if pubsub_client is None:
+            pubsub_client = PubSubClient()
+        if feed_store is None:
+            feed_store = SyncFeedStore(connect_db)
+        _handle(cloud_event)
 
 
 def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
@@ -145,18 +149,21 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
         # Upload MP3 directly to staging bucket.
         # if_generation_match=0 skips redundant writes but we
         # always proceed to publish (prior invocation may have crashed after upload).
-        date_dir = parts[1]
-        mp3_path = f"echo/{feed['id']}/{date_dir}/{Path(name).name}"
-        staging_uri = f"gs://{STAGING_BUCKET}/{mp3_path}"
-        blob = gcs_client.bucket(STAGING_BUCKET).blob(mp3_path)
-        try:
-            blob.upload_from_string(
-                mp3_bytes,
-                content_type="audio/mpeg",
-                if_generation_match=0,
-            )
-        except PreconditionFailed:
-            logger.info("MP3 already exists, skipping upload: %s", staging_uri)
+        with tracer.start_as_current_span("upload_echo_staged_audio"):
+            date_dir = parts[1]
+            mp3_path = f"echo/{feed['id']}/{date_dir}/{Path(name).name}"
+            staging_uri = f"gs://{STAGING_BUCKET}/{mp3_path}"
+            blob = gcs_client.bucket(STAGING_BUCKET).blob(mp3_path)
+            try:
+                blob.upload_from_string(
+                    mp3_bytes,
+                    content_type="audio/mpeg",
+                    if_generation_match=0,
+                )
+            except PreconditionFailed:
+                logger.info(
+                    "MP3 already exists, skipping upload: %s", staging_uri
+                )
 
         # Publish AudioChunk with deterministic session_id for dedup.
         feed_id_str = str(feed["id"])
