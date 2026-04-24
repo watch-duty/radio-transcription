@@ -653,7 +653,7 @@ export function TranscriptView({
                   }
                   sx={{ textTransform: 'none' }}
                 >
-                  {isTranscriptsPolling ? 'Refreshing...' : 'Refresh (15s)'}
+                  {isTranscriptsPolling ? 'Refreshing...' : `Refresh (${TRANSCRIPTS_POLLING_INTERVAL_MS / 1000}s)`}
                 </Button>
               )}
             </Box>
