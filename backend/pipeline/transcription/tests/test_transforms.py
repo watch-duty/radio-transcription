@@ -181,9 +181,6 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             )
 
 
-
-
-
 class TranscribeAudioTest(unittest.TestCase):
     @patch("backend.pipeline.transcription.stateful_transforms.get_transcriber")
     @patch("backend.pipeline.transcription.stateful_transforms.AudioProcessor")
