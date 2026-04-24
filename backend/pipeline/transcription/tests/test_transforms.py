@@ -26,7 +26,7 @@ from backend.pipeline.transcription.datatypes import (
     TranscriptionResult,
 )
 from backend.pipeline.transcription.enums import TranscriberType, VadType
-from backend.pipeline.transcription.stitcher import (
+from backend.pipeline.transcription.ordered_stitcher import (
     TranscribeAudioFn,
 )
 from backend.pipeline.transcription.transcribers import Transcriber
@@ -197,8 +197,8 @@ class AddEventTimestampTest(unittest.TestCase):
 
 
 class TranscribeAudioTest(unittest.TestCase):
-    @patch("backend.pipeline.transcription.stitcher.get_transcriber")
-    @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
+    @patch("backend.pipeline.transcription.ordered_stitcher.get_transcriber")
+    @patch("backend.pipeline.transcription.ordered_stitcher.AudioProcessor")
     def test_dlq_routing(
         self, mock_audio_processor: MagicMock, mock_get_transcriber: MagicMock
     ) -> None:
