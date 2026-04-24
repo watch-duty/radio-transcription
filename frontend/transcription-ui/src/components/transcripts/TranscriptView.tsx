@@ -84,8 +84,6 @@ export function TranscriptView({
   const [highlightedTransmissionId, setHighlightedTransmissionId] = useState<
     string | null
   >(targetTransmissionId);
-  const [hideLoadNewerTranscriptsButton, setHideLoadNewerTranscriptsButton] =
-    useState(false);
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const hasScrolledToTarget = useRef(false);
@@ -393,8 +391,6 @@ export function TranscriptView({
         <Button
           variant="contained"
           onClick={() => {
-            setHideLoadNewerTranscriptsButton(false);
-
             if (!feedId) {
               return;
             }
@@ -610,7 +606,7 @@ export function TranscriptView({
                 }}
                 components={{
                   Header: () =>
-                    hasNewerTranscripts && !hideLoadNewerTranscriptsButton ? (
+                    hasNewerTranscripts ? (
                       <Box
                         sx={{
                           display: 'flex',
@@ -634,7 +630,6 @@ export function TranscriptView({
                                 )?.transcripts.length === 0
                               ) {
                                 triggerSnackbar('No newer transcripts found');
-                                setHideLoadNewerTranscriptsButton(true);
                               }
                             }}
                             disabled={isTranscriptsFetching}
