@@ -209,7 +209,7 @@ describe('AudioDisplay', () => {
       expect(labelsAfter).not.toEqual(labelsBefore);
     });
   });
-  
+
   it('should adjust window duration based on userDuration capped at 15 minutes', async () => {
     const mockTranscripts: Transcript[] = [
       {
