@@ -111,10 +111,20 @@ def process_ordering(
     feed_id, metadata = element
     session_changed = False
 
+    task_logger = logging.LoggerAdapter(
+        logging.getLogger(__name__),
+        {
+            "system": "transcription",
+            "component": "sequence-buffer",
+            "feed_id": feed_id,
+            "session_id": metadata.session_id,
+        },
+    )
+
     # Session change detection
     if curr_context.session_id != metadata.session_id:
-        logging.getLogger(__name__).info(
-            f"[{feed_id}] Session ID changed from {curr_context.session_id} to {metadata.session_id}. Resetting state."
+        task_logger.info(
+            f"Session ID changed from {curr_context.session_id} to {metadata.session_id}. Resetting state."
         )
         session_changed = True
         out_of_order_timer.clear()
@@ -129,8 +139,8 @@ def process_ordering(
         new_expected_next_ts,
         new_buffer_elements,
         elements_to_emit,
-        _was_late,
-        _was_buffered,
+        was_late,
+        was_buffered,
     ) = sequence_buffer.process_chunk(
         current_ts_ms=current_ts_ms,
         gcs_uri=metadata.gcs_uri,
@@ -138,6 +148,15 @@ def process_ordering(
         buffer_elements=buffer_elements,
         chunk_duration_ms=metadata.duration_ms,
     )
+
+    if was_late:
+        task_logger.info(f"[Order] Late chunk: {metadata.gcs_uri}")
+    if was_buffered:
+        task_logger.info(
+            f"[Order] Buffered chunk from future: {metadata.gcs_uri}"
+        )
+    if elements_to_emit:
+        task_logger.info(f"[Order] Releasing {len(elements_to_emit)} chunks")
 
     # Update jitter buffer state
     curr_context = replace(
@@ -227,11 +246,22 @@ class OrderedStitchAudioFn(beam.DoFn):
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
     ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
         """Processes incoming chunks, orders them, downloads audio, and stitches them."""
-        feed_id, _metadata = element
+        feed_id, metadata = element
         current_ts_ms = int(float(timestamp) * MS_PER_SECOND)
         curr_context = (
             transmission_context_state.read() or TransmissionContext()
         )
+
+        task_logger = logging.LoggerAdapter(
+            logging.getLogger(__name__),
+            {
+                "system": "transcription",
+                "component": "ordered-stitcher",
+                "feed_id": feed_id,
+                "session_id": curr_context.session_id or "unknown",
+            },
+        )
+        task_logger.info(f"[Process] Processing chunk {metadata.gcs_uri}")
 
         # Handle session change and ordering via helper function
         elements_to_emit, curr_context, session_changed = process_ordering(
@@ -286,6 +316,16 @@ class OrderedStitchAudioFn(beam.DoFn):
         session_id: str,
     ) -> Iterator[tuple[str, FlushRequest]]:
         """Clears current internal state arrays and yields a compiled FlushRequest downstream."""
+        task_logger = logging.LoggerAdapter(
+            logging.getLogger(__name__),
+            {
+                "system": "transcription",
+                "component": "ordered-stitcher",
+                "feed_id": action.feed_id,
+                "session_id": session_id,
+            },
+        )
+
         processed_uris = action.isolated_audio_buffer_uris or list(
             transmission_context.read().contributing_audio_uris
         )
@@ -300,10 +340,8 @@ class OrderedStitchAudioFn(beam.DoFn):
                 action.speech_time_range.start_ms,
                 action.speech_time_range.end_ms,
             )
-            logger.info(
-                "Generated transmission_id: %s for feed: %s",
-                transmission_id,
-                action.feed_id,
+            task_logger.info(
+                f"[Flush] Emitting transmission {transmission_id} with {len(processed_uris)} chunks"
             )
 
             yield (
@@ -339,6 +377,16 @@ class OrderedStitchAudioFn(beam.DoFn):
         is_backfill: bool,
     ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
         """Helper to download and stitch a list of ready chunks."""
+        task_logger = logging.LoggerAdapter(
+            logging.getLogger(__name__),
+            {
+                "system": "transcription",
+                "component": "ordered-stitcher",
+                "feed_id": feed_id,
+                "session_id": curr_context.session_id or "unknown",
+            },
+        )
+
         if not self.audio_processor:
             msg = "AudioProcessor not initialized. setup() must be called."
             raise RuntimeError(msg)
@@ -348,8 +396,14 @@ class OrderedStitchAudioFn(beam.DoFn):
         for chunk in elements_to_emit:
             try:
                 # 1. Download audio!
+                task_logger.info(
+                    f"[Download] Downloading audio for {chunk.gcs_uri}"
+                )
                 chunk_data = self.audio_processor.download_audio_and_detect(
                     chunk.gcs_uri, chunk.timestamp_ms
+                )
+                task_logger.info(
+                    f"[Download] Downloaded audio for {chunk.gcs_uri}"
                 )
 
                 if self.stitch_config.bypass_stitching:
