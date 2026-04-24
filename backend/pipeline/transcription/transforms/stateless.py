@@ -18,10 +18,10 @@ from backend.pipeline.schema_types.raw_audio_chunk_pb2 import (
 from backend.pipeline.schema_types.transcribed_audio_pb2 import (
     TranscribedAudio,
 )
-from backend.pipeline.transcription.constants import (
+from backend.pipeline.transcription.models.constants import (
     DEAD_LETTER_QUEUE_TAG,
 )
-from backend.pipeline.transcription.datatypes import (
+from backend.pipeline.transcription.models.datatypes import (
     ChunkMetadata,
     FeedMetadata,
     TranscriptionResult,

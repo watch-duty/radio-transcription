@@ -8,10 +8,10 @@ from backend.pipeline.common.constants import (
     CHUNK_DURATION_SECONDS,
     MS_PER_SECOND,
 )
-from backend.pipeline.transcription.constants import (
+from backend.pipeline.transcription.models.constants import (
     DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
 )
-from backend.pipeline.transcription.enums import TranscriberType, VadType
+from backend.pipeline.transcription.models.enums import TranscriberType, VadType
 
 
 @dataclass(frozen=True)

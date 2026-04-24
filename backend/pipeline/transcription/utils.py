@@ -6,7 +6,7 @@ from typing import Self
 
 import pydantic
 
-from backend.pipeline.transcription.datatypes import TimeRange
+from backend.pipeline.transcription.models.datatypes import TimeRange
 
 logger = logging.getLogger(__name__)
 
