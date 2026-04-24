@@ -7,7 +7,6 @@ import tempfile
 import urllib.parse
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 from google.cloud import storage
@@ -65,7 +64,7 @@ class AudioProcessor:
         shared_resources: SharedResources | None = None,
         vad_factory: Callable[[VadType, str], VoiceActivityDetector]
         | None = None,
-        gcs_factory: Callable[[], Any] | None = None,
+        gcs_factory: Callable[[], storage.Client] | None = None,
     ) -> None:
         self.vad_type = vad_type
         self.vad_config = vad_config
@@ -75,7 +74,7 @@ class AudioProcessor:
         self.sed_detector = AcousticGateDetector()
 
         self.vad: VoiceActivityDetector | None = None
-        self.gcs_client: Any | None = None
+        self.gcs_client: storage.Client | None = None
 
     def setup(self) -> None:
         """Initializes the VAD plugin and GCS client once per worker."""
