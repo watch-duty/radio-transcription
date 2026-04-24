@@ -54,6 +54,8 @@ type ListTranscriptsData = {
   transcripts: Transcript[];
 } & ListTranscriptsPage;
 
+const TRANSCRIPTS_POLLING_INTERVAL_MS = 15000; // 15 seconds
+
 export function TranscriptView({
   addAlert,
   triggerSnackbar,
@@ -86,8 +88,9 @@ export function TranscriptView({
   >(targetTransmissionId);
   const [hideLoadNewerTranscriptsButton, setHideLoadNewerTranscriptsButton] =
     useState(false);
-  const [isAtTop, setIsAtTop] = useState(true);
-  const [isPolling, setIsPolling] = useState(false);
+  const [isViewAtTopOfTranscripts, setIsViewAtTopOfTranscripts] =
+    useState(true);
+  const [isTranscriptsPolling, setIsTranscriptsPolling] = useState(false);
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const hasScrolledToTarget = useRef(false);
@@ -291,12 +294,13 @@ export function TranscriptView({
   );
 
   useEffect(() => {
-    if (searchedStartTime || !isAtTop || !newestTimestamp || !searchedFeedId)
+    if (!isViewAtTopOfTranscripts || !newestTimestamp || !searchedFeedId) {
       return;
+    }
 
     const interval = setInterval(async () => {
       try {
-        setIsPolling(true);
+        setIsTranscriptsPolling(true);
         const newTranscripts = await pollNewerTranscripts();
         if (newTranscripts.length > 0) {
           updateCacheWithNewTranscripts(newTranscripts);
@@ -304,19 +308,19 @@ export function TranscriptView({
       } catch (error) {
         console.error('Polling error:', error);
       } finally {
-        setIsPolling(false);
+        setIsTranscriptsPolling(false);
       }
-    }, 15000);
+    }, TRANSCRIPTS_POLLING_INTERVAL_MS);
 
     return () => clearInterval(interval);
   }, [
-    searchedStartTime,
-    isAtTop,
+    isViewAtTopOfTranscripts,
     newestTimestamp,
     searchedFeedId,
     pollNewerTranscripts,
     updateCacheWithNewTranscripts,
   ]);
+
   const {
     data: rules,
     error: rulesError,
@@ -620,12 +624,12 @@ export function TranscriptView({
               ) : (
                 <Box />
               )}
-              {(!hasNewerTranscripts) && (
+              {!hasNewerTranscripts && (
                 <Button
                   size="small"
                   variant="text"
                   onClick={async () => {
-                    setIsPolling(true);
+                    setIsTranscriptsPolling(true);
                     try {
                       const newTranscripts = await pollNewerTranscripts();
                       if (newTranscripts.length > 0) {
@@ -636,12 +640,12 @@ export function TranscriptView({
                     } catch (error) {
                       console.error('Manual refresh error:', error);
                     } finally {
-                      setIsPolling(false);
+                      setIsTranscriptsPolling(false);
                     }
                   }}
-                  disabled={isTranscriptsFetching || isPolling}
+                  disabled={isTranscriptsFetching || isTranscriptsPolling}
                   startIcon={
-                    isPolling ? (
+                    isTranscriptsPolling ? (
                       <CircularProgress size={16} color="inherit" />
                     ) : (
                       <RefreshIcon />
@@ -649,10 +653,9 @@ export function TranscriptView({
                   }
                   sx={{ textTransform: 'none' }}
                 >
-                  {isPolling ? 'Refreshing...' : 'Refresh (15s)'}
+                  {isTranscriptsPolling ? 'Refreshing...' : 'Refresh (15s)'}
                 </Button>
               )}
-
             </Box>
             <Paper
               variant="outlined"
@@ -667,7 +670,7 @@ export function TranscriptView({
               <GroupedVirtuoso
                 ref={virtuosoRef}
                 groupCounts={groupCounts}
-                atTopStateChange={(atTop) => setIsAtTop(atTop)}
+                atTopStateChange={(atTop) => setIsViewAtTopOfTranscripts(atTop)}
                 groupContent={(index) => {
                   const title = groupTitles[index];
                   return (
