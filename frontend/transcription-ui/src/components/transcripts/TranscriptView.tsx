@@ -180,7 +180,7 @@ export function TranscriptView({
     // Note: TanStack Query automatically manages the bidirectional pagination state for us.
     // - `getNextPageParam` is always passed the LAST page in the cache (oldest) to continue scanning backward.
     // - `getPreviousPageParam` is always passed the FIRST page in the cache (newest) to continue scanning forward.
-    // Because each page stores its own `nextToken` and `order`, the framework naturally isolates the 
+    // Because each page stores its own `nextToken` and `order`, the framework naturally isolates the
     // forward and backward pagination bookmarks without us needing to maintain separate local state for them.
     getNextPageParam: (lastPage) => {
       // We only fetch older transcripts (descending order). Because the initial
