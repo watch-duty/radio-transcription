@@ -2,14 +2,10 @@
 
 import logging
 from collections.abc import Iterator
-from typing import Any, Union, override
+from typing import Any, override
 
 import apache_beam as beam
 from apache_beam.io.gcp.pubsub import PubsubMessage
-from apache_beam.transforms.userstate import (
-    ReadModifyWriteRuntimeState,
-    ReadModifyWriteStateSpec,
-)
 from google.protobuf.duration_pb2 import Duration  # type: ignore
 
 from backend.pipeline.common.constants import (
@@ -92,115 +88,58 @@ class ParseAndKeyFn(beam.DoFn):
             )
 
 
-@beam.typehints.with_input_types(tuple[str, ChunkMetadata])
-@beam.typehints.with_output_types(tuple[str, FeedMetadata])
-class ExtractFeedMetadataFn(beam.DoFn):
-    """Extracts feed metadata from the ChunkMetadata."""
-
-    @override
-    def process(
-        self, element: tuple[str, ChunkMetadata]
-    ) -> Iterator[tuple[str, FeedMetadata]]:
-        feed_id, chunk = element
-        yield (feed_id, chunk.feed_metadata)
-
-
-@beam.typehints.with_input_types(
-    tuple[str, Union[FeedMetadata, TranscriptionResult]]
-)
+@beam.typehints.with_input_types(TranscriptionResult)
 @beam.typehints.with_output_types(PubsubMessage)
-class SerializeAndEnrichFn(beam.DoFn):
-    """Stores feed metadata in state and enriches the final TranscribedAudio message."""
-
-    FEED_METADATA_SPEC = ReadModifyWriteStateSpec(
-        "feed_metadata", beam.coders.PickleCoder()
-    )
-    LAST_START_MS_SPEC = ReadModifyWriteStateSpec(
-        "last_start_ms", beam.coders.VarIntCoder()
-    )
+class SerializeFn(beam.DoFn):
+    """Serializes the final TranscribedAudio message to Pub/Sub."""
 
     @override
     def process(
         self,
-        element: tuple[str, Any],
-        feed_metadata_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            FEED_METADATA_SPEC
-        ),
-        last_start_ms_state: ReadModifyWriteRuntimeState = beam.DoFn.StateParam(  # type: ignore # noqa: B008
-            LAST_START_MS_SPEC
-        ),
+        element: TranscriptionResult,
     ) -> Iterator[PubsubMessage]:
-        feed_id, value = element
+        value = element
 
-        if isinstance(value, FeedMetadata):
-            feed_metadata_state.write(value)
-        elif isinstance(value, TranscriptionResult):
-            metadata = feed_metadata_state.read()
-            if not metadata or not metadata.feed_name:
-                msg = f"Missing or incomplete feed metadata for feed_id: {feed_id}"
-                raise ValueError(msg)
-            feed_name = metadata.feed_name
-            external_id = metadata.external_id
+        if value.start_audio_offset_ms is None:
+            msg = f"Missing start_audio_offset_ms for feed_id: {value.feed_id} (session: {value.session_id})"
+            raise ValueError(msg)
+        start_offset = Duration(
+            seconds=value.start_audio_offset_ms // MICROSECONDS_PER_MS,
+            nanos=(value.start_audio_offset_ms % MICROSECONDS_PER_MS)
+            * NANOS_PER_MS,
+        )
 
-            # Duplicate detection based on start time
-            last_start_ms = last_start_ms_state.read()
-            current_start_ms = value.time_range.start_ms
+        if value.end_audio_offset_ms is None:
+            msg = f"Missing end_audio_offset_ms for feed_id: {value.feed_id} (session: {value.session_id})"
+            raise ValueError(msg)
+        end_offset = Duration(
+            seconds=value.end_audio_offset_ms // MICROSECONDS_PER_MS,
+            nanos=(value.end_audio_offset_ms % MICROSECONDS_PER_MS)
+            * NANOS_PER_MS,
+        )
 
-            if (
-                last_start_ms is not None
-                and abs(current_start_ms - last_start_ms) < 100
-            ):
-                logger.warning(
-                    "[%s / %s] Potential growing/overlapping transmission detected! "
-                    "Starts at nearly the same time (%dms) as previous (%dms).",
-                    feed_id,
-                    value.session_id,
-                    current_start_ms,
-                    last_start_ms,
-                )
-
-            last_start_ms_state.write(current_start_ms)
-
-            if value.start_audio_offset_ms is None:
-                msg = f"Missing start_audio_offset_ms for feed_id: {feed_id} (session: {value.session_id})"
-                raise ValueError(msg)
-            start_offset = Duration(
-                seconds=value.start_audio_offset_ms // MICROSECONDS_PER_MS,
-                nanos=(value.start_audio_offset_ms % MICROSECONDS_PER_MS)
-                * NANOS_PER_MS,
-            )
-
-            if value.end_audio_offset_ms is None:
-                msg = f"Missing end_audio_offset_ms for feed_id: {feed_id} (session: {value.session_id})"
-                raise ValueError(msg)
-            end_offset = Duration(
-                seconds=value.end_audio_offset_ms // MICROSECONDS_PER_MS,
-                nanos=(value.end_audio_offset_ms % MICROSECONDS_PER_MS)
-                * NANOS_PER_MS,
-            )
-
-            proto = TranscribedAudio(
-                feed_id=value.feed_id,
-                source_audio_uris=value.contributing_audio_uris,
-                transmission_id=value.transmission_id,
-                transcript=value.transcript,
-                missing_prior_context=value.missing_prior_context,
-                missing_post_context=value.missing_post_context,
-                start_audio_offset=start_offset,
-                end_audio_offset=end_offset,
-                canonical_audio_uri=value.canonical_audio_uri,
-                playback_audio_uri=value.playback_audio_uri,
-                feed_name=feed_name,
-                external_id=external_id,
-            )
-            proto.start_timestamp.FromMicroseconds(
-                value.time_range.start_ms * MICROSECONDS_PER_MS
-            )
-            proto.end_timestamp.FromMicroseconds(
-                value.time_range.end_ms * MICROSECONDS_PER_MS
-            )
-            yield PubsubMessage(
-                data=proto.SerializeToString(),
-                attributes={},
-                ordering_key=value.feed_id,
-            )
+        proto = TranscribedAudio(
+            feed_id=value.feed_id,
+            source_audio_uris=value.contributing_audio_uris,
+            transmission_id=value.transmission_id,
+            transcript=value.transcript,
+            missing_prior_context=value.missing_prior_context,
+            missing_post_context=value.missing_post_context,
+            start_audio_offset=start_offset,
+            end_audio_offset=end_offset,
+            canonical_audio_uri=value.canonical_audio_uri,
+            playback_audio_uri=value.playback_audio_uri,
+            feed_name=value.feed_metadata.feed_name,
+            external_id=value.feed_metadata.external_id,
+        )
+        proto.start_timestamp.FromMicroseconds(
+            value.time_range.start_ms * MICROSECONDS_PER_MS
+        )
+        proto.end_timestamp.FromMicroseconds(
+            value.time_range.end_ms * MICROSECONDS_PER_MS
+        )
+        yield PubsubMessage(
+            data=proto.SerializeToString(),
+            attributes={},
+            ordering_key=value.feed_id,
+        )

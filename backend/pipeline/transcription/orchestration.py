@@ -41,9 +41,8 @@ from backend.pipeline.transcription.stateful_transforms import (
     TranscribeAudioFn,
 )
 from backend.pipeline.transcription.transforms import (
-    ExtractFeedMetadataFn,
     ParseAndKeyFn,
-    SerializeAndEnrichFn,
+    SerializeFn,
 )
 
 logger = logging.getLogger(__name__)
@@ -96,11 +95,6 @@ def get_pipeline(
     parsed = messages | "ParseAndKey" >> beam.ParDo(
         ParseAndKeyFn()
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
-
-    # Extract feed metadata for enrichment
-    feed_metadata = parsed[MAIN_TAG] | "ExtractFeedMetadata" >> beam.ParDo(
-        ExtractFeedMetadataFn()
-    )
 
     dlq_list = []
 
@@ -189,21 +183,8 @@ def get_pipeline(
         )
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
-    # Key transcripts by feed_id
-    keyed_transcripts = transcripts.main | "KeyTranscripts" >> beam.Map(
-        lambda res: (res.feed_id, res)
-    )
-
-    # Flatten with feed metadata
-    combined_for_enrichment = (
-        feed_metadata,
-        keyed_transcripts,
-    ) | "FlattenForEnrichment" >> beam.Flatten()
-
     # Convert the native TranscriptionResult into a serialized Protobuf and wrap in a Pub/Sub message
-    serialized = combined_for_enrichment | "SerializeAndEnrich" >> beam.ParDo(
-        SerializeAndEnrichFn()
-    )
+    serialized = transcripts.main | "Serialize" >> beam.ParDo(SerializeFn())
     serialized | "WriteToPubSub" >> WriteToPubSub(
         topic=options.output_topic,
         with_attributes=True,

@@ -31,7 +31,7 @@ from backend.pipeline.transcription.stateful_transforms import (
 from backend.pipeline.transcription.transcribers import Transcriber
 from backend.pipeline.transcription.transforms import (
     ParseAndKeyFn,
-    SerializeAndEnrichFn,
+    SerializeFn,
 )
 
 
@@ -213,6 +213,10 @@ class TranscribeAudioTest(unittest.TestCase):
                             missing_post_context=False,
                             start_audio_offset_ms=0,
                             end_audio_offset_ms=500,
+                            feed_metadata=FeedMetadata(
+                                feed_name="fake-feed",
+                                external_id="fake-external",
+                            ),
                         ),
                     )
                 ]
@@ -242,12 +246,17 @@ class TranscribeAudioTest(unittest.TestCase):
 
 class SerializeAndEnrichTest(unittest.TestCase):
     def test_serialize_and_enrich(self) -> None:
-        """Verifies that SerializeAndEnrichFn correctly stores feed_name and enriches the transcript."""
+        """Verifies that SerializeAndEnrichFn correctly enriches and serializes the transcript."""
         options = PipelineOptions(
             flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
         )
 
         with BeamTestPipeline(options=options) as p:
+            feed_metadata = FeedMetadata(
+                feed_name="Test Feed Name",
+                external_id="test-external-id",
+            )
+
             res1 = TranscriptionResult(
                 feed_id="test-feed",
                 session_id="fake-session",
@@ -261,6 +270,7 @@ class SerializeAndEnrichTest(unittest.TestCase):
                 end_audio_offset_ms=200,
                 canonical_audio_uri="gs://bucket/1.flac",
                 playback_audio_uri="gs://bucket/1_playback.flac",
+                feed_metadata=feed_metadata,
             )
 
             res2 = TranscriptionResult(
@@ -276,23 +286,10 @@ class SerializeAndEnrichTest(unittest.TestCase):
                 end_audio_offset_ms=200,
                 canonical_audio_uri="gs://bucket/2.flac",
                 playback_audio_uri="gs://bucket/2_playback.flac",
+                feed_metadata=feed_metadata,
             )
 
-            elements = [
-                (
-                    "test-feed",
-                    FeedMetadata(
-                        feed_name="Test Feed Name",
-                        external_id="test-external-id",
-                    ),
-                ),
-                ("test-feed", res1),
-                ("test-feed", res2),
-            ]
-
-            results = (
-                p | beam.Create(elements) | beam.ParDo(SerializeAndEnrichFn())
-            )
+            results = p | beam.Create([res1, res2]) | beam.ParDo(SerializeFn())
 
             def assert_results(msgs):
                 from backend.pipeline.schema_types.transcribed_audio_pb2 import (  # noqa: PLC0415

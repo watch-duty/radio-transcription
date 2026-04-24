@@ -88,6 +88,7 @@ class TranscriptionResult:
     end_audio_offset_ms: int
     canonical_audio_uri: str
     playback_audio_uri: str
+    feed_metadata: FeedMetadata
     missing_prior_context: bool = False
     missing_post_context: bool = False
 
@@ -113,6 +114,8 @@ class TransmissionContext:
     buffer_duration_ms: int = 0
     order_timer_active: bool = False
     out_of_order_buffer: list[BufferedChunk] = field(default_factory=list)
+    feed_metadata: FeedMetadata | None = None
+    last_transmission_start_ms: int | None = None
 
 
 @dataclass
@@ -199,6 +202,7 @@ class FlushRequest:
     contributing_audio_uris: list[str]
     time_range: TimeRange
     transmission_id: str
+    feed_metadata: FeedMetadata
     missing_prior_context: bool
     missing_post_context: bool
     start_audio_offset_ms: int | None

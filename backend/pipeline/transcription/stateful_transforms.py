@@ -3,7 +3,7 @@ import time
 from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import Any, override
+from typing import Any, cast, override
 
 import apache_beam as beam
 import numpy as np
@@ -32,6 +32,7 @@ from backend.pipeline.transcription.datatypes import (
     ChunkMetadata,
     DownloadedChunkPayload,
     DropAction,
+    FeedMetadata,
     FlushAction,
     FlushRequest,
     OrderRestorerConfig,
@@ -219,6 +220,11 @@ class OrderedStitchAudioFn(beam.DoFn):
     )
     TRANSMISSION_CONTEXT_STATE = beam.DoFn.StateParam(TRANSMISSION_CONTEXT_SPEC)
 
+    LAST_START_MS_SPEC = ReadModifyWriteStateSpec(
+        "last_start_ms", beam.coders.VarIntCoder()
+    )
+    LAST_START_MS_STATE = beam.DoFn.StateParam(LAST_START_MS_SPEC)
+
     # --- Timers ---
 
     # From RestoreOrderFn
@@ -260,6 +266,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
         transmission_buffer_state: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
+        last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
         out_of_order_timer: RuntimeTimer = OUT_OF_ORDER_TIMER,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
@@ -284,6 +291,11 @@ class OrderedStitchAudioFn(beam.DoFn):
             feed_id, curr_context.session_id, "transcription-stitcher"
         )
         task_logger.info(f"[Process] Processing chunk {metadata.gcs_uri}")
+
+        if curr_context.feed_metadata is None:
+            curr_context = replace(
+                curr_context, feed_metadata=metadata.feed_metadata
+            )
 
         if session_changed:
             # Also clear stitching state!
@@ -315,6 +327,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                 curr_context,
                 transmission_context_state,
                 transmission_buffer_state,
+                last_start_ms_state,
                 timer_manager,
                 feed_id,
                 is_backfill=is_backfill,
@@ -325,6 +338,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         action: FlushAction,
         transmission_context: ReadModifyWriteRuntimeState,
         transmission_buffer: BagRuntimeState,
+        last_start_ms_state: ReadModifyWriteRuntimeState,
         timer_manager: StaleTimerManager,
         session_id: str,
     ) -> Iterator[tuple[str, FlushRequest]]:
@@ -350,6 +364,30 @@ class OrderedStitchAudioFn(beam.DoFn):
                 f"[Flush] Emitting transmission {transmission_id} with {len(processed_uris)} chunks"
             )
 
+            curr_ctx = transmission_context.read()
+            if curr_ctx is None:
+                msg = (
+                    "TransmissionContext cannot be None in _apply_flush_action"
+                )
+                raise ValueError(msg)
+            if curr_ctx.feed_metadata is None:
+                msg = "feed_metadata cannot be None in _apply_flush_action"
+                raise ValueError(msg)
+
+            current_start_ms = action.speech_time_range.start_ms
+            last_start_ms = last_start_ms_state.read()
+
+            if (
+                last_start_ms is not None
+                and abs(current_start_ms - last_start_ms) < 100
+            ):
+                task_logger.warning(
+                    f"Potential growing/overlapping transmission detected! "
+                    f"Starts at nearly the same time ({current_start_ms}ms) as previous ({last_start_ms}ms)."
+                )
+
+            last_start_ms_state.write(current_start_ms)
+
             yield (
                 action.feed_id,
                 FlushRequest(
@@ -363,6 +401,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                     start_audio_offset_ms=action.start_audio_offset_ms,
                     end_audio_offset_ms=action.end_audio_offset_ms,
                     transmission_id=transmission_id,
+                    feed_metadata=curr_ctx.feed_metadata,
                 ),
             )
 
@@ -377,6 +416,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         curr_context: TransmissionContext,
         transmission_context_state: ReadModifyWriteRuntimeState,
         transmission_buffer_state: BagRuntimeState,
+        last_start_ms_state: ReadModifyWriteRuntimeState,
         timer_manager: StaleTimerManager,
         feed_id: str,
         *,
@@ -433,6 +473,9 @@ class OrderedStitchAudioFn(beam.DoFn):
                                 curr_context.session_id,
                                 time_range,
                             ),
+                            feed_metadata=cast(
+                                "FeedMetadata", curr_context.feed_metadata
+                            ),
                         ),
                     )
                     continue
@@ -471,6 +514,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                                 action,
                                 transmission_context_state,
                                 transmission_buffer_state,
+                                last_start_ms_state,
                                 timer_manager,
                                 session_id=curr_context.session_id,
                             )
@@ -514,6 +558,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         feed_id: str = beam.DoFn.KeyParam,  # type: ignore
         transmission_buffer_state: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
+        last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
     ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
@@ -571,6 +616,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                     curr_context,
                     transmission_context_state,
                     transmission_buffer_state,
+                    last_start_ms_state,
                     timer_manager,
                     feed_id,
                     is_backfill=is_backfill,
@@ -658,6 +704,9 @@ class OrderedStitchAudioFn(beam.DoFn):
                         end_audio_offset_ms=end_time_ms
                         - curr_context.buffer_start_time_ms,
                         transmission_id=transmission_id,
+                        feed_metadata=cast(
+                            "FeedMetadata", curr_context.feed_metadata
+                        ),
                     ),
                 )
             except Exception as e:
@@ -721,6 +770,10 @@ class OrderedBypassFn(beam.DoFn):
         curr_context = (
             transmission_context_state.read() or TransmissionContext()
         )
+        if curr_context.feed_metadata is None:
+            curr_context = replace(
+                curr_context, feed_metadata=_metadata.feed_metadata
+            )
 
         # Handle session change and ordering via helper function
         elements_to_emit, curr_context, _session_changed = process_ordering(
@@ -736,14 +789,14 @@ class OrderedBypassFn(beam.DoFn):
 
         if elements_to_emit:
             yield from self._download_and_yield(
-                elements_to_emit, feed_id, curr_context.session_id or "unknown"
+                elements_to_emit, feed_id, curr_context
             )
 
     def _download_and_yield(
         self,
         elements_to_emit: list[BufferedChunk],
         feed_id: str,
-        session_id: str,
+        curr_context: TransmissionContext,
     ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
         if not self.audio_processor:
             msg = "AudioProcessor not initialized. setup() must be called."
@@ -765,7 +818,7 @@ class OrderedBypassFn(beam.DoFn):
                     FlushRequest(
                         buffer=chunk_data.audio,
                         feed_id=feed_id,
-                        session_id=session_id,
+                        session_id=curr_context.session_id or "unknown",
                         contributing_audio_uris=[chunk.gcs_uri],
                         time_range=time_range,
                         missing_prior_context=False,
@@ -773,8 +826,11 @@ class OrderedBypassFn(beam.DoFn):
                         start_audio_offset_ms=0,
                         end_audio_offset_ms=None,
                         transmission_id=generate_transmission_id(
-                            session_id,
+                            curr_context.session_id or "unknown",
                             time_range,
+                        ),
+                        feed_metadata=cast(
+                            "FeedMetadata", curr_context.feed_metadata
                         ),
                     ),
                 )
@@ -835,7 +891,7 @@ class OrderedBypassFn(beam.DoFn):
             transmission_context_state.write(curr_context)
 
             yield from self._download_and_yield(
-                elements_to_emit, feed_id, curr_context.session_id or "unknown"
+                elements_to_emit, feed_id, curr_context
             )
 
 
@@ -1008,6 +1064,7 @@ class TranscribeAudioFn(beam.DoFn):
             end_audio_offset_ms=request.end_audio_offset_ms,
             canonical_audio_uri=canonical_audio_uri,
             playback_audio_uri=playback_audio_uri,
+            feed_metadata=request.feed_metadata,
         )
 
     @override
