@@ -45,7 +45,6 @@ interface TranscriptViewProps {
 }
 
 type ListTranscriptsPage = {
-  timestamp?: number;
   nextToken?: string;
   order: 'asc' | 'desc';
 };
@@ -148,7 +147,10 @@ export function TranscriptView({
     queryKey: ['listTranscripts', token, searchedFeedId, searchedTimestamp],
     queryFn: async ({ pageParam }) => {
       const { nextToken, order } = pageParam;
-      const originalTimestampMs = searchedTimestamp
+
+      // We only fetch the timestamp on the initial load. On subsequent loads,
+      // the cursor-based positioning of the database in nextToken handles the rest.
+      const originalTimestampMs = !nextToken && searchedTimestamp
         ? roundUpToNearestMinute(searchedTimestamp).getTime()
         : undefined;
 
@@ -169,7 +171,7 @@ export function TranscriptView({
         response.transcripts.reverse();
       }
 
-      return { ...response, timestamp: originalTimestampMs, order };
+      return { ...response, order };
     },
     initialPageParam: {
       order: 'desc',
