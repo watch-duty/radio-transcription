@@ -270,6 +270,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         curr_context = (
             transmission_context_state.read() or TransmissionContext()
         )
+        previous_expected_ts = curr_context.expected_next_chunk_start_ms
 
         # Handle session change and ordering via helper function
         elements_to_emit, curr_context, session_changed = process_ordering(
@@ -318,6 +319,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                 timer_manager,
                 feed_id,
                 is_backfill=is_backfill,
+                previous_expected_ts=previous_expected_ts,
             )
 
     def _apply_flush_action(
@@ -381,6 +383,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         feed_id: str,
         *,
         is_backfill: bool,
+        previous_expected_ts: int | None = None,
     ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
         """Helper to download and stitch a list of ready chunks."""
         if curr_context.session_id is None:
@@ -444,6 +447,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                 )
 
                 # 2. Reconstruct StitcherContext!
+                expected_ts = previous_expected_ts if chunk == elements_to_emit[0] else curr_context.expected_next_chunk_start_ms
                 ctx = StitcherContext(
                     feed_id=feed_id,
                     current_gcs_uri=chunk.gcs_uri,
@@ -454,7 +458,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                     transmission_start_time_ms=curr_context.stale_start_time_ms,
                     buffer_start_time_ms=curr_context.buffer_start_time_ms,
                     missing_prior_context=curr_context.missing_prior_context,
-                    expected_next_chunk_start_ms=curr_context.expected_next_chunk_start_ms,
+                    expected_next_chunk_start_ms=expected_ts,
                     start_audio_offset_ms=curr_context.start_audio_offset_ms,
                     end_audio_offset_ms=None,
                     buffer_duration_ms=curr_context.buffer_duration_ms,
@@ -462,7 +466,6 @@ class OrderedStitchAudioFn(beam.DoFn):
 
                 # 3. Process through state machine!
                 actions = state_machine.process_chunk(payload.chunk_data, ctx)
-                print(f"DEBUG actions for {chunk.gcs_uri}: {actions}")
 
                 # 4. Apply actions!
                 for action in actions:

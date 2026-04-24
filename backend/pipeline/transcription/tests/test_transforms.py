@@ -567,11 +567,10 @@ class OrderedStitchAudioTest(unittest.TestCase):
                     )
                 )
                 .advance_watermark_to(100)
-                .add_elements([
-                    TimestampedValue(("test-feed-ooo", metadata_chunk1), 100),
-                    TimestampedValue(("test-feed-ooo", metadata_chunk3), 102),
-                    TimestampedValue(("test-feed-ooo", metadata_chunk2), 101),
-                ])
+                .add_elements([TimestampedValue(("test-feed-ooo", metadata_chunk1), 100)])
+                .add_elements([TimestampedValue(("test-feed-ooo", metadata_chunk3), 102)])
+                .add_elements([TimestampedValue(("test-feed-ooo", metadata_chunk2), 101)])
+                .advance_watermark_to(115)
                 .advance_watermark_to_infinity()
             )
 
@@ -582,9 +581,12 @@ class OrderedStitchAudioTest(unittest.TestCase):
             )
 
             def assert_results(msgs):
-                assert len(msgs) == 3
+                assert len(msgs) == 2
                 for feed_id, request in msgs:
                     assert feed_id == "test-feed-ooo"
-                    assert request.transmission_id is not None
+                
+                lengths = [len(request.buffer) for feed_id, request in msgs]
+                assert 32000 in lengths
+                assert 16000 in lengths
 
             assert_that(results, assert_results)
