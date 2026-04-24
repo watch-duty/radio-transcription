@@ -66,6 +66,48 @@ class NormalizerSettings:
         ),
     )
 
+    # Per-type claim budget caps (scaling plan §4/§6). Worker passes
+    # min(cap, cap - held, total_slack) as each CTE branch's LIMIT so
+    # PostgreSQL enforces the cap structurally via the query planner.
+    cap_bcfy_feeds: int = field(
+        default_factory=lambda: int(
+            os.environ.get("CAP_BCFY_FEEDS", "240"),
+        ),
+    )
+    cap_bcfy_calls: int = field(
+        default_factory=lambda: int(
+            os.environ.get("CAP_BCFY_CALLS", "600"),
+        ),
+    )
+    cap_openmhz: int = field(
+        default_factory=lambda: int(
+            os.environ.get("CAP_OPENMHZ", "900"),
+        ),
+    )
+
+    # Claim ramp filter (scaling plan §9.4). md5-based deterministic
+    # bucketing; 100 = every feed claimable. Sub-100 values enable staged
+    # rollout during Phase 2 ramp stages.
+    claim_ramp_pct: int = field(
+        default_factory=lambda: int(
+            os.environ.get("CLAIM_RAMP_PCT", "100"),
+        ),
+    )
+
+    # Batched + jittered SIGTERM release (scaling plan §8). Each batch is
+    # its own transaction (asyncpg auto-commit on pool.execute); jitter
+    # between batches staggers fleet-wide UNCLAIMED flips during scale-in.
+    sigterm_release_batch_size: int = field(
+        default_factory=lambda: int(
+            os.environ.get("SIGTERM_RELEASE_BATCH_SIZE", "50"),
+        ),
+    )
+    sigterm_release_jitter_max_sec: float = field(
+        default_factory=lambda: float(
+            os.environ.get("SIGTERM_RELEASE_JITTER_MAX_SEC", "2.0"),
+        ),
+    )
+
     # GCS
     audio_staging_bucket: str = field(
         default_factory=lambda: _require_env("AUDIO_STAGING_BUCKET"),

@@ -46,6 +46,12 @@ class TestNormalizerSettings(unittest.TestCase):
             "HEALTH_CHECK_PORT": "9090",
             "HEALTH_CHECK_STARTUP_GRACE_SEC": "90.0",
             "SEGMENTED_PUBSUB_TOPIC_PATH": "projects/test-project/topics/test-segmented-topic",
+            "CAP_BCFY_FEEDS": "200",
+            "CAP_BCFY_CALLS": "400",
+            "CAP_OPENMHZ": "700",
+            "CLAIM_RAMP_PCT": "50",
+            "SIGTERM_RELEASE_BATCH_SIZE": "25",
+            "SIGTERM_RELEASE_JITTER_MAX_SEC": "1.5",
         }
 
         with patch.dict("os.environ", env, clear=True):
@@ -86,6 +92,12 @@ class TestNormalizerSettings(unittest.TestCase):
             settings.segmented_pubsub_topic_path,
             "projects/test-project/topics/test-segmented-topic",
         )
+        self.assertEqual(settings.cap_bcfy_feeds, 200)
+        self.assertEqual(settings.cap_bcfy_calls, 400)
+        self.assertEqual(settings.cap_openmhz, 700)
+        self.assertEqual(settings.claim_ramp_pct, 50)
+        self.assertEqual(settings.sigterm_release_batch_size, 25)
+        self.assertEqual(settings.sigterm_release_jitter_max_sec, 1.5)
 
     def test_edge_case_uses_defaults_and_generates_worker_id(self) -> None:
         """Uses defaults for optional settings when only required vars are set."""
@@ -120,6 +132,12 @@ class TestNormalizerSettings(unittest.TestCase):
             "projects/test-project/topics/test-topic",
         )
         self.assertIsNone(settings.segmented_pubsub_topic_path)
+        self.assertEqual(settings.cap_bcfy_feeds, 240)
+        self.assertEqual(settings.cap_bcfy_calls, 600)
+        self.assertEqual(settings.cap_openmhz, 900)
+        self.assertEqual(settings.claim_ramp_pct, 100)
+        self.assertEqual(settings.sigterm_release_batch_size, 50)
+        self.assertEqual(settings.sigterm_release_jitter_max_sec, 2.0)
 
     def test_edge_case_zero_and_negative_numeric_values_parse(self) -> None:
         """Allows zero/negative values because parsing does not enforce ranges."""
