@@ -108,6 +108,15 @@ def _make_settings(**overrides) -> mock.MagicMock:
         # port 1 when a test exercises _main().
         "health_check_port": 8080,
         "health_check_startup_grace_sec": 120.0,
+        # Per-type claim caps + ramp + SIGTERM release settings — must be
+        # real ints/floats so min()/random.uniform()/arithmetic don't blow
+        # up on MagicMock auto-created attributes.
+        "cap_bcfy_feeds": 240,
+        "cap_bcfy_calls": 600,
+        "cap_openmhz": 900,
+        "claim_ramp_pct": 100,
+        "sigterm_release_batch_size": 50,
+        "sigterm_release_jitter_max_sec": 2.0,
     }
     defaults.update(overrides)
     m = mock.MagicMock()

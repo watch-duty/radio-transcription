@@ -112,6 +112,22 @@ class NormalizerRuntime:
         # while the task is not yet .done(), misinterpreting the intentional
         # release as a fence violation and triggering os._exit(1).
         self._releasing_feeds: set[FeedID] = set()
+        # Per-type claim accounting for the worker-budgeted DB-enforced cap
+        # (scaling plan §4/§6). _held_by_type counts currently-leased feeds
+        # of each source_type; the leasing loop passes
+        # max(0, min(cap, cap - held, total_slack)) as each CTE branch's
+        # LIMIT so PostgreSQL enforces the per-type cap structurally. The
+        # parallel _task_source_types dict mirrors _feed_tasks so the reaper
+        # can decrement the right bucket on task exit without relying on
+        # private attributes of asyncio.Task. Invariant:
+        # set(_task_source_types) == set(_feed_tasks) at the boundaries of
+        # _leasing_loop and _shutdown_sequence.
+        self._held_by_type: dict[SourceType, int] = {
+            SourceType.BCFY_FEEDS: 0,
+            SourceType.BCFY_CALLS: 0,
+            SourceType.OPENMHZ: 0,
+        }
+        self._task_source_types: dict[FeedID, SourceType] = {}
         self._heartbeat_thread: threading.Thread | None = None
         self._store: FeedStore = None  # type: ignore # set in _main()
         self._heartbeat_store: FeedStore = None  # type: ignore # set in _main()
@@ -257,28 +273,70 @@ class NormalizerRuntime:
             # a thundering herd cold-start on recovery. Since the DB is down,
             # no other worker can steal leases either.
             try:
-                capacity = self._normalizer_settings.max_feeds_per_worker - len(
-                    self._feed_tasks
+                total_slack = (
+                    self._normalizer_settings.max_feeds_per_worker
+                    - len(self._feed_tasks)
                 )
-                if capacity > 0:
+                if total_slack > 0:
+                    s = self._normalizer_settings
+                    # Per-type caps enforce the memory budget: for each
+                    # source_type, the worker asks for at most
+                    # cap - current_held rows, further clamped by total
+                    # slack so we never exceed max_feeds_per_worker. The
+                    # inner caps[t] inside min() is redundant algebraically
+                    # but defends against a negative-held accounting bug
+                    # (e.g. a double-decrement would make cap - held > cap).
+                    caps: dict[SourceType, int] = {
+                        SourceType.BCFY_FEEDS: s.cap_bcfy_feeds,
+                        SourceType.BCFY_CALLS: s.cap_bcfy_calls,
+                        SourceType.OPENMHZ: s.cap_openmhz,
+                    }
+                    limits: dict[SourceType, int] = {
+                        t: max(
+                            0,
+                            min(
+                                caps[t],
+                                caps[t] - self._held_by_type[t],
+                                total_slack,
+                            ),
+                        )
+                        for t in caps
+                    }
                     logger.info(
-                        "Attempting to acquire up to %d feeds (%d/%d active)",
-                        capacity,
-                        len(self._feed_tasks),
-                        self._normalizer_settings.max_feeds_per_worker,
+                        "Attempting to acquire feeds "
+                        "(slack=%d, caps=%s, held=%s, limits=%s)",
+                        total_slack,
+                        {t.value: v for t, v in caps.items()},
+                        {t.value: v for t, v in self._held_by_type.items()},
+                        {t.value: v for t, v in limits.items()},
                     )
-                    # Temporary adapter — pass total slack as each branch's
-                    # LIMIT so the total claim bounds at capacity even
-                    # without per-type enforcement. Real per-type arithmetic
-                    # (min(cap, cap - held, total_slack)) lands in commit 5
-                    # once worker-side budget tracking is wired in.
-                    leases = await self._store.acquire_feeds_batch(
-                        self._normalizer_settings.worker_id,
-                        self._normalizer_settings.claim_ramp_pct,
-                        capacity,
-                        capacity,
-                        capacity,
+                    primary = await self._store.acquire_feeds_batch(
+                        s.worker_id,
+                        s.claim_ramp_pct,
+                        limits[SourceType.BCFY_FEEDS],
+                        limits[SourceType.BCFY_CALLS],
+                        limits[SourceType.OPENMHZ],
                     )
+                    leases: list[LeasedFeed] = list(primary)
+                    # When the primary per-type CTE underfills (caps bound
+                    # the ask below remaining slack, or there simply aren't
+                    # enough unclaimed feeds of the right types), try the
+                    # recovery path to sweep up failing-retryable +
+                    # active-abandoned rows. The pg_cron sweep reclaims most
+                    # active-abandoned rows at 30 s cadence, but this path
+                    # still earns its keep for failing-retryable and for
+                    # reclaiming slack before the next sweep tick.
+                    if len(primary) < total_slack:
+                        recovery = (
+                            await self._store.acquire_feeds_recovery(
+                                s.worker_id,
+                                s.abandonment_window_sec,
+                                s.claim_ramp_pct,
+                                total_slack - len(primary),
+                            )
+                        )
+                        leases.extend(recovery)
+
                     for lease in leases:
                         existing = self._feed_tasks.get(lease["id"])
                         if existing is not None and not existing.done():
@@ -290,6 +348,8 @@ class NormalizerRuntime:
                             # worker — including the healthy new task.
                             # Cancel first; the CancelledError handler in
                             # _process_feed exits cleanly without DB writes.
+                            # The decrement for the cancelled task happens in
+                            # _reap_completed_tasks on the next iteration.
                             logger.warning(
                                 "Cancelling orphaned task for feed %s "
                                 "(re-leased with token %d)",
@@ -302,10 +362,15 @@ class NormalizerRuntime:
                             name=f"feed-{lease['name']}",
                         )
                         self._feed_tasks[lease["id"]] = task
+                        self._task_source_types[lease["id"]] = lease["source_type"]
+                        self._held_by_type[lease["source_type"]] += 1
                     if leases:
                         logger.info(
-                            "Acquired %d feeds (%d/%d active)",
+                            "Acquired %d feeds (primary=%d, recovery=%d) "
+                            "— %d/%d active",
                             len(leases),
+                            len(primary),
+                            len(leases) - len(primary),
                             len(self._feed_tasks),
                             self._normalizer_settings.max_feeds_per_worker,
                         )
@@ -331,6 +396,13 @@ class NormalizerRuntime:
         """
         for feed_id in [fid for fid, t in self._feed_tasks.items() if t.done()]:
             task = self._feed_tasks.pop(feed_id)
+            # Keep _task_source_types + _held_by_type in lockstep with the
+            # main task dict. pop(..., None) + max(0, ...) are defensive:
+            # if an unknown feed_id slips in (corrupted state, test double)
+            # we'd rather no-op than underflow the counter.
+            src = self._task_source_types.pop(feed_id, None)
+            if src is not None and src in self._held_by_type:
+                self._held_by_type[src] = max(0, self._held_by_type[src] - 1)
             try:
                 exc = task.exception()
             except asyncio.CancelledError:
