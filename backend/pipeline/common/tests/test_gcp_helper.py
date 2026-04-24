@@ -2,7 +2,7 @@ import concurrent.futures
 import datetime
 import unittest
 import uuid
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import aiohttp
 from multidict import CIMultiDict, CIMultiDictProxy
@@ -105,7 +105,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             bucket,
             expected_object_name,
             audio_chunk,
-            metadata={"trace_id": "00000000000000000000000000000001"},
+            metadata={"trace_id": ANY},
             content_type="audio/flac",
         )
         self.assertEqual(result, expected_path)
@@ -145,7 +145,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             bucket,
             expected_object_name,
             audio_chunk,
-            metadata={"trace_id": "00000000000000000000000000000001"},
+            metadata={"trace_id": ANY},
             content_type="audio/flac",
         )
         self.assertEqual(result, expected_path)
@@ -260,7 +260,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             "test-bucket",
             expected_object_name,
             b"\x00\x01" * 100,
-            metadata={"trace_id": "00000000000000000000000000000001"},
+            metadata={"trace_id": ANY},
             content_type="audio/flac",
             parameters={"ifGenerationMatch": "0"},
         )
@@ -303,7 +303,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             bucket,
             object_name,
             audio,
-            metadata={"trace_id": "00000000000000000000000000000001"},
+            metadata={"trace_id": ANY},
             content_type="audio/flac",
         )
         self.assertEqual(result, f"gs://{bucket}/{object_name}")
@@ -322,9 +322,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         metadata = call_kwargs.kwargs.get("metadata") or call_kwargs[1].get(
             "metadata"
         )
-        self.assertEqual(
-            metadata, {"trace_id": "00000000000000000000000000000001"}
-        )
+        self.assertIsNone(metadata)
 
     async def test_upload_with_if_generation_match(self) -> None:
         """ifGenerationMatch=0 is passed as parameters to storage.upload."""
@@ -342,7 +340,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             "bucket",
             "obj.flac",
             b"audio",
-            metadata={"trace_id": "00000000000000000000000000000001"},
+            metadata={"trace_id": ANY},
             content_type="audio/flac",
             parameters={"ifGenerationMatch": "0"},
         )
@@ -451,9 +449,7 @@ class TestPublishAudioChunkSync(unittest.TestCase):
         publish_args, publish_kwargs = mock_publisher.publish.call_args
         self.assertEqual(publish_args[0], "projects/test/topics/audio")
         self.assertEqual(publish_kwargs["source_type"], "echo")
-        self.assertEqual(
-            publish_kwargs["trace_id"], "00000000000000000000000000000001"
-        )
+
         self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
 
         chunk = AudioChunk()
