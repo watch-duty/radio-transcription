@@ -532,6 +532,31 @@ class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await task
 
+    async def test_skip_if_recent_is_not_a_fence_violation(self) -> None:
+        """renewed=False + current_worker=self (skip-if-recent) must not trigger os._exit."""
+        rt = _make_runtime()
+        task = asyncio.create_task(asyncio.sleep(100))
+        rt._feed_tasks[_FEED_ID] = task
+        rt._releasing_feeds = set()
+        rt._heartbeat_store = mock.AsyncMock()
+        rt._heartbeat_store.renew_heartbeats_batch_diagnostic.return_value = [
+            # Skip-if-recent short-circuits the UPDATE inside the SQL — we
+            # still own the feed (current_worker=_WORKER_ID) but renewed is
+            # False because last_heartbeat was <15 s fresh.
+            self._diag(_FEED_ID, worker=_WORKER_ID, renewed=False),
+        ]
+
+        with mock.patch(
+            "backend.pipeline.ingestion.normalizer_runtime.os._exit",
+        ) as mock_exit:
+            await rt._heartbeat_cycle()
+            mock_exit.assert_not_called()
+
+        self.assertFalse(task.cancelled())
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
     async def test_lost_feeds_trigger_exit(self) -> None:
         """When any feed is lost from heartbeat renewal, os._exit is called."""
         other_worker = uuid.UUID("99999999-8888-7777-6666-555555555555")

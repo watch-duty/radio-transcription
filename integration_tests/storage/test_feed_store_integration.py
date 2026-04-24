@@ -205,7 +205,7 @@ async def test_primary_cte_respects_per_type_limits(
         limit_openmhz=3,
     )
 
-    counts: dict[SourceType, int] = {t: 0 for t in SourceType}
+    counts: dict[SourceType, int] = dict.fromkeys(SourceType, 0)
     for lease in result:
         counts[lease["source_type"]] += 1
     assert counts[SourceType.BCFY_FEEDS] == 2
@@ -271,6 +271,128 @@ async def test_primary_cte_sets_status_to_active(
     assert row["status"] == "active"
     assert row["worker_id"] == worker
     assert row["fencing_token"] >= 1
+
+
+# -- Tests: last_heartbeat write hygiene (HB-01) ---------------------
+
+
+async def _read_last_heartbeat(
+    pool: asyncpg.Pool, feed_id: uuid.UUID
+) -> datetime.datetime | None:
+    row = await pool.fetchrow(
+        "SELECT last_heartbeat FROM feeds WHERE id = $1::uuid",
+        str(feed_id),
+    )
+    assert row is not None
+    return row["last_heartbeat"]
+
+
+async def test_update_progress_does_not_touch_last_heartbeat(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """UPDATE_PROGRESS_SQL no longer writes last_heartbeat (HB-01)."""
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool, "Progress Feed",
+        status="active",
+        worker_id=worker,
+        last_heartbeat_age_seconds=30,
+    )
+    before = await _read_last_heartbeat(db_pool, feed_id)
+
+    ok = await store.update_feed_progress(
+        feed_id, worker, "gs://bucket/file.flac", fencing_token=0,
+        last_bookmark_time=None,
+    )
+
+    assert ok is True
+    after = await _read_last_heartbeat(db_pool, feed_id)
+    assert after == before, "last_heartbeat must be unchanged by progress writes"
+
+
+async def test_report_failure_does_not_touch_last_heartbeat(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """REPORT_FAILURE_SQL no longer writes last_heartbeat (HB-01)."""
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool, "Failing Feed",
+        status="active",
+        worker_id=worker,
+        last_heartbeat_age_seconds=30,
+    )
+    before = await _read_last_heartbeat(db_pool, feed_id)
+
+    result = await store.report_feed_failure(feed_id, worker, fencing_token=0)
+
+    assert result is not None
+    after = await _read_last_heartbeat(db_pool, feed_id)
+    assert after == before, "last_heartbeat must be unchanged by failure writes"
+
+
+# -- Tests: heartbeat skip-if-recent (HB-02) -------------------------
+
+
+async def test_heartbeat_skipped_when_recent(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """A feed with last_heartbeat <15 s ago is NOT renewed; caller still owns it."""
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool, "Recent Feed",
+        status="active",
+        worker_id=worker,
+        last_heartbeat_age_seconds=5,
+    )
+    before = await _read_last_heartbeat(db_pool, feed_id)
+
+    results = await store.renew_heartbeats_batch_diagnostic([feed_id], worker)
+
+    assert len(results) == 1
+    assert results[0]["current_worker"] == worker
+    assert results[0]["renewed"] is False, "fresh heartbeat must skip renewal"
+    after = await _read_last_heartbeat(db_pool, feed_id)
+    assert after == before
+
+
+async def test_heartbeat_renewed_when_stale(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """A feed with last_heartbeat >15 s ago IS renewed, last_heartbeat advances."""
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool, "Stale Feed",
+        status="active",
+        worker_id=worker,
+        last_heartbeat_age_seconds=30,
+    )
+    before = await _read_last_heartbeat(db_pool, feed_id)
+
+    results = await store.renew_heartbeats_batch_diagnostic([feed_id], worker)
+
+    assert results[0]["renewed"] is True
+    after = await _read_last_heartbeat(db_pool, feed_id)
+    assert after is not None and before is not None
+    assert after > before, "stale heartbeat must advance"
+
+
+async def test_heartbeat_null_is_renewed(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """NULL-safe branch: last_heartbeat IS NULL is eligible for renewal."""
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool, "Null Heartbeat Feed",
+        status="active",
+        worker_id=worker,
+        last_heartbeat_age_seconds=None,  # yields NULL
+    )
+
+    results = await store.renew_heartbeats_batch_diagnostic([feed_id], worker)
+
+    assert results[0]["renewed"] is True
+    after = await _read_last_heartbeat(db_pool, feed_id)
+    assert after is not None
 
 
 # -- Tests: update_feed_progress --------------------------------------

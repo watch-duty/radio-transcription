@@ -675,9 +675,21 @@ class NormalizerRuntime:
             self._normalizer_settings.worker_id,
         )
 
-        renewed_ids = {r["id"] for r in results if r["renewed"]}
+        # Retention signal is now DB-authoritative worker ownership, not
+        # `renewed`. Skip-if-recent (feed_queries.py
+        # RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL) short-circuits the UPDATE
+        # when last_heartbeat is already <15 s fresh — those rows return
+        # with renewed=False but current_worker=us. Using `renewed` as the
+        # gate would then fire spurious fence-violation os._exit(1) on
+        # every newly-claimed feed whose first heartbeat tick falls inside
+        # the fresh window. The correct invariant is: a feed is retained
+        # iff the DB row still shows our worker_id.
+        worker_id = self._normalizer_settings.worker_id
+        retained_ids = {
+            r["id"] for r in results if r["current_worker"] == worker_id
+        }
 
-        # A feed missing from renewed_ids is NOT a violation if:
+        # A feed missing from retained_ids is NOT a violation if:
         #   - active[fid].done(): task finished between snapshot and DB response
         #   - fid in _releasing_feeds: task is mid-await on release_feed /
         #     record_failure — DB has set worker_id=NULL but task hasn't returned.
@@ -690,14 +702,15 @@ class NormalizerRuntime:
         lost_ids = {
             fid
             for fid in active
-            if fid not in renewed_ids
+            if fid not in retained_ids
             and not active[fid].done()
             and fid not in self._releasing_feeds
         }
         if not lost_ids:
             logger.debug(
-                "Heartbeat renewed for %d feeds",
-                len(renewed_ids),
+                "Heartbeat retained %d feeds (%d actually written)",
+                len(retained_ids),
+                sum(1 for r in results if r["renewed"]),
             )
             return
 

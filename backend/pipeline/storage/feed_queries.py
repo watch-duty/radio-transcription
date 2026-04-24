@@ -41,21 +41,23 @@ UPDATE_PROGRESS_SQL = """\
 UPDATE feeds
 SET last_processed_filename = $1,
     last_bookmark_time = COALESCE($5, last_bookmark_time),
-    last_heartbeat = NOW(),
     failure_count = 0
 WHERE id = $2 AND worker_id = $3 AND fencing_token = $4
 """
 
 RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL = """\
 WITH current_state AS (
-    SELECT id, worker_id, status
+    SELECT id, worker_id, status, last_heartbeat
     FROM feeds WHERE id = ANY($1::uuid[])
     FOR UPDATE
 ),
 do_update AS (
     UPDATE feeds SET last_heartbeat = NOW()
     FROM current_state
-    WHERE feeds.id = current_state.id AND current_state.worker_id = $2
+    WHERE feeds.id = current_state.id
+      AND current_state.worker_id = $2
+      AND (current_state.last_heartbeat IS NULL
+           OR current_state.last_heartbeat < NOW() - INTERVAL '15 seconds')
     RETURNING feeds.id
 )
 SELECT
@@ -243,7 +245,6 @@ SET status = CASE WHEN failure_count + 1 >= $3
                   ELSE 'failing'::feed_status END,
     failure_count = failure_count + 1,
     worker_id = NULL,
-    last_heartbeat = NOW(),
     retry_after = CASE WHEN failure_count + 1 < $3
                        THEN NOW() + LEAST($5 * INTERVAL '1 second',
                             $6 * INTERVAL '1 second' * POWER(2, failure_count))
