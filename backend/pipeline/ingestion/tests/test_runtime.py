@@ -929,9 +929,9 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
         await rt._shutdown_sequence()
 
         rt._thread_stop.set.assert_called_once()
-        # With an empty _feed_tasks the release path iterates 0 times and
-        # never calls release_feeds_batch_by_ids. The invariant we care
-        # about is that cleanup continues past the health_runner boom.
+        # The invariant we care about is that cleanup continues past the
+        # health_runner boom — release_feeds_batch is reached, the pubsub
+        # and gcs clients close, the pools close.
         self.assertEqual(len(rt._feed_tasks), 0)
 
 
@@ -1057,34 +1057,32 @@ class TestLeasingLoopHeldCounts(unittest.IsolatedAsyncioTestCase):
 
 
 class TestSigtermRelease(unittest.IsolatedAsyncioTestCase):
-    """Tests for the SIGTERM release path (single UPDATE by feed_ids)."""
+    """Tests for the SIGTERM release path (single WHERE worker_id = $1 UPDATE)."""
 
-    async def test_release_passes_all_feed_ids_in_one_call(self) -> None:
-        """120 held leases → exactly 1 release_feeds_batch_by_ids call."""
+    async def test_release_calls_batch_with_worker_id(self) -> None:
+        """Shutdown issues exactly one release_feeds_batch call with worker_id."""
         rt = _make_runtime()
         rt._shutdown = asyncio.Event()
         rt._thread_stop = mock.MagicMock()
         rt._heartbeat_thread = None
         rt._store = mock.AsyncMock()
-        rt._store.release_feeds_batch_by_ids.return_value = 120
+        rt._store.release_feeds_batch.return_value = 120
         rt._data_pool = mock.AsyncMock()
         rt._heartbeat_pool = mock.AsyncMock()
         rt._pubsub_client = mock.AsyncMock()
         rt._gcs_client = mock.AsyncMock()
         rt._health_runner = mock.AsyncMock()
 
-        feed_ids = [uuid.uuid4() for _ in range(120)]
-        for fid in feed_ids:
+        # Populate _feed_tasks so _shutdown_sequence has tasks to cancel,
+        # but the call shape no longer depends on the IDs themselves.
+        for _ in range(120):
             t = asyncio.create_task(asyncio.sleep(0))
-            rt._feed_tasks[fid] = t
+            rt._feed_tasks[uuid.uuid4()] = t
         await asyncio.gather(*rt._feed_tasks.values(), return_exceptions=True)
 
         await rt._shutdown_sequence()
 
-        # Single release_feeds_batch_by_ids call containing all 120 ids.
-        rt._store.release_feeds_batch_by_ids.assert_awaited_once()
-        call_args = rt._store.release_feeds_batch_by_ids.await_args
-        self.assertEqual(len(call_args[0][1]), 120)
+        rt._store.release_feeds_batch.assert_awaited_once_with(_WORKER_ID)
 
 
 class TestHeartbeatLoopSetsLeaseLost(unittest.IsolatedAsyncioTestCase):

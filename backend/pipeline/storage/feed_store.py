@@ -14,7 +14,7 @@ from backend.pipeline.storage.feed_queries import (
     LEASE_FEED_SQL,
     LIST_FEEDS_SQL,
     RELEASE_FEED_SQL,
-    RELEASE_FEEDS_BATCH_BY_IDS_SQL,
+    RELEASE_FEEDS_BATCH_SQL,
     RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
     REPORT_FAILURE_SQL,
     RESET_FEED_SQL,
@@ -490,35 +490,21 @@ class FeedStore:
                 continue
         return counts
 
-    async def release_feeds_batch_by_ids(
-        self,
-        worker_id: uuid.UUID,
-        feed_ids: list[uuid.UUID],
-    ) -> int:
-        """Release a specific set of lease IDs owned by this worker.
+    async def release_feeds_batch(self, worker_id: uuid.UUID) -> int:
+        """Release every active lease still owned by this worker.
 
-        Used by the SIGTERM drain path to release leases in ~50-row batches
-        with jitter between batches, staggering fleet-wide UNCLAIMED flips
-        during scale-in events (scaling plan §8). Each call uses
-        ``pool.execute`` so asyncpg auto-commits per batch — explicit
-        transaction brackets are not needed.
+        The SIGTERM drain path calls this once after cancelling all feed
+        tasks. The DB is authoritative — any row with ``worker_id = us``
+        is released, including stragglers where an earlier per-feed
+        ``release_feed`` failed and never retried.
 
         Args:
-            worker_id: UUID of the worker releasing leases.
-            feed_ids: Specific feed UUIDs to release. Feeds in this list
-                that are no longer owned by ``worker_id`` (e.g. already
-                reclaimed by the pg_cron sweep) are silently skipped.
+            worker_id: UUID of the worker releasing its leases.
 
         Returns:
             The number of feeds actually released.
         """
-        if not feed_ids:
-            return 0
-        result = await self._pool.execute(
-            RELEASE_FEEDS_BATCH_BY_IDS_SQL,
-            worker_id,
-            feed_ids,
-        )
+        result = await self._pool.execute(RELEASE_FEEDS_BATCH_SQL, worker_id)
         if result.startswith("UPDATE "):
             return int(result.split()[1])
         return 0

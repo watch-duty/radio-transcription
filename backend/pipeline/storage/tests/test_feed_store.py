@@ -682,37 +682,25 @@ class TestCountHeldByType(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[1], _WORKER_ID)
 
 
-class TestReleaseFeedsBatchByIds(unittest.IsolatedAsyncioTestCase):
-    """Tests for FeedStore.release_feeds_batch_by_ids."""
+class TestReleaseFeedsBatch(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.release_feeds_batch."""
 
-    async def test_empty_list_fast_path(self) -> None:
-        """Empty feed_ids returns 0 without touching the pool."""
-        pool = _make_pool()
-        store = FeedStore(pool)
-
-        result = await store.release_feeds_batch_by_ids(_WORKER_ID, [])
-
-        self.assertEqual(result, 0)
-        pool.execute.assert_not_called()
-
-    async def test_passes_params(self) -> None:
+    async def test_passes_worker_id(self) -> None:
         pool = _make_pool(execute_result="UPDATE 2")
         store = FeedStore(pool)
-        ids = [_FEED_ID, _FEED_ID_B]
 
-        result = await store.release_feeds_batch_by_ids(_WORKER_ID, ids)
+        result = await store.release_feeds_batch(_WORKER_ID)
 
         self.assertEqual(result, 2)
         args = pool.execute.call_args[0]
-        self.assertIs(args[0], feed_queries.RELEASE_FEEDS_BATCH_BY_IDS_SQL)
+        self.assertIs(args[0], feed_queries.RELEASE_FEEDS_BATCH_SQL)
         self.assertEqual(args[1], _WORKER_ID)
-        self.assertEqual(args[2], ids)
 
     async def test_parses_update_count(self) -> None:
         pool = _make_pool(execute_result="UPDATE 7")
         store = FeedStore(pool)
 
-        result = await store.release_feeds_batch_by_ids(_WORKER_ID, [_FEED_ID])
+        result = await store.release_feeds_batch(_WORKER_ID)
 
         self.assertEqual(result, 7)
 
@@ -720,7 +708,7 @@ class TestReleaseFeedsBatchByIds(unittest.IsolatedAsyncioTestCase):
         pool = _make_pool(execute_result="ROLLBACK")
         store = FeedStore(pool)
 
-        result = await store.release_feeds_batch_by_ids(_WORKER_ID, [_FEED_ID])
+        result = await store.release_feeds_batch(_WORKER_ID)
 
         self.assertEqual(result, 0)
 

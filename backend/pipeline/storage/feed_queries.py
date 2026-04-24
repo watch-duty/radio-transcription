@@ -77,19 +77,24 @@ SET worker_id = NULL,
 WHERE id = $1 AND worker_id = $2 AND fencing_token = $3
 """
 
-# SIGTERM drain: release a specific set of lease IDs in one UPDATE. Sized
-# to ~50 rows/call by the caller and issued via pool.execute so each call
-# is its own transaction (asyncpg auto-commits outside explicit blocks).
+# SIGTERM drain: release every lease still owned by this worker in one
+# UPDATE. The WHERE worker_id = $1 form is authoritative — it catches any
+# stragglers where an earlier per-feed release_feed call failed (transient
+# DB error, asyncio task got reaped before the finally block could
+# re-raise) and the row sits in the DB with worker_id=us until pg_cron
+# reclaims it ~60 s later. Symmetric with count_held_by_type's DB-truth
+# stance: the DB is the source of authority for which feeds we own.
+#
 # unclaimed_since = NOW() matches the convention in RELEASE_FEED_SQL so
 # the autoscaler's MIN(unclaimed_since) signal stays accurate across
 # scale-in. No last_heartbeat write — heartbeat renewal is now the sole
 # writer of that column (scaling plan §6.1).
-RELEASE_FEEDS_BATCH_BY_IDS_SQL = """\
+RELEASE_FEEDS_BATCH_SQL = """\
 UPDATE feeds
 SET worker_id = NULL,
     status = 'unclaimed'::feed_status,
     unclaimed_since = NOW()
-WHERE worker_id = $1 AND id = ANY($2::uuid[])
+WHERE worker_id = $1
 """
 
 # Authoritative per-cycle replacement for the worker's in-memory

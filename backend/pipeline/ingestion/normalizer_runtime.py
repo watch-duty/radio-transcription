@@ -988,25 +988,21 @@ class NormalizerRuntime:
         # see their lease as NULL during a progress update and trigger an
         # accidental fence violation (os._exit(1)).
         #
-        # Release all held leases in a single WHERE id = ANY($2) UPDATE.
-        # The per-type CTE + SKIP LOCKED on the claim side makes concurrent
-        # polling after a fleet-wide UNCLAIMED flip self-balancing across
-        # surviving workers, so the batched+jittered stagger the scaling
-        # plan originally prescribed is no longer needed.
-        feed_ids = list(self._feed_tasks.keys())
+        # Single WHERE worker_id = $1 UPDATE: catches every row the DB
+        # thinks we own, including stragglers from earlier per-feed
+        # release_feed failures. The per-type CTE + SKIP LOCKED on the
+        # claim side makes concurrent polling after a fleet-wide UNCLAIMED
+        # flip self-balancing across surviving workers, so the
+        # batched+jittered stagger the scaling plan originally prescribed
+        # is no longer needed.
+        worker_id = self._normalizer_settings.worker_id
         logger.info(
-            "Releasing %d leases for worker %s",
-            len(feed_ids),
-            self._normalizer_settings.worker_id,
+            "Releasing all leases owned by worker %s",
+            worker_id,
         )
         try:
-            total_released = await self._store.release_feeds_batch_by_ids(
-                self._normalizer_settings.worker_id,
-                feed_ids,
-            )
-            logger.info(
-                "Released %d/%d leases", total_released, len(feed_ids),
-            )
+            total_released = await self._store.release_feeds_batch(worker_id)
+            logger.info("Released %d leases", total_released)
         except Exception:
             logger.exception(
                 "Failed to release feeds on shutdown (safety net will recover)"
