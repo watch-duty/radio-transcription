@@ -216,6 +216,8 @@ export function TranscriptView({
   );
 
   // This is used to group transcripts by date and display them in the UI.
+  // groupCounts is an array of numbers representing the number of transcripts in each group.
+  // groupTitles is an array of strings representing the title of each group.
   const { groupCounts, groupTitles } = useMemo(() => {
     const counts: number[] = [];
     const titles: string[] = [];
