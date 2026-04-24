@@ -351,8 +351,11 @@ export function TranscriptView({
    */
   useEffect(() => {
     if (
+      // Skip polling if not viewing at the top of the transcripts to prevent fetching data when the user would not see it.
+      // User can always click refresh button if they want to.
       !isViewAtTopOfTranscripts ||
-      hasNewerTranscripts || // Skip polling if there are older historical pages ahead of us to load
+      // Skip polling if there are older historical pages ahead of us to load.
+      hasNewerTranscripts ||
       !newestTimestamp ||
       !searchedFeedId
     ) {
