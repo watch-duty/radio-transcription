@@ -267,10 +267,17 @@ class NormalizerRuntime:
                         len(self._feed_tasks),
                         self._normalizer_settings.max_feeds_per_worker,
                     )
+                    # Temporary adapter — pass total slack as each branch's
+                    # LIMIT so the total claim bounds at capacity even
+                    # without per-type enforcement. Real per-type arithmetic
+                    # (min(cap, cap - held, total_slack)) lands in commit 5
+                    # once worker-side budget tracking is wired in.
                     leases = await self._store.acquire_feeds_batch(
                         self._normalizer_settings.worker_id,
-                        self._normalizer_settings.abandonment_window_sec,
-                        limit=capacity,
+                        self._normalizer_settings.claim_ramp_pct,
+                        capacity,
+                        capacity,
+                        capacity,
                     )
                     for lease in leases:
                         existing = self._feed_tasks.get(lease["id"])

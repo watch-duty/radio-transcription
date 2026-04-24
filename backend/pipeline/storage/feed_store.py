@@ -388,31 +388,42 @@ class FeedStore:
     async def acquire_feeds_batch(
         self,
         worker_id: uuid.UUID,
-        abandonment_window_sec: float,
-        limit: int,
+        ramp_pct: int,
+        limit_bcfy_feeds: int,
+        limit_bcfy_calls: int,
+        limit_openmhz: int,
     ) -> list[LeasedFeed]:
         """
-        Batch-acquire up to *limit* available feeds in a single query.
+        Batch-acquire unclaimed feeds via the per-type UNION ALL MATERIALIZED CTE.
 
-        Uses FOR UPDATE SKIP LOCKED to avoid contention with other workers.
+        Each branch is independently capped by its per-type LIMIT so adversarial
+        heap clustering (e.g. a batch of newly-added bcfy_feeds landing
+        together) cannot hand a worker a memory-heavy mono-type batch.
+        Passing 0 for a branch's LIMIT structurally skips that type — the
+        branch's inner SELECT returns no rows and contributes nothing to the
+        outer UPDATE.
+
+        Recovery-path claims (failing-retryable + active-abandoned) are served
+        by the separate ``acquire_feeds_recovery`` method, called when this
+        primary path returns fewer rows than the worker's total slack.
 
         Args:
             worker_id: UUID of the worker requesting leases.
-            abandonment_window_sec: Seconds before a heartbeat is considered stale.
-            limit: Maximum number of feeds to acquire.
+            ramp_pct: md5 ramp filter threshold (0-100). 100 = all eligible.
+            limit_bcfy_feeds: LIMIT applied to the bcfy_feeds branch.
+            limit_bcfy_calls: LIMIT applied to the bcfy_calls branch.
+            limit_openmhz: LIMIT applied to the openmhz branch.
 
         Returns:
             List of ``LeasedFeed`` dicts (empty if none available).
-
         """
-        import datetime  # noqa: PLC0415
-
         rows = await self._pool.fetch(
             ACQUIRE_FEEDS_BATCH_SQL,
             worker_id,
-            datetime.timedelta(seconds=abandonment_window_sec),
-            limit,
-            self._source_types,
+            ramp_pct,
+            limit_bcfy_feeds,
+            limit_bcfy_calls,
+            limit_openmhz,
         )
         return [self._row_to_leased_feed(row) for row in rows]
 

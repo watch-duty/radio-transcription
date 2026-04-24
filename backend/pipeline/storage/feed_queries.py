@@ -98,32 +98,86 @@ SET worker_id = NULL,
 WHERE worker_id = $1 AND id = ANY($2::uuid[])
 """
 
+# Primary per-type claim: three independent per-type CTEs, each locking its
+# own rows with its own LIMIT. UNION ALL happens in a fourth CTE across
+# their IDs — the outer UPDATE joins the combined IDs. Each per-type CTE
+# gets its own MATERIALIZED pin to keep the SKIP LOCKED subquery from
+# being inlined and re-evaluated per outer row (which would defeat the
+# LIMIT under nested-loop plans).
+#
+# Worker computes each branch's LIMIT as max(0, min(cap, cap - held,
+# total_slack)) so the DB enforces per-type caps structurally — a worker
+# cannot be handed more memory-heavy bcfy_feeds rows than the cap allows
+# in a single claim call.
+#
+# **Why not a single-CTE UNION ALL with FOR NO KEY UPDATE on the combined
+# query?** PostgreSQL does not allow FOR UPDATE / FOR NO KEY UPDATE on a
+# UNION result (asyncpg raises FeatureNotSupportedError: "FOR NO KEY
+# UPDATE is not allowed with UNION/INTERSECT/EXCEPT"). Per-CTE locking
+# sidesteps this and also clarifies the intent: each branch's lock scope
+# is its own source_type partition.
+#
+# The failing-retryable + active-abandoned paths are served by the
+# separate ACQUIRE_FEEDS_RECOVERY_SQL, called when this primary path
+# underfills.
+#
+# FOR NO KEY UPDATE (not FOR UPDATE): weaker lock, sufficient because we
+# only mutate status/worker_id/fencing_token/last_heartbeat — none of
+# which are primary/unique keys. Reduces lock-manager contention at peak.
+#
+# ORDER BY id within each branch exploits the shipped composite partial
+# index `feeds_claim_by_type_idx ON feeds (source_type, id)
+# WHERE status = 'unclaimed'` — no sort node, index-scan only.
+#
+# md5-based ramp filter (not hashtext): md5() is documented stable across
+# PostgreSQL minor-version upgrades; hashtext() has historically changed
+# between major versions, which would silently re-shuffle feeds between
+# ramp buckets mid-rollout (scaling plan §9.4).
+#
+# Params: $1=worker_id, $2=ramp_pct,
+#         $3=limit_bcfy_feeds, $4=limit_bcfy_calls, $5=limit_openmhz.
 ACQUIRE_FEEDS_BATCH_SQL = """\
-WITH available_feeds AS (
-    SELECT id
-    FROM feeds
-    WHERE (
-        status = 'unclaimed'::feed_status
-        OR (status = 'failing'::feed_status AND (retry_after IS NULL OR retry_after <= NOW()))
-        OR (status = 'active'::feed_status
-            AND last_heartbeat < NOW() - $2::interval)
-    )
-    AND ($4::text[] IS NULL OR source_type = ANY($4::text[]))
-    ORDER BY (status = 'unclaimed'::feed_status) DESC,
-             retry_after ASC NULLS FIRST,
-             last_heartbeat ASC NULLS FIRST
-    LIMIT $3
-    FOR UPDATE SKIP LOCKED
-),
+WITH
+    bcfy_feeds_claim AS MATERIALIZED (
+        SELECT id FROM feeds
+        WHERE source_type = 'bcfy_feeds' AND status = 'unclaimed'::feed_status
+          AND (('x' || substr(md5(id::text), 1, 7))::bit(28)::integer) % 100 < $2
+        ORDER BY id
+        LIMIT $3
+        FOR NO KEY UPDATE SKIP LOCKED
+    ),
+    bcfy_calls_claim AS MATERIALIZED (
+        SELECT id FROM feeds
+        WHERE source_type = 'bcfy_calls' AND status = 'unclaimed'::feed_status
+          AND (('x' || substr(md5(id::text), 1, 7))::bit(28)::integer) % 100 < $2
+        ORDER BY id
+        LIMIT $4
+        FOR NO KEY UPDATE SKIP LOCKED
+    ),
+    openmhz_claim AS MATERIALIZED (
+        SELECT id FROM feeds
+        WHERE source_type = 'openmhz' AND status = 'unclaimed'::feed_status
+          AND (('x' || substr(md5(id::text), 1, 7))::bit(28)::integer) % 100 < $2
+        ORDER BY id
+        LIMIT $5
+        FOR NO KEY UPDATE SKIP LOCKED
+    ),
+    claimed AS MATERIALIZED (
+        SELECT id FROM bcfy_feeds_claim
+        UNION ALL
+        SELECT id FROM bcfy_calls_claim
+        UNION ALL
+        SELECT id FROM openmhz_claim
+    ),
 leased AS (
     UPDATE feeds
-    SET worker_id = $1,
-        status = 'active'::feed_status,
-        retry_after = NULL,
+    SET status = 'active'::feed_status,
+        worker_id = $1,
+        fencing_token = fencing_token + 1,
         last_heartbeat = NOW(),
-        fencing_token = fencing_token + 1
-    FROM available_feeds
-    WHERE feeds.id = available_feeds.id
+        retry_after = NULL
+    FROM claimed
+    WHERE feeds.id = claimed.id
     RETURNING feeds.id, feeds.name, feeds.source_type,
               feeds.last_processed_filename, feeds.last_bookmark_time,
               feeds.fencing_token

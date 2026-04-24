@@ -185,6 +185,94 @@ async def test_concurrent_leases_get_different_feeds(
     assert result_a["id"] != result_b["id"]
 
 
+# -- Tests: acquire_feeds_batch (per-type CTE) -----------------------
+
+
+async def test_primary_cte_respects_per_type_limits(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """Each branch's LIMIT bounds the rows returned of that source_type."""
+    for i in range(3):
+        await _insert_feed(db_pool, f"bf-{i}", source_type="bcfy_feeds")
+        await _insert_feed(db_pool, f"bc-{i}", source_type="bcfy_calls")
+        await _insert_feed(db_pool, f"om-{i}", source_type="openmhz")
+
+    worker = uuid.uuid4()
+    result = await store.acquire_feeds_batch(
+        worker, ramp_pct=100,
+        limit_bcfy_feeds=2,
+        limit_bcfy_calls=1,
+        limit_openmhz=3,
+    )
+
+    counts: dict[SourceType, int] = {t: 0 for t in SourceType}
+    for lease in result:
+        counts[lease["source_type"]] += 1
+    assert counts[SourceType.BCFY_FEEDS] == 2
+    assert counts[SourceType.BCFY_CALLS] == 1
+    assert counts[SourceType.OPENMHZ] == 3
+
+
+async def test_primary_cte_limit_zero_skips_type(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """A per-branch LIMIT of 0 returns zero rows of that source_type."""
+    await _insert_feed(db_pool, "bf-0", source_type="bcfy_feeds")
+    await _insert_feed(db_pool, "bf-1", source_type="bcfy_feeds")
+    await _insert_feed(db_pool, "bc-0", source_type="bcfy_calls")
+
+    worker = uuid.uuid4()
+    result = await store.acquire_feeds_batch(
+        worker, ramp_pct=100,
+        limit_bcfy_feeds=0,
+        limit_bcfy_calls=10,
+        limit_openmhz=10,
+    )
+
+    assert all(lease["source_type"] != SourceType.BCFY_FEEDS for lease in result)
+    assert any(lease["source_type"] == SourceType.BCFY_CALLS for lease in result)
+
+
+async def test_primary_cte_ramp_zero_returns_empty(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """ramp_pct=0 disables every bucket — no rows regardless of LIMITs."""
+    await _insert_feed(db_pool, "bf-0", source_type="bcfy_feeds")
+    await _insert_feed(db_pool, "bc-0", source_type="bcfy_calls")
+
+    worker = uuid.uuid4()
+    result = await store.acquire_feeds_batch(
+        worker, ramp_pct=0,
+        limit_bcfy_feeds=10,
+        limit_bcfy_calls=10,
+        limit_openmhz=10,
+    )
+
+    assert result == []
+
+
+async def test_primary_cte_sets_status_to_active(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """The outer UPDATE transitions unclaimed → active, bumps fencing_token."""
+    feed_id = await _insert_feed(db_pool, "bf-0", source_type="bcfy_feeds")
+    worker = uuid.uuid4()
+
+    result = await store.acquire_feeds_batch(
+        worker, ramp_pct=100,
+        limit_bcfy_feeds=10,
+        limit_bcfy_calls=10,
+        limit_openmhz=10,
+    )
+
+    assert len(result) == 1
+    assert result[0]["id"] == feed_id
+    row = await _get_feed_status(db_pool, feed_id)
+    assert row["status"] == "active"
+    assert row["worker_id"] == worker
+    assert row["fencing_token"] >= 1
+
+
 # -- Tests: update_feed_progress --------------------------------------
 
 

@@ -422,7 +422,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
         pool = _make_pool(fetch_result=rows)
         store = FeedStore(pool)
 
-        result = await store.acquire_feeds_batch(_WORKER_ID, 60.0, limit=10)
+        result = await store.acquire_feeds_batch(_WORKER_ID, 100, 10, 10, 10)
 
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0]["id"], _FEED_ID)
@@ -433,32 +433,34 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
         pool = _make_pool(fetch_result=[])
         store = FeedStore(pool)
 
-        result = await store.acquire_feeds_batch(_WORKER_ID, 60.0, limit=10)
+        result = await store.acquire_feeds_batch(_WORKER_ID, 100, 10, 10, 10)
 
         self.assertEqual(result, [])
 
     async def test_passes_correct_parameters(self) -> None:
-        """Parameters include worker_id, timedelta, limit, and source_types."""
+        """Parameters are worker_id, ramp_pct, and three per-type limits."""
         pool = _make_pool(fetch_result=[])
         store = FeedStore(pool)
 
-        await store.acquire_feeds_batch(_WORKER_ID, 60.0, limit=5)
+        await store.acquire_feeds_batch(_WORKER_ID, 75, 2, 3, 5)
 
         args = pool.fetch.call_args[0]
+        self.assertIs(args[0], feed_queries.ACQUIRE_FEEDS_BATCH_SQL)
         self.assertEqual(args[1], _WORKER_ID)
-        self.assertEqual(args[2], datetime.timedelta(seconds=60.0))
-        self.assertEqual(args[3], 5)
-        self.assertIsNone(args[4])  # source_types default
+        self.assertEqual(args[2], 75)
+        self.assertEqual(args[3], 2)
+        self.assertEqual(args[4], 3)
+        self.assertEqual(args[5], 5)
 
-    async def test_passes_source_types_filter(self) -> None:
-        """When FeedStore is constructed with source_types, the filter is passed to the query."""
+    async def test_per_type_limit_zero_is_passed_through(self) -> None:
+        """A branch's LIMIT of 0 reaches the SQL — DB enforces the skip."""
         pool = _make_pool(fetch_result=[])
-        store = FeedStore(pool, source_types=["bcfy_feeds", "bcfy_calls"])
+        store = FeedStore(pool)
 
-        await store.acquire_feeds_batch(_WORKER_ID, 60.0, limit=5)
+        await store.acquire_feeds_batch(_WORKER_ID, 100, 0, 10, 10)
 
         args = pool.fetch.call_args[0]
-        self.assertEqual(args[4], ["bcfy_feeds", "bcfy_calls"])
+        self.assertEqual(args[3], 0)
 
     async def test_raises_value_error_on_unknown_source_type(self) -> None:
         """ValueError is raised with details if the DB returns an unknown source type slug."""
@@ -474,7 +476,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         with self.assertRaises(ValueError) as ctx:
-            await store.acquire_feeds_batch(_WORKER_ID, 60.0, limit=1)
+            await store.acquire_feeds_batch(_WORKER_ID, 100, 1, 1, 1)
 
         self.assertIn(
             f"Unknown source type 'invalid_type' for feed {_FEED_ID}",
