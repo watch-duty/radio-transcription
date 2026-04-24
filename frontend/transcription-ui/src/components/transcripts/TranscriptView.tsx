@@ -256,35 +256,42 @@ export function TranscriptView({
 
     return { groupCounts: counts, groupTitles: titles };
   }, [transcripts]);
+
+  // The timestamp of the newest transcript currently loaded in the UI.
+  // Used as a reference point when polling for newly arriving transcripts.
   const newestTimestamp = transcripts[0]?.startTimestamp;
 
+  /**
+   * Fetches transcripts that have arrived after the current newest loaded transcript.
+   * Used by both the automatic background polling and the manual "Refresh" button.
+   */
   const pollNewerTranscripts = useCallback(async () => {
-    if (!newestTimestamp || !searchedFeedId) return [];
+    if (!newestTimestamp || !searchedFeedId || !token) return [];
     const response = await listTranscripts(
       searchedFeedId,
-      token!,
-      undefined,
-      undefined,
-      new Date(newestTimestamp).getTime()
+      token,
+      /*limit=*/ undefined,
+      /*nextToken=*/ undefined,
+      // Query for transcripts with a start time greater than our current newest
+      /*startTime=*/ new Date(newestTimestamp).getTime()
     );
     return response.transcripts;
   }, [newestTimestamp, searchedFeedId, token]);
 
+  /**
+   * Merges newly polled transcripts into the top of the infinite query cache.
+   * This updates the active view without triggering a full refetch of all loaded pages.
+   */
   const updateCacheWithNewTranscripts = useCallback(
     (newTranscripts: Transcript[]) => {
-      queryClient.setQueryData<
-        InfiniteData<{
-          transcripts: Transcript[];
-          nextToken?: string;
-          startTime?: number;
-          endTime?: number;
-          order?: 'asc' | 'desc';
-        }>
-      >(
-        ['listTranscripts', token, searchedFeedId, undefined, undefined],
+      if (!token) return;
+      queryClient.setQueryData<InfiniteData<ListTranscriptsData>>(
+        ['listTranscripts', token, searchedFeedId, searchedTimestamp],
         (oldData) => {
           if (!oldData) return oldData;
 
+          // Filter out duplicates to prevent rendering issues if a transcript 
+          // was caught in both the initial fetch and the poll.
           const existingIds = new Set(
             oldData.pages.flatMap((p) =>
               p.transcripts.map((t) => t.transmissionId)
@@ -296,6 +303,7 @@ export function TranscriptView({
 
           if (filteredNew.length === 0) return oldData;
 
+          // Prepend the new transcripts to the first (newest) page of the query cache.
           const newPages = [...oldData.pages];
           newPages[0] = {
             ...newPages[0],
@@ -305,11 +313,22 @@ export function TranscriptView({
         }
       );
     },
-    [token, searchedFeedId, queryClient]
+    [token, searchedFeedId, searchedTimestamp, queryClient]
   );
 
+  /**
+   * Background polling effect.
+   * Automatically fetches new transcripts every 15 seconds, provided the user is:
+   * 1. Scrolled to the top of the view.
+   * 2. Looking at the "live" head of the stream (no more un-fetched newer pages available).
+   */
   useEffect(() => {
-    if (!isViewAtTopOfTranscripts || !newestTimestamp || !searchedFeedId) {
+    if (
+      !isViewAtTopOfTranscripts ||
+      hasNewerTranscripts || // Skip polling if there are older historical pages ahead of us to load
+      !newestTimestamp ||
+      !searchedFeedId
+    ) {
       return;
     }
 
@@ -330,6 +349,7 @@ export function TranscriptView({
     return () => clearInterval(interval);
   }, [
     isViewAtTopOfTranscripts,
+    hasNewerTranscripts,
     newestTimestamp,
     searchedFeedId,
     pollNewerTranscripts,

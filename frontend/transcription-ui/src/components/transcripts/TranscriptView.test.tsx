@@ -828,7 +828,7 @@ describe('TranscriptView', () => {
         nextToken: undefined,
       });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -916,7 +916,7 @@ describe('TranscriptView', () => {
         nextToken: undefined,
       });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
