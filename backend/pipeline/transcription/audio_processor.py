@@ -137,8 +137,7 @@ class AudioProcessor:
 
         samples = np.frombuffer(process.stdout, dtype=np.int16)
         sr = 16000
-        if samples.ndim > 1:
-            samples = np.mean(samples, axis=1).astype(np.int16)
+
 
         speech_segments = self.sed_detector.detect(samples)
 
