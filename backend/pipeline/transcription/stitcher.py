@@ -42,6 +42,9 @@ from backend.pipeline.transcription.transcribers import (
 )
 
 logger = logging.getLogger(__name__)
+logger = logging.LoggerAdapter(
+    logger, {"system": "transcription", "component": "transcriber"}
+)
 
 
 SEQUENTIAL_BARRIER_SPEC = ReadModifyWriteStateSpec(
