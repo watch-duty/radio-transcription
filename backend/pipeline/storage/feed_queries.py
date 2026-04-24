@@ -92,6 +92,32 @@ SET worker_id = NULL,
 WHERE worker_id = $1 AND id = ANY($2::uuid[])
 """
 
+# Authoritative per-cycle replacement for the worker's in-memory
+# _held_by_type counter. The worker calls this once per leasing iteration
+# before _calculate_branch_limits so per-type LIMITs reflect DB truth,
+# not a running Python count that has to be kept in sync across every
+# path that mutates _feed_tasks (claim, reap, orphan cancel,
+# sweep-reclaim, shutdown).
+#
+# Why DB truth beats an incremental counter: the PR #334 review cycles
+# surfaced two silent leaks in the incremental pattern — one when the
+# orphan path cancelled a running task without decrementing (commit
+# c84b52d), one when the orphan task was already .done() between reap
+# and re-lease (commit 32afbc2). Both were O(N) per-event drifts that
+# never threw. Pulling the number from the DB each cycle makes the
+# entire class of drift bugs structurally impossible.
+#
+# Cost: one extra round-trip per worker per lease_poll_interval_sec
+# (default 5 s) → ~0.2 qps per worker → ~3.2 qps at 16-worker fleet.
+# Served by idx_feeds_active (id) WHERE status='active' partial index
+# (migration 018): ≤250 active rows per worker, sub-millisecond.
+COUNT_HELD_BY_TYPE_SQL = """\
+SELECT source_type, COUNT(*) AS n
+FROM feeds
+WHERE worker_id = $1 AND status = 'active'::feed_status
+GROUP BY source_type
+"""
+
 # Primary per-type claim: three independent per-type CTEs, each locking its
 # own rows with its own LIMIT. UNION ALL happens in a fourth CTE across
 # their IDs — the outer UPDATE joins the combined IDs. Each per-type CTE

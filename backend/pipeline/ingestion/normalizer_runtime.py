@@ -112,22 +112,6 @@ class NormalizerRuntime:
         # while the task is not yet .done(), misinterpreting the intentional
         # release as a fence violation and triggering os._exit(1).
         self._releasing_feeds: set[FeedID] = set()
-        # Per-type claim accounting for the worker-budgeted DB-enforced cap
-        # (scaling plan §4/§6). _held_by_type counts currently-leased feeds
-        # of each source_type; the leasing loop passes
-        # max(0, min(cap, cap - held, total_slack)) as each CTE branch's
-        # LIMIT so PostgreSQL enforces the per-type cap structurally. The
-        # parallel _task_source_types dict mirrors _feed_tasks so the reaper
-        # can decrement the right bucket on task exit without relying on
-        # private attributes of asyncio.Task. Invariant:
-        # set(_task_source_types) == set(_feed_tasks) at the boundaries of
-        # _leasing_loop and _shutdown_sequence.
-        self._held_by_type: dict[SourceType, int] = {
-            SourceType.BCFY_FEEDS: 0,
-            SourceType.BCFY_CALLS: 0,
-            SourceType.OPENMHZ: 0,
-        }
-        self._task_source_types: dict[FeedID, SourceType] = {}
         self._heartbeat_thread: threading.Thread | None = None
         self._store: FeedStore = None  # type: ignore # set in _main()
         self._heartbeat_store: FeedStore = None  # type: ignore # set in _main()
@@ -284,20 +268,28 @@ class NormalizerRuntime:
                         SourceType.BCFY_CALLS: s.cap_bcfy_calls,
                         SourceType.OPENMHZ: s.cap_openmhz,
                     }
+                    # Pull the authoritative per-type held count from the
+                    # DB before apportioning. See FeedStore.count_held_by_type
+                    # for rationale: the previous in-memory counter leaked
+                    # twice during PR review cycles (orphan-on-running +
+                    # orphan-on-done), both silent O(N) drifts. DB-truth
+                    # per cycle is structurally drift-proof and costs one
+                    # extra round-trip per lease_poll_interval_sec.
+                    held = await self._store.count_held_by_type(s.worker_id)
                     # Apportion total_slack across the three per-type CTE
                     # branches (see _calculate_branch_limits for the
                     # algorithm + rationale). Extracted to a pure helper
                     # so the allocation math is unit-testable without the
                     # surrounding asyncio loop.
                     limits = self._calculate_branch_limits(
-                        total_slack, caps, self._held_by_type,
+                        total_slack, caps, held,
                     )
                     logger.info(
                         "Attempting to acquire feeds "
                         "(slack=%d, caps=%s, held=%s, limits=%s, total_ask=%d)",
                         total_slack,
                         {t.value: v for t, v in caps.items()},
-                        {t.value: v for t, v in self._held_by_type.items()},
+                        {t.value: v for t, v in held.items()},
                         {t.value: v for t, v in limits.items()},
                         sum(limits.values()),
                     )
@@ -335,9 +327,9 @@ class NormalizerRuntime:
                             # it's about to be overwritten in _feed_tasks
                             # below and become unreachable from the
                             # reaper's iteration over
-                            # self._feed_tasks.items(). Missing the cleanup
-                            # in either case would leak one slot of this
-                            # source_type's cap per orphan-replace cycle.
+                            # self._feed_tasks.items(). We still need to
+                            # consume the old task's exception — the
+                            # reaper won't see it after the overwrite.
                             # Branches:
                             #   - not done: still running with an outdated
                             #     fencing token; if left alive it would
@@ -347,8 +339,8 @@ class NormalizerRuntime:
                             #     exits cleanly without DB writes).
                             #   - done: task already exited between our
                             #     last reap call and acquire_feeds_batch
-                            #     returning. Accounting cleanup is still
-                            #     required for the same reason.
+                            #     returning. Exception-consumption cleanup
+                            #     is still required for the same reason.
                             if not existing.done():
                                 logger.warning(
                                     "Cancelling orphaned task for feed %s "
@@ -363,19 +355,6 @@ class NormalizerRuntime:
                                     "inline during re-lease (reaper won't see it "
                                     "after overwrite)",
                                     lease["name"],
-                                )
-                            # Decrement the old task's per-type slot so the
-                            # `+= 1` below brings the counter back to
-                            # exactly "1 per held feed", not "2 per held
-                            # feed where the old one is invisible to the
-                            # reaper". max(0, ...) is defensive.
-                            old_src = self._task_source_types.get(lease["id"])
-                            if (
-                                old_src is not None
-                                and old_src in self._held_by_type
-                            ):
-                                self._held_by_type[old_src] = max(
-                                    0, self._held_by_type[old_src] - 1,
                                 )
                             # Consume the task's exception so asyncio
                             # doesn't log "Task exception was never
@@ -392,8 +371,6 @@ class NormalizerRuntime:
                             name=f"feed-{lease['name']}",
                         )
                         self._feed_tasks[lease["id"]] = task
-                        self._task_source_types[lease["id"]] = lease["source_type"]
-                        self._held_by_type[lease["source_type"]] += 1
                     if leases:
                         logger.info(
                             "Acquired %d feeds (primary=%d, recovery=%d) "
@@ -426,13 +403,6 @@ class NormalizerRuntime:
         """
         for feed_id in [fid for fid, t in self._feed_tasks.items() if t.done()]:
             task = self._feed_tasks.pop(feed_id)
-            # Keep _task_source_types + _held_by_type in lockstep with the
-            # main task dict. pop(..., None) + max(0, ...) are defensive:
-            # if an unknown feed_id slips in (corrupted state, test double)
-            # we'd rather no-op than underflow the counter.
-            src = self._task_source_types.pop(feed_id, None)
-            if src is not None and src in self._held_by_type:
-                self._held_by_type[src] = max(0, self._held_by_type[src] - 1)
             try:
                 exc = task.exception()
             except asyncio.CancelledError:
@@ -477,7 +447,10 @@ class NormalizerRuntime:
         Args:
             total_slack: max_feeds_per_worker - len(_feed_tasks).
             caps: per-SourceType env-var-driven cap ceilings.
-            held: current _held_by_type snapshot.
+            held: DB-derived per-type active-lease count for this worker
+                (see FeedStore.count_held_by_type). May contain extra
+                keys beyond ``caps`` (e.g. ECHO always 0) — they are
+                ignored because the dict comprehension iterates ``caps``.
 
         Returns:
             Dict mapping each SourceType in `caps` to its computed LIMIT.
@@ -530,10 +503,7 @@ class NormalizerRuntime:
         normally calls ``task.exception()`` on completed tasks to prevent
         the "Task exception was never retrieved" warning at GC time, but
         orphaned tasks aren't in _feed_tasks anymore, so the reaper can't
-        reach them. This callback does that job instead. It also decoupled
-        from _held_by_type bookkeeping — that decrement already happened
-        synchronously at cancel time, so this callback only consumes the
-        exception.
+        reach them. This callback does that job instead.
         """
         try:
             exc = task.exception()
@@ -1041,12 +1011,6 @@ class NormalizerRuntime:
             logger.exception(
                 "Failed to release feeds on shutdown (safety net will recover)"
             )
-        finally:
-            # Scrub parallel state so it doesn't carry over if the worker is
-            # ever rehydrated in-process (not used today, but keeps invariant
-            # set(_task_source_types) == set(_feed_tasks) honest across
-            # shutdown).
-            self._task_source_types.clear()
 
         await self._pubsub_client.close()
         await self._gcs_client.close()

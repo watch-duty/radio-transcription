@@ -273,6 +273,73 @@ async def test_primary_cte_sets_status_to_active(
     assert row["fencing_token"] >= 1
 
 
+# -- Tests: count_held_by_type ---------------------------------------
+
+
+async def test_count_held_by_type_groups_only_active_owned_rows(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """Only active rows owned by ``worker_id`` count, grouped by source_type."""
+    worker = uuid.uuid4()
+    other_worker = uuid.uuid4()
+
+    # Owned + active: should count.
+    await _insert_feed(
+        db_pool, "owned-bf-1", source_type="bcfy_feeds",
+        status="active", worker_id=worker, last_heartbeat_age_seconds=10,
+    )
+    await _insert_feed(
+        db_pool, "owned-bf-2", source_type="bcfy_feeds",
+        status="active", worker_id=worker, last_heartbeat_age_seconds=10,
+    )
+    await _insert_feed(
+        db_pool, "owned-bc-1", source_type="bcfy_calls",
+        status="active", worker_id=worker, last_heartbeat_age_seconds=10,
+    )
+    # Owned + active openmhz: zero rows expected → key still present with 0.
+
+    # Other worker, active: must NOT count for our worker.
+    await _insert_feed(
+        db_pool, "other-bf", source_type="bcfy_feeds",
+        status="active", worker_id=other_worker,
+        last_heartbeat_age_seconds=10,
+    )
+    # Owned but failing: must NOT count (status != active).
+    await _insert_feed(
+        db_pool, "owned-failing", source_type="bcfy_feeds",
+        status="failing", worker_id=None, failure_count=1,
+        last_heartbeat_age_seconds=120,
+    )
+    # Unclaimed: must NOT count.
+    await _insert_feed(db_pool, "unclaimed", source_type="bcfy_calls")
+
+    result = await store.count_held_by_type(worker)
+
+    assert result[SourceType.BCFY_FEEDS] == 2
+    assert result[SourceType.BCFY_CALLS] == 1
+    assert result[SourceType.OPENMHZ] == 0
+    # ECHO is always returned with 0 — Echo feeds are served by a separate
+    # cloud function and never leased by this worker.
+    assert result[SourceType.ECHO] == 0
+
+
+async def test_count_held_by_type_empty_when_worker_holds_nothing(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """Worker with no active leases gets all-zero dict (every type keyed)."""
+    other_worker = uuid.uuid4()
+    await _insert_feed(
+        db_pool, "active-other", source_type="bcfy_feeds",
+        status="active", worker_id=other_worker,
+        last_heartbeat_age_seconds=10,
+    )
+
+    result = await store.count_held_by_type(uuid.uuid4())
+
+    assert set(result.keys()) == set(SourceType)
+    assert all(v == 0 for v in result.values())
+
+
 # -- Tests: last_heartbeat write hygiene (HB-01) ---------------------
 
 

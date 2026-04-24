@@ -605,6 +605,83 @@ class TestAcquireFeedsRecovery(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result[0]["id"], _FEED_ID)
 
 
+class TestCountHeldByType(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.count_held_by_type."""
+
+    async def test_returns_counts_for_returned_source_types(self) -> None:
+        """Returned rows populate the corresponding SourceType keys."""
+        pool = _make_pool(
+            fetch_result=[
+                {"source_type": "bcfy_feeds", "n": 12},
+                {"source_type": "bcfy_calls", "n": 7},
+            ],
+        )
+        store = FeedStore(pool)
+
+        result = await store.count_held_by_type(_WORKER_ID)
+
+        self.assertEqual(result[SourceType.BCFY_FEEDS], 12)
+        self.assertEqual(result[SourceType.BCFY_CALLS], 7)
+
+    async def test_returns_zeros_for_absent_source_types(self) -> None:
+        """Every SourceType key is present in output, even if not in rows."""
+        pool = _make_pool(
+            fetch_result=[
+                {"source_type": "bcfy_feeds", "n": 3},
+            ],
+        )
+        store = FeedStore(pool)
+
+        result = await store.count_held_by_type(_WORKER_ID)
+
+        # Every SourceType is keyed, with 0 for unreturned types.
+        for source_type in SourceType:
+            self.assertIn(source_type, result)
+        self.assertEqual(result[SourceType.BCFY_FEEDS], 3)
+        self.assertEqual(result[SourceType.BCFY_CALLS], 0)
+        self.assertEqual(result[SourceType.OPENMHZ], 0)
+        self.assertEqual(result[SourceType.ECHO], 0)
+
+    async def test_skips_unknown_source_type_rows(self) -> None:
+        """Bogus source_type strings are silently skipped, not raised."""
+        pool = _make_pool(
+            fetch_result=[
+                {"source_type": "bcfy_feeds", "n": 4},
+                {"source_type": "future_type_not_in_enum", "n": 99},
+            ],
+        )
+        store = FeedStore(pool)
+
+        result = await store.count_held_by_type(_WORKER_ID)
+
+        # The known type populates; the unknown row is dropped — output
+        # contains only valid SourceType keys, all integer values.
+        self.assertEqual(result[SourceType.BCFY_FEEDS], 4)
+        for value in result.values():
+            self.assertIsInstance(value, int)
+
+    async def test_empty_db_result_returns_all_zeros(self) -> None:
+        """No rows → dict has every SourceType mapped to 0."""
+        pool = _make_pool(fetch_result=[])
+        store = FeedStore(pool)
+
+        result = await store.count_held_by_type(_WORKER_ID)
+
+        self.assertEqual(set(result.keys()), set(SourceType))
+        self.assertTrue(all(v == 0 for v in result.values()))
+
+    async def test_passes_worker_id_as_param(self) -> None:
+        """Worker ID is forwarded as the only SQL parameter."""
+        pool = _make_pool(fetch_result=[])
+        store = FeedStore(pool)
+
+        await store.count_held_by_type(_WORKER_ID)
+
+        args = pool.fetch.call_args[0]
+        self.assertIs(args[0], feed_queries.COUNT_HELD_BY_TYPE_SQL)
+        self.assertEqual(args[1], _WORKER_ID)
+
+
 class TestReleaseFeedsBatchByIds(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.release_feeds_batch_by_ids."""
 

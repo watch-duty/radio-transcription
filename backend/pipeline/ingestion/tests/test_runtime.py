@@ -210,6 +210,8 @@ class TestLeasingLoopOrphanedTask(unittest.IsolatedAsyncioTestCase):
         rt = _make_runtime()
         rt._shutdown = asyncio.Event()
         rt._store = mock.AsyncMock()
+        rt._store.count_held_by_type.return_value = dict.fromkeys(SourceType, 0)
+        rt._store.acquire_feeds_recovery.return_value = []
         rt._releasing_feeds = set()
 
         # Simulate an existing running task for the same feed
@@ -257,6 +259,7 @@ class TestLeasingLoopOrphanedTask(unittest.IsolatedAsyncioTestCase):
         )
         rt._shutdown = asyncio.Event()
         rt._store = mock.AsyncMock()
+        rt._store.count_held_by_type.return_value = dict.fromkeys(SourceType, 0)
         rt._releasing_feeds = set()
         rt._store.acquire_feeds_batch.side_effect = [
             [],  # empty result so no tasks spawn
@@ -276,93 +279,6 @@ class TestLeasingLoopOrphanedTask(unittest.IsolatedAsyncioTestCase):
             all(limit >= 0 for limit in limits),
             "no branch should receive a negative LIMIT",
         )
-
-    async def test_already_done_orphan_rerelease_does_not_leak(self) -> None:
-        """Done task at re-lease time must be cleaned up, not silently dropped.
-
-        Regression: if the old task finished between `_reap_completed_tasks`
-        and the next `acquire_feeds_batch` return, `existing.done()` is True
-        and the cancellation branch used to short-circuit — which skipped
-        the _held_by_type decrement and left the old task unreachable from
-        the reaper (overwritten in _feed_tasks). That leaked 1 slot of
-        that source_type per occurrence.
-        """
-        rt = _make_runtime()
-        rt._shutdown = asyncio.Event()
-        rt._store = mock.AsyncMock()
-        rt._releasing_feeds = set()
-
-        # Pre-existing DONE task for _FEED. Use a task that has already
-        # completed (no exception).
-        done_task: asyncio.Task[None] = asyncio.create_task(asyncio.sleep(0))
-        await done_task
-        assert done_task.done()
-        rt._feed_tasks[_FEED_ID] = done_task
-        rt._task_source_types[_FEED_ID] = SourceType.BCFY_FEEDS
-        rt._held_by_type[SourceType.BCFY_FEEDS] = 1
-
-        rt._store.acquire_feeds_batch.side_effect = [
-            [_FEED],
-            asyncio.CancelledError,
-        ]
-        rt._store.acquire_feeds_recovery.return_value = []
-
-        with mock.patch.object(
-            rt, "_process_feed", new_callable=mock.AsyncMock
-        ):
-            rt._shutdown.set()
-            await rt._leasing_loop()
-
-        # One feed held → count is 1, not 2 (would be 2 before the fix
-        # because the done-task path skipped the decrement).
-        self.assertEqual(rt._held_by_type[SourceType.BCFY_FEEDS], 1)
-
-    async def test_orphan_rerelease_does_not_leak_held_by_type(self) -> None:
-        """Re-leasing a held feed must not double-count _held_by_type.
-
-        Regression: the old task becomes unreachable from _reap_completed_tasks
-        once _feed_tasks[lease["id"]] is overwritten, so its decrement never
-        fires while the new task's +=1 does. Without the inline decrement at
-        cancel time, _held_by_type would leak one slot per re-lease and
-        structurally starve the per-type cap over time.
-        """
-        rt = _make_runtime()
-        rt._shutdown = asyncio.Event()
-        rt._store = mock.AsyncMock()
-        rt._releasing_feeds = set()
-
-        # Pre-populate state to look like the worker already holds _FEED
-        # (source_type=BCFY_FEEDS) with a running task.
-        old_task = asyncio.create_task(asyncio.sleep(1000))
-        rt._feed_tasks[_FEED_ID] = old_task
-        rt._task_source_types[_FEED_ID] = SourceType.BCFY_FEEDS
-        rt._held_by_type[SourceType.BCFY_FEEDS] = 1
-
-        # Single leasing cycle: returns the same feed (re-lease). Recovery
-        # path returns empty so it doesn't interfere.
-        rt._store.acquire_feeds_batch.side_effect = [
-            [_FEED],
-            asyncio.CancelledError,
-        ]
-        rt._store.acquire_feeds_recovery.return_value = []
-
-        with mock.patch.object(
-            rt, "_process_feed", new_callable=mock.AsyncMock
-        ):
-            rt._shutdown.set()
-            await rt._leasing_loop()
-
-        # Let the cancellation propagate.
-        await asyncio.sleep(0)
-
-        # The invariant that matters: one feed held → count is 1, not 2.
-        # Before the fix, this would be 2 because the old task's decrement
-        # was routed through the reaper, which never sees the old task
-        # after _feed_tasks[_FEED_ID] got overwritten.
-        self.assertEqual(rt._held_by_type[SourceType.BCFY_FEEDS], 1)
-        # And _task_source_types still has exactly the new task's entry.
-        self.assertEqual(rt._task_source_types[_FEED_ID], SourceType.BCFY_FEEDS)
-        self.assertTrue(old_task.cancelled())
 
 
 class TestProcessFeedFenceViolation(unittest.IsolatedAsyncioTestCase):
@@ -1093,6 +1009,53 @@ class TestCalculateBranchLimits(unittest.TestCase):
         self.assertLessEqual(limits[SourceType.OPENMHZ], 900)
 
 
+class TestLeasingLoopHeldCounts(unittest.IsolatedAsyncioTestCase):
+    """The leasing loop must source per-type held counts from the DB."""
+
+    async def test_count_held_by_type_called_before_acquire(self) -> None:
+        """count_held_by_type is awaited and its result feeds branch limits."""
+        rt = _make_runtime(
+            max_feeds_per_worker=250,
+            cap_bcfy_feeds=240,
+            cap_bcfy_calls=600,
+            cap_openmhz=900,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+
+        # Simulate the worker already holding 240 BCFY_FEEDS (at cap).
+        # _calculate_branch_limits should give that branch zero headroom.
+        rt._store.count_held_by_type.return_value = {
+            SourceType.BCFY_FEEDS: 240,
+            SourceType.BCFY_CALLS: 0,
+            SourceType.OPENMHZ: 0,
+            SourceType.ECHO: 0,
+        }
+        rt._store.acquire_feeds_batch.side_effect = [
+            [],
+            asyncio.CancelledError,
+        ]
+        rt._store.acquire_feeds_recovery.return_value = []
+
+        rt._shutdown.set()
+        await rt._leasing_loop()
+
+        # The DB-derived held dict must have been consulted.
+        rt._store.count_held_by_type.assert_awaited()
+        call = rt._store.count_held_by_type.await_args_list[0]
+        self.assertEqual(call[0][0], _WORKER_ID)
+
+        # The acquire call's per-type limits must reflect the DB-derived
+        # held: bcfy_feeds=0 (capped), other two share total_slack=250.
+        acquire_call = rt._store.acquire_feeds_batch.await_args_list[0]
+        bcfy_feeds_limit, bcfy_calls_limit, openmhz_limit = acquire_call[0][2:5]
+        self.assertEqual(bcfy_feeds_limit, 0)
+        self.assertEqual(
+            bcfy_calls_limit + openmhz_limit + bcfy_feeds_limit, 250,
+        )
+
+
 class TestSigtermRelease(unittest.IsolatedAsyncioTestCase):
     """Tests for the SIGTERM release path (single UPDATE by feed_ids)."""
 
@@ -1114,7 +1077,6 @@ class TestSigtermRelease(unittest.IsolatedAsyncioTestCase):
         for fid in feed_ids:
             t = asyncio.create_task(asyncio.sleep(0))
             rt._feed_tasks[fid] = t
-            rt._task_source_types[fid] = list(rt._held_by_type.keys())[0]
         await asyncio.gather(*rt._feed_tasks.values(), return_exceptions=True)
 
         await rt._shutdown_sequence()
@@ -1123,7 +1085,6 @@ class TestSigtermRelease(unittest.IsolatedAsyncioTestCase):
         rt._store.release_feeds_batch_by_ids.assert_awaited_once()
         call_args = rt._store.release_feeds_batch_by_ids.await_args
         self.assertEqual(len(call_args[0][1]), 120)
-        self.assertEqual(rt._task_source_types, {})
 
 
 class TestHeartbeatLoopSetsLeaseLost(unittest.IsolatedAsyncioTestCase):

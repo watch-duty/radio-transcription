@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, TypedDict
 from backend.pipeline.storage.feed_queries import (
     ACQUIRE_FEEDS_BATCH_SQL,
     ACQUIRE_FEEDS_RECOVERY_SQL,
+    COUNT_HELD_BY_TYPE_SQL,
     CREATE_FEED_SQL,
     DELETE_FEED_SQL,
     GET_FEED_SQL,
@@ -445,6 +446,49 @@ class FeedStore:
             limit,
         )
         return [self._row_to_leased_feed(row) for row in rows]
+
+    async def count_held_by_type(
+        self,
+        worker_id: uuid.UUID,
+    ) -> dict[SourceType, int]:
+        """Count active leases held by ``worker_id``, grouped by source_type.
+
+        Authoritative per-cycle replacement for the worker's in-memory
+        ``_held_by_type`` counter. The leasing loop calls this once per
+        iteration and passes the result straight into
+        ``_calculate_branch_limits``; the DB is the source of truth, so
+        sweep-reclaims and cross-worker steals are reflected immediately
+        without any in-process bookkeeping.
+
+        The returned dict always contains an entry for every ``SourceType``
+        value — types the worker doesn't currently hold map to 0. This
+        lets the caller skip ``.get(t, 0)`` dances at use sites. ``ECHO``
+        is always 0 in practice (Echo feeds are served by a separate
+        cloud function, never leased by this worker) but the key is
+        populated anyway so the invariant "every SourceType in the dict"
+        holds.
+
+        Unknown ``source_type`` strings returned by the DB are silently
+        skipped. ``CREATE_FEED_SQL`` enforces referential integrity
+        against ``source_types``, so this should never trigger in
+        practice — the skip path is defensive against a hypothetical
+        schema drift.
+
+        Args:
+            worker_id: UUID of the worker whose held leases to count.
+
+        Returns:
+            Dict mapping every ``SourceType`` to the count of active
+            leases owned by this worker for that type (0 if none).
+        """
+        rows = await self._pool.fetch(COUNT_HELD_BY_TYPE_SQL, worker_id)
+        counts: dict[SourceType, int] = dict.fromkeys(SourceType, 0)
+        for row in rows:
+            try:
+                counts[SourceType(row["source_type"])] = row["n"]
+            except ValueError:
+                continue
+        return counts
 
     async def release_feeds_batch_by_ids(
         self,
