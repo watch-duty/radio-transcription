@@ -480,7 +480,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self, mock_create_ffmpeg: AsyncMock, mock_now_utc: MagicMock
     ) -> None:
         """Test timestamp math: chunks advance by CHUNK_DURATION_SECONDS when
-        _now_utc() is far future so min() picks chunk_end_time (unclamped path).
+        receipt_time is far in the future so min() picks chunk_end_time (unclamped path).
         """
         fixed_anchor = datetime.datetime(
             2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC
@@ -538,13 +538,14 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
     async def test_last_chunk_end_time_clamped_to_current_time(
         self, mock_create_ffmpeg: AsyncMock, mock_now_utc: MagicMock
     ) -> None:
-        """Test timestamp math: last chunk end_time is clamped to _now_utc()
-        when _now_utc() < chunk_end_time so min() picks _now_utc() (clamped path).
+        """Test timestamp math: chunk_end_time is clamped to receipt_time when
+        receipt_time < computed chunk_end_time so min() picks receipt_time.
+        This applies to every chunk, including the last one when process_done=True.
 
-        A single segment drives _now_utc() exactly three times:
+        A single segment drives _now_utc() exactly twice:
         1. stream_anchor_time (before the inner loop),
-        2. receipt_time stamp (RCPT-02, immediately before read_bytes), and
-        3. the min() clamp when the process is done and the only chunk is finalized.
+        2. receipt_time stamp (RCPT-02, immediately before read_bytes).
+        The clamp unconditionally reuses the already-captured receipt_time.
         """
         fixed_anchor = datetime.datetime(
             2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC
@@ -554,8 +555,8 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         clamp_time = fixed_anchor + datetime.timedelta(
             seconds=CHUNK_DURATION_SECONDS - 5
         )
-        # 2nd value feeds the receipt_time stamp (RCPT-02); 3rd feeds min() clamp.
-        mock_now_utc.side_effect = [fixed_anchor, clamp_time, clamp_time]
+        # 1st call: stream_anchor_time; 2nd call: receipt_time (also the clamp value).
+        mock_now_utc.side_effect = [fixed_anchor, clamp_time]
 
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=4444,
@@ -575,6 +576,61 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].chunk_start_time, fixed_anchor)
         self.assertEqual(results[0].chunk_end_time, clamp_time)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc",
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_chunk_end_time_clamped_to_receipt_time_when_stream_running(
+        self, mock_create_ffmpeg: AsyncMock, mock_now_utc: MagicMock
+    ) -> None:
+        """Regression test for Option A: chunk_end_time is clamped to receipt_time
+        even when the stream is still running (process_done=False).
+
+        Before the fix, only the last segment (process_done=True) was clamped.
+        Intermediate segments could produce future-dated chunk_end_time values
+        when ffmpeg writes segments faster than wall-clock time advances.
+
+        With two segments:
+        - _now_utc() call 1: stream_anchor_time = T0
+        - _now_utc() call 2: receipt_time for segment 0 = T0 + 25s
+          (segment 0 is finalised because segment 1 exists; process_done=False)
+        - _now_utc() call 3: receipt_time for segment 1 = T0 + 55s
+          (segment 1 is finalised when process exits; process_done=True)
+
+        Natural chunk_end_times would be T0+30s and T0+60s.  Both exceed their
+        respective receipt_times, so the clamp must apply in both cases.
+        """
+        t0 = datetime.datetime(2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC)
+        receipt_seg0 = t0 + datetime.timedelta(seconds=CHUNK_DURATION_SECONDS - 5)
+        receipt_seg1 = t0 + datetime.timedelta(seconds=2 * CHUNK_DURATION_SECONDS - 5)
+        mock_now_utc.side_effect = [t0, receipt_seg0, receipt_seg1]
+
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=6666,
+            segments=[b"FLAC_SEG_0", b"FLAC_SEG_1"],
+            wait_delay=0.1,
+            wait_result=0,
+        )
+
+        feed = _make_feed("running-clamp-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed, shutdown_event, url_base="https://mock.example.com/"
+        )
+        results = await _collect_chunks_with_timestamps(gen)
+
+        self.assertEqual(len(results), 2)
+        # Both chunks must have chunk_end_time <= their receipt_time.
+        self.assertLessEqual(results[0].chunk_end_time, results[0].receipt_time)
+        self.assertLessEqual(results[1].chunk_end_time, results[1].receipt_time)
+        # Exact values confirm clamping occurred (natural ends were T0+30s, T0+60s).
+        self.assertEqual(results[0].chunk_end_time, receipt_seg0)
+        self.assertEqual(results[1].chunk_end_time, receipt_seg1)
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
@@ -628,9 +684,9 @@ class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
             2026, 4, 22, 12, 0, 0, tzinfo=datetime.UTC
         )
         # _now_utc is called for stream_anchor_time once BEFORE the loop,
-        # then again for each segment's receipt_time, then again for the
-        # chunk_end clamp. Return a fixed value for every call.
-        mock_now.side_effect = [fixed_time, fixed_time, fixed_time]
+        # then again for each segment's receipt_time. The clamp reuses
+        # receipt_time directly, so no third call is made.
+        mock_now.side_effect = [fixed_time, fixed_time]
         mock_create.side_effect = _make_process_factory(
             pid=1,
             segments=[b"seg0"],

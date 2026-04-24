@@ -196,8 +196,11 @@ async def capture_icecast_stream(  # noqa: PLR0915
                         chunk_end_time = chunk_start_time + datetime.timedelta(
                             seconds=CHUNK_DURATION_SECONDS
                         )
-                        if process_done:
-                            chunk_end_time = min(chunk_end_time, _now_utc())
+                        # Clamp chunk times to receipt_time so we never emit
+                        # future-dated bookmarks even when ffmpeg segments
+                        # finalize faster than wall-clock time (Option A).
+                        chunk_end_time = min(chunk_end_time, receipt_time)
+                        chunk_start_time = min(chunk_start_time, chunk_end_time)
                         yield CapturedChunk(
                             audio_bytes=segment_bytes,
                             chunk_start_time=chunk_start_time,
