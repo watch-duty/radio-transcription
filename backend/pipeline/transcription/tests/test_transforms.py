@@ -128,7 +128,10 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
                                 gcs_uri="gs://test-bucket/path/to/test.flac",
                                 session_id="mock-session-id",
                                 duration_ms=1000,
-                                feed_name="mock-feed-name",
+                                feed_metadata=FeedMetadata(
+                                    feed_name="mock-feed-name",
+                                    external_id="mock-external-id",
+                                ),
                             ),
                         )
                     ]

@@ -74,7 +74,10 @@ class ParseAndKeyFn(beam.DoFn):
                     gcs_uri=chunk_proto.gcs_uri,
                     session_id=chunk_proto.session_id,
                     duration_ms=chunk_proto.duration_ms,
-                    feed_name=chunk_proto.feed_name,
+                    feed_metadata=FeedMetadata(
+                        feed_name=chunk_proto.feed_name,
+                        external_id=chunk_proto.external_id,
+                    ),
                 ),
             )
         except Exception as e:
@@ -99,7 +102,7 @@ class ExtractFeedMetadataFn(beam.DoFn):
         self, element: tuple[str, ChunkMetadata]
     ) -> Iterator[tuple[str, FeedMetadata]]:
         feed_id, chunk = element
-        yield (feed_id, FeedMetadata(feed_name=chunk.feed_name))
+        yield (feed_id, chunk.feed_metadata)
 
 
 @beam.typehints.with_input_types(
