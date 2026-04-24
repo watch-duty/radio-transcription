@@ -1178,7 +1178,7 @@ class TestCaptureBcfyCallsReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
 
         results = []
         async for chunk in bcfy_calls_collector.capture_bcfy_calls(
-            cast("LeasedFeed", feed), shutdown, "https://api.example/"
+            feed, shutdown, "https://api.example/"
         ):
             results.append(chunk)
             shutdown.set()

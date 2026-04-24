@@ -1,0 +1,420 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.2, pytest-9.0.3, pluggy-1.6.0
+rootdir: /usr/local/google/home/arobee/wd/radio-transcription-2
+configfile: pyproject.toml
+plugins: cov-7.1.0, anyio-4.13.0, asyncio-1.3.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collected 1 item
+
+backend/pipeline/transcription/tests/test_transforms.py DEBUG actions for gs://test-bucket/path/to/chunk1.flac: [FlushAction(reason='Flushing isolated late-arriving audio chunk', feed_id='test-feed', time_range=TimeRange(start_ms=100000, end_ms=101000), speech_time_range=TimeRange(start_ms=100000, end_ms=101000), contributing_audio_uris=['gs://test-bucket/path/to/chunk1.flac'], missing_prior_context=True, missing_post_context=True, start_audio_offset_ms=0, end_audio_offset_ms=1000, clear_state=False, isolated_audio_buffer=[array([1, 1, 1, ..., 1, 1, 1], shape=(16000,), dtype=int16)], isolated_audio_buffer_uris=[])]
+DEBUG actions for gs://test-bucket/path/to/chunk2.flac: [FlushAction(reason='Flushing isolated late-arriving audio chunk', feed_id='test-feed', time_range=TimeRange(start_ms=101000, end_ms=102000), speech_time_range=TimeRange(start_ms=101000, end_ms=102000), contributing_audio_uris=['gs://test-bucket/path/to/chunk2.flac'], missing_prior_context=True, missing_post_context=True, start_audio_offset_ms=0, end_audio_offset_ms=1000, clear_state=False, isolated_audio_buffer=[array([2, 2, 2, ..., 2, 2, 2], shape=(16000,), dtype=int16)], isolated_audio_buffer_uris=[])]
+DEBUG actions for gs://test-bucket/path/to/chunk3.flac: [FlushAction(reason='Flushing isolated late-arriving audio chunk', feed_id='test-feed', time_range=TimeRange(start_ms=102000, end_ms=103000), speech_time_range=TimeRange(start_ms=102000, end_ms=103000), contributing_audio_uris=['gs://test-bucket/path/to/chunk3.flac'], missing_prior_context=True, missing_post_context=True, start_audio_offset_ms=0, end_audio_offset_ms=1000, clear_state=False, isolated_audio_buffer=[array([3, 3, 3, ..., 3, 3, 3], shape=(16000,), dtype=int16)], isolated_audio_buffer_uris=[])]
+F
+
+=================================== FAILURES ===================================
+_ OrderedStitchAudioTest.test_ordered_stitch_audio_handles_out_of_order_chunks _
+
+msgs = [('test-feed', FlushRequest(buffer=array([1, 1, 1, ..., 1, 1, 1], shape=(16000,), dtype=int16), feed_id='test-feed', s...1b317d9b6', missing_prior_context=True, missing_post_context=True, start_audio_offset_ms=0, end_audio_offset_ms=1000))]
+
+    def assert_results(msgs):
+>       assert len(msgs) == 1
+E       AssertionError: assert 3 == 1
+E        +  where 3 = len([('test-feed', FlushRequest(buffer=array([1, 1, 1, ..., 1, 1, 1], shape=(16000,), dtype=int16), feed_id='test-feed', s...1b317d9b6', missing_prior_context=True, missing_post_context=True, start_audio_offset_ms=0, end_audio_offset_ms=1000))])
+
+backend/pipeline/transcription/tests/test_transforms.py:586: AssertionError
+
+During handling of the above exception, another exception occurred:
+
+self = <backend.pipeline.transcription.tests.test_transforms.OrderedStitchAudioTest testMethod=test_ordered_stitch_audio_handles_out_of_order_chunks>
+mock_audio_processor = <MagicMock name='AudioProcessor' id='140495895397440'>
+
+    @patch("backend.pipeline.transcription.stateful_transforms.AudioProcessor")
+    def test_ordered_stitch_audio_handles_out_of_order_chunks(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that OrderedStitchAudioFn buffers out-of-order chunks and emits them in order."""
+        mock_processor_inst = mock_audio_processor.return_value
+    
+        def download_side_effect(gcs_uri, timestamp_ms):
+            if "chunk1" in gcs_uri:
+                return AudioChunkData(
+                    start_ms=100000,
+                    audio=np.ones(16000, dtype=np.int16),
+                    sample_rate=16000,
+                    speech_segments=[TimeRange(0, 1000)],
+                    gcs_uri=gcs_uri,
+                    duration_ms=1000,
+                )
+            elif "chunk2" in gcs_uri:
+                return AudioChunkData(
+                    start_ms=101000,
+                    audio=np.ones(16000, dtype=np.int16) * 2,
+                    sample_rate=16000,
+                    speech_segments=[TimeRange(0, 1000)],
+                    gcs_uri=gcs_uri,
+                    duration_ms=1000,
+                )
+            else:
+                return AudioChunkData(
+                    start_ms=102000,
+                    audio=np.ones(16000, dtype=np.int16) * 3,
+                    sample_rate=16000,
+                    speech_segments=[TimeRange(0, 1000)],
+                    gcs_uri=gcs_uri,
+                    duration_ms=1000,
+                )
+    
+        mock_processor_inst.download_audio_and_detect.side_effect = download_side_effect
+        mock_processor_inst.preprocess_audio.side_effect = lambda x: x
+        mock_processor_inst.check_vad.return_value = True
+    
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=5000)
+        stitch_config = get_test_stitch_config(stale_timeout_ms=5000, significant_gap_ms=5000)
+    
+        options = PipelineOptions(
+            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+        )
+    
+        metadata_chunk1 = ChunkMetadata(
+            gcs_uri="gs://test-bucket/path/to/chunk1.flac",
+            session_id="mock-session-id",
+            duration_ms=1000,
+            feed_metadata=FeedMetadata(feed_name="mock-feed", external_id="mock-external-id"),
+        )
+    
+        metadata_chunk2 = ChunkMetadata(
+            gcs_uri="gs://test-bucket/path/to/chunk2.flac",
+            session_id="mock-session-id",
+            duration_ms=1000,
+            feed_metadata=FeedMetadata(feed_name="mock-feed", external_id="mock-external-id"),
+        )
+    
+        metadata_chunk3 = ChunkMetadata(
+            gcs_uri="gs://test-bucket/path/to/chunk3.flac",
+            session_id="mock-session-id",
+            duration_ms=1000,
+            feed_metadata=FeedMetadata(feed_name="mock-feed", external_id="mock-external-id"),
+        )
+    
+>       with BeamTestPipeline(options=options) as p:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+backend/pipeline/transcription/tests/test_transforms.py:559: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.13/site-packages/apache_beam/pipeline.py:653: in __exit__
+    self.result = self.run()
+                  ^^^^^^^^^^
+.venv/lib/python3.13/site-packages/apache_beam/testing/test_pipeline.py:122: in run
+    state = result.wait_until_finish(duration=self.timeout)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/apache_beam/runners/direct/direct_runner.py:652: in wait_until_finish
+    self._executor.await_completion()
+.venv/lib/python3.13/site-packages/apache_beam/runners/direct/executor.py:418: in await_completion
+    self._executor.await_completion()
+.venv/lib/python3.13/site-packages/apache_beam/runners/direct/executor.py:465: in await_completion
+    raise update.exception
+.venv/lib/python3.13/site-packages/apache_beam/runners/direct/executor.py:356: in call
+    self.attempt_call(
+.venv/lib/python3.13/site-packages/apache_beam/runners/direct/executor.py:399: in attempt_call
+    evaluator.process_element(value)
+.venv/lib/python3.13/site-packages/apache_beam/runners/direct/transform_evaluator.py:875: in process_element
+    self.runner.process(element)
+apache_beam/runners/common.py:1495: in apache_beam.runners.common.DoFnRunner.process
+    ???
+apache_beam/runners/common.py:1500: in apache_beam.runners.common.DoFnRunner.process
+    ???
+apache_beam/runners/common.py:1609: in apache_beam.runners.common.DoFnRunner._reraise_augmented
+    ???
+apache_beam/runners/common.py:1498: in apache_beam.runners.common.DoFnRunner.process
+    ???
+apache_beam/runners/common.py:685: in apache_beam.runners.common.SimpleInvoker.invoke_process
+    ???
+.venv/lib/python3.13/site-packages/apache_beam/transforms/core.py:2118: in <lambda>
+    wrapper = lambda x: [fn(x)]
+                         ^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+msgs = [('test-feed', FlushRequest(buffer=array([1, 1, 1, ..., 1, 1, 1], shape=(16000,), dtype=int16), feed_id='test-feed', s...1b317d9b6', missing_prior_context=True, missing_post_context=True, start_audio_offset_ms=0, end_audio_offset_ms=1000))]
+
+    def assert_results(msgs):
+>       assert len(msgs) == 1
+E       AssertionError: assert 3 == 1
+E        +  where 3 = len([('test-feed', FlushRequest(buffer=array([1, 1, 1, ..., 1, 1, 1], shape=(16000,), dtype=int16), feed_id='test-feed', s...1b317d9b6', missing_prior_context=True, missing_post_context=True, start_audio_offset_ms=0, end_audio_offset_ms=1000))]) [while running 'assert_that/Match']
+
+backend/pipeline/transcription/tests/test_transforms.py:586: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  root:decorators.py:250 TaggedOutput in return type must include type parameters: TaggedOutput[Literal['tag_name'], ValueType]. Bare TaggedOutput will be ignored.
+WARNING  apache_beam.transforms.core:core.py:1789 Key coder FastPrimitivesCoder for transform <ParDo(PTransform) label=[ParDo(OrderedStitchAudioFn)]> with stateful DoFn may not be deterministic. This may cause incorrect behavior for complex key types. Consider adding an input type hint for this transform.
+WARNING  root:decorators.py:250 TaggedOutput in return type must include type parameters: TaggedOutput[Literal['tag_name'], ValueType]. Bare TaggedOutput will be ignored.
+WARNING  root:decorators.py:250 TaggedOutput in return type must include type parameters: TaggedOutput[Literal['tag_name'], ValueType]. Bare TaggedOutput will be ignored.
+WARNING  apache_beam.options.pipeline_options:logger.py:99 Unparseable argument: --input_subscription=a
+WARNING  apache_beam.options.pipeline_options:logger.py:99 Unparseable argument: --output_topic=b
+WARNING  apache_beam.options.pipeline_options:pipeline_options.py:573 Discarding unparseable args: ['--input_subscription=a', '--output_topic=b']
+ERROR    apache_beam.runners.common:transform_evaluator.py:875 assert 3 == 1
+ +  where 3 = len([('test-feed', FlushRequest(buffer=array([1, 1, 1, ..., 1, 1, 1], shape=(16000,), dtype=int16), feed_id='test-feed', s...1b317d9b6', missing_prior_context=True, missing_post_context=True, start_audio_offset_ms=0, end_audio_offset_ms=1000))]) [while running 'assert_that/Match']
+Traceback (most recent call last):
+  File "apache_beam/runners/common.py", line 1498, in apache_beam.runners.common.DoFnRunner.process
+  File "apache_beam/runners/common.py", line 685, in apache_beam.runners.common.SimpleInvoker.invoke_process
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/apache_beam/transforms/core.py", line 2118, in <lambda>
+    wrapper = lambda x: [fn(x)]
+                         ~~^^^
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/backend/pipeline/transcription/tests/test_transforms.py", line 586, in assert_results
+    assert len(msgs) == 1
+AssertionError: assert 3 == 1
+ +  where 3 = len([('test-feed', FlushRequest(buffer=array([1, 1, 1, ..., 1, 1, 1], shape=(16000,), dtype=int16), feed_id='test-feed', s...1b317d9b6', missing_prior_context=True, missing_post_context=True, start_audio_offset_ms=0, end_audio_offset_ms=1000))])
+ERROR    apache_beam.runners.direct.executor:executor.py:365 Exception at bundle <apache_beam.runners.direct.bundle_factory._Bundle object at 0x7fc7bffcf4d0>, due to an exception.
+ Traceback (most recent call last):
+  File "apache_beam/runners/common.py", line 1498, in apache_beam.runners.common.DoFnRunner.process
+  File "apache_beam/runners/common.py", line 685, in apache_beam.runners.common.SimpleInvoker.invoke_process
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/apache_beam/transforms/core.py", line 2118, in <lambda>
+    wrapper = lambda x: [fn(x)]
+                         ~~^^^
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/backend/pipeline/transcription/tests/test_transforms.py", line 586, in assert_results
+    assert len(msgs) == 1
+AssertionError: assert 3 == 1
+ +  where 3 = len([('test-feed', FlushRequest(buffer=array([1, 1, 1, ..., 1, 1, 1], shape=(16000,), dtype=int16), feed_id='test-feed', s...1b317d9b6', missing_prior_context=True, missing_post_context=True, start_audio_offset_ms=0, end_audio_offset_ms=1000))])
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/apache_beam/runners/direct/executor.py", line 356, in call
+    self.attempt_call(
+    ~~~~~~~~~~~~~~~~~^
+        metrics_container,
+        ^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+        process_state,
+        ^^^^^^^^^^^^^^
+        finish_state)
+        ^^^^^^^^^^^^^
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/apache_beam/runners/direct/executor.py", line 399, in attempt_call
+    evaluator.process_element(value)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/apache_beam/runners/direct/transform_evaluator.py", line 875, in process_element
+    self.runner.process(element)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "apache_beam/runners/common.py", line 1495, in apache_beam.runners.common.DoFnRunner.process
+  File "apache_beam/runners/common.py", line 1500, in apache_beam.runners.common.DoFnRunner.process
+  File "apache_beam/runners/common.py", line 1609, in apache_beam.runners.common.DoFnRunner._reraise_augmented
+  File "apache_beam/runners/common.py", line 1498, in apache_beam.runners.common.DoFnRunner.process
+  File "apache_beam/runners/common.py", line 685, in apache_beam.runners.common.SimpleInvoker.invoke_process
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/apache_beam/transforms/core.py", line 2118, in <lambda>
+    wrapper = lambda x: [fn(x)]
+                         ~~^^^
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/backend/pipeline/transcription/tests/test_transforms.py", line 586, in assert_results
+    assert len(msgs) == 1
+AssertionError: assert 3 == 1
+ +  where 3 = len([('test-feed', FlushRequest(buffer=array([1, 1, 1, ..., 1, 1, 1], shape=(16000,), dtype=int16), feed_id='test-feed', s...1b317d9b6', missing_prior_context=True, missing_post_context=True, start_audio_offset_ms=0, end_audio_offset_ms=1000))]) [while running 'assert_that/Match']
+
+ERROR    apache_beam.runners.common:transform_evaluator.py:875 assert 3 == 1
+ +  where 3 = len([('test-feed', FlushRequest(buffer=array([1, 1, 1, ..., 1, 1, 1], shape=(16000,), dtype=int16), feed_id='test-feed', s...1b317d9b6', missing_prior_context=True, missing_post_context=True, start_audio_offset_ms=0, end_audio_offset_ms=1000))]) [while running 'assert_that/Match']
+Traceback (most recent call last):
+  File "apache_beam/runners/common.py", line 1498, in apache_beam.runners.common.DoFnRunner.process
+  File "apache_beam/runners/common.py", line 685, in apache_beam.runners.common.SimpleInvoker.invoke_process
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/apache_beam/transforms/core.py", line 2118, in <lambda>
+    wrapper = lambda x: [fn(x)]
+                         ~~^^^
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/backend/pipeline/transcription/tests/test_transforms.py", line 586, in assert_results
+    assert len(msgs) == 1
+AssertionError: assert 3 == 1
+ +  where 3 = len([('test-feed', FlushRequest(buffer=array([1, 1, 1, ..., 1, 1, 1], shape=(16000,), dtype=int16), feed_id='test-feed', s...1b317d9b6', missing_prior_context=True, missing_post_context=True, start_audio_offset_ms=0, end_audio_offset_ms=1000))])
+ERROR    apache_beam.runners.direct.executor:executor.py:365 Exception at bundle <apache_beam.runners.direct.bundle_factory._Bundle object at 0x7fc7bffcf4d0>, due to an exception.
+ Traceback (most recent call last):
+  File "apache_beam/runners/common.py", line 1498, in apache_beam.runners.common.DoFnRunner.process
+  File "apache_beam/runners/common.py", line 685, in apache_beam.runners.common.SimpleInvoker.invoke_process
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/apache_beam/transforms/core.py", line 2118, in <lambda>
+    wrapper = lambda x: [fn(x)]
+                         ~~^^^
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/backend/pipeline/transcription/tests/test_transforms.py", line 586, in assert_results
+    assert len(msgs) == 1
+AssertionError: assert 3 == 1
+ +  where 3 = len([('test-feed', FlushRequest(buffer=array([1, 1, 1, ..., 1, 1, 1], shape=(16000,), dtype=int16), feed_id='test-feed', s...1b317d9b6', missing_prior_context=True, missing_post_context=True, start_audio_offset_ms=0, end_audio_offset_ms=1000))])
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/apache_beam/runners/direct/executor.py", line 356, in call
+    self.attempt_call(
+    ~~~~~~~~~~~~~~~~~^
+        metrics_container,
+        ^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+        process_state,
+        ^^^^^^^^^^^^^^
+        finish_state)
+        ^^^^^^^^^^^^^
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/apache_beam/runners/direct/executor.py", line 399, in attempt_call
+    evaluator.process_element(value)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/apache_beam/runners/direct/transform_evaluator.py", line 875, in process_element
+    self.runner.process(element)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "apache_beam/runners/common.py", line 1495, in apache_beam.runners.common.DoFnRunner.process
+  File "apache_beam/runners/common.py", line 1500, in apache_beam.runners.common.DoFnRunner.process
+  File "apache_beam/runners/common.py", line 1609, in apache_beam.runners.common.DoFnRunner._reraise_augmented
+  File "apache_beam/runners/common.py", line 1498, in apache_beam.runners.common.DoFnRunner.process
+  File "apache_beam/runners/common.py", line 685, in apache_beam.runners.common.SimpleInvoker.invoke_process
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/apache_beam/transforms/core.py", line 2118, in <lambda>
+    wrapper = lambda x: [fn(x)]
+                         ~~^^^
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/backend/pipeline/transcription/tests/test_transforms.py", line 586, in assert_results
+    assert len(msgs) == 1
+AssertionError: assert 3 == 1
+ +  where 3 = len([('test-feed', FlushRequest(buffer=array([1, 1, 1, ..., 1, 1, 1], shape=(16000,), dtype=int16), feed_id='test-feed', s...1b317d9b6', missing_prior_context=True, missing_post_context=True, start_audio_offset_ms=0, end_audio_offset_ms=1000))]) [while running 'assert_that/Match']
+
+ERROR    apache_beam.runners.common:transform_evaluator.py:875 assert 3 == 1
+ +  where 3 = len([('test-feed', FlushRequest(buffer=array([1, 1, 1, ..., 1, 1, 1], shape=(16000,), dtype=int16), feed_id='test-feed', s...1b317d9b6', missing_prior_context=True, missing_post_context=True, start_audio_offset_ms=0, end_audio_offset_ms=1000))]) [while running 'assert_that/Match']
+Traceback (most recent call last):
+  File "apache_beam/runners/common.py", line 1498, in apache_beam.runners.common.DoFnRunner.process
+  File "apache_beam/runners/common.py", line 685, in apache_beam.runners.common.SimpleInvoker.invoke_process
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/apache_beam/transforms/core.py", line 2118, in <lambda>
+    wrapper = lambda x: [fn(x)]
+                         ~~^^^
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/backend/pipeline/transcription/tests/test_transforms.py", line 586, in assert_results
+    assert len(msgs) == 1
+AssertionError: assert 3 == 1
+ +  where 3 = len([('test-feed', FlushRequest(buffer=array([1, 1, 1, ..., 1, 1, 1], shape=(16000,), dtype=int16), feed_id='test-feed', s...1b317d9b6', missing_prior_context=True, missing_post_context=True, start_audio_offset_ms=0, end_audio_offset_ms=1000))])
+ERROR    apache_beam.runners.direct.executor:executor.py:365 Exception at bundle <apache_beam.runners.direct.bundle_factory._Bundle object at 0x7fc7bffcf4d0>, due to an exception.
+ Traceback (most recent call last):
+  File "apache_beam/runners/common.py", line 1498, in apache_beam.runners.common.DoFnRunner.process
+  File "apache_beam/runners/common.py", line 685, in apache_beam.runners.common.SimpleInvoker.invoke_process
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/apache_beam/transforms/core.py", line 2118, in <lambda>
+    wrapper = lambda x: [fn(x)]
+                         ~~^^^
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/backend/pipeline/transcription/tests/test_transforms.py", line 586, in assert_results
+    assert len(msgs) == 1
+AssertionError: assert 3 == 1
+ +  where 3 = len([('test-feed', FlushRequest(buffer=array([1, 1, 1, ..., 1, 1, 1], shape=(16000,), dtype=int16), feed_id='test-feed', s...1b317d9b6', missing_prior_context=True, missing_post_context=True, start_audio_offset_ms=0, end_audio_offset_ms=1000))])
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/apache_beam/runners/direct/executor.py", line 356, in call
+    self.attempt_call(
+    ~~~~~~~~~~~~~~~~~^
+        metrics_container,
+        ^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+        process_state,
+        ^^^^^^^^^^^^^^
+        finish_state)
+        ^^^^^^^^^^^^^
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/apache_beam/runners/direct/executor.py", line 399, in attempt_call
+    evaluator.process_element(value)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/apache_beam/runners/direct/transform_evaluator.py", line 875, in process_element
+    self.runner.process(element)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "apache_beam/runners/common.py", line 1495, in apache_beam.runners.common.DoFnRunner.process
+  File "apache_beam/runners/common.py", line 1500, in apache_beam.runners.common.DoFnRunner.process
+  File "apache_beam/runners/common.py", line 1609, in apache_beam.runners.common.DoFnRunner._reraise_augmented
+  File "apache_beam/runners/common.py", line 1498, in apache_beam.runners.common.DoFnRunner.process
+  File "apache_beam/runners/common.py", line 685, in apache_beam.runners.common.SimpleInvoker.invoke_process
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/apache_beam/transforms/core.py", line 2118, in <lambda>
+    wrapper = lambda x: [fn(x)]
+                         ~~^^^
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/backend/pipeline/transcription/tests/test_transforms.py", line 586, in assert_results
+    assert len(msgs) == 1
+AssertionError: assert 3 == 1
+ +  where 3 = len([('test-feed', FlushRequest(buffer=array([1, 1, 1, ..., 1, 1, 1], shape=(16000,), dtype=int16), feed_id='test-feed', s...1b317d9b6', missing_prior_context=True, missing_post_context=True, start_audio_offset_ms=0, end_audio_offset_ms=1000))]) [while running 'assert_that/Match']
+
+ERROR    apache_beam.runners.common:transform_evaluator.py:875 assert 3 == 1
+ +  where 3 = len([('test-feed', FlushRequest(buffer=array([1, 1, 1, ..., 1, 1, 1], shape=(16000,), dtype=int16), feed_id='test-feed', s...1b317d9b6', missing_prior_context=True, missing_post_context=True, start_audio_offset_ms=0, end_audio_offset_ms=1000))]) [while running 'assert_that/Match']
+Traceback (most recent call last):
+  File "apache_beam/runners/common.py", line 1498, in apache_beam.runners.common.DoFnRunner.process
+  File "apache_beam/runners/common.py", line 685, in apache_beam.runners.common.SimpleInvoker.invoke_process
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/apache_beam/transforms/core.py", line 2118, in <lambda>
+    wrapper = lambda x: [fn(x)]
+                         ~~^^^
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/backend/pipeline/transcription/tests/test_transforms.py", line 586, in assert_results
+    assert len(msgs) == 1
+AssertionError: assert 3 == 1
+ +  where 3 = len([('test-feed', FlushRequest(buffer=array([1, 1, 1, ..., 1, 1, 1], shape=(16000,), dtype=int16), feed_id='test-feed', s...1b317d9b6', missing_prior_context=True, missing_post_context=True, start_audio_offset_ms=0, end_audio_offset_ms=1000))])
+ERROR    apache_beam.runners.direct.executor:executor.py:365 Exception at bundle <apache_beam.runners.direct.bundle_factory._Bundle object at 0x7fc7bffcf4d0>, due to an exception.
+ Traceback (most recent call last):
+  File "apache_beam/runners/common.py", line 1498, in apache_beam.runners.common.DoFnRunner.process
+  File "apache_beam/runners/common.py", line 685, in apache_beam.runners.common.SimpleInvoker.invoke_process
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/apache_beam/transforms/core.py", line 2118, in <lambda>
+    wrapper = lambda x: [fn(x)]
+                         ~~^^^
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/backend/pipeline/transcription/tests/test_transforms.py", line 586, in assert_results
+    assert len(msgs) == 1
+AssertionError: assert 3 == 1
+ +  where 3 = len([('test-feed', FlushRequest(buffer=array([1, 1, 1, ..., 1, 1, 1], shape=(16000,), dtype=int16), feed_id='test-feed', s...1b317d9b6', missing_prior_context=True, missing_post_context=True, start_audio_offset_ms=0, end_audio_offset_ms=1000))])
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/apache_beam/runners/direct/executor.py", line 356, in call
+    self.attempt_call(
+    ~~~~~~~~~~~~~~~~~^
+        metrics_container,
+        ^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+        process_state,
+        ^^^^^^^^^^^^^^
+        finish_state)
+        ^^^^^^^^^^^^^
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/apache_beam/runners/direct/executor.py", line 399, in attempt_call
+    evaluator.process_element(value)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/apache_beam/runners/direct/transform_evaluator.py", line 875, in process_element
+    self.runner.process(element)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "apache_beam/runners/common.py", line 1495, in apache_beam.runners.common.DoFnRunner.process
+  File "apache_beam/runners/common.py", line 1500, in apache_beam.runners.common.DoFnRunner.process
+  File "apache_beam/runners/common.py", line 1609, in apache_beam.runners.common.DoFnRunner._reraise_augmented
+  File "apache_beam/runners/common.py", line 1498, in apache_beam.runners.common.DoFnRunner.process
+  File "apache_beam/runners/common.py", line 685, in apache_beam.runners.common.SimpleInvoker.invoke_process
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/apache_beam/transforms/core.py", line 2118, in <lambda>
+    wrapper = lambda x: [fn(x)]
+                         ~~^^^
+  File "/usr/local/google/home/arobee/wd/radio-transcription-2/backend/pipeline/transcription/tests/test_transforms.py", line 586, in assert_results
+    assert len(msgs) == 1
+AssertionError: assert 3 == 1
+ +  where 3 = len([('test-feed', FlushRequest(buffer=array([1, 1, 1, ..., 1, 1, 1], shape=(16000,), dtype=int16), feed_id='test-feed', s...1b317d9b6', missing_prior_context=True, missing_post_context=True, start_audio_offset_ms=0, end_audio_offset_ms=1000))]) [while running 'assert_that/Match']
+
+ERROR    apache_beam.runners.direct.executor:executor.py:370 Giving up after 4 attempts.
+WARNING  apache_beam.runners.direct.executor:executor.py:593 A task failed with exception: assert 3 == 1
+ +  where 3 = len([('test-feed', FlushRequest(buffer=array([1, 1, 1, ..., 1, 1, 1], shape=(16000,), dtype=int16), feed_id='test-feed', s...1b317d9b6', missing_prior_context=True, missing_post_context=True, start_audio_offset_ms=0, end_audio_offset_ms=1000))]) [while running 'assert_that/Match']
+=============================== warnings summary ===============================
+.venv/lib/python3.13/site-packages/httplib2/auth.py:20
+  /usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/httplib2/auth.py:20: PyparsingDeprecationWarning: 'setName' deprecated - use 'set_name'
+    token = pp.Word(tchar).setName("token")
+
+.venv/lib/python3.13/site-packages/httplib2/auth.py:21
+  /usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/httplib2/auth.py:21: PyparsingDeprecationWarning: 'leaveWhitespace' deprecated - use 'leave_whitespace'
+    token68 = pp.Combine(pp.Word("-._~+/" + pp.nums + pp.alphas) + pp.Optional(pp.Word("=").leaveWhitespace())).setName(
+
+.venv/lib/python3.13/site-packages/httplib2/auth.py:21
+  /usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/httplib2/auth.py:21: PyparsingDeprecationWarning: 'setName' deprecated - use 'set_name'
+    token68 = pp.Combine(pp.Word("-._~+/" + pp.nums + pp.alphas) + pp.Optional(pp.Word("=").leaveWhitespace())).setName(
+
+.venv/lib/python3.13/site-packages/httplib2/auth.py:25
+  /usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/httplib2/auth.py:25: PyparsingDeprecationWarning: 'setName' deprecated - use 'set_name'
+    quoted_string = pp.dblQuotedString.copy().setName("quoted-string").setParseAction(unquote)
+
+.venv/lib/python3.13/site-packages/httplib2/auth.py:25
+  /usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/httplib2/auth.py:25: PyparsingDeprecationWarning: 'setParseAction' deprecated - use 'set_parse_action'
+    quoted_string = pp.dblQuotedString.copy().setName("quoted-string").setParseAction(unquote)
+
+.venv/lib/python3.13/site-packages/httplib2/auth.py:26
+  /usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/httplib2/auth.py:26: PyparsingDeprecationWarning: 'setName' deprecated - use 'set_name'
+    auth_param_name = token.copy().setName("auth-param-name").addParseAction(downcaseTokens)
+
+.venv/lib/python3.13/site-packages/httplib2/auth.py:26
+  /usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/httplib2/auth.py:26: PyparsingDeprecationWarning: 'addParseAction' deprecated - use 'add_parse_action'
+    auth_param_name = token.copy().setName("auth-param-name").addParseAction(downcaseTokens)
+
+.venv/lib/python3.13/site-packages/httplib2/auth.py:28
+  /usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/httplib2/auth.py:28: PyparsingDeprecationWarning: 'delimitedList' deprecated - use 'DelimitedList'
+    params = pp.Dict(pp.delimitedList(pp.Group(auth_param)))
+
+.venv/lib/python3.13/site-packages/httplib2/auth.py:34
+  /usr/local/google/home/arobee/wd/radio-transcription-2/.venv/lib/python3.13/site-packages/httplib2/auth.py:34: PyparsingDeprecationWarning: 'delimitedList' deprecated - use 'DelimitedList'
+    www_authenticate = pp.delimitedList(pp.Group(challenge))
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED backend/pipeline/transcription/tests/test_transforms.py::OrderedStitchAudioTest::test_ordered_stitch_audio_handles_out_of_order_chunks
+======================== 1 failed, 9 warnings in 4.86s =========================

@@ -9,6 +9,9 @@ from backend.pipeline.transcription.datatypes import (
 )
 
 logger = logging.getLogger(__name__)
+logger = logging.LoggerAdapter(
+    logger, {"system": "transcription", "component": "sequence-buffer"}
+)
 
 
 class SequenceBuffer:
@@ -29,7 +32,7 @@ class SequenceBuffer:
         expected_next_ts: int | None,
         buffer_elements: list[BufferedChunk],
         chunk_duration_ms: int | None = None,
-    ) -> tuple[int, list[BufferedChunk], list[str], bool, bool]:
+    ) -> tuple[int, list[BufferedChunk], list[BufferedChunk], bool, bool]:
         """Processes a single incoming audio chunk against the expected sequence progression.
 
         This method acts as the core traffic cop for the jitter buffer:
@@ -51,7 +54,7 @@ class SequenceBuffer:
 
         if abs(difference) <= epsilon_ms:
             # HAPP PATH: The chunk matches our mathematical expectation exactly.
-            to_emit.append(gcs_uri)
+            to_emit.append(BufferedChunk(current_ts_ms, gcs_uri))
             # Advance the expected timestamp. Use provided duration if available (for varying lengths),
             # otherwise fallback to fixed config duration.
             duration = (
@@ -77,7 +80,7 @@ class SequenceBuffer:
             logger.info(
                 f"Yielding late chunk at {current_ts_ms} (expected {expected_next_ts}) for isolated transcription."
             )
-            to_emit.append(gcs_uri)
+            to_emit.append(BufferedChunk(current_ts_ms, gcs_uri))
         else:
             # FUTURE PATH: The difference > epsilon_ms, meaning this chunk arrived before
             # its predecessor. We store it in state, parking it until the missing chunk arrives.
@@ -97,7 +100,7 @@ class SequenceBuffer:
         expected_next_ts: int,
         buffer_elements: list[BufferedChunk],
         epsilon_ms: int = DEFAULT_FLOAT_TOLERANCE_MS,
-    ) -> tuple[int, list[BufferedChunk], list[str]]:
+    ) -> tuple[int, list[BufferedChunk], list[BufferedChunk]]:
         """Recursively scans the active buffer to find any chunks that sequentially match the newly advanced expected_next_ts.
 
         If found, yields them and steps the timestamp forward.
@@ -112,7 +115,7 @@ class SequenceBuffer:
         for chunk in sorted_elements:
             difference = chunk.timestamp_ms - expected_next_ts
             if abs(difference) <= epsilon_ms:
-                to_emit.append(chunk.gcs_uri)
+                to_emit.append(chunk)
                 expected_next_ts = (
                     chunk.timestamp_ms + self.config.chunk_duration_ms
                 )

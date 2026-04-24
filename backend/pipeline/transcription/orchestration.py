@@ -35,18 +35,14 @@ from backend.pipeline.transcription.datatypes import (
     TranscribeAudioConfig,
 )
 from backend.pipeline.transcription.options import TranscriptionOptions
-from backend.pipeline.transcription.stitcher import (
-    StitchAudioFn,
+from backend.pipeline.transcription.stateful_transforms import (
+    OrderedBypassFn,
+    OrderedStitchAudioFn,
     TranscribeAudioFn,
 )
 from backend.pipeline.transcription.transforms import (
-    AddEventTimestamp,
-    BypassStitchingFn,
-    DownloadAudioFn,
-    ExtractFeedMetadataFn,
     ParseAndKeyFn,
-    RestoreOrderFn,
-    SerializeAndEnrichFn,
+    SerializeFn,
 )
 
 logger = logging.getLogger(__name__)
@@ -93,30 +89,14 @@ def get_pipeline(
         subscription=options.input_subscription,
         id_label=options.id_label or None,
         with_attributes=True,
+        timestamp_attribute="timestamp_ms",
     )
     # Group incoming messages into Key-Value pairs: (feed_id, gs://uri/to/audio)
     parsed = messages | "ParseAndKey" >> beam.ParDo(
         ParseAndKeyFn()
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
-    # Extract feed metadata for enrichment
-    feed_metadata = parsed[MAIN_TAG] | "ExtractFeedMetadata" >> beam.ParDo(
-        ExtractFeedMetadataFn()
-    )
-
-    timestamped = parsed[MAIN_TAG] | "AddTimestamp" >> beam.ParDo(
-        AddEventTimestamp()
-    ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
-
-    # Order chunks based on event timestamps to ensure chronological processing
-    restored = timestamped.main | "RestoreOrder" >> beam.ParDo(
-        RestoreOrderFn(
-            config=OrderRestorerConfig(
-                out_of_order_timeout_ms=options.out_of_order_timeout_ms
-                or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
-            )
-        )
-    )
+    dlq_list = []
 
     # Claim-check: Download the raw bytes for ordered chunks currently just passing as URIs
     download_config = StitchAudioConfig(
@@ -134,24 +114,59 @@ def get_pipeline(
         if options.route_to_dlq is not None
         else True,
     )
-    downloaded_chunks = restored | "DownloadAudio" >> beam.ParDo(
-        DownloadAudioFn(config=download_config)
-    ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
     # Core pipeline logic: State buffers audio across multiple chunks, flushing only on silence or timeout.
     if options.bypass_stitching:
-        stitching_main = downloaded_chunks.main | "BypassStitch" >> beam.ParDo(
-            BypassStitchingFn()
+        stitching_config = StitchAudioConfig(
+            project_id=pipeline_options.view_as(GoogleCloudOptions).project,
+            vad_type=options.vad_type,
+            vad_config=options.vad_config,
+            significant_gap_ms=options.significant_gap_ms
+            or DEFAULT_SIGNIFICANT_GAP_MS,
+            stale_timeout_ms=options.stale_timeout_ms
+            or DEFAULT_STALE_TIMEOUT_MS,
+            max_transmission_duration_ms=options.max_transmission_duration_ms
+            or DEFAULT_MAX_TRANSMISSION_DURATION_MS,
+            vad_pre_roll_ms=options.vad_pre_roll_ms or DEFAULT_VAD_PRE_ROLL_MS,
+            vad_post_roll_ms=options.vad_post_roll_ms
+            or DEFAULT_VAD_POST_ROLL_MS,
+            route_to_dlq=options.route_to_dlq
+            if options.route_to_dlq is not None
+            else True,
+            bypass_stitching=True,
         )
-    else:
-        stitching_results = (
-            downloaded_chunks.main
-            | "StitchAudio"
-            >> beam.ParDo(StitchAudioFn(config=download_config)).with_outputs(
-                DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG
+
+        order_config = OrderRestorerConfig(
+            out_of_order_timeout_ms=options.out_of_order_timeout_ms
+            or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
+        )
+
+        stitching_results = parsed[
+            MAIN_TAG
+        ] | "OrderedBypassStitch" >> beam.ParDo(
+            OrderedBypassFn(
+                order_config=order_config,
+                stitch_config=stitching_config,
             )
-        )
+        ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+
         stitching_main = stitching_results.main
+        dlq_list.append(stitching_results[DEAD_LETTER_QUEUE_TAG])
+    else:
+        # New merged path: Handles both ordering and stitching in a single DoFn
+        stitching_results = parsed[
+            MAIN_TAG
+        ] | "OrderedStitchAudio" >> beam.ParDo(
+            OrderedStitchAudioFn(
+                order_config=OrderRestorerConfig(
+                    out_of_order_timeout_ms=options.out_of_order_timeout_ms
+                    or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
+                ),
+                stitch_config=download_config,
+            )
+        ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+        stitching_main = stitching_results.main
+        dlq_list.append(stitching_results[DEAD_LETTER_QUEUE_TAG])
 
     transcripts = stitching_main | "TranscribeAudio" >> beam.ParDo(
         TranscribeAudioFn(
@@ -169,21 +184,8 @@ def get_pipeline(
         )
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
-    # Key transcripts by feed_id
-    keyed_transcripts = transcripts.main | "KeyTranscripts" >> beam.Map(
-        lambda res: (res.feed_id, res)
-    )
-
-    # Flatten with feed metadata
-    combined_for_enrichment = (
-        feed_metadata,
-        keyed_transcripts,
-    ) | "FlattenForEnrichment" >> beam.Flatten()
-
     # Convert the native TranscriptionResult into a serialized Protobuf and wrap in a Pub/Sub message
-    serialized = combined_for_enrichment | "SerializeAndEnrich" >> beam.ParDo(
-        SerializeAndEnrichFn()
-    )
+    serialized = transcripts.main | "Serialize" >> beam.ParDo(SerializeFn())
     serialized | "WriteToPubSub" >> WriteToPubSub(
         topic=options.output_topic,
         with_attributes=True,
@@ -192,12 +194,8 @@ def get_pipeline(
     # Route all DLQ (Dead Letter Queue) outputs from intermediate steps to a dedicated topic
     dlq_list = [
         parsed[DEAD_LETTER_QUEUE_TAG],
-        timestamped[DEAD_LETTER_QUEUE_TAG],
-        downloaded_chunks[DEAD_LETTER_QUEUE_TAG],
         transcripts[DEAD_LETTER_QUEUE_TAG],
     ]
-    if not options.bypass_stitching:
-        dlq_list.append(stitching_results[DEAD_LETTER_QUEUE_TAG])
 
     dlq_combined = tuple(dlq_list) | "FlattenDlqs" >> beam.Flatten()
 

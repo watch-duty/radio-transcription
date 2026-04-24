@@ -48,20 +48,21 @@ class AudioChunkData:
 
 
 @dataclass(frozen=True)
+class FeedMetadata:
+    """Metadata about a feed, used for enriching the output."""
+
+    feed_name: str
+    external_id: str
+
+
+@dataclass(frozen=True)
 class ChunkMetadata:
     """Metadata for an audio chunk before download."""
 
     gcs_uri: str
     session_id: str
     duration_ms: int
-
-
-@dataclass(frozen=True)
-class FeedMetadata:
-    """Metadata about a feed, used for enriching the output."""
-
-    feed_name: str
-    external_id: str
+    feed_metadata: FeedMetadata
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,7 @@ class TranscriptionResult:
     end_audio_offset_ms: int
     canonical_audio_uri: str
     playback_audio_uri: str
+    feed_metadata: FeedMetadata
     missing_prior_context: bool = False
     missing_post_context: bool = False
 
@@ -110,6 +112,10 @@ class TransmissionContext:
     missing_prior_context: bool = False
     missing_post_context: bool = False
     buffer_duration_ms: int = 0
+    order_timer_active: bool = False
+    out_of_order_buffer: list[BufferedChunk] = field(default_factory=list)
+    feed_metadata: FeedMetadata | None = None
+    last_transmission_start_ms: int | None = None
 
 
 @dataclass
@@ -129,7 +135,7 @@ class StitcherContext:
     missing_prior_context: bool
     expected_next_chunk_start_ms: int | None
     start_audio_offset_ms: int | None
-    end_audio_offset_ms: int | None
+    end_audio_offset_ms: int | None = None
     buffer_duration_ms: int = 0
 
 
@@ -154,6 +160,8 @@ class StitchAudioConfig:
     vad_pre_roll_ms: int
     vad_post_roll_ms: int
     route_to_dlq: bool = True
+    backfill_lateness_threshold_ms: int = 300000
+    bypass_stitching: bool = False
 
     def __post_init__(self) -> None:
         """Validates the dataclass variables."""
@@ -194,6 +202,7 @@ class FlushRequest:
     contributing_audio_uris: list[str]
     time_range: TimeRange
     transmission_id: str
+    feed_metadata: FeedMetadata
     missing_prior_context: bool
     missing_post_context: bool
     start_audio_offset_ms: int | None
@@ -234,6 +243,7 @@ class FlushAction(StateMachineAction):
     end_audio_offset_ms: int
     clear_state: bool = True
     isolated_audio_buffer: list[np.ndarray] = field(default_factory=list)
+    isolated_audio_buffer_uris: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

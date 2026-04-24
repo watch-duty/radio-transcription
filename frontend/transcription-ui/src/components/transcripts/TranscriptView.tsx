@@ -87,8 +87,6 @@ export function TranscriptView({
   const [highlightedTransmissionId, setHighlightedTransmissionId] = useState<
     string | null
   >(targetTransmissionId);
-  const [hideLoadNewerTranscriptsButton, setHideLoadNewerTranscriptsButton] =
-    useState(false);
   const [isViewAtTopOfTranscripts, setIsViewAtTopOfTranscripts] =
     useState(true);
   const [isTranscriptsPolling, setIsTranscriptsPolling] = useState(false);
@@ -120,10 +118,7 @@ export function TranscriptView({
     return feedIdToFeedMap.get(feedId) || null;
   }, [feedIdToFeedMap, feedId]);
 
-  // Memoizing the selected feed object derived from the searchedFeedId state.
-  const searchedFeed = useMemo(() => {
-    return feedIdToFeedMap.get(searchedFeedId) || null;
-  }, [feedIdToFeedMap, searchedFeedId]);
+  const searchedFeed = feedIdToFeedMap.get(searchedFeedId) || null;
 
   /**
    * Effect for handling feeds errors.
@@ -159,9 +154,13 @@ export function TranscriptView({
     queryKey: ['listTranscripts', token, searchedFeedId, searchedTimestamp],
     queryFn: async ({ pageParam }) => {
       const { nextToken, order } = pageParam;
-      const originalTimestampMs = searchedTimestamp
-        ? roundUpToNearestMinute(searchedTimestamp).getTime()
-        : undefined;
+
+      // We only fetch the timestamp on the initial load. On subsequent loads,
+      // the cursor-based positioning of the database in nextToken handles the rest.
+      const originalTimestampMs =
+        !nextToken && searchedTimestamp
+          ? roundUpToNearestMinute(searchedTimestamp).getTime()
+          : undefined;
 
       const response = await listTranscripts(
         searchedFeedId,
@@ -180,23 +179,37 @@ export function TranscriptView({
         response.transcripts.reverse();
       }
 
-      return { ...response, timestamp: originalTimestampMs, order };
+      return { ...response, order };
     },
     initialPageParam: {
       order: 'desc',
     },
-    getNextPageParam: (page) => {
-      if (page.order !== 'desc') return undefined;
-      return page.nextToken
-        ? { order: 'desc', nextToken: page.nextToken }
+    // Note: TanStack Query automatically manages the bidirectional pagination state for us.
+    // - `getNextPageParam` is always passed the LAST page in the cache (oldest) to continue scanning backward.
+    // - `getPreviousPageParam` is always passed the FIRST page in the cache (newest) to continue scanning forward.
+    // Because each page stores its own `nextToken` and `order`, the framework naturally isolates the
+    // forward and backward pagination bookmarks without us needing to maintain separate local state for them.
+    getNextPageParam: (lastPage) => {
+      // We only fetch older transcripts (descending order). Because the initial
+      // page is in descending order, we can just use the nextToken.
+      if (lastPage.order !== 'desc') return undefined;
+      return lastPage.nextToken
+        ? { order: 'desc', nextToken: lastPage.nextToken }
         : undefined;
     },
-    getPreviousPageParam: (page) => {
+    getPreviousPageParam: (firstPage) => {
+      // 1. If no timestamp was searched, we are at the "live" head. No newer transcripts exist.
       if (!searchedTimestamp) return undefined;
-      if (page.order === 'asc' && !page.nextToken) return undefined;
+      // 2. If we are already fetching newer transcripts ('asc') and hit the end, stop.
+      if (firstPage.order === 'asc') {
+        return firstPage.nextToken
+          ? { order: 'asc', nextToken: firstPage.nextToken }
+          : undefined;
+      }
+      // 3. Initial load (order === 'desc'): Start fetching newer transcripts from the base timestamp.
       return {
         order: 'asc',
-        nextToken: page.order === 'asc' ? page.nextToken : undefined,
+        nextToken: undefined,
       };
     },
     enabled: !!token && !!searchedFeedId,
@@ -209,7 +222,9 @@ export function TranscriptView({
     [listTranscriptsResponse]
   );
 
-  // This is used to group transcripts by date and display them in the UI.
+   // This is used to group transcripts by date and display them in the UI.
+  // groupCounts is an array of numbers representing the number of transcripts in each group.
+  // groupTitles is an array of strings representing the title of each group.
   const { groupCounts, groupTitles } = useMemo(() => {
     const counts: number[] = [];
     const titles: string[] = [];
@@ -478,8 +493,6 @@ export function TranscriptView({
         <Button
           variant="contained"
           onClick={() => {
-            setHideLoadNewerTranscriptsButton(false);
-
             if (!feedId) {
               return;
             }
@@ -728,7 +741,7 @@ export function TranscriptView({
                 }}
                 components={{
                   Header: () =>
-                    hasNewerTranscripts && !hideLoadNewerTranscriptsButton ? (
+                    hasNewerTranscripts ? (
                       <Box
                         sx={{
                           display: 'flex',
@@ -752,7 +765,6 @@ export function TranscriptView({
                                 )?.transcripts.length === 0
                               ) {
                                 triggerSnackbar('No newer transcripts found');
-                                setHideLoadNewerTranscriptsButton(true);
                               }
                             }}
                             disabled={isTranscriptsFetching}
