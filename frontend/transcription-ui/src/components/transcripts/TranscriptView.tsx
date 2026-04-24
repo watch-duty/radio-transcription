@@ -150,9 +150,10 @@ export function TranscriptView({
 
       // We only fetch the timestamp on the initial load. On subsequent loads,
       // the cursor-based positioning of the database in nextToken handles the rest.
-      const originalTimestampMs = !nextToken && searchedTimestamp
-        ? roundUpToNearestMinute(searchedTimestamp).getTime()
-        : undefined;
+      const originalTimestampMs =
+        !nextToken && searchedTimestamp
+          ? roundUpToNearestMinute(searchedTimestamp).getTime()
+          : undefined;
 
       const response = await listTranscripts(
         searchedFeedId,
