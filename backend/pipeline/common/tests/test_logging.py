@@ -1,3 +1,4 @@
+import logging
 from unittest import TestCase, mock
 
 from backend.pipeline.common.logging import setup_logging
@@ -37,3 +38,20 @@ class TestLogging(TestCase):
                 mock_client_inst.setup_logging.assert_called_once()
                 mock_exporter.assert_called_once()
                 mock_set_provider.assert_called_once()
+
+    @mock.patch("logging.basicConfig")
+    def test_setup_logging_local(self, mock_basic_config) -> None:
+        # Mock is_gcp_env to return False to trigger local logging path
+        with mock.patch(
+            "backend.pipeline.common.logging.is_gcp_env", return_value=False
+        ):
+            # First call should initialize local logging
+            setup_logging()
+            mock_basic_config.assert_called_once()
+            _args, kwargs = mock_basic_config.call_args
+            self.assertEqual(kwargs["level"], logging.INFO)
+            self.assertTrue(kwargs["force"])
+
+            # Second call should do nothing (idempotency)
+            setup_logging()
+            mock_basic_config.assert_called_once()
