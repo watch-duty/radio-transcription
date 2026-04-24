@@ -580,6 +580,12 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 )
             )
 
+            # NOTE: In an ideal production scenario (e.g. on Dataflow), all 3 chunks 
+            # would be stitched into a single transmission (1 message).
+            # However, in this DirectRunner unit test, Chunk 1 gets processed in an 
+            # earlier bundle and flushed before Chunks 2 and 3 arrive.
+            # Thus, we expect 2 messages here, but we still verify that Chunk 2 and 
+            # Chunk 3 were successfully stitched together (one message has length 32000).
             def assert_results(msgs):
                 assert len(msgs) == 2
                 for feed_id, request in msgs:
