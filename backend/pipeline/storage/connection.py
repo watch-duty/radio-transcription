@@ -20,8 +20,8 @@ async def create_pool(
     db_name: str,
     password: str = "",
     port: int = 6432,
-    min_size: int = 5,
-    max_size: int = 5,
+    min_size: int = 8,
+    max_size: int = 8,
     command_timeout: float | None = None,
     timeout: float | None = None,  # noqa: ASYNC109
     max_inactive_connection_lifetime: float | None = None,
