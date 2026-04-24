@@ -49,7 +49,9 @@ class ParseAndKeyFn(beam.DoFn):
         self, element: PubsubMessage, *args: Any, **kwargs: Any
     ) -> Iterator[
         tuple[str, ChunkMetadata]
-        | beam.pvalue.TaggedOutput[Literal["transcription_dlq"], dict[str, Any]]
+        | beam.pvalue.TaggedOutput[
+            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
+        ]
     ]:
         """Extracts the feed_id and parses the protobuf payload."""
 
