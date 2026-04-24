@@ -27,10 +27,10 @@ from backend.pipeline.transcription.datatypes import (
     TranscriptionResult,
 )
 from backend.pipeline.transcription.enums import TranscriberType, VadType
+from backend.pipeline.transcription.ordered_stitcher import OrderedBypassFn
 from backend.pipeline.transcription.stitcher import (
     TranscribeAudioFn,
 )
-from backend.pipeline.transcription.ordered_stitcher import OrderedBypassFn
 from backend.pipeline.transcription.transcribers import Transcriber
 from backend.pipeline.transcription.transforms import (
     AddEventTimestamp,
@@ -361,19 +361,19 @@ class OrderedBypassTest(unittest.TestCase):
                 session_id="mock-session-id",
                 duration_ms=1000,
             )
-            
+
             elements = p | beam.Create(
                 [("test-feed", metadata)]
             )
-            
+
             results = elements | beam.ParDo(
                 OrderedBypassFn(order_config=order_config, stitch_config=stitch_config)
             )
-            
+
             def assert_results(msgs):
                 assert len(msgs) == 1
                 feed_id, request = msgs[0]
                 assert feed_id == "test-feed"
                 assert request.end_audio_offset_ms == 1000
-                
+
             assert_that(results, assert_results)
