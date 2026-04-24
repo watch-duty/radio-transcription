@@ -13,7 +13,6 @@ import aiohttp
 import asyncpg
 import uvloop
 from aiohttp import web
-from opentelemetry import trace
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
@@ -384,144 +383,139 @@ class NormalizerRuntime:
                         f"expected CapturedChunk"
                     )
                     raise TypeError(msg)  # noqa: TRY301
+                # session_id is owned by the capture function. Fall back
+                # to a runtime-generated UUID during the transition period
+                # for collectors that haven't been updated yet.
+                session_id = captured_chunk.session_id
+                if session_id is None:
+                    if _fallback_session_id is None:
+                        _fallback_session_id = str(uuid.uuid4())
+                        logger.warning(
+                            "Collector for feed %s did not set session_id"
+                            " on CapturedChunk — using fallback",
+                            feed["name"],
+                        )
+                    session_id = _fallback_session_id
+                gcs_uri = await retry_with_lease_check(
+                    gcp_helper.upload_staged_audio,
+                    self._gcs_client,
+                    captured_chunk.audio_bytes,
+                    feed,
+                    settings.audio_staging_bucket,
+                    chunk_seq,
+                    fencing_token,
+                    extension,
+                    content_type,
+                    lease_lost=self._lease_lost,
+                    shutdown=self._shutdown,
+                    max_retries=settings.gcs_upload_max_retries,
+                    base_delay_sec=settings.gcs_upload_retry_base_delay_sec,
+                    max_delay_sec=settings.gcs_upload_retry_max_delay_sec,
+                    retryable=(
+                        aiohttp.ClientError,
+                        asyncio.TimeoutError,
+                        OSError,
+                    ),
+                    operation_name="GCS upload",
+                )
+                duration_ms = int(
+                    (
+                        captured_chunk.chunk_end_time
+                        - captured_chunk.chunk_start_time
+                    ).total_seconds()
+                    * 1000
+                )
+                message_id = await gcp_helper.publish_audio_chunk(
+                    self._pubsub_client,
+                    topic_path,
+                    str(feed["id"]),
+                    feed["name"],
+                    feed["external_id"],
+                    gcs_uri,
+                    start_timestamp=captured_chunk.chunk_start_time,
+                    session_id=session_id,
+                    source_type=feed["source_type"],
+                    duration_ms=duration_ms,
+                )
+                logger.info(
+                    "Published message %s for feed %s", message_id, feed["name"]
+                )
+                chunk_seq += 1
 
-                tracer = trace.get_tracer(__name__)
-                with tracer.start_as_current_span("process_captured_chunk"):
-                    # session_id is owned by the capture function. Fall back
-                    # to a runtime-generated UUID during the transition period
-                    # for collectors that haven't been updated yet.
-                    session_id = captured_chunk.session_id
-                    if session_id is None:
-                        if _fallback_session_id is None:
-                            _fallback_session_id = str(uuid.uuid4())
-                            logger.warning(
-                                "Collector for feed %s did not set session_id"
-                                " on CapturedChunk — using fallback",
-                                feed["name"],
-                            )
-                        session_id = _fallback_session_id
-                    gcs_uri = await retry_with_lease_check(
-                        gcp_helper.upload_staged_audio,
-                        self._gcs_client,
-                        captured_chunk.audio_bytes,
-                        feed,
-                        settings.audio_staging_bucket,
+                ok = await retry_with_lease_check(
+                    self._store.update_feed_progress,
+                    feed["id"],
+                    worker_id,
+                    gcs_uri,
+                    fencing_token,
+                    captured_chunk.chunk_end_time,
+                    lease_lost=self._lease_lost,
+                    shutdown=self._shutdown,
+                    max_retries=settings.bookmark_max_retries,
+                    base_delay_sec=settings.bookmark_retry_base_delay_sec,
+                    max_delay_sec=settings.bookmark_retry_max_delay_sec,
+                    retryable=(
+                        asyncpg.PostgresConnectionError,
+                        asyncpg.InterfaceError,
+                        OSError,
+                    ),
+                    operation_name="bookmark write",
+                )
+                if not ok:
+                    # If the batched heartbeat is healthy (renewing every 15s),
+                    # leases cannot be stolen within the 60s abandonment window.
+                    # A stolen lease means the heartbeat mechanism itself failed
+                    # systemically — cancelling one task while 249 others may
+                    # also be compromised is unsafe. os._exit(1) is deliberate.
+                    # MIG auto-heals within seconds; total downtime per feed:
+                    # ~60s (abandonment window) + ~5s (instance restart).
+                    logger.critical(
+                        "Fence violation on bookmark for feed %s -- terminating",
+                        feed["name"],
+                    )
+                    # logging.shutdown() flushes background logging threads
+                    # (e.g. Cloud Logging's CloudLoggingHandler) that os._exit
+                    # would bypass. This fence violation log is the only
+                    # post-mortem evidence of split-brain.
+                    logging.shutdown()
+                    os._exit(1)
+
+                # SLO: chunk_ingested emit — strictly-after-bookmark-ok
+                # D-11: wrapped json_fields shape for uniformity with quarantine.
+                # D-15: latency_clamped absent unless raw latency < 0 (only ever True).
+                # D-16: processing_latency_sec absent when receipt_time is None
+                # (NOT explicit null — Terraform alert filters handle key-existence).
+                # Cost note: ~500 GiB/month at 12k-feed fleet per research Pitfall 6.
+                chunk_ingested_payload: dict[str, object] = {
+                    "event_type": EVENT_TYPE_CHUNK_INGESTED,
+                    "feed_id": str(feed["id"]),
+                    "source_type": feed["source_type"],
+                }
+                if captured_chunk.receipt_time is not None:
+                    raw_latency_sec = (
+                        datetime.datetime.now(datetime.UTC)
+                        - captured_chunk.receipt_time
+                    ).total_seconds()
+                    chunk_ingested_payload["processing_latency_sec"] = max(
+                        0.0, round(raw_latency_sec, 2)
+                    )
+                    if raw_latency_sec < 0:
+                        chunk_ingested_payload["latency_clamped"] = True
+                logger.info(
+                    "Chunk ingested",
+                    extra={"json_fields": chunk_ingested_payload},
+                )
+
+                if self._shutdown.is_set():
+                    # Return without calling release_feed — _shutdown_sequence
+                    # handles all task cancellation and the 60s abandonment
+                    # window is the safety net if batch release fails.
+                    logger.info(
+                        "Shutdown -- stopping feed %s cleanly after chunk %d",
+                        feed["name"],
                         chunk_seq,
-                        fencing_token,
-                        extension,
-                        content_type,
-                        lease_lost=self._lease_lost,
-                        shutdown=self._shutdown,
-                        max_retries=settings.gcs_upload_max_retries,
-                        base_delay_sec=settings.gcs_upload_retry_base_delay_sec,
-                        max_delay_sec=settings.gcs_upload_retry_max_delay_sec,
-                        retryable=(
-                            aiohttp.ClientError,
-                            asyncio.TimeoutError,
-                            OSError,
-                        ),
-                        operation_name="GCS upload",
                     )
-                    duration_ms = int(
-                        (
-                            captured_chunk.chunk_end_time
-                            - captured_chunk.chunk_start_time
-                        ).total_seconds()
-                        * 1000
-                    )
-                    message_id = await gcp_helper.publish_audio_chunk(
-                        self._pubsub_client,
-                        topic_path,
-                        str(feed["id"]),
-                        feed["name"],
-                        feed["external_id"],
-                        gcs_uri,
-                        start_timestamp=captured_chunk.chunk_start_time,
-                        session_id=session_id,
-                        source_type=feed["source_type"],
-                        duration_ms=duration_ms,
-                    )
-                    logger.info(
-                        "Published message %s for feed %s",
-                        message_id,
-                        feed["name"],
-                    )
-                    chunk_seq += 1
-
-                    ok = await retry_with_lease_check(
-                        self._store.update_feed_progress,
-                        feed["id"],
-                        worker_id,
-                        gcs_uri,
-                        fencing_token,
-                        captured_chunk.chunk_end_time,
-                        lease_lost=self._lease_lost,
-                        shutdown=self._shutdown,
-                        max_retries=settings.bookmark_max_retries,
-                        base_delay_sec=settings.bookmark_retry_base_delay_sec,
-                        max_delay_sec=settings.bookmark_retry_max_delay_sec,
-                        retryable=(
-                            asyncpg.PostgresConnectionError,
-                            asyncpg.InterfaceError,
-                            OSError,
-                        ),
-                        operation_name="bookmark write",
-                    )
-                    if not ok:
-                        # If the batched heartbeat is healthy (renewing every 15s),
-                        # leases cannot be stolen within the 60s abandonment window.
-                        # A stolen lease means the heartbeat mechanism itself failed
-                        # systemically — cancelling one task while 249 others may
-                        # also be compromised is unsafe. os._exit(1) is deliberate.
-                        # MIG auto-heals within seconds; total downtime per feed:
-                        # ~60s (abandonment window) + ~5s (instance restart).
-                        logger.critical(
-                            "Fence violation on bookmark for feed %s -- terminating",
-                            feed["name"],
-                        )
-                        # logging.shutdown() flushes background logging threads
-                        # (e.g. Cloud Logging's CloudLoggingHandler) that os._exit
-                        # would bypass. This fence violation log is the only
-                        # post-mortem evidence of split-brain.
-                        logging.shutdown()
-                        os._exit(1)
-
-                    # SLO: chunk_ingested emit — strictly-after-bookmark-ok
-                    # D-11: wrapped json_fields shape for uniformity with quarantine.
-                    # D-15: latency_clamped absent unless raw latency < 0 (only ever True).
-                    # D-16: processing_latency_sec absent when receipt_time is None
-                    # (NOT explicit null — Terraform alert filters handle key-existence).
-                    # Cost note: ~500 GiB/month at 12k-feed fleet per research Pitfall 6.
-                    chunk_ingested_payload: dict[str, object] = {
-                        "event_type": EVENT_TYPE_CHUNK_INGESTED,
-                        "feed_id": str(feed["id"]),
-                        "source_type": feed["source_type"],
-                    }
-                    if captured_chunk.receipt_time is not None:
-                        raw_latency_sec = (
-                            datetime.datetime.now(datetime.UTC)
-                            - captured_chunk.receipt_time
-                        ).total_seconds()
-                        chunk_ingested_payload["processing_latency_sec"] = max(
-                            0.0, round(raw_latency_sec, 2)
-                        )
-                        if raw_latency_sec < 0:
-                            chunk_ingested_payload["latency_clamped"] = True
-                    logger.info(
-                        "Chunk ingested",
-                        extra={"json_fields": chunk_ingested_payload},
-                    )
-
-                    if self._shutdown.is_set():
-                        # Return without calling release_feed — _shutdown_sequence
-                        # handles all task cancellation and the 60s abandonment
-                        # window is the safety net if batch release fails.
-                        logger.info(
-                            "Shutdown -- stopping feed %s cleanly after chunk %d",
-                            feed["name"],
-                            chunk_seq,
-                        )
-                        return
+                    return
 
         except asyncio.CancelledError:
             logger.info("Feed %s task cancelled", feed["name"])
