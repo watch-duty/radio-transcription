@@ -462,6 +462,7 @@ class OrderedStitchAudioFn(beam.DoFn):
 
                 # 3. Process through state machine!
                 actions = state_machine.process_chunk(payload.chunk_data, ctx)
+                print(f"DEBUG actions for {chunk.gcs_uri}: {actions}")
 
                 # 4. Apply actions!
                 for action in actions:
