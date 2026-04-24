@@ -64,6 +64,21 @@ logger = logging.LoggerAdapter(
 )
 
 
+def _get_task_logger(
+    feed_id: str, session_id: str | None, component: str
+) -> logging.LoggerAdapter:
+    """Creates a contextual LoggerAdapter for tracing items through the pipeline."""
+    return logging.LoggerAdapter(
+        logging.getLogger(__name__),
+        {
+            "system": "transcription",
+            "component": component,
+            "feed_id": feed_id,
+            "session_id": session_id or "unknown",
+        },
+    )
+
+
 class StaleTimerManager:
     """Helper class to manage both event-time and processing-time stale timers."""
 
@@ -121,14 +136,8 @@ def process_ordering(
     feed_id, metadata = element
     session_changed = False
 
-    task_logger = logging.LoggerAdapter(
-        logging.getLogger(__name__),
-        {
-            "system": "transcription",
-            "component": "sequence-buffer",
-            "feed_id": feed_id,
-            "session_id": metadata.session_id,
-        },
+    task_logger = _get_task_logger(
+        feed_id, metadata.session_id, "sequence-buffer"
     )
 
     # Session change detection
@@ -262,17 +271,6 @@ class OrderedStitchAudioFn(beam.DoFn):
             transmission_context_state.read() or TransmissionContext()
         )
 
-        task_logger = logging.LoggerAdapter(
-            logging.getLogger(__name__),
-            {
-                "system": "transcription",
-                "component": "ordered-stitcher",
-                "feed_id": feed_id,
-                "session_id": curr_context.session_id or "unknown",
-            },
-        )
-        task_logger.info(f"[Process] Processing chunk {metadata.gcs_uri}")
-
         # Handle session change and ordering via helper function
         elements_to_emit, curr_context, session_changed = process_ordering(
             element,
@@ -281,6 +279,11 @@ class OrderedStitchAudioFn(beam.DoFn):
             out_of_order_timer,
             self.order_config,
         )
+
+        task_logger = _get_task_logger(
+            feed_id, curr_context.session_id, "transcription-stitcher"
+        )
+        task_logger.info(f"[Process] Processing chunk {metadata.gcs_uri}")
 
         if session_changed:
             # Also clear stitching state!
@@ -326,14 +329,8 @@ class OrderedStitchAudioFn(beam.DoFn):
         session_id: str,
     ) -> Iterator[tuple[str, FlushRequest]]:
         """Clears current internal state arrays and yields a compiled FlushRequest downstream."""
-        task_logger = logging.LoggerAdapter(
-            logging.getLogger(__name__),
-            {
-                "system": "transcription",
-                "component": "ordered-stitcher",
-                "feed_id": action.feed_id,
-                "session_id": session_id,
-            },
+        task_logger = _get_task_logger(
+            action.feed_id, session_id, "transcription-stitcher"
         )
 
         processed_uris = action.isolated_audio_buffer_uris or list(
@@ -386,14 +383,10 @@ class OrderedStitchAudioFn(beam.DoFn):
         is_backfill: bool,
     ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
         """Helper to download and stitch a list of ready chunks."""
-        task_logger = logging.LoggerAdapter(
-            logging.getLogger(__name__),
-            {
-                "system": "transcription",
-                "component": "ordered-stitcher",
-                "feed_id": feed_id,
-                "session_id": curr_context.session_id or "unknown",
-            },
+        task_logger = _get_task_logger(
+            feed_id,
+            curr_context.session_id or "unknown",
+            "transcription-stitcher",
         )
 
         if not self.audio_processor:
