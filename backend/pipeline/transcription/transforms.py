@@ -50,9 +50,9 @@ class ParseAndKeyFn(beam.DoFn):
             raise ValueError(msg)
 
         try:
-            feed_id = element.attributes["feed_id"]
             chunk_proto = AudioChunk()
             chunk_proto.ParseFromString(element.data)
+            feed_id = chunk_proto.feed_id
 
             if not chunk_proto.gcs_uri:
                 msg = "AudioChunk missing required gcs_uri"
