@@ -337,8 +337,7 @@ class OrderedStitchAudioFn(beam.DoFn):
             # Create a deterministic UUID using our shared helper so that Beam retries produce the exact same ID
             transmission_id = generate_transmission_id(
                 session_id,
-                action.speech_time_range.start_ms,
-                action.speech_time_range.end_ms,
+                action.speech_time_range,
             )
             task_logger.info(
                 f"[Flush] Emitting transmission {transmission_id} with {len(processed_uris)} chunks"
@@ -406,6 +405,11 @@ class OrderedStitchAudioFn(beam.DoFn):
                     f"[Download] Downloaded audio for {chunk.gcs_uri}"
                 )
 
+                time_range = TimeRange(
+                    start_ms=chunk.timestamp_ms,
+                    end_ms=chunk.timestamp_ms + chunk_data.duration_ms,
+                )
+
                 if self.stitch_config.bypass_stitching:
                     yield (
                         feed_id,
@@ -414,19 +418,14 @@ class OrderedStitchAudioFn(beam.DoFn):
                             feed_id=feed_id,
                             session_id=curr_context.session_id or "unknown",
                             contributing_audio_uris=[chunk.gcs_uri],
-                            time_range=TimeRange(
-                                start_ms=chunk.timestamp_ms,
-                                end_ms=chunk.timestamp_ms
-                                + chunk_data.duration_ms,
-                            ),
+                            time_range=time_range,
                             missing_prior_context=False,
                             missing_post_context=False,
                             start_audio_offset_ms=0,
                             end_audio_offset_ms=None,
                             transmission_id=generate_transmission_id(
                                 curr_context.session_id or "unknown",
-                                chunk.timestamp_ms,
-                                chunk.timestamp_ms + chunk_data.duration_ms,
+                                time_range,
                             ),
                         ),
                     )
@@ -627,10 +626,12 @@ class OrderedStitchAudioFn(beam.DoFn):
         ):
             try:
                 # Create a deterministic UUID
+                time_range = TimeRange(
+                    start_ms=start_time_ms, end_ms=end_time_ms
+                )
                 transmission_id = generate_transmission_id(
                     curr_context.session_id or "unknown",
-                    start_time_ms,
-                    end_time_ms,
+                    time_range,
                 )
 
                 yield (
@@ -640,9 +641,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                         feed_id=key,
                         session_id=curr_context.session_id or "unknown",
                         contributing_audio_uris=processed_uris,
-                        time_range=TimeRange(
-                            start_ms=start_time_ms, end_ms=end_time_ms
-                        ),
+                        time_range=time_range,
                         missing_prior_context=curr_context.missing_prior_context,
                         missing_post_context=True,
                         start_audio_offset_ms=curr_context.start_audio_offset_ms,
@@ -746,6 +745,11 @@ class OrderedBypassFn(beam.DoFn):
                     chunk.gcs_uri, chunk.timestamp_ms
                 )
 
+                time_range = TimeRange(
+                    start_ms=chunk.timestamp_ms,
+                    end_ms=chunk.timestamp_ms + chunk_data.duration_ms,
+                )
+
                 yield (
                     feed_id,
                     FlushRequest(
@@ -753,18 +757,14 @@ class OrderedBypassFn(beam.DoFn):
                         feed_id=feed_id,
                         session_id=session_id,
                         contributing_audio_uris=[chunk.gcs_uri],
-                        time_range=TimeRange(
-                            start_ms=chunk.timestamp_ms,
-                            end_ms=chunk.timestamp_ms + chunk_data.duration_ms,
-                        ),
+                        time_range=time_range,
                         missing_prior_context=False,
                         missing_post_context=False,
                         start_audio_offset_ms=0,
                         end_audio_offset_ms=None,
                         transmission_id=generate_transmission_id(
                             session_id,
-                            chunk.timestamp_ms,
-                            chunk.timestamp_ms + chunk_data.duration_ms,
+                            time_range,
                         ),
                     ),
                 )
