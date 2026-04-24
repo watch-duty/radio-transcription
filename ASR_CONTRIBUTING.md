@@ -1,5 +1,12 @@
 # ASR Evaluations
 
+## Architecture
+
+The ASR Evaluation framework uses a decoupled **Driver/Worker** architecture to benchmark and compare different Speech-to-Text models:
+
+- **Driver**: Orchestrates the evaluation process. It reads a dataset manifest (JSONL file containing audio paths), sends transcription requests to the model workers, and aggregates the results into a final output file.
+- **Model Workers**: Independent microservices wrapped in FastAPI and hosted in Docker containers. Each worker serves a specific model (e.g., Qwen, Canary) and exposes a `/transcribe` endpoint. This allows for easy scaling, environment isolation (CPU vs GPU), and simple addition of new models without changing the orchestration logic.
+
 ## "Local" Development
 Each model is developed on its own colab, which is run on a Jupyter notebook. You can find them under `/model/colabs`.
 
@@ -9,7 +16,7 @@ If you want to run the Docker image with GPUs, you will need to create a GCE ins
 
 Since each contributor will have their own dedicated instance, make sure to use a unique name for your instance to avoid conflicts. When you run the terraform plan, the state will be saved locally. You'll want to keep it so that you can easily make changes to your instance if the definition gets updated.
 
-```
+```bash
 # Assuming you're starting from the root directory of the repo, navigate to the asr_evaluation module.
 cd terraform/modules/asr_evaluation
 
@@ -26,7 +33,7 @@ terraform apply -var-file=local_variables.tfvars
 
 ### Setup docker on the VM (for GPU runs)
 Once you have your instance provisioned and set up. You can setup docker on the instance:
-```
+```bash
 gcloud compute ssh <your_instance_name> \
     --project <your_project_id> \
     --zone us-central1-a
@@ -42,34 +49,41 @@ sudo docker run --rm --gpus all nvidia/cuda:12.0.0-base-ubuntu22.04 nvidia-smi
 ```
 
 Optional: Make docker sudoless
-```
+```bash
 sudo usermod -aG docker $USER
 newgrp docker
 ```
 
 ### Run docker directly on the VM (with GPU)
 Setup
-```
+```bash
 git clone https://github.com/watch-duty/radio-transcription.git
 cd radio-transcription
 ```
 
-Run all 3 containers (NeMO + Jupyter, NeMO CLI, and Jupyter)
-```
+Run the desired services using Docker Compose:
+```bash
 # Add in sudo if you didn't make docker sudoless
 
-# Run NeMO + Jupyter | Jupyter
-docker compose -f asr-eval-docker-compose.yml up -d [asr-eval-cpu|notebooks]
+# Run Jupyter Notebook environment (with NeMO on CPU)
+docker compose -f asr-eval-docker-compose.yml up -d asr-eval-cpu
+
+# Run Jupyter Notebook environment (with NeMO on GPU)
+docker compose -f asr-eval-docker-compose.yml up -d asr-eval
+
+# Run lightweight Jupyter Notebook (without NeMO)
+docker compose -f asr-eval-docker-compose.yml up -d notebooks
+
+# Run specific Model Worker APIs (FastAPI)
+docker compose -f asr-eval-docker-compose.yml up -d qwen-asr-cpu
+docker compose -f asr-eval-docker-compose.yml up -d canary-qwen
 
 # To access NeMo CLI using the asr-eval container image
 docker compose -f asr-eval-docker-compose.yml run --entrypoint /bin/zsh asr-eval
-
-# Run NeMO + Jupyter with GPU
-docker compose -f asr-eval-docker-compose.yml up -d asr-eval
 ```
 
 Accessing the Jupyter notebooks from your local machine
-```
+```bash
 # Port forwarding for you to be able to access the notebook from your browser.
 # The notebook should be accessible via localhost:8888
 gcloud compute ssh <your_instance_name> \
@@ -79,3 +93,27 @@ gcloud compute ssh <your_instance_name> \
 ```
 
 Alternatively, if you want to use VSCode or your local IDE, you can also use Remote SSH. This way you won't have to keep syncing changes between your machine and your local code.
+
+## Adding a New Model for Evaluation
+
+To add a new Speech-to-Text model to the framework, follow these steps:
+
+### 1. Create the Model Directory
+Create a new folder under `model/models/` for your model (e.g., `model/models/my_new_model/`).
+
+### 2. Implement the FastAPI Service (`api.py`)
+Create an `api.py` file that exposes a `/transcribe` endpoint. Follow these best practices:
+- **Use Lifespan Events**: Load your model during application startup using FastAPI's `lifespan` context manager to avoid loading delays on the first request.
+- **Robust File Handling**: Use `tempfile` and ensure files are deleted in a `finally` block to prevent disk space leaks.
+
+### 3. Create the `Dockerfile`
+Create a `Dockerfile` in your model directory:
+- Use a slim base image if the model runs on CPU.
+- Install necessary system dependencies (like `ffmpeg`).
+- Copy your code and expose port 8000.
+
+### 4. Register in Docker Compose
+Add your new service to `asr-eval-docker-compose.yml`. Map a unique host port to container port 8000.
+
+### 5. Update the Driver/Colab
+Update your evaluation notebook or driver script to target your new service's endpoint (e.g., `http://my_new_model:8000/transcribe`).
