@@ -61,6 +61,7 @@ class FeedMetadata:
     """Metadata about a feed, used for enriching the output."""
 
     feed_name: str
+    external_id: str
 
 
 @dataclass(frozen=True)

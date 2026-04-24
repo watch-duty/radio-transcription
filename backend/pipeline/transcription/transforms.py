@@ -101,7 +101,13 @@ class ExtractFeedMetadataFn(beam.DoFn):
         feed_id, chunk_bytes = element
         chunk_proto = AudioChunk()
         chunk_proto.ParseFromString(chunk_bytes)
-        yield (feed_id, FeedMetadata(feed_name=chunk_proto.feed_name))
+        yield (
+            feed_id,
+            FeedMetadata(
+                feed_name=chunk_proto.feed_name,
+                external_id=chunk_proto.external_id,
+            ),
+        )
 
 
 @beam.typehints.with_input_types(tuple[str, bytes])
@@ -204,6 +210,7 @@ class SerializeAndEnrichFn(beam.DoFn):
                 msg = f"Missing or incomplete feed metadata for feed_id: {feed_id}"
                 raise ValueError(msg)
             feed_name = metadata.feed_name
+            external_id = metadata.external_id
 
             # Duplicate detection based on start time
             last_start_ms = last_start_ms_state.read()
@@ -254,6 +261,7 @@ class SerializeAndEnrichFn(beam.DoFn):
                 canonical_audio_uri=value.canonical_audio_uri,
                 playback_audio_uri=value.playback_audio_uri,
                 feed_name=feed_name,
+                external_id=external_id,
             )
             proto.start_timestamp.FromMicroseconds(
                 value.time_range.start_ms * MICROSECONDS_PER_MS
