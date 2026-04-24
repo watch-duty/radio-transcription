@@ -383,9 +383,12 @@ class OrderedStitchAudioFn(beam.DoFn):
         is_backfill: bool,
     ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
         """Helper to download and stitch a list of ready chunks."""
+        if curr_context.session_id is None:
+            msg = "Session ID cannot be None in _download_and_stitch"
+            raise ValueError(msg)
         task_logger = _get_task_logger(
             feed_id,
-            curr_context.session_id or "unknown",
+            curr_context.session_id,
             "transcription-stitcher",
         )
 
@@ -427,7 +430,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                             start_audio_offset_ms=0,
                             end_audio_offset_ms=None,
                             transmission_id=generate_transmission_id(
-                                curr_context.session_id or "unknown",
+                                curr_context.session_id,
                                 time_range,
                             ),
                         ),
@@ -469,7 +472,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                                 transmission_context_state,
                                 transmission_buffer_state,
                                 timer_manager,
-                                session_id=curr_context.session_id or "unknown",
+                                session_id=curr_context.session_id,
                             )
                         case AppendBufferAction():
                             transmission_buffer_state.add(action.audio_buffer)
@@ -627,13 +630,17 @@ class OrderedStitchAudioFn(beam.DoFn):
             and end_time_ms is not None
             and curr_context.buffer_start_time_ms is not None
         ):
+            if curr_context.session_id is None:
+                msg = "Session ID cannot be None in _handle_stale_transmission"
+                raise ValueError(msg)
+
             try:
                 # Create a deterministic UUID
                 time_range = TimeRange(
                     start_ms=start_time_ms, end_ms=end_time_ms
                 )
                 transmission_id = generate_transmission_id(
-                    curr_context.session_id or "unknown",
+                    curr_context.session_id,
                     time_range,
                 )
 
@@ -642,7 +649,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                     FlushRequest(
                         buffer=np.concatenate(audio_buffer),
                         feed_id=key,
-                        session_id=curr_context.session_id or "unknown",
+                        session_id=curr_context.session_id,
                         contributing_audio_uris=processed_uris,
                         time_range=time_range,
                         missing_prior_context=curr_context.missing_prior_context,
