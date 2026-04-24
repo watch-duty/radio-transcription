@@ -64,7 +64,6 @@ async def upload_staged_audio(
             to guarantee create-only semantics.
         extension: File extension to use (default: "flac").
         content_type: Content-Type header for upload (default: "audio/flac").
-        trace_id: Optional trace ID for tracking messages through the pipeline.
 
     Returns:
         The full GCS path (``gs://bucket/object``).
@@ -124,7 +123,6 @@ async def upload_audio(
             create-only semantics (fails with 412 if the object exists).
             When set, a 412 is treated as success (idempotent retry).
         content_type: Content-Type header for upload (default: "audio/flac").
-        trace_id: Optional trace ID for tracking messages through the pipeline.
 
     Returns:
         The full GCS path (``gs://bucket/object``).
