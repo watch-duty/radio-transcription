@@ -619,7 +619,7 @@ export function TranscriptView({
             >
               {searchedFeed?.sourceUrl || searchedFeed?.archiveUrl ? (
                 <Box
-                  sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2 }}
+                  sx={{ display: 'flex', alignItems: 'center', gap: 2 }}
                 >
                   {searchedFeed.sourceUrl && (
                     <Link
