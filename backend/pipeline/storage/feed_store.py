@@ -6,12 +6,14 @@ from typing import TYPE_CHECKING, TypedDict
 
 from backend.pipeline.storage.feed_queries import (
     ACQUIRE_FEEDS_BATCH_SQL,
+    ACQUIRE_FEEDS_RECOVERY_SQL,
     CREATE_FEED_SQL,
     DELETE_FEED_SQL,
     GET_FEED_SQL,
     LEASE_FEED_SQL,
     LIST_FEEDS_SQL,
     RELEASE_FEED_SQL,
+    RELEASE_FEEDS_BATCH_BY_IDS_SQL,
     RELEASE_FEEDS_BATCH_SQL,
     RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
     REPORT_FAILURE_SQL,
@@ -139,6 +141,31 @@ class FeedStore:
             external_id=row["external_id"],
         )
 
+    def _row_to_leased_feed(self, row: asyncpg.Record) -> LeasedFeed:
+        """Convert a claim/lease-path row to a LeasedFeed dict.
+
+        Shared between lease_feed (single-row), acquire_feeds_batch (primary
+        per-type CTE), and acquire_feeds_recovery (failing-retryable +
+        active-abandoned). Keeping the mapping in one place ensures all three
+        claim paths agree on how source_type is validated and which columns
+        end up in the TypedDict.
+        """
+        try:
+            source_type = SourceType(row["source_type"])
+        except ValueError as e:
+            msg = f"Unknown source type {row['source_type']!r} for feed {row['id']}"
+            raise ValueError(msg) from e
+        return LeasedFeed(
+            id=row["id"],
+            name=row["name"],
+            external_id=row["external_id"],
+            source_type=source_type,
+            last_processed_filename=row["last_processed_filename"],
+            last_bookmark_time=row["last_bookmark_time"],
+            fencing_token=row["fencing_token"],
+            source_feed_id=row["source_feed_id"],
+        )
+
     async def lease_feed(self, worker_id: uuid.UUID) -> LeasedFeed | None:
         """
         Atomically find, lock, and lease an available feed.
@@ -160,23 +187,7 @@ class FeedStore:
         )
         if row is None:
             return None
-
-        try:
-            source_type = SourceType(row["source_type"])
-        except ValueError as e:
-            msg = f"Unknown source type {row['source_type']!r} for feed {row['id']}"
-            raise ValueError(msg) from e
-
-        return LeasedFeed(
-            id=row["id"],
-            name=row["name"],
-            external_id=row["external_id"],
-            source_type=source_type,
-            last_processed_filename=row["last_processed_filename"],
-            last_bookmark_time=row["last_bookmark_time"],
-            fencing_token=row["fencing_token"],
-            source_feed_id=row["source_feed_id"],
-        )
+        return self._row_to_leased_feed(row)
 
     async def update_feed_progress(
         self,
@@ -403,27 +414,78 @@ class FeedStore:
             limit,
             self._source_types,
         )
+        return [self._row_to_leased_feed(row) for row in rows]
 
-        leased_feeds = []
-        for row in rows:
-            try:
-                source_type = SourceType(row["source_type"])
-            except ValueError as e:
-                msg = f"Unknown source type {row['source_type']!r} for feed {row['id']}"
-                raise ValueError(msg) from e
-            leased_feeds.append(
-                LeasedFeed(
-                    id=row["id"],
-                    name=row["name"],
-                    external_id=row["external_id"],
-                    source_type=source_type,
-                    last_processed_filename=row["last_processed_filename"],
-                    last_bookmark_time=row["last_bookmark_time"],
-                    fencing_token=row["fencing_token"],
-                    source_feed_id=row["source_feed_id"],
-                )
-            )
-        return leased_feeds
+    async def acquire_feeds_recovery(
+        self,
+        worker_id: uuid.UUID,
+        abandonment_window_sec: float,
+        ramp_pct: int,
+        limit: int,
+    ) -> list[LeasedFeed]:
+        """Recovery-path claim: failing-retryable + active-abandoned.
+
+        Called by the worker when the per-type primary CTE returns fewer rows
+        than the worker's total slack. No per-type cap — failing and
+        abandoned volumes are small by construction, and the pg_cron sweep
+        handles most active-abandoned reclamation out-of-band.
+
+        Args:
+            worker_id: UUID of the worker requesting leases.
+            abandonment_window_sec: Seconds before a heartbeat is considered stale.
+            ramp_pct: md5 ramp filter threshold (0-100). 100 = all eligible.
+            limit: Maximum number of feeds to acquire.
+
+        Returns:
+            List of ``LeasedFeed`` dicts (empty if none available or
+            ``limit <= 0``).
+        """
+        if limit <= 0:
+            return []
+
+        import datetime  # noqa: PLC0415
+
+        rows = await self._pool.fetch(
+            ACQUIRE_FEEDS_RECOVERY_SQL,
+            worker_id,
+            datetime.timedelta(seconds=abandonment_window_sec),
+            ramp_pct,
+            limit,
+        )
+        return [self._row_to_leased_feed(row) for row in rows]
+
+    async def release_feeds_batch_by_ids(
+        self,
+        worker_id: uuid.UUID,
+        feed_ids: list[uuid.UUID],
+    ) -> int:
+        """Release a specific set of lease IDs owned by this worker.
+
+        Used by the SIGTERM drain path to release leases in ~50-row batches
+        with jitter between batches, staggering fleet-wide UNCLAIMED flips
+        during scale-in events (scaling plan §8). Each call uses
+        ``pool.execute`` so asyncpg auto-commits per batch — explicit
+        transaction brackets are not needed.
+
+        Args:
+            worker_id: UUID of the worker releasing leases.
+            feed_ids: Specific feed UUIDs to release. Feeds in this list
+                that are no longer owned by ``worker_id`` (e.g. already
+                reclaimed by the pg_cron sweep) are silently skipped.
+
+        Returns:
+            The number of feeds actually released.
+        """
+        if not feed_ids:
+            return 0
+        result = await self._pool.execute(
+            RELEASE_FEEDS_BATCH_BY_IDS_SQL,
+            worker_id,
+            feed_ids,
+        )
+        if result.startswith("UPDATE "):
+            return int(result.split()[1])
+        return 0
 
     async def create_feed(
         self,

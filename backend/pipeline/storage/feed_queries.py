@@ -83,6 +83,21 @@ SET worker_id = NULL,
 WHERE worker_id = $1 AND status = 'active'::feed_status
 """
 
+# SIGTERM drain: release a specific set of lease IDs in one UPDATE. Sized
+# to ~50 rows/call by the caller and issued via pool.execute so each call
+# is its own transaction (asyncpg auto-commits outside explicit blocks).
+# unclaimed_since = NOW() matches the convention in RELEASE_FEED_SQL and
+# RELEASE_FEEDS_BATCH_SQL so the autoscaler's MIN(unclaimed_since) signal
+# stays accurate across scale-in. No last_heartbeat write — heartbeat
+# renewal is now the sole writer of that column (scaling plan §6.1).
+RELEASE_FEEDS_BATCH_BY_IDS_SQL = """\
+UPDATE feeds
+SET worker_id = NULL,
+    status = 'unclaimed'::feed_status,
+    unclaimed_since = NOW()
+WHERE worker_id = $1 AND id = ANY($2::uuid[])
+"""
+
 ACQUIRE_FEEDS_BATCH_SQL = """\
 WITH available_feeds AS (
     SELECT id
@@ -109,6 +124,53 @@ leased AS (
         fencing_token = fencing_token + 1
     FROM available_feeds
     WHERE feeds.id = available_feeds.id
+    RETURNING feeds.id, feeds.name, feeds.source_type,
+              feeds.last_processed_filename, feeds.last_bookmark_time,
+              feeds.fencing_token
+)
+SELECT leased.id, leased.name, leased.source_type,
+       leased.last_processed_filename, leased.last_bookmark_time,
+       leased.fencing_token, fpi.source_feed_id, fpi.external_id
+FROM leased
+JOIN feed_properties fpi ON fpi.feed_id = leased.id
+"""
+
+# Recovery-path claim: failing-retryable + active-abandoned. Runs when the
+# primary per-type CTE (ACQUIRE_FEEDS_BATCH_SQL) returns fewer rows than
+# the worker's total slack. No per-type cap here: failing and abandoned
+# volumes are small by construction (pg_cron sweep drains active-abandoned
+# at 30 s cadence; failure events are rare). Ordering by retry_after ASC
+# NULLS FIRST prioritizes unclaimed retries over drift between retry windows.
+# Same md5 ramp filter as the primary path — ramp changes affect both
+# branches symmetrically, which keeps rollback semantics deterministic.
+#
+# MATERIALIZED is non-negotiable for the same planner reason as the primary
+# CTE: without it, the planner can inline the CTE into the outer UPDATE and
+# re-evaluate the SKIP LOCKED subquery per outer row, which would bypass
+# the LIMIT.
+#
+# Params: $1=worker_id, $2=abandonment_interval, $3=ramp_pct, $4=limit.
+ACQUIRE_FEEDS_RECOVERY_SQL = """\
+WITH recovered AS MATERIALIZED (
+    SELECT id FROM feeds
+    WHERE (
+        (status = 'failing'::feed_status AND (retry_after IS NULL OR retry_after <= NOW()))
+        OR (status = 'active'::feed_status AND last_heartbeat < NOW() - $2::interval)
+    )
+      AND (('x' || substr(md5(id::text), 1, 7))::bit(28)::integer) % 100 < $3
+    ORDER BY retry_after ASC NULLS FIRST, id
+    LIMIT $4
+    FOR NO KEY UPDATE SKIP LOCKED
+),
+leased AS (
+    UPDATE feeds
+    SET status = 'active'::feed_status,
+        worker_id = $1,
+        fencing_token = fencing_token + 1,
+        last_heartbeat = NOW(),
+        retry_after = NULL
+    FROM recovered
+    WHERE feeds.id = recovered.id
     RETURNING feeds.id, feeds.name, feeds.source_type,
               feeds.last_processed_filename, feeds.last_bookmark_time,
               feeds.fencing_token

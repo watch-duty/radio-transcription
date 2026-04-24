@@ -574,6 +574,110 @@ class TestReleaseFeedsBatch(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[1], _WORKER_ID)
 
 
+class TestRowToLeasedFeed(unittest.TestCase):
+    """Tests for the shared row-to-LeasedFeed mapping helper."""
+
+    def test_returns_leased_feed_from_valid_row(self) -> None:
+        store = FeedStore(_make_pool())
+
+        result = store._row_to_leased_feed(_LEASE_ROW)
+
+        self.assertEqual(result["id"], _FEED_ID)
+        self.assertEqual(result["name"], "My Feed")
+        self.assertEqual(result["source_type"], SourceType.BCFY_FEEDS)
+        self.assertEqual(result["fencing_token"], 1)
+
+    def test_invalid_source_type_raises(self) -> None:
+        bad_row = {**_LEASE_ROW, "source_type": "not_a_real_type"}
+        store = FeedStore(_make_pool())
+
+        with self.assertRaises(ValueError) as context:
+            store._row_to_leased_feed(bad_row)
+
+        self.assertIn("Unknown source type 'not_a_real_type'", str(context.exception))
+
+
+class TestAcquireFeedsRecovery(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.acquire_feeds_recovery."""
+
+    async def test_empty_limit_fast_path(self) -> None:
+        """Limit <= 0 returns [] without touching the pool."""
+        pool = _make_pool()
+        store = FeedStore(pool)
+
+        result = await store.acquire_feeds_recovery(_WORKER_ID, 60.0, 100, 0)
+
+        self.assertEqual(result, [])
+        pool.fetch.assert_not_called()
+
+    async def test_passes_four_params(self) -> None:
+        """worker_id, abandonment_interval, ramp_pct, limit."""
+        pool = _make_pool(fetch_result=[])
+        store = FeedStore(pool)
+
+        await store.acquire_feeds_recovery(_WORKER_ID, 60.0, 75, 10)
+
+        args = pool.fetch.call_args[0]
+        self.assertIs(args[0], feed_queries.ACQUIRE_FEEDS_RECOVERY_SQL)
+        self.assertEqual(args[1], _WORKER_ID)
+        self.assertEqual(args[2], datetime.timedelta(seconds=60.0))
+        self.assertEqual(args[3], 75)
+        self.assertEqual(args[4], 10)
+
+    async def test_returns_leased_feeds(self) -> None:
+        """Rows are converted to LeasedFeed dicts via the shared helper."""
+        pool = _make_pool(fetch_result=[_LEASE_ROW])
+        store = FeedStore(pool)
+
+        result = await store.acquire_feeds_recovery(_WORKER_ID, 60.0, 100, 10)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["id"], _FEED_ID)
+
+
+class TestReleaseFeedsBatchByIds(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.release_feeds_batch_by_ids."""
+
+    async def test_empty_list_fast_path(self) -> None:
+        """Empty feed_ids returns 0 without touching the pool."""
+        pool = _make_pool()
+        store = FeedStore(pool)
+
+        result = await store.release_feeds_batch_by_ids(_WORKER_ID, [])
+
+        self.assertEqual(result, 0)
+        pool.execute.assert_not_called()
+
+    async def test_passes_params(self) -> None:
+        pool = _make_pool(execute_result="UPDATE 2")
+        store = FeedStore(pool)
+        ids = [_FEED_ID, _FEED_ID_B]
+
+        result = await store.release_feeds_batch_by_ids(_WORKER_ID, ids)
+
+        self.assertEqual(result, 2)
+        args = pool.execute.call_args[0]
+        self.assertIs(args[0], feed_queries.RELEASE_FEEDS_BATCH_BY_IDS_SQL)
+        self.assertEqual(args[1], _WORKER_ID)
+        self.assertEqual(args[2], ids)
+
+    async def test_parses_update_count(self) -> None:
+        pool = _make_pool(execute_result="UPDATE 7")
+        store = FeedStore(pool)
+
+        result = await store.release_feeds_batch_by_ids(_WORKER_ID, [_FEED_ID])
+
+        self.assertEqual(result, 7)
+
+    async def test_returns_zero_for_unparseable_result(self) -> None:
+        pool = _make_pool(execute_result="ROLLBACK")
+        store = FeedStore(pool)
+
+        result = await store.release_feeds_batch_by_ids(_WORKER_ID, [_FEED_ID])
+
+        self.assertEqual(result, 0)
+
+
 class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.create_feed."""
 
