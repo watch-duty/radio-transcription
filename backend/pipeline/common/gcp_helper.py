@@ -219,19 +219,17 @@ def publish_audio_chunk_sync(
     This is the synchronous core used by both sync callers (e.g. Echo
     ingestion) and the async wrapper below.
     """
-    audio_chunk_msg = AudioChunk(gcs_uri=gcs_uri)
+    audio_chunk_msg = AudioChunk(
+        gcs_uri=gcs_uri,
+        feed_id=feed_id,
+        feed_name=feed_name,
+        duration_ms=duration_ms,
+        session_id=session_id,
+        external_id=external_id,
+    )
     audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
-    audio_chunk_msg.session_id = session_id
-    audio_chunk_msg.feed_name = feed_name
-    audio_chunk_msg.external_id = external_id
-    audio_chunk_msg.duration_ms = duration_ms
 
-    attrs: dict[str, str] = {
-        "feed_id": feed_id,
-        "session_id": session_id,
-        "gcs_uri": gcs_uri,
-        "trace_id": pipeline_logging.get_current_trace_id(),
-    }
+    attrs: dict[str, str] = {}
     if source_type is not None:
         attrs["source_type"] = source_type
 
@@ -263,19 +261,17 @@ async def publish_audio_chunk(
     non-blockingly, ensuring other asyncio tasks remain responsive.
     """
     publisher = pubsub_client.get_publisher()
-    audio_chunk_msg = AudioChunk(gcs_uri=gcs_uri)
+    audio_chunk_msg = AudioChunk(
+        gcs_uri=gcs_uri,
+        feed_id=feed_id,
+        feed_name=feed_name,
+        duration_ms=duration_ms,
+        session_id=session_id,
+        external_id=external_id,
+    )
     audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
-    audio_chunk_msg.session_id = session_id
-    audio_chunk_msg.feed_name = feed_name
-    audio_chunk_msg.external_id = external_id
-    audio_chunk_msg.duration_ms = duration_ms
 
-    attrs: dict[str, str] = {
-        "feed_id": feed_id,
-        "session_id": session_id,
-        "gcs_uri": gcs_uri,
-        "trace_id": pipeline_logging.get_current_trace_id(),
-    }
+    attrs: dict[str, str] = {}
     if source_type is not None:
         attrs["source_type"] = source_type
 

@@ -135,7 +135,7 @@ export function TranscriptRow({
           </Typography>
         </Box>
         <AudioPlayer
-          audioUri={transcript.canonicalAudioUri}
+          audioUri={transcript.playbackAudioUri}
           transmissionId={transcript.transmissionId}
           onPlay={onPlay}
           currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}

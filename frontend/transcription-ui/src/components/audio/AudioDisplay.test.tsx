@@ -4,10 +4,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import type { Transcript } from '@transcription/common';
 
+import { getAudioUrl } from '../../utils/audioUtils';
 import { AudioDisplay } from './AudioDisplay';
 
 vi.mock('@wavesurfer/react', () => ({
-  default: () => <div data-testid="wavesurfer-player" />,
+  default: (props: { url: string }) => (
+    <div data-testid="wavesurfer-player" data-url={props.url} />
+  ),
 }));
 
 describe('AudioDisplay', () => {
@@ -206,6 +209,7 @@ describe('AudioDisplay', () => {
       expect(labelsAfter).not.toEqual(labelsBefore);
     });
   });
+
   it('should adjust window duration based on userDuration capped at 15 minutes', async () => {
     const mockTranscripts: Transcript[] = [
       {
@@ -262,5 +266,39 @@ describe('AudioDisplay', () => {
       if (diff30 < 0) diff30 += 24 * 60;
       expect(diff30).toBe(15);
     });
+  });
+
+  it('passes playbackAudioUri to WavesurferPlayer (transformed via getAudioUrl)', () => {
+    const mockTranscripts: Transcript[] = [
+      {
+        transmissionId: '1',
+        feedId: 'feed1',
+        startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
+        endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
+        transcript: 'Test 1',
+        canonicalAudioUri: 'audio1.flac',
+        playbackAudioUri: 'gs://bucket/audio1.m4a',
+        evaluationDecisions: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+        startAudioOffset: '0',
+        endAudioOffset: '0',
+      },
+    ];
+
+    render(
+      <AudioDisplay
+        transcripts={mockTranscripts}
+        currentlyPlayingTransmissionId={null}
+      />
+    );
+
+    const wavesurfer = screen.getByTestId('wavesurfer-player');
+    expect(wavesurfer).toBeTruthy();
+    expect(wavesurfer.getAttribute('data-url')).toBe(
+      getAudioUrl(mockTranscripts[0].playbackAudioUri)
+    );
+    expect(wavesurfer.getAttribute('data-url')).toContain('.m4a');
   });
 });
