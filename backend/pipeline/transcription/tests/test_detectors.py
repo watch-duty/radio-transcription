@@ -1,9 +1,11 @@
 import unittest
-import numpy as np
 from unittest.mock import MagicMock, patch
-from backend.pipeline.transcription.detectors import AcousticGateDetector
-from backend.pipeline.transcription.datatypes import TimeRange
+
+import numpy as np
+
 from backend.pipeline.common.constants import SAMPLE_RATE_HZ
+from backend.pipeline.transcription.datatypes import TimeRange
+from backend.pipeline.transcription.detectors import AcousticGateDetector
 
 
 class AcousticGateDetectorTest(unittest.TestCase):
@@ -46,8 +48,9 @@ class AcousticGateDetectorTest(unittest.TestCase):
     def test_detect_noise_like(self) -> None:
         detector = AcousticGateDetector()
         # Create white noise (high energy, high flatness)
-        samples = np.random.randint(
-            -32768, 32767, SAMPLE_RATE_HZ, dtype=np.int16
+        rng = np.random.default_rng()
+        samples = rng.integers(
+            -32768, 32767, size=SAMPLE_RATE_HZ, dtype=np.int16
         )
 
         results = detector.detect(samples)
