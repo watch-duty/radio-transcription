@@ -268,7 +268,7 @@ export function TranscriptView({
    */
   const pollNewerTranscripts = useCallback(async () => {
     if (!newestTimestamp || !searchedFeedId || !token) return [];
-    
+
     const allNewTranscripts: Transcript[] = [];
     let currentNextToken: string | undefined = undefined;
     let hasMore = true;
@@ -645,9 +645,7 @@ export function TranscriptView({
               sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}
             >
               {searchedFeed?.sourceUrl || searchedFeed?.archiveUrl ? (
-                <Box
-                  sx={{ display: 'flex', alignItems: 'center', gap: 2 }}
-                >
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                   {searchedFeed.sourceUrl && (
                     <Link
                       href={searchedFeed.sourceUrl}
