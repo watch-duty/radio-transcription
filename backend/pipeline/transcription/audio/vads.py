@@ -19,7 +19,7 @@ from backend.pipeline.transcription.common.constants import (
     DEFAULT_TENVAD_THRESHOLD,
 )
 from backend.pipeline.transcription.common.enums import VadType
-from backend.pipeline.transcription.utils import ConfigBase
+from backend.pipeline.transcription.common.utils import ConfigBase
 
 logger = logging.getLogger(__name__)
 logger = logging.LoggerAdapter(

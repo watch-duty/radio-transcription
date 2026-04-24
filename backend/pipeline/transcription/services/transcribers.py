@@ -27,7 +27,7 @@ from backend.pipeline.transcription.common.constants import (
     DEFAULT_RETRY_MAX_SECONDS,
 )
 from backend.pipeline.transcription.common.enums import TranscriberType
-from backend.pipeline.transcription.utils import ConfigBase
+from backend.pipeline.transcription.common.utils import ConfigBase
 
 logger = logging.getLogger(__name__)
 

@@ -45,6 +45,7 @@ from backend.pipeline.transcription.common.datatypes import (
     TransmissionContext,
     UpdateStateAction,
 )
+from backend.pipeline.transcription.common.utils import generate_transmission_id
 from backend.pipeline.transcription.resources import (
     SHARED_RESOURCE_HANDLE,
     SharedResources,
@@ -57,7 +58,6 @@ from backend.pipeline.transcription.state.sequence_buffer import SequenceBuffer
 from backend.pipeline.transcription.state.stitcher_state import (
     AudioStitchingStateMachine,
 )
-from backend.pipeline.transcription.utils import generate_transmission_id
 
 logger = logging.getLogger(__name__)
 logger = logging.LoggerAdapter(
