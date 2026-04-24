@@ -447,7 +447,11 @@ class OrderedStitchAudioFn(beam.DoFn):
                 )
 
                 # 2. Reconstruct StitcherContext!
-                expected_ts = previous_expected_ts if chunk == elements_to_emit[0] else curr_context.expected_next_chunk_start_ms
+                expected_ts = (
+                    previous_expected_ts
+                    if chunk == elements_to_emit[0]
+                    else curr_context.expected_next_chunk_start_ms
+                )
                 ctx = StitcherContext(
                     feed_id=feed_id,
                     current_gcs_uri=chunk.gcs_uri,

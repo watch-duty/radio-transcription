@@ -159,6 +159,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
                 parsed[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ"
             )
 
+
 class AddEventTimestampTest(unittest.TestCase):
     def test_valid_timestamp_extraction(self) -> None:
         """Verifies that AddEventTimestamp accurately regex-extracts and assigns the logical windowing timestamp natively from the chunk's standardized filename."""
@@ -183,7 +184,9 @@ class AddEventTimestampTest(unittest.TestCase):
                     gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
                     session_id="mock-session-id",
                     duration_ms=0,
-                    feed_metadata=FeedMetadata(feed_name="mock-feed", external_id="mock-external-id"),
+                    feed_metadata=FeedMetadata(
+                        feed_name="mock-feed", external_id="mock-external-id"
+                    ),
                 ),
             ),
         )
@@ -201,6 +204,7 @@ class AddEventTimestampTest(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertIsInstance(result[0], beam.pvalue.TaggedOutput)
         self.assertEqual(result[0].tag, DEAD_LETTER_QUEUE_TAG)  # type: ignore
+
 
 class TranscribeAudioTest(unittest.TestCase):
     @patch("backend.pipeline.transcription.stateful_transforms.get_transcriber")
@@ -431,7 +435,9 @@ class OrderedBypassTest(unittest.TestCase):
             gcs_uri="gs://test-bucket/path/to/test.flac",
             session_id="mock-session-id",
             duration_ms=1000,
-            feed_metadata=FeedMetadata(feed_name="mock-feed", external_id="mock-external-id"),
+            feed_metadata=FeedMetadata(
+                feed_name="mock-feed", external_id="mock-external-id"
+            ),
         )
 
         with BeamTestPipeline(options=options) as p:
@@ -452,9 +458,13 @@ class OrderedBypassTest(unittest.TestCase):
                 .advance_watermark_to_infinity()
             )
 
-            results = p | test_stream | beam.ParDo(
-                OrderedBypassFn(
-                    order_config=order_config, stitch_config=stitch_config
+            results = (
+                p
+                | test_stream
+                | beam.ParDo(
+                    OrderedBypassFn(
+                        order_config=order_config, stitch_config=stitch_config
+                    )
                 )
             )
 
@@ -497,7 +507,9 @@ class OrderedStitchAudioTest(unittest.TestCase):
             gcs_uri="gs://test-bucket/path/to/test.flac",
             session_id="mock-session-id",
             duration_ms=1000,
-            feed_metadata=FeedMetadata(feed_name="mock-feed", external_id="mock-external-id"),
+            feed_metadata=FeedMetadata(
+                feed_name="mock-feed", external_id="mock-external-id"
+            ),
         )
 
         with BeamTestPipeline(options=options) as p:
@@ -516,9 +528,13 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 .advance_watermark_to_infinity()
             )
 
-            results = p | test_stream | beam.ParDo(
-                OrderedStitchAudioFn(
-                    order_config=order_config, stitch_config=stitch_config
+            results = (
+                p
+                | test_stream
+                | beam.ParDo(
+                    OrderedStitchAudioFn(
+                        order_config=order_config, stitch_config=stitch_config
+                    )
                 )
             )
 
@@ -566,12 +582,16 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 duration_ms=1000,
             )
 
-        mock_processor_inst.download_audio_and_detect.side_effect = download_side_effect
+        mock_processor_inst.download_audio_and_detect.side_effect = (
+            download_side_effect
+        )
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
         mock_processor_inst.check_vad.return_value = True
 
         order_config = OrderRestorerConfig(out_of_order_timeout_ms=5000)
-        stitch_config = get_test_stitch_config(stale_timeout_ms=5000, significant_gap_ms=5000)
+        stitch_config = get_test_stitch_config(
+            stale_timeout_ms=5000, significant_gap_ms=5000
+        )
 
         options = PipelineOptions(
             flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
@@ -581,21 +601,27 @@ class OrderedStitchAudioTest(unittest.TestCase):
             gcs_uri="gs://test-bucket/path/to/chunk1.flac",
             session_id="mock-session-id",
             duration_ms=1000,
-            feed_metadata=FeedMetadata(feed_name="mock-feed", external_id="mock-external-id"),
+            feed_metadata=FeedMetadata(
+                feed_name="mock-feed", external_id="mock-external-id"
+            ),
         )
 
         metadata_chunk2 = ChunkMetadata(
             gcs_uri="gs://test-bucket/path/to/chunk2.flac",
             session_id="mock-session-id",
             duration_ms=1000,
-            feed_metadata=FeedMetadata(feed_name="mock-feed", external_id="mock-external-id"),
+            feed_metadata=FeedMetadata(
+                feed_name="mock-feed", external_id="mock-external-id"
+            ),
         )
 
         metadata_chunk3 = ChunkMetadata(
             gcs_uri="gs://test-bucket/path/to/chunk3.flac",
             session_id="mock-session-id",
             duration_ms=1000,
-            feed_metadata=FeedMetadata(feed_name="mock-feed", external_id="mock-external-id"),
+            feed_metadata=FeedMetadata(
+                feed_name="mock-feed", external_id="mock-external-id"
+            ),
         )
 
         with BeamTestPipeline(options=options) as p:
@@ -609,24 +635,34 @@ class OrderedStitchAudioTest(unittest.TestCase):
                     )
                 )
                 .advance_watermark_to(100)
-                .add_elements([TimestampedValue(("test-feed-ooo", metadata_chunk1), 100)])
-                .add_elements([TimestampedValue(("test-feed-ooo", metadata_chunk3), 102)])
-                .add_elements([TimestampedValue(("test-feed-ooo", metadata_chunk2), 101)])
+                .add_elements(
+                    [TimestampedValue(("test-feed-ooo", metadata_chunk1), 100)]
+                )
+                .add_elements(
+                    [TimestampedValue(("test-feed-ooo", metadata_chunk3), 102)]
+                )
+                .add_elements(
+                    [TimestampedValue(("test-feed-ooo", metadata_chunk2), 101)]
+                )
                 .advance_watermark_to(115)
                 .advance_watermark_to_infinity()
             )
 
-            results = p | test_stream | beam.ParDo(
-                OrderedStitchAudioFn(
-                    order_config=order_config, stitch_config=stitch_config
+            results = (
+                p
+                | test_stream
+                | beam.ParDo(
+                    OrderedStitchAudioFn(
+                        order_config=order_config, stitch_config=stitch_config
+                    )
                 )
             )
 
-            # NOTE: In an ideal production scenario (e.g. on Dataflow), all 3 chunks 
+            # NOTE: In an ideal production scenario (e.g. on Dataflow), all 3 chunks
             # would be stitched into a single transmission (1 message).
-            # However, in this DirectRunner unit test, Chunk 1 gets processed in an 
+            # However, in this DirectRunner unit test, Chunk 1 gets processed in an
             # earlier bundle and flushed before Chunks 2 and 3 arrive.
-            # Thus, we expect 2 messages here, but we still verify that Chunk 2 and 
+            # Thus, we expect 2 messages here, but we still verify that Chunk 2 and
             # Chunk 3 were successfully stitched together (one message has length 32000).
             def assert_results(msgs):
                 assert len(msgs) == 2
