@@ -2,7 +2,7 @@ import concurrent.futures
 import datetime
 import unittest
 import uuid
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 from multidict import CIMultiDict, CIMultiDictProxy
@@ -55,21 +55,6 @@ def _make_pubsub_client() -> tuple[MagicMock, MagicMock]:
 class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
     """Test suite for the upload_staged_audio function."""
 
-    async def asyncSetUp(self) -> None:
-        self.mock_span = MagicMock()
-        self.mock_span_context = MagicMock()
-        self.mock_span_context.is_valid = True
-        self.mock_span_context.trace_id = 1
-        self.mock_span.get_span_context.return_value = self.mock_span_context
-
-        self.patcher = patch(
-            "opentelemetry.trace.get_current_span", return_value=self.mock_span
-        )
-        self.patcher.start()
-
-    async def asyncTearDown(self) -> None:
-        self.patcher.stop()
-
     @patch("backend.pipeline.common.gcp_helper.datetime")
     async def test_upload_staged_audio_success(
         self,
@@ -105,7 +90,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             bucket,
             expected_object_name,
             audio_chunk,
-            metadata={"trace_id": ANY},
+            metadata={"trace_id": ""},
             content_type="audio/flac",
         )
         self.assertEqual(result, expected_path)
@@ -145,7 +130,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             bucket,
             expected_object_name,
             audio_chunk,
-            metadata={"trace_id": ANY},
+            metadata={"trace_id": ""},
             content_type="audio/flac",
         )
         self.assertEqual(result, expected_path)
@@ -260,7 +245,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             "test-bucket",
             expected_object_name,
             b"\x00\x01" * 100,
-            metadata={"trace_id": ANY},
+            metadata={"trace_id": ""},
             content_type="audio/flac",
             parameters={"ifGenerationMatch": "0"},
         )
@@ -269,21 +254,6 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
 
 class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
     """Tests for the upload_audio function."""
-
-    async def asyncSetUp(self) -> None:
-        self.mock_span = MagicMock()
-        self.mock_span_context = MagicMock()
-        self.mock_span_context.is_valid = True
-        self.mock_span_context.trace_id = 1
-        self.mock_span.get_span_context.return_value = self.mock_span_context
-
-        self.patcher = patch(
-            "opentelemetry.trace.get_current_span", return_value=self.mock_span
-        )
-        self.patcher.start()
-
-    async def asyncTearDown(self) -> None:
-        self.patcher.stop()
 
     async def test_upload_with_correct_bucket_and_object_name(self) -> None:
         mock_gcs_client, mock_storage = _make_gcs_client()
@@ -303,7 +273,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             bucket,
             object_name,
             audio,
-            metadata={"trace_id": ANY},
+            metadata={"trace_id": ""},
             content_type="audio/flac",
         )
         self.assertEqual(result, f"gs://{bucket}/{object_name}")
@@ -322,7 +292,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         metadata = call_kwargs.kwargs.get("metadata") or call_kwargs[1].get(
             "metadata"
         )
-        self.assertIsNone(metadata)
+        self.assertEqual(metadata, {"trace_id": ""})
 
     async def test_upload_with_if_generation_match(self) -> None:
         """ifGenerationMatch=0 is passed as parameters to storage.upload."""
@@ -340,7 +310,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             "bucket",
             "obj.flac",
             b"audio",
-            metadata={"trace_id": ANY},
+            metadata={"trace_id": ""},
             content_type="audio/flac",
             parameters={"ifGenerationMatch": "0"},
         )
@@ -408,21 +378,6 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
 
 class TestPublishAudioChunkSync(unittest.TestCase):
     """Test suite for the synchronous publish_audio_chunk_sync function."""
-
-    def setUp(self) -> None:
-        self.mock_span = MagicMock()
-        self.mock_span_context = MagicMock()
-        self.mock_span_context.is_valid = True
-        self.mock_span_context.trace_id = 1
-        self.mock_span.get_span_context.return_value = self.mock_span_context
-
-        self.patcher = patch(
-            "opentelemetry.trace.get_current_span", return_value=self.mock_span
-        )
-        self.patcher.start()
-
-    def tearDown(self) -> None:
-        self.patcher.stop()
 
     def test_sets_timestamp_ordering_key_and_attributes(self) -> None:
         mock_now = datetime.datetime(2026, 3, 5, 12, 0, tzinfo=datetime.UTC)
