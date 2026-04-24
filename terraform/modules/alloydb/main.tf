@@ -201,7 +201,7 @@ resource "google_cloud_run_v2_job" "schema_migration" {
         command = ["/bin/sh"]
         args = [
           "-c",
-          "for f in $(ls /sql/*.sql | sort); do echo \"Applying $f...\"; PGPASSWORD=\"$PGPASSWORD\" psql -h \"$DB_HOST\" -p \"$DB_PORT\" -U \"$DB_USER\" -d \"$DB_NAME\" -v ON_ERROR_STOP=1 -f \"$f\" || exit 1; done; echo 'Schema applied successfully.'"
+          "for f in /sql/*.sql; do echo \"Applying $f...\"; PGPASSWORD=\"$PGPASSWORD\" psql -h \"$DB_HOST\" -p \"$DB_PORT\" -U \"$DB_USER\" -d \"$DB_NAME\" -v ON_ERROR_STOP=1 -f \"$f\" || exit 1; done; echo 'Schema applied successfully.'"
         ]
 
         env {

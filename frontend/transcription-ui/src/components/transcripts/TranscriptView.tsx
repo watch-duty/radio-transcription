@@ -20,6 +20,7 @@ import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import {
   type InfiniteData,
+  type QueryKey,
   useInfiniteQuery,
   useQuery,
   useQueryClient,
@@ -32,8 +33,7 @@ import { listRules } from '../../service/listRules';
 import { listTranscripts } from '../../service/listTranscripts';
 import {
   getInitialTimestamp,
-  getSearchedEndTime,
-  getSearchedStartTime,
+  roundUpToNearestMinute,
 } from '../../utils/timeUtils';
 import AudioDisplay from '../audio/AudioDisplay';
 import DateTimePicker from '../common/DateTimePicker';
@@ -44,12 +44,23 @@ interface TranscriptViewProps {
   triggerSnackbar: (message: string) => void;
 }
 
+type ListTranscriptsPage = {
+  timestamp?: number;
+  nextToken?: string;
+  order: 'asc' | 'desc';
+};
+
+type ListTranscriptsData = {
+  transcripts: Transcript[];
+} & ListTranscriptsPage;
+
 export function TranscriptView({
   addAlert,
   triggerSnackbar,
 }: TranscriptViewProps) {
   const theme = useTheme();
   const { token } = useAuth();
+
   const queryClient = useQueryClient();
 
   const [searchParams, setSearchParams] = useSearchParams();
@@ -58,17 +69,14 @@ export function TranscriptView({
   const [feedId, setFeedId] = useState<string>(
     () => searchParams.get('feedId') || ''
   );
-  const [timestamp, setTimestamp] = useState<Date | null>(() =>
-    getInitialTimestamp(searchParams)
-  );
   const [searchedFeedId, setSearchedFeedId] = useState<string>(
     () => searchParams.get('feedId') || ''
   );
-  const [searchedStartTime, setSearchedStartTime] = useState<Date | null>(() =>
-    getSearchedStartTime(searchParams)
+  const [timestamp, setTimestamp] = useState<Date | null>(() =>
+    getInitialTimestamp(searchParams)
   );
-  const [searchedEndTime, setSearchedEndTime] = useState<Date | null>(() =>
-    getSearchedEndTime(searchParams)
+  const [searchedTimestamp, setSearchedTimestamp] = useState<Date | null>(() =>
+    getInitialTimestamp(searchParams)
   );
 
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
@@ -76,8 +84,8 @@ export function TranscriptView({
   const [highlightedTransmissionId, setHighlightedTransmissionId] = useState<
     string | null
   >(targetTransmissionId);
-  const [hideFooterButton, setHideFooterButton] = useState(false);
-  const [hideHeaderButton, setHideHeaderButton] = useState(false);
+  const [hideLoadNewerTranscriptsButton, setHideLoadNewerTranscriptsButton] =
+    useState(false);
   const [isAtTop, setIsAtTop] = useState(true);
   const [isPolling, setIsPolling] = useState(false);
 
@@ -129,7 +137,7 @@ export function TranscriptView({
     data: listTranscriptsResponse,
     fetchNextPage: fetchOlderTranscripts,
     hasNextPage: hasOlderTranscripts,
-    fetchPreviousPage: fetchNewerTrnscripts,
+    fetchPreviousPage: fetchNewerTranscripts,
     hasPreviousPage: hasNewerTranscripts,
     isFetchingNextPage: isFetchingOlderTranscripts,
     isFetchingPreviousPage: isFetchingNewerTranscripts,
@@ -138,51 +146,26 @@ export function TranscriptView({
     isFetching: isTranscriptsFetching, // isFetching is any load, which we use to show that we're loading additional data
     isSuccess: isTranscriptsSuccess,
   } = useInfiniteQuery<
-    {
-      transcripts: Transcript[];
-      nextToken?: string;
-      startTime?: number;
-      endTime?: number;
-      order?: 'asc' | 'desc';
-    },
+    ListTranscriptsData,
     Error,
-    InfiniteData<{
-      transcripts: Transcript[];
-      nextToken?: string;
-      startTime?: number;
-      endTime?: number;
-      order?: 'asc' | 'desc';
-    }>,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    any[],
-    {
-      startTime?: number;
-      endTime?: number;
-      nextToken?: string;
-      order?: 'asc' | 'desc';
-    }
+    InfiniteData<ListTranscriptsData>,
+    QueryKey,
+    ListTranscriptsPage
   >({
-    queryKey: [
-      'listTranscripts',
-      token,
-      searchedFeedId,
-      searchedStartTime?.getTime(),
-      searchedEndTime?.getTime(),
-    ],
+    queryKey: ['listTranscripts', token, searchedFeedId, searchedTimestamp],
     queryFn: async ({ pageParam }) => {
-      const { startTime, endTime, nextToken, order } = pageParam as {
-        startTime?: number;
-        endTime?: number;
-        nextToken?: string;
-        order?: 'asc' | 'desc';
-      };
+      const { nextToken, order } = pageParam;
+      const originalTimestampMs = searchedTimestamp
+        ? roundUpToNearestMinute(searchedTimestamp).getTime()
+        : undefined;
+
       const response = await listTranscripts(
         searchedFeedId,
-        token!,
-        undefined,
+        token ?? '',
+        /*limit=*/ undefined,
         nextToken,
-        startTime,
-        endTime,
+        /*startTime=*/ order === 'asc' ? originalTimestampMs : undefined,
+        /*endTime=*/ order === 'desc' ? originalTimestampMs : undefined,
         order
       );
 
@@ -193,75 +176,26 @@ export function TranscriptView({
         response.transcripts.reverse();
       }
 
-      return { ...response, startTime, endTime, order };
+      return { ...response, timestamp: originalTimestampMs, order };
     },
     initialPageParam: {
-      startTime: searchedStartTime?.getTime() ?? undefined,
-      endTime: searchedEndTime?.getTime() ?? undefined,
-      order: undefined,
-    } as {
-      startTime?: number;
-      endTime?: number;
-      nextToken?: string;
-      order?: 'asc' | 'desc';
+      order: 'desc',
     },
-    // The naming of getNextPageParam is a bit confusing here. What we're actually
-    // doing is using this function to fetch the "previous" page in time, or more
-    // accurately, the page before the last page returned by the API.
-    getNextPageParam: (lastPage) => {
-      if (lastPage.nextToken) {
-        return {
-          startTime: lastPage.startTime,
-          endTime: lastPage.endTime,
-          nextToken: lastPage.nextToken,
-          order: lastPage.order,
-        };
-      }
-      const oldestTranscript =
-        lastPage.transcripts?.[lastPage.transcripts.length - 1];
-      if (oldestTranscript) {
-        return {
-          // Substract 1ms to avoid getting the same transcript again
-          endTime: new Date(oldestTranscript.endTimestamp).getTime() - 1,
-          order: 'desc' as const,
-        };
-      }
-      if (lastPage.startTime !== undefined) {
-        return {
-          endTime: lastPage.startTime,
-          order: 'desc' as const,
-        };
-      }
-      return undefined;
+    getNextPageParam: (page) => {
+      if (page.order !== 'desc') return undefined;
+      return page.nextToken
+        ? { order: 'desc', nextToken: page.nextToken }
+        : undefined;
     },
-    // In contrast to getNextPageParam, getPreviousPageParam is used to fetch
-    // the "next" page in time, or more accurately, the page after the first page
-    // returned by the API.
-    getPreviousPageParam: (firstPage) => {
-      const newestTranscript = firstPage.transcripts?.[0];
-      if (newestTranscript) {
-        // Add 1ms to get the next transcript, as the current one ends at endTimestamp
-        const startTime = new Date(newestTranscript.endTimestamp).getTime() + 1;
-        if (startTime > Date.now()) {
-          return undefined;
-        }
-        return {
-          startTime,
-          order: 'asc' as const,
-        };
-      }
-      if (firstPage.endTime !== undefined) {
-        if (firstPage.endTime > Date.now()) {
-          return undefined;
-        }
-        return {
-          startTime: firstPage.endTime,
-          order: 'asc' as const,
-        };
-      }
-      return undefined;
+    getPreviousPageParam: (page) => {
+      if (!searchedTimestamp) return undefined;
+      if (page.order === 'asc' && !page.nextToken) return undefined;
+      return {
+        order: 'asc',
+        nextToken: page.order === 'asc' ? page.nextToken : undefined,
+      };
     },
-    enabled: !!searchedFeedId,
+    enabled: !!token && !!searchedFeedId,
     refetchOnWindowFocus: false,
   });
 
@@ -389,7 +323,7 @@ export function TranscriptView({
     isLoading: rulesLoading,
   } = useQuery({
     queryKey: ['listRules', token],
-    queryFn: () => listRules(token!),
+    queryFn: () => listRules(token ?? ''),
     enabled: !!token,
     refetchOnWindowFocus: false,
   });
@@ -459,6 +393,10 @@ export function TranscriptView({
     }
     setHighlightedTransmissionId(transmissionId);
   };
+
+  if (!token) {
+    return null;
+  }
 
   return (
     <Box
@@ -535,43 +473,32 @@ export function TranscriptView({
         <Button
           variant="contained"
           onClick={() => {
-            let calcStart: Date | null = null;
-            let calcEnd: Date | null = null;
-
-            if (timestamp) {
-              calcStart = new Date(timestamp.getTime() - 15 * 60 * 1000);
-              calcEnd = new Date(timestamp.getTime() + 15 * 60 * 1000);
-            }
-
-            setSearchedStartTime(calcStart);
-            setSearchedEndTime(calcEnd);
-            setHideFooterButton(false);
-            setHideHeaderButton(false);
+            setHideLoadNewerTranscriptsButton(false);
 
             if (!feedId) {
               return;
             }
 
             const newParams: Record<string, string> = { feedId: feedId.trim() };
-            if (timestamp) newParams.timestamp = timestamp.getTime().toString();
+            if (timestamp) {
+              newParams.timestamp = timestamp.getTime().toString();
+            } else {
+              setSearchedTimestamp(timestamp);
+            }
             setSearchParams(newParams);
 
-            if (
-              searchedFeedId === feedId &&
-              searchedStartTime?.getTime() === calcStart?.getTime() &&
-              searchedEndTime?.getTime() === calcEnd?.getTime()
-            ) {
+            if (searchedFeedId === feedId) {
               queryClient.resetQueries({
                 queryKey: [
                   'listTranscripts',
                   token,
                   searchedFeedId,
-                  calcStart?.getTime(),
-                  calcEnd?.getTime(),
+                  searchedTimestamp,
                 ],
               });
             } else {
               setSearchedFeedId(feedId);
+              setSearchedTimestamp(timestamp);
             }
           }}
           disabled={feedsFetching || isTranscriptsInitialLoading || !feedId}
@@ -693,7 +620,7 @@ export function TranscriptView({
               ) : (
                 <Box />
               )}
-              {(!hasNewerTranscripts || hideHeaderButton) && (
+              {(!hasNewerTranscripts) && (
                 <Button
                   size="small"
                   variant="text"
@@ -740,7 +667,6 @@ export function TranscriptView({
               <GroupedVirtuoso
                 ref={virtuosoRef}
                 groupCounts={groupCounts}
-                data={transcripts}
                 atTopStateChange={(atTop) => setIsAtTop(atTop)}
                 groupContent={(index) => {
                   const title = groupTitles[index];
@@ -774,7 +700,8 @@ export function TranscriptView({
                     </ListItem>
                   );
                 }}
-                itemContent={(index, groupIndex, transcript) => {
+                itemContent={(index) => {
+                  const transcript = transcripts[index];
                   return (
                     <TranscriptRow
                       key={transcript.transmissionId}
@@ -797,7 +724,7 @@ export function TranscriptView({
                 }}
                 components={{
                   Header: () =>
-                    hasNewerTranscripts && !hideHeaderButton ? (
+                    hasNewerTranscripts && !hideLoadNewerTranscriptsButton ? (
                       <Box
                         sx={{
                           display: 'flex',
@@ -811,7 +738,7 @@ export function TranscriptView({
                           <Button
                             variant="text"
                             onClick={async () => {
-                              const result = await fetchNewerTrnscripts();
+                              const result = await fetchNewerTranscripts();
                               if (
                                 result.data &&
                                 (
@@ -821,7 +748,7 @@ export function TranscriptView({
                                 )?.transcripts.length === 0
                               ) {
                                 triggerSnackbar('No newer transcripts found');
-                                setHideHeaderButton(true);
+                                setHideLoadNewerTranscriptsButton(true);
                               }
                             }}
                             disabled={isTranscriptsFetching}
@@ -833,7 +760,7 @@ export function TranscriptView({
                       </Box>
                     ) : null,
                   Footer: () => {
-                    if (hasOlderTranscripts && !hideFooterButton) {
+                    if (hasOlderTranscripts) {
                       return (
                         <Box
                           sx={{
@@ -847,20 +774,7 @@ export function TranscriptView({
                           ) : (
                             <Button
                               variant="text"
-                              onClick={async () => {
-                                const result = await fetchOlderTranscripts();
-                                if (result.data) {
-                                  const lastPage = result.data.pages[
-                                    result.data.pages.length - 1
-                                  ] as { transcripts: Transcript[] };
-                                  if (lastPage?.transcripts.length === 0) {
-                                    triggerSnackbar(
-                                      'No older transcripts found'
-                                    );
-                                    setHideFooterButton(true);
-                                  }
-                                }
-                              }}
+                              onClick={() => fetchOlderTranscripts()}
                               disabled={isTranscriptsFetching}
                               sx={{ minWidth: '160px' }}
                             >
@@ -870,22 +784,19 @@ export function TranscriptView({
                         </Box>
                       );
                     }
-                    if (!hasOlderTranscripts || hideFooterButton) {
-                      return (
-                        <Box
-                          sx={{
-                            display: 'flex',
-                            justifyContent: 'center',
-                            py: 2,
-                          }}
-                        >
-                          <Typography variant="caption" color="text.secondary">
-                            No more transcripts found
-                          </Typography>
-                        </Box>
-                      );
-                    }
-                    return null;
+                    return (
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          justifyContent: 'center',
+                          py: 2,
+                        }}
+                      >
+                        <Typography variant="caption" color="text.secondary">
+                          No more transcripts found
+                        </Typography>
+                      </Box>
+                    );
                   },
                 }}
               />

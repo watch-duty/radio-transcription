@@ -9,6 +9,7 @@ import type { Transcript } from '@transcription/common';
 import WavesurferPlayer from '@wavesurfer/react';
 
 import { getAudioUrl } from '../../utils/audioUtils';
+import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 
 interface AudioDisplayProps {
   transcripts: Transcript[];
@@ -16,8 +17,6 @@ interface AudioDisplayProps {
   onClipClick?: (transmissionId: string) => void;
   userDuration?: string | null;
 }
-
-const MAX_WINDOW_DURATION_MS = 30 * 60 * 1000; // 30 minutes
 
 const formatTime = (timestamp: number) => {
   const date = new Date(timestamp);

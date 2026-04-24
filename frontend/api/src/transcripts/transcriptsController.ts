@@ -29,6 +29,7 @@ export interface TranscriptResponse {
   missing_post_context: boolean;
   source_audio_uris: string[];
   canonical_audio_uri: string;
+  playback_audio_uri: string;
   start_audio_offset: string;
   end_audio_offset: string;
   evaluation_decisions: string[];
@@ -45,6 +46,7 @@ function convertTranscriptResponse(response: TranscriptResponse): Transcript {
     missingPostContext: response.missing_post_context,
     sourceAudioUris: response.source_audio_uris,
     canonicalAudioUri: response.canonical_audio_uri,
+    playbackAudioUri: response.playback_audio_uri,
     startAudioOffset: response.start_audio_offset,
     endAudioOffset: response.end_audio_offset,
     evaluationDecisions: response.evaluation_decisions,

@@ -28,6 +28,7 @@ from testcontainers.core.waiting_utils import wait_for_logs
 from testcontainers.postgres import PostgresContainer
 
 from backend.pipeline.ingestion.collectors.echo import main as echo_main
+from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.storage.settings import AlloyDBSettings
 from backend.pipeline.storage.sync_connection import connect_db
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
@@ -93,6 +94,8 @@ class TestEchoCollectorIntegration(unittest.TestCase):
             autocommit=True,
         ) as conn:
             for sql_file in sorted(_SQL_DIR.glob("*.sql")):
+                if "pg_cron" in sql_file.name:
+                    continue  # pg_cron extension is production-only (AlloyDB flag)
                 conn.execute(sql_file.read_bytes())
 
         # --- Fake GCS Server ---
@@ -238,9 +241,11 @@ class TestEchoCollectorIntegration(unittest.TestCase):
 
         # Verify AudioChunk published with correct attributes
         self.mock_publisher.publish.assert_called_once()
-        call_kwargs = self.mock_publisher.publish.call_args.kwargs
-        self.assertEqual(call_kwargs["feed_id"], str(feed_id))
+        publish_args, call_kwargs = self.mock_publisher.publish.call_args
         self.assertEqual(call_kwargs["source_type"], "echo")
+        chunk = AudioChunk()
+        chunk.ParseFromString(publish_args[1])
+        self.assertEqual(chunk.feed_id, str(feed_id))
 
     def test_unknown_channel_skips_silently(self) -> None:
         """MP3 from unregistered channel -> no GCS write, no publish."""

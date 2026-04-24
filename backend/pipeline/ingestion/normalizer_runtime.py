@@ -1,5 +1,6 @@
 import asyncio
 import concurrent.futures
+import datetime
 import logging
 import os
 import signal
@@ -15,7 +16,10 @@ from aiohttp import web
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
-from backend.pipeline.ingestion import health_server, quarantine_telemetry
+from backend.pipeline.ingestion import (
+    health_server,
+    quarantine_telemetry,
+)
 from backend.pipeline.ingestion.health_server import HealthState
 from backend.pipeline.ingestion.models import CapturedChunk
 from backend.pipeline.ingestion.retry import (
@@ -24,6 +28,7 @@ from backend.pipeline.ingestion.retry import (
 )
 from backend.pipeline.ingestion.router import resolve_topic_path
 from backend.pipeline.ingestion.settings import NormalizerSettings
+from backend.pipeline.ingestion.slo_contract import EVENT_TYPE_CHUNK_INGESTED
 from backend.pipeline.storage.connection import (
     close_pool,
     create_pool_with_retry,
@@ -475,6 +480,32 @@ class NormalizerRuntime:
                     logging.shutdown()
                     os._exit(1)
 
+                # SLO: chunk_ingested emit — strictly-after-bookmark-ok
+                # D-11: wrapped json_fields shape for uniformity with quarantine.
+                # D-15: latency_clamped absent unless raw latency < 0 (only ever True).
+                # D-16: processing_latency_sec absent when receipt_time is None
+                # (NOT explicit null — Terraform alert filters handle key-existence).
+                # Cost note: ~500 GiB/month at 12k-feed fleet per research Pitfall 6.
+                chunk_ingested_payload: dict[str, object] = {
+                    "event_type": EVENT_TYPE_CHUNK_INGESTED,
+                    "feed_id": str(feed["id"]),
+                    "source_type": feed["source_type"],
+                }
+                if captured_chunk.receipt_time is not None:
+                    raw_latency_sec = (
+                        datetime.datetime.now(datetime.UTC)
+                        - captured_chunk.receipt_time
+                    ).total_seconds()
+                    chunk_ingested_payload["processing_latency_sec"] = max(
+                        0.0, round(raw_latency_sec, 2)
+                    )
+                    if raw_latency_sec < 0:
+                        chunk_ingested_payload["latency_clamped"] = True
+                logger.info(
+                    "Chunk ingested",
+                    extra={"json_fields": chunk_ingested_payload},
+                )
+
                 if self._shutdown.is_set():
                     # Return without calling release_feed — _shutdown_sequence
                     # handles all task cancellation and the 60s abandonment
@@ -719,8 +750,9 @@ class NormalizerRuntime:
                     exc_info=True,
                 )
 
-        # Stop heartbeat FIRST to prevent it from seeing released feeds as
-        # fence violations during the teardown window.
+        # Stop the heartbeat thread before cancelling feed tasks: once feeds
+        # are released the heartbeat would otherwise see them as fence
+        # violations during the teardown window.
         self._thread_stop.set()
 
         # asyncio.to_thread avoids blocking the event loop during join().

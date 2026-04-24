@@ -541,9 +541,10 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         """Test timestamp math: last chunk end_time is clamped to _now_utc()
         when _now_utc() < chunk_end_time so min() picks _now_utc() (clamped path).
 
-        A single segment guarantees _now_utc() is called exactly twice: once
-        to set stream_anchor_time, and once for the min() clamp when the process
-        is done and the only chunk is finalized.
+        A single segment drives _now_utc() exactly three times:
+        1. stream_anchor_time (before the inner loop),
+        2. receipt_time stamp (RCPT-02, immediately before read_bytes), and
+        3. the min() clamp when the process is done and the only chunk is finalized.
         """
         fixed_anchor = datetime.datetime(
             2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC
@@ -553,7 +554,8 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         clamp_time = fixed_anchor + datetime.timedelta(
             seconds=CHUNK_DURATION_SECONDS - 5
         )
-        mock_now_utc.side_effect = [fixed_anchor, clamp_time]
+        # 2nd value feeds the receipt_time stamp (RCPT-02); 3rd feeds min() clamp.
+        mock_now_utc.side_effect = [fixed_anchor, clamp_time, clamp_time]
 
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=4444,
@@ -602,6 +604,49 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(chunk.session_id)
         self.assertEqual(results[0].session_id, results[1].session_id)
         self.assertEqual(results[1].session_id, results[2].session_id)
+
+
+class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
+    """RCPT-02: Icecast stamps receipt_time at segment finalization."""
+
+    @patch.dict(os.environ, MOCK_ENV_VARS)
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast"
+        ".icecast_collector._now_utc"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast"
+        ".icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_stamps_receipt_time_on_yielded_chunk(
+        self,
+        mock_create: AsyncMock,
+        mock_now: MagicMock,
+    ) -> None:
+        fixed_time = datetime.datetime(
+            2026, 4, 22, 12, 0, 0, tzinfo=datetime.UTC
+        )
+        # _now_utc is called for stream_anchor_time once BEFORE the loop,
+        # then again for each segment's receipt_time, then again for the
+        # chunk_end clamp. Return a fixed value for every call.
+        mock_now.side_effect = [fixed_time, fixed_time, fixed_time]
+        mock_create.side_effect = _make_process_factory(
+            pid=1,
+            segments=[b"seg0"],
+            wait_delay=0.05,
+            wait_result=0,
+        )
+
+        feed = _make_feed("test", source_feed_id="sid")
+        shutdown = asyncio.Event()
+        gen = icecast_collector.capture_icecast_stream(
+            cast("LeasedFeed", feed), shutdown, "http://example.com/"
+        )
+        chunks = await _collect_chunks_with_timestamps(gen)
+
+        self.assertGreaterEqual(len(chunks), 1)
+        self.assertEqual(chunks[0].receipt_time, fixed_time)
 
 
 if __name__ == "__main__":

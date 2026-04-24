@@ -1,3 +1,5 @@
+export const MAX_WINDOW_DURATION_MS = 30 * 60 * 1000; // 30 minutes
+
 export function getInitialTimestamp(
   searchParams: URLSearchParams
 ): Date | null {
@@ -21,4 +23,9 @@ export function getSearchedEndTime(searchParams: URLSearchParams): Date | null {
     return new Date(Number(ts) + 15 * 60 * 1000);
   }
   return null;
+}
+
+export function roundUpToNearestMinute(date: Date) {
+  const msInMinute = 60 * 1000;
+  return new Date(Math.ceil(date.getTime() / msInMinute) * msInMinute);
 }
