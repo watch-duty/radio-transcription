@@ -349,8 +349,6 @@ class NormalizerRuntime:
                             # worker — including the healthy new task.
                             # Cancel first; the CancelledError handler in
                             # _process_feed exits cleanly without DB writes.
-                            # The decrement for the cancelled task happens in
-                            # _reap_completed_tasks on the next iteration.
                             logger.warning(
                                 "Cancelling orphaned task for feed %s "
                                 "(re-leased with token %d)",
@@ -358,6 +356,35 @@ class NormalizerRuntime:
                                 lease["fencing_token"],
                             )
                             existing.cancel()
+                            # Clean up accounting for the cancelled task
+                            # synchronously: we're about to overwrite
+                            # _feed_tasks[lease["id"]] below, which makes
+                            # the old task unreachable from the reaper's
+                            # iteration over self._feed_tasks.items(). If
+                            # we waited for the reaper, _held_by_type
+                            # would leak by 1 for this source_type every
+                            # time re-leasing occurs, structurally
+                            # starving the per-type cap over time. Decrement
+                            # now; the `+= 1` below brings the counter back
+                            # to the correct "1 per held feed" state.
+                            old_src = self._task_source_types.get(lease["id"])
+                            if (
+                                old_src is not None
+                                and old_src in self._held_by_type
+                            ):
+                                self._held_by_type[old_src] = max(
+                                    0, self._held_by_type[old_src] - 1,
+                                )
+                            # The reaper won't see `existing` anymore (it's
+                            # no longer in _feed_tasks), so it can't call
+                            # task.exception() to consume the eventual
+                            # CancelledError (or a real exception). Hook a
+                            # done-callback to do that job and keep the
+                            # asyncio "Task exception was never retrieved"
+                            # warning out of the logs.
+                            existing.add_done_callback(
+                                self._consume_orphan_exception,
+                            )
                         task = asyncio.create_task(
                             self._process_feed(lease),
                             name=f"feed-{lease['name']}",
@@ -418,6 +445,33 @@ class NormalizerRuntime:
                         exc,
                         exc_info=exc,
                     )
+
+    @staticmethod
+    def _consume_orphan_exception(task: asyncio.Task) -> None:
+        """Consume the exception from an orphaned (cancelled-and-replaced) task.
+
+        Called via ``add_done_callback`` on tasks that _leasing_loop
+        cancels when it re-leases a feed it already holds. The reaper
+        normally calls ``task.exception()`` on completed tasks to prevent
+        the "Task exception was never retrieved" warning at GC time, but
+        orphaned tasks aren't in _feed_tasks anymore, so the reaper can't
+        reach them. This callback does that job instead. It also decoupled
+        from _held_by_type bookkeeping — that decrement already happened
+        synchronously at cancel time, so this callback only consumes the
+        exception.
+        """
+        try:
+            exc = task.exception()
+        except asyncio.CancelledError:
+            pass  # expected path for the re-lease cancel race
+        else:
+            if exc is not None:
+                logger.error(
+                    "Orphaned feed task %s exited with error: %s",
+                    task.get_name(),
+                    exc,
+                    exc_info=exc,
+                )
 
     # -- Per-feed pipeline ------------------------------------------------
 

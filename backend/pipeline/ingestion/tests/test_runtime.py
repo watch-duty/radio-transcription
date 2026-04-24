@@ -242,6 +242,53 @@ class TestLeasingLoopOrphanedTask(unittest.IsolatedAsyncioTestCase):
         self.assertIn(_FEED_ID, rt._feed_tasks)
         self.assertIsNot(rt._feed_tasks[_FEED_ID], old_task)
 
+    async def test_orphan_rerelease_does_not_leak_held_by_type(self) -> None:
+        """Re-leasing a held feed must not double-count _held_by_type.
+
+        Regression: the old task becomes unreachable from _reap_completed_tasks
+        once _feed_tasks[lease["id"]] is overwritten, so its decrement never
+        fires while the new task's +=1 does. Without the inline decrement at
+        cancel time, _held_by_type would leak one slot per re-lease and
+        structurally starve the per-type cap over time.
+        """
+        rt = _make_runtime()
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+
+        # Pre-populate state to look like the worker already holds _FEED
+        # (source_type=BCFY_FEEDS) with a running task.
+        old_task = asyncio.create_task(asyncio.sleep(1000))
+        rt._feed_tasks[_FEED_ID] = old_task
+        rt._task_source_types[_FEED_ID] = SourceType.BCFY_FEEDS
+        rt._held_by_type[SourceType.BCFY_FEEDS] = 1
+
+        # Single leasing cycle: returns the same feed (re-lease). Recovery
+        # path returns empty so it doesn't interfere.
+        rt._store.acquire_feeds_batch.side_effect = [
+            [_FEED],
+            asyncio.CancelledError,
+        ]
+        rt._store.acquire_feeds_recovery.return_value = []
+
+        with mock.patch.object(
+            rt, "_process_feed", new_callable=mock.AsyncMock
+        ):
+            rt._shutdown.set()
+            await rt._leasing_loop()
+
+        # Let the cancellation propagate.
+        await asyncio.sleep(0)
+
+        # The invariant that matters: one feed held → count is 1, not 2.
+        # Before the fix, this would be 2 because the old task's decrement
+        # was routed through the reaper, which never sees the old task
+        # after _feed_tasks[_FEED_ID] got overwritten.
+        self.assertEqual(rt._held_by_type[SourceType.BCFY_FEEDS], 1)
+        # And _task_source_types still has exactly the new task's entry.
+        self.assertEqual(rt._task_source_types[_FEED_ID], SourceType.BCFY_FEEDS)
+        self.assertTrue(old_task.cancelled())
+
 
 class TestProcessFeedFenceViolation(unittest.IsolatedAsyncioTestCase):
     """Tests for _process_feed fence violation."""
