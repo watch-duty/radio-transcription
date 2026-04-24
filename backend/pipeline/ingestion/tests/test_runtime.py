@@ -116,7 +116,6 @@ def _make_settings(**overrides) -> mock.MagicMock:
         "cap_openmhz": 900,
         "claim_ramp_pct": 100,
         "sigterm_release_batch_size": 50,
-        "sigterm_release_jitter_max_sec": 2.0,
     }
     defaults.update(overrides)
     m = mock.MagicMock()
@@ -1144,19 +1143,6 @@ class TestBatchedSigtermRelease(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(calls[0][0][1]), 50)
         self.assertEqual(len(calls[1][0][1]), 50)
         self.assertEqual(len(calls[2][0][1]), 20)
-
-        # One jitter sleep (pre-drain, before the first batch), not per
-        # batch. 120 feeds / batch=50 = 3 batches, but we only want a
-        # single fleet-wide-stagger sleep regardless of batch count so
-        # shutdown duration stays deterministic.
-        jitter_sleeps = [
-            s for s in sleep_calls
-            if 0 <= s <= rt._normalizer_settings.sigterm_release_jitter_max_sec
-        ]
-        self.assertEqual(
-            len(jitter_sleeps), 1,
-            f"expected exactly 1 pre-drain jitter sleep; saw {sleep_calls}",
-        )
 
         # Parallel state scrubbed.
         self.assertEqual(rt._task_source_types, {})

@@ -94,24 +94,15 @@ class NormalizerSettings:
         ),
     )
 
-    # Batched + jittered SIGTERM release (scaling plan §8). Each batch is
-    # its own transaction (asyncpg auto-commit on pool.execute); jitter
-    # between batches staggers fleet-wide UNCLAIMED flips during scale-in.
+    # Batched SIGTERM release (scaling plan §8). Bounds transaction size
+    # on the AlloyDB lock manager under concurrent worker shutdown; each
+    # batch is its own transaction via asyncpg's pool.execute auto-commit.
+    # Post-release polling stampede is self-balancing thanks to the
+    # per-type CTE + SKIP LOCKED on the claim side, so no jitter is
+    # needed on top.
     sigterm_release_batch_size: int = field(
         default_factory=lambda: int(
             os.environ.get("SIGTERM_RELEASE_BATCH_SIZE", "50"),
-        ),
-    )
-    # Default 0.5 s: keeps worst-case total jitter bounded even at higher
-    # per-worker counts (at 1000 feeds + batch=50, 19 sleeps × 0.5 s =
-    # 9.5 s worst, 4.75 s average) — comfortably inside any reasonable
-    # platform graceful-termination window (GCE MIG 120 s default, k8s
-    # 30 s default). Still provides fleet-wide stagger for scale-in.
-    # Raise via env var if the specific deployment has a longer window
-    # and wants a broader UNCLAIMED-flip distribution.
-    sigterm_release_jitter_max_sec: float = field(
-        default_factory=lambda: float(
-            os.environ.get("SIGTERM_RELEASE_JITTER_MAX_SEC", "0.5"),
         ),
     )
 

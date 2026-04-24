@@ -3,7 +3,6 @@ import concurrent.futures
 import datetime
 import logging
 import os
-import random
 import signal
 import threading
 import time
@@ -1019,39 +1018,22 @@ class NormalizerRuntime:
         # see their lease as NULL during a progress update and trigger an
         # accidental fence violation (os._exit(1)).
         #
-        # Release leases in batches (default 50 rows) after one pre-drain
-        # jitter sleep. The jitter's purpose is fleet-wide stagger on
-        # SIGTERM (e.g. MIG scale-in): each node picks a different random
-        # start offset, so the fleet's UNCLAIMED flips spread across
-        # ~jitter_max seconds even though each node drains at max speed
-        # once it starts. Sleeping once — instead of between every batch —
-        # makes a node's shutdown duration deterministic and linear only
-        # in batch count (not random), which keeps shutdown safely inside
-        # k8s-style termination windows even at higher per-worker feed
-        # counts. See scaling-plan §8 (adapted: per-node stagger via
-        # entry-time jitter rather than per-batch jitter).
+        # Release leases in batches (default 50 rows/batch) rather than one
+        # monolithic UPDATE. Benefits: bounds transaction size (small lock
+        # footprint per batch), lets asyncpg auto-commit per call (pool.execute),
+        # and plays nicely with AlloyDB's lock manager under concurrent
+        # worker shutdown. The per-type CTE + SKIP LOCKED on the claim side
+        # means concurrent polling after a fleet-wide UNCLAIMED flip is
+        # self-balancing across the remaining workers — no stampede defense
+        # beyond the per-batch commits is needed.
         feed_ids = list(self._feed_tasks.keys())
         batch_size = self._normalizer_settings.sigterm_release_batch_size
-        jitter_max = self._normalizer_settings.sigterm_release_jitter_max_sec
         logger.info(
-            "Releasing %d leases for worker %s in batches of %d "
-            "(pre-drain jitter max %.2fs)",
+            "Releasing %d leases for worker %s in batches of %d",
             len(feed_ids),
             self._normalizer_settings.worker_id,
             batch_size,
-            jitter_max,
         )
-        if feed_ids and jitter_max > 0:
-            # Intentional break of the file-level "no asyncio.sleep"
-            # invariant (L68): the invariant exists so the leasing loop
-            # stays SIGTERM-interruptible; inside _shutdown_sequence we
-            # ARE the drain path and interruption is moot.
-            # _sleep_or_shutdown would collapse to 0 s (shutdown is
-            # already set) and defeat the stagger purpose. Non-crypto
-            # jitter for fleet-wide stagger, not security.
-            await asyncio.sleep(
-                random.uniform(0, jitter_max),  # noqa: S311
-            )
         total_released = 0
         try:
             for i in range(0, len(feed_ids), batch_size):
