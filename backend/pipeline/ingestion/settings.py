@@ -94,17 +94,6 @@ class NormalizerSettings:
         ),
     )
 
-    # Batched SIGTERM release (scaling plan §8). Bounds transaction size
-    # on the AlloyDB lock manager under concurrent worker shutdown; each
-    # batch is its own transaction via asyncpg's pool.execute auto-commit.
-    # Post-release polling stampede is self-balancing thanks to the
-    # per-type CTE + SKIP LOCKED on the claim side, so no jitter is
-    # needed on top.
-    sigterm_release_batch_size: int = field(
-        default_factory=lambda: int(
-            os.environ.get("SIGTERM_RELEASE_BATCH_SIZE", "50"),
-        ),
-    )
 
     # GCS
     audio_staging_bucket: str = field(

@@ -115,7 +115,6 @@ def _make_settings(**overrides) -> mock.MagicMock:
         "cap_bcfy_calls": 600,
         "cap_openmhz": 900,
         "claim_ramp_pct": 100,
-        "sigterm_release_batch_size": 50,
     }
     defaults.update(overrides)
     m = mock.MagicMock()
@@ -1094,57 +1093,36 @@ class TestCalculateBranchLimits(unittest.TestCase):
         self.assertLessEqual(limits[SourceType.OPENMHZ], 900)
 
 
-class TestBatchedSigtermRelease(unittest.IsolatedAsyncioTestCase):
-    """Tests for the batched+jittered SIGTERM release path."""
+class TestSigtermRelease(unittest.IsolatedAsyncioTestCase):
+    """Tests for the SIGTERM release path (single UPDATE by feed_ids)."""
 
-    async def test_release_fires_in_batches(self) -> None:
-        """120 leases + batch=50 → 3 calls with sizes [50, 50, 20]."""
-        rt = _make_runtime(sigterm_release_batch_size=50)
+    async def test_release_passes_all_feed_ids_in_one_call(self) -> None:
+        """120 held leases → exactly 1 release_feeds_batch_by_ids call."""
+        rt = _make_runtime()
         rt._shutdown = asyncio.Event()
         rt._thread_stop = mock.MagicMock()
         rt._heartbeat_thread = None
         rt._store = mock.AsyncMock()
-        rt._store.release_feeds_batch_by_ids.return_value = 50
+        rt._store.release_feeds_batch_by_ids.return_value = 120
         rt._data_pool = mock.AsyncMock()
         rt._heartbeat_pool = mock.AsyncMock()
         rt._pubsub_client = mock.AsyncMock()
         rt._gcs_client = mock.AsyncMock()
         rt._health_runner = mock.AsyncMock()
 
-        # Populate 120 feed tasks + matching source_type entries. Use
-        # async-no-op tasks that we cancel ourselves so shutdown sees them
-        # as completed.
         feed_ids = [uuid.uuid4() for _ in range(120)]
         for fid in feed_ids:
             t = asyncio.create_task(asyncio.sleep(0))
             rt._feed_tasks[fid] = t
-            rt._task_source_types[fid] = (
-                rt._task_source_types.get(fid)
-                or list(rt._held_by_type.keys())[0]
-            )
+            rt._task_source_types[fid] = list(rt._held_by_type.keys())[0]
         await asyncio.gather(*rt._feed_tasks.values(), return_exceptions=True)
 
-        # Replace asyncio.sleep in the runtime module so jitter is
-        # deterministic and we can count calls.
-        sleep_calls: list[float] = []
+        await rt._shutdown_sequence()
 
-        async def _fake_sleep(secs: float) -> None:
-            sleep_calls.append(secs)
-
-        with mock.patch(
-            "backend.pipeline.ingestion.normalizer_runtime.asyncio.sleep",
-            new=_fake_sleep,
-        ):
-            await rt._shutdown_sequence()
-
-        # Three batches with sizes [50, 50, 20].
-        calls = rt._store.release_feeds_batch_by_ids.await_args_list
-        self.assertEqual(len(calls), 3)
-        self.assertEqual(len(calls[0][0][1]), 50)
-        self.assertEqual(len(calls[1][0][1]), 50)
-        self.assertEqual(len(calls[2][0][1]), 20)
-
-        # Parallel state scrubbed.
+        # Single release_feeds_batch_by_ids call containing all 120 ids.
+        rt._store.release_feeds_batch_by_ids.assert_awaited_once()
+        call_args = rt._store.release_feeds_batch_by_ids.await_args
+        self.assertEqual(len(call_args[0][1]), 120)
         self.assertEqual(rt._task_source_types, {})
 
 

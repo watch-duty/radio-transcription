@@ -50,7 +50,6 @@ class TestNormalizerSettings(unittest.TestCase):
             "CAP_BCFY_CALLS": "400",
             "CAP_OPENMHZ": "700",
             "CLAIM_RAMP_PCT": "50",
-            "SIGTERM_RELEASE_BATCH_SIZE": "25",
         }
 
         with patch.dict("os.environ", env, clear=True):
@@ -95,7 +94,6 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.cap_bcfy_calls, 400)
         self.assertEqual(settings.cap_openmhz, 700)
         self.assertEqual(settings.claim_ramp_pct, 50)
-        self.assertEqual(settings.sigterm_release_batch_size, 25)
 
     def test_edge_case_uses_defaults_and_generates_worker_id(self) -> None:
         """Uses defaults for optional settings when only required vars are set."""
@@ -134,7 +132,6 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.cap_bcfy_calls, 600)
         self.assertEqual(settings.cap_openmhz, 900)
         self.assertEqual(settings.claim_ramp_pct, 100)
-        self.assertEqual(settings.sigterm_release_batch_size, 50)
 
     def test_edge_case_zero_and_negative_numeric_values_parse(self) -> None:
         """Allows zero/negative values because parsing does not enforce ranges."""

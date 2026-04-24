@@ -1018,40 +1018,28 @@ class NormalizerRuntime:
         # see their lease as NULL during a progress update and trigger an
         # accidental fence violation (os._exit(1)).
         #
-        # Release leases in batches (default 50 rows/batch) rather than one
-        # monolithic UPDATE. Benefits: bounds transaction size (small lock
-        # footprint per batch), lets asyncpg auto-commit per call (pool.execute),
-        # and plays nicely with AlloyDB's lock manager under concurrent
-        # worker shutdown. The per-type CTE + SKIP LOCKED on the claim side
-        # means concurrent polling after a fleet-wide UNCLAIMED flip is
-        # self-balancing across the remaining workers — no stampede defense
-        # beyond the per-batch commits is needed.
+        # Release all held leases in a single WHERE id = ANY($2) UPDATE.
+        # The per-type CTE + SKIP LOCKED on the claim side makes concurrent
+        # polling after a fleet-wide UNCLAIMED flip self-balancing across
+        # surviving workers, so the batched+jittered stagger the scaling
+        # plan originally prescribed is no longer needed.
         feed_ids = list(self._feed_tasks.keys())
-        batch_size = self._normalizer_settings.sigterm_release_batch_size
         logger.info(
-            "Releasing %d leases for worker %s in batches of %d",
+            "Releasing %d leases for worker %s",
             len(feed_ids),
             self._normalizer_settings.worker_id,
-            batch_size,
         )
-        total_released = 0
         try:
-            for i in range(0, len(feed_ids), batch_size):
-                chunk = feed_ids[i : i + batch_size]
-                released = await self._store.release_feeds_batch_by_ids(
-                    self._normalizer_settings.worker_id,
-                    chunk,
-                )
-                total_released += released
+            total_released = await self._store.release_feeds_batch_by_ids(
+                self._normalizer_settings.worker_id,
+                feed_ids,
+            )
             logger.info(
-                "Released %d/%d leases in %d batch(es)",
-                total_released,
-                len(feed_ids),
-                (len(feed_ids) + batch_size - 1) // batch_size if feed_ids else 0,
+                "Released %d/%d leases", total_released, len(feed_ids),
             )
         except Exception:
             logger.exception(
-                "Failed to batch-release feeds on shutdown (safety net will recover)"
+                "Failed to release feeds on shutdown (safety net will recover)"
             )
         finally:
             # Scrub parallel state so it doesn't carry over if the worker is
