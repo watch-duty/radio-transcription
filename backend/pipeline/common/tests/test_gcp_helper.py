@@ -403,13 +403,13 @@ class TestPublishAudioChunkSync(unittest.TestCase):
         mock_publisher.publish.assert_called_once()
         publish_args, publish_kwargs = mock_publisher.publish.call_args
         self.assertEqual(publish_args[0], "projects/test/topics/audio")
-        self.assertEqual(publish_kwargs["feed_id"], "feed-42")
         self.assertEqual(publish_kwargs["source_type"], "echo")
         self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
 
         chunk = AudioChunk()
         chunk.ParseFromString(publish_args[1])
         self.assertEqual(chunk.gcs_uri, "gs://bucket/audio.flac")
+        self.assertEqual(chunk.feed_id, "feed-42")
         self.assertTrue(chunk.HasField("start_timestamp"))
         self.assertEqual(
             chunk.start_timestamp.seconds, int(mock_now.timestamp())

@@ -13,6 +13,7 @@ from backend.pipeline.ingestion.collectors.echo.main import (
     _handle,
     _parse_timestamp,
 )
+from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
 
 
@@ -181,9 +182,11 @@ class TestHandle:
         # Verify AudioChunk published
         pub = _patch_globals["publisher"]
         pub.publish.assert_called_once()
-        call_kwargs = pub.publish.call_args.kwargs
-        assert call_kwargs["feed_id"] == str(feed_id)
+        publish_args, call_kwargs = pub.publish.call_args
         assert call_kwargs["source_type"] == "echo"
+        chunk = AudioChunk()
+        chunk.ParseFromString(publish_args[1])
+        assert chunk.feed_id == str(feed_id)
 
         # Verify heartbeat recorded
         mock_store.record_heartbeat.assert_called_once_with(feed_id)
