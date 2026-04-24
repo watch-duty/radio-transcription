@@ -37,7 +37,6 @@ from backend.pipeline.transcription.stitcher import (
 )
 from backend.pipeline.transcription.transcribers import Transcriber
 from backend.pipeline.transcription.transforms import (
-    AddEventTimestamp,
     BypassStitchingFn,
     DownloadAudioFn,
     ParseAndKeyFn,
@@ -110,7 +109,12 @@ def get_test_transcribe_config(**kwargs: Any) -> TranscribeAudioConfig:
 class ParseAndKeyTimestampTest(unittest.TestCase):
     def test_parse_and_key_success(self) -> None:
         """Verifies that well-formed Pub/Sub messages containing a serialized AudioChunk and feed_id are correctly unmarshalled and keyed by feed."""
-        chunk = AudioChunk(gcs_uri="gs://test-bucket/path/to/test.flac")
+        chunk = AudioChunk(
+            gcs_uri="gs://test-bucket/path/to/test.flac",
+            feed_id="test-feed",
+            duration_ms=1000,
+            session_id="mock-session-id",
+        )
         chunk.start_timestamp.FromMicroseconds(123456789000)
         mock_msg = PubsubMessage(
             chunk.SerializeToString(),
@@ -127,7 +131,22 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
 
             assert_that(
                 parsed.main,
-                equal_to([("test-feed", chunk.SerializeToString())]),
+                equal_to(
+                    [
+                        (
+                            "test-feed",
+                            ChunkMetadata(
+                                gcs_uri="gs://test-bucket/path/to/test.flac",
+                                session_id="mock-session-id",
+                                duration_ms=1000,
+                                feed_metadata=FeedMetadata(
+                                    feed_name="",
+                                    external_id="",
+                                ),
+                            ),
+                        )
+                    ]
+                ),
             )
             assert_that(
                 parsed[DEAD_LETTER_QUEUE_TAG],
@@ -154,55 +173,12 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             def assert_dlq(elements: list[dict[str, Any]]) -> None:
 
                 assert len(elements) == 1
-                assert (
-                    "Missing required payload attribute" in elements[0]["error"]
-                )
+                assert "missing feed_id" in elements[0]["error"]
 
             assert_that(parsed.main, equal_to([]), label="CheckEmptyMain")
             assert_that(
                 parsed[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ"
             )
-
-
-class AddEventTimestampTest(unittest.TestCase):
-    def test_valid_timestamp_extraction(self) -> None:
-        """Verifies that AddEventTimestamp accurately regex-extracts and assigns the logical windowing timestamp natively from the chunk's standardized filename."""
-        chunk = AudioChunk(
-            gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
-            session_id="mock-session-id",
-        )
-        chunk.start_timestamp.FromMicroseconds(1678886400000000)
-        element = ("test-feed", chunk.SerializeToString())
-        fn = AddEventTimestamp()
-        result = list(fn.process(element))
-
-        self.assertEqual(len(result), 1)
-        self.assertIsInstance(result[0], TimestampedValue)
-        self.assertEqual(
-            result[0].value,  # type: ignore
-            (
-                "test-feed",
-                ChunkMetadata(
-                    gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
-                    session_id="mock-session-id",
-                    duration_ms=0,
-                ),
-            ),
-        )
-        self.assertEqual(result[0].timestamp, 1678886400)  # type: ignore
-
-    def test_invalid_timestamp_raises_value_error(self) -> None:
-        """Verifies that chunks possessing malformed or unidentifiable file names result in safely tagging the element for DLQ observation instead of crashing."""
-        chunk = AudioChunk(
-            gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/invalid-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac"
-        )
-        element = ("test-feed", chunk.SerializeToString())
-        fn = AddEventTimestamp()
-
-        result = list(fn.process(element))
-        self.assertEqual(len(result), 1)
-        self.assertIsInstance(result[0], beam.pvalue.TaggedOutput)
-        self.assertEqual(result[0].tag, DEAD_LETTER_QUEUE_TAG)  # type: ignore
 
 
 class BypassStitchingTest(unittest.TestCase):

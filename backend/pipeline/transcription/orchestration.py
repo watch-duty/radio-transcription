@@ -40,7 +40,6 @@ from backend.pipeline.transcription.stitcher import (
     TranscribeAudioFn,
 )
 from backend.pipeline.transcription.transforms import (
-    AddEventTimestamp,
     BypassStitchingFn,
     DownloadAudioFn,
     ExtractFeedMetadataFn,
@@ -93,6 +92,7 @@ def get_pipeline(
         subscription=options.input_subscription,
         id_label=options.id_label or None,
         with_attributes=True,
+        timestamp_attribute="timestamp_ms",
     )
     # Group incoming messages into Key-Value pairs: (feed_id, gs://uri/to/audio)
     parsed = messages | "ParseAndKey" >> beam.ParDo(
@@ -104,12 +104,8 @@ def get_pipeline(
         ExtractFeedMetadataFn()
     )
 
-    timestamped = parsed[MAIN_TAG] | "AddTimestamp" >> beam.ParDo(
-        AddEventTimestamp()
-    ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
-
     # Order chunks based on event timestamps to ensure chronological processing
-    restored = timestamped.main | "RestoreOrder" >> beam.ParDo(
+    restored = parsed[MAIN_TAG] | "RestoreOrder" >> beam.ParDo(
         RestoreOrderFn(
             config=OrderRestorerConfig(
                 out_of_order_timeout_ms=options.out_of_order_timeout_ms
@@ -192,7 +188,6 @@ def get_pipeline(
     # Route all DLQ (Dead Letter Queue) outputs from intermediate steps to a dedicated topic
     dlq_list = [
         parsed[DEAD_LETTER_QUEUE_TAG],
-        timestamped[DEAD_LETTER_QUEUE_TAG],
         downloaded_chunks[DEAD_LETTER_QUEUE_TAG],
         transcripts[DEAD_LETTER_QUEUE_TAG],
     ]
