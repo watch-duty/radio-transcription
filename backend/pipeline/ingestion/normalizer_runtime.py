@@ -248,7 +248,7 @@ class NormalizerRuntime:
 
     # -- Leasing ----------------------------------------------------------
 
-    async def _leasing_loop(self) -> None:
+    async def _leasing_loop(self) -> None:  # noqa: PLR0912
         """
         Continuously lease feeds in batches and spawn processing tasks.
 
@@ -280,36 +280,55 @@ class NormalizerRuntime:
                 )
                 if total_slack > 0:
                     s = self._normalizer_settings
-                    # Per-type caps enforce the memory budget: for each
-                    # source_type, the worker asks for at most
-                    # cap - current_held rows, further clamped by total
-                    # slack so we never exceed max_feeds_per_worker. The
-                    # inner caps[t] inside min() is redundant algebraically
-                    # but defends against a negative-held accounting bug
-                    # (e.g. a double-decrement would make cap - held > cap).
                     caps: dict[SourceType, int] = {
                         SourceType.BCFY_FEEDS: s.cap_bcfy_feeds,
                         SourceType.BCFY_CALLS: s.cap_bcfy_calls,
                         SourceType.OPENMHZ: s.cap_openmhz,
                     }
-                    limits: dict[SourceType, int] = {
-                        t: max(
-                            0,
-                            min(
-                                caps[t],
-                                caps[t] - self._held_by_type[t],
-                                total_slack,
-                            ),
-                        )
+                    # Per-type caps bound each branch individually
+                    # (16.9 MiB/feed × 240 bcfy_feeds rows is one worker's
+                    # memory ceiling for that type). But the claim query is
+                    # a UNION ALL across three branches, so bounding each
+                    # branch by total_slack independently would let the
+                    # SUM exceed total_slack — e.g. at cold start with
+                    # max_feeds_per_worker=250, three branches of 250 each
+                    # could return 740 feeds in one call and blow past the
+                    # worker budget by 3x. Apportion total_slack across
+                    # branches via round-robin (+1 to each active branch
+                    # per round until the slack is spent or each branch
+                    # hits its per-type headroom), which guarantees
+                    # sum(limits.values()) <= total_slack and also avoids
+                    # starving any one type. max() on per-type headroom is
+                    # defensive against a negative-held accounting bug
+                    # (which would otherwise make cap - held > cap).
+                    headroom: dict[SourceType, int] = {
+                        t: max(0, caps[t] - self._held_by_type[t])
                         for t in caps
                     }
+                    limits: dict[SourceType, int] = dict.fromkeys(caps, 0)
+                    remaining = total_slack
+                    while remaining > 0:
+                        progressed = False
+                        for t in caps:
+                            if limits[t] < headroom[t]:
+                                limits[t] += 1
+                                remaining -= 1
+                                progressed = True
+                                if remaining == 0:
+                                    break
+                        if not progressed:
+                            # Every branch is already at its per-type
+                            # headroom — total_slack exceeded the
+                            # cap-summed ceiling, nothing more to allocate.
+                            break
                     logger.info(
                         "Attempting to acquire feeds "
-                        "(slack=%d, caps=%s, held=%s, limits=%s)",
+                        "(slack=%d, caps=%s, held=%s, limits=%s, total_ask=%d)",
                         total_slack,
                         {t.value: v for t, v in caps.items()},
                         {t.value: v for t, v in self._held_by_type.items()},
                         {t.value: v for t, v in limits.items()},
+                        sum(limits.values()),
                     )
                     primary = await self._store.acquire_feeds_batch(
                         s.worker_id,

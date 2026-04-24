@@ -137,7 +137,7 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.cap_openmhz, 900)
         self.assertEqual(settings.claim_ramp_pct, 100)
         self.assertEqual(settings.sigterm_release_batch_size, 50)
-        self.assertEqual(settings.sigterm_release_jitter_max_sec, 2.0)
+        self.assertEqual(settings.sigterm_release_jitter_max_sec, 0.5)
 
     def test_edge_case_zero_and_negative_numeric_values_parse(self) -> None:
         """Allows zero/negative values because parsing does not enforce ranges."""

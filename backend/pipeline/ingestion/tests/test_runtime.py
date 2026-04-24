@@ -242,6 +242,43 @@ class TestLeasingLoopOrphanedTask(unittest.IsolatedAsyncioTestCase):
         self.assertIn(_FEED_ID, rt._feed_tasks)
         self.assertIsNot(rt._feed_tasks[_FEED_ID], old_task)
 
+    async def test_total_slack_bounded_across_branches(self) -> None:
+        """Sum of per-branch LIMITs must not exceed total_slack (cold start).
+
+        Regression: without the round-robin apportion, three branches each
+        get `min(cap, total_slack)`, so at max_feeds_per_worker=250 the
+        query could legitimately return 250 + 250 + 250 = 740 feeds and
+        blow past the worker budget. The apportion must guarantee
+        sum(limits) <= total_slack.
+        """
+        rt = _make_runtime(
+            max_feeds_per_worker=250,
+            cap_bcfy_feeds=240,
+            cap_bcfy_calls=600,
+            cap_openmhz=900,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+        rt._store.acquire_feeds_batch.side_effect = [
+            [],  # empty result so no tasks spawn
+            asyncio.CancelledError,
+        ]
+        rt._store.acquire_feeds_recovery.return_value = []
+
+        rt._shutdown.set()
+        await rt._leasing_loop()
+
+        # Inspect the call made to acquire_feeds_batch; args[2:5] are the
+        # three per-type LIMITs.
+        call = rt._store.acquire_feeds_batch.await_args_list[0]
+        limits = call[0][2:5]
+        self.assertEqual(sum(limits), 250)  # exactly total_slack
+        self.assertTrue(
+            all(limit >= 0 for limit in limits),
+            "no branch should receive a negative LIMIT",
+        )
+
     async def test_orphan_rerelease_does_not_leak_held_by_type(self) -> None:
         """Re-leasing a held feed must not double-count _held_by_type.
 
