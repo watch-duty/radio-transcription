@@ -290,7 +290,7 @@ export function TranscriptView({
         (oldData) => {
           if (!oldData) return oldData;
 
-          // Filter out duplicates to prevent rendering issues if a transcript 
+          // Filter out duplicates to prevent rendering issues if a transcript
           // was caught in both the initial fetch and the poll.
           const existingIds = new Set(
             oldData.pages.flatMap((p) =>
@@ -686,7 +686,9 @@ export function TranscriptView({
                   }
                   sx={{ textTransform: 'none' }}
                 >
-                  {isTranscriptsPolling ? 'Refreshing...' : `Refresh (${TRANSCRIPTS_POLLING_INTERVAL_DISPLAY_STRING})`}
+                  {isTranscriptsPolling
+                    ? 'Refreshing...'
+                    : `Refresh (${TRANSCRIPTS_POLLING_INTERVAL_DISPLAY_STRING})`}
                 </Button>
               )}
             </Box>
