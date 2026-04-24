@@ -199,8 +199,20 @@ JOIN feed_properties fpi ON fpi.feed_id = leased.id
 # the design assumes (≤ ~500 failing-or-abandoned rows at a time, drained
 # by pg_cron), the sort stays in work_mem and is cheap. If either volume
 # ever spikes (pg_cron paused, failure storm), this query becomes an
-# expensive seq/sort path — the right follow-up is a partial index on
-# (retry_after, id) WHERE status='failing' OR status='active'.
+# expensive seq/sort path.
+#
+# TODO(recovery-path-index): if recovery-path P99 exceeds 50 ms at  # noqa: TD003
+# production load OR the pg_cron sweep is paused for extended windows,
+# add migration:
+#
+#   CREATE INDEX CONCURRENTLY idx_feeds_recovery
+#       ON feeds (retry_after, id)
+#       WHERE status IN ('failing'::feed_status, 'active'::feed_status);
+#
+# The HOT protection CI check (terraform/modules/alloydb/sql/ci/
+# hot_protection_check.sql) would also need a second allow-list entry
+# for this index, since it covers retry_after on active rows (where
+# retry_after is NULL and rarely mutated — low bloat in practice).
 #
 # MATERIALIZED is non-negotiable for the same planner reason as the primary
 # CTE: without it, the planner can inline the CTE into the outer UPDATE and

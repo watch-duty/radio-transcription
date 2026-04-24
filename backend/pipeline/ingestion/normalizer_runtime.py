@@ -248,7 +248,7 @@ class NormalizerRuntime:
 
     # -- Leasing ----------------------------------------------------------
 
-    async def _leasing_loop(self) -> None:  # noqa: PLR0912
+    async def _leasing_loop(self) -> None:
         """
         Continuously lease feeds in batches and spawn processing tasks.
 
@@ -285,55 +285,14 @@ class NormalizerRuntime:
                         SourceType.BCFY_CALLS: s.cap_bcfy_calls,
                         SourceType.OPENMHZ: s.cap_openmhz,
                     }
-                    # Per-type caps bound each branch individually
-                    # (16.9 MiB/feed × 240 bcfy_feeds rows is one worker's
-                    # memory ceiling for that type). But the claim query is
-                    # a UNION ALL across three branches, so bounding each
-                    # branch by total_slack independently would let the
-                    # SUM exceed total_slack — e.g. at cold start with
-                    # max_feeds_per_worker=250, three branches of 250 each
-                    # could return 740 feeds in one call and blow past the
-                    # worker budget by 3x. Apportion total_slack across
-                    # branches by water-filling: sort by ascending
-                    # headroom, give each branch min(headroom, fair_share)
-                    # where fair_share is `remaining // remaining_branches`.
-                    # Guarantees sum(limits.values()) <= total_slack and
-                    # redistributes any slack a capped branch couldn't
-                    # absorb to the branches behind it. O(N log N) on a
-                    # 3-element dict — effectively O(1). max() on headroom
-                    # is defensive against a negative-held accounting bug
-                    # (which would otherwise make cap - held > cap).
-                    headroom: dict[SourceType, int] = {
-                        t: max(0, caps[t] - self._held_by_type[t])
-                        for t in caps
-                    }
-                    limits: dict[SourceType, int] = dict.fromkeys(caps, 0)
-                    # Sort types by ascending headroom so tight branches
-                    # are sized first; the loop's integer-division share
-                    # naturally widens for later branches as preceding
-                    # branches consume less than their "fair" slice.
-                    sorted_types = sorted(caps, key=lambda t: headroom[t])
-                    remaining_slack = total_slack
-                    remaining_branches = len(sorted_types)
-                    for t in sorted_types:
-                        share = remaining_slack // remaining_branches
-                        limits[t] = min(headroom[t], share)
-                        remaining_slack -= limits[t]
-                        remaining_branches -= 1
-                    # Integer-division leaves at most N-1 units of slack
-                    # unassigned (the remainder). Give them to the
-                    # largest-headroom branches that still have room.
-                    if remaining_slack > 0:
-                        for t in reversed(sorted_types):
-                            if remaining_slack == 0:
-                                break
-                            if limits[t] < headroom[t]:
-                                bump = min(
-                                    headroom[t] - limits[t],
-                                    remaining_slack,
-                                )
-                                limits[t] += bump
-                                remaining_slack -= bump
+                    # Apportion total_slack across the three per-type CTE
+                    # branches (see _calculate_branch_limits for the
+                    # algorithm + rationale). Extracted to a pure helper
+                    # so the allocation math is unit-testable without the
+                    # surrounding asyncio loop.
+                    limits = self._calculate_branch_limits(
+                        total_slack, caps, self._held_by_type,
+                    )
                     logger.info(
                         "Attempting to acquire feeds "
                         "(slack=%d, caps=%s, held=%s, limits=%s, total_ask=%d)",
@@ -489,6 +448,79 @@ class NormalizerRuntime:
                         exc,
                         exc_info=exc,
                     )
+
+    @staticmethod
+    def _calculate_branch_limits(
+        total_slack: int,
+        caps: dict[SourceType, int],
+        held: dict[SourceType, int],
+    ) -> dict[SourceType, int]:
+        """Water-filling apportion of total_slack across per-type branches.
+
+        Per-type caps bound each branch individually (16.9 MiB/feed x 240
+        bcfy_feeds rows is one worker's memory ceiling for that type). But
+        the claim query is a UNION ALL across three branches, so bounding
+        each branch by total_slack independently would let the SUM exceed
+        total_slack — e.g. at cold start with max_feeds_per_worker=250,
+        three branches of 250 each would return 740 feeds in one call,
+        blowing past the worker budget by 3x.
+
+        Algorithm: sort by ascending headroom, give each branch
+        min(headroom, fair_share) where fair_share is
+        `remaining_slack // remaining_branches`. Guarantees
+        sum(limits.values()) <= total_slack, redistributes slack that a
+        capped branch couldn't absorb to the branches behind it, and
+        avoids starving any type. O(N log N) on a 3-element dict —
+        effectively O(1). max() on per-type headroom is defensive against
+        a negative-held accounting bug (which would otherwise make
+        cap - held > cap).
+
+        Args:
+            total_slack: max_feeds_per_worker - len(_feed_tasks).
+            caps: per-SourceType env-var-driven cap ceilings.
+            held: current _held_by_type snapshot.
+
+        Returns:
+            Dict mapping each SourceType in `caps` to its computed LIMIT.
+            Sum of values is <= total_slack and each value is >= 0.
+        """
+        # Clamp headroom at the cap, not just at zero: if `held` somehow
+        # went negative (double-decrement accounting bug), max(0, cap -
+        # held) > cap and would let a branch's LIMIT exceed the memory
+        # ceiling the cap represents. min(cap, ...) restores the "never
+        # exceeds cap" invariant regardless of held's sign.
+        headroom: dict[SourceType, int] = {
+            t: min(caps[t], max(0, caps[t] - held[t])) for t in caps
+        }
+        limits: dict[SourceType, int] = dict.fromkeys(caps, 0)
+        # Sort types by ascending headroom so tight branches are sized
+        # first; the loop's integer-division share naturally widens for
+        # later branches as preceding branches consume less than their
+        # "fair" slice.
+        sorted_types = sorted(caps, key=lambda t: headroom[t])
+        remaining_slack = total_slack
+        remaining_branches = len(sorted_types)
+        for t in sorted_types:
+            share = (
+                remaining_slack // remaining_branches
+                if remaining_branches > 0
+                else 0
+            )
+            limits[t] = min(headroom[t], share)
+            remaining_slack -= limits[t]
+            remaining_branches -= 1
+        # Integer division leaves at most N-1 units of slack unassigned
+        # (the remainder). Give them to the largest-headroom branches that
+        # still have room.
+        if remaining_slack > 0:
+            for t in reversed(sorted_types):
+                if remaining_slack == 0:
+                    break
+                if limits[t] < headroom[t]:
+                    bump = min(headroom[t] - limits[t], remaining_slack)
+                    limits[t] += bump
+                    remaining_slack -= bump
+        return limits
 
     @staticmethod
     def _consume_orphan_exception(task: asyncio.Task) -> None:

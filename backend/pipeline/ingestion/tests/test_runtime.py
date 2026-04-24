@@ -1021,6 +1021,80 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(rt._feed_tasks), 0)
 
 
+class TestCalculateBranchLimits(unittest.TestCase):
+    """Water-filling apportion: sum(limits) <= total_slack, no starvation."""
+
+    CAPS = {
+        SourceType.BCFY_FEEDS: 240,
+        SourceType.BCFY_CALLS: 600,
+        SourceType.OPENMHZ: 900,
+    }
+
+    def test_cold_start_bounds_sum_at_total_slack(self) -> None:
+        # max_feeds_per_worker=250, all held=0 → sum must be exactly 250.
+        held = dict.fromkeys(self.CAPS, 0)
+        limits = NormalizerRuntime._calculate_branch_limits(250, self.CAPS, held)
+        self.assertEqual(sum(limits.values()), 250)
+        self.assertTrue(all(v >= 0 for v in limits.values()))
+
+    def test_plan_target_800_bounds_sum(self) -> None:
+        # max_feeds_per_worker=800 (scaling-plan target), all held=0.
+        held = dict.fromkeys(self.CAPS, 0)
+        limits = NormalizerRuntime._calculate_branch_limits(800, self.CAPS, held)
+        self.assertEqual(sum(limits.values()), 800)
+
+    def test_slack_exceeds_cap_sum_clamps_at_caps(self) -> None:
+        # total_slack=2000 > sum(caps)=1740 → each branch gets its cap,
+        # leftover slack is unassigned.
+        held = dict.fromkeys(self.CAPS, 0)
+        limits = NormalizerRuntime._calculate_branch_limits(2000, self.CAPS, held)
+        self.assertEqual(limits[SourceType.BCFY_FEEDS], 240)
+        self.assertEqual(limits[SourceType.BCFY_CALLS], 600)
+        self.assertEqual(limits[SourceType.OPENMHZ], 900)
+        self.assertEqual(sum(limits.values()), 1740)
+
+    def test_type_at_cap_yields_zero_for_that_branch(self) -> None:
+        held = {
+            SourceType.BCFY_FEEDS: 240,
+            SourceType.BCFY_CALLS: 0,
+            SourceType.OPENMHZ: 0,
+        }
+        limits = NormalizerRuntime._calculate_branch_limits(250, self.CAPS, held)
+        self.assertEqual(limits[SourceType.BCFY_FEEDS], 0)
+        self.assertEqual(sum(limits.values()), 250)
+
+    def test_small_headroom_branch_redistributes_to_larger(self) -> None:
+        # bcfy_feeds has only 10 headroom; slack=300 must go mostly to
+        # bcfy_calls + openmhz.
+        held = {
+            SourceType.BCFY_FEEDS: 230,
+            SourceType.BCFY_CALLS: 0,
+            SourceType.OPENMHZ: 0,
+        }
+        limits = NormalizerRuntime._calculate_branch_limits(300, self.CAPS, held)
+        self.assertLessEqual(limits[SourceType.BCFY_FEEDS], 10)
+        self.assertEqual(sum(limits.values()), 300)
+
+    def test_zero_slack_returns_all_zeros(self) -> None:
+        held = dict.fromkeys(self.CAPS, 0)
+        limits = NormalizerRuntime._calculate_branch_limits(0, self.CAPS, held)
+        self.assertEqual(limits, dict.fromkeys(self.CAPS, 0))
+
+    def test_negative_held_defensive_does_not_overrun_cap(self) -> None:
+        # Corrupted state: decrement bug made held negative. max() clamp
+        # must prevent the "cap - held > cap" hazard.
+        held = {
+            SourceType.BCFY_FEEDS: -5,
+            SourceType.BCFY_CALLS: 0,
+            SourceType.OPENMHZ: 0,
+        }
+        limits = NormalizerRuntime._calculate_branch_limits(1000, self.CAPS, held)
+        # Each branch still bounded at its cap even with corrupted held.
+        self.assertLessEqual(limits[SourceType.BCFY_FEEDS], 240)
+        self.assertLessEqual(limits[SourceType.BCFY_CALLS], 600)
+        self.assertLessEqual(limits[SourceType.OPENMHZ], 900)
+
+
 class TestBatchedSigtermRelease(unittest.IsolatedAsyncioTestCase):
     """Tests for the batched+jittered SIGTERM release path."""
 
