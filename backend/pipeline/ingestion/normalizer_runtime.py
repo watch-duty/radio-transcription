@@ -946,12 +946,16 @@ class NormalizerRuntime:
         # see their lease as NULL during a progress update and trigger an
         # accidental fence violation (os._exit(1)).
         #
-        # Release in batches of ~50 with 0-2 s jitter between batches so a
-        # fleet-wide SIGTERM (e.g. MIG scale-in) doesn't flip every VM's
-        # worker's ~1,500 leases to 'unclaimed' in one instant, triggering a
-        # fleet-wide polling stampede at the next leasing cycle. Each call
-        # uses pool.execute so asyncpg auto-commits per batch — explicit
-        # transaction brackets are not needed. See scaling-plan §8.
+        # Release in batches (default 50 rows) with a small per-batch jitter
+        # (default 0-0.5 s) so a fleet-wide SIGTERM (e.g. MIG scale-in)
+        # doesn't flip every VM's leases to 'unclaimed' in one instant,
+        # triggering a fleet-wide polling stampede at the next leasing
+        # cycle. Each call uses pool.execute so asyncpg auto-commits per
+        # batch — explicit transaction brackets are not needed.
+        # sigterm_release_jitter_max_sec is tunable via env var for
+        # deployments with longer graceful-termination windows; the 0.5 s
+        # default keeps worst-case total jitter bounded at higher per-
+        # worker feed counts. See scaling-plan §8.
         feed_ids = list(self._feed_tasks.keys())
         batch_size = self._normalizer_settings.sigterm_release_batch_size
         jitter_max = self._normalizer_settings.sigterm_release_jitter_max_sec
