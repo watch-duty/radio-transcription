@@ -55,6 +55,7 @@ type ListTranscriptsData = {
 } & ListTranscriptsPage;
 
 const TRANSCRIPTS_POLLING_INTERVAL_MS = 15000; // 15 seconds
+const TRANSCRIPTS_POLLING_INTERVAL_DISPLAY_STRING = `${TRANSCRIPTS_POLLING_INTERVAL_MS / 1000}s`;
 
 export function TranscriptView({
   addAlert,
@@ -653,7 +654,7 @@ export function TranscriptView({
                   }
                   sx={{ textTransform: 'none' }}
                 >
-                  {isTranscriptsPolling ? 'Refreshing...' : `Refresh (${TRANSCRIPTS_POLLING_INTERVAL_MS / 1000}s)`}
+                  {isTranscriptsPolling ? 'Refreshing...' : `Refresh (${TRANSCRIPTS_POLLING_INTERVAL_DISPLAY_STRING})`}
                 </Button>
               )}
             </Box>
