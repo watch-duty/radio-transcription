@@ -2,7 +2,7 @@
 
 import logging
 from collections.abc import Iterator
-from typing import Any, override
+from typing import Any, Literal, override
 
 import apache_beam as beam
 from apache_beam.io.gcp.pubsub import PubsubMessage
@@ -47,7 +47,10 @@ class ParseAndKeyFn(beam.DoFn):
     @override
     def process(
         self, element: PubsubMessage, *args: Any, **kwargs: Any
-    ) -> Iterator[tuple[str, ChunkMetadata] | beam.pvalue.TaggedOutput]:
+    ) -> Iterator[
+        tuple[str, ChunkMetadata]
+        | beam.pvalue.TaggedOutput[Literal["transcription_dlq"], dict[str, Any]]
+    ]:
         """Extracts the feed_id and parses the protobuf payload."""
 
         def _raise(msg: str) -> None:
