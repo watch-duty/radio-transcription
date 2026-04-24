@@ -177,21 +177,26 @@ export function TranscriptView({
     initialPageParam: {
       order: 'desc',
     },
-    getNextPageParam: (page) => {
+    // Note: TanStack Query automatically manages the bidirectional pagination state for us.
+    // - `getNextPageParam` is always passed the LAST page in the cache (oldest) to continue scanning backward.
+    // - `getPreviousPageParam` is always passed the FIRST page in the cache (newest) to continue scanning forward.
+    // Because each page stores its own `nextToken` and `order`, the framework naturally isolates the 
+    // forward and backward pagination bookmarks without us needing to maintain separate local state for them.
+    getNextPageParam: (lastPage) => {
       // We only fetch older transcripts (descending order). Because the initial
       // page is in descending order, we can just use the nextToken.
-      if (page.order !== 'desc') return undefined;
-      return page.nextToken
-        ? { order: 'desc', nextToken: page.nextToken }
+      if (lastPage.order !== 'desc') return undefined;
+      return lastPage.nextToken
+        ? { order: 'desc', nextToken: lastPage.nextToken }
         : undefined;
     },
-    getPreviousPageParam: (page) => {
+    getPreviousPageParam: (firstPage) => {
       // 1. If no timestamp was searched, we are at the "live" head. No newer transcripts exist.
       if (!searchedTimestamp) return undefined;
       // 2. If we are already fetching newer transcripts ('asc') and hit the end, stop.
-      if (page.order === 'asc') {
-        return page.nextToken
-          ? { order: 'asc', nextToken: page.nextToken }
+      if (firstPage.order === 'asc') {
+        return firstPage.nextToken
+          ? { order: 'asc', nextToken: firstPage.nextToken }
           : undefined;
       }
       // 3. Initial load (order === 'desc'): Start fetching newer transcripts from the base timestamp.
