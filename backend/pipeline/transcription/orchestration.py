@@ -35,11 +35,9 @@ from backend.pipeline.transcription.datatypes import (
     TranscribeAudioConfig,
 )
 from backend.pipeline.transcription.options import TranscriptionOptions
-from backend.pipeline.transcription.ordered_stitcher import (
+from backend.pipeline.transcription.stateful_transforms import (
     OrderedBypassFn,
     OrderedStitchAudioFn,
-)
-from backend.pipeline.transcription.stitcher import (
     TranscribeAudioFn,
 )
 from backend.pipeline.transcription.transforms import (
@@ -182,6 +180,7 @@ def get_pipeline(
             ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
         )
         stitching_main = stitching_results.main
+        dlq_list.append(stitching_results[DEAD_LETTER_QUEUE_TAG])
 
     transcripts = stitching_main | "TranscribeAudio" >> beam.ParDo(
         TranscribeAudioFn(

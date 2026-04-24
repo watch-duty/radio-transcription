@@ -41,6 +41,9 @@ from backend.pipeline.transcription.vads import (
 )
 
 logger = logging.getLogger(__name__)
+logger = logging.LoggerAdapter(
+    logger, {"system": "transcription", "component": "audio-processor"}
+)
 
 
 def get_gcs_client() -> storage.Client:

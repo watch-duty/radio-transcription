@@ -22,6 +22,9 @@ from backend.pipeline.transcription.enums import VadType
 from backend.pipeline.transcription.utils import ConfigBase
 
 logger = logging.getLogger(__name__)
+logger = logging.LoggerAdapter(
+    logger, {"system": "transcription", "component": "vad"}
+)
 
 
 class VoiceActivityDetector(abc.ABC):

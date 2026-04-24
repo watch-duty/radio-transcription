@@ -9,6 +9,9 @@ from backend.pipeline.transcription.datatypes import (
 )
 
 logger = logging.getLogger(__name__)
+logger = logging.LoggerAdapter(
+    logger, {"system": "transcription", "component": "sequence-buffer"}
+)
 
 
 class SequenceBuffer:

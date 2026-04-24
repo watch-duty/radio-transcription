@@ -144,9 +144,13 @@ class AddEventTimestamp(beam.DoFn):
                     (
                         feed_id,
                         ChunkMetadata(
-                            chunk_proto.gcs_uri,
-                            chunk_proto.session_id,
-                            chunk_proto.duration_ms,
+                            gcs_uri=chunk_proto.gcs_uri,
+                            session_id=chunk_proto.session_id,
+                            duration_ms=chunk_proto.duration_ms,
+                            feed_metadata=FeedMetadata(
+                                feed_name=chunk_proto.feed_name,
+                                external_id=chunk_proto.external_id,
+                            ),
                         ),
                     ),
                     timestamp_sec,
