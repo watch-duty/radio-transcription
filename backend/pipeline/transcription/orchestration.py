@@ -35,7 +35,7 @@ from backend.pipeline.transcription.datatypes import (
     TranscribeAudioConfig,
 )
 from backend.pipeline.transcription.options import TranscriptionOptions
-from backend.pipeline.transcription.ordered_stitcher import (
+from backend.pipeline.transcription.stateful_transforms import (
     OrderedBypassFn,
     OrderedStitchAudioFn,
     TranscribeAudioFn,
