@@ -175,17 +175,26 @@ export function TranscriptView({
       order: 'desc',
     },
     getNextPageParam: (page) => {
+      // We only fetch older transcripts (descending order). Because the initial
+      // page is in descending order, we can just use the nextToken.
       if (page.order !== 'desc') return undefined;
       return page.nextToken
         ? { order: 'desc', nextToken: page.nextToken }
         : undefined;
     },
     getPreviousPageParam: (page) => {
+      // 1. If no timestamp was searched, we are at the "live" head. No newer transcripts exist.
       if (!searchedTimestamp) return undefined;
-      if (page.order === 'asc' && !page.nextToken) return undefined;
+      // 2. If we are already fetching newer transcripts ('asc') and hit the end, stop.
+      if (page.order === 'asc') {
+        return page.nextToken
+          ? { order: 'asc', nextToken: page.nextToken }
+          : undefined;
+      }
+      // 3. Initial load (order === 'desc'): Start fetching newer transcripts from the base timestamp.
       return {
         order: 'asc',
-        nextToken: page.order === 'asc' ? page.nextToken : undefined,
+        nextToken: undefined,
       };
     },
     enabled: !!token && !!searchedFeedId,
