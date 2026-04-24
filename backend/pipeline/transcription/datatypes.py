@@ -155,7 +155,7 @@ class StitchAudioConfig:
     vad_pre_roll_ms: int
     vad_post_roll_ms: int
     route_to_dlq: bool = True
-    backfill_lateness_threshold_ms: int = 5000
+    backfill_lateness_threshold_ms: int = 300000
     bypass_stitching: bool = False
 
     def __post_init__(self) -> None:

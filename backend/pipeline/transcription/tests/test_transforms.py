@@ -20,6 +20,7 @@ from backend.pipeline.transcription.datatypes import (
     ChunkMetadata,
     FeedMetadata,
     FlushRequest,
+    OrderRestorerConfig,
     StitchAudioConfig,
     TimeRange,
     TranscribeAudioConfig,
@@ -29,6 +30,7 @@ from backend.pipeline.transcription.enums import TranscriberType, VadType
 from backend.pipeline.transcription.stitcher import (
     TranscribeAudioFn,
 )
+from backend.pipeline.transcription.ordered_stitcher import OrderedBypassFn
 from backend.pipeline.transcription.transcribers import Transcriber
 from backend.pipeline.transcription.transforms import (
     AddEventTimestamp,
@@ -332,4 +334,46 @@ class SerializeAndEnrichTest(unittest.TestCase):
                 assert protos[1].transcript == "Hello world again"
                 assert protos[1].feed_name == "Test Feed Name"
 
+            assert_that(results, assert_results)
+
+
+class OrderedBypassTest(unittest.TestCase):
+    @patch("backend.pipeline.transcription.ordered_stitcher.AudioProcessor")
+    def test_ordered_bypass_yields_correct_offsets(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that OrderedBypassFn sets end_audio_offset_ms correctly."""
+        mock_processor_inst = mock_audio_processor.return_value
+        chunk_data = MagicMock()
+        chunk_data.duration_ms = 1000
+        chunk_data.audio = np.zeros(16000, dtype=np.int16)
+        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        stitch_config = get_test_stitch_config()
+
+        options = PipelineOptions(
+            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+        )
+        with BeamTestPipeline(options=options) as p:
+            metadata = ChunkMetadata(
+                gcs_uri="gs://test-bucket/path/to/test.flac",
+                session_id="mock-session-id",
+                duration_ms=1000,
+            )
+            
+            elements = p | beam.Create(
+                [("test-feed", metadata)]
+            )
+            
+            results = elements | beam.ParDo(
+                OrderedBypassFn(order_config=order_config, stitch_config=stitch_config)
+            )
+            
+            def assert_results(msgs):
+                assert len(msgs) == 1
+                feed_id, request = msgs[0]
+                assert feed_id == "test-feed"
+                assert request.end_audio_offset_ms == 1000
+                
             assert_that(results, assert_results)

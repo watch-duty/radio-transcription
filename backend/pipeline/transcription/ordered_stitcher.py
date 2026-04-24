@@ -365,7 +365,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                             missing_prior_context=False,
                             missing_post_context=False,
                             start_audio_offset_ms=0,
-                            end_audio_offset_ms=None,
+                            end_audio_offset_ms=chunk_data.duration_ms,
                             transmission_id=generate_transmission_id(
                                 curr_context.session_id or "unknown",
                                 chunk.timestamp_ms,
@@ -703,7 +703,7 @@ class OrderedBypassFn(beam.DoFn):
                         missing_prior_context=False,
                         missing_post_context=False,
                         start_audio_offset_ms=0,
-                        end_audio_offset_ms=None,
+                        end_audio_offset_ms=chunk_data.duration_ms,
                         transmission_id=generate_transmission_id(
                             session_id,
                             chunk.timestamp_ms,
