@@ -10,11 +10,11 @@ import numpy as np
 import soundfile as sf
 
 from backend.pipeline.transcription.audio.audio_processor import AudioProcessor
-from backend.pipeline.transcription.models.datatypes import (
+from backend.pipeline.transcription.common.datatypes import (
     AudioChunkData,
     TimeRange,
 )
-from backend.pipeline.transcription.models.enums import VadType
+from backend.pipeline.transcription.common.enums import VadType
 
 logger = logging.getLogger(__name__)
 

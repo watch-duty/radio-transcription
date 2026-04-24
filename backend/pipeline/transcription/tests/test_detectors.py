@@ -5,7 +5,7 @@ import numpy as np
 
 from backend.pipeline.common.constants import SAMPLE_RATE_HZ
 from backend.pipeline.transcription.audio.detectors import AcousticGateDetector
-from backend.pipeline.transcription.models.datatypes import TimeRange
+from backend.pipeline.transcription.common.datatypes import TimeRange
 
 
 class AcousticGateDetectorTest(unittest.TestCase):

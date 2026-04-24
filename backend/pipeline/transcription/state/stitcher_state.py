@@ -2,7 +2,7 @@
 
 import logging
 
-from backend.pipeline.transcription.models.datatypes import (
+from backend.pipeline.transcription.common.datatypes import (
     AppendBufferAction,
     AudioChunkData,
     DropAction,

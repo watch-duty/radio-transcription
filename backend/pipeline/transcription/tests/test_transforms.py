@@ -16,10 +16,10 @@ from apache_beam.testing.util import assert_that, equal_to
 from apache_beam.transforms.window import TimestampedValue
 
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
-from backend.pipeline.transcription.models.constants import (
+from backend.pipeline.transcription.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
 )
-from backend.pipeline.transcription.models.datatypes import (
+from backend.pipeline.transcription.common.datatypes import (
     AudioChunkData,
     ChunkMetadata,
     FeedMetadata,
@@ -30,7 +30,7 @@ from backend.pipeline.transcription.models.datatypes import (
     TranscribeAudioConfig,
     TranscriptionResult,
 )
-from backend.pipeline.transcription.models.enums import TranscriberType, VadType
+from backend.pipeline.transcription.common.enums import TranscriberType, VadType
 from backend.pipeline.transcription.services.transcribers import Transcriber
 from backend.pipeline.transcription.transforms.stateful import (
     OrderedBypassFn,

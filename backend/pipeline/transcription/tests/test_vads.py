@@ -9,7 +9,7 @@ from backend.pipeline.transcription.audio.vads import (
     TenVadPlugin,
     get_vad_plugin,
 )
-from backend.pipeline.transcription.models.enums import VadType
+from backend.pipeline.transcription.common.enums import VadType
 
 
 class TestVadPlugins(unittest.TestCase):

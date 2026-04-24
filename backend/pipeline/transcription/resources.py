@@ -9,7 +9,7 @@ from typing import Any
 from apache_beam.utils.shared import Shared
 
 from backend.pipeline.transcription.audio.vads import VoiceActivityDetector
-from backend.pipeline.transcription.models.enums import TranscriberType, VadType
+from backend.pipeline.transcription.common.enums import TranscriberType, VadType
 from backend.pipeline.transcription.services.transcribers import Transcriber
 
 logger = logging.getLogger(__name__)

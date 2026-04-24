@@ -19,7 +19,7 @@ from apache_beam.options.pipeline_options import (
     StandardOptions,
 )
 
-from backend.pipeline.transcription.models.constants import (
+from backend.pipeline.transcription.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
     DEFAULT_MAX_TRANSMISSION_DURATION_MS,
     DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
@@ -29,7 +29,7 @@ from backend.pipeline.transcription.models.constants import (
     DEFAULT_VAD_PRE_ROLL_MS,
     MAIN_TAG,
 )
-from backend.pipeline.transcription.models.datatypes import (
+from backend.pipeline.transcription.common.datatypes import (
     OrderRestorerConfig,
     StitchAudioConfig,
     TranscribeAudioConfig,

@@ -9,7 +9,7 @@ import numpy as np
 from scipy.signal import stft
 from scipy.stats import gmean
 
-from backend.pipeline.transcription.models.constants import (
+from backend.pipeline.transcription.common.constants import (
     DEFAULT_SED_FFT_SIZE,
     DEFAULT_SED_HOP_SIZE,
 )

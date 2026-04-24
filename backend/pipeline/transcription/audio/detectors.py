@@ -8,7 +8,7 @@ from backend.pipeline.transcription.audio.dsp import (
     compute_rms_energy,
     compute_spectral_flatness,
 )
-from backend.pipeline.transcription.models.constants import (
+from backend.pipeline.transcription.common.constants import (
     BACKGROUND_NOISE_PERCENTILE,
     DEFAULT_AGD_DEBOUNCE_WINDOW_SEC,
     DEFAULT_AGD_ENERGY_THRESHOLD,
@@ -24,7 +24,7 @@ from backend.pipeline.transcription.models.constants import (
     MEDIAN_FILTER_VOTING_THRESHOLD,
     MIN_AGD_FFT_SIZE,
 )
-from backend.pipeline.transcription.models.datatypes import TimeRange
+from backend.pipeline.transcription.common.datatypes import TimeRange
 
 logger = logging.getLogger(__name__)
 

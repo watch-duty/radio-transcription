@@ -22,11 +22,11 @@ from apache_beam.utils.timestamp import Timestamp
 from backend.pipeline.common.constants import MS_PER_SECOND, SAMPLE_RATE_HZ
 from backend.pipeline.common.storage.gcs_uploader import GCSAudioUploader
 from backend.pipeline.transcription.audio.audio_processor import AudioProcessor
-from backend.pipeline.transcription.models.constants import (
+from backend.pipeline.transcription.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
     DEFAULT_FLOAT_TOLERANCE_MS,
 )
-from backend.pipeline.transcription.models.datatypes import (
+from backend.pipeline.transcription.common.datatypes import (
     AppendBufferAction,
     BufferedChunk,
     ChunkMetadata,

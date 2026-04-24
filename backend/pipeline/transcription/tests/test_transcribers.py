@@ -7,10 +7,10 @@ from unittest.mock import MagicMock, call, patch
 from google.api_core.retry import Retry
 
 from backend.pipeline.common.constants import BYTES_PER_SECOND_16KHZ_MONO
-from backend.pipeline.transcription.models.constants import (
+from backend.pipeline.transcription.common.constants import (
     CHIRP_UNINTELLIGIBLE_MARKER,
 )
-from backend.pipeline.transcription.models.enums import TranscriberType
+from backend.pipeline.transcription.common.enums import TranscriberType
 from backend.pipeline.transcription.services.transcribers import (
     ChirpConfig,
     GoogleChirpV3Transcriber,

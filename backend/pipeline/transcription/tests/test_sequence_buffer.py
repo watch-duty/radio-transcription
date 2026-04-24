@@ -1,6 +1,6 @@
 import unittest
 
-from backend.pipeline.transcription.models.datatypes import OrderRestorerConfig
+from backend.pipeline.transcription.common.datatypes import OrderRestorerConfig
 from backend.pipeline.transcription.state.sequence_buffer import (
     BufferedChunk,
     SequenceBuffer,

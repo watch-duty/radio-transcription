@@ -27,7 +27,7 @@ from backend.pipeline.transcription.audio.vads import (
     VoiceActivityDetector,
     get_vad_plugin,
 )
-from backend.pipeline.transcription.models.constants import (
+from backend.pipeline.transcription.common.constants import (
     DEFAULT_SED_FFT_SIZE,
     DEFAULT_SED_HOP_SIZE,
     HIGHPASS_FILTER_FREQ,
@@ -36,8 +36,8 @@ from backend.pipeline.transcription.models.constants import (
     VAD_FLATNESS_NOISE_THRESHOLD,
     VAD_RMS_SILENCE_THRESHOLD,
 )
-from backend.pipeline.transcription.models.datatypes import AudioChunkData
-from backend.pipeline.transcription.models.enums import VadType
+from backend.pipeline.transcription.common.datatypes import AudioChunkData
+from backend.pipeline.transcription.common.enums import VadType
 from backend.pipeline.transcription.resources import SharedResources
 
 logger = logging.getLogger(__name__)
