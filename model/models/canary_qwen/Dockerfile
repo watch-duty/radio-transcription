@@ -1,4 +1,4 @@
-FROM nvcr.io/nvidia/nemo:26.02.00
+FROM nvcr.io/nvidia/nemo:24.12
 
 WORKDIR /app
 

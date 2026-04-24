@@ -63,6 +63,7 @@ services:
       dockerfile: model/models/canary_qwen/Dockerfile
     ports:
       - "8001:8000"
+    ipc: host
     deploy:
       resources:
         reservations:
