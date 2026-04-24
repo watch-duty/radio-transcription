@@ -192,6 +192,16 @@ JOIN feed_properties fpi ON fpi.feed_id = leased.id
 # Same md5 ramp filter as the primary path — ramp changes affect both
 # branches symmetrically, which keeps rollback semantics deterministic.
 #
+# Known performance limit: ORDER BY (retry_after, id) is served by the
+# idx_feeds_failing_retryable partial index for the failing branch, but
+# the active-abandoned branch relies on idx_feeds_active (id) followed by
+# a filter on last_heartbeat + a sort. At the structurally-small volumes
+# the design assumes (≤ ~500 failing-or-abandoned rows at a time, drained
+# by pg_cron), the sort stays in work_mem and is cheap. If either volume
+# ever spikes (pg_cron paused, failure storm), this query becomes an
+# expensive seq/sort path — the right follow-up is a partial index on
+# (retry_after, id) WHERE status='failing' OR status='active'.
+#
 # MATERIALIZED is non-negotiable for the same planner reason as the primary
 # CTE: without it, the planner can inline the CTE into the outer UPDATE and
 # re-evaluate the SKIP LOCKED subquery per outer row, which would bypass

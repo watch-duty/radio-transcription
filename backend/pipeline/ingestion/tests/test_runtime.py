@@ -279,6 +279,46 @@ class TestLeasingLoopOrphanedTask(unittest.IsolatedAsyncioTestCase):
             "no branch should receive a negative LIMIT",
         )
 
+    async def test_already_done_orphan_rerelease_does_not_leak(self) -> None:
+        """Done task at re-lease time must be cleaned up, not silently dropped.
+
+        Regression: if the old task finished between `_reap_completed_tasks`
+        and the next `acquire_feeds_batch` return, `existing.done()` is True
+        and the cancellation branch used to short-circuit — which skipped
+        the _held_by_type decrement and left the old task unreachable from
+        the reaper (overwritten in _feed_tasks). That leaked 1 slot of
+        that source_type per occurrence.
+        """
+        rt = _make_runtime()
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+
+        # Pre-existing DONE task for _FEED. Use a task that has already
+        # completed (no exception).
+        done_task: asyncio.Task[None] = asyncio.create_task(asyncio.sleep(0))
+        await done_task
+        assert done_task.done()
+        rt._feed_tasks[_FEED_ID] = done_task
+        rt._task_source_types[_FEED_ID] = SourceType.BCFY_FEEDS
+        rt._held_by_type[SourceType.BCFY_FEEDS] = 1
+
+        rt._store.acquire_feeds_batch.side_effect = [
+            [_FEED],
+            asyncio.CancelledError,
+        ]
+        rt._store.acquire_feeds_recovery.return_value = []
+
+        with mock.patch.object(
+            rt, "_process_feed", new_callable=mock.AsyncMock
+        ):
+            rt._shutdown.set()
+            await rt._leasing_loop()
+
+        # One feed held → count is 1, not 2 (would be 2 before the fix
+        # because the done-task path skipped the decrement).
+        self.assertEqual(rt._held_by_type[SourceType.BCFY_FEEDS], 1)
+
     async def test_orphan_rerelease_does_not_leak_held_by_type(self) -> None:
         """Re-leasing a held feed must not double-count _held_by_type.
 
@@ -1031,10 +1071,18 @@ class TestBatchedSigtermRelease(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(calls[1][0][1]), 50)
         self.assertEqual(len(calls[2][0][1]), 20)
 
-        # Exactly 2 jitter sleeps — between batches, not after the last.
-        # (Excludes the one sleep the cancellation-await path may do.)
-        jitter_sleeps = [s for s in sleep_calls if 0 <= s <= 2.0]
-        self.assertGreaterEqual(len(jitter_sleeps), 2)
+        # One jitter sleep (pre-drain, before the first batch), not per
+        # batch. 120 feeds / batch=50 = 3 batches, but we only want a
+        # single fleet-wide-stagger sleep regardless of batch count so
+        # shutdown duration stays deterministic.
+        jitter_sleeps = [
+            s for s in sleep_calls
+            if 0 <= s <= rt._normalizer_settings.sigterm_release_jitter_max_sec
+        ]
+        self.assertEqual(
+            len(jitter_sleeps), 1,
+            f"expected exactly 1 pre-drain jitter sleep; saw {sleep_calls}",
+        )
 
         # Parallel state scrubbed.
         self.assertEqual(rt._task_source_types, {})

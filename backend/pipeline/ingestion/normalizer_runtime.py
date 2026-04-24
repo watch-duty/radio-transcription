@@ -294,33 +294,46 @@ class NormalizerRuntime:
                     # max_feeds_per_worker=250, three branches of 250 each
                     # could return 740 feeds in one call and blow past the
                     # worker budget by 3x. Apportion total_slack across
-                    # branches via round-robin (+1 to each active branch
-                    # per round until the slack is spent or each branch
-                    # hits its per-type headroom), which guarantees
-                    # sum(limits.values()) <= total_slack and also avoids
-                    # starving any one type. max() on per-type headroom is
-                    # defensive against a negative-held accounting bug
+                    # branches by water-filling: sort by ascending
+                    # headroom, give each branch min(headroom, fair_share)
+                    # where fair_share is `remaining // remaining_branches`.
+                    # Guarantees sum(limits.values()) <= total_slack and
+                    # redistributes any slack a capped branch couldn't
+                    # absorb to the branches behind it. O(N log N) on a
+                    # 3-element dict — effectively O(1). max() on headroom
+                    # is defensive against a negative-held accounting bug
                     # (which would otherwise make cap - held > cap).
                     headroom: dict[SourceType, int] = {
                         t: max(0, caps[t] - self._held_by_type[t])
                         for t in caps
                     }
                     limits: dict[SourceType, int] = dict.fromkeys(caps, 0)
-                    remaining = total_slack
-                    while remaining > 0:
-                        progressed = False
-                        for t in caps:
+                    # Sort types by ascending headroom so tight branches
+                    # are sized first; the loop's integer-division share
+                    # naturally widens for later branches as preceding
+                    # branches consume less than their "fair" slice.
+                    sorted_types = sorted(caps, key=lambda t: headroom[t])
+                    remaining_slack = total_slack
+                    remaining_branches = len(sorted_types)
+                    for t in sorted_types:
+                        share = remaining_slack // remaining_branches
+                        limits[t] = min(headroom[t], share)
+                        remaining_slack -= limits[t]
+                        remaining_branches -= 1
+                    # Integer-division leaves at most N-1 units of slack
+                    # unassigned (the remainder). Give them to the
+                    # largest-headroom branches that still have room.
+                    if remaining_slack > 0:
+                        for t in reversed(sorted_types):
+                            if remaining_slack == 0:
+                                break
                             if limits[t] < headroom[t]:
-                                limits[t] += 1
-                                remaining -= 1
-                                progressed = True
-                                if remaining == 0:
-                                    break
-                        if not progressed:
-                            # Every branch is already at its per-type
-                            # headroom — total_slack exceeded the
-                            # cap-summed ceiling, nothing more to allocate.
-                            break
+                                bump = min(
+                                    headroom[t] - limits[t],
+                                    remaining_slack,
+                                )
+                                limits[t] += bump
+                                remaining_slack -= bump
                     logger.info(
                         "Attempting to acquire feeds "
                         "(slack=%d, caps=%s, held=%s, limits=%s, total_ask=%d)",
@@ -359,33 +372,45 @@ class NormalizerRuntime:
 
                     for lease in leases:
                         existing = self._feed_tasks.get(lease["id"])
-                        if existing is not None and not existing.done():
-                            # A stale heartbeat allowed the DB to re-lease a
-                            # feed we already hold.  The old task still runs
-                            # with its original (now-outdated) fencing token.
-                            # If left alive it will eventually fail a fenced
-                            # write and call os._exit(1), killing the whole
-                            # worker — including the healthy new task.
-                            # Cancel first; the CancelledError handler in
-                            # _process_feed exits cleanly without DB writes.
-                            logger.warning(
-                                "Cancelling orphaned task for feed %s "
-                                "(re-leased with token %d)",
-                                lease["name"],
-                                lease["fencing_token"],
-                            )
-                            existing.cancel()
-                            # Clean up accounting for the cancelled task
-                            # synchronously: we're about to overwrite
-                            # _feed_tasks[lease["id"]] below, which makes
-                            # the old task unreachable from the reaper's
-                            # iteration over self._feed_tasks.items(). If
-                            # we waited for the reaper, _held_by_type
-                            # would leak by 1 for this source_type every
-                            # time re-leasing occurs, structurally
-                            # starving the per-type cap over time. Decrement
-                            # now; the `+= 1` below brings the counter back
-                            # to the correct "1 per held feed" state.
+                        if existing is not None:
+                            # Whether or not `existing` is already .done(),
+                            # it's about to be overwritten in _feed_tasks
+                            # below and become unreachable from the
+                            # reaper's iteration over
+                            # self._feed_tasks.items(). Missing the cleanup
+                            # in either case would leak one slot of this
+                            # source_type's cap per orphan-replace cycle.
+                            # Branches:
+                            #   - not done: still running with an outdated
+                            #     fencing token; if left alive it would
+                            #     eventually fail a fenced write and call
+                            #     os._exit(1). Cancel it (the
+                            #     CancelledError path in _process_feed
+                            #     exits cleanly without DB writes).
+                            #   - done: task already exited between our
+                            #     last reap call and acquire_feeds_batch
+                            #     returning. Accounting cleanup is still
+                            #     required for the same reason.
+                            if not existing.done():
+                                logger.warning(
+                                    "Cancelling orphaned task for feed %s "
+                                    "(re-leased with token %d)",
+                                    lease["name"],
+                                    lease["fencing_token"],
+                                )
+                                existing.cancel()
+                            else:
+                                logger.info(
+                                    "Reaping already-done task for feed %s "
+                                    "inline during re-lease (reaper won't see it "
+                                    "after overwrite)",
+                                    lease["name"],
+                                )
+                            # Decrement the old task's per-type slot so the
+                            # `+= 1` below brings the counter back to
+                            # exactly "1 per held feed", not "2 per held
+                            # feed where the old one is invisible to the
+                            # reaper". max(0, ...) is defensive.
                             old_src = self._task_source_types.get(lease["id"])
                             if (
                                 old_src is not None
@@ -394,13 +419,13 @@ class NormalizerRuntime:
                                 self._held_by_type[old_src] = max(
                                     0, self._held_by_type[old_src] - 1,
                                 )
-                            # The reaper won't see `existing` anymore (it's
-                            # no longer in _feed_tasks), so it can't call
-                            # task.exception() to consume the eventual
-                            # CancelledError (or a real exception). Hook a
-                            # done-callback to do that job and keep the
-                            # asyncio "Task exception was never retrieved"
-                            # warning out of the logs.
+                            # Consume the task's exception so asyncio
+                            # doesn't log "Task exception was never
+                            # retrieved" at GC time. For an already-done
+                            # task add_done_callback fires synchronously;
+                            # for one we just cancelled it fires after
+                            # cancel propagates. Either way the reaper
+                            # won't get to this task (it's unreachable).
                             existing.add_done_callback(
                                 self._consume_orphan_exception,
                             )
@@ -946,26 +971,39 @@ class NormalizerRuntime:
         # see their lease as NULL during a progress update and trigger an
         # accidental fence violation (os._exit(1)).
         #
-        # Release in batches (default 50 rows) with a small per-batch jitter
-        # (default 0-0.5 s) so a fleet-wide SIGTERM (e.g. MIG scale-in)
-        # doesn't flip every VM's leases to 'unclaimed' in one instant,
-        # triggering a fleet-wide polling stampede at the next leasing
-        # cycle. Each call uses pool.execute so asyncpg auto-commits per
-        # batch — explicit transaction brackets are not needed.
-        # sigterm_release_jitter_max_sec is tunable via env var for
-        # deployments with longer graceful-termination windows; the 0.5 s
-        # default keeps worst-case total jitter bounded at higher per-
-        # worker feed counts. See scaling-plan §8.
+        # Release leases in batches (default 50 rows) after one pre-drain
+        # jitter sleep. The jitter's purpose is fleet-wide stagger on
+        # SIGTERM (e.g. MIG scale-in): each node picks a different random
+        # start offset, so the fleet's UNCLAIMED flips spread across
+        # ~jitter_max seconds even though each node drains at max speed
+        # once it starts. Sleeping once — instead of between every batch —
+        # makes a node's shutdown duration deterministic and linear only
+        # in batch count (not random), which keeps shutdown safely inside
+        # k8s-style termination windows even at higher per-worker feed
+        # counts. See scaling-plan §8 (adapted: per-node stagger via
+        # entry-time jitter rather than per-batch jitter).
         feed_ids = list(self._feed_tasks.keys())
         batch_size = self._normalizer_settings.sigterm_release_batch_size
         jitter_max = self._normalizer_settings.sigterm_release_jitter_max_sec
         logger.info(
-            "Releasing %d leases for worker %s in batches of %d (jitter max %.1fs)",
+            "Releasing %d leases for worker %s in batches of %d "
+            "(pre-drain jitter max %.2fs)",
             len(feed_ids),
             self._normalizer_settings.worker_id,
             batch_size,
             jitter_max,
         )
+        if feed_ids and jitter_max > 0:
+            # Intentional break of the file-level "no asyncio.sleep"
+            # invariant (L68): the invariant exists so the leasing loop
+            # stays SIGTERM-interruptible; inside _shutdown_sequence we
+            # ARE the drain path and interruption is moot.
+            # _sleep_or_shutdown would collapse to 0 s (shutdown is
+            # already set) and defeat the stagger purpose. Non-crypto
+            # jitter for fleet-wide stagger, not security.
+            await asyncio.sleep(
+                random.uniform(0, jitter_max),  # noqa: S311
+            )
         total_released = 0
         try:
             for i in range(0, len(feed_ids), batch_size):
@@ -975,19 +1013,6 @@ class NormalizerRuntime:
                     chunk,
                 )
                 total_released += released
-                # Intentional break of the file-level "no asyncio.sleep"
-                # invariant (L68): the invariant exists so the leasing loop
-                # stays SIGTERM-interruptible; inside _shutdown_sequence
-                # we ARE the drain path and interruption is moot.
-                # _sleep_or_shutdown would collapse to 0 s (shutdown is
-                # already set) and defeat the stagger purpose.
-                if i + batch_size < len(feed_ids) and jitter_max > 0:
-                    # Non-crypto jitter for fleet-wide stagger — intent is
-                    # to spread UNCLAIMED flips across scale-in SIGTERMs,
-                    # not to secure anything.
-                    await asyncio.sleep(
-                        random.uniform(0, jitter_max),  # noqa: S311
-                    )
             logger.info(
                 "Released %d/%d leases in %d batch(es)",
                 total_released,
