@@ -887,6 +887,22 @@ class NormalizerRuntime:
         # every newly-claimed feed whose first heartbeat tick falls inside
         # the fresh window. The correct invariant is: a feed is retained
         # iff the DB row still shows our worker_id.
+        #
+        # Race tolerance: `current_worker` is a point-in-time read from
+        # within a `SELECT ... FOR UPDATE` CTE, so it is consistent at
+        # that transaction's boundary. Between this check and a later
+        # fenced write by the task itself (progress / release / failure),
+        # another party could in theory steal the lease — but that path
+        # requires the pg_cron sweep (30 s cadence, 60 s abandonment
+        # threshold) OR another worker's recovery-CTE to fire, neither
+        # of which can happen while our last_heartbeat stays < 60 s old.
+        # Fenced writes on the task side are the authoritative lease-lost
+        # detection at write time; they call update_feed_progress /
+        # release_feed / report_feed_failure with WHERE worker_id=$1 AND
+        # fencing_token=$2 and return False if our lease was taken. The
+        # existing retry_with_lease_check wrapper + _lease_lost event
+        # gracefully handles that outcome without depending on the
+        # heartbeat's retained_ids observation.
         worker_id = self._normalizer_settings.worker_id
         retained_ids = {
             r["id"] for r in results if r["current_worker"] == worker_id
