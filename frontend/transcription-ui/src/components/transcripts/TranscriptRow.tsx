@@ -10,7 +10,6 @@ import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import type { Transcript } from '@transcription/common';
 
-import { DEFAULT_DURATION_MINUTES } from '../../utils/timeUtils';
 import AudioPlayer from '../audio/AudioPlayer';
 import AlertTooltip from './AlertTooltip';
 
@@ -175,10 +174,6 @@ export function TranscriptRow({
                 url.searchParams.set(
                   'timestamp',
                   new Date(transcript.startTimestamp).getTime().toString()
-                );
-                url.searchParams.set(
-                  'duration',
-                  DEFAULT_DURATION_MINUTES.toString()
                 );
                 navigator.clipboard.writeText(url.toString());
                 triggerSnackbar('Link copied');

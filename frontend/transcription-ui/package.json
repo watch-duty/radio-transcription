@@ -31,6 +31,7 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router": "^7.14.1",
+    "react-virtuoso": "^4.18.5",
     "swagger-ui-react": "^5.32.3",
     "wavesurfer.js": "^7.12.6"
   },
@@ -48,6 +49,7 @@
     "@types/react-dom": "^19.2.3",
     "@types/swagger-ui-react": "^5.18.0",
     "@vitejs/plugin-react-swc": "^4.2.2",
+    "@vitest/ui": "4.1.4",
     "eslint": "^10.2.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react": "^7.37.5",
