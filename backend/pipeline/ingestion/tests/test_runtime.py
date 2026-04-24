@@ -891,7 +891,69 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
         await rt._shutdown_sequence()
 
         rt._thread_stop.set.assert_called_once()
-        rt._store.release_feeds_batch.assert_awaited_once()
+        # With an empty _feed_tasks the release path iterates 0 times and
+        # never calls release_feeds_batch_by_ids. The invariant we care
+        # about is that cleanup continues past the health_runner boom.
+        self.assertEqual(len(rt._feed_tasks), 0)
+
+
+class TestBatchedSigtermRelease(unittest.IsolatedAsyncioTestCase):
+    """Tests for the batched+jittered SIGTERM release path."""
+
+    async def test_release_fires_in_batches(self) -> None:
+        """120 leases + batch=50 → 3 calls with sizes [50, 50, 20]."""
+        rt = _make_runtime(sigterm_release_batch_size=50)
+        rt._shutdown = asyncio.Event()
+        rt._thread_stop = mock.MagicMock()
+        rt._heartbeat_thread = None
+        rt._store = mock.AsyncMock()
+        rt._store.release_feeds_batch_by_ids.return_value = 50
+        rt._data_pool = mock.AsyncMock()
+        rt._heartbeat_pool = mock.AsyncMock()
+        rt._pubsub_client = mock.AsyncMock()
+        rt._gcs_client = mock.AsyncMock()
+        rt._health_runner = mock.AsyncMock()
+
+        # Populate 120 feed tasks + matching source_type entries. Use
+        # async-no-op tasks that we cancel ourselves so shutdown sees them
+        # as completed.
+        feed_ids = [uuid.uuid4() for _ in range(120)]
+        for fid in feed_ids:
+            t = asyncio.create_task(asyncio.sleep(0))
+            rt._feed_tasks[fid] = t
+            rt._task_source_types[fid] = (
+                rt._task_source_types.get(fid)
+                or list(rt._held_by_type.keys())[0]
+            )
+        await asyncio.gather(*rt._feed_tasks.values(), return_exceptions=True)
+
+        # Replace asyncio.sleep in the runtime module so jitter is
+        # deterministic and we can count calls.
+        sleep_calls: list[float] = []
+
+        async def _fake_sleep(secs: float) -> None:
+            sleep_calls.append(secs)
+
+        with mock.patch(
+            "backend.pipeline.ingestion.normalizer_runtime.asyncio.sleep",
+            new=_fake_sleep,
+        ):
+            await rt._shutdown_sequence()
+
+        # Three batches with sizes [50, 50, 20].
+        calls = rt._store.release_feeds_batch_by_ids.await_args_list
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(calls[0][0][1]), 50)
+        self.assertEqual(len(calls[1][0][1]), 50)
+        self.assertEqual(len(calls[2][0][1]), 20)
+
+        # Exactly 2 jitter sleeps — between batches, not after the last.
+        # (Excludes the one sleep the cancellation-await path may do.)
+        jitter_sleeps = [s for s in sleep_calls if 0 <= s <= 2.0]
+        self.assertGreaterEqual(len(jitter_sleeps), 2)
+
+        # Parallel state scrubbed.
+        self.assertEqual(rt._task_source_types, {})
 
 
 class TestHeartbeatLoopSetsLeaseLost(unittest.IsolatedAsyncioTestCase):

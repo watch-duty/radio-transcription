@@ -3,6 +3,7 @@ import concurrent.futures
 import datetime
 import logging
 import os
+import random
 import signal
 import threading
 import time
@@ -871,23 +872,61 @@ class NormalizerRuntime:
         # exit! If we release leases while tasks are still running, they might
         # see their lease as NULL during a progress update and trigger an
         # accidental fence violation (os._exit(1)).
+        #
+        # Release in batches of ~50 with 0-2 s jitter between batches so a
+        # fleet-wide SIGTERM (e.g. MIG scale-in) doesn't flip every VM's
+        # worker's ~1,500 leases to 'unclaimed' in one instant, triggering a
+        # fleet-wide polling stampede at the next leasing cycle. Each call
+        # uses pool.execute so asyncpg auto-commits per batch — explicit
+        # transaction brackets are not needed. See scaling-plan §8.
+        feed_ids = list(self._feed_tasks.keys())
+        batch_size = self._normalizer_settings.sigterm_release_batch_size
+        jitter_max = self._normalizer_settings.sigterm_release_jitter_max_sec
         logger.info(
-            "Releasing all leases for worker %s",
+            "Releasing %d leases for worker %s in batches of %d (jitter max %.1fs)",
+            len(feed_ids),
             self._normalizer_settings.worker_id,
+            batch_size,
+            jitter_max,
         )
+        total_released = 0
         try:
-            count = await self._store.release_feeds_batch(
-                self._normalizer_settings.worker_id
-            )
+            for i in range(0, len(feed_ids), batch_size):
+                chunk = feed_ids[i : i + batch_size]
+                released = await self._store.release_feeds_batch_by_ids(
+                    self._normalizer_settings.worker_id,
+                    chunk,
+                )
+                total_released += released
+                # Intentional break of the file-level "no asyncio.sleep"
+                # invariant (L68): the invariant exists so the leasing loop
+                # stays SIGTERM-interruptible; inside _shutdown_sequence
+                # we ARE the drain path and interruption is moot.
+                # _sleep_or_shutdown would collapse to 0 s (shutdown is
+                # already set) and defeat the stagger purpose.
+                if i + batch_size < len(feed_ids) and jitter_max > 0:
+                    # Non-crypto jitter for fleet-wide stagger — intent is
+                    # to spread UNCLAIMED flips across scale-in SIGTERMs,
+                    # not to secure anything.
+                    await asyncio.sleep(
+                        random.uniform(0, jitter_max),  # noqa: S311
+                    )
             logger.info(
-                "Successfully released %d leases for worker %s",
-                count,
-                self._normalizer_settings.worker_id,
+                "Released %d/%d leases in %d batch(es)",
+                total_released,
+                len(feed_ids),
+                (len(feed_ids) + batch_size - 1) // batch_size if feed_ids else 0,
             )
         except Exception:
             logger.exception(
                 "Failed to batch-release feeds on shutdown (safety net will recover)"
             )
+        finally:
+            # Scrub parallel state so it doesn't carry over if the worker is
+            # ever rehydrated in-process (not used today, but keeps invariant
+            # set(_task_source_types) == set(_feed_tasks) honest across
+            # shutdown).
+            self._task_source_types.clear()
 
         await self._pubsub_client.close()
         await self._gcs_client.close()

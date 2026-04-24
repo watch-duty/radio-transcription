@@ -14,7 +14,6 @@ from backend.pipeline.storage.feed_queries import (
     LIST_FEEDS_SQL,
     RELEASE_FEED_SQL,
     RELEASE_FEEDS_BATCH_BY_IDS_SQL,
-    RELEASE_FEEDS_BATCH_SQL,
     RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
     REPORT_FAILURE_SQL,
     RESET_FEED_SQL,
@@ -366,24 +365,6 @@ class FeedStore:
             fencing_token,
         )
         return result == "UPDATE 1"
-
-    async def release_feeds_batch(self, worker_id: uuid.UUID) -> int:
-        """
-        Release all active leases held by this worker.
-
-        Used during graceful shutdown to allow other workers to immediately claim
-        the feeds without waiting for timeout expiration.
-
-        Args:
-            worker_id: UUID of the worker releasing leases.
-
-        Returns:
-            The number of feeds released.
-        """
-        result = await self._pool.execute(RELEASE_FEEDS_BATCH_SQL, worker_id)
-        if result.startswith("UPDATE "):
-            return int(result.split()[1])
-        return 0
 
     async def acquire_feeds_batch(
         self,
