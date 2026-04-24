@@ -861,7 +861,9 @@ describe('TranscriptView', () => {
         'fake-token',
         undefined,
         undefined,
-        new Date('2026-04-10T12:00:00Z').getTime()
+        new Date('2026-04-10T12:00:00Z').getTime(),
+        undefined,
+        'asc'
       );
       expect(screen.getByText('Newer Transcript')).toBeTruthy();
     });

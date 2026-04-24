@@ -264,18 +264,45 @@ export function TranscriptView({
   /**
    * Fetches transcripts that have arrived after the current newest loaded transcript.
    * Used by both the automatic background polling and the manual "Refresh" button.
+   * Handles pagination in case there are multiple pages of new transcripts.
    */
   const pollNewerTranscripts = useCallback(async () => {
     if (!newestTimestamp || !searchedFeedId || !token) return [];
-    const response = await listTranscripts(
-      searchedFeedId,
-      token,
-      /*limit=*/ undefined,
-      /*nextToken=*/ undefined,
-      // Query for transcripts with a start time greater than our current newest
-      /*startTime=*/ new Date(newestTimestamp).getTime()
-    );
-    return response.transcripts;
+    
+    const allNewTranscripts: Transcript[] = [];
+    let currentNextToken: string | undefined = undefined;
+    let hasMore = true;
+    let iterations = 0;
+
+    try {
+      // Fetch all pages of new transcripts moving forward in time.
+      // Limit to 10 iterations to prevent infinite loops. This shouldn't happen, but you never know.
+      while (hasMore && iterations < 10) {
+        iterations++;
+        const response = await listTranscripts(
+          searchedFeedId,
+          token,
+          /*limit=*/ undefined,
+          currentNextToken,
+          // Query for transcripts with a start time greater than our current newest
+          /*startTime=*/ new Date(newestTimestamp).getTime(),
+          /*endTime=*/ undefined,
+          /*order=*/ 'asc'
+        );
+
+        if (response.transcripts && response.transcripts.length > 0) {
+          allNewTranscripts.push(...response.transcripts);
+        }
+
+        currentNextToken = response.nextToken;
+        hasMore = !!currentNextToken;
+      }
+    } catch (error) {
+      console.error('Error polling for new transcripts:', error);
+    }
+
+    // Reverse the array so the newest transcripts are at index 0 for prepending
+    return allNewTranscripts.reverse();
   }, [newestTimestamp, searchedFeedId, token]);
 
   /**
