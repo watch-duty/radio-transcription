@@ -138,7 +138,6 @@ class AudioProcessor:
         samples = np.frombuffer(process.stdout, dtype=np.int16)
         sr = 16000
 
-
         speech_segments = self.sed_detector.detect(samples)
 
         if duration_ms is None:

@@ -362,12 +362,12 @@ class OrderedBypassTest(unittest.TestCase):
                 duration_ms=1000,
             )
 
-            elements = p | beam.Create(
-                [("test-feed", metadata)]
-            )
+            elements = p | beam.Create([("test-feed", metadata)])
 
             results = elements | beam.ParDo(
-                OrderedBypassFn(order_config=order_config, stitch_config=stitch_config)
+                OrderedBypassFn(
+                    order_config=order_config, stitch_config=stitch_config
+                )
             )
 
             def assert_results(msgs):

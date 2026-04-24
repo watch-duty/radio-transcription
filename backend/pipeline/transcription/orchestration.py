@@ -220,11 +220,13 @@ def get_pipeline(
     )
 
     # Route all DLQ (Dead Letter Queue) outputs from intermediate steps to a dedicated topic
-    dlq_list.extend([
-        parsed[DEAD_LETTER_QUEUE_TAG],
-        timestamped[DEAD_LETTER_QUEUE_TAG],
-        transcripts[DEAD_LETTER_QUEUE_TAG],
-    ])
+    dlq_list.extend(
+        [
+            parsed[DEAD_LETTER_QUEUE_TAG],
+            timestamped[DEAD_LETTER_QUEUE_TAG],
+            transcripts[DEAD_LETTER_QUEUE_TAG],
+        ]
+    )
 
     dlq_combined = tuple(dlq_list) | "FlattenDlqs" >> beam.Flatten()
 

@@ -5,6 +5,7 @@ from backend.pipeline.transcription.detectors import AcousticGateDetector
 from backend.pipeline.transcription.datatypes import TimeRange
 from backend.pipeline.common.constants import SAMPLE_RATE_HZ
 
+
 class AcousticGateDetectorTest(unittest.TestCase):
     def test_detect_empty_audio(self) -> None:
         detector = AcousticGateDetector()
@@ -29,15 +30,15 @@ class AcousticGateDetectorTest(unittest.TestCase):
         self, mock_rms: MagicMock, mock_flatness: MagicMock
     ) -> None:
         detector = AcousticGateDetector()
-        
+
         # Mock high energy and low flatness (between 0.005 and 0.4)
         # We need some low energy frames to establish a low noise floor!
         mock_rms.return_value = np.array([0.01, 0.01] + [1.0] * 10)
         mock_flatness.return_value = np.ones(12) * 0.1
-        
+
         samples = np.zeros(16000, dtype=np.int16)
         results = detector.detect(samples)
-        
+
         # It should detect speech!
         self.assertTrue(len(results) > 0)
         self.assertIsInstance(results[0], TimeRange)
@@ -45,8 +46,10 @@ class AcousticGateDetectorTest(unittest.TestCase):
     def test_detect_noise_like(self) -> None:
         detector = AcousticGateDetector()
         # Create white noise (high energy, high flatness)
-        samples = np.random.randint(-32768, 32767, SAMPLE_RATE_HZ, dtype=np.int16)
-        
+        samples = np.random.randint(
+            -32768, 32767, SAMPLE_RATE_HZ, dtype=np.int16
+        )
+
         results = detector.detect(samples)
         # It should NOT detect speech (flatness should be high)
         self.assertEqual(results, [])
