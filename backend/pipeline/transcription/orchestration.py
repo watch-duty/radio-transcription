@@ -222,6 +222,7 @@ def get_pipeline(
     dlq_list.extend(
         [
             parsed[DEAD_LETTER_QUEUE_TAG],
+            timestamped[DEAD_LETTER_QUEUE_TAG],
             transcripts[DEAD_LETTER_QUEUE_TAG],
         ]
     )
