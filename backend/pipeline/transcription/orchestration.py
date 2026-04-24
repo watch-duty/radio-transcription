@@ -41,10 +41,8 @@ from backend.pipeline.transcription.stateful_transforms import (
     TranscribeAudioFn,
 )
 from backend.pipeline.transcription.transforms import (
-    AddEventTimestamp,
-    ExtractFeedMetadataFn,
     ParseAndKeyFn,
-    SerializeAndEnrichFn,
+    SerializeFn,
 )
 
 logger = logging.getLogger(__name__)
@@ -91,19 +89,11 @@ def get_pipeline(
         subscription=options.input_subscription,
         id_label=options.id_label or None,
         with_attributes=True,
+        timestamp_attribute="timestamp_ms",
     )
     # Group incoming messages into Key-Value pairs: (feed_id, gs://uri/to/audio)
     parsed = messages | "ParseAndKey" >> beam.ParDo(
         ParseAndKeyFn()
-    ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
-
-    # Extract feed metadata for enrichment
-    feed_metadata = parsed[MAIN_TAG] | "ExtractFeedMetadata" >> beam.ParDo(
-        ExtractFeedMetadataFn()
-    )
-
-    timestamped = parsed[MAIN_TAG] | "AddTimestamp" >> beam.ParDo(
-        AddEventTimestamp()
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
     dlq_list = []
@@ -151,34 +141,30 @@ def get_pipeline(
             or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
         )
 
-        stitching_results = (
-            timestamped.main
-            | "OrderedBypassStitch"
-            >> beam.ParDo(
-                OrderedBypassFn(
-                    order_config=order_config,
-                    stitch_config=stitching_config,
-                )
-            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
-        )
+        stitching_results = parsed[
+            MAIN_TAG
+        ] | "OrderedBypassStitch" >> beam.ParDo(
+            OrderedBypassFn(
+                order_config=order_config,
+                stitch_config=stitching_config,
+            )
+        ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
         stitching_main = stitching_results.main
         dlq_list.append(stitching_results[DEAD_LETTER_QUEUE_TAG])
     else:
         # New merged path: Handles both ordering and stitching in a single DoFn
-        stitching_results = (
-            timestamped.main
-            | "OrderedStitchAudio"
-            >> beam.ParDo(
-                OrderedStitchAudioFn(
-                    order_config=OrderRestorerConfig(
-                        out_of_order_timeout_ms=options.out_of_order_timeout_ms
-                        or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
-                    ),
-                    stitch_config=download_config,
-                )
-            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
-        )
+        stitching_results = parsed[
+            MAIN_TAG
+        ] | "OrderedStitchAudio" >> beam.ParDo(
+            OrderedStitchAudioFn(
+                order_config=OrderRestorerConfig(
+                    out_of_order_timeout_ms=options.out_of_order_timeout_ms
+                    or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
+                ),
+                stitch_config=download_config,
+            )
+        ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
         stitching_main = stitching_results.main
         dlq_list.append(stitching_results[DEAD_LETTER_QUEUE_TAG])
 
@@ -198,34 +184,18 @@ def get_pipeline(
         )
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
-    # Key transcripts by feed_id
-    keyed_transcripts = transcripts.main | "KeyTranscripts" >> beam.Map(
-        lambda res: (res.feed_id, res)
-    )
-
-    # Flatten with feed metadata
-    combined_for_enrichment = (
-        feed_metadata,
-        keyed_transcripts,
-    ) | "FlattenForEnrichment" >> beam.Flatten()
-
     # Convert the native TranscriptionResult into a serialized Protobuf and wrap in a Pub/Sub message
-    serialized = combined_for_enrichment | "SerializeAndEnrich" >> beam.ParDo(
-        SerializeAndEnrichFn()
-    )
+    serialized = transcripts.main | "Serialize" >> beam.ParDo(SerializeFn())
     serialized | "WriteToPubSub" >> WriteToPubSub(
         topic=options.output_topic,
         with_attributes=True,
     )
 
     # Route all DLQ (Dead Letter Queue) outputs from intermediate steps to a dedicated topic
-    dlq_list.extend(
-        [
-            parsed[DEAD_LETTER_QUEUE_TAG],
-            timestamped[DEAD_LETTER_QUEUE_TAG],
-            transcripts[DEAD_LETTER_QUEUE_TAG],
-        ]
-    )
+    dlq_list = [
+        parsed[DEAD_LETTER_QUEUE_TAG],
+        transcripts[DEAD_LETTER_QUEUE_TAG],
+    ]
 
     dlq_combined = tuple(dlq_list) | "FlattenDlqs" >> beam.Flatten()
 
