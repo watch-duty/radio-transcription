@@ -49,6 +49,9 @@ from backend.pipeline.transcription.stitcher_state import (
 from backend.pipeline.transcription.utils import generate_transmission_id
 
 logger = logging.getLogger(__name__)
+logger = logging.LoggerAdapter(
+    logger, {"system": "transcription", "component": "ordered-stitcher"}
+)
 
 
 class StaleTimerManager:
