@@ -26,6 +26,10 @@ from backend.pipeline.transcription.datatypes import (
     FeedMetadata,
     TranscriptionResult,
 )
+from backend.pipeline.transcription.options import (
+    DataflowSystemOptions,  # noqa: F401
+    TranscriptionOptions,  # noqa: F401
+)
 
 logger = logging.getLogger(__name__)
 
