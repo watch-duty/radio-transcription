@@ -1215,7 +1215,7 @@ class TestThreePhaseHandler(unittest.IsolatedAsyncioTestCase):
     RED phase: these tests are written before the handler change in Task 2.
     They must FAIL against the current bare `except Exception` code:
       - Test A fails because SourceError is currently swallowed, so
-        report_feed_failure is called without attribution/reason kwargs.
+        report_feed_failure is called without reason kwargs.
       - Test B fails because PipelineError is currently caught by bare-except
         and report_feed_failure IS called (it should NOT be).
       - Test C fails because RuntimeError is currently swallowed (not propagated).
@@ -1231,10 +1231,10 @@ class TestThreePhaseHandler(unittest.IsolatedAsyncioTestCase):
         rt._releasing_feeds = set()
         return rt
 
-    async def test_a_source_error_calls_report_feed_failure_with_attribution(
+    async def test_a_source_error_calls_report_feed_failure_with_reason(
         self,
     ) -> None:
-        """SourceError from capture_fn triggers report_feed_failure(attribution='source', reason=...)."""
+        """SourceError from capture_fn triggers report_feed_failure(reason=...)."""
 
         async def _capture_raises_source_error(feed, shutdown):
             raise SourceError(reason="auth_failed")
@@ -1252,7 +1252,6 @@ class TestThreePhaseHandler(unittest.IsolatedAsyncioTestCase):
 
         rt._store.report_feed_failure.assert_awaited_once()
         call_kwargs = rt._store.report_feed_failure.call_args
-        self.assertEqual(call_kwargs.kwargs.get("attribution"), "source")
         self.assertEqual(call_kwargs.kwargs.get("reason"), "auth_failed")
 
     async def test_b_pipeline_error_does_not_call_report_feed_failure(
@@ -1282,7 +1281,7 @@ class TestThreePhaseHandler(unittest.IsolatedAsyncioTestCase):
         # report_feed_failure must NOT be called — pipeline errors don't affect feed state
         rt._store.report_feed_failure.assert_not_awaited()
 
-        # A structured warning log with attribution="pipeline" must be emitted
+        # A structured warning log for pipeline_error must be emitted
         warning_calls = mock_logger.warning.call_args_list
         pipeline_error_logged = any(
             (

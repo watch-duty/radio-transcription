@@ -530,7 +530,6 @@ class NormalizerRuntime:
                         "pipeline_error",
                         extra={"json_fields": {
                             "feed_id": str(feed["id"]),
-                            "attribution": "pipeline",
                             "reason": e.reason,
                         }},
                     )
@@ -563,7 +562,6 @@ class NormalizerRuntime:
                     worker_id,
                     fencing_token,
                     self._normalizer_settings.feed_failure_threshold,
-                    attribution="source",
                     reason=e.reason,
                 )
                 if status == "quarantined":
