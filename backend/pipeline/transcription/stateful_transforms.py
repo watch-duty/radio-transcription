@@ -348,8 +348,9 @@ class OrderedStitchAudioFn(beam.DoFn):
             action.feed_id, session_id, "transcription-stitcher"
         )
 
+        curr_ctx = transmission_context.read() or TransmissionContext()
         processed_uris = action.isolated_audio_buffer_uris or list(
-            transmission_context.read().contributing_audio_uris
+            curr_ctx.contributing_audio_uris
         )
 
         audio_buffer = action.isolated_audio_buffer or list(
@@ -365,12 +366,6 @@ class OrderedStitchAudioFn(beam.DoFn):
                 f"[Flush] Emitting transmission {transmission_id} with {len(processed_uris)} chunks"
             )
 
-            curr_ctx = transmission_context.read()
-            if curr_ctx is None:
-                msg = (
-                    "TransmissionContext cannot be None in _apply_flush_action"
-                )
-                raise ValueError(msg)
             if curr_ctx.feed_metadata is None:
                 msg = "feed_metadata cannot be None in _apply_flush_action"
                 raise ValueError(msg)
@@ -407,7 +402,9 @@ class OrderedStitchAudioFn(beam.DoFn):
             )
 
         if action.clear_state:
-            transmission_context.clear()
+            transmission_context.write(
+                TransmissionContext(feed_metadata=curr_ctx.feed_metadata)
+            )
             transmission_buffer.clear()
             timer_manager.clear()
 
@@ -726,7 +723,9 @@ class OrderedStitchAudioFn(beam.DoFn):
                     {"error": msg, "feed_id": key, "stale_flush": True},
                 )
 
-        transmission_context.clear()
+        transmission_context.write(
+            TransmissionContext(feed_metadata=curr_context.feed_metadata)
+        )
         transmission_buffer.clear()
         timer_manager.clear()
 
