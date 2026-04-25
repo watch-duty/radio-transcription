@@ -605,7 +605,19 @@ class NormalizerRuntime:
             return
 
         except SourceError as e:
-            logger.exception("Feed source error: %s", feed["name"])
+            # WARNING (not ERROR/exception): SourceError represents expected
+            # external state (auth_failed, source_unreachable,
+            # reconnect_exhausted) — not a code bug. Including reason in the
+            # message keeps it grep-able; exc_info=e preserves the chained
+            # cause (e.g. the underlying JWT exception for auth_failed) so
+            # triage still has the full picture without flooding ERROR-level
+            # logs during an upstream outage that hits many feeds at once.
+            logger.warning(
+                "Feed source error: feed=%s reason=%s",
+                feed["name"],
+                e.reason,
+                exc_info=e,
+            )
             # SAFETY: _releasing_feeds invariant — add BEFORE the first await
             # that drops the lease (report_feed_failure sets worker_id=NULL).
             self._releasing_feeds.add(feed["id"])
