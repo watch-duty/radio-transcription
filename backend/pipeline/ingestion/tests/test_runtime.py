@@ -10,6 +10,7 @@ import aiohttp
 import asyncpg
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
+from backend.pipeline.ingestion.exceptions import PipelineError, SourceError
 from backend.pipeline.ingestion.normalizer_runtime import (
     CapturedChunk,
     NormalizerRuntime,
@@ -1208,6 +1209,156 @@ class TestProcessFeedPublishAttributes(unittest.IsolatedAsyncioTestCase):
         mock_publish.assert_called_once()
         _, _, kwargs = mock_publish.mock_calls[0]
         self.assertEqual(kwargs["source_type"], _FEED["source_type"])
+
+
+class TestThreePhaseHandler(unittest.IsolatedAsyncioTestCase):
+    """Tests for the three-phase exception handler in _run_feed_task.
+
+    RED phase: these tests are written before the handler change in Task 2.
+    They must FAIL against the current bare `except Exception` code:
+      - Test A fails because SourceError is currently swallowed, so
+        report_feed_failure is called without attribution/reason kwargs.
+      - Test B fails because PipelineError is currently caught by bare-except
+        and report_feed_failure IS called (it should NOT be).
+      - Test C fails because RuntimeError is currently swallowed (not propagated).
+    """
+
+    def _make_rt_with_capture(self, capture_fn) -> NormalizerRuntime:
+        """Build a NormalizerRuntime with a custom capture_fn."""
+        settings = _make_settings()
+        rt = NormalizerRuntime(capture_fn=capture_fn, settings=settings)
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+        return rt
+
+    async def test_a_source_error_calls_report_feed_failure_with_attribution(
+        self,
+    ) -> None:
+        """SourceError from capture_fn triggers report_feed_failure(attribution='source', reason=...)."""
+
+        async def _capture_raises_source_error(feed, shutdown):
+            raise SourceError(reason="auth_failed")
+            # Make this a proper async generator
+            yield  # noqa: unreachable
+
+        rt = self._make_rt_with_capture(_capture_raises_source_error)
+        rt._store.report_feed_failure = mock.AsyncMock(return_value="failing")
+
+        with (
+            _mock_upload_audio(),
+            _mock_pubsub_publish(),
+        ):
+            await rt._process_feed(_FEED)
+
+        rt._store.report_feed_failure.assert_awaited_once()
+        call_kwargs = rt._store.report_feed_failure.call_args
+        self.assertEqual(call_kwargs.kwargs.get("attribution"), "source")
+        self.assertEqual(call_kwargs.kwargs.get("reason"), "auth_failed")
+
+    async def test_b_pipeline_error_does_not_call_report_feed_failure(
+        self,
+    ) -> None:
+        """PipelineError from publish_audio_chunk logs pipeline_error and does NOT call report_feed_failure."""
+
+        async def _one_chunk(feed, shutdown):
+            yield _make_captured_chunk(b"audio")
+
+        rt = self._make_rt_with_capture(_one_chunk)
+        rt._store.update_feed_progress = mock.AsyncMock(return_value=True)
+
+        with (
+            _mock_upload_audio(),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.publish_audio_chunk",
+                new_callable=mock.AsyncMock,
+                side_effect=PipelineError(reason="publish_schema_validation"),
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.logger",
+            ) as mock_logger,
+        ):
+            await rt._process_feed(_FEED)
+
+        # report_feed_failure must NOT be called — pipeline errors don't affect feed state
+        rt._store.report_feed_failure.assert_not_awaited()
+
+        # A structured warning log with attribution="pipeline" must be emitted
+        warning_calls = mock_logger.warning.call_args_list
+        pipeline_error_logged = any(
+            (
+                "pipeline_error" in str(c)
+                or (
+                    len(c.args) > 0
+                    and "pipeline_error" in str(c.args[0])
+                )
+                or "pipeline" in str(c)
+            )
+            for c in warning_calls
+        )
+        self.assertTrue(
+            pipeline_error_logged,
+            msg=f"Expected a pipeline_error warning log; got: {warning_calls}",
+        )
+
+    async def test_c_unenumerated_exception_propagates(self) -> None:
+        """RuntimeError (non-enumerated) propagates out of _process_feed uncaught."""
+
+        async def _capture_raises_runtime_error(feed, shutdown):
+            raise RuntimeError("unexpected")
+            yield  # noqa: unreachable
+
+        rt = self._make_rt_with_capture(_capture_raises_runtime_error)
+
+        with (
+            _mock_upload_audio(),
+            _mock_pubsub_publish(),
+        ):
+            with self.assertRaises(RuntimeError):
+                await rt._process_feed(_FEED)
+
+        # report_feed_failure must NOT be called
+        rt._store.report_feed_failure.assert_not_awaited()
+
+    async def test_d_cancelled_error_returns_cleanly(self) -> None:
+        """asyncio.CancelledError from capture_fn returns cleanly (no exception to caller)."""
+
+        async def _capture_raises_cancelled(feed, shutdown):
+            raise asyncio.CancelledError
+            yield  # noqa: unreachable
+
+        rt = self._make_rt_with_capture(_capture_raises_cancelled)
+
+        # Should NOT raise
+        with _mock_upload_audio(), _mock_pubsub_publish():
+            await rt._process_feed(_FEED)
+
+        # No report_feed_failure — CancelledError is not a feed failure
+        rt._store.report_feed_failure.assert_not_awaited()
+
+    async def test_e_lease_expired_error_returns_cleanly(self) -> None:
+        """LeaseExpiredError from retry_with_lease_check returns cleanly, no DB write."""
+        from backend.pipeline.ingestion.retry import LeaseExpiredError
+
+        async def _one_chunk(feed, shutdown):
+            yield _make_captured_chunk(b"audio")
+
+        rt = self._make_rt_with_capture(_one_chunk)
+        rt._lease_lost = asyncio.Event()
+        rt._lease_lost.set()  # trigger LeaseExpiredError via retry_with_lease_check
+
+        with (
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.upload_staged_audio",
+                mock.AsyncMock(return_value="gs://b/p"),
+            ),
+            _mock_pubsub_publish(),
+        ):
+            await rt._process_feed(_FEED)
+
+        rt._store.report_feed_failure.assert_not_awaited()
+        rt._store.release_feed.assert_not_awaited()
 
 
 if __name__ == "__main__":
