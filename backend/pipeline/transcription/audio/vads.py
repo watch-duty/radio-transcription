@@ -20,8 +20,9 @@ from backend.pipeline.transcription.common.constants import (
 )
 from backend.pipeline.transcription.common.enums import VadType
 from backend.pipeline.transcription.common.utils import ConfigBase
+from backend.pipeline.transcription.common.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 logger = logging.LoggerAdapter(
     logger, {"system": "transcription", "component": "vad"}
 )

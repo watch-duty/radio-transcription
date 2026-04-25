@@ -46,6 +46,7 @@ from backend.pipeline.transcription.common.datatypes import (
     UpdateStateAction,
 )
 from backend.pipeline.transcription.common.utils import generate_transmission_id
+from backend.pipeline.transcription.common.logging import get_logger
 from backend.pipeline.transcription.resources import (
     SHARED_RESOURCE_HANDLE,
     SharedResources,
@@ -59,7 +60,7 @@ from backend.pipeline.transcription.state.stitcher_state import (
     AudioStitchingStateMachine,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 logger = logging.LoggerAdapter(
     logger, {"system": "transcription", "component": "ordered-stitcher"}
 )
@@ -70,7 +71,7 @@ def _get_task_logger(
 ) -> logging.LoggerAdapter:
     """Creates a contextual LoggerAdapter for tracing items through the pipeline."""
     return logging.LoggerAdapter(
-        logging.getLogger(__name__),
+        get_logger(__name__),
         {
             "system": "transcription",
             "component": component,

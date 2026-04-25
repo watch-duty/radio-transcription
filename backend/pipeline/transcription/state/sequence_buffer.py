@@ -9,8 +9,9 @@ from backend.pipeline.transcription.common.datatypes import (
     BufferedChunk,
     OrderRestorerConfig,
 )
+from backend.pipeline.transcription.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 logger = logging.LoggerAdapter(
     logger, {"system": "transcription", "component": "sequence-buffer"}
 )
