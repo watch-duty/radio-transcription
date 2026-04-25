@@ -179,7 +179,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
                 _TEST_FEED, shutdown, "https://api.openmhz.com/"
             ):
                 pass
-        self.assertEqual(ctx.exception.reason, "source_unreachable")
+        self.assertEqual(ctx.exception.reason, "reconnect_exhausted")
 
         # The Nth failure raises before sleeping, so N-1 sleeps
         self.assertEqual(mock_sleep.call_count, MAX_RECONNECT_FAILURES - 1)

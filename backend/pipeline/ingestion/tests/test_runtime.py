@@ -1335,6 +1335,38 @@ class TestThreePhaseHandler(unittest.IsolatedAsyncioTestCase):
         call_kwargs = rt._store.report_feed_failure.call_args
         self.assertEqual(call_kwargs.kwargs.get("reason"), "internal_error")
 
+    async def test_internal_error_releasing_feeds_cleaned_up_when_report_raises(
+        self,
+    ) -> None:
+        """_releasing_feeds.discard runs in finally even when report_feed_failure itself raises.
+
+        Regression guard for the SAFETY invariant: _releasing_feeds MUST
+        be empty after _process_feed returns, otherwise _heartbeat_cycle
+        would mis-classify this feed and either skip its renewal or fire
+        a spurious fence-violation os._exit. The finally clause in the
+        internal_error handler is what guarantees this; this test would
+        fail if that finally were dropped.
+        """
+
+        async def _capture_raises_runtime_error(feed, shutdown):
+            raise RuntimeError("unexpected")
+            yield  # noqa: unreachable
+
+        rt = self._make_rt_with_capture(_capture_raises_runtime_error)
+        # Make report_feed_failure itself raise — exercises the inner
+        # except Exception path, then the outer finally.
+        rt._store.report_feed_failure = mock.AsyncMock(
+            side_effect=RuntimeError("DB unreachable"),
+        )
+
+        with _mock_upload_audio(), _mock_pubsub_publish():
+            # Should NOT raise — the inner try/except swallows the DB error.
+            await rt._process_feed(_FEED)
+
+        rt._store.report_feed_failure.assert_awaited_once()
+        # The critical invariant.
+        self.assertEqual(rt._releasing_feeds, set())
+
     async def test_internal_error_quarantines_after_threshold(self) -> None:
         """5 unenumerated exceptions transition the feed to quarantined with reason='internal_error' (RESP-03, VERIF-07)."""
 
