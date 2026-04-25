@@ -315,35 +315,28 @@ class NormalizerRuntime:
                 return
 
     def _reap_completed_tasks(self) -> None:
-        """
-        Remove completed tasks and consume their exceptions.
+        """Remove completed tasks and consume their exceptions.
 
-        Must call ``task.exception()`` to retrieve the stored exception —
+        Must call ``task.exception()`` to retrieve the stored exception --
         without this, asyncio logs a "Task exception was never retrieved"
         warning at garbage collection time. ``.exception()`` on a cancelled
         task raises ``CancelledError``, hence the guard.
 
-        Fail-fast on any unenumerated exception (D-06 / RUNTIME-03):
-        ``_process_feed`` catches and handles ``SourceError``,
-        ``LeaseExpiredError``, and ``CancelledError`` internally, so a
-        non-None ``task.exception()`` means an *unenumerated* error escaped.
-        Without crashing here, the lease was never released and
-        ``failure_count`` was never incremented — the feed would bounce
-        between workers (lease expires, re-leased, crashes again, never
-        quarantines), a poison-pill loop that the bare-except masked
-        before Phase 3.  ``os._exit(1)`` matches the heartbeat fence-
-        violation pattern: MIG restarts the container; the lease re-
-        claims within ``abandonment_window``; alerting on rapid restarts
-        (operator surface, follow-up project) catches deterministic feed
-        bugs.
+        The catch-and-quarantine handler in ``_process_feed`` (D-01, v1.1)
+        is the primary fault-response path. The reaper exists to drain
+        ``task.exception()`` so asyncio does not emit
+        "Task exception was never retrieved" warnings, and to log meta-bugs
+        where the catch handler itself raised -- which would indicate the
+        DB write or telemetry call inside the catch arm crashed. Such
+        meta-bugs surface as ERROR logs here; the lease abandonment window
+        is the recovery safety net (D-04, v1.1).
         """
-        exit_after_log = False
         for feed_id in [fid for fid, t in self._feed_tasks.items() if t.done()]:
             task = self._feed_tasks.pop(feed_id)
             try:
                 exc = task.exception()
             except asyncio.CancelledError:
-                pass  # normal — task was cancelled by shutdown
+                pass  # normal -- task was cancelled by shutdown
             else:
                 if exc is not None:
                     logger.error(
@@ -352,22 +345,6 @@ class NormalizerRuntime:
                         exc,
                         exc_info=exc,
                     )
-                    exit_after_log = True
-
-        # Skip fail-fast during shutdown: tasks can fail with various
-        # exceptions during cleanup, and crashing during teardown defeats
-        # graceful shutdown (lease release, log flush). Defensive None
-        # check guards against early-init paths where _shutdown is not
-        # yet bound (e.g. unit tests that exercise the reaper directly).
-        if exit_after_log and (
-            self._shutdown is None or not self._shutdown.is_set()
-        ):
-            logger.critical(
-                "Unenumerated feed-task exception -- terminating worker "
-                "for MIG restart (D-06)",
-            )
-            logging.shutdown()  # flush before os._exit bypasses handlers
-            os._exit(1)
 
     # -- Per-feed pipeline ------------------------------------------------
 
@@ -648,9 +625,55 @@ class NormalizerRuntime:
                 self._releasing_feeds.discard(feed["id"])
             return
 
-        # NO bare `except Exception` — unenumerated exceptions propagate,
-        # worker exits non-zero, MIG restarts, lease re-claims within
-        # abandonment_window. Fail-fast over fail-quiet (D-06).
+        except Exception as e:
+            # ERROR + traceback (logger.exception): an unenumerated Exception is a
+            # code bug, not expected external state. The full traceback is mandatory
+            # for triage and is the v1.1 replacement for the v1.0 fail-fast crash --
+            # the bug is now visible AND the fleet keeps processing the other
+            # feeds (D-01, D-02). After feed_failure_threshold consecutive
+            # internal_error cycles the existing failing -> quarantined machinery
+            # transitions the feed with quarantine_reason='internal_error'.
+            # Transient bugs auto-recover because failure_count resets to 0 on
+            # the next successful publish (D-05; existing update_feed_progress
+            # behavior).
+            logger.exception(
+                "Feed internal error: feed=%s",
+                feed["name"],
+            )
+            # SAFETY: _releasing_feeds invariant -- add BEFORE the first await
+            # that drops the lease (report_feed_failure sets worker_id=NULL).
+            self._releasing_feeds.add(feed["id"])
+            try:
+                status = await self._store.report_feed_failure(
+                    feed["id"],
+                    worker_id,
+                    fencing_token,
+                    self._normalizer_settings.feed_failure_threshold,
+                    reason="internal_error",
+                )
+                if status == "quarantined":
+                    await quarantine_telemetry.emit_quarantine_event(
+                        feed_id=str(feed["id"]),
+                        feed_name=feed["name"],
+                        source_type=str(feed["source_type"]),
+                    )
+            except Exception:
+                # 60s abandonment window is the safety net if this fails.
+                logger.exception(
+                    "Failed to record internal error for feed %s",
+                    feed["name"],
+                )
+            finally:
+                # SAFETY: No await between discard() and return.
+                self._releasing_feeds.discard(feed["id"])
+            return
+
+        # The except Exception arm above (D-01, v1.1) catches unenumerated
+        # exceptions and routes them via report_feed_failure(reason="internal_error")
+        # so a deterministic poison-pill feed cannot DoS the fleet. The reaper
+        # below still consumes task.exception() but no longer calls os._exit(1)
+        # (D-04, v1.1) -- the catch-and-quarantine path is the primary fault-
+        # response mechanism.
 
         # Normal completion (capture generator exhausted)
         # SAFETY: same _releasing_feeds invariant as above.

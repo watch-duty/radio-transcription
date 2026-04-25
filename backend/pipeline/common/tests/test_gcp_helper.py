@@ -474,6 +474,74 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chunk.external_id, "ext-id")
         self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
 
+    async def test_paused_ordering_key_calls_resume_publish(self) -> None:
+        """PublishToPausedOrderingKeyException triggers resume_publish before re-raising as PipelineError (PUB-01, VERIF-08)."""
+        from google.cloud.pubsub_v1.publisher.exceptions import (
+            PublishToPausedOrderingKeyException,
+        )
+        from backend.pipeline.ingestion.exceptions import PipelineError
+
+        mock_pubsub_client, mock_publisher = _make_pubsub_client()
+        mock_now = datetime.datetime(2026, 4, 25, 12, 0, tzinfo=datetime.UTC)
+
+        fut = concurrent.futures.Future()
+        fut.set_exception(PublishToPausedOrderingKeyException("feed-42"))
+        mock_publisher.publish.return_value = fut
+
+        with self.assertRaises(PipelineError) as ctx:
+            await gcp_helper.publish_audio_chunk(
+                mock_pubsub_client,
+                topic_path="projects/test/topics/audio",
+                feed_id="feed-42",
+                feed_name="Central Fire",
+                external_id="ext-id",
+                gcs_uri="gs://bucket/audio.flac",
+                session_id="test-session-1",
+                start_timestamp=mock_now,
+                duration_ms=15000,
+            )
+
+        self.assertEqual(ctx.exception.reason, "publish_paused_ordering_key")
+        mock_publisher.resume_publish.assert_called_once_with(
+            "projects/test/topics/audio",
+            ordering_key="feed-42",
+        )
+
+    async def test_resume_publish_failure_swallowed(self) -> None:
+        """RuntimeError or ValueError from resume_publish is swallowed; PipelineError is still raised (PUB-01)."""
+        from google.cloud.pubsub_v1.publisher.exceptions import (
+            PublishToPausedOrderingKeyException,
+        )
+        from backend.pipeline.ingestion.exceptions import PipelineError
+
+        mock_now = datetime.datetime(2026, 4, 25, 12, 0, tzinfo=datetime.UTC)
+
+        for resume_exc in (RuntimeError("publisher stopped"), ValueError("unseen key")):
+            with self.subTest(resume_exc=type(resume_exc).__name__):
+                mock_pubsub_client, mock_publisher = _make_pubsub_client()
+                fut = concurrent.futures.Future()
+                fut.set_exception(PublishToPausedOrderingKeyException("feed-42"))
+                mock_publisher.publish.return_value = fut
+                mock_publisher.resume_publish.side_effect = resume_exc
+
+                with self.assertRaises(PipelineError) as ctx:
+                    await gcp_helper.publish_audio_chunk(
+                        mock_pubsub_client,
+                        topic_path="projects/test/topics/audio",
+                        feed_id="feed-42",
+                        feed_name="Central Fire",
+                        external_id="ext-id",
+                        gcs_uri="gs://bucket/audio.flac",
+                        session_id="test-session-1",
+                        start_timestamp=mock_now,
+                        duration_ms=15000,
+                    )
+
+                self.assertEqual(
+                    ctx.exception.reason, "publish_paused_ordering_key"
+                )
+                mock_publisher.resume_publish.assert_called_once()
+
 
 class TestParseGcsUri(unittest.TestCase):
     """Tests for the parse_gcs_uri function."""

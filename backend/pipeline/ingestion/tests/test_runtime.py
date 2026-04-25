@@ -175,23 +175,19 @@ class TestReapCompletedTasks(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn(_FEED_ID, rt._feed_tasks)
 
-    async def test_logs_exception_and_triggers_fail_fast_exit(self) -> None:
-        """Tasks that raised are logged AND trigger os._exit(1) (D-06).
+    async def test_logs_exception_and_does_not_call_exit(self) -> None:
+        """Tasks that raised are logged but the reaper NEVER calls os._exit (v1.1).
 
-        After Phase 3 removed the bare ``except Exception`` from
-        ``_process_feed``, an unenumerated exception that escapes is a
-        signal that ``failure_count`` was never incremented and the
-        feed was never quarantined. Letting the worker continue creates
-        a poison-pill loop where the feed bounces between workers,
-        crashing each one. Fail-fast: log + os._exit(1) + MIG restart.
+        The catch-and-quarantine handler in _process_feed is the primary
+        fault-response path. The reaper just drains task.exception() so
+        asyncio does not emit "Task exception was never retrieved".
         """
-
         async def _boom() -> None:
             msg = "boom"
             raise RuntimeError(msg)
 
         rt = _make_runtime()
-        rt._shutdown = asyncio.Event()  # not set — fail-fast path
+        rt._shutdown = asyncio.Event()
         task = asyncio.create_task(_boom())
         await asyncio.sleep(0)  # let task finish
         rt._feed_tasks[_FEED_ID] = task
@@ -203,39 +199,6 @@ class TestReapCompletedTasks(unittest.IsolatedAsyncioTestCase):
             mock.patch(
                 "backend.pipeline.ingestion.normalizer_runtime.os._exit",
             ) as mock_exit,
-            mock.patch("logging.shutdown"),
-        ):
-            rt._reap_completed_tasks()
-
-        mock_logger.error.assert_called()
-        mock_exit.assert_called_once_with(1)
-        self.assertNotIn(_FEED_ID, rt._feed_tasks)
-
-    async def test_no_fail_fast_during_shutdown(self) -> None:
-        """During shutdown, task exceptions log but DO NOT trigger os._exit.
-
-        Tasks can fail with various exceptions during cleanup; crashing
-        here would defeat graceful shutdown (lease release, log flush).
-        """
-
-        async def _boom() -> None:
-            raise RuntimeError("teardown boom")
-
-        rt = _make_runtime()
-        rt._shutdown = asyncio.Event()
-        rt._shutdown.set()  # in shutdown — fail-fast suppressed
-        task = asyncio.create_task(_boom())
-        await asyncio.sleep(0)
-        rt._feed_tasks[_FEED_ID] = task
-
-        with (
-            mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.logger",
-            ) as mock_logger,
-            mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.os._exit",
-            ) as mock_exit,
-            mock.patch("logging.shutdown"),
         ):
             rt._reap_completed_tasks()
 
@@ -1266,7 +1229,9 @@ class TestThreePhaseHandler(unittest.IsolatedAsyncioTestCase):
         report_feed_failure is called without reason kwargs.
       - Test B fails because PipelineError is currently caught by bare-except
         and report_feed_failure IS called (it should NOT be).
-      - Test C fails because RuntimeError is currently swallowed (not propagated).
+      - Test C asserts RuntimeError is caught and routed via
+        report_feed_failure(reason='internal_error') under the v1.1
+        fault-response model (D-01).
     """
 
     def _make_rt_with_capture(self, capture_fn) -> NormalizerRuntime:
@@ -1347,24 +1312,87 @@ class TestThreePhaseHandler(unittest.IsolatedAsyncioTestCase):
             msg=f"Expected a pipeline_error warning log; got: {warning_calls}",
         )
 
-    async def test_c_unenumerated_exception_propagates(self) -> None:
-        """RuntimeError (non-enumerated) propagates out of _process_feed uncaught."""
+    async def test_c_unenumerated_exception_quarantines_via_internal_error(
+        self,
+    ) -> None:
+        """RuntimeError (non-enumerated) does NOT propagate; routes via report_feed_failure(reason='internal_error') (D-01)."""
 
         async def _capture_raises_runtime_error(feed, shutdown):
             raise RuntimeError("unexpected")
             yield  # noqa: unreachable
 
         rt = self._make_rt_with_capture(_capture_raises_runtime_error)
+        rt._store.report_feed_failure = mock.AsyncMock(return_value="failing")
 
         with (
             _mock_upload_audio(),
             _mock_pubsub_publish(),
         ):
-            with self.assertRaises(RuntimeError):
+            # Should NOT raise.
+            await rt._process_feed(_FEED)
+
+        rt._store.report_feed_failure.assert_awaited_once()
+        call_kwargs = rt._store.report_feed_failure.call_args
+        self.assertEqual(call_kwargs.kwargs.get("reason"), "internal_error")
+
+    async def test_internal_error_quarantines_after_threshold(self) -> None:
+        """5 unenumerated exceptions transition the feed to quarantined with reason='internal_error' (RESP-03, VERIF-07)."""
+
+        async def _always_raises(feed, shutdown):
+            raise RuntimeError("simulated bug")
+            yield  # noqa: unreachable
+
+        rt = self._make_rt_with_capture(_always_raises)
+        # Drive 5 cycles: first 4 return "failing", 5th returns "quarantined".
+        rt._store.report_feed_failure = mock.AsyncMock(
+            side_effect=["failing", "failing", "failing", "failing", "quarantined"],
+        )
+
+        with (
+            _mock_upload_audio(),
+            _mock_pubsub_publish(),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.quarantine_telemetry.emit_quarantine_event",
+                new_callable=mock.AsyncMock,
+            ) as mock_emit,
+        ):
+            for _ in range(5):
                 await rt._process_feed(_FEED)
 
-        # report_feed_failure must NOT be called
-        rt._store.report_feed_failure.assert_not_awaited()
+        self.assertEqual(rt._store.report_feed_failure.await_count, 5)
+        for call in rt._store.report_feed_failure.await_args_list:
+            self.assertEqual(call.kwargs.get("reason"), "internal_error")
+        # Telemetry fired once on the transition.
+        mock_emit.assert_awaited_once()
+
+    async def test_internal_error_resets_on_success(self) -> None:
+        """A successful publish between unenumerated exceptions allows update_feed_progress to fire (RESP-03, VERIF-07).
+
+        Mechanically verifies the path; the SQL-level failure_count reset
+        is covered by storage-layer tests.
+        """
+        call_count = {"n": 0}
+
+        async def _alternating(feed, shutdown):
+            call_count["n"] += 1
+            if call_count["n"] % 2 == 1:  # odd calls raise
+                raise RuntimeError("intermittent bug")
+            else:
+                yield _make_captured_chunk(b"audio")
+
+        rt = self._make_rt_with_capture(_alternating)
+        rt._store.report_feed_failure = mock.AsyncMock(return_value="failing")
+        rt._store.update_feed_progress = mock.AsyncMock(return_value=True)
+
+        with _mock_upload_audio(), _mock_pubsub_publish():
+            await rt._process_feed(_FEED)  # raise -> report_feed_failure
+            await rt._process_feed(_FEED)  # success -> update_feed_progress
+            await rt._process_feed(_FEED)  # raise -> report_feed_failure
+
+        self.assertEqual(rt._store.report_feed_failure.await_count, 2)
+        self.assertEqual(rt._store.update_feed_progress.await_count, 1)
+        for call in rt._store.report_feed_failure.await_args_list:
+            self.assertEqual(call.kwargs.get("reason"), "internal_error")
 
     async def test_d_cancelled_error_returns_cleanly(self) -> None:
         """asyncio.CancelledError from capture_fn returns cleanly (no exception to caller)."""

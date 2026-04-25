@@ -298,6 +298,27 @@ async def publish_audio_chunk(
     except gax_exceptions.InvalidArgument as e:
         raise PipelineError(reason="publish_schema_validation") from e
     except PublishToPausedOrderingKeyException as e:
+        # Auto-resume the paused ordering key (D-06, v1.1). resume_publish is a
+        # local-flag clear on the PublisherClient -- it does not call Pub/Sub.
+        # Without this, every subsequent chunk for the same feed_id would
+        # raise the same exception until worker restart (silent indefinite
+        # drop). The original message is already lost from Pub/Sub's
+        # perspective; resume just unblocks the next chunk (D-07).
+        #
+        # Defensive try/except (RuntimeError, ValueError) -- the two documented
+        # failure modes of resume_publish (publisher already stopped /
+        # topic+key combo never seen). Neither should occur here in normal
+        # operation (we just observed the paused exception from the same
+        # publisher+topic+key combo), but a crash on the failure path
+        # itself would be worse than swallowing.
+        try:
+            publisher.resume_publish(topic_path, ordering_key=feed_id)
+        except (RuntimeError, ValueError):
+            logger.exception(
+                "resume_publish failed for feed=%s topic=%s",
+                feed_id,
+                topic_path,
+            )
         raise PipelineError(reason="publish_paused_ordering_key") from e
     except gax_exceptions.GoogleAPICallError as e:
         # Catches every Google API publish error (PermissionDenied, NotFound,
