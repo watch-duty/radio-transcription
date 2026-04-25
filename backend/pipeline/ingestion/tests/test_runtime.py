@@ -1029,8 +1029,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
 
         async def _failing_capture(feed, shutdown):
             yield _make_captured_chunk(b"audio")
-            msg = "capture failed"
-            raise RuntimeError(msg)
+            raise SourceError(reason="capture_failed")
 
         rt = NormalizerRuntime(
             capture_fn=_failing_capture, settings=_make_settings()
@@ -1065,8 +1064,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
 
         async def _failing_capture(feed, shutdown):
             yield _make_captured_chunk(b"audio")
-            msg = "capture failed"
-            raise RuntimeError(msg)
+            raise SourceError(reason="capture_failed")
 
         rt = NormalizerRuntime(
             capture_fn=_failing_capture, settings=_make_settings()
