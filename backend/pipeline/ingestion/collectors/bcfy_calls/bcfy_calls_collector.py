@@ -443,10 +443,10 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                     headers["Authorization"] = f"Bearer {jwt_token}"
                 except Exception as e:
                     # Use warning, not exception — the SourceError handler in
-                    # normalizer_runtime calls logger.exception on the chained
-                    # SourceError, which already includes this exception's
-                    # traceback via __cause__. Logging it here too duplicates
-                    # the stack trace for every auth failure.
+                    # normalizer_runtime calls logger.warning(..., exc_info=e)
+                    # on the chained SourceError, which already includes this
+                    # exception's traceback via __cause__. Logging it here too
+                    # duplicates the stack trace for every auth failure.
                     logger.warning("Failed to refresh JWT token: %s", e)
                     raise SourceError(reason="auth_failed") from e
                 consecutive_failures = await _handle_loop_failure(

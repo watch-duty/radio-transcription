@@ -192,7 +192,7 @@ async def openmhz_collector(
                     short_name,
                     consecutive_ws_failures,
                 )
-                raise SourceError(reason="source_unreachable")
+                raise SourceError(reason="reconnect_exhausted")
 
             backoff = min(
                 _RECONNECT_BACKOFF_CAP_SEC,
