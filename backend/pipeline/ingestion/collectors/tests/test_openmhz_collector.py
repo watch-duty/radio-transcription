@@ -16,6 +16,7 @@ from backend.pipeline.ingestion.collectors.openmhz.collector import (
     MAX_RECONNECT_FAILURES,
     openmhz_collector,
 )
+from backend.pipeline.ingestion.exceptions import SourceError
 from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 
 _TEST_FEED = LeasedFeed(
@@ -173,11 +174,12 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         mock_sleep.return_value = False
 
         shutdown = asyncio.Event()
-        with self.assertRaises(RuntimeError, msg="consecutively"):
+        with self.assertRaises(SourceError) as ctx:
             async for _ in openmhz_collector(
                 _TEST_FEED, shutdown, "https://api.openmhz.com/"
             ):
                 pass
+        self.assertEqual(ctx.exception.reason, "source_unreachable")
 
         # The Nth failure raises before sleeping, so N-1 sleeps
         self.assertEqual(mock_sleep.call_count, MAX_RECONNECT_FAILURES - 1)

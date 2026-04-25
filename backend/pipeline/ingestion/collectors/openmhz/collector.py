@@ -13,6 +13,7 @@ from curl_cffi.requests import AsyncSession
 from backend.pipeline.ingestion.collectors.openmhz._ws_transport import (
     websocket_transport,
 )
+from backend.pipeline.ingestion.exceptions import SourceError
 from backend.pipeline.ingestion.models import CapturedChunk
 from backend.pipeline.ingestion.slo_contract import (
     EVENT_TYPE_CALL_DOWNLOAD_FAILED,
@@ -185,17 +186,13 @@ async def openmhz_collector(
 
             consecutive_ws_failures += 1
             if consecutive_ws_failures >= MAX_RECONNECT_FAILURES:
-                msg = (
-                    f"WebSocket failed {consecutive_ws_failures} "
-                    f"times consecutively for {short_name}"
-                )
                 logger.error(
                     "Escalating to runtime: short_name=%s "
                     "consecutive_failures=%d",
                     short_name,
                     consecutive_ws_failures,
                 )
-                raise RuntimeError(msg)
+                raise SourceError(reason="source_unreachable")
 
             backoff = min(
                 _RECONNECT_BACKOFF_CAP_SEC,
