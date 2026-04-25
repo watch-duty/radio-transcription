@@ -262,12 +262,16 @@ class FeedStore:
         failure_threshold: int = 5,
         backoff_base_sec: int = 15,
         backoff_max_sec: int = 600,
+        *,
+        attribution: str = "unknown",
+        reason: str = "",
     ) -> str | None:
         """Report a feed failure with exponential backoff.
 
         Atomically increments ``failure_count``, computes ``retry_after``
         with exponential backoff + jitter, and transitions to
-        ``'quarantined'`` if *failure_threshold* is reached.
+        ``'quarantined'`` if *failure_threshold* is reached.  On quarantine
+        transition, ``quarantine_reason`` is populated from *reason*.
 
         Backoff formula: ``min(backoff_base_sec * 2^failure_count,
         backoff_max_sec) + random(0-10s) jitter``.
@@ -283,6 +287,15 @@ class FeedStore:
                 quarantine.
             backoff_base_sec: Base delay in seconds for the first retry.
             backoff_max_sec: Maximum backoff cap in seconds.
+            attribution: Who caused the failure (``"source"`` for feed-source
+                errors, ``"unknown"`` when called from the bare-except path
+                before Phase 3 ships).  Logged in structured events; not
+                persisted to a column (Phase 3 will set ``"source"``
+                properly from the SourceError handler).
+            reason: Short snake_case tag for the failure mode
+                (e.g. ``"auth_failed"``).  Persisted to
+                ``feeds.quarantine_reason`` on transition to quarantined.
+                Empty string when called via the Phase 2 bare-except default.
 
         Returns:
             The new feed status (``'failing'`` or ``'quarantined'``) if
@@ -298,6 +311,7 @@ class FeedStore:
             fencing_token,
             backoff_max_sec,
             backoff_base_sec,
+            reason,            # $7 (NEW) — populates quarantine_reason on transition
         )
         if row is None:
             return None
@@ -309,6 +323,8 @@ class FeedStore:
                 extra={
                     "feed_id": str(feed_id),
                     "failure_count": row["failure_count"],
+                    "attribution": attribution,
+                    "reason": reason,
                 },
             )
         else:
@@ -318,6 +334,8 @@ class FeedStore:
                     "feed_id": str(feed_id),
                     "failure_count": row["failure_count"],
                     "retry_after": str(row["retry_after"]),
+                    "attribution": attribution,
+                    "reason": reason,
                 },
             )
         return status

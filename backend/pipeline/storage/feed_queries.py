@@ -132,7 +132,8 @@ SET status = CASE WHEN failure_count + 1 >= $3
                        THEN NOW() + LEAST($5 * INTERVAL '1 second',
                             $6 * INTERVAL '1 second' * POWER(2, failure_count))
                             + (RANDOM() * INTERVAL '10 seconds')
-                       ELSE NULL END
+                       ELSE NULL END,
+    quarantine_reason = CASE WHEN failure_count + 1 >= $3 THEN $7 ELSE quarantine_reason END
 WHERE id = $1 AND worker_id = $2 AND fencing_token = $4
 RETURNING status::text, failure_count, retry_after
 """
