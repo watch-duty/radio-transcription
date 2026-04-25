@@ -299,5 +299,11 @@ async def publish_audio_chunk(
         raise PipelineError(reason="publish_schema_validation") from e
     except PublishToPausedOrderingKeyException as e:
         raise PipelineError(reason="publish_paused_ordering_key") from e
-    except Exception as e:
+    except gax_exceptions.GoogleAPICallError as e:
+        # Catches every Google API publish error (PermissionDenied, NotFound,
+        # Unavailable, DeadlineExceeded, Aborted, etc.) — every server-side
+        # cause of a publish failure. Anything else (TypeError, AttributeError,
+        # KeyError) is a code bug; let it propagate so the reaper's fail-fast
+        # path (D-06) catches it instead of silently dropping every chunk
+        # for the feed forever via the catch-all wrap.
         raise PipelineError(reason="publish_other") from e
