@@ -31,8 +31,8 @@ class SourceError(FeedError):
             immediately know whose problem it is.
     """
 
-    def __init__(self, reason: str, *args: object, **kwargs: object) -> None:
-        super().__init__(reason, *args, **kwargs)
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
         self.reason = reason
 
 
@@ -48,6 +48,6 @@ class PipelineError(FeedError):
             (e.g. ``"publish_schema_validation"``, ``"gcs_upload"``).
     """
 
-    def __init__(self, reason: str, *args: object, **kwargs: object) -> None:
-        super().__init__(reason, *args, **kwargs)
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
         self.reason = reason

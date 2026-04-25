@@ -263,7 +263,7 @@ class FeedStore:
         backoff_base_sec: int = 15,
         backoff_max_sec: int = 600,
         *,
-        reason: str = "",
+        reason: str | None = None,
     ) -> str | None:
         """Report a feed failure with exponential backoff.
 
@@ -289,7 +289,9 @@ class FeedStore:
             reason: Short snake_case tag for the failure mode
                 (e.g. ``"auth_failed"``).  Persisted to
                 ``feeds.quarantine_reason`` on transition to quarantined.
-                Empty string when the failure mode is unknown.
+                ``None`` (default) writes SQL NULL — preferred over an empty
+                string so triage queries can use ``WHERE quarantine_reason
+                IS NOT NULL``.
 
         Returns:
             The new feed status (``'failing'`` or ``'quarantined'``) if
