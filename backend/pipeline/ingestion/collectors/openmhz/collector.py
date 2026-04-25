@@ -13,7 +13,7 @@ from curl_cffi.requests import AsyncSession
 from backend.pipeline.ingestion.collectors.openmhz._ws_transport import (
     websocket_transport,
 )
-from backend.pipeline.ingestion.exceptions import SourceError  # noqa: F401
+from backend.pipeline.ingestion.exceptions import SourceError
 from backend.pipeline.ingestion.models import CapturedChunk
 from backend.pipeline.ingestion.slo_contract import (
     EVENT_TYPE_CALL_DOWNLOAD_FAILED,
@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+MAX_RECONNECT_FAILURES = 10
 _DOWNLOAD_MAX_RETRIES = 3
 _DOWNLOAD_BACKOFF_BASE_SEC = 1.0
 _RECONNECT_BACKOFF_BASE_SEC = 1.0
@@ -110,7 +111,9 @@ async def openmhz_collector(
 
     Raises:
         ValueError: If ``source_feed_id`` is missing from the feed.
-"""
+        RuntimeError: After ``MAX_RECONNECT_FAILURES`` consecutive
+            transport failures.
+    """
     source_feed_id = feed.get("source_feed_id")
     if not source_feed_id:
         msg = f"Feed {feed['id']} ({feed['name']}) missing source_feed_id"
@@ -120,7 +123,7 @@ async def openmhz_collector(
     transport_name = os.getenv("OPENMHZ_TRANSPORT", "websocket")
     transport_factory = _get_transport(transport_name)
 
-    _reconnect_attempt = 0
+    consecutive_ws_failures = 0
     download_session = AsyncSession()
 
     try:
@@ -133,7 +136,7 @@ async def openmhz_collector(
                     async for call in events:
                         # SLO: receipt_time stamp — OpenMHZ WS event arrived
                         receipt_time = datetime.datetime.now(datetime.UTC)
-                        _reconnect_attempt = 0
+                        consecutive_ws_failures = 0
 
                         if call.length_sec == 0:
                             continue
@@ -181,15 +184,24 @@ async def openmhz_collector(
             if shutdown_event.is_set():
                 return
 
-            _reconnect_attempt += 1
+            consecutive_ws_failures += 1
+            if consecutive_ws_failures >= MAX_RECONNECT_FAILURES:
+                logger.error(
+                    "Escalating to runtime: short_name=%s "
+                    "consecutive_failures=%d",
+                    short_name,
+                    consecutive_ws_failures,
+                )
+                raise SourceError(reason="source_unreachable")
+
             backoff = min(
                 _RECONNECT_BACKOFF_CAP_SEC,
-                _RECONNECT_BACKOFF_BASE_SEC * (2**_reconnect_attempt),
+                _RECONNECT_BACKOFF_BASE_SEC * (2**consecutive_ws_failures),
             ) + random.uniform(0, 1)  # noqa: S311 -- jitter, not crypto
             logger.info(
                 "Reconnecting: short_name=%s attempt=%d backoff_sec=%.1f",
                 short_name,
-                _reconnect_attempt,
+                consecutive_ws_failures,
                 backoff,
             )
             if await _sleep_or_shutdown(shutdown_event, backoff):

@@ -13,8 +13,10 @@ if TYPE_CHECKING:
 
 from backend.pipeline.ingestion.collectors.openmhz._types import CallEvent
 from backend.pipeline.ingestion.collectors.openmhz.collector import (
+    MAX_RECONNECT_FAILURES,
     openmhz_collector,
 )
+from backend.pipeline.ingestion.exceptions import SourceError
 from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 
 _TEST_FEED = LeasedFeed(
@@ -156,6 +158,31 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
                 feed, shutdown, "https://api.openmhz.com/"
             ):
                 pass
+
+    @patch(f"{_COL_MOD}.websocket_transport")
+    @patch(f"{_COL_MOD}._sleep_or_shutdown", new_callable=AsyncMock)
+    async def test_raises_after_max_reconnect_failures(
+        self,
+        mock_sleep: AsyncMock,
+        mock_transport: MagicMock,
+    ) -> None:
+        """Transport always raises -> collector escalates."""
+        mock_transport.return_value.__aenter__ = AsyncMock(
+            side_effect=ConnectionError("refused")
+        )
+        mock_transport.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_sleep.return_value = False
+
+        shutdown = asyncio.Event()
+        with self.assertRaises(SourceError) as ctx:
+            async for _ in openmhz_collector(
+                _TEST_FEED, shutdown, "https://api.openmhz.com/"
+            ):
+                pass
+        self.assertEqual(ctx.exception.reason, "source_unreachable")
+
+        # The Nth failure raises before sleeping, so N-1 sleeps
+        self.assertEqual(mock_sleep.call_count, MAX_RECONNECT_FAILURES - 1)
 
     @patch(f"{_COL_MOD}.websocket_transport")
     @patch(f"{_COL_MOD}._download_m4a")
