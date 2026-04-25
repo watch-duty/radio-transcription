@@ -397,33 +397,53 @@ class NormalizerRuntime:
                             feed["name"],
                         )
                     session_id = _fallback_session_id
+                # Bump chunk_seq up-front for every captured chunk, success or
+                # failure. Reusing a seq across chunks is unsafe: combined with
+                # second-precision upload timestamps and the 412-treated-as-
+                # success path, a same-second retry could publish the next
+                # chunk's metadata pointing at the previous chunk's audio bytes.
+                seq_for_chunk = chunk_seq
+                chunk_seq += 1
                 # PHASE 2: Pipeline — upload + publish + bookmark. PipelineError
                 # means our side misbehaved (GCS, Pub/Sub schema, paused ordering
                 # key). Drop the chunk, keep the feed active — do NOT increment
                 # failure_count (D-03).
                 try:
-                    gcs_uri = await retry_with_lease_check(
-                        gcp_helper.upload_staged_audio,
-                        self._gcs_client,
-                        captured_chunk.audio_bytes,
-                        feed,
-                        settings.audio_staging_bucket,
-                        chunk_seq,
-                        fencing_token,
-                        extension,
-                        content_type,
-                        lease_lost=self._lease_lost,
-                        shutdown=self._shutdown,
-                        max_retries=settings.gcs_upload_max_retries,
-                        base_delay_sec=settings.gcs_upload_retry_base_delay_sec,
-                        max_delay_sec=settings.gcs_upload_retry_max_delay_sec,
-                        retryable=(
-                            aiohttp.ClientError,
-                            asyncio.TimeoutError,
-                            OSError,
-                        ),
-                        operation_name="GCS upload",
-                    )
+                    try:
+                        gcs_uri = await retry_with_lease_check(
+                            gcp_helper.upload_staged_audio,
+                            self._gcs_client,
+                            captured_chunk.audio_bytes,
+                            feed,
+                            settings.audio_staging_bucket,
+                            seq_for_chunk,
+                            fencing_token,
+                            extension,
+                            content_type,
+                            lease_lost=self._lease_lost,
+                            shutdown=self._shutdown,
+                            max_retries=settings.gcs_upload_max_retries,
+                            base_delay_sec=settings.gcs_upload_retry_base_delay_sec,
+                            max_delay_sec=settings.gcs_upload_retry_max_delay_sec,
+                            retryable=(
+                                aiohttp.ClientError,
+                                asyncio.TimeoutError,
+                                OSError,
+                            ),
+                            operation_name="GCS upload",
+                        )
+                    except (
+                        aiohttp.ClientError,
+                        asyncio.TimeoutError,
+                        OSError,
+                    ) as e:
+                        # Retries exhausted on a transient/network upload error.
+                        # Surface as a PipelineError so the outer handler treats
+                        # it as our-side misbehavior (drop chunk, keep feed
+                        # active). Wrapping inside upload_audio would defeat
+                        # retry, since PipelineError isn't in the retryable
+                        # tuple — the wrap must happen here, after retry.
+                        raise PipelineError(reason="gcs_upload") from e
                     duration_ms = int(
                         (
                             captured_chunk.chunk_end_time
@@ -446,7 +466,6 @@ class NormalizerRuntime:
                     logger.info(
                         "Published message %s for feed %s", message_id, feed["name"]
                     )
-                    chunk_seq += 1
 
                     ok = await retry_with_lease_check(
                         self._store.update_feed_progress,
@@ -526,12 +545,17 @@ class NormalizerRuntime:
                 except PipelineError as e:
                     # Drop the chunk, keep the feed active, try the next chunk.
                     # Do NOT increment failure_count — this is our side misbehaving.
+                    # exc_info=e preserves the chained __cause__ traceback
+                    # (e.g. gax_exceptions.InvalidArgument, aiohttp.ClientError)
+                    # in Cloud Logging — without it we lose the underlying
+                    # error and only see the reason tag.
                     logger.warning(
                         "pipeline_error",
                         extra={"json_fields": {
                             "feed_id": str(feed["id"]),
                             "reason": e.reason,
                         }},
+                        exc_info=e,
                     )
                     continue
 

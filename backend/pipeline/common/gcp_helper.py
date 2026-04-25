@@ -153,6 +153,10 @@ async def upload_audio(
         # aiohttp.ClientResponseError is a subclass of ClientError, which
         # retry_with_lease_check treats as retryable — without this catch,
         # a 412 would be retried indefinitely instead of treated as success.
+        # Other ClientResponseError statuses (incl. transient 5xx) propagate
+        # so retry_with_lease_check can match them via the retryable tuple.
+        # Wrapping in PipelineError here would defeat retry, since
+        # PipelineError isn't in any retryable tuple.
         if if_generation_match is not None and exc.status == 412:
             logger.info(
                 "GCS 412 (object exists): %s/%s -- treating as success",
@@ -160,9 +164,7 @@ async def upload_audio(
                 object_name,
             )
         else:
-            raise PipelineError(reason="gcs_upload") from exc
-    except Exception as e:
-        raise PipelineError(reason="gcs_upload") from e
+            raise
     return f"gs://{bucket}/{object_name}"
 
 

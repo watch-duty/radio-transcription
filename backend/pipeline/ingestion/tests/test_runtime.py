@@ -1358,5 +1358,188 @@ class TestThreePhaseHandler(unittest.IsolatedAsyncioTestCase):
         rt._store.release_feed.assert_not_awaited()
 
 
+class TestProcessFeedUploadRetryExhaustion(unittest.IsolatedAsyncioTestCase):
+    """Regression: GCS upload errors must retry, then fall through as pipeline_error.
+
+    A prior version of this code wrapped every upload exception in
+    PipelineError inside upload_audio. Because PipelineError is not in any
+    retryable tuple, retry_with_lease_check matched nothing and aborted on
+    the first failure. This suite pins the post-fix behavior:
+      - Retryable transport errors are retried up to max_retries+1 times.
+      - Persistent failure surfaces as a pipeline_error log + continue
+        (chunk dropped, feed left active) — not a SourceError-style
+        report_feed_failure call.
+    """
+
+    async def test_persistent_upload_failure_drops_chunk_without_quarantine(
+        self,
+    ) -> None:
+        """Persistent aiohttp.ClientError exhausts retries → pipeline_error log, no DB failure write."""
+
+        async def _one_chunk(feed, shutdown):
+            yield _make_captured_chunk(b"audio")
+
+        rt = NormalizerRuntime(
+            capture_fn=_one_chunk,
+            settings=_make_settings(
+                gcs_upload_max_retries=2,
+                gcs_upload_retry_base_delay_sec=0.0,
+                gcs_upload_retry_max_delay_sec=0.0,
+            ),
+        )
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress.return_value = True
+        rt._releasing_feeds = set()
+
+        # Always fail with a retryable transport error.
+        upload_mock = mock.AsyncMock(
+            side_effect=aiohttp.ClientError("persistent network error"),
+        )
+
+        with (
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.upload_staged_audio",
+                upload_mock,
+            ),
+            _mock_pubsub_publish() as mock_publish,
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.logger",
+            ) as mock_logger,
+        ):
+            await rt._process_feed(_FEED)
+
+        # Retry attempted (max_retries + 1 = 3 calls). Without the fix, only
+        # one call would have occurred — PipelineError isn't retryable, so
+        # the wrap defeated the retry tuple match.
+        self.assertEqual(upload_mock.await_count, 3)
+
+        # Pub/Sub never called — upload exhausted.
+        mock_publish.assert_not_called()
+
+        # report_feed_failure NOT called — pipeline error must not quarantine.
+        rt._store.report_feed_failure.assert_not_awaited()
+
+        # A pipeline_error warning must have been logged.
+        warning_calls = mock_logger.warning.call_args_list
+        pipeline_error_logged = any(
+            "pipeline_error" in str(c) for c in warning_calls
+        )
+        self.assertTrue(
+            pipeline_error_logged,
+            msg=f"Expected pipeline_error warning; got: {warning_calls}",
+        )
+
+        # Generator exhausted normally → release_feed called.
+        rt._store.release_feed.assert_awaited_once()
+
+
+class TestProcessFeedChunkSeqMonotonic(unittest.IsolatedAsyncioTestCase):
+    """Regression: chunk_seq must increment for every captured chunk.
+
+    Reusing chunk_seq across chunks is unsafe: combined with the
+    second-precision upload timestamp and the 412-treated-as-success path
+    in upload_audio, a same-second collision could publish a new chunk's
+    metadata pointing at the previous chunk's audio bytes. Pin the bump-
+    up-front behavior so the seq is unique per yielded chunk regardless of
+    success/failure.
+    """
+
+    async def test_seq_advances_after_pipeline_error(self) -> None:
+        """When chunk N fails publish (PipelineError), chunk N+1 uses seq+1, not the same seq."""
+
+        async def _two_chunks(feed, shutdown):
+            yield _make_captured_chunk(b"audio1")
+            yield _make_captured_chunk(b"audio2")
+
+        rt = NormalizerRuntime(
+            capture_fn=_two_chunks, settings=_make_settings()
+        )
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress.return_value = True
+        rt._releasing_feeds = set()
+
+        upload_mock = mock.AsyncMock(return_value="gs://b/p")
+
+        # First publish fails, second succeeds.
+        publish_mock = mock.AsyncMock(
+            side_effect=[
+                PipelineError(reason="publish_other"),
+                "msg-2",
+            ],
+        )
+
+        with (
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.upload_staged_audio",
+                upload_mock,
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.publish_audio_chunk",
+                publish_mock,
+            ),
+        ):
+            await rt._process_feed(_FEED)
+
+        self.assertEqual(upload_mock.await_count, 2)
+        # The seq for upload_staged_audio is positional arg index 4 (after
+        # gcs_client, audio_bytes, feed, bucket).
+        seq_first = upload_mock.await_args_list[0].args[4]
+        seq_second = upload_mock.await_args_list[1].args[4]
+        self.assertEqual(seq_second, seq_first + 1)
+
+    async def test_seq_advances_after_upload_retry_exhaustion(self) -> None:
+        """When chunk N's upload exhausts retries, chunk N+1 uses seq+1."""
+
+        async def _two_chunks(feed, shutdown):
+            yield _make_captured_chunk(b"audio1")
+            yield _make_captured_chunk(b"audio2")
+
+        rt = NormalizerRuntime(
+            capture_fn=_two_chunks,
+            settings=_make_settings(
+                gcs_upload_max_retries=1,
+                gcs_upload_retry_base_delay_sec=0.0,
+                gcs_upload_retry_max_delay_sec=0.0,
+            ),
+        )
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress.return_value = True
+        rt._releasing_feeds = set()
+
+        # Chunk 1: fail twice (retry exhaustion = max_retries+1 calls).
+        # Chunk 2: succeed on first attempt.
+        upload_mock = mock.AsyncMock(
+            side_effect=[
+                aiohttp.ClientError("blip"),
+                aiohttp.ClientError("blip"),
+                "gs://b/p",
+            ],
+        )
+
+        with (
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.upload_staged_audio",
+                upload_mock,
+            ),
+            _mock_pubsub_publish(),
+        ):
+            await rt._process_feed(_FEED)
+
+        # 2 failed + 1 success
+        self.assertEqual(upload_mock.await_count, 3)
+        # The two failed attempts use chunk 1's seq; the third uses chunk 2's seq.
+        seq_chunk1_attempt1 = upload_mock.await_args_list[0].args[4]
+        seq_chunk1_attempt2 = upload_mock.await_args_list[1].args[4]
+        seq_chunk2 = upload_mock.await_args_list[2].args[4]
+        self.assertEqual(seq_chunk1_attempt1, seq_chunk1_attempt2)  # retry uses same seq
+        self.assertEqual(seq_chunk2, seq_chunk1_attempt1 + 1)  # next chunk advances
+
+
 if __name__ == "__main__":
     unittest.main()
