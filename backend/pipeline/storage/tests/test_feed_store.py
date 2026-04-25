@@ -392,6 +392,13 @@ class TestReleaseFeed(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[1:], (_FEED_ID, _WORKER_ID, 1))
 
 
+_DEFAULT_LIMITS: dict[SourceType, int] = {
+    SourceType.BCFY_FEEDS: 10,
+    SourceType.BCFY_CALLS: 10,
+    SourceType.OPENMHZ: 10,
+}
+
+
 class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.acquire_feeds_batch."""
 
@@ -422,7 +429,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
         pool = _make_pool(fetch_result=rows)
         store = FeedStore(pool)
 
-        result = await store.acquire_feeds_batch(_WORKER_ID, 100, 10, 10, 10)
+        result = await store.acquire_feeds_batch(_WORKER_ID, 100, _DEFAULT_LIMITS)
 
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0]["id"], _FEED_ID)
@@ -433,34 +440,95 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
         pool = _make_pool(fetch_result=[])
         store = FeedStore(pool)
 
-        result = await store.acquire_feeds_batch(_WORKER_ID, 100, 10, 10, 10)
+        result = await store.acquire_feeds_batch(_WORKER_ID, 100, _DEFAULT_LIMITS)
 
         self.assertEqual(result, [])
 
-    async def test_passes_correct_parameters(self) -> None:
-        """Parameters are worker_id, ramp_pct, and three per-type limits."""
+    async def test_passes_positional_in_claim_types_order(self) -> None:
+        """Limits dict is unpacked in claim_types iteration order."""
         pool = _make_pool(fetch_result=[])
-        store = FeedStore(pool)
+        store = FeedStore(
+            pool,
+            claim_types=[
+                SourceType.BCFY_FEEDS,
+                SourceType.BCFY_CALLS,
+                SourceType.OPENMHZ,
+            ],
+        )
 
-        await store.acquire_feeds_batch(_WORKER_ID, 75, 2, 3, 5)
+        await store.acquire_feeds_batch(
+            _WORKER_ID, 75,
+            {
+                SourceType.BCFY_FEEDS: 2,
+                SourceType.BCFY_CALLS: 3,
+                SourceType.OPENMHZ: 5,
+            },
+        )
 
         args = pool.fetch.call_args[0]
-        self.assertIs(args[0], feed_queries.ACQUIRE_FEEDS_BATCH_SQL)
+        # args[0] is the generated SQL string (not a constant identity check
+        # anymore — the constant no longer exists).
+        self.assertIsInstance(args[0], str)
         self.assertEqual(args[1], _WORKER_ID)
         self.assertEqual(args[2], 75)
-        self.assertEqual(args[3], 2)
-        self.assertEqual(args[4], 3)
-        self.assertEqual(args[5], 5)
+        self.assertEqual(args[3], 2)  # BCFY_FEEDS
+        self.assertEqual(args[4], 3)  # BCFY_CALLS
+        self.assertEqual(args[5], 5)  # OPENMHZ
 
     async def test_per_type_limit_zero_is_passed_through(self) -> None:
         """A branch's LIMIT of 0 reaches the SQL — DB enforces the skip."""
         pool = _make_pool(fetch_result=[])
-        store = FeedStore(pool)
+        store = FeedStore(
+            pool,
+            claim_types=[
+                SourceType.BCFY_FEEDS,
+                SourceType.BCFY_CALLS,
+                SourceType.OPENMHZ,
+            ],
+        )
 
-        await store.acquire_feeds_batch(_WORKER_ID, 100, 0, 10, 10)
+        await store.acquire_feeds_batch(
+            _WORKER_ID, 100,
+            {SourceType.BCFY_FEEDS: 0, SourceType.BCFY_CALLS: 10, SourceType.OPENMHZ: 10},
+        )
 
         args = pool.fetch.call_args[0]
         self.assertEqual(args[3], 0)
+
+    async def test_absent_limit_key_treated_as_zero(self) -> None:
+        """Types absent from limits dict pass 0 to the SQL — same effect as LIMIT 0."""
+        pool = _make_pool(fetch_result=[])
+        store = FeedStore(
+            pool,
+            claim_types=[
+                SourceType.BCFY_FEEDS,
+                SourceType.BCFY_CALLS,
+                SourceType.OPENMHZ,
+            ],
+        )
+
+        await store.acquire_feeds_batch(
+            _WORKER_ID, 100, {SourceType.BCFY_FEEDS: 5},
+        )
+
+        args = pool.fetch.call_args[0]
+        self.assertEqual(args[3], 5)
+        self.assertEqual(args[4], 0)
+        self.assertEqual(args[5], 0)
+
+    async def test_raises_on_unknown_limit_key(self) -> None:
+        """A SourceType not in claim_types raises ValueError."""
+        pool = _make_pool(fetch_result=[])
+        # Default claim_types = SourceType minus ECHO. Construct a store
+        # that only claims BCFY_FEEDS so OPENMHZ is unknown.
+        store = FeedStore(pool, claim_types=[SourceType.BCFY_FEEDS])
+
+        with self.assertRaises(ValueError) as ctx:
+            await store.acquire_feeds_batch(
+                _WORKER_ID, 100,
+                {SourceType.BCFY_FEEDS: 1, SourceType.OPENMHZ: 1},
+            )
+        self.assertIn("openmhz", str(ctx.exception))
 
     async def test_raises_value_error_on_unknown_source_type(self) -> None:
         """ValueError is raised with details if the DB returns an unknown source type slug."""
@@ -476,12 +544,64 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         with self.assertRaises(ValueError) as ctx:
-            await store.acquire_feeds_batch(_WORKER_ID, 100, 1, 1, 1)
+            await store.acquire_feeds_batch(
+                _WORKER_ID, 100,
+                {SourceType.BCFY_FEEDS: 1, SourceType.BCFY_CALLS: 1, SourceType.OPENMHZ: 1},
+            )
 
         self.assertIn(
             f"Unknown source type 'invalid_type' for feed {_FEED_ID}",
             str(ctx.exception),
         )
+
+
+class TestBuildAcquireFeedsBatchSql(unittest.TestCase):
+    """Tests for build_acquire_feeds_batch_sql pure helper."""
+
+    def test_one_branch_per_claim_type(self) -> None:
+        sql = feed_queries.build_acquire_feeds_batch_sql([SourceType.BCFY_FEEDS])
+        self.assertEqual(sql.count("AS MATERIALIZED ("), 2)  # 1 branch + claimed
+
+    def test_three_branches_for_production_set(self) -> None:
+        sql = feed_queries.build_acquire_feeds_batch_sql([
+            SourceType.BCFY_FEEDS,
+            SourceType.BCFY_CALLS,
+            SourceType.OPENMHZ,
+        ])
+        self.assertEqual(sql.count("AS MATERIALIZED ("), 4)  # 3 branches + claimed
+
+    def test_param_count_matches_claim_types(self) -> None:
+        """N claim_types → LIMIT $3..$(2+N) appears in SQL."""
+        sql = feed_queries.build_acquire_feeds_batch_sql([
+            SourceType.BCFY_FEEDS,
+            SourceType.BCFY_CALLS,
+            SourceType.OPENMHZ,
+        ])
+        self.assertIn("LIMIT $3", sql)
+        self.assertIn("LIMIT $4", sql)
+        self.assertIn("LIMIT $5", sql)
+        self.assertNotIn("LIMIT $6", sql)
+
+    def test_source_type_literals_inlined(self) -> None:
+        sql = feed_queries.build_acquire_feeds_batch_sql([
+            SourceType.BCFY_FEEDS,
+            SourceType.BCFY_CALLS,
+            SourceType.OPENMHZ,
+        ])
+        self.assertIn("source_type = 'bcfy_feeds'", sql)
+        self.assertIn("source_type = 'bcfy_calls'", sql)
+        self.assertIn("source_type = 'openmhz'", sql)
+
+    def test_deterministic(self) -> None:
+        types = [SourceType.BCFY_FEEDS, SourceType.OPENMHZ]
+        self.assertEqual(
+            feed_queries.build_acquire_feeds_batch_sql(types),
+            feed_queries.build_acquire_feeds_batch_sql(types),
+        )
+
+    def test_empty_claim_types_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            feed_queries.build_acquire_feeds_batch_sql([])
 
 
 class TestReportFeedFailureWithThreshold(unittest.IsolatedAsyncioTestCase):

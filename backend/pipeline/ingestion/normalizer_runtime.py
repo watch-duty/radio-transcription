@@ -176,7 +176,9 @@ class NormalizerRuntime:
         # SYN-ACK timeout), starving the pool of connections.
         self._data_pool = await create_pool_with_retry(settings.db)
         self._store = FeedStore(
-            self._data_pool, source_types=settings.source_types
+            self._data_pool,
+            source_types=settings.source_types,
+            claim_types=list(settings.caps.keys()),
         )
 
         # Dedicated 1-connection pool ensures heartbeat queries never queue
@@ -263,11 +265,7 @@ class NormalizerRuntime:
                 )
                 if total_slack > 0:
                     s = self._normalizer_settings
-                    caps: dict[SourceType, int] = {
-                        SourceType.BCFY_FEEDS: s.cap_bcfy_feeds,
-                        SourceType.BCFY_CALLS: s.cap_bcfy_calls,
-                        SourceType.OPENMHZ: s.cap_openmhz,
-                    }
+                    caps = s.caps
                     # Pull the authoritative per-type held count from the
                     # DB before apportioning. See FeedStore.count_held_by_type
                     # for rationale: the previous in-memory counter leaked
@@ -276,7 +274,7 @@ class NormalizerRuntime:
                     # per cycle is structurally drift-proof and costs one
                     # extra round-trip per lease_poll_interval_sec.
                     held = await self._store.count_held_by_type(s.worker_id)
-                    # Apportion total_slack across the three per-type CTE
+                    # Apportion total_slack across the per-type CTE
                     # branches (see _calculate_branch_limits for the
                     # algorithm + rationale). Extracted to a pure helper
                     # so the allocation math is unit-testable without the
@@ -296,9 +294,7 @@ class NormalizerRuntime:
                     primary = await self._store.acquire_feeds_batch(
                         s.worker_id,
                         s.claim_ramp_pct,
-                        limits[SourceType.BCFY_FEEDS],
-                        limits[SourceType.BCFY_CALLS],
-                        limits[SourceType.OPENMHZ],
+                        limits,
                     )
                     leases: list[LeasedFeed] = list(primary)
                     # When the primary per-type CTE underfills (caps bound

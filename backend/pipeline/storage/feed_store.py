@@ -5,7 +5,6 @@ import logging
 from typing import TYPE_CHECKING, TypedDict
 
 from backend.pipeline.storage.feed_queries import (
-    ACQUIRE_FEEDS_BATCH_SQL,
     ACQUIRE_FEEDS_RECOVERY_SQL,
     COUNT_HELD_BY_TYPE_SQL,
     CREATE_FEED_SQL,
@@ -19,11 +18,13 @@ from backend.pipeline.storage.feed_queries import (
     REPORT_FAILURE_SQL,
     RESET_FEED_SQL,
     UPDATE_PROGRESS_SQL,
+    build_acquire_feeds_batch_sql,
 )
 
 if TYPE_CHECKING:
     import datetime
     import uuid
+    from collections.abc import Sequence
 
     import asyncpg
 
@@ -107,6 +108,14 @@ class FeedStore:
             lease queries.  When set, only feeds whose ``source_type``
             matches one of the values will be leased.  ``None`` disables
             filtering (all types are eligible).
+        claim_types: Optional ordered sequence of ``SourceType`` values
+            this store will claim via ``acquire_feeds_batch``. The SQL
+            is generated at construction time with one MATERIALIZED CTE
+            per type. Defaults to every ``SourceType`` except ``ECHO``
+            (Echo feeds are served by a separate cloud function and
+            are never leased here). ``NormalizerRuntime`` passes
+            ``list(settings.caps.keys())`` so the SQL shape and the
+            runtime's per-type budgets are seeded from the same set.
 
     """
 
@@ -114,9 +123,16 @@ class FeedStore:
         self,
         pool: asyncpg.Pool,
         source_types: list[str] | None = None,
+        claim_types: Sequence[SourceType] | None = None,
     ) -> None:
         self._pool = pool
         self._source_types = source_types
+        if claim_types is None:
+            claim_types = [t for t in SourceType if t != SourceType.ECHO]
+        self._claim_types: tuple[SourceType, ...] = tuple(claim_types)
+        self._acquire_feeds_batch_sql = build_acquire_feeds_batch_sql(
+            self._claim_types,
+        )
 
     def _row_to_feed(self, row: asyncpg.Record) -> Feed:
         """Convert a database row to a Feed dict with validation."""
@@ -371,9 +387,7 @@ class FeedStore:
         self,
         worker_id: uuid.UUID,
         ramp_pct: int,
-        limit_bcfy_feeds: int,
-        limit_bcfy_calls: int,
-        limit_openmhz: int,
+        limits: dict[SourceType, int],
     ) -> list[LeasedFeed]:
         """
         Batch-acquire unclaimed feeds via the per-type UNION ALL MATERIALIZED CTE.
@@ -392,20 +406,28 @@ class FeedStore:
         Args:
             worker_id: UUID of the worker requesting leases.
             ramp_pct: md5 ramp filter threshold (0-100). 100 = all eligible.
-            limit_bcfy_feeds: LIMIT applied to the bcfy_feeds branch.
-            limit_bcfy_calls: LIMIT applied to the bcfy_calls branch.
-            limit_openmhz: LIMIT applied to the openmhz branch.
+            limits: Per-type LIMIT keyed by ``SourceType``. Types absent
+                from the dict are passed as 0 (their CTE branch returns
+                no rows). Types present but not in this store's
+                ``claim_types`` raise ``ValueError`` — the SQL was
+                generated for a fixed set at construction.
 
         Returns:
             List of ``LeasedFeed`` dicts (empty if none available).
         """
+        unknown = set(limits) - set(self._claim_types)
+        if unknown:
+            msg = (
+                "limits contains source types not in this store's claim_types: "
+                f"{sorted(t.value for t in unknown)}"
+            )
+            raise ValueError(msg)
+        positional = [limits.get(t, 0) for t in self._claim_types]
         rows = await self._pool.fetch(
-            ACQUIRE_FEEDS_BATCH_SQL,
+            self._acquire_feeds_batch_sql,
             worker_id,
             ramp_pct,
-            limit_bcfy_feeds,
-            limit_bcfy_calls,
-            limit_openmhz,
+            *positional,
         )
         return [self._row_to_leased_feed(row) for row in rows]
 

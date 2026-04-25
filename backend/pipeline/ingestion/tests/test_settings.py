@@ -3,6 +3,7 @@ import uuid
 from unittest.mock import patch
 
 from backend.pipeline.ingestion.settings import NormalizerSettings
+from backend.pipeline.storage.feed_store import SourceType
 
 
 def _required_env() -> dict[str, str]:
@@ -90,9 +91,9 @@ class TestNormalizerSettings(unittest.TestCase):
             settings.segmented_pubsub_topic_path,
             "projects/test-project/topics/test-segmented-topic",
         )
-        self.assertEqual(settings.cap_bcfy_feeds, 200)
-        self.assertEqual(settings.cap_bcfy_calls, 400)
-        self.assertEqual(settings.cap_openmhz, 700)
+        self.assertEqual(settings.caps[SourceType.BCFY_FEEDS], 200)
+        self.assertEqual(settings.caps[SourceType.BCFY_CALLS], 400)
+        self.assertEqual(settings.caps[SourceType.OPENMHZ], 700)
         self.assertEqual(settings.claim_ramp_pct, 50)
 
     def test_edge_case_uses_defaults_and_generates_worker_id(self) -> None:
@@ -128,9 +129,9 @@ class TestNormalizerSettings(unittest.TestCase):
             "projects/test-project/topics/test-topic",
         )
         self.assertIsNone(settings.segmented_pubsub_topic_path)
-        self.assertEqual(settings.cap_bcfy_feeds, 240)
-        self.assertEqual(settings.cap_bcfy_calls, 600)
-        self.assertEqual(settings.cap_openmhz, 900)
+        self.assertEqual(settings.caps[SourceType.BCFY_FEEDS], 240)
+        self.assertEqual(settings.caps[SourceType.BCFY_CALLS], 600)
+        self.assertEqual(settings.caps[SourceType.OPENMHZ], 900)
         self.assertEqual(settings.claim_ramp_pct, 100)
 
     def test_edge_case_zero_and_negative_numeric_values_parse(self) -> None:
@@ -154,6 +155,28 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.db.pool_min_size, 0)
         self.assertEqual(settings.db.pool_max_size, -2)
         self.assertEqual(settings.abandonment_window_sec, -0.5)
+
+    def test_caps_partial_env_override(self) -> None:
+        """Setting CAP_<NAME> for one type overrides only that one; others use defaults."""
+        env = {**_required_env(), "CAP_BCFY_FEEDS": "999"}
+
+        with patch.dict("os.environ", env, clear=True):
+            settings = NormalizerSettings()
+
+        self.assertEqual(settings.caps[SourceType.BCFY_FEEDS], 999)
+        self.assertEqual(settings.caps[SourceType.BCFY_CALLS], 600)
+        self.assertEqual(settings.caps[SourceType.OPENMHZ], 900)
+
+    def test_caps_keys_match_default_caps_registry(self) -> None:
+        """settings.caps populates exactly the SourceTypes registered in _DEFAULT_CAPS."""
+        with patch.dict("os.environ", _required_env(), clear=True):
+            settings = NormalizerSettings()
+
+        # ECHO is intentionally absent: Echo feeds aren't VM-leased.
+        self.assertNotIn(SourceType.ECHO, settings.caps)
+        self.assertIn(SourceType.BCFY_FEEDS, settings.caps)
+        self.assertIn(SourceType.BCFY_CALLS, settings.caps)
+        self.assertIn(SourceType.OPENMHZ, settings.caps)
 
     def test_invalid_missing_required_env_var_raises(self) -> None:
         """Raises ValueError when a required environment variable is missing."""

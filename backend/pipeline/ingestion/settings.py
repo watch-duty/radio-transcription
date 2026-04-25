@@ -4,6 +4,7 @@ import os
 import uuid
 from dataclasses import dataclass, field
 
+from backend.pipeline.storage.feed_store import SourceType
 from backend.pipeline.storage.settings import AlloyDBSettings
 
 
@@ -14,6 +15,27 @@ def _require_env(name: str) -> str:
         msg = f"Required environment variable {name} is not set"
         raise ValueError(msg)
     return value
+
+
+# Per-type claim-budget defaults (scaling plan §4/§6). The set of keys
+# IS the canonical "what types this fleet claims" registry — adding a
+# new claimable source type means adding one entry here. The runtime
+# and FeedStore both iterate this set; neither references SourceType
+# members directly. ECHO is intentionally absent: Echo feeds are
+# served by a separate cloud function, not VM-leased.
+_DEFAULT_CAPS: dict[SourceType, int] = {
+    SourceType.BCFY_FEEDS: 240,
+    SourceType.BCFY_CALLS: 600,
+    SourceType.OPENMHZ: 900,
+}
+
+
+def _load_caps_from_env() -> dict[SourceType, int]:
+    """Build per-type caps from CAP_<NAME> env vars, defaulting via _DEFAULT_CAPS."""
+    return {
+        t: int(os.environ.get(f"CAP_{t.name}", str(default)))
+        for t, default in _DEFAULT_CAPS.items()
+    }
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -69,21 +91,9 @@ class NormalizerSettings:
     # Per-type claim budget caps (scaling plan §4/§6). Worker passes
     # min(cap, cap - held, total_slack) as each CTE branch's LIMIT so
     # PostgreSQL enforces the cap structurally via the query planner.
-    cap_bcfy_feeds: int = field(
-        default_factory=lambda: int(
-            os.environ.get("CAP_BCFY_FEEDS", "240"),
-        ),
-    )
-    cap_bcfy_calls: int = field(
-        default_factory=lambda: int(
-            os.environ.get("CAP_BCFY_CALLS", "600"),
-        ),
-    )
-    cap_openmhz: int = field(
-        default_factory=lambda: int(
-            os.environ.get("CAP_OPENMHZ", "900"),
-        ),
-    )
+    # Defaults + claimable type set live in module-level _DEFAULT_CAPS;
+    # CAP_<NAME> env vars override individual entries.
+    caps: dict[SourceType, int] = field(default_factory=_load_caps_from_env)
 
     # Claim ramp filter (scaling plan §9.4). md5-based deterministic
     # bucketing; 100 = every feed claimable. Sub-100 values enable staged

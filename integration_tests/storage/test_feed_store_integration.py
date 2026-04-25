@@ -200,9 +200,11 @@ async def test_primary_cte_respects_per_type_limits(
     worker = uuid.uuid4()
     result = await store.acquire_feeds_batch(
         worker, ramp_pct=100,
-        limit_bcfy_feeds=2,
-        limit_bcfy_calls=1,
-        limit_openmhz=3,
+        limits={
+            SourceType.BCFY_FEEDS: 2,
+            SourceType.BCFY_CALLS: 1,
+            SourceType.OPENMHZ: 3,
+        },
     )
 
     counts: dict[SourceType, int] = dict.fromkeys(SourceType, 0)
@@ -224,9 +226,11 @@ async def test_primary_cte_limit_zero_skips_type(
     worker = uuid.uuid4()
     result = await store.acquire_feeds_batch(
         worker, ramp_pct=100,
-        limit_bcfy_feeds=0,
-        limit_bcfy_calls=10,
-        limit_openmhz=10,
+        limits={
+            SourceType.BCFY_FEEDS: 0,
+            SourceType.BCFY_CALLS: 10,
+            SourceType.OPENMHZ: 10,
+        },
     )
 
     assert all(lease["source_type"] != SourceType.BCFY_FEEDS for lease in result)
@@ -243,9 +247,11 @@ async def test_primary_cte_ramp_zero_returns_empty(
     worker = uuid.uuid4()
     result = await store.acquire_feeds_batch(
         worker, ramp_pct=0,
-        limit_bcfy_feeds=10,
-        limit_bcfy_calls=10,
-        limit_openmhz=10,
+        limits={
+            SourceType.BCFY_FEEDS: 10,
+            SourceType.BCFY_CALLS: 10,
+            SourceType.OPENMHZ: 10,
+        },
     )
 
     assert result == []
@@ -260,9 +266,11 @@ async def test_primary_cte_sets_status_to_active(
 
     result = await store.acquire_feeds_batch(
         worker, ramp_pct=100,
-        limit_bcfy_feeds=10,
-        limit_bcfy_calls=10,
-        limit_openmhz=10,
+        limits={
+            SourceType.BCFY_FEEDS: 10,
+            SourceType.BCFY_CALLS: 10,
+            SourceType.OPENMHZ: 10,
+        },
     )
 
     assert len(result) == 1

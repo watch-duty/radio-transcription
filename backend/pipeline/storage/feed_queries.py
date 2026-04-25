@@ -1,4 +1,12 @@
 """SQL queries for feed storage operations."""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from backend.pipeline.storage.feed_store import SourceType
 
 LEASE_FEED_SQL = """\
 WITH available_feed AS (
@@ -123,12 +131,12 @@ WHERE worker_id = $1 AND status = 'active'::feed_status
 GROUP BY source_type
 """
 
-# Primary per-type claim: three independent per-type CTEs, each locking its
-# own rows with its own LIMIT. UNION ALL happens in a fourth CTE across
-# their IDs — the outer UPDATE joins the combined IDs. Each per-type CTE
-# gets its own MATERIALIZED pin to keep the SKIP LOCKED subquery from
-# being inlined and re-evaluated per outer row (which would defeat the
-# LIMIT under nested-loop plans).
+# Primary per-type claim: one independent CTE per claim_type, each locking
+# its own rows with its own LIMIT. UNION ALL happens in a `claimed` CTE
+# across their IDs — the outer UPDATE joins the combined IDs. Each
+# per-type CTE gets its own MATERIALIZED pin to keep the SKIP LOCKED
+# subquery from being inlined and re-evaluated per outer row (which would
+# defeat the LIMIT under nested-loop plans).
 #
 # Worker computes each branch's LIMIT as max(0, min(cap, cap - held,
 # total_slack)) so the DB enforces per-type caps structurally — a worker
@@ -159,60 +167,76 @@ GROUP BY source_type
 # between major versions, which would silently re-shuffle feeds between
 # ramp buckets mid-rollout (scaling plan §9.4).
 #
-# Params: $1=worker_id, $2=ramp_pct,
-#         $3=limit_bcfy_feeds, $4=limit_bcfy_calls, $5=limit_openmhz.
-ACQUIRE_FEEDS_BATCH_SQL = """\
-WITH
-    bcfy_feeds_claim AS MATERIALIZED (
-        SELECT id FROM feeds
-        WHERE source_type = 'bcfy_feeds' AND status = 'unclaimed'::feed_status
-          AND (('x' || substr(md5(id::text), 1, 7))::bit(28)::integer) % 100 < $2
-        ORDER BY id
-        LIMIT $3
-        FOR NO KEY UPDATE SKIP LOCKED
-    ),
-    bcfy_calls_claim AS MATERIALIZED (
-        SELECT id FROM feeds
-        WHERE source_type = 'bcfy_calls' AND status = 'unclaimed'::feed_status
-          AND (('x' || substr(md5(id::text), 1, 7))::bit(28)::integer) % 100 < $2
-        ORDER BY id
-        LIMIT $4
-        FOR NO KEY UPDATE SKIP LOCKED
-    ),
-    openmhz_claim AS MATERIALIZED (
-        SELECT id FROM feeds
-        WHERE source_type = 'openmhz' AND status = 'unclaimed'::feed_status
-          AND (('x' || substr(md5(id::text), 1, 7))::bit(28)::integer) % 100 < $2
-        ORDER BY id
-        LIMIT $5
-        FOR NO KEY UPDATE SKIP LOCKED
-    ),
-    claimed AS MATERIALIZED (
-        SELECT id FROM bcfy_feeds_claim
-        UNION ALL
-        SELECT id FROM bcfy_calls_claim
-        UNION ALL
-        SELECT id FROM openmhz_claim
-    ),
-leased AS (
-    UPDATE feeds
-    SET status = 'active'::feed_status,
-        worker_id = $1,
-        fencing_token = fencing_token + 1,
-        last_heartbeat = NOW(),
-        retry_after = NULL
-    FROM claimed
-    WHERE feeds.id = claimed.id
-    RETURNING feeds.id, feeds.name, feeds.source_type,
-              feeds.last_processed_filename, feeds.last_bookmark_time,
-              feeds.fencing_token
-)
-SELECT leased.id, leased.name, leased.source_type,
-       leased.last_processed_filename, leased.last_bookmark_time,
-       leased.fencing_token, fpi.source_feed_id, fpi.external_id
-FROM leased
-JOIN feed_properties fpi ON fpi.feed_id = leased.id
-"""
+# Params: $1=worker_id, $2=ramp_pct, $3..$(2+N)=per-type LIMITs in
+# claim_types order. Source_type literals are inlined per branch so the
+# planner can use the (source_type, id) WHERE status='unclaimed' partial
+# composite index for an index-only scan; parametrizing them would
+# defeat that.
+def build_acquire_feeds_batch_sql(claim_types: Sequence[SourceType]) -> str:
+    """Generate per-type batch-claim SQL for the given claim_types.
+
+    Returns a SQL string with one MATERIALIZED CTE per source_type, a
+    UNION-ALL `claimed` CTE collecting their IDs, and an outer UPDATE
+    that JOINs feed_properties for the LeasedFeed return shape. The
+    LIMIT for branch i is parameter ``$3 + i`` in claim_types iteration
+    order; $1 is worker_id and $2 is ramp_pct.
+
+    For the production set (BCFY_FEEDS, BCFY_CALLS, OPENMHZ in that
+    order), the output is byte-identical to the previous static
+    ACQUIRE_FEEDS_BATCH_SQL constant.
+    """
+    if not claim_types:
+        msg = "claim_types must contain at least one SourceType"
+        raise ValueError(msg)
+
+    # SAFETY: The interpolated `t.value` strings come from the SourceType
+    # enum, which is a closed set defined in feed_store.py. They are
+    # never derived from user input. The Bandit S608 SQL-injection
+    # warning is a false positive in this context — the closed-enum
+    # invariant is enforced at compile time by mypy.
+    branches: list[str] = []
+    union_lines: list[str] = []
+    for i, t in enumerate(claim_types):
+        limit_param = i + 3
+        branches.append(
+            f"    {t.value}_claim AS MATERIALIZED (\n"  # noqa: S608
+            f"        SELECT id FROM feeds\n"
+            f"        WHERE source_type = '{t.value}' AND status = 'unclaimed'::feed_status\n"
+            f"          AND (('x' || substr(md5(id::text), 1, 7))::bit(28)::integer) % 100 < $2\n"
+            f"        ORDER BY id\n"
+            f"        LIMIT ${limit_param}\n"
+            f"        FOR NO KEY UPDATE SKIP LOCKED\n"
+            f"    )"
+        )
+        union_lines.append(f"        SELECT id FROM {t.value}_claim")  # noqa: S608
+    branches_sql = ",\n".join(branches) + ","
+    union_sql = "\n        UNION ALL\n".join(union_lines)
+
+    return (
+        "WITH\n"  # noqa: S608
+        f"{branches_sql}\n"
+        "    claimed AS MATERIALIZED (\n"
+        f"{union_sql}\n"
+        "    ),\n"
+        "leased AS (\n"
+        "    UPDATE feeds\n"
+        "    SET status = 'active'::feed_status,\n"
+        "        worker_id = $1,\n"
+        "        fencing_token = fencing_token + 1,\n"
+        "        last_heartbeat = NOW(),\n"
+        "        retry_after = NULL\n"
+        "    FROM claimed\n"
+        "    WHERE feeds.id = claimed.id\n"
+        "    RETURNING feeds.id, feeds.name, feeds.source_type,\n"
+        "              feeds.last_processed_filename, feeds.last_bookmark_time,\n"
+        "              feeds.fencing_token\n"
+        ")\n"
+        "SELECT leased.id, leased.name, leased.source_type,\n"
+        "       leased.last_processed_filename, leased.last_bookmark_time,\n"
+        "       leased.fencing_token, fpi.source_feed_id, fpi.external_id\n"
+        "FROM leased\n"
+        "JOIN feed_properties fpi ON fpi.feed_id = leased.id\n"
+    )
 
 # Recovery-path claim: failing-retryable + active-abandoned. Runs when the
 # primary per-type CTE (ACQUIRE_FEEDS_BATCH_SQL) returns fewer rows than

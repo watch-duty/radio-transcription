@@ -111,9 +111,11 @@ def _make_settings(**overrides) -> mock.MagicMock:
         # Per-type claim caps + ramp + SIGTERM release settings — must be
         # real ints/floats so min()/random.uniform()/arithmetic don't blow
         # up on MagicMock auto-created attributes.
-        "cap_bcfy_feeds": 240,
-        "cap_bcfy_calls": 600,
-        "cap_openmhz": 900,
+        "caps": {
+            SourceType.BCFY_FEEDS: 240,
+            SourceType.BCFY_CALLS: 600,
+            SourceType.OPENMHZ: 900,
+        },
         "claim_ramp_pct": 100,
     }
     defaults.update(overrides)
@@ -253,9 +255,11 @@ class TestLeasingLoopOrphanedTask(unittest.IsolatedAsyncioTestCase):
         """
         rt = _make_runtime(
             max_feeds_per_worker=250,
-            cap_bcfy_feeds=240,
-            cap_bcfy_calls=600,
-            cap_openmhz=900,
+            caps={
+                SourceType.BCFY_FEEDS: 240,
+                SourceType.BCFY_CALLS: 600,
+                SourceType.OPENMHZ: 900,
+            },
         )
         rt._shutdown = asyncio.Event()
         rt._store = mock.AsyncMock()
@@ -270,13 +274,13 @@ class TestLeasingLoopOrphanedTask(unittest.IsolatedAsyncioTestCase):
         rt._shutdown.set()
         await rt._leasing_loop()
 
-        # Inspect the call made to acquire_feeds_batch; args[2:5] are the
-        # three per-type LIMITs.
+        # Inspect the call made to acquire_feeds_batch; arg[2] is the
+        # per-type LIMIT dict.
         call = rt._store.acquire_feeds_batch.await_args_list[0]
-        limits = call[0][2:5]
-        self.assertEqual(sum(limits), 250)  # exactly total_slack
+        limits_dict = call[0][2]
+        self.assertEqual(sum(limits_dict.values()), 250)  # exactly total_slack
         self.assertTrue(
-            all(limit >= 0 for limit in limits),
+            all(v >= 0 for v in limits_dict.values()),
             "no branch should receive a negative LIMIT",
         )
 
@@ -1016,9 +1020,11 @@ class TestLeasingLoopHeldCounts(unittest.IsolatedAsyncioTestCase):
         """count_held_by_type is awaited and its result feeds branch limits."""
         rt = _make_runtime(
             max_feeds_per_worker=250,
-            cap_bcfy_feeds=240,
-            cap_bcfy_calls=600,
-            cap_openmhz=900,
+            caps={
+                SourceType.BCFY_FEEDS: 240,
+                SourceType.BCFY_CALLS: 600,
+                SourceType.OPENMHZ: 900,
+            },
         )
         rt._shutdown = asyncio.Event()
         rt._store = mock.AsyncMock()
@@ -1046,14 +1052,13 @@ class TestLeasingLoopHeldCounts(unittest.IsolatedAsyncioTestCase):
         call = rt._store.count_held_by_type.await_args_list[0]
         self.assertEqual(call[0][0], _WORKER_ID)
 
-        # The acquire call's per-type limits must reflect the DB-derived
-        # held: bcfy_feeds=0 (capped), other two share total_slack=250.
+        # The acquire call's per-type limits dict must reflect the
+        # DB-derived held: bcfy_feeds=0 (capped), other two share
+        # total_slack=250.
         acquire_call = rt._store.acquire_feeds_batch.await_args_list[0]
-        bcfy_feeds_limit, bcfy_calls_limit, openmhz_limit = acquire_call[0][2:5]
-        self.assertEqual(bcfy_feeds_limit, 0)
-        self.assertEqual(
-            bcfy_calls_limit + openmhz_limit + bcfy_feeds_limit, 250,
-        )
+        limits_dict = acquire_call[0][2]
+        self.assertEqual(limits_dict[SourceType.BCFY_FEEDS], 0)
+        self.assertEqual(sum(limits_dict.values()), 250)
 
 
 class TestSigtermRelease(unittest.IsolatedAsyncioTestCase):
