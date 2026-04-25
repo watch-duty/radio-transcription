@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 import aiohttp
 from google.cloud import secretmanager
 
+from backend.pipeline.ingestion.exceptions import SourceError
 from backend.pipeline.ingestion.models import CapturedChunk
 from backend.pipeline.ingestion.slo_contract import (
     EVENT_TYPE_CALL_AUTH_FAILURE,
@@ -315,11 +316,7 @@ async def _handle_loop_failure(
     """Increment failure count, raise if exceeded, and sleep."""
     consecutive_failures += 1
     if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
-        msg = (
-            f"Feed {feed_id} exceeded {_MAX_CONSECUTIVE_FAILURES} "
-            "consecutive failures; marking as unhealthy"
-        )
-        raise RuntimeError(msg)
+        raise SourceError(reason="source_unreachable")
     await _sleep_or_shutdown(shutdown_event, _POLL_INTERVAL_SEC)
     return consecutive_failures
 
@@ -446,6 +443,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                     headers["Authorization"] = f"Bearer {jwt_token}"
                 except Exception as e:
                     logger.exception("Failed to refresh JWT token: %s", e)
+                    raise SourceError(reason="auth_failed") from e
                 consecutive_failures = await _handle_loop_failure(
                     feed_id, consecutive_failures, shutdown_event
                 )
