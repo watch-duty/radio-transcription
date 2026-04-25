@@ -6,7 +6,10 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
+from google.api_core import exceptions as gax_exceptions
+from google.cloud.pubsub_v1.publisher.exceptions import PublishToPausedOrderingKeyException
 
+from backend.pipeline.ingestion.exceptions import PipelineError
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 
 if TYPE_CHECKING:
@@ -157,7 +160,9 @@ async def upload_audio(
                 object_name,
             )
         else:
-            raise
+            raise PipelineError(reason="gcs_upload") from exc
+    except Exception as e:
+        raise PipelineError(reason="gcs_upload") from e
     return f"gs://{bucket}/{object_name}"
 
 
@@ -286,4 +291,11 @@ async def publish_audio_chunk(
         ordering_key=feed_id,
         **attrs,
     )
-    return await asyncio.wrap_future(future)
+    try:
+        return await asyncio.wrap_future(future)
+    except gax_exceptions.InvalidArgument as e:
+        raise PipelineError(reason="publish_schema_validation") from e
+    except PublishToPausedOrderingKeyException as e:
+        raise PipelineError(reason="publish_paused_ordering_key") from e
+    except Exception as e:
+        raise PipelineError(reason="publish_other") from e
