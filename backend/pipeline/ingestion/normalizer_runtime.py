@@ -322,7 +322,22 @@ class NormalizerRuntime:
         without this, asyncio logs a "Task exception was never retrieved"
         warning at garbage collection time. ``.exception()`` on a cancelled
         task raises ``CancelledError``, hence the guard.
+
+        Fail-fast on any unenumerated exception (D-06 / RUNTIME-03):
+        ``_process_feed`` catches and handles ``SourceError``,
+        ``LeaseExpiredError``, and ``CancelledError`` internally, so a
+        non-None ``task.exception()`` means an *unenumerated* error escaped.
+        Without crashing here, the lease was never released and
+        ``failure_count`` was never incremented — the feed would bounce
+        between workers (lease expires, re-leased, crashes again, never
+        quarantines), a poison-pill loop that the bare-except masked
+        before Phase 3.  ``os._exit(1)`` matches the heartbeat fence-
+        violation pattern: MIG restarts the container; the lease re-
+        claims within ``abandonment_window``; alerting on rapid restarts
+        (operator surface, follow-up project) catches deterministic feed
+        bugs.
         """
+        exit_after_log = False
         for feed_id in [fid for fid, t in self._feed_tasks.items() if t.done()]:
             task = self._feed_tasks.pop(feed_id)
             try:
@@ -330,8 +345,6 @@ class NormalizerRuntime:
             except asyncio.CancelledError:
                 pass  # normal — task was cancelled by shutdown
             else:
-                # Observability only — _process_feed already called
-                # record_failure before the task exited.
                 if exc is not None:
                     logger.error(
                         "Feed task %s failed: %s",
@@ -339,6 +352,22 @@ class NormalizerRuntime:
                         exc,
                         exc_info=exc,
                     )
+                    exit_after_log = True
+
+        # Skip fail-fast during shutdown: tasks can fail with various
+        # exceptions during cleanup, and crashing during teardown defeats
+        # graceful shutdown (lease release, log flush). Defensive None
+        # check guards against early-init paths where _shutdown is not
+        # yet bound (e.g. unit tests that exercise the reaper directly).
+        if exit_after_log and (
+            self._shutdown is None or not self._shutdown.is_set()
+        ):
+            logger.critical(
+                "Unenumerated feed-task exception -- terminating worker "
+                "for MIG restart (D-06)",
+            )
+            logging.shutdown()  # flush before os._exit bypasses handlers
+            os._exit(1)
 
     # -- Per-feed pipeline ------------------------------------------------
 

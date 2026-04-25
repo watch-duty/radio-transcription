@@ -175,24 +175,72 @@ class TestReapCompletedTasks(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn(_FEED_ID, rt._feed_tasks)
 
-    async def test_logs_exception(self) -> None:
-        """Tasks that raised are cleaned up and logged."""
+    async def test_logs_exception_and_triggers_fail_fast_exit(self) -> None:
+        """Tasks that raised are logged AND trigger os._exit(1) (D-06).
+
+        After Phase 3 removed the bare ``except Exception`` from
+        ``_process_feed``, an unenumerated exception that escapes is a
+        signal that ``failure_count`` was never incremented and the
+        feed was never quarantined. Letting the worker continue creates
+        a poison-pill loop where the feed bounces between workers,
+        crashing each one. Fail-fast: log + os._exit(1) + MIG restart.
+        """
 
         async def _boom() -> None:
             msg = "boom"
             raise RuntimeError(msg)
 
         rt = _make_runtime()
+        rt._shutdown = asyncio.Event()  # not set — fail-fast path
         task = asyncio.create_task(_boom())
         await asyncio.sleep(0)  # let task finish
         rt._feed_tasks[_FEED_ID] = task
 
-        with mock.patch(
-            "backend.pipeline.ingestion.normalizer_runtime.logger",
-        ) as mock_logger:
+        with (
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.logger",
+            ) as mock_logger,
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.os._exit",
+            ) as mock_exit,
+            mock.patch("logging.shutdown"),
+        ):
             rt._reap_completed_tasks()
 
         mock_logger.error.assert_called()
+        mock_exit.assert_called_once_with(1)
+        self.assertNotIn(_FEED_ID, rt._feed_tasks)
+
+    async def test_no_fail_fast_during_shutdown(self) -> None:
+        """During shutdown, task exceptions log but DO NOT trigger os._exit.
+
+        Tasks can fail with various exceptions during cleanup; crashing
+        here would defeat graceful shutdown (lease release, log flush).
+        """
+
+        async def _boom() -> None:
+            raise RuntimeError("teardown boom")
+
+        rt = _make_runtime()
+        rt._shutdown = asyncio.Event()
+        rt._shutdown.set()  # in shutdown — fail-fast suppressed
+        task = asyncio.create_task(_boom())
+        await asyncio.sleep(0)
+        rt._feed_tasks[_FEED_ID] = task
+
+        with (
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.logger",
+            ) as mock_logger,
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.os._exit",
+            ) as mock_exit,
+            mock.patch("logging.shutdown"),
+        ):
+            rt._reap_completed_tasks()
+
+        mock_logger.error.assert_called()
+        mock_exit.assert_not_called()
         self.assertNotIn(_FEED_ID, rt._feed_tasks)
 
 
