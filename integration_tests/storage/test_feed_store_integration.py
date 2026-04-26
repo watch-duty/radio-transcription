@@ -281,6 +281,99 @@ async def test_primary_cte_sets_status_to_active(
     assert row["fencing_token"] >= 1
 
 
+# -- Tests: acquire_feeds_recovery source_type filter ---------------
+
+
+async def test_recovery_excludes_non_claim_source_types(
+    db_pool: asyncpg.Pool,
+) -> None:
+    """Recovery sweep must not return rows whose source_type is outside claim_types.
+
+    Regression: prior to the source_type filter, recovery would scoop up
+    failing-retryable or active-abandoned rows of ANY source_type — including
+    ECHO (served by a separate cloud function, never VM-leased) and any
+    type the worker is not configured to claim. This breaks the per-type
+    memory-budget invariant the primary path enforces structurally.
+    """
+    await db_pool.execute("TRUNCATE feeds CASCADE")
+    # Worker only claims bcfy_feeds.
+    store = FeedStore(db_pool, claim_types=[SourceType.BCFY_FEEDS])
+    worker = uuid.uuid4()
+
+    # An ECHO row in failing-retryable state with retry_after in the past.
+    echo_id = await _insert_feed(
+        db_pool, "echo-failing", source_type="echo",
+        status="failing", failure_count=1, last_heartbeat_age_seconds=120,
+    )
+    await db_pool.execute(
+        "UPDATE feeds SET retry_after = NOW() - INTERVAL '10 seconds'"
+        " WHERE id = $1",
+        echo_id,
+    )
+    # An openmhz row in active-abandoned state — also outside claim_types.
+    other_worker = uuid.uuid4()
+    await _insert_feed(
+        db_pool, "openmhz-abandoned", source_type="openmhz",
+        status="active", worker_id=other_worker,
+        last_heartbeat_age_seconds=120,
+    )
+    # A bcfy_feeds row in failing-retryable — this one IS a valid target.
+    bcfy_id = await _insert_feed(
+        db_pool, "bcfy-failing", source_type="bcfy_feeds",
+        status="failing", failure_count=1, last_heartbeat_age_seconds=120,
+    )
+    await db_pool.execute(
+        "UPDATE feeds SET retry_after = NOW() - INTERVAL '10 seconds'"
+        " WHERE id = $1",
+        bcfy_id,
+    )
+
+    result = await store.acquire_feeds_recovery(
+        worker, abandonment_window_sec=60.0, ramp_pct=100, limit=10,
+    )
+
+    returned_ids = {lease["id"] for lease in result}
+    assert echo_id not in returned_ids, "ECHO must never be claim-recovered"
+    # Confirm only bcfy_feeds came back; openmhz row stays with the other worker.
+    assert returned_ids == {bcfy_id}
+    assert all(lease["source_type"] == SourceType.BCFY_FEEDS for lease in result)
+
+
+async def test_recovery_with_full_claim_types_picks_up_all(
+    db_pool: asyncpg.Pool,
+) -> None:
+    """With the production claim_types set, recovery still works for all three."""
+    await db_pool.execute("TRUNCATE feeds CASCADE")
+    store = FeedStore(
+        db_pool,
+        claim_types=[
+            SourceType.BCFY_FEEDS,
+            SourceType.BCFY_CALLS,
+            SourceType.OPENMHZ,
+        ],
+    )
+    worker = uuid.uuid4()
+
+    ids: dict[str, uuid.UUID] = {}
+    for source_type in ("bcfy_feeds", "bcfy_calls", "openmhz"):
+        fid = await _insert_feed(
+            db_pool, f"{source_type}-failing", source_type=source_type,
+            status="failing", failure_count=1, last_heartbeat_age_seconds=120,
+        )
+        await db_pool.execute(
+            "UPDATE feeds SET retry_after = NOW() - INTERVAL '10 seconds'"
+            " WHERE id = $1",
+            fid,
+        )
+        ids[source_type] = fid
+
+    result = await store.acquire_feeds_recovery(
+        worker, abandonment_window_sec=60.0, ramp_pct=100, limit=10,
+    )
+
+    assert {lease["id"] for lease in result} == set(ids.values())
+
+
 # -- Tests: count_held_by_type ---------------------------------------
 
 

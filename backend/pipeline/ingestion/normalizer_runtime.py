@@ -447,6 +447,9 @@ class NormalizerRuntime:
                 (see FeedStore.count_held_by_type). May contain extra
                 keys beyond ``caps`` (e.g. ECHO always 0) — they are
                 ignored because the dict comprehension iterates ``caps``.
+                Keys in ``caps`` that are absent from ``held`` are
+                treated as 0; this keeps the function safe against any
+                future caller that passes a sparse dict.
 
         Returns:
             Dict mapping each SourceType in `caps` to its computed LIMIT.
@@ -458,7 +461,7 @@ class NormalizerRuntime:
         # ceiling the cap represents. min(cap, ...) restores the "never
         # exceeds cap" invariant regardless of held's sign.
         headroom: dict[SourceType, int] = {
-            t: min(caps[t], max(0, caps[t] - held[t])) for t in caps
+            t: min(caps[t], max(0, caps[t] - held.get(t, 0))) for t in caps
         }
         limits: dict[SourceType, int] = dict.fromkeys(caps, 0)
         # Sort types by ascending headroom so tight branches are sized

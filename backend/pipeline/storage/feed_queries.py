@@ -242,8 +242,16 @@ def build_acquire_feeds_batch_sql(claim_types: Sequence[SourceType]) -> str:
 # primary per-type CTE (ACQUIRE_FEEDS_BATCH_SQL) returns fewer rows than
 # the worker's total slack. No per-type cap here: failing and abandoned
 # volumes are small by construction (pg_cron sweep drains active-abandoned
-# at 30 s cadence; failure events are rare). Ordering by retry_after ASC
-# NULLS FIRST prioritizes unclaimed retries over drift between retry windows.
+# at 30 s cadence; failure events are rare).
+#
+# ORDER BY retry_after ASC NULLS LAST, id prioritizes failing-retryable
+# (retry_after = past timestamp, set by REPORT_FAILURE_SQL) over
+# active-abandoned (retry_after = NULL, cleared on claim). Failing
+# rows are workers' only safety net — pg_cron does not reclaim them —
+# whereas active-abandoned has the 30 s pg_cron sweep as a backstop.
+# Within the failing bucket, oldest-retry first; within the
+# active-abandoned tail (NULL retry_after), id order for determinism.
+#
 # Same md5 ramp filter as the primary path — ramp changes affect both
 # branches symmetrically, which keeps rollback semantics deterministic.
 #
@@ -274,16 +282,27 @@ def build_acquire_feeds_batch_sql(claim_types: Sequence[SourceType]) -> str:
 # re-evaluate the SKIP LOCKED subquery per outer row, which would bypass
 # the LIMIT.
 #
-# Params: $1=worker_id, $2=abandonment_interval, $3=ramp_pct, $4=limit.
+# source_type filter ($5): restricts the recovery sweep to the worker's
+# claim_types. Without it, recovery would scoop up failing or
+# active-abandoned rows of any source_type — including types this worker
+# has no per-type cap for (so the per-type memory budget would be
+# bypassed) and types served by a separate pipeline (e.g. ECHO via Cloud
+# Function, never VM-leased). The primary CTE (ACQUIRE_FEEDS_BATCH_SQL)
+# already filters per-type via the literal `source_type = '...'` in each
+# branch; recovery now does the same, dynamically, via $5.
+#
+# Params: $1=worker_id, $2=abandonment_interval, $3=ramp_pct, $4=limit,
+#         $5=claim_types (text[] of source_type values).
 ACQUIRE_FEEDS_RECOVERY_SQL = """\
 WITH recovered AS MATERIALIZED (
     SELECT id FROM feeds
-    WHERE (
-        (status = 'failing'::feed_status AND (retry_after IS NULL OR retry_after <= NOW()))
-        OR (status = 'active'::feed_status AND last_heartbeat < NOW() - $2::interval)
-    )
+    WHERE source_type = ANY($5::text[])
+      AND (
+          (status = 'failing'::feed_status AND (retry_after IS NULL OR retry_after <= NOW()))
+          OR (status = 'active'::feed_status AND last_heartbeat < NOW() - $2::interval)
+      )
       AND (('x' || substr(md5(id::text), 1, 7))::bit(28)::integer) % 100 < $3
-    ORDER BY retry_after ASC NULLS FIRST, id
+    ORDER BY retry_after ASC NULLS LAST, id
     LIMIT $4
     FOR NO KEY UPDATE SKIP LOCKED
 ),

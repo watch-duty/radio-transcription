@@ -700,10 +700,17 @@ class TestAcquireFeedsRecovery(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, [])
         pool.fetch.assert_not_called()
 
-    async def test_passes_four_params(self) -> None:
-        """worker_id, abandonment_interval, ramp_pct, limit."""
+    async def test_passes_five_params(self) -> None:
+        """worker_id, abandonment_interval, ramp_pct, limit, claim_types[]."""
         pool = _make_pool(fetch_result=[])
-        store = FeedStore(pool)
+        store = FeedStore(
+            pool,
+            claim_types=[
+                SourceType.BCFY_FEEDS,
+                SourceType.BCFY_CALLS,
+                SourceType.OPENMHZ,
+            ],
+        )
 
         await store.acquire_feeds_recovery(_WORKER_ID, 60.0, 75, 10)
 
@@ -713,6 +720,20 @@ class TestAcquireFeedsRecovery(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[2], datetime.timedelta(seconds=60.0))
         self.assertEqual(args[3], 75)
         self.assertEqual(args[4], 10)
+        # $5: claim_types as text[] in claim_types iteration order. Excludes
+        # ECHO (which is never claimed via VM workers) so it can't be
+        # swept up by the recovery path.
+        self.assertEqual(args[5], ["bcfy_feeds", "bcfy_calls", "openmhz"])
+
+    async def test_claim_types_array_reflects_store_subset(self) -> None:
+        """Recovery $5 mirrors the store's claim_types subset (excludes others)."""
+        pool = _make_pool(fetch_result=[])
+        store = FeedStore(pool, claim_types=[SourceType.BCFY_FEEDS])
+
+        await store.acquire_feeds_recovery(_WORKER_ID, 60.0, 100, 10)
+
+        args = pool.fetch.call_args[0]
+        self.assertEqual(args[5], ["bcfy_feeds"])
 
     async def test_returns_leased_feeds(self) -> None:
         """Rows are converted to LeasedFeed dicts via the shared helper."""

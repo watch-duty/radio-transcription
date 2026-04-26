@@ -440,10 +440,13 @@ class FeedStore:
     ) -> list[LeasedFeed]:
         """Recovery-path claim: failing-retryable + active-abandoned.
 
-        Called by the worker when the per-type primary CTE returns fewer rows
-        than the worker's total slack. No per-type cap — failing and
-        abandoned volumes are small by construction, and the pg_cron sweep
-        handles most active-abandoned reclamation out-of-band.
+        Called by the worker when the per-type primary CTE returns fewer
+        rows than the worker's total slack. The query is filtered to this
+        store's ``claim_types``, so feeds of types this worker doesn't
+        claim (including ``ECHO``) are never returned. No per-type cap
+        within ``claim_types`` — failing and abandoned volumes are small
+        by construction, and the pg_cron sweep handles most
+        active-abandoned reclamation out-of-band.
 
         Args:
             worker_id: UUID of the worker requesting leases.
@@ -466,6 +469,7 @@ class FeedStore:
             datetime.timedelta(seconds=abandonment_window_sec),
             ramp_pct,
             limit,
+            [t.value for t in self._claim_types],
         )
         return [self._row_to_leased_feed(row) for row in rows]
 

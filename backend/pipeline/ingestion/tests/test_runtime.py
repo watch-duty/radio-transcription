@@ -1012,6 +1012,17 @@ class TestCalculateBranchLimits(unittest.TestCase):
         self.assertLessEqual(limits[SourceType.BCFY_CALLS], 600)
         self.assertLessEqual(limits[SourceType.OPENMHZ], 900)
 
+    def test_held_missing_keys_treated_as_zero(self) -> None:
+        # Future caller passes a sparse dict (only types it currently
+        # holds). The function must not KeyError; missing keys default
+        # to held=0 → full headroom for that branch.
+        held: dict[SourceType, int] = {SourceType.BCFY_FEEDS: 100}
+        limits = NormalizerRuntime._calculate_branch_limits(250, self.CAPS, held)
+        # BCFY_CALLS and OPENMHZ have no entry in `held` — both should
+        # be treated as held=0 with full cap-sized headroom.
+        self.assertEqual(sum(limits.values()), 250)
+        self.assertTrue(all(v >= 0 for v in limits.values()))
+
 
 class TestLeasingLoopHeldCounts(unittest.IsolatedAsyncioTestCase):
     """The leasing loop must source per-type held counts from the DB."""
