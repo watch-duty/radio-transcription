@@ -5,6 +5,9 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
+from google.cloud.pubsub_v1.publisher.exceptions import (
+    PublishToPausedOrderingKeyException,
+)
 from multidict import CIMultiDict, CIMultiDictProxy
 from yarl import URL
 
@@ -476,10 +479,6 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
 
     async def test_paused_ordering_key_calls_resume_publish(self) -> None:
         """PublishToPausedOrderingKeyException triggers resume_publish before propagating raw."""
-        from google.cloud.pubsub_v1.publisher.exceptions import (
-            PublishToPausedOrderingKeyException,
-        )
-
         mock_pubsub_client, mock_publisher = _make_pubsub_client()
         mock_now = datetime.datetime(2026, 4, 25, 12, 0, tzinfo=datetime.UTC)
 
@@ -507,10 +506,6 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
 
     async def test_resume_publish_failure_swallowed(self) -> None:
         """RuntimeError or ValueError from resume_publish is swallowed; the original PausedOrderingKey exception still propagates."""
-        from google.cloud.pubsub_v1.publisher.exceptions import (
-            PublishToPausedOrderingKeyException,
-        )
-
         mock_now = datetime.datetime(2026, 4, 25, 12, 0, tzinfo=datetime.UTC)
 
         for resume_exc in (RuntimeError("publisher stopped"), ValueError("unseen key")):

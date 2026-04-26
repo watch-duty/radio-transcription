@@ -191,7 +191,8 @@ async def openmhz_collector(
                     short_name,
                     consecutive_ws_failures,
                 )
-                raise RuntimeError("reconnect_exhausted")
+                msg = "reconnect_exhausted"
+                raise RuntimeError(msg)
 
             backoff = min(
                 _RECONNECT_BACKOFF_CAP_SEC,

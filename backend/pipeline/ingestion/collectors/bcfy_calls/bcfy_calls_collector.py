@@ -315,7 +315,8 @@ async def _handle_loop_failure(
     """Increment failure count, raise if exceeded, and sleep."""
     consecutive_failures += 1
     if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
-        raise RuntimeError("source_unreachable")
+        msg = "source_unreachable"
+        raise RuntimeError(msg)
     await _sleep_or_shutdown(shutdown_event, _POLL_INTERVAL_SEC)
     return consecutive_failures
 
@@ -446,7 +447,8 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                     # includes this exception's traceback via __cause__.
                     # Logging it here too duplicates the stack trace.
                     logger.warning("Failed to refresh JWT token: %s", e)
-                    raise RuntimeError("auth_failed") from e
+                    msg = "auth_failed"
+                    raise RuntimeError(msg) from e
                 consecutive_failures = await _handle_loop_failure(
                     feed_id, consecutive_failures, shutdown_event
                 )

@@ -6,7 +6,9 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
-from google.cloud.pubsub_v1.publisher.exceptions import PublishToPausedOrderingKeyException
+from google.cloud.pubsub_v1.publisher.exceptions import (
+    PublishToPausedOrderingKeyException,
+)
 
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 
