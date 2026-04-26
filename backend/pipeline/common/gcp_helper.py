@@ -6,10 +6,8 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
-from google.api_core import exceptions as gax_exceptions
 from google.cloud.pubsub_v1.publisher.exceptions import PublishToPausedOrderingKeyException
 
-from backend.pipeline.ingestion.exceptions import PipelineError
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 
 if TYPE_CHECKING:
@@ -155,8 +153,6 @@ async def upload_audio(
         # a 412 would be retried indefinitely instead of treated as success.
         # Other ClientResponseError statuses (incl. transient 5xx) propagate
         # so retry_with_lease_check can match them via the retryable tuple.
-        # Wrapping in PipelineError here would defeat retry, since
-        # PipelineError isn't in any retryable tuple.
         if if_generation_match is not None and exc.status == 412:
             logger.info(
                 "GCS 412 (object exists): %s/%s -- treating as success",
@@ -295,22 +291,15 @@ async def publish_audio_chunk(
     )
     try:
         return await asyncio.wrap_future(future)
-    except gax_exceptions.InvalidArgument as e:
-        raise PipelineError(reason="publish_schema_validation") from e
-    except PublishToPausedOrderingKeyException as e:
-        # Auto-resume the paused ordering key (D-06, v1.1). resume_publish is a
-        # local-flag clear on the PublisherClient -- it does not call Pub/Sub.
-        # Without this, every subsequent chunk for the same feed_id would
-        # raise the same exception until worker restart (silent indefinite
-        # drop). The original message is already lost from Pub/Sub's
-        # perspective; resume just unblocks the next chunk (D-07).
-        #
-        # Defensive try/except (RuntimeError, ValueError) -- the two documented
-        # failure modes of resume_publish (publisher already stopped /
-        # topic+key combo never seen). Neither should occur here in normal
-        # operation (we just observed the paused exception from the same
-        # publisher+topic+key combo), but a crash on the failure path
-        # itself would be worse than swallowing.
+    except PublishToPausedOrderingKeyException:
+        # Clear the local Publisher pause flag so a post-un-quarantine
+        # re-lease on the same worker can publish. The exception still
+        # propagates to _process_feed's catch-all, which will quarantine
+        # the feed after threshold strikes.
+        # Defensive try/except: resume_publish is documented to raise
+        # RuntimeError (publisher stopped) or ValueError (unseen key).
+        # Neither should occur here in normal operation, but a crash on
+        # the failure-cleanup path itself would be worse than swallowing.
         try:
             publisher.resume_publish(topic_path, ordering_key=feed_id)
         except (RuntimeError, ValueError):
@@ -319,12 +308,4 @@ async def publish_audio_chunk(
                 feed_id,
                 topic_path,
             )
-        raise PipelineError(reason="publish_paused_ordering_key") from e
-    except gax_exceptions.GoogleAPICallError as e:
-        # Catches every Google API publish error (PermissionDenied, NotFound,
-        # Unavailable, DeadlineExceeded, Aborted, etc.) — every server-side
-        # cause of a publish failure. Anything else (TypeError, AttributeError,
-        # KeyError) is a code bug; let it propagate so the reaper's fail-fast
-        # path (D-06) catches it instead of silently dropping every chunk
-        # for the feed forever via the catch-all wrap.
-        raise PipelineError(reason="publish_other") from e
+        raise

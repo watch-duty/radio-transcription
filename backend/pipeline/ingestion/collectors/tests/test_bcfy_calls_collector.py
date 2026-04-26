@@ -13,7 +13,6 @@ import aiohttp
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     bcfy_calls_collector,
 )
-from backend.pipeline.ingestion.exceptions import SourceError
 from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 
 
@@ -607,11 +606,11 @@ class TestHandleLoopFailure(unittest.IsolatedAsyncioTestCase):
 
     async def test_raises_on_max_consecutive_failures(self) -> None:
         threshold = bcfy_calls_collector._MAX_CONSECUTIVE_FAILURES
-        with self.assertRaises(SourceError) as ctx:
+        with self.assertRaises(RuntimeError) as ctx:
             await bcfy_calls_collector._handle_loop_failure(
                 "fid", threshold - 1, self.shutdown
             )
-        self.assertEqual(ctx.exception.reason, "source_unreachable")
+        self.assertEqual(str(ctx.exception), "source_unreachable")
 
     async def test_does_not_raise_below_max(self) -> None:
         threshold = bcfy_calls_collector._MAX_CONSECUTIVE_FAILURES
@@ -1002,12 +1001,12 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             False  # Simulate sleeping normally without shutdown
         )
 
-        with self.assertRaises(SourceError) as ctx:
+        with self.assertRaises(RuntimeError) as ctx:
             async for _ in bcfy_calls_collector.capture_bcfy_calls(
                 self.leased_feed, self.shutdown, self.url_base
             ):
                 pass
-        self.assertEqual(ctx.exception.reason, "source_unreachable")
+        self.assertEqual(str(ctx.exception), "source_unreachable")
         self.assertEqual(mock_fetch.call_count, 10)
 
     @patch(
@@ -1024,17 +1023,17 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
     async def test_max_consecutive_failures_auth_error(
         self, mock_sleep: AsyncMock, mock_fetch: AsyncMock, mock_jwt: MagicMock
     ) -> None:
-        # AuthError triggers token refresh; refresh also fails → SourceError(auth_failed)
+        # AuthError triggers token refresh; refresh also fails → RuntimeError("auth_failed")
         mock_jwt.side_effect = ["token", Exception("secret unavailable")]
         mock_fetch.side_effect = bcfy_calls_collector.AuthError("Auth failure")
         mock_sleep.return_value = False
 
-        with self.assertRaises(SourceError) as ctx:
+        with self.assertRaises(RuntimeError) as ctx:
             async for _ in bcfy_calls_collector.capture_bcfy_calls(
                 self.leased_feed, self.shutdown, self.url_base
             ):
                 pass
-        self.assertEqual(ctx.exception.reason, "auth_failed")
+        self.assertEqual(str(ctx.exception), "auth_failed")
         self.assertEqual(mock_fetch.call_count, 1)
 
     @patch(

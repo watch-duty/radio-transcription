@@ -475,11 +475,10 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
 
     async def test_paused_ordering_key_calls_resume_publish(self) -> None:
-        """PublishToPausedOrderingKeyException triggers resume_publish before re-raising as PipelineError (PUB-01, VERIF-08)."""
+        """PublishToPausedOrderingKeyException triggers resume_publish before propagating raw."""
         from google.cloud.pubsub_v1.publisher.exceptions import (
             PublishToPausedOrderingKeyException,
         )
-        from backend.pipeline.ingestion.exceptions import PipelineError
 
         mock_pubsub_client, mock_publisher = _make_pubsub_client()
         mock_now = datetime.datetime(2026, 4, 25, 12, 0, tzinfo=datetime.UTC)
@@ -488,7 +487,7 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
         fut.set_exception(PublishToPausedOrderingKeyException("feed-42"))
         mock_publisher.publish.return_value = fut
 
-        with self.assertRaises(PipelineError) as ctx:
+        with self.assertRaises(PublishToPausedOrderingKeyException):
             await gcp_helper.publish_audio_chunk(
                 mock_pubsub_client,
                 topic_path="projects/test/topics/audio",
@@ -501,18 +500,16 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
                 duration_ms=15000,
             )
 
-        self.assertEqual(ctx.exception.reason, "publish_paused_ordering_key")
         mock_publisher.resume_publish.assert_called_once_with(
             "projects/test/topics/audio",
             ordering_key="feed-42",
         )
 
     async def test_resume_publish_failure_swallowed(self) -> None:
-        """RuntimeError or ValueError from resume_publish is swallowed; PipelineError is still raised (PUB-01)."""
+        """RuntimeError or ValueError from resume_publish is swallowed; the original PausedOrderingKey exception still propagates."""
         from google.cloud.pubsub_v1.publisher.exceptions import (
             PublishToPausedOrderingKeyException,
         )
-        from backend.pipeline.ingestion.exceptions import PipelineError
 
         mock_now = datetime.datetime(2026, 4, 25, 12, 0, tzinfo=datetime.UTC)
 
@@ -524,7 +521,7 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
                 mock_publisher.publish.return_value = fut
                 mock_publisher.resume_publish.side_effect = resume_exc
 
-                with self.assertRaises(PipelineError) as ctx:
+                with self.assertRaises(PublishToPausedOrderingKeyException):
                     await gcp_helper.publish_audio_chunk(
                         mock_pubsub_client,
                         topic_path="projects/test/topics/audio",
@@ -537,9 +534,6 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
                         duration_ms=15000,
                     )
 
-                self.assertEqual(
-                    ctx.exception.reason, "publish_paused_ordering_key"
-                )
                 mock_publisher.resume_publish.assert_called_once()
 
 
