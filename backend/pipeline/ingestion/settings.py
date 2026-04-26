@@ -104,7 +104,6 @@ class NormalizerSettings:
         ),
     )
 
-
     # GCS
     audio_staging_bucket: str = field(
         default_factory=lambda: _require_env("AUDIO_STAGING_BUCKET"),

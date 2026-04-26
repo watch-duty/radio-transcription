@@ -519,10 +519,18 @@ class FeedStore:
     async def release_feeds_batch(self, worker_id: uuid.UUID) -> int:
         """Release every active lease still owned by this worker.
 
-        The SIGTERM drain path calls this once after cancelling all feed
-        tasks. The DB is authoritative — any row with ``worker_id = us``
-        is released, including stragglers where an earlier per-feed
-        ``release_feed`` failed and never retried.
+        Primary use: ``_shutdown_sequence`` calls this once after
+        cancelling all feed tasks. The cancelled tasks return without
+        running their normal-completion ``release_feed`` (see the
+        ``_process_feed`` shutdown branch), so this single
+        ``WHERE worker_id = $1`` UPDATE is what actually flips them
+        back to ``unclaimed``.
+
+        Secondary defensive role: catches any straggler row where an
+        earlier per-feed ``release_feed`` call failed mid-lifetime
+        (transient DB error, task reaped before the finally block could
+        retry) and the row was sitting in the DB with ``worker_id = us``
+        until pg_cron reclaimed it.
 
         Args:
             worker_id: UUID of the worker releasing its leases.

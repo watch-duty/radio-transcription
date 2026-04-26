@@ -186,8 +186,16 @@ class NormalizerRuntime:
         # this, pool contention causes false stall-timeout kills.
         hb_settings = settings.db.replace(pool_min_size=1, pool_max_size=1)
         self._heartbeat_pool = await create_pool_with_retry(hb_settings)
+        # Heartbeat store doesn't claim feeds (only renews + counts), but
+        # we pass the same claim_types for symmetry — keeps both stores
+        # generated from the same set so a future divergence between
+        # caps.keys() and the FeedStore default (all SourceType minus
+        # ECHO) doesn't silently change the heartbeat store's
+        # never-called acquire SQL out of sync with the data store's.
         self._heartbeat_store = FeedStore(
-            self._heartbeat_pool, source_types=settings.source_types
+            self._heartbeat_pool,
+            source_types=settings.source_types,
+            claim_types=list(settings.caps.keys()),
         )
 
         self._heartbeat_thread = threading.Thread(

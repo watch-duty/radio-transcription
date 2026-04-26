@@ -86,17 +86,19 @@ WHERE id = $1 AND worker_id = $2 AND fencing_token = $3
 """
 
 # SIGTERM drain: release every lease still owned by this worker in one
-# UPDATE. The WHERE worker_id = $1 form is authoritative — it catches any
-# stragglers where an earlier per-feed release_feed call failed (transient
-# DB error, asyncio task got reaped before the finally block could
-# re-raise) and the row sits in the DB with worker_id=us until pg_cron
-# reclaims it ~60 s later. Symmetric with count_held_by_type's DB-truth
-# stance: the DB is the source of authority for which feeds we own.
+# UPDATE. Primary use is _shutdown_sequence — after cancelling all feed
+# tasks (whose CancelledError path skips the normal-completion
+# release_feed), this single statement is what flips every active row
+# back to unclaimed. Secondary defensive role: catches stragglers where
+# an earlier per-feed release_feed call failed mid-lifetime and left
+# worker_id = us in the DB.
 #
-# unclaimed_since = NOW() matches the convention in RELEASE_FEED_SQL so
-# the autoscaler's MIN(unclaimed_since) signal stays accurate across
-# scale-in. No last_heartbeat write — heartbeat renewal is now the sole
-# writer of that column (scaling plan §6.1).
+# WHERE worker_id = $1 is authoritative for both cases — symmetric with
+# count_held_by_type's DB-truth stance. unclaimed_since = NOW() matches
+# the convention in RELEASE_FEED_SQL so the autoscaler's
+# MIN(unclaimed_since) signal stays accurate across scale-in. No
+# last_heartbeat write — heartbeat renewal is now the sole writer of
+# that column (scaling plan §6.1).
 RELEASE_FEEDS_BATCH_SQL = """\
 UPDATE feeds
 SET worker_id = NULL,

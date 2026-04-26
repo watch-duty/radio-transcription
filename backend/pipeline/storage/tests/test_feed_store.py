@@ -603,6 +603,75 @@ class TestBuildAcquireFeedsBatchSql(unittest.TestCase):
         with self.assertRaises(ValueError):
             feed_queries.build_acquire_feeds_batch_sql([])
 
+    def test_byte_identical_to_golden_for_production_set(self) -> None:
+        """Production claim_types order produces a known-good SQL string.
+
+        Guards against accidental SQL formatting drift during future
+        refactors. The SQL shape (whitespace, indentation, branch
+        ordering, parameter numbering) is load-bearing — the planner
+        chooses the (source_type, id) WHERE status='unclaimed' partial
+        composite index based on the literal source_type per branch, and
+        the DB-side prepared-statement cache keys on the SQL string.
+        """
+        expected = (
+            "WITH\n"
+            "    bcfy_feeds_claim AS MATERIALIZED (\n"
+            "        SELECT id FROM feeds\n"
+            "        WHERE source_type = 'bcfy_feeds' AND status = 'unclaimed'::feed_status\n"
+            "          AND (('x' || substr(md5(id::text), 1, 7))::bit(28)::integer) % 100 < $2\n"
+            "        ORDER BY id\n"
+            "        LIMIT $3\n"
+            "        FOR NO KEY UPDATE SKIP LOCKED\n"
+            "    ),\n"
+            "    bcfy_calls_claim AS MATERIALIZED (\n"
+            "        SELECT id FROM feeds\n"
+            "        WHERE source_type = 'bcfy_calls' AND status = 'unclaimed'::feed_status\n"
+            "          AND (('x' || substr(md5(id::text), 1, 7))::bit(28)::integer) % 100 < $2\n"
+            "        ORDER BY id\n"
+            "        LIMIT $4\n"
+            "        FOR NO KEY UPDATE SKIP LOCKED\n"
+            "    ),\n"
+            "    openmhz_claim AS MATERIALIZED (\n"
+            "        SELECT id FROM feeds\n"
+            "        WHERE source_type = 'openmhz' AND status = 'unclaimed'::feed_status\n"
+            "          AND (('x' || substr(md5(id::text), 1, 7))::bit(28)::integer) % 100 < $2\n"
+            "        ORDER BY id\n"
+            "        LIMIT $5\n"
+            "        FOR NO KEY UPDATE SKIP LOCKED\n"
+            "    ),\n"
+            "    claimed AS MATERIALIZED (\n"
+            "        SELECT id FROM bcfy_feeds_claim\n"
+            "        UNION ALL\n"
+            "        SELECT id FROM bcfy_calls_claim\n"
+            "        UNION ALL\n"
+            "        SELECT id FROM openmhz_claim\n"
+            "    ),\n"
+            "leased AS (\n"
+            "    UPDATE feeds\n"
+            "    SET status = 'active'::feed_status,\n"
+            "        worker_id = $1,\n"
+            "        fencing_token = fencing_token + 1,\n"
+            "        last_heartbeat = NOW(),\n"
+            "        retry_after = NULL\n"
+            "    FROM claimed\n"
+            "    WHERE feeds.id = claimed.id\n"
+            "    RETURNING feeds.id, feeds.name, feeds.source_type,\n"
+            "              feeds.last_processed_filename, feeds.last_bookmark_time,\n"
+            "              feeds.fencing_token\n"
+            ")\n"
+            "SELECT leased.id, leased.name, leased.source_type,\n"
+            "       leased.last_processed_filename, leased.last_bookmark_time,\n"
+            "       leased.fencing_token, fpi.source_feed_id, fpi.external_id\n"
+            "FROM leased\n"
+            "JOIN feed_properties fpi ON fpi.feed_id = leased.id\n"
+        )
+        actual = feed_queries.build_acquire_feeds_batch_sql([
+            SourceType.BCFY_FEEDS,
+            SourceType.BCFY_CALLS,
+            SourceType.OPENMHZ,
+        ])
+        self.assertEqual(actual, expected)
+
 
 class TestReportFeedFailureWithThreshold(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.report_feed_failure with custom threshold."""
