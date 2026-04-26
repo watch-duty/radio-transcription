@@ -307,7 +307,7 @@ class FeedStore:
             fencing_token,
             backoff_max_sec,
             backoff_base_sec,
-            reason,            # $7 — populates quarantine_reason on transition
+            reason,  # $7 — populates quarantine_reason on transition
         )
         if row is None:
             return None

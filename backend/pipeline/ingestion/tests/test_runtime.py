@@ -181,6 +181,7 @@ class TestReapCompletedTasks(unittest.IsolatedAsyncioTestCase):
         fault-response path. The reaper just drains task.exception() so
         asyncio does not emit "Task exception was never retrieved".
         """
+
         async def _boom() -> None:
             msg = "boom"
             raise RuntimeError(msg)

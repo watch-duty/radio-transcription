@@ -508,11 +508,16 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
         """RuntimeError or ValueError from resume_publish is swallowed; the original PausedOrderingKey exception still propagates."""
         mock_now = datetime.datetime(2026, 4, 25, 12, 0, tzinfo=datetime.UTC)
 
-        for resume_exc in (RuntimeError("publisher stopped"), ValueError("unseen key")):
+        for resume_exc in (
+            RuntimeError("publisher stopped"),
+            ValueError("unseen key"),
+        ):
             with self.subTest(resume_exc=type(resume_exc).__name__):
                 mock_pubsub_client, mock_publisher = _make_pubsub_client()
                 fut = concurrent.futures.Future()
-                fut.set_exception(PublishToPausedOrderingKeyException("feed-42"))
+                fut.set_exception(
+                    PublishToPausedOrderingKeyException("feed-42")
+                )
                 mock_publisher.publish.return_value = fut
                 mock_publisher.resume_publish.side_effect = resume_exc
 
