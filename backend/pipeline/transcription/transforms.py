@@ -118,6 +118,10 @@ class SerializeFn(beam.DoFn):
             * NANOS_PER_MS,
         )
 
+        if value.feed_metadata is None:
+            msg = f"Missing feed_metadata in TranscriptionResult for feed_id: {value.feed_id} (session: {value.session_id})"
+            raise ValueError(msg)
+
         proto = TranscribedAudio(
             feed_id=value.feed_id,
             source_audio_uris=value.contributing_audio_uris,
