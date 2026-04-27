@@ -13,6 +13,9 @@ import aiohttp
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     bcfy_calls_collector,
 )
+from backend.pipeline.ingestion.collectors.tests.conftest import (
+    _default_resources,
+)
 from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 
 
@@ -649,7 +652,10 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         self.feed["source_feed_id"] = None
         with self.assertRaisesRegex(ValueError, "missing source_feed_id"):
             async for _ in bcfy_calls_collector.capture_bcfy_calls(
-                self.leased_feed, self.shutdown, self.url_base
+                self.leased_feed,
+                self.shutdown,
+                self.url_base,
+                _default_resources(),
             ):
                 pass
 
@@ -703,7 +709,10 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         chunks = [
             c
             async for c in bcfy_calls_collector.capture_bcfy_calls(
-                self.leased_feed, self.shutdown, self.url_base
+                self.leased_feed,
+                self.shutdown,
+                self.url_base,
+                _default_resources(),
             )
         ]
 
@@ -775,7 +784,10 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             chunks = [
                 c
                 async for c in bcfy_calls_collector.capture_bcfy_calls(
-                    self.leased_feed, self.shutdown, self.url_base
+                    self.leased_feed,
+                    self.shutdown,
+                    self.url_base,
+                    _default_resources(),
                 )
             ]
 
@@ -827,7 +839,10 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         chunks = [
             c
             async for c in bcfy_calls_collector.capture_bcfy_calls(
-                self.leased_feed, self.shutdown, self.url_base
+                self.leased_feed,
+                self.shutdown,
+                self.url_base,
+                _default_resources(),
             )
         ]
 
@@ -854,7 +869,10 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(RuntimeError, "Fatal API Error"):
             async for _ in bcfy_calls_collector.capture_bcfy_calls(
-                self.leased_feed, self.shutdown, self.url_base
+                self.leased_feed,
+                self.shutdown,
+                self.url_base,
+                _default_resources(),
             ):
                 pass
 
@@ -884,7 +902,10 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         chunks = [
             c
             async for c in bcfy_calls_collector.capture_bcfy_calls(
-                self.leased_feed, self.shutdown, self.url_base
+                self.leased_feed,
+                self.shutdown,
+                self.url_base,
+                _default_resources(),
             )
         ]
 
@@ -926,7 +947,10 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         chunks = [
             c
             async for c in bcfy_calls_collector.capture_bcfy_calls(
-                self.leased_feed, self.shutdown, self.url_base
+                self.leased_feed,
+                self.shutdown,
+                self.url_base,
+                _default_resources(),
             )
         ]
 
@@ -974,7 +998,10 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         chunks = [
             c
             async for c in bcfy_calls_collector.capture_bcfy_calls(
-                self.leased_feed, self.shutdown, self.url_base
+                self.leased_feed,
+                self.shutdown,
+                self.url_base,
+                _default_resources(),
             )
         ]
 
@@ -1003,7 +1030,10 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(RuntimeError) as ctx:
             async for _ in bcfy_calls_collector.capture_bcfy_calls(
-                self.leased_feed, self.shutdown, self.url_base
+                self.leased_feed,
+                self.shutdown,
+                self.url_base,
+                _default_resources(),
             ):
                 pass
         self.assertEqual(str(ctx.exception), "source_unreachable")
@@ -1030,7 +1060,10 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(RuntimeError) as ctx:
             async for _ in bcfy_calls_collector.capture_bcfy_calls(
-                self.leased_feed, self.shutdown, self.url_base
+                self.leased_feed,
+                self.shutdown,
+                self.url_base,
+                _default_resources(),
             ):
                 pass
         self.assertEqual(str(ctx.exception), "auth_failed")
@@ -1056,7 +1089,10 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(RuntimeError, "CDN rate limit"):
             async for _ in bcfy_calls_collector.capture_bcfy_calls(
-                self.leased_feed, self.shutdown, self.url_base
+                self.leased_feed,
+                self.shutdown,
+                self.url_base,
+                _default_resources(),
             ):
                 pass
 
@@ -1110,7 +1146,10 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         chunks = [
             c
             async for c in bcfy_calls_collector.capture_bcfy_calls(
-                self.leased_feed, self.shutdown, self.url_base
+                self.leased_feed,
+                self.shutdown,
+                self.url_base,
+                _default_resources(),
             )
         ]
 
@@ -1174,7 +1213,10 @@ class TestCaptureBcfyCallsReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
 
         results = []
         async for chunk in bcfy_calls_collector.capture_bcfy_calls(
-            cast("LeasedFeed", feed), shutdown, "https://api.example/"
+            cast("LeasedFeed", feed),
+            shutdown,
+            "https://api.example/",
+            _default_resources(),
         ):
             results.append(chunk)
             shutdown.set()
@@ -1255,7 +1297,10 @@ class TestBcfyCallsCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
             level="WARNING",
         ) as cm:
             async for _ in bcfy_calls_collector.capture_bcfy_calls(
-                self.leased_feed, shutdown, "https://api.bcfy/"
+                self.leased_feed,
+                shutdown,
+                "https://api.bcfy/",
+                _default_resources(),
             ):
                 pass
 
@@ -1345,7 +1390,10 @@ class TestBcfyCallsCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
             # Placeholder WARNING so assertLogs captures something regardless of emit.
             bcfy_calls_collector.logger.warning("_test_placeholder_")
             async for _ in bcfy_calls_collector.capture_bcfy_calls(
-                self.leased_feed, shutdown, "https://api.bcfy/"
+                self.leased_feed,
+                shutdown,
+                "https://api.bcfy/",
+                _default_resources(),
             ):
                 shutdown.set()
 
@@ -1405,7 +1453,10 @@ class TestBcfyCallsCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
             # Placeholder WARNING so assertLogs captures something regardless of emit.
             bcfy_calls_collector.logger.warning("_test_placeholder_")
             async for _ in bcfy_calls_collector.capture_bcfy_calls(
-                self.leased_feed, shutdown, "https://api.bcfy/"
+                self.leased_feed,
+                shutdown,
+                "https://api.bcfy/",
+                _default_resources(),
             ):
                 pass
 

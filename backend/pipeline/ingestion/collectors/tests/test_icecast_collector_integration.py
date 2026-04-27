@@ -17,6 +17,9 @@ from testcontainers.postgres import PostgresContainer
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client
 from backend.pipeline.ingestion.collectors.icecast import icecast_collector
+from backend.pipeline.ingestion.collectors.tests.conftest import (
+    _default_resources,
+)
 from backend.pipeline.storage.feed_store import (
     FeedStore,
     LeasedFeed,
@@ -260,7 +263,10 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         chunks_uploaded = []
         last_chunk_ts = None
         async for capture_chunk in icecast_collector.capture_icecast_stream(
-            feed, shutdown, url_base="https://mock.example.com/"
+            feed,
+            shutdown,
+            url_base="https://mock.example.com/",
+            _resources=_default_resources(),
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client,
@@ -320,7 +326,10 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         chunk_timestamps = []
         seq = 0
         async for capture_chunk in icecast_collector.capture_icecast_stream(
-            feed, shutdown, url_base="https://mock.example.com/"
+            feed,
+            shutdown,
+            url_base="https://mock.example.com/",
+            _resources=_default_resources(),
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client,
@@ -379,7 +388,10 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         last_chunk_ts = None
         seq = 0
         async for capture_chunk in icecast_collector.capture_icecast_stream(
-            feed, shutdown, url_base="https://mock.example.com/"
+            feed,
+            shutdown,
+            url_base="https://mock.example.com/",
+            _resources=_default_resources(),
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client,
@@ -431,6 +443,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 feed,
                 shutdown,
                 url_base="https://mock.example.com/",
+                _resources=_default_resources(),
             ):
                 pass  # Should not yield any chunks
 
@@ -466,7 +479,10 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         gcs_path = None
         async for capture_chunk in icecast_collector.capture_icecast_stream(
-            feed, shutdown, url_base="https://mock.example.com/"
+            feed,
+            shutdown,
+            url_base="https://mock.example.com/",
+            _resources=_default_resources(),
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client,
@@ -509,6 +525,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 feed,
                 shutdown,
                 url_base="https://mock.example.com/",
+                _resources=_default_resources(),
             ):
                 pass
 

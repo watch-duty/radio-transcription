@@ -23,6 +23,9 @@ from backend.pipeline.ingestion.collectors.openmhz._types import CallEvent
 from backend.pipeline.ingestion.collectors.openmhz.collector import (
     openmhz_collector,
 )
+from backend.pipeline.ingestion.collectors.tests.conftest import (
+    _default_resources,
+)
 from backend.pipeline.storage.feed_store import (
     FeedStore,
     LeasedFeed,
@@ -259,7 +262,10 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         chunks_uploaded = []
         async for chunk in openmhz_collector(
-            feed, shutdown, "https://api.openmhz.com/"
+            feed,
+            shutdown,
+            "https://api.openmhz.com/",
+            _default_resources(),
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client,
@@ -315,7 +321,10 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         gcs_paths = []
         seq = 0
         async for chunk in openmhz_collector(
-            feed, shutdown, "https://api.openmhz.com/"
+            feed,
+            shutdown,
+            "https://api.openmhz.com/",
+            _default_resources(),
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client, chunk.audio_bytes, feed, _TEST_BUCKET, seq
@@ -375,7 +384,10 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         gcs_paths = []
         seq = 0
         async for chunk in openmhz_collector(
-            feed, shutdown, "https://api.openmhz.com/"
+            feed,
+            shutdown,
+            "https://api.openmhz.com/",
+            _default_resources(),
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client, chunk.audio_bytes, feed, _TEST_BUCKET, seq
@@ -416,7 +428,10 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         gcs_paths = []
         async for chunk in openmhz_collector(
-            feed, shutdown, "https://api.openmhz.com/"
+            feed,
+            shutdown,
+            "https://api.openmhz.com/",
+            _default_resources(),
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client, chunk.audio_bytes, feed, _TEST_BUCKET, 0
@@ -447,7 +462,10 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         with self.assertRaises(ValueError) as ctx:
             async for _ in openmhz_collector(
-                feed, shutdown, "https://api.openmhz.com/"
+                feed,
+                shutdown,
+                "https://api.openmhz.com/",
+                _default_resources(),
             ):
                 pass
 

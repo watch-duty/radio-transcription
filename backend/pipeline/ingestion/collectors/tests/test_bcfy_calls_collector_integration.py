@@ -21,6 +21,9 @@ from backend.pipeline.common.clients import gcs_client
 from backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector import (
     capture_bcfy_calls,
 )
+from backend.pipeline.ingestion.collectors.tests.conftest import (
+    _default_resources,
+)
 from backend.pipeline.storage.feed_store import (
     FeedStore,
     LeasedFeed,
@@ -249,7 +252,10 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         chunks_uploaded = []
         async for chunk in capture_bcfy_calls(
-            feed, shutdown, "http://api.example.com/"
+            feed,
+            shutdown,
+            "http://api.example.com/",
+            _default_resources(),
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs,
@@ -332,7 +338,10 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         gcs_paths = []
         seq = 0
         async for chunk in capture_bcfy_calls(
-            feed, shutdown, "http://api.example.com/"
+            feed,
+            shutdown,
+            "http://api.example.com/",
+            _default_resources(),
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs, chunk.audio_bytes, feed, _TEST_BUCKET, seq
@@ -403,7 +412,10 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         chunks = []
         async for chunk in capture_bcfy_calls(
-            feed, shutdown, "http://api.example.com/"
+            feed,
+            shutdown,
+            "http://api.example.com/",
+            _default_resources(),
         ):
             chunks.append(chunk)
             if len(chunks) == 2:
@@ -434,7 +446,10 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         with self.assertRaises(ValueError, msg="missing source_feed_id"):
             async for _ in capture_bcfy_calls(
-                feed, shutdown, "http://api.example.com/"
+                feed,
+                shutdown,
+                "http://api.example.com/",
+                _default_resources(),
             ):
                 pass
 
