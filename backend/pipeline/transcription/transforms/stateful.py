@@ -765,27 +765,15 @@ class OrderedStitchAudioFn(beam.DoFn):
 
 @beam.typehints.with_input_types(tuple[str, ChunkMetadata])
 @beam.typehints.with_output_types(tuple[str, FlushRequest])
-class OrderedBypassFn(beam.DoFn):
-    """A stateful Beam DoFn that handles chronological ordering and downloading,
-    but bypasses the stitching state machine, yielding FlushRequests immediately.
+class StatelessBypassFn(beam.DoFn):
+    """A purely stateless Beam DoFn that handles downloading and yielding FlushRequests
+    immediately, bypassing both ordering and stitching.
     """
-
-    TRANSMISSION_CONTEXT_SPEC = ReadModifyWriteStateSpec(
-        "transmission_context", beam.coders.PickleCoder()
-    )
-    TRANSMISSION_CONTEXT_STATE = beam.DoFn.StateParam(TRANSMISSION_CONTEXT_SPEC)
-
-    OUT_OF_ORDER_TIMER_SPEC = TimerSpec(
-        "out_of_order_timer", beam.TimeDomain.WATERMARK
-    )
-    OUT_OF_ORDER_TIMER = beam.DoFn.TimerParam(OUT_OF_ORDER_TIMER_SPEC)
 
     def __init__(
         self,
-        order_config: OrderRestorerConfig,
         stitch_config: StitchAudioConfig,
     ) -> None:
-        self.order_config = order_config
         self.stitch_config = stitch_config
         self.audio_processor: AudioProcessor | None = None
 
@@ -801,151 +789,57 @@ class OrderedBypassFn(beam.DoFn):
         self,
         element: tuple[str, ChunkMetadata],
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
-        transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
-        out_of_order_timer: RuntimeTimer = OUT_OF_ORDER_TIMER,  # type: ignore
     ) -> Iterator[
         tuple[str, FlushRequest]
         | beam.pvalue.TaggedOutput[
             Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
         ]
     ]:
-        """Processes incoming chunks, orders them, and yields FlushRequests immediately."""
-        feed_id, _metadata = element
-        curr_context = (
-            transmission_context_state.read() or TransmissionContext()
-        )
-        if curr_context.feed_metadata is None:
-            curr_context = replace(
-                curr_context, feed_metadata=_metadata.feed_metadata
-            )
+        """Processes incoming chunks immediately."""
+        feed_id, metadata = element
 
-        # Handle session change and ordering via helper function
-        elements_to_emit, curr_context, _session_changed = process_ordering(
-            element,
-            timestamp,
-            curr_context,
-            out_of_order_timer,
-            self.order_config,
-        )
-
-        # Always write updated context!
-        transmission_context_state.write(curr_context)
-
-        if elements_to_emit:
-            yield from self._download_and_yield(
-                elements_to_emit, feed_id, curr_context
-            )
-
-    def _download_and_yield(
-        self,
-        elements_to_emit: list[BufferedChunk],
-        feed_id: str,
-        curr_context: TransmissionContext,
-    ) -> Iterator[
-        tuple[str, FlushRequest]
-        | beam.pvalue.TaggedOutput[
-            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
-        ]
-    ]:
         if not self.audio_processor:
             msg = "AudioProcessor not initialized. setup() must be called."
             raise RuntimeError(msg)
 
-        for chunk in elements_to_emit:
-            try:
-                chunk_data = self.audio_processor.download_audio_and_detect(
-                    chunk.gcs_uri, chunk.timestamp_ms
-                )
+        current_ts_ms = int(float(timestamp) * MS_PER_SECOND)
 
-                time_range = TimeRange(
-                    start_ms=chunk.timestamp_ms,
-                    end_ms=chunk.timestamp_ms + chunk_data.duration_ms,
-                )
+        try:
+            chunk_data = self.audio_processor.download_audio_and_detect(
+                metadata.gcs_uri, current_ts_ms
+            )
 
-                yield (
-                    feed_id,
-                    FlushRequest(
-                        buffer=chunk_data.audio,
-                        feed_id=feed_id,
-                        session_id=curr_context.session_id or "unknown",
-                        contributing_audio_uris=[chunk.gcs_uri],
-                        time_range=time_range,
-                        missing_prior_context=False,
-                        missing_post_context=False,
-                        start_audio_offset_ms=0,
-                        end_audio_offset_ms=chunk_data.duration_ms,
-                        transmission_id=generate_transmission_id(
-                            curr_context.session_id or "unknown",
-                            time_range,
-                        ),
-                        feed_metadata=cast(
-                            "FeedMetadata", curr_context.feed_metadata
-                        ),
+            time_range = TimeRange(
+                start_ms=current_ts_ms,
+                end_ms=current_ts_ms + chunk_data.duration_ms,
+            )
+
+            yield (
+                feed_id,
+                FlushRequest(
+                    buffer=chunk_data.audio,
+                    feed_id=feed_id,
+                    session_id=metadata.session_id or "unknown",
+                    contributing_audio_uris=[metadata.gcs_uri],
+                    time_range=time_range,
+                    missing_prior_context=False,
+                    missing_post_context=False,
+                    start_audio_offset_ms=0,
+                    end_audio_offset_ms=chunk_data.duration_ms,
+                    transmission_id=generate_transmission_id(
+                        metadata.session_id or "unknown",
+                        time_range,
                     ),
-                )
-            except Exception as e:
-                logging.getLogger(__name__).exception(
-                    f"Error processing chunk {chunk.gcs_uri} for feed {feed_id}"
-                )
-                yield beam.pvalue.TaggedOutput(
-                    DEAD_LETTER_QUEUE_TAG,
-                    {"error": str(e), "feed_id": feed_id},
-                )
-
-    @on_timer(OUT_OF_ORDER_TIMER_SPEC)
-    def handle_gap_timeout(
-        self,
-        feed_id: str = beam.DoFn.KeyParam,  # type: ignore
-        transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
-        out_of_order_timer: RuntimeTimer = OUT_OF_ORDER_TIMER,  # type: ignore
-    ) -> Iterator[
-        tuple[str, FlushRequest]
-        | beam.pvalue.TaggedOutput[
-            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
-        ]
-    ]:
-        """Handles the gap timeout by advancing the expected sequence."""
-        curr_context = (
-            transmission_context_state.read() or TransmissionContext()
-        )
-        curr_context = replace(curr_context, order_timer_active=False)
-        transmission_context_state.write(curr_context)
-
-        buffer_elements = curr_context.out_of_order_buffer
-        if buffer_elements:
-            sorted_elements = sorted(buffer_elements)
-            new_expected = sorted_elements[0].timestamp_ms
-
-            logging.getLogger(__name__).warning(
-                f"[{feed_id}] Gap timeout! Advancing expected from {curr_context.expected_next_chunk_start_ms} to {new_expected}."
+                    feed_metadata=metadata.feed_metadata,
+                ),
             )
-
-            curr_context = replace(
-                curr_context,
-                expected_next_chunk_start_ms=new_expected,
-                missing_prior_context=True,
+        except Exception as e:
+            logging.getLogger(__name__).exception(
+                f"Error processing chunk {metadata.gcs_uri} for feed {feed_id}"
             )
-            transmission_context_state.write(curr_context)
-
-            sequence_buffer = SequenceBuffer(self.order_config)
-
-            new_expected_next_ts, new_buffer_elements, elements_to_emit = (
-                sequence_buffer.drain_ready_elements(
-                    expected_next_ts=new_expected,
-                    buffer_elements=buffer_elements,
-                    epsilon_ms=DEFAULT_FLOAT_TOLERANCE_MS,
-                )
-            )
-
-            curr_context = replace(
-                curr_context,
-                expected_next_chunk_start_ms=new_expected_next_ts,
-                out_of_order_buffer=new_buffer_elements,
-            )
-            transmission_context_state.write(curr_context)
-
-            yield from self._download_and_yield(
-                elements_to_emit, feed_id, curr_context
+            yield beam.pvalue.TaggedOutput(
+                DEAD_LETTER_QUEUE_TAG,
+                {"error": str(e), "feed_id": feed_id},
             )
 
 
