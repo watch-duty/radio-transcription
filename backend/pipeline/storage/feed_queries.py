@@ -170,6 +170,58 @@ GROUP BY source_type
 # Source_type literals are inlined per branch so the planner can use
 # the (source_type, id) WHERE status='unclaimed' partial composite
 # index for an index-only scan; parametrizing them would defeat that.
+def _build_claim_query(
+    branches: list[str],
+    branch_names: list[str],
+    combined_cte_name: str,
+) -> str:
+    """Wrap pre-built per-type CTE branches in the outer UPDATE+SELECT.
+
+    Shared scaffolding used by both ``build_acquire_feeds_batch_sql``
+    (primary, unclaimed) and ``build_acquire_feeds_recovery_sql``
+    (failing-retryable + active-abandoned). The differing parts are the
+    per-branch WHERE / ORDER BY (encoded in ``branches``) and the
+    combined-CTE name (``combined_cte_name`` = ``claimed`` or
+    ``recovered``); the outer UPDATE that flips status to active and the
+    final feed_properties JOIN are identical between paths.
+
+    SAFETY: ``branches`` and ``branch_names`` contain interpolated
+    ``SourceType.value`` strings (closed enum, never user input). The
+    Bandit S608 SQL-injection warning is a false positive in this
+    context — same justification as the per-builder noqa comments.
+    """
+    branches_sql = ",\n".join(branches) + ","
+    union_sql = "\n        UNION ALL\n".join(
+        f"        SELECT id FROM {n}"  # noqa: S608
+        for n in branch_names
+    )
+    return (
+        "WITH\n"  # noqa: S608
+        f"{branches_sql}\n"
+        f"    {combined_cte_name} AS MATERIALIZED (\n"
+        f"{union_sql}\n"
+        "    ),\n"
+        "leased AS (\n"
+        "    UPDATE feeds\n"
+        "    SET status = 'active'::feed_status,\n"
+        "        worker_id = $1,\n"
+        "        fencing_token = fencing_token + 1,\n"
+        "        last_heartbeat = NOW(),\n"
+        "        retry_after = NULL\n"
+        f"    FROM {combined_cte_name}\n"
+        f"    WHERE feeds.id = {combined_cte_name}.id\n"
+        "    RETURNING feeds.id, feeds.name, feeds.source_type,\n"
+        "              feeds.last_processed_filename, feeds.last_bookmark_time,\n"
+        "              feeds.fencing_token\n"
+        ")\n"
+        "SELECT leased.id, leased.name, leased.source_type,\n"
+        "       leased.last_processed_filename, leased.last_bookmark_time,\n"
+        "       leased.fencing_token, fpi.source_feed_id, fpi.external_id\n"
+        "FROM leased\n"
+        "JOIN feed_properties fpi ON fpi.feed_id = leased.id\n"
+    )
+
+
 def build_acquire_feeds_batch_sql(claim_types: Sequence[SourceType]) -> str:
     """Generate per-type batch-claim SQL for the given claim_types.
 
@@ -183,17 +235,14 @@ def build_acquire_feeds_batch_sql(claim_types: Sequence[SourceType]) -> str:
         msg = "claim_types must contain at least one SourceType"
         raise ValueError(msg)
 
-    # SAFETY: The interpolated `t.value` strings come from the SourceType
-    # enum, which is a closed set defined in feed_store.py. They are
-    # never derived from user input. The Bandit S608 SQL-injection
-    # warning is a false positive in this context — the closed-enum
-    # invariant is enforced at compile time by mypy.
     branches: list[str] = []
-    union_lines: list[str] = []
+    branch_names: list[str] = []
     for i, t in enumerate(claim_types):
         limit_param = i + 2
+        cte_name = f"{t.value}_claim"
+        branch_names.append(cte_name)
         branches.append(
-            f"    {t.value}_claim AS MATERIALIZED (\n"  # noqa: S608
+            f"    {cte_name} AS MATERIALIZED (\n"  # noqa: S608
             f"        SELECT id FROM feeds\n"
             f"        WHERE source_type = '{t.value}' AND status = 'unclaimed'::feed_status\n"
             f"        ORDER BY id\n"
@@ -201,35 +250,7 @@ def build_acquire_feeds_batch_sql(claim_types: Sequence[SourceType]) -> str:
             f"        FOR NO KEY UPDATE SKIP LOCKED\n"
             f"    )"
         )
-        union_lines.append(f"        SELECT id FROM {t.value}_claim")  # noqa: S608
-    branches_sql = ",\n".join(branches) + ","
-    union_sql = "\n        UNION ALL\n".join(union_lines)
-
-    return (
-        "WITH\n"  # noqa: S608
-        f"{branches_sql}\n"
-        "    claimed AS MATERIALIZED (\n"
-        f"{union_sql}\n"
-        "    ),\n"
-        "leased AS (\n"
-        "    UPDATE feeds\n"
-        "    SET status = 'active'::feed_status,\n"
-        "        worker_id = $1,\n"
-        "        fencing_token = fencing_token + 1,\n"
-        "        last_heartbeat = NOW(),\n"
-        "        retry_after = NULL\n"
-        "    FROM claimed\n"
-        "    WHERE feeds.id = claimed.id\n"
-        "    RETURNING feeds.id, feeds.name, feeds.source_type,\n"
-        "              feeds.last_processed_filename, feeds.last_bookmark_time,\n"
-        "              feeds.fencing_token\n"
-        ")\n"
-        "SELECT leased.id, leased.name, leased.source_type,\n"
-        "       leased.last_processed_filename, leased.last_bookmark_time,\n"
-        "       leased.fencing_token, fpi.source_feed_id, fpi.external_id\n"
-        "FROM leased\n"
-        "JOIN feed_properties fpi ON fpi.feed_id = leased.id\n"
-    )
+    return _build_claim_query(branches, branch_names, "claimed")
 
 
 # Recovery-path claim: failing-retryable + active-abandoned. Runs when
@@ -298,15 +319,14 @@ def build_acquire_feeds_recovery_sql(claim_types: Sequence[SourceType]) -> str:
         msg = "claim_types must contain at least one SourceType"
         raise ValueError(msg)
 
-    # SAFETY: t.value strings come from the SourceType enum (closed set
-    # in feed_store.py), never user input. The Bandit S608 SQL-injection
-    # warning is a false positive in this context.
     branches: list[str] = []
-    union_lines: list[str] = []
+    branch_names: list[str] = []
     for i, t in enumerate(claim_types):
         limit_param = i + 3
+        cte_name = f"{t.value}_recovery"
+        branch_names.append(cte_name)
         branches.append(
-            f"    {t.value}_recovery AS MATERIALIZED (\n"  # noqa: S608
+            f"    {cte_name} AS MATERIALIZED (\n"  # noqa: S608
             f"        SELECT id FROM feeds\n"
             f"        WHERE source_type = '{t.value}'\n"
             f"          AND (\n"
@@ -318,35 +338,7 @@ def build_acquire_feeds_recovery_sql(claim_types: Sequence[SourceType]) -> str:
             f"        FOR NO KEY UPDATE SKIP LOCKED\n"
             f"    )"
         )
-        union_lines.append(f"        SELECT id FROM {t.value}_recovery")  # noqa: S608
-    branches_sql = ",\n".join(branches) + ","
-    union_sql = "\n        UNION ALL\n".join(union_lines)
-
-    return (
-        "WITH\n"  # noqa: S608
-        f"{branches_sql}\n"
-        "    recovered AS MATERIALIZED (\n"
-        f"{union_sql}\n"
-        "    ),\n"
-        "leased AS (\n"
-        "    UPDATE feeds\n"
-        "    SET status = 'active'::feed_status,\n"
-        "        worker_id = $1,\n"
-        "        fencing_token = fencing_token + 1,\n"
-        "        last_heartbeat = NOW(),\n"
-        "        retry_after = NULL\n"
-        "    FROM recovered\n"
-        "    WHERE feeds.id = recovered.id\n"
-        "    RETURNING feeds.id, feeds.name, feeds.source_type,\n"
-        "              feeds.last_processed_filename, feeds.last_bookmark_time,\n"
-        "              feeds.fencing_token\n"
-        ")\n"
-        "SELECT leased.id, leased.name, leased.source_type,\n"
-        "       leased.last_processed_filename, leased.last_bookmark_time,\n"
-        "       leased.fencing_token, fpi.source_feed_id, fpi.external_id\n"
-        "FROM leased\n"
-        "JOIN feed_properties fpi ON fpi.feed_id = leased.id\n"
-    )
+    return _build_claim_query(branches, branch_names, "recovered")
 
 
 REPORT_FAILURE_SQL = """\
