@@ -7,6 +7,19 @@ WORKDIR /app
 
 ENV PYTHONPATH=/app
 
+# ---------------------------------------------------------------------------
+# HANDOFF: cloud-init prerequisites (must land in the infrastructure PR)
+# ---------------------------------------------------------------------------
+# The container cannot set these from inside; they must be applied at VM-level
+# via cloud-init in the follow-up Terraform PR against radio-transcription-deployment.
+# HANDOFF: net.ipv4.ip_local_port_range = "10000 65535"
+# HANDOFF: net.ipv4.tcp_keepalive_time = 60
+# HANDOFF: net.ipv4.tcp_keepalive_intvl = 10
+# HANDOFF: net.ipv4.tcp_keepalive_probes = 3
+# HANDOFF: container --stop-timeout >= 100 s (90 s graceful budget + ~10 s teardown
+#          vs the GCE 120 s ACPI cap)
+# ---------------------------------------------------------------------------
+
 # 1. Install ffmpeg for audio processing
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
