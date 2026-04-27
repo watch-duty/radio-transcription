@@ -168,6 +168,9 @@ class GoogleChirpV3Transcriber(Transcriber):
             raise RuntimeError(msg)
 
         duration_sec = len(audio_data) / BYTES_PER_SECOND_16KHZ_MONO
+        if duration_sec > 60.0:
+            msg = f"Audio payload too long for synchronous API: {duration_sec:.2f}s"
+            raise ValueError(msg)
 
         logger.info(
             "Transcribing %.3fs of audio",
@@ -206,8 +209,6 @@ class GoogleChirpV3Transcriber(Transcriber):
             deadline=float(DEFAULT_RETRY_MAX_SECONDS * DEFAULT_MAX_RETRIES),
         )
         response = self.client.recognize(request=request, retry=retry_policy)
-        return self._parse_response(response)
-
         return self._parse_response(response)
 
     def _parse_response(
