@@ -55,6 +55,7 @@ type ListTranscriptsData = {
 
 const TRANSCRIPTS_POLLING_INTERVAL_MS = 15000; // 15 seconds
 const TRANSCRIPTS_POLLING_INTERVAL_DISPLAY_STRING = `${TRANSCRIPTS_POLLING_INTERVAL_MS / 1000}s`;
+const MAX_TRANSCRIPTS_POLLING_ITERATIONS = 10;
 
 export function TranscriptView({
   addAlert,
@@ -276,8 +277,13 @@ export function TranscriptView({
 
     try {
       // Fetch all pages of new transcripts moving forward in time.
-      // Limit to 10 iterations to prevent infinite loops. This shouldn't happen, but you never know.
-      while (hasMore && iterations < 10) {
+      while (hasMore) {
+        if (iterations > MAX_TRANSCRIPTS_POLLING_ITERATIONS) {
+          console.warn(
+            'pollNewerTranscripts has more than 10 pages of new transcripts. This is unexpected. If this message continues, please report a bug.'
+          );
+        }
+
         iterations++;
         const response = await listTranscripts(
           searchedFeedId,
