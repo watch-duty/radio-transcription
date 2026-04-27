@@ -169,9 +169,12 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
                 DEAD_LETTER_QUEUE_TAG, main="main"
             )
 
-            def assert_dlq(elements: list[dict[str, Any]]) -> None:
+            def assert_dlq(
+                elements: list[dict[str, str | bool | dict[str, str]]],
+            ) -> None:
 
                 assert len(elements) == 1
+                assert isinstance(elements[0]["error"], str)
                 assert (
                     "Failed to parse or validate payload"
                     in elements[0]["error"]
@@ -239,9 +242,12 @@ class TranscribeAudioTest(unittest.TestCase):
                 )
             ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
 
-            def assert_dlq(elements: list[dict[str, Any]]) -> None:
+            def assert_dlq(
+                elements: list[dict[str, str | bool | dict[str, str]]],
+            ) -> None:
 
                 assert len(elements) == 1
+                assert isinstance(elements[0]["error"], str)
                 assert "Transcription API outage!" in elements[0]["error"]
 
             def assert_empty(elements):

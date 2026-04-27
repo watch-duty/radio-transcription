@@ -3,7 +3,7 @@ import time
 from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import Any, cast, override
+from typing import Any, Literal, cast, override
 
 import apache_beam as beam
 import numpy as np
@@ -273,7 +273,12 @@ class OrderedStitchAudioFn(beam.DoFn):
         out_of_order_timer: RuntimeTimer = OUT_OF_ORDER_TIMER,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
-    ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
+    ) -> Iterator[
+        tuple[str, FlushRequest]
+        | beam.pvalue.TaggedOutput[
+            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
+        ]
+    ]:
         """Processes incoming chunks, orders them, downloads audio, and stitches them."""
         feed_id, metadata = element
         current_ts_ms = int(float(timestamp) * MS_PER_SECOND)
@@ -423,7 +428,12 @@ class OrderedStitchAudioFn(beam.DoFn):
         *,
         is_backfill: bool,
         previous_expected_ts: int | None = None,
-    ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
+    ) -> Iterator[
+        tuple[str, FlushRequest]
+        | beam.pvalue.TaggedOutput[
+            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
+        ]
+    ]:
         """Helper to download and stitch a list of ready chunks."""
         if curr_context.session_id is None:
             msg = "Session ID cannot be None in _download_and_stitch"
@@ -568,7 +578,12 @@ class OrderedStitchAudioFn(beam.DoFn):
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
-    ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
+    ) -> Iterator[
+        tuple[str, FlushRequest]
+        | beam.pvalue.TaggedOutput[
+            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
+        ]
+    ]:
         """Handles the gap timeout by advancing the expected sequence."""
         curr_context = (
             transmission_context_state.read() or TransmissionContext()
@@ -637,7 +652,12 @@ class OrderedStitchAudioFn(beam.DoFn):
         transmission_context: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
-    ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
+    ) -> Iterator[
+        tuple[str, FlushRequest]
+        | beam.pvalue.TaggedOutput[
+            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
+        ]
+    ]:
         """Handles stale flushes triggered by event time."""
         timer_manager = StaleTimerManager(
             stale_timer_event, stale_timer_proc, self.stitch_config
@@ -654,7 +674,12 @@ class OrderedStitchAudioFn(beam.DoFn):
         transmission_context: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
-    ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
+    ) -> Iterator[
+        tuple[str, FlushRequest]
+        | beam.pvalue.TaggedOutput[
+            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
+        ]
+    ]:
         """Handles stale flushes triggered by processing time."""
         timer_manager = StaleTimerManager(
             stale_timer_event, stale_timer_proc, self.stitch_config
@@ -669,7 +694,12 @@ class OrderedStitchAudioFn(beam.DoFn):
         transmission_buffer: BagRuntimeState,
         transmission_context: ReadModifyWriteRuntimeState,
         timer_manager: StaleTimerManager,
-    ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
+    ) -> Iterator[
+        tuple[str, FlushRequest]
+        | beam.pvalue.TaggedOutput[
+            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
+        ]
+    ]:
         """Common logic for handling stale transmissions."""
         curr_context = transmission_context.read() or TransmissionContext()
         start_time_ms = curr_context.stale_start_time_ms
@@ -773,7 +803,12 @@ class OrderedBypassFn(beam.DoFn):
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         out_of_order_timer: RuntimeTimer = OUT_OF_ORDER_TIMER,  # type: ignore
-    ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
+    ) -> Iterator[
+        tuple[str, FlushRequest]
+        | beam.pvalue.TaggedOutput[
+            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
+        ]
+    ]:
         """Processes incoming chunks, orders them, and yields FlushRequests immediately."""
         feed_id, _metadata = element
         curr_context = (
@@ -806,7 +841,12 @@ class OrderedBypassFn(beam.DoFn):
         elements_to_emit: list[BufferedChunk],
         feed_id: str,
         curr_context: TransmissionContext,
-    ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
+    ) -> Iterator[
+        tuple[str, FlushRequest]
+        | beam.pvalue.TaggedOutput[
+            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
+        ]
+    ]:
         if not self.audio_processor:
             msg = "AudioProcessor not initialized. setup() must be called."
             raise RuntimeError(msg)
@@ -858,7 +898,12 @@ class OrderedBypassFn(beam.DoFn):
         feed_id: str = beam.DoFn.KeyParam,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         out_of_order_timer: RuntimeTimer = OUT_OF_ORDER_TIMER,  # type: ignore
-    ) -> Iterator[tuple[str, FlushRequest] | beam.pvalue.TaggedOutput]:
+    ) -> Iterator[
+        tuple[str, FlushRequest]
+        | beam.pvalue.TaggedOutput[
+            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
+        ]
+    ]:
         """Handles the gap timeout by advancing the expected sequence."""
         curr_context = (
             transmission_context_state.read() or TransmissionContext()
@@ -1083,7 +1128,12 @@ class TranscribeAudioFn(beam.DoFn):
         sequential_barrier: ReadModifyWriteRuntimeState = SEQUENTIAL_BARRIER_STATE,  # type: ignore
         *args: Any,
         **kwargs: Any,
-    ) -> Iterator[TranscriptionResult | beam.pvalue.TaggedOutput]:
+    ) -> Iterator[
+        TranscriptionResult
+        | beam.pvalue.TaggedOutput[
+            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
+        ]
+    ]:
         """Submits the consolidated flushed buffer strictly sequentially to the external transcription API."""
         feed_id, request = element
         try:
