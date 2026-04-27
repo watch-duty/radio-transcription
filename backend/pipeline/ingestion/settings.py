@@ -97,7 +97,7 @@ class NormalizerSettings:
     )
     graceful_shutdown_timeout_sec: float = field(
         default_factory=lambda: float(
-            os.environ.get("GRACEFUL_SHUTDOWN_TIMEOUT_SEC", "10.0"),
+            os.environ.get("GRACEFUL_SHUTDOWN_TIMEOUT_SEC", "90.0"),
         ),
     )
 
