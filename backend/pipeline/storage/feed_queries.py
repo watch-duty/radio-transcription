@@ -164,28 +164,18 @@ GROUP BY source_type
 # index `feeds_claim_by_type_idx ON feeds (source_type, id)
 # WHERE status = 'unclaimed'` — no sort node, index-scan only.
 #
-# md5-based ramp filter (not hashtext): md5() is documented stable across
-# PostgreSQL minor-version upgrades; hashtext() has historically changed
-# between major versions, which would silently re-shuffle feeds between
-# ramp buckets mid-rollout (scaling plan §9.4).
-#
-# Params: $1=worker_id, $2=ramp_pct, $3..$(2+N)=per-type LIMITs in
-# claim_types order. Source_type literals are inlined per branch so the
-# planner can use the (source_type, id) WHERE status='unclaimed' partial
-# composite index for an index-only scan; parametrizing them would
-# defeat that.
+# Params: $1=worker_id, $2..$(1+N)=per-type LIMITs in claim_types order.
+# Source_type literals are inlined per branch so the planner can use
+# the (source_type, id) WHERE status='unclaimed' partial composite
+# index for an index-only scan; parametrizing them would defeat that.
 def build_acquire_feeds_batch_sql(claim_types: Sequence[SourceType]) -> str:
     """Generate per-type batch-claim SQL for the given claim_types.
 
     Returns a SQL string with one MATERIALIZED CTE per source_type, a
     UNION-ALL `claimed` CTE collecting their IDs, and an outer UPDATE
     that JOINs feed_properties for the LeasedFeed return shape. The
-    LIMIT for branch i is parameter ``$3 + i`` in claim_types iteration
-    order; $1 is worker_id and $2 is ramp_pct.
-
-    For the production set (BCFY_FEEDS, BCFY_CALLS, OPENMHZ in that
-    order), the output is byte-identical to the previous static
-    ACQUIRE_FEEDS_BATCH_SQL constant.
+    LIMIT for branch i is parameter ``$2 + i`` in claim_types iteration
+    order; $1 is worker_id.
     """
     if not claim_types:
         msg = "claim_types must contain at least one SourceType"
@@ -199,12 +189,11 @@ def build_acquire_feeds_batch_sql(claim_types: Sequence[SourceType]) -> str:
     branches: list[str] = []
     union_lines: list[str] = []
     for i, t in enumerate(claim_types):
-        limit_param = i + 3
+        limit_param = i + 2
         branches.append(
             f"    {t.value}_claim AS MATERIALIZED (\n"  # noqa: S608
             f"        SELECT id FROM feeds\n"
             f"        WHERE source_type = '{t.value}' AND status = 'unclaimed'::feed_status\n"
-            f"          AND (('x' || substr(md5(id::text), 1, 7))::bit(28)::integer) % 100 < $2\n"
             f"        ORDER BY id\n"
             f"        LIMIT ${limit_param}\n"
             f"        FOR NO KEY UPDATE SKIP LOCKED\n"
@@ -284,28 +273,27 @@ def build_acquire_feeds_batch_sql(claim_types: Sequence[SourceType]) -> str:
 # re-evaluate the SKIP LOCKED subquery per outer row, which would bypass
 # the LIMIT.
 #
-# source_type filter ($5): restricts the recovery sweep to the worker's
+# source_type filter ($4): restricts the recovery sweep to the worker's
 # claim_types. Without it, recovery would scoop up failing or
 # active-abandoned rows of any source_type — including types this worker
 # has no per-type cap for (so the per-type memory budget would be
 # bypassed) and types served by a separate pipeline (e.g. ECHO via Cloud
 # Function, never VM-leased). The primary CTE (ACQUIRE_FEEDS_BATCH_SQL)
 # already filters per-type via the literal `source_type = '...'` in each
-# branch; recovery now does the same, dynamically, via $5.
+# branch; recovery now does the same, dynamically, via $4.
 #
-# Params: $1=worker_id, $2=abandonment_interval, $3=ramp_pct, $4=limit,
-#         $5=claim_types (text[] of source_type values).
+# Params: $1=worker_id, $2=abandonment_interval, $3=limit,
+#         $4=claim_types (text[] of source_type values).
 ACQUIRE_FEEDS_RECOVERY_SQL = """\
 WITH recovered AS MATERIALIZED (
     SELECT id FROM feeds
-    WHERE source_type = ANY($5::text[])
+    WHERE source_type = ANY($4::text[])
       AND (
           (status = 'failing'::feed_status AND (retry_after IS NULL OR retry_after <= NOW()))
           OR (status = 'active'::feed_status AND last_heartbeat < NOW() - $2::interval)
       )
-      AND (('x' || substr(md5(id::text), 1, 7))::bit(28)::integer) % 100 < $3
     ORDER BY retry_after ASC NULLS LAST, id
-    LIMIT $4
+    LIMIT $3
     FOR NO KEY UPDATE SKIP LOCKED
 ),
 leased AS (

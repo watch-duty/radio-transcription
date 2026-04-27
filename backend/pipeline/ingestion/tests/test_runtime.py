@@ -116,7 +116,6 @@ def _make_settings(**overrides) -> mock.MagicMock:
             SourceType.BCFY_CALLS: 600,
             SourceType.OPENMHZ: 900,
         },
-        "claim_ramp_pct": 100,
     }
     defaults.update(overrides)
     m = mock.MagicMock()
@@ -274,10 +273,10 @@ class TestLeasingLoopOrphanedTask(unittest.IsolatedAsyncioTestCase):
         rt._shutdown.set()
         await rt._leasing_loop()
 
-        # Inspect the call made to acquire_feeds_batch; arg[2] is the
+        # Inspect the call made to acquire_feeds_batch; arg[1] is the
         # per-type LIMIT dict.
         call = rt._store.acquire_feeds_batch.await_args_list[0]
-        limits_dict = call[0][2]
+        limits_dict = call[0][1]
         self.assertEqual(sum(limits_dict.values()), 250)  # exactly total_slack
         self.assertTrue(
             all(v >= 0 for v in limits_dict.values()),
@@ -1067,7 +1066,7 @@ class TestLeasingLoopHeldCounts(unittest.IsolatedAsyncioTestCase):
         # DB-derived held: bcfy_feeds=0 (capped), other two share
         # total_slack=250.
         acquire_call = rt._store.acquire_feeds_batch.await_args_list[0]
-        limits_dict = acquire_call[0][2]
+        limits_dict = acquire_call[0][1]
         self.assertEqual(limits_dict[SourceType.BCFY_FEEDS], 0)
         self.assertEqual(sum(limits_dict.values()), 250)
 

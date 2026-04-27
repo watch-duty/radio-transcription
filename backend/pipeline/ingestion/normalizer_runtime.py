@@ -301,7 +301,6 @@ class NormalizerRuntime:
                     )
                     primary = await self._store.acquire_feeds_batch(
                         s.worker_id,
-                        s.claim_ramp_pct,
                         limits,
                     )
                     leases: list[LeasedFeed] = list(primary)
@@ -318,7 +317,6 @@ class NormalizerRuntime:
                             await self._store.acquire_feeds_recovery(
                                 s.worker_id,
                                 s.abandonment_window_sec,
-                                s.claim_ramp_pct,
                                 total_slack - len(primary),
                             )
                         )

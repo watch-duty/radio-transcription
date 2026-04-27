@@ -104,18 +104,6 @@ class NormalizerSettings:
     # CAP_<NAME> env vars override individual entries.
     caps: dict[SourceType, int] = field(default_factory=_load_caps_from_env)
 
-    # Claim ramp filter (scaling plan §9.4). md5-based deterministic
-    # bucketing; 100 = every feed claimable. Sub-100 values enable staged
-    # rollout during Phase 2 ramp stages. Clamped to [0, 100]: out-of-
-    # range values would silently skew the bucket distribution (e.g.
-    # negative pct makes the `% 100 < $2` predicate always false → no
-    # feeds claimable; values > 100 act as 100 → no ramp gating).
-    claim_ramp_pct: int = field(
-        default_factory=lambda: max(0, min(100, int(
-            os.environ.get("CLAIM_RAMP_PCT", "100"),
-        ))),
-    )
-
     # GCS
     audio_staging_bucket: str = field(
         default_factory=lambda: _require_env("AUDIO_STAGING_BUCKET"),

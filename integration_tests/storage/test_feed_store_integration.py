@@ -199,7 +199,7 @@ async def test_primary_cte_respects_per_type_limits(
 
     worker = uuid.uuid4()
     result = await store.acquire_feeds_batch(
-        worker, ramp_pct=100,
+        worker,
         limits={
             SourceType.BCFY_FEEDS: 2,
             SourceType.BCFY_CALLS: 1,
@@ -225,7 +225,7 @@ async def test_primary_cte_limit_zero_skips_type(
 
     worker = uuid.uuid4()
     result = await store.acquire_feeds_batch(
-        worker, ramp_pct=100,
+        worker,
         limits={
             SourceType.BCFY_FEEDS: 0,
             SourceType.BCFY_CALLS: 10,
@@ -237,26 +237,6 @@ async def test_primary_cte_limit_zero_skips_type(
     assert any(lease["source_type"] == SourceType.BCFY_CALLS for lease in result)
 
 
-async def test_primary_cte_ramp_zero_returns_empty(
-    db_pool: asyncpg.Pool, store: FeedStore
-) -> None:
-    """ramp_pct=0 disables every bucket — no rows regardless of LIMITs."""
-    await _insert_feed(db_pool, "bf-0", source_type="bcfy_feeds")
-    await _insert_feed(db_pool, "bc-0", source_type="bcfy_calls")
-
-    worker = uuid.uuid4()
-    result = await store.acquire_feeds_batch(
-        worker, ramp_pct=0,
-        limits={
-            SourceType.BCFY_FEEDS: 10,
-            SourceType.BCFY_CALLS: 10,
-            SourceType.OPENMHZ: 10,
-        },
-    )
-
-    assert result == []
-
-
 async def test_primary_cte_sets_status_to_active(
     db_pool: asyncpg.Pool, store: FeedStore
 ) -> None:
@@ -265,7 +245,7 @@ async def test_primary_cte_sets_status_to_active(
     worker = uuid.uuid4()
 
     result = await store.acquire_feeds_batch(
-        worker, ramp_pct=100,
+        worker,
         limits={
             SourceType.BCFY_FEEDS: 10,
             SourceType.BCFY_CALLS: 10,
@@ -329,7 +309,7 @@ async def test_recovery_excludes_non_claim_source_types(
     )
 
     result = await store.acquire_feeds_recovery(
-        worker, abandonment_window_sec=60.0, ramp_pct=100, limit=10,
+        worker, abandonment_window_sec=60.0, limit=10,
     )
 
     returned_ids = {lease["id"] for lease in result}
@@ -368,7 +348,7 @@ async def test_recovery_with_full_claim_types_picks_up_all(
         ids[source_type] = fid
 
     result = await store.acquire_feeds_recovery(
-        worker, abandonment_window_sec=60.0, ramp_pct=100, limit=10,
+        worker, abandonment_window_sec=60.0, limit=10,
     )
 
     assert {lease["id"] for lease in result} == set(ids.values())

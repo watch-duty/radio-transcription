@@ -395,7 +395,6 @@ class FeedStore:
     async def acquire_feeds_batch(
         self,
         worker_id: uuid.UUID,
-        ramp_pct: int,
         limits: dict[SourceType, int],
     ) -> list[LeasedFeed]:
         """
@@ -414,7 +413,6 @@ class FeedStore:
 
         Args:
             worker_id: UUID of the worker requesting leases.
-            ramp_pct: md5 ramp filter threshold (0-100). 100 = all eligible.
             limits: Per-type LIMIT keyed by ``SourceType``. Types absent
                 from the dict are passed as 0 (their CTE branch returns
                 no rows). Types present but not in this store's
@@ -435,7 +433,6 @@ class FeedStore:
         rows = await self._pool.fetch(
             self._acquire_feeds_batch_sql,
             worker_id,
-            ramp_pct,
             *positional,
         )
         return [self._row_to_leased_feed(row) for row in rows]
@@ -444,7 +441,6 @@ class FeedStore:
         self,
         worker_id: uuid.UUID,
         abandonment_window_sec: float,
-        ramp_pct: int,
         limit: int,
     ) -> list[LeasedFeed]:
         """Recovery-path claim: failing-retryable + active-abandoned.
@@ -460,7 +456,6 @@ class FeedStore:
         Args:
             worker_id: UUID of the worker requesting leases.
             abandonment_window_sec: Seconds before a heartbeat is considered stale.
-            ramp_pct: md5 ramp filter threshold (0-100). 100 = all eligible.
             limit: Maximum number of feeds to acquire.
 
         Returns:
@@ -476,7 +471,6 @@ class FeedStore:
             ACQUIRE_FEEDS_RECOVERY_SQL,
             worker_id,
             datetime.timedelta(seconds=abandonment_window_sec),
-            ramp_pct,
             limit,
             [t.value for t in self._claim_types],
         )
