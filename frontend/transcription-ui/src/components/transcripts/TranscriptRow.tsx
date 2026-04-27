@@ -84,7 +84,7 @@ export function TranscriptRow({
           display: 'flex',
           alignItems: 'center',
           gap: 2,
-          py: 1.5,
+          py: 0.25,
           bgcolor: isHighlighted ? 'action.selected' : 'inherit',
           scrollMarginTop: theme.spacing(5),
         }}
