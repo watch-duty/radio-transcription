@@ -1141,12 +1141,30 @@ class TranscribeAudioFn(beam.DoFn):
             if transcribed:
                 self.transcription_count.inc()
                 yield transcribed
-        except Exception as e:
+        except (ValueError, Exception) as e:
             if not self.config.route_to_dlq:
                 raise
             self.dlq_count.inc()
-            logger.exception("Error transcribing buffer for feed %s", feed_id)
-            msg = str(e)
+
+            is_validation = isinstance(e, ValueError)
+            error_type = (
+                "validation_failure" if is_validation else "unexpected_error"
+            )
+
+            if is_validation:
+                logger.warning(
+                    f"Validation failure during transcription for feed {feed_id}: {e}"
+                )
+            else:
+                logger.exception(
+                    "Unexpected error transcribing buffer for feed %s", feed_id
+                )
+
             yield beam.pvalue.TaggedOutput(
-                DEAD_LETTER_QUEUE_TAG, {"error": msg, "feed_id": feed_id}
+                DEAD_LETTER_QUEUE_TAG,
+                {
+                    "error": str(e),
+                    "feed_id": feed_id,
+                    "error_type": error_type,
+                },
             )

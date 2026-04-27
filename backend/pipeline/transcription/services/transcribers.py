@@ -168,6 +168,9 @@ class GoogleChirpV3Transcriber(Transcriber):
             raise RuntimeError(msg)
 
         duration_sec = len(audio_data) / BYTES_PER_SECOND_16KHZ_MONO
+        if duration_sec > 60.0:
+            msg = f"Audio payload too long for synchronous API: {duration_sec:.2f}s"
+            raise ValueError(msg)
 
         logger.info(
             "Transcribing %.3fs of audio",
