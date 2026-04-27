@@ -1,7 +1,5 @@
 """A framework-agnostic chronological jitter buffer abstracting gap logic away from Beam state."""
 
-import logging
-
 from backend.pipeline.transcription.common.constants import (
     DEFAULT_FLOAT_TOLERANCE_MS,
 )
@@ -11,9 +9,8 @@ from backend.pipeline.transcription.common.datatypes import (
 )
 from backend.pipeline.transcription.common.logging import get_logger
 
-logger = get_logger(__name__)
-logger = logging.LoggerAdapter(
-    logger, {"system": "transcription", "component": "sequence-buffer"}
+logger = get_logger(
+    __name__, {"system": "transcription", "component": "sequence-buffer"}
 )
 
 

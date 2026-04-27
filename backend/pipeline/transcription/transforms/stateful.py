@@ -22,7 +22,6 @@ from apache_beam.utils.timestamp import Timestamp
 from backend.pipeline.common.constants import MS_PER_SECOND, SAMPLE_RATE_HZ
 from backend.pipeline.common.storage.gcs_uploader import GCSAudioUploader
 from backend.pipeline.transcription.audio.audio_processor import AudioProcessor
-from backend.pipeline.transcription.common.logging import get_logger
 from backend.pipeline.transcription.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
     DEFAULT_FLOAT_TOLERANCE_MS,
@@ -46,11 +45,8 @@ from backend.pipeline.transcription.common.datatypes import (
     TransmissionContext,
     UpdateStateAction,
 )
-<<<<<<< HEAD:backend/pipeline/transcription/transforms/stateful.py
-from backend.pipeline.transcription.common.utils import generate_transmission_id
 from backend.pipeline.transcription.common.logging import get_logger
-=======
->>>>>>> b7aff1b0 (feat: Move structured logging to common subpackage and fix imports):backend/pipeline/transcription/stateful_transforms.py
+from backend.pipeline.transcription.common.utils import generate_transmission_id
 from backend.pipeline.transcription.resources import (
     SHARED_RESOURCE_HANDLE,
     SharedResources,
@@ -64,9 +60,8 @@ from backend.pipeline.transcription.state.stitcher_state import (
     AudioStitchingStateMachine,
 )
 
-logger = get_logger(__name__)
-logger = logging.LoggerAdapter(
-    logger, {"system": "transcription", "component": "ordered-stitcher"}
+logger = get_logger(
+    __name__, {"system": "transcription", "component": "ordered-stitcher"}
 )
 
 

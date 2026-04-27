@@ -1,6 +1,7 @@
 import json
 import logging
 import sys
+from typing import Any
 
 
 class TaskJsonFormatter(logging.Formatter):
@@ -18,7 +19,9 @@ class TaskJsonFormatter(logging.Formatter):
         return json.dumps(log_record)
 
 
-def get_logger(name: str) -> logging.Logger:
+def get_logger(
+    name: str, extra: dict[str, Any] | None = None
+) -> logging.Logger | logging.LoggerAdapter:
     """Returns a logger configured to output JSON lines to stdout, with propagation disabled to prevent duplicates in Dataflow."""
     logger = logging.getLogger(name)
     logger.propagate = False
@@ -28,4 +31,6 @@ def get_logger(name: str) -> logging.Logger:
         handler.setFormatter(TaskJsonFormatter())
         logger.addHandler(handler)
 
+    if extra:
+        return logging.LoggerAdapter(logger, extra)
     return logger
