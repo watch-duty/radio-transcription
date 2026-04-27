@@ -2,7 +2,7 @@ import os
 import json
 import torch
 import logging
-from .gcs_utils import parse_gcs_uri, download_blob_to_file
+from .gcs_utils import parse_gcs_uri, download_blob_to_file, upload_file_to_blob
 
 logger = logging.getLogger(__name__)
 

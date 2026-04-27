@@ -41,3 +41,20 @@ def download_jsonl_manifest(storage_client, gcs_manifest_uri: str) -> list[dict]
             manifest_entries.append(json.loads(line))
     logger.info(f"Downloaded {len(manifest_entries)} entries from {gcs_manifest_uri}")
     return manifest_entries
+
+def upload_inference_results(storage_client, bucket_name, project_name, model_name, experiment_name, results_list):
+    """
+    Uploads inference results directly from memory to GCS using the standard path structure.
+    """
+    blob_path = f"inference_manifests/{project_name}/{model_name}/{experiment_name}/{project_name}_{model_name}_{experiment_name}.jsonl"
+    
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.blob(blob_path)
+    
+    # Convert list of dicts to JSONL string in memory
+    jsonl_content = "\n".join(json.dumps(row) for row in results_list) + "\n"
+    
+    blob.upload_from_string(jsonl_content, content_type="application/jsonl")
+    
+    logger.info(f"Uploaded results to gs://{bucket_name}/{blob_path}")
+    return f"gs://{bucket_name}/{blob_path}"
