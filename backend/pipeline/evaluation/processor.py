@@ -65,6 +65,10 @@ class EvaluationEventProcessor:
             )
             return
 
+        if not new_audio.source_audio_uris:
+            msg = f"TranscribedAudio missing source_audio_uris for feed_id: {new_audio.feed_id} (transmission: {new_audio.transmission_id})"
+            raise ValueError(msg)
+
         # 2. Evaluate
         # TODO (https://linear.app/watchduty/issue/GOO-245/): Handle evaluation failure.
         evaluated_payload = self.evaluation_service.evaluate(new_audio)
