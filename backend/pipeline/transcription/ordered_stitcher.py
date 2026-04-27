@@ -287,9 +287,14 @@ class OrderedStitchAudioFn(beam.DoFn):
             transmission_context.read().contributing_audio_uris
         )
 
-        audio_buffer = action.isolated_audio_buffer or list(
-            transmission_buffer.read()
-        )
+        if not action.clear_state:
+            # Late chunk processing: only use isolated buffer
+            audio_buffer = action.isolated_audio_buffer
+        else:
+            # Normal or stale flush: fall back to main buffer if isolated is empty
+            audio_buffer = action.isolated_audio_buffer or list(
+                transmission_buffer.read()
+            )
         if audio_buffer:
             # Create a deterministic UUID using our shared helper so that Beam retries produce the exact same ID
             transmission_id = generate_transmission_id(
