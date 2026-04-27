@@ -21,7 +21,7 @@ from backend.pipeline.ingestion import (
     quarantine_telemetry,
 )
 from backend.pipeline.ingestion.health_server import HealthState
-from backend.pipeline.ingestion.models import CapturedChunk
+from backend.pipeline.ingestion.models import CapturedChunk, CaptureResources
 from backend.pipeline.ingestion.retry import (
     LeaseExpiredError,
     retry_with_lease_check,
@@ -41,9 +41,14 @@ from backend.pipeline.storage.feed_store import (
 )
 
 FeedID = uuid.UUID
-# 2-arg interface: route_capturer binds url_base internally.
-# See CollectorFn in models.py for the 3-arg raw collector signature.
-CaptureFn = Callable[[LeasedFeed, asyncio.Event], AsyncIterator[CapturedChunk]]
+# 3-arg interface: route_capturer binds url_base internally and forwards
+# the runtime-owned CaptureResources (http_session + spawn_semaphore) to
+# the underlying 4-arg CollectorFn.
+# See CollectorFn in models.py for the 4-arg raw collector signature.
+CaptureFn = Callable[
+    [LeasedFeed, asyncio.Event, CaptureResources],
+    AsyncIterator[CapturedChunk],
+]
 logger = logging.getLogger(__name__)
 
 
@@ -115,6 +120,14 @@ class NormalizerRuntime:
         self._heartbeat_thread: threading.Thread | None = None
         self._store: FeedStore = None  # type: ignore # set in _main()
         self._heartbeat_store: FeedStore = None  # type: ignore # set in _main()
+        # aiohttp ClientSession + ffmpeg spawn semaphore are constructed in
+        # _main() because both require a running event loop. Lifecycle:
+        # session is closed in _shutdown_sequence after _gcs_client.close()
+        # with a 250ms SSL-teardown sleep (Pitfall 12). Semaphore is
+        # loop-scoped and disappears with the loop.
+        self._http_session: aiohttp.ClientSession = None  # type: ignore # set in _main()
+        self._ffmpeg_spawn_sem: asyncio.Semaphore = None  # type: ignore # set in _main()
+        self._capture_resources: CaptureResources = None  # type: ignore # set in _main()
         # Size the aiohttp connection pool to match the feed concurrency so
         # GCS uploads are never queued waiting for a free connection slot.
         # Without this, the default limit of 100 means ~150 uploads always
@@ -204,6 +217,30 @@ class NormalizerRuntime:
         self._heartbeat_thread.start()
 
         quarantine_telemetry.configure(settings.google_cloud_project)
+
+        # SHUTDOWN-01 / Phase 2 scaffolding for HTTP-01 + SPAWN-01.
+        # Constructed inside _main() because both primitives require a
+        # running event loop. TCPConnector kwargs per research
+        # SUMMARY.md (limit_per_host=64 absorbs activation bursts;
+        # ttl_dns_cache=300 survives cold-start herd; keepalive_timeout=75
+        # is > 60s poll cadence). NO enable_cleanup_closed — ignored on
+        # Python 3.13.1+ (aiohttp 3.13.5 docs). Session is closed in
+        # _shutdown_sequence AFTER _gcs_client.close(), followed by
+        # await asyncio.sleep(0.25) for SSL teardown (Pitfall 12).
+        self._http_session = aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(
+                limit=0,
+                limit_per_host=64,
+                ttl_dns_cache=300,
+                keepalive_timeout=75,
+            ),
+            timeout=aiohttp.ClientTimeout(total=30, connect=10),
+        )
+        self._ffmpeg_spawn_sem = asyncio.Semaphore(settings.ffmpeg_spawn_limit)
+        self._capture_resources = CaptureResources(
+            http_session=self._http_session,
+            spawn_semaphore=self._ffmpeg_spawn_sem,
+        )
 
         # Start /healthz HTTP server. Runs on the same event loop as the
         # leasing/heartbeat coroutines — this is load-bearing: if the loop is
@@ -582,6 +619,7 @@ class NormalizerRuntime:
             async for captured_chunk in self._capture_fn(
                 feed,
                 self._shutdown,
+                self._capture_resources,
             ):
                 if not isinstance(captured_chunk, CapturedChunk):
                     msg = (
@@ -1055,6 +1093,17 @@ class NormalizerRuntime:
 
         await self._pubsub_client.close()
         await self._gcs_client.close()
+
+        # Close runtime-owned aiohttp session AFTER _gcs_client.close()
+        # per shutdown-ordering invariant (PITFALLS.md Pitfall 4 — close
+        # session after asyncio.wait of feed tasks; placing alongside
+        # _gcs_client.close() satisfies that). The 250ms sleep gives SSL
+        # transports time to flush so we don't emit
+        # "ResourceWarning: unclosed transport" (PITFALLS.md Pitfall 12 —
+        # enable_cleanup_closed is dead on Python 3.13.1+).
+        if self._http_session is not None:
+            await self._http_session.close()
+            await asyncio.sleep(0.25)
 
         # Heartbeat pool close may raise if the heartbeat cycle was
         # mid-query when we stopped the thread — harmless during shutdown.
