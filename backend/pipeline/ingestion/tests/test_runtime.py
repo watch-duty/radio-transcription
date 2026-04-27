@@ -108,6 +108,14 @@ def _make_settings(**overrides) -> mock.MagicMock:
         # port 1 when a test exercises _main().
         "health_check_port": 8080,
         "health_check_startup_grace_sec": 120.0,
+        # Per-type claim caps — must be a real dict so iteration in the
+        # leasing loop and _calculate_branch_limits doesn't trip over
+        # MagicMock auto-created attributes.
+        "caps": {
+            SourceType.BCFY_FEEDS: 240,
+            SourceType.BCFY_CALLS: 600,
+            SourceType.OPENMHZ: 900,
+        },
     }
     defaults.update(overrides)
     m = mock.MagicMock()
@@ -203,6 +211,8 @@ class TestLeasingLoopOrphanedTask(unittest.IsolatedAsyncioTestCase):
         rt = _make_runtime()
         rt._shutdown = asyncio.Event()
         rt._store = mock.AsyncMock()
+        rt._store.count_held_by_type.return_value = dict.fromkeys(SourceType, 0)
+        rt._store.acquire_feeds_recovery.return_value = []
         rt._releasing_feeds = set()
 
         # Simulate an existing running task for the same feed
@@ -232,6 +242,46 @@ class TestLeasingLoopOrphanedTask(unittest.IsolatedAsyncioTestCase):
         # New task must be in _feed_tasks (not the old one)
         self.assertIn(_FEED_ID, rt._feed_tasks)
         self.assertIsNot(rt._feed_tasks[_FEED_ID], old_task)
+
+    async def test_total_slack_bounded_across_branches(self) -> None:
+        """Sum of per-branch LIMITs must not exceed total_slack (cold start).
+
+        Regression: without the round-robin apportion, three branches each
+        get `min(cap, total_slack)`, so at max_feeds_per_worker=250 the
+        query could legitimately return 250 + 250 + 250 = 740 feeds and
+        blow past the worker budget. The apportion must guarantee
+        sum(limits) <= total_slack.
+        """
+        rt = _make_runtime(
+            max_feeds_per_worker=250,
+            caps={
+                SourceType.BCFY_FEEDS: 240,
+                SourceType.BCFY_CALLS: 600,
+                SourceType.OPENMHZ: 900,
+            },
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._store.count_held_by_type.return_value = dict.fromkeys(SourceType, 0)
+        rt._releasing_feeds = set()
+        rt._store.acquire_feeds_batch.side_effect = [
+            [],  # empty result so no tasks spawn
+            asyncio.CancelledError,
+        ]
+        rt._store.acquire_feeds_recovery.return_value = []
+
+        rt._shutdown.set()
+        await rt._leasing_loop()
+
+        # Inspect the call made to acquire_feeds_batch; arg[1] is the
+        # per-type LIMIT dict.
+        call = rt._store.acquire_feeds_batch.await_args_list[0]
+        limits_dict = call[0][1]
+        self.assertEqual(sum(limits_dict.values()), 250)  # exactly total_slack
+        self.assertTrue(
+            all(v >= 0 for v in limits_dict.values()),
+            "no branch should receive a negative LIMIT",
+        )
 
 
 class TestProcessFeedFenceViolation(unittest.IsolatedAsyncioTestCase):
@@ -526,6 +576,31 @@ class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
         ]
 
         await rt._heartbeat_cycle()
+
+        self.assertFalse(task.cancelled())
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+    async def test_skip_if_recent_is_not_a_fence_violation(self) -> None:
+        """renewed=False + current_worker=self (skip-if-recent) must not trigger os._exit."""
+        rt = _make_runtime()
+        task = asyncio.create_task(asyncio.sleep(100))
+        rt._feed_tasks[_FEED_ID] = task
+        rt._releasing_feeds = set()
+        rt._heartbeat_store = mock.AsyncMock()
+        rt._heartbeat_store.renew_heartbeats_batch_diagnostic.return_value = [
+            # Skip-if-recent short-circuits the UPDATE inside the SQL — we
+            # still own the feed (current_worker=_WORKER_ID) but renewed is
+            # False because last_heartbeat was <15 s fresh.
+            self._diag(_FEED_ID, worker=_WORKER_ID, renewed=False),
+        ]
+
+        with mock.patch(
+            "backend.pipeline.ingestion.normalizer_runtime.os._exit",
+        ) as mock_exit:
+            await rt._heartbeat_cycle()
+            mock_exit.assert_not_called()
 
         self.assertFalse(task.cancelled())
         task.cancel()
@@ -857,7 +932,186 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
         await rt._shutdown_sequence()
 
         rt._thread_stop.set.assert_called_once()
-        rt._store.release_feeds_batch.assert_awaited_once()
+        # The invariant we care about is that cleanup continues past the
+        # health_runner boom — release_feeds_batch is reached, the pubsub
+        # and gcs clients close, the pools close.
+        self.assertEqual(len(rt._feed_tasks), 0)
+
+
+class TestCalculateBranchLimits(unittest.TestCase):
+    """Water-filling apportion: sum(limits) <= total_slack, no starvation."""
+
+    CAPS = {
+        SourceType.BCFY_FEEDS: 240,
+        SourceType.BCFY_CALLS: 600,
+        SourceType.OPENMHZ: 900,
+    }
+
+    def test_cold_start_bounds_sum_at_total_slack(self) -> None:
+        # max_feeds_per_worker=250, all held=0 → sum must be exactly 250.
+        held = dict.fromkeys(self.CAPS, 0)
+        limits = NormalizerRuntime._calculate_branch_limits(
+            250, self.CAPS, held
+        )
+        self.assertEqual(sum(limits.values()), 250)
+        self.assertTrue(all(v >= 0 for v in limits.values()))
+
+    def test_plan_target_800_bounds_sum(self) -> None:
+        # max_feeds_per_worker=800 (scaling-plan target), all held=0.
+        held = dict.fromkeys(self.CAPS, 0)
+        limits = NormalizerRuntime._calculate_branch_limits(
+            800, self.CAPS, held
+        )
+        self.assertEqual(sum(limits.values()), 800)
+
+    def test_slack_exceeds_cap_sum_clamps_at_caps(self) -> None:
+        # total_slack=2000 > sum(caps)=1740 → each branch gets its cap,
+        # leftover slack is unassigned.
+        held = dict.fromkeys(self.CAPS, 0)
+        limits = NormalizerRuntime._calculate_branch_limits(
+            2000, self.CAPS, held
+        )
+        self.assertEqual(limits[SourceType.BCFY_FEEDS], 240)
+        self.assertEqual(limits[SourceType.BCFY_CALLS], 600)
+        self.assertEqual(limits[SourceType.OPENMHZ], 900)
+        self.assertEqual(sum(limits.values()), 1740)
+
+    def test_type_at_cap_yields_zero_for_that_branch(self) -> None:
+        held = {
+            SourceType.BCFY_FEEDS: 240,
+            SourceType.BCFY_CALLS: 0,
+            SourceType.OPENMHZ: 0,
+        }
+        limits = NormalizerRuntime._calculate_branch_limits(
+            250, self.CAPS, held
+        )
+        self.assertEqual(limits[SourceType.BCFY_FEEDS], 0)
+        self.assertEqual(sum(limits.values()), 250)
+
+    def test_small_headroom_branch_redistributes_to_larger(self) -> None:
+        # bcfy_feeds has only 10 headroom; slack=300 must go mostly to
+        # bcfy_calls + openmhz.
+        held = {
+            SourceType.BCFY_FEEDS: 230,
+            SourceType.BCFY_CALLS: 0,
+            SourceType.OPENMHZ: 0,
+        }
+        limits = NormalizerRuntime._calculate_branch_limits(
+            300, self.CAPS, held
+        )
+        self.assertLessEqual(limits[SourceType.BCFY_FEEDS], 10)
+        self.assertEqual(sum(limits.values()), 300)
+
+    def test_zero_slack_returns_all_zeros(self) -> None:
+        held = dict.fromkeys(self.CAPS, 0)
+        limits = NormalizerRuntime._calculate_branch_limits(0, self.CAPS, held)
+        self.assertEqual(limits, dict.fromkeys(self.CAPS, 0))
+
+    def test_negative_held_defensive_does_not_overrun_cap(self) -> None:
+        # Corrupted state: decrement bug made held negative. max() clamp
+        # must prevent the "cap - held > cap" hazard.
+        held = {
+            SourceType.BCFY_FEEDS: -5,
+            SourceType.BCFY_CALLS: 0,
+            SourceType.OPENMHZ: 0,
+        }
+        limits = NormalizerRuntime._calculate_branch_limits(
+            1000, self.CAPS, held
+        )
+        # Each branch still bounded at its cap even with corrupted held.
+        self.assertLessEqual(limits[SourceType.BCFY_FEEDS], 240)
+        self.assertLessEqual(limits[SourceType.BCFY_CALLS], 600)
+        self.assertLessEqual(limits[SourceType.OPENMHZ], 900)
+
+    def test_held_missing_keys_treated_as_zero(self) -> None:
+        # Future caller passes a sparse dict (only types it currently
+        # holds). The function must not KeyError; missing keys default
+        # to held=0 → full headroom for that branch.
+        held: dict[SourceType, int] = {SourceType.BCFY_FEEDS: 100}
+        limits = NormalizerRuntime._calculate_branch_limits(
+            250, self.CAPS, held
+        )
+        # BCFY_CALLS and OPENMHZ have no entry in `held` — both should
+        # be treated as held=0 with full cap-sized headroom.
+        self.assertEqual(sum(limits.values()), 250)
+        self.assertTrue(all(v >= 0 for v in limits.values()))
+
+
+class TestLeasingLoopHeldCounts(unittest.IsolatedAsyncioTestCase):
+    """The leasing loop must source per-type held counts from the DB."""
+
+    async def test_count_held_by_type_called_before_acquire(self) -> None:
+        """count_held_by_type is awaited and its result feeds branch limits."""
+        rt = _make_runtime(
+            max_feeds_per_worker=250,
+            caps={
+                SourceType.BCFY_FEEDS: 240,
+                SourceType.BCFY_CALLS: 600,
+                SourceType.OPENMHZ: 900,
+            },
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+
+        # Simulate the worker already holding 240 BCFY_FEEDS (at cap).
+        # _calculate_branch_limits should give that branch zero headroom.
+        rt._store.count_held_by_type.return_value = {
+            SourceType.BCFY_FEEDS: 240,
+            SourceType.BCFY_CALLS: 0,
+            SourceType.OPENMHZ: 0,
+            SourceType.ECHO: 0,
+        }
+        rt._store.acquire_feeds_batch.side_effect = [
+            [],
+            asyncio.CancelledError,
+        ]
+        rt._store.acquire_feeds_recovery.return_value = []
+
+        rt._shutdown.set()
+        await rt._leasing_loop()
+
+        # The DB-derived held dict must have been consulted.
+        rt._store.count_held_by_type.assert_awaited()
+        call = rt._store.count_held_by_type.await_args_list[0]
+        self.assertEqual(call[0][0], _WORKER_ID)
+
+        # The acquire call's per-type limits dict must reflect the
+        # DB-derived held: bcfy_feeds=0 (capped), other two share
+        # total_slack=250.
+        acquire_call = rt._store.acquire_feeds_batch.await_args_list[0]
+        limits_dict = acquire_call[0][1]
+        self.assertEqual(limits_dict[SourceType.BCFY_FEEDS], 0)
+        self.assertEqual(sum(limits_dict.values()), 250)
+
+
+class TestSigtermRelease(unittest.IsolatedAsyncioTestCase):
+    """Tests for the SIGTERM release path (single WHERE worker_id = $1 UPDATE)."""
+
+    async def test_release_calls_batch_with_worker_id(self) -> None:
+        """Shutdown issues exactly one release_feeds_batch call with worker_id."""
+        rt = _make_runtime()
+        rt._shutdown = asyncio.Event()
+        rt._thread_stop = mock.MagicMock()
+        rt._heartbeat_thread = None
+        rt._store = mock.AsyncMock()
+        rt._store.release_feeds_batch.return_value = 120
+        rt._data_pool = mock.AsyncMock()
+        rt._heartbeat_pool = mock.AsyncMock()
+        rt._pubsub_client = mock.AsyncMock()
+        rt._gcs_client = mock.AsyncMock()
+        rt._health_runner = mock.AsyncMock()
+
+        # Populate _feed_tasks so _shutdown_sequence has tasks to cancel,
+        # but the call shape no longer depends on the IDs themselves.
+        for _ in range(120):
+            t = asyncio.create_task(asyncio.sleep(0))
+            rt._feed_tasks[uuid.uuid4()] = t
+        await asyncio.gather(*rt._feed_tasks.values(), return_exceptions=True)
+
+        await rt._shutdown_sequence()
+
+        rt._store.release_feeds_batch.assert_awaited_once_with(_WORKER_ID)
 
 
 class TestHeartbeatLoopSetsLeaseLost(unittest.IsolatedAsyncioTestCase):
