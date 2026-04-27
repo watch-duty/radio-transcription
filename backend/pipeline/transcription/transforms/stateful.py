@@ -357,7 +357,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         )
 
         curr_ctx = transmission_context.read() or TransmissionContext()
-        processed_uris = action.isolated_audio_buffer_uris or list(
+        processed_uris = action.contributing_audio_uris or list(
             curr_ctx.contributing_audio_uris
         )
 
