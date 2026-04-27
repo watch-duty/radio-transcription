@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 import aiohttp
 from google.cloud import secretmanager
 
-from backend.pipeline.ingestion.models import CapturedChunk
+from backend.pipeline.ingestion.models import CapturedChunk, CaptureResources
 from backend.pipeline.ingestion.slo_contract import (
     EVENT_TYPE_CALL_AUTH_FAILURE,
     EVENT_TYPE_CALL_DOWNLOAD_FAILED,
@@ -322,7 +322,10 @@ async def _handle_loop_failure(
 
 
 async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
-    feed: LeasedFeed, shutdown_event: asyncio.Event, url_base: str
+    feed: LeasedFeed,
+    shutdown_event: asyncio.Event,
+    url_base: str,
+    _resources: CaptureResources,
 ) -> AsyncIterator[CapturedChunk]:
     """Capture audio chunks from Broadcastify Calls API.
 
@@ -332,6 +335,9 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
         url_base: Full Broadcastify Calls API live endpoint URL to query.
             The function uses this URL directly after normalizing a
             trailing slash.
+        _resources: Runtime-owned http_session and spawn_semaphore.
+            Phase 2 accepts but does not use; Phase 3 wires
+            http_session into the polling loop (HTTP-01).
     """
     connection_session_id = str(uuid.uuid4())
     source_feed_id = feed.get("source_feed_id")

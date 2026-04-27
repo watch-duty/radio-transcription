@@ -21,7 +21,7 @@ from backend.pipeline.common.constants import (
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
 )
-from backend.pipeline.ingestion.models import CapturedChunk
+from backend.pipeline.ingestion.models import CapturedChunk, CaptureResources
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -87,7 +87,10 @@ def _segment_path(directory: Path, index: int) -> Path:
 
 
 async def capture_icecast_stream(  # noqa: PLR0915
-    feed: LeasedFeed, shutdown_event: asyncio.Event, url_base: str
+    feed: LeasedFeed,
+    shutdown_event: asyncio.Event,
+    url_base: str,
+    _resources: CaptureResources,
 ) -> AsyncIterator[CapturedChunk]:
     """
     Capture audio chunks from an Icecast stream using ffmpeg segment muxing.
@@ -100,6 +103,9 @@ async def capture_icecast_stream(  # noqa: PLR0915
         feed: Leased feed containing source_feed_id and metadata
         shutdown_event: Signals graceful shutdown request
         url_base: The base URL to prepend to the source_feed_id for stream access
+        _resources: Runtime-owned http_session and spawn_semaphore.
+            Phase 2 accepts but does not use; Phase 3 wires the
+            spawn_semaphore around the create_subprocess_exec call.
 
     Yields:
         A CapturedChunk containing:
