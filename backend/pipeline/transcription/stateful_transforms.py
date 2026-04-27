@@ -148,7 +148,10 @@ def process_ordering(
         )
         session_changed = True
         out_of_order_timer.clear()
-        curr_context = TransmissionContext(session_id=metadata.session_id)
+        curr_context = TransmissionContext(
+            session_id=metadata.session_id,
+            feed_metadata=metadata.feed_metadata,
+        )
 
     sequence_buffer = SequenceBuffer(order_config)
     buffer_elements = curr_context.out_of_order_buffer

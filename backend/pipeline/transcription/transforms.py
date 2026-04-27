@@ -97,53 +97,66 @@ class SerializeFn(beam.DoFn):
     def process(
         self,
         element: TranscriptionResult,
-    ) -> Iterator[PubsubMessage]:
-        value = element
-
-        if value.start_audio_offset_ms is None:
-            msg = f"Missing start_audio_offset_ms for feed_id: {value.feed_id} (session: {value.session_id})"
-            raise ValueError(msg)
-        start_offset = Duration(
-            seconds=value.start_audio_offset_ms // MICROSECONDS_PER_MS,
-            nanos=(value.start_audio_offset_ms % MICROSECONDS_PER_MS)
-            * NANOS_PER_MS,
-        )
-
-        if value.end_audio_offset_ms is None:
-            msg = f"Missing end_audio_offset_ms for feed_id: {value.feed_id} (session: {value.session_id})"
-            raise ValueError(msg)
-        end_offset = Duration(
-            seconds=value.end_audio_offset_ms // MICROSECONDS_PER_MS,
-            nanos=(value.end_audio_offset_ms % MICROSECONDS_PER_MS)
-            * NANOS_PER_MS,
-        )
-
-        if value.feed_metadata is None:
-            msg = f"Missing feed_metadata in TranscriptionResult for feed_id: {value.feed_id} (session: {value.session_id})"
+    ) -> Iterator[PubsubMessage | beam.pvalue.TaggedOutput]:
+        def _raise(msg: str) -> None:
             raise ValueError(msg)
 
-        proto = TranscribedAudio(
-            feed_id=value.feed_id,
-            source_audio_uris=value.contributing_audio_uris,
-            transmission_id=value.transmission_id,
-            transcript=value.transcript,
-            missing_prior_context=value.missing_prior_context,
-            missing_post_context=value.missing_post_context,
-            start_audio_offset=start_offset,
-            end_audio_offset=end_offset,
-            canonical_audio_uri=value.canonical_audio_uri,
-            playback_audio_uri=value.playback_audio_uri,
-            feed_name=value.feed_metadata.feed_name,
-            external_id=value.feed_metadata.external_id,
-        )
-        proto.start_timestamp.FromMicroseconds(
-            value.time_range.start_ms * MICROSECONDS_PER_MS
-        )
-        proto.end_timestamp.FromMicroseconds(
-            value.time_range.end_ms * MICROSECONDS_PER_MS
-        )
-        yield PubsubMessage(
-            data=proto.SerializeToString(),
-            attributes={},
-            ordering_key=value.feed_id,
-        )
+        try:
+            value = element
+
+            if value.start_audio_offset_ms is None:
+                msg = f"Missing start_audio_offset_ms for feed_id: {value.feed_id} (session: {value.session_id})"
+                _raise(msg)
+            start_offset = Duration(
+                seconds=value.start_audio_offset_ms // MICROSECONDS_PER_MS,
+                nanos=(value.start_audio_offset_ms % MICROSECONDS_PER_MS)
+                * NANOS_PER_MS,
+            )
+
+            if value.end_audio_offset_ms is None:
+                msg = f"Missing end_audio_offset_ms for feed_id: {value.feed_id} (session: {value.session_id})"
+                _raise(msg)
+            end_offset = Duration(
+                seconds=value.end_audio_offset_ms // MICROSECONDS_PER_MS,
+                nanos=(value.end_audio_offset_ms % MICROSECONDS_PER_MS)
+                * NANOS_PER_MS,
+            )
+
+            if value.feed_metadata is None:
+                msg = f"Missing feed_metadata in TranscriptionResult for feed_id: {value.feed_id} (session: {value.session_id})"
+                _raise(msg)
+
+            proto = TranscribedAudio(
+                feed_id=value.feed_id,
+                source_audio_uris=value.contributing_audio_uris,
+                transmission_id=value.transmission_id,
+                transcript=value.transcript,
+                missing_prior_context=value.missing_prior_context,
+                missing_post_context=value.missing_post_context,
+                start_audio_offset=start_offset,
+                end_audio_offset=end_offset,
+                canonical_audio_uri=value.canonical_audio_uri,
+                playback_audio_uri=value.playback_audio_uri,
+                feed_name=value.feed_metadata.feed_name,
+                external_id=value.feed_metadata.external_id,
+            )
+            proto.start_timestamp.FromMicroseconds(
+                value.time_range.start_ms * MICROSECONDS_PER_MS
+            )
+            proto.end_timestamp.FromMicroseconds(
+                value.time_range.end_ms * MICROSECONDS_PER_MS
+            )
+            yield PubsubMessage(
+                data=proto.SerializeToString(),
+                attributes={},
+                ordering_key=value.feed_id,
+            )
+        except Exception as e:
+            logger.exception(
+                "Error serializing transcription result for feed %s",
+                element.feed_id,
+            )
+            yield beam.pvalue.TaggedOutput(
+                DEAD_LETTER_QUEUE_TAG,
+                {"error": str(e), "feed_id": element.feed_id},
+            )
