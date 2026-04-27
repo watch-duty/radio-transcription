@@ -299,7 +299,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         task_logger = _get_task_logger(
             feed_id, curr_context.session_id, "transcription-stitcher"
         )
-        task_logger.info(f"[Process] Processing chunk {metadata.gcs_uri}")
+        task_logger.debug(f"[Process] Processing chunk {metadata.gcs_uri}")
 
         if curr_context.feed_metadata is None:
             curr_context = replace(
@@ -453,13 +453,13 @@ class OrderedStitchAudioFn(beam.DoFn):
         for chunk in elements_to_emit:
             try:
                 # 1. Download audio!
-                task_logger.info(
+                task_logger.debug(
                     f"[Download] Downloading audio for {chunk.gcs_uri}"
                 )
                 chunk_data = self.audio_processor.download_audio_and_detect(
                     chunk.gcs_uri, chunk.timestamp_ms
                 )
-                task_logger.info(
+                task_logger.debug(
                     f"[Download] Downloaded audio for {chunk.gcs_uri}"
                 )
 
