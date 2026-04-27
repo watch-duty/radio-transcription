@@ -20,11 +20,34 @@ ENV PYTHONPATH=/app
 #          vs the GCE 120 s ACPI cap)
 # ---------------------------------------------------------------------------
 
-# 1. Install ffmpeg for audio processing
+# 1. Install ffmpeg (audio processing) and libjemalloc2 (memory allocator).
+# MEMORY-01: libjemalloc2 ships /usr/lib/x86_64-linux-gnu/libjemalloc.so.2
+# on Debian Bookworm/amd64 (current MIG hardware). Loaded via LD_PRELOAD
+# below. See https://packages.debian.org/bookworm/libjemalloc2.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        ffmpeg && \
+        ffmpeg \
+        libjemalloc2 && \
     rm -rf /var/lib/apt/lists/*
+
+# MEMORY-01: jemalloc allocator + glibc fallback.
+# LD_PRELOAD path is amd64-specific (Debian Bookworm); on arm64 the
+# equivalent path is /usr/lib/aarch64-linux-gnu/libjemalloc.so.2. All
+# current MIG hardware (n2-/c2d-/n2d-standard-4) is amd64 — see Pitfall 13
+# in .planning/research/PITFALLS.md if migrating arches. MALLOC_ARENA_MAX=2
+# is a belt-and-suspenders fallback (only effective if jemalloc fails to
+# load — under normal operation it is a no-op since jemalloc bypasses
+# glibc malloc).
+ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2
+ENV MALLOC_ARENA_MAX=2
+
+# MEMORY-01 (D-04): LD_PRELOAD propagates to ffmpeg children by default
+# (asyncio.create_subprocess_exec uses env=None which inherits parent env).
+# This is intentional — ffmpeg also benefits from jemalloc fragmentation
+# reduction. If a future ffmpeg version exhibits issues under preloaded
+# jemalloc, override per-spawn with:
+#     env={**os.environ, "LD_PRELOAD": ""}
+# passed into create_subprocess_exec. NOT applied today.
 
 # 2. Install dependencies
 COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
