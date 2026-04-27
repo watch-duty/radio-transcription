@@ -30,6 +30,7 @@ from backend.pipeline.transcription.common.datatypes import (
     TimeRange,
     TranscribeAudioConfig,
     TranscriptionResult,
+    TransmissionContext,
 )
 from backend.pipeline.transcription.common.enums import TranscriberType, VadType
 from backend.pipeline.transcription.services.transcribers import Transcriber
@@ -458,6 +459,117 @@ class OrderedBypassTest(unittest.TestCase):
 
 
 class OrderedStitchAudioTest(unittest.TestCase):
+
+    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
+    def test_late_chunk_empty_buffer_no_fallback(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that a late chunk with an empty isolated buffer does not fall back to the main buffer."""
+        mock_processor_inst = mock_audio_processor.return_value
+        chunk_data = MagicMock()
+        chunk_data.duration_ms = 1000
+        chunk_data.audio = np.zeros(16000, dtype=np.int16)
+        chunk_data.start_ms = 1000
+        chunk_data.speech_segments = []  # Silent chunk
+        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        stitch_config = get_test_stitch_config(
+            significant_gap_ms=500, stale_timeout_ms=60000
+        )
+
+        fn = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn.audio_processor = mock_processor_inst  # Inject mock
+
+        # Mock state parameters
+        class MockBagState:
+            def __init__(self) -> None:
+                self.items = []
+
+            def read(self):
+                return self.items
+
+            def add(self, item):
+                self.items.append(item)
+
+            def clear(self):
+                self.items = []
+
+        class MockValueState:
+            def __init__(self, initial=None) -> None:
+                self.val = initial
+
+            def read(self):
+                return self.val
+
+            def write(self, val):
+                self.val = val
+
+            def clear(self):
+                self.val = None
+
+        # Seed state to simulate a late chunk condition
+        curr_context = TransmissionContext(
+            session_id="mock-session",
+            expected_next_chunk_start_ms=2000,
+            stale_start_time_ms=0,
+            buffer_start_time_ms=0,
+            last_end_time_ms=1000,
+            contributing_audio_uris=["gs://main/chunk1.flac"],
+        )
+
+        transmission_context_state = MockValueState(curr_context)
+        transmission_buffer_state = MockBagState()
+        transmission_buffer_state.add(
+            np.ones(16000, dtype=np.int16)
+        )  # Main buffer content
+
+        out_of_order_timer = MagicMock()
+        stale_timer_event = MagicMock()
+        stale_timer_proc = MagicMock()
+
+        element = (
+            "test-feed",
+            ChunkMetadata(
+                gcs_uri="gs://late/chunk2.flac",
+                session_id="mock-session",
+                duration_ms=1000,
+                feed_metadata=FeedMetadata(
+                    feed_name="mock-feed", external_id="mock-external-id"
+                ),
+            ),
+        )
+        timestamp = Timestamp(1.0)  # 1.0 seconds = 1000 ms
+
+        results = list(
+            fn.process(
+                element=element,
+                timestamp=timestamp,
+                transmission_buffer_state=transmission_buffer_state,  # type: ignore
+                transmission_context_state=transmission_context_state,  # type: ignore
+                out_of_order_timer=out_of_order_timer,
+                stale_timer_event=stale_timer_event,
+                stale_timer_proc=stale_timer_proc,
+            )
+        )
+
+        flush_requests = [
+            r
+            for r in results
+            if isinstance(r, tuple) and isinstance(r[1], FlushRequest)
+        ]
+        self.assertEqual(
+            len(flush_requests),
+            0,
+            "Should not yield FlushRequest for empty late chunk",
+        )
+        self.assertEqual(
+            len(transmission_buffer_state.read()),
+            1,
+            "Main buffer should not be cleared",
+        )
     @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
     def test_ordered_stitch_audio_flushes_on_stale_timer(
         self, mock_audio_processor: MagicMock
@@ -657,118 +769,4 @@ class OrderedStitchAudioTest(unittest.TestCase):
             assert_that(results, assert_results)
 
 
-class OrderedStitchAudioTest(unittest.TestCase):
-    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
-    def test_late_chunk_empty_buffer_no_fallback(
-        self, mock_audio_processor: MagicMock
-    ) -> None:
-        """Verifies that a late chunk with an empty isolated buffer does not fall back to the main buffer."""
-        mock_processor_inst = mock_audio_processor.return_value
-        chunk_data = MagicMock()
-        chunk_data.duration_ms = 1000
-        chunk_data.audio = np.zeros(16000, dtype=np.int16)
-        chunk_data.start_ms = 1000
-        chunk_data.speech_segments = []  # Silent chunk
-        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
 
-        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
-        stitch_config = get_test_stitch_config(
-            significant_gap_ms=500, stale_timeout_ms=60000
-        )
-
-        fn = OrderedStitchAudioFn(
-            order_config=order_config, stitch_config=stitch_config
-        )
-        fn.audio_processor = mock_processor_inst  # Inject mock
-
-        # Mock state parameters
-        class MockBagState:
-            def __init__(self):
-                self.items = []
-
-            def read(self):
-                return self.items
-
-            def add(self, item):
-                self.items.append(item)
-
-            def clear(self):
-                self.items = []
-
-        class MockValueState:
-            def __init__(self, initial=None):
-                self.val = initial
-
-            def read(self):
-                return self.val
-
-            def write(self, val):
-                self.val = val
-
-            def clear(self):
-                self.val = None
-
-        from backend.pipeline.transcription.common.datatypes import (
-            TransmissionContext,
-        )
-
-        # Seed state to simulate a late chunk condition
-        curr_context = TransmissionContext(
-            session_id="mock-session",
-            expected_next_chunk_start_ms=2000,
-            stale_start_time_ms=0,
-            buffer_start_time_ms=0,
-            last_end_time_ms=1000,
-            contributing_audio_uris=["gs://main/chunk1.flac"],
-        )
-
-        transmission_context_state = MockValueState(curr_context)
-        transmission_buffer_state = MockBagState()
-        transmission_buffer_state.add(
-            np.ones(16000, dtype=np.int16)
-        )  # Main buffer content
-
-        out_of_order_timer = MagicMock()
-        stale_timer_event = MagicMock()
-        stale_timer_proc = MagicMock()
-
-        element = (
-            "test-feed",
-            ChunkMetadata(
-                gcs_uri="gs://late/chunk2.flac",
-                session_id="mock-session",
-                duration_ms=1000,
-                feed_metadata=FeedMetadata(
-                    feed_name="mock-feed", external_id="mock-external-id"
-                ),
-            ),
-        )
-        timestamp = Timestamp(1.0)  # 1.0 seconds = 1000 ms
-
-        results = list(
-            fn.process(
-                element=element,
-                timestamp=timestamp,
-                transmission_buffer_state=transmission_buffer_state,  # type: ignore
-                transmission_context_state=transmission_context_state,  # type: ignore
-                out_of_order_timer=out_of_order_timer,
-                stale_timer_event=stale_timer_event,
-                stale_timer_proc=stale_timer_proc,
-            )
-        )
-
-        flush_requests = [
-            r
-            for r in results
-            if isinstance(r, tuple) and isinstance(r[1], FlushRequest)
-        ]
-        self.assertEqual(
-            len(flush_requests),
-            0,
-            "Should not yield FlushRequest for empty late chunk",
-        )
-        self.assertEqual(
-            len(transmission_buffer_state.read()),
-            1,
-            "Main buffer should not be cleared",
-        )

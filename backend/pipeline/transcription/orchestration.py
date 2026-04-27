@@ -99,7 +99,6 @@ def get_pipeline(
         ParseAndKeyFn()
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
-
     dlq_list = []
 
     # Claim-check: Download the raw bytes for ordered chunks currently just passing as URIs
