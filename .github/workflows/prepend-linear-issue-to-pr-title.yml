@@ -10,7 +10,7 @@ on:
 jobs:
   prepend_issue_id:
     runs-on: ubuntu-latest
-    if: ${{ github.actor != 'dependabot[bot]' && !contains(github.event.pull_request.title, '[DEV-ONLY]') && !contains(github.event.pull_request.title, '[ENG-ONLY]') }}
+    if: ${{ github.event.pull_request.user.login && !contains(github.event.pull_request.title, '[DEV-ONLY]') && !contains(github.event.pull_request.title, '[ENG-ONLY]') }}
     outputs:
       linear-issue-id: ${{ steps.find.outputs.linear-issue-identifier }}
     steps:
