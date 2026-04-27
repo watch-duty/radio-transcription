@@ -243,9 +243,6 @@ def build_acquire_feeds_batch_sql(claim_types: Sequence[SourceType]) -> str:
 # Within the failing bucket, oldest-retry first; within the
 # active-abandoned tail (NULL retry_after), id order for determinism.
 #
-# Same md5 ramp filter as the primary path — ramp changes affect both
-# branches symmetrically, which keeps rollback semantics deterministic.
-#
 # Known performance limit: ORDER BY (retry_after, id) is served by the
 # idx_feeds_failing_retryable partial index for the failing branch, but
 # the active-abandoned branch relies on idx_feeds_active (id) followed by

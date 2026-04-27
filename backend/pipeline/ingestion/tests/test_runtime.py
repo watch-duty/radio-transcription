@@ -108,9 +108,9 @@ def _make_settings(**overrides) -> mock.MagicMock:
         # port 1 when a test exercises _main().
         "health_check_port": 8080,
         "health_check_startup_grace_sec": 120.0,
-        # Per-type claim caps + ramp + SIGTERM release settings — must be
-        # real ints/floats so min()/random.uniform()/arithmetic don't blow
-        # up on MagicMock auto-created attributes.
+        # Per-type claim caps — must be a real dict so iteration in the
+        # leasing loop and _calculate_branch_limits doesn't trip over
+        # MagicMock auto-created attributes.
         "caps": {
             SourceType.BCFY_FEEDS: 240,
             SourceType.BCFY_CALLS: 600,
