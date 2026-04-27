@@ -93,6 +93,20 @@ def _make_settings(**overrides) -> mock.MagicMock:
         "heartbeat_stall_timeout_sec": 45.0,
         "graceful_shutdown_timeout_sec": 10.0,
         "ffmpeg_spawn_limit": 8,
+        # RSS watchdog (Phase 4 / WATCHDOG-01). Defaults pin to "watchdog
+        # disabled in tests unless explicitly overridden": override=None
+        # would normally trigger fs reads at __init__ — but the watchdog
+        # construction lives in _main, not __init__, and tests typically
+        # don't drive _main. For tests that DO exercise the watchdog body,
+        # rss_watchdog_warmup_sec=0.0 makes the warmup deadline trivially
+        # in the past so the test can drive samples directly.
+        "container_memory_bytes_override": None,
+        "rss_watchdog_poll_interval_sec": 0.05,
+        "rss_watchdog_pause_threshold": 0.70,
+        "rss_watchdog_exit_threshold": 0.90,
+        "rss_watchdog_pause_consecutive_samples": 3,
+        "rss_watchdog_exit_consecutive_samples": 3,
+        "rss_watchdog_warmup_sec": 0.0,
         "audio_staging_bucket": "test-bucket",
         "continuous_pubsub_topic_path": "projects/p/topics/t",
         "db": AlloyDBSettings(
@@ -1503,6 +1517,335 @@ class TestProcessFeedPublishAttributes(unittest.IsolatedAsyncioTestCase):
         mock_publish.assert_called_once()
         _, _, kwargs = mock_publish.mock_calls[0]
         self.assertEqual(kwargs["source_type"], _FEED["source_type"])
+
+
+class TestRssWatchdogDebounce(unittest.TestCase):
+    """D-30: pause-set debounce semantics.
+
+    The watchdog OS-thread body is exercised by mocking _thread_stop so the
+    loop runs exactly N+1 times (initial check returns False N times, then
+    True to break) and mocking _resolve_container_memory_usage_bytes to
+    return controlled values. _resolve_container_memory_bytes is bypassed
+    by passing the limit directly to _rss_watchdog_loop.
+    """
+
+    def _drive_samples(
+        self,
+        rt: NormalizerRuntime,
+        limit_bytes: int,
+        usage_samples: list[int],
+    ) -> None:
+        """Run _rss_watchdog_loop with controlled samples then exit."""
+        # _thread_stop.is_set returns False len(samples) times then True.
+        # _thread_stop.wait returns False each time (timeout elapsed normally).
+        is_set_returns = [False] * len(usage_samples) + [True]
+        wait_returns = [False] * len(usage_samples)
+
+        rt._thread_stop = mock.MagicMock()
+        rt._thread_stop.is_set.side_effect = is_set_returns
+        rt._thread_stop.wait.side_effect = wait_returns
+
+        with mock.patch.object(
+            rt,
+            "_resolve_container_memory_usage_bytes",
+            side_effect=usage_samples,
+        ):
+            rt._rss_watchdog_loop(limit_bytes)
+
+    def test_two_high_then_one_low_does_not_set(self) -> None:
+        """2 samples at 70% then 1 at 65% — counter resets, NOT paused."""
+        rt = _make_runtime()
+        # 70%, 70%, 65% of 1000 = 700, 700, 650
+        self._drive_samples(rt, limit_bytes=1000, usage_samples=[700, 700, 650])
+        self.assertFalse(rt._paused_for_memory.is_set())
+
+    def test_three_high_samples_set_pause(self) -> None:
+        """3 consecutive samples at 70% — _paused_for_memory.is_set() True."""
+        rt = _make_runtime()
+        self._drive_samples(rt, limit_bytes=1000, usage_samples=[700, 700, 700])
+        self.assertTrue(rt._paused_for_memory.is_set())
+
+    def test_three_high_then_inside_band_stays_set(self) -> None:
+        """3 high then 1 sample inside hysteresis band (65%) — still set."""
+        rt = _make_runtime()
+        self._drive_samples(
+            rt,
+            limit_bytes=1000,
+            usage_samples=[700, 700, 700, 650],
+        )
+        self.assertTrue(rt._paused_for_memory.is_set())
+
+    def test_three_high_then_below_floor_clears(self) -> None:
+        """3 high then 1 below-floor (59%) — cleared via 10pp hysteresis."""
+        rt = _make_runtime()
+        self._drive_samples(
+            rt,
+            limit_bytes=1000,
+            usage_samples=[700, 700, 700, 590],
+        )
+        self.assertFalse(rt._paused_for_memory.is_set())
+
+
+class TestRssWatchdogExitSemantics(unittest.TestCase):
+    """D-31: exit-trip semantics + os._exit-NOT-called assertion.
+
+    The single-trip flag is verified by driving 4 samples at 95% and asserting
+    call_soon_threadsafe is invoked exactly once.
+    """
+
+    def _drive_samples_with_loop(
+        self,
+        rt: NormalizerRuntime,
+        limit_bytes: int,
+        usage_samples: list[int],
+    ) -> tuple[mock.MagicMock, mock.MagicMock]:
+        """Drive _rss_watchdog_loop and return the call_soon_threadsafe mock."""
+        rt._loop = mock.MagicMock()
+        rt._shutdown = mock.MagicMock()
+        is_set_returns = [False] * len(usage_samples) + [True]
+        wait_returns = [False] * len(usage_samples)
+        rt._thread_stop = mock.MagicMock()
+        rt._thread_stop.is_set.side_effect = is_set_returns
+        rt._thread_stop.wait.side_effect = wait_returns
+
+        with (
+            mock.patch.object(
+                rt,
+                "_resolve_container_memory_usage_bytes",
+                side_effect=usage_samples,
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.os._exit",
+            ) as mock_exit,
+            mock.patch("logging.shutdown"),
+        ):
+            rt._rss_watchdog_loop(limit_bytes)
+            return rt._loop.call_soon_threadsafe, mock_exit
+
+    def test_two_at_exit_then_one_low_does_not_trip(self) -> None:
+        """2 samples at 95% then 1 at 70% — counter resets, no trip."""
+        rt = _make_runtime()
+        cst_mock, exit_mock = self._drive_samples_with_loop(
+            rt,
+            limit_bytes=1000,
+            usage_samples=[950, 950, 700],
+        )
+        cst_mock.assert_not_called()
+        self.assertFalse(rt._rss_watchdog_tripped)
+        exit_mock.assert_not_called()
+
+    def test_three_at_exit_threshold_trips_via_shutdown_set(self) -> None:
+        """3 consecutive 95% samples — call_soon_threadsafe(_shutdown.set)
+        called once, _thread_stop.set called, _rss_watchdog_tripped True,
+        os._exit NOT called.
+        """
+        rt = _make_runtime()
+        cst_mock, exit_mock = self._drive_samples_with_loop(
+            rt,
+            limit_bytes=1000,
+            usage_samples=[950, 950, 950],
+        )
+        cst_mock.assert_called_once_with(rt._shutdown.set)
+        # _thread_stop has been reassigned to MagicMock inside
+        # _drive_samples_with_loop, but ty can't narrow across the helper
+        # call boundary; the ignore comment makes the intent explicit.
+        rt._thread_stop.set.assert_called_once()  # ty: ignore[unresolved-attribute]
+        self.assertTrue(rt._rss_watchdog_tripped)
+        # CRITICAL ASSERTION (D-31): os._exit MUST NOT be called by the
+        # watchdog. Graceful shutdown only — kernel OOM is the backstop.
+        exit_mock.assert_not_called()
+
+    def test_post_trip_sample_does_not_re_fire(self) -> None:
+        """4 samples at 95% — single-trip flag prevents double-fire."""
+        rt = _make_runtime()
+        cst_mock, exit_mock = self._drive_samples_with_loop(
+            rt,
+            limit_bytes=1000,
+            usage_samples=[950, 950, 950, 950],
+        )
+        # Trip happened once on sample 3; sample 4 was a no-op via the
+        # _rss_watchdog_tripped guard.
+        cst_mock.assert_called_once()
+        exit_mock.assert_not_called()
+
+
+class TestRssWatchdogWarmupGrace(unittest.TestCase):
+    """D-32: 60s warmup grace — counter does NOT increment during warmup."""
+
+    def _drive_samples_with_time(
+        self,
+        rt: NormalizerRuntime,
+        limit_bytes: int,
+        usage_samples: list[int],
+        time_sequence: list[float],
+    ) -> None:
+        """Drive _rss_watchdog_loop with a controlled time.monotonic sequence."""
+        is_set_returns = [False] * len(usage_samples) + [True]
+        wait_returns = [False] * len(usage_samples)
+        rt._thread_stop = mock.MagicMock()
+        rt._thread_stop.is_set.side_effect = is_set_returns
+        rt._thread_stop.wait.side_effect = wait_returns
+
+        with (
+            mock.patch.object(
+                rt,
+                "_resolve_container_memory_usage_bytes",
+                side_effect=usage_samples,
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.time.monotonic",
+                side_effect=time_sequence,
+            ),
+        ):
+            rt._rss_watchdog_loop(limit_bytes)
+
+    def test_sample_during_warmup_does_not_increment(self) -> None:
+        """Sample at 80% within 60s warmup — pause flag stays clear."""
+        rt = _make_runtime(rss_watchdog_warmup_sec=60.0)
+        # Time sequence: 0.0 (watchdog_start), then 30.0 (sample 1, < 60s).
+        # Sample is 80% (above pause_threshold) but warmup grace skips it.
+        self._drive_samples_with_time(
+            rt,
+            limit_bytes=1000,
+            usage_samples=[800],
+            time_sequence=[0.0, 30.0],
+        )
+        self.assertFalse(rt._paused_for_memory.is_set())
+
+    def test_sample_after_warmup_increments(self) -> None:
+        """Sample at 80% post-warmup (61s) — counter increments. After 3
+        post-warmup samples the pause flag sets.
+        """
+        rt = _make_runtime(rss_watchdog_warmup_sec=60.0)
+        # Time sequence: 0.0 (watchdog_start), then 61, 62, 63 (post-warmup).
+        # 3 post-warmup samples at 80% — pause flag should set.
+        self._drive_samples_with_time(
+            rt,
+            limit_bytes=1000,
+            usage_samples=[800, 800, 800],
+            time_sequence=[0.0, 61.0, 62.0, 63.0],
+        )
+        self.assertTrue(rt._paused_for_memory.is_set())
+
+
+class TestRssWatchdogIntegration(unittest.IsolatedAsyncioTestCase):
+    """D-33: end-to-end pause / resume / trip via monkeypatched cgroup readers.
+
+    Per D-34, no real allocation in CI — the monkeypatched-usage approach
+    exercises the same gating logic deterministically. The 'real allocation'
+    verification happens in canary, not CI.
+    """
+
+    async def test_pause_resume_then_trip_lifecycle(self) -> None:
+        """D-33 LITERAL: drive 3 high → pause-set; 1 low → pause-clear; 3 at 95% → trip.
+
+        After the trip, drive _shutdown_sequence() and assert release_feeds_batch
+        runs successfully AND os._exit is NEVER called throughout.
+
+        Per CONTEXT.md D-33: 'assert _shutdown.is_set() is True AND
+        release_feeds_batch runs successfully'. The two halves are inseparable
+        — proving the trip path AND proving graceful release together is the
+        contract this test satisfies.
+        """
+        rt = _make_runtime(
+            rss_watchdog_warmup_sec=0.0,
+            rss_watchdog_pause_threshold=0.70,
+            rss_watchdog_exit_threshold=0.90,
+            rss_watchdog_pause_consecutive_samples=3,
+            rss_watchdog_exit_consecutive_samples=3,
+        )
+        rt._loop = asyncio.get_running_loop()
+        rt._shutdown = asyncio.Event()
+
+        # Wire the same shutdown-sequence collaborators that
+        # TestSigtermRelease.test_release_calls_batch_with_worker_id uses.
+        # Mirroring that shape keeps the integration test on the same
+        # well-trodden path.
+        rt._heartbeat_thread = None
+        rt._rss_watchdog_thread = (
+            None  # join skipped after watchdog body returns
+        )
+        rt._store = mock.AsyncMock()
+        rt._store.release_feeds_batch.return_value = 0
+        rt._data_pool = mock.AsyncMock()
+        rt._heartbeat_pool = mock.AsyncMock()
+        rt._pubsub_client = mock.AsyncMock()
+        rt._gcs_client = mock.AsyncMock()
+        rt._health_runner = mock.AsyncMock()
+
+        # 7 samples: 3 at 80% (pause), 1 at 50% (clear), 3 at 95% (trip).
+        # 100MB limit. 80MB = 80%, 50MB = 50%, 95MB = 95%.
+        usage_samples = [
+            80 * 1024 * 1024,
+            80 * 1024 * 1024,
+            80 * 1024 * 1024,
+            50 * 1024 * 1024,
+            95 * 1024 * 1024,
+            95 * 1024 * 1024,
+            95 * 1024 * 1024,
+        ]
+
+        # Re-bind _thread_stop with sequencing for the watchdog body. After
+        # the watchdog body returns and we proceed to _shutdown_sequence,
+        # _thread_stop is set by the trip path so existing shutdown code
+        # treats it as a normal stop signal.
+        rt._thread_stop = mock.MagicMock()
+        is_set_returns = [False] * len(usage_samples) + [True]
+        wait_returns = [False] * len(usage_samples)
+        rt._thread_stop.is_set.side_effect = is_set_returns
+        rt._thread_stop.wait.side_effect = wait_returns
+
+        with (
+            mock.patch.object(
+                rt,
+                "_resolve_container_memory_usage_bytes",
+                side_effect=usage_samples,
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.os._exit",
+            ) as mock_exit,
+            mock.patch("logging.shutdown"),
+        ):
+            # Phase A: drive the watchdog body in a worker thread so the
+            # asyncio loop stays available for call_soon_threadsafe.
+            await asyncio.to_thread(
+                rt._rss_watchdog_loop,
+                100 * 1024 * 1024,
+            )
+
+            # Yield once so any call_soon_threadsafe-scheduled callbacks
+            # (the _shutdown.set) actually run on the event loop before
+            # the assertions below.
+            await asyncio.sleep(0)
+
+            # Mid-state assertions (between trip and shutdown_sequence).
+            # After 3 of 80% → pause set; after 50% → cleared; after 3 of
+            # 95% → trip. End-of-watchdog-body state: pause cleared (the
+            # 95% samples tripped exit on sample 3 before another pause-
+            # set cycle could complete), _shutdown.is_set() True,
+            # _rss_watchdog_tripped True. PROVES D-33 first half.
+            self.assertTrue(rt._shutdown.is_set())
+            self.assertTrue(rt._rss_watchdog_tripped)
+
+            # Phase B: drive _shutdown_sequence to completion. This is the
+            # D-33 SECOND HALF: 'release_feeds_batch runs successfully'.
+            # Without this drive-through, we are NOT verifying the literal
+            # D-33 contract — we are only verifying that the trip event
+            # fired. The point of D-33 is that the trip → graceful-release
+            # path actually completes end-to-end.
+            await rt._shutdown_sequence()
+
+        # D-33 LITERAL ASSERTIONS:
+        #   1. _shutdown.is_set() True (asserted mid-test, above).
+        #   2. release_feeds_batch ran successfully (= awaited exactly once
+        #      with worker_id; mirrors TestSigtermRelease pattern).
+        rt._store.release_feeds_batch.assert_awaited_once_with(_WORKER_ID)
+
+        # CRITICAL invariant — REQUIREMENTS WATCHDOG-01 explicit: os._exit
+        # must NEVER be called by the watchdog or by _shutdown_sequence
+        # along the watchdog-trip path, regardless of how high RSS climbed.
+        # Graceful shutdown only — kernel OOM is the backstop.
+        mock_exit.assert_not_called()
 
 
 if __name__ == "__main__":
