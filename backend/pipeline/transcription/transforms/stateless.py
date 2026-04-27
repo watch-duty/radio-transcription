@@ -18,13 +18,17 @@ from backend.pipeline.schema_types.raw_audio_chunk_pb2 import (
 from backend.pipeline.schema_types.transcribed_audio_pb2 import (
     TranscribedAudio,
 )
-from backend.pipeline.transcription.constants import (
+from backend.pipeline.transcription.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
 )
-from backend.pipeline.transcription.datatypes import (
+from backend.pipeline.transcription.common.datatypes import (
     ChunkMetadata,
     FeedMetadata,
     TranscriptionResult,
+)
+from backend.pipeline.transcription.options import (
+    DataflowSystemOptions,  # noqa: F401
+    TranscriptionOptions,  # noqa: F401
 )
 
 logger = logging.getLogger(__name__)

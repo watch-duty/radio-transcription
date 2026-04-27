@@ -21,12 +21,12 @@ from apache_beam.utils.timestamp import Timestamp
 
 from backend.pipeline.common.constants import MS_PER_SECOND, SAMPLE_RATE_HZ
 from backend.pipeline.common.storage.gcs_uploader import GCSAudioUploader
-from backend.pipeline.transcription.audio_processor import AudioProcessor
-from backend.pipeline.transcription.constants import (
+from backend.pipeline.transcription.audio.audio_processor import AudioProcessor
+from backend.pipeline.transcription.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
     DEFAULT_FLOAT_TOLERANCE_MS,
 )
-from backend.pipeline.transcription.datatypes import (
+from backend.pipeline.transcription.common.datatypes import (
     AppendBufferAction,
     BufferedChunk,
     ChunkMetadata,
@@ -45,19 +45,19 @@ from backend.pipeline.transcription.datatypes import (
     TransmissionContext,
     UpdateStateAction,
 )
+from backend.pipeline.transcription.common.utils import generate_transmission_id
 from backend.pipeline.transcription.resources import (
     SHARED_RESOURCE_HANDLE,
     SharedResources,
 )
-from backend.pipeline.transcription.sequence_buffer import SequenceBuffer
-from backend.pipeline.transcription.stitcher_state import (
-    AudioStitchingStateMachine,
-)
-from backend.pipeline.transcription.transcribers import (
+from backend.pipeline.transcription.services.transcribers import (
     Transcriber,
     get_transcriber,
 )
-from backend.pipeline.transcription.utils import generate_transmission_id
+from backend.pipeline.transcription.state.sequence_buffer import SequenceBuffer
+from backend.pipeline.transcription.state.stitcher_state import (
+    AudioStitchingStateMachine,
+)
 
 logger = logging.getLogger(__name__)
 logger = logging.LoggerAdapter(

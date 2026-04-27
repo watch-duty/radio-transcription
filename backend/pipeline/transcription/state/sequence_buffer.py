@@ -2,8 +2,10 @@
 
 import logging
 
-from backend.pipeline.transcription.constants import DEFAULT_FLOAT_TOLERANCE_MS
-from backend.pipeline.transcription.datatypes import (
+from backend.pipeline.transcription.common.constants import (
+    DEFAULT_FLOAT_TOLERANCE_MS,
+)
+from backend.pipeline.transcription.common.datatypes import (
     BufferedChunk,
     OrderRestorerConfig,
 )

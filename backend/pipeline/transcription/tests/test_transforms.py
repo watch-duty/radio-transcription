@@ -16,8 +16,10 @@ from apache_beam.testing.util import assert_that, equal_to
 from apache_beam.transforms.window import TimestampedValue
 
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
-from backend.pipeline.transcription.constants import DEAD_LETTER_QUEUE_TAG
-from backend.pipeline.transcription.datatypes import (
+from backend.pipeline.transcription.common.constants import (
+    DEAD_LETTER_QUEUE_TAG,
+)
+from backend.pipeline.transcription.common.datatypes import (
     AudioChunkData,
     ChunkMetadata,
     FeedMetadata,
@@ -28,14 +30,14 @@ from backend.pipeline.transcription.datatypes import (
     TranscribeAudioConfig,
     TranscriptionResult,
 )
-from backend.pipeline.transcription.enums import TranscriberType, VadType
-from backend.pipeline.transcription.stateful_transforms import (
+from backend.pipeline.transcription.common.enums import TranscriberType, VadType
+from backend.pipeline.transcription.services.transcribers import Transcriber
+from backend.pipeline.transcription.transforms.stateful import (
     OrderedBypassFn,
     OrderedStitchAudioFn,
     TranscribeAudioFn,
 )
-from backend.pipeline.transcription.transcribers import Transcriber
-from backend.pipeline.transcription.transforms import (
+from backend.pipeline.transcription.transforms.stateless import (
     ParseAndKeyFn,
     SerializeFn,
 )
@@ -182,8 +184,8 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
 
 
 class TranscribeAudioTest(unittest.TestCase):
-    @patch("backend.pipeline.transcription.stateful_transforms.get_transcriber")
-    @patch("backend.pipeline.transcription.stateful_transforms.AudioProcessor")
+    @patch("backend.pipeline.transcription.transforms.stateful.get_transcriber")
+    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
     def test_dlq_routing(
         self, mock_audio_processor: MagicMock, mock_get_transcriber: MagicMock
     ) -> None:
@@ -326,7 +328,7 @@ class SerializeAndEnrichTest(unittest.TestCase):
 
 
 class OrderedBypassTest(unittest.TestCase):
-    @patch("backend.pipeline.transcription.stateful_transforms.AudioProcessor")
+    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
     def test_ordered_bypass_yields_correct_offsets(
         self, mock_audio_processor: MagicMock
     ) -> None:
@@ -385,7 +387,7 @@ class OrderedBypassTest(unittest.TestCase):
 
             assert_that(results, assert_results)
 
-    @patch("backend.pipeline.transcription.stateful_transforms.AudioProcessor")
+    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
     def test_ordered_bypass_flushes_on_timeout(
         self, mock_audio_processor: MagicMock
     ) -> None:
@@ -449,7 +451,7 @@ class OrderedBypassTest(unittest.TestCase):
 
 
 class OrderedStitchAudioTest(unittest.TestCase):
-    @patch("backend.pipeline.transcription.stateful_transforms.AudioProcessor")
+    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
     def test_ordered_stitch_audio_flushes_on_stale_timer(
         self, mock_audio_processor: MagicMock
     ) -> None:
@@ -519,7 +521,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
 
             assert_that(results, assert_results)
 
-    @patch("backend.pipeline.transcription.stateful_transforms.AudioProcessor")
+    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
     def test_ordered_stitch_audio_handles_out_of_order_chunks(
         self, mock_audio_processor: MagicMock
     ) -> None:
