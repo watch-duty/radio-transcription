@@ -36,6 +36,7 @@ class TestCreatePool(unittest.IsolatedAsyncioTestCase):
             min_size=8,
             max_size=8,
             statement_cache_size=0,
+            server_settings={"idle_in_transaction_session_timeout": "30000"},
         )
         self.assertEqual(result, mock_pool)
 
@@ -70,6 +71,7 @@ class TestCreatePool(unittest.IsolatedAsyncioTestCase):
             min_size=5,
             max_size=20,
             statement_cache_size=0,
+            server_settings={"idle_in_transaction_session_timeout": "30000"},
         )
         self.assertEqual(result, mock_pool)
 
@@ -102,6 +104,7 @@ class TestCreatePool(unittest.IsolatedAsyncioTestCase):
             min_size=8,
             max_size=8,
             statement_cache_size=0,
+            server_settings={"idle_in_transaction_session_timeout": "30000"},
             command_timeout=30.0,
             timeout=10.0,
         )
