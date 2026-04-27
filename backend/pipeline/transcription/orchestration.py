@@ -20,6 +20,7 @@ from apache_beam.options.pipeline_options import (
 
 from backend.pipeline.transcription.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
+    DEFAULT_BYPASS_STALE_TIMEOUT_MS,
     DEFAULT_MAX_TRANSMISSION_DURATION_MS,
     DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_SIGNIFICANT_GAP_MS,
@@ -126,7 +127,7 @@ def get_pipeline(
             significant_gap_ms=options.significant_gap_ms
             or DEFAULT_SIGNIFICANT_GAP_MS,
             stale_timeout_ms=options.stale_timeout_ms
-            or DEFAULT_STALE_TIMEOUT_MS,
+            or DEFAULT_BYPASS_STALE_TIMEOUT_MS,
             max_transmission_duration_ms=options.max_transmission_duration_ms
             or DEFAULT_MAX_TRANSMISSION_DURATION_MS,
             vad_pre_roll_ms=options.vad_pre_roll_ms or DEFAULT_VAD_PRE_ROLL_MS,
