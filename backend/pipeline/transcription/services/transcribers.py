@@ -8,6 +8,7 @@ allowing the Beam pipeline to dynamically swap between different engines
 import abc
 import pathlib
 
+import google.api_core.exceptions
 from google.api_core import client_options
 from google.api_core.retry import Retry
 from google.cloud import speech_v2 as cloud_speech
@@ -205,7 +206,14 @@ class GoogleChirpV3Transcriber(Transcriber):
             multiplier=2.0,
             deadline=float(DEFAULT_RETRY_MAX_SECONDS * DEFAULT_MAX_RETRIES),
         )
-        response = self.client.recognize(request=request, retry=retry_policy)
+        try:
+            response = self.client.recognize(
+                request=request, retry=retry_policy
+            )
+        except google.api_core.exceptions.InvalidArgument as e:
+            logger.warning(f"Skipping segment due to API limit: {e}")
+            return None
+
         return self._parse_response(response)
 
     def _parse_response(
