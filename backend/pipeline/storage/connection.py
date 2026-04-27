@@ -63,6 +63,18 @@ async def create_pool(
         "min_size": min_size,
         "max_size": max_size,
         "statement_cache_size": 0,  # Required for PgBouncer transaction-mode pooling.
+        # DB-01: Server-side guardrail against stuck transactions. Every connection
+        # acquired from this pool carries `idle_in_transaction_session_timeout = 30s`
+        # at session start; PostgreSQL forcibly disconnects a connection that has
+        # been idle inside a transaction for >30s. Value is the string "30000"
+        # (milliseconds) — asyncpg's StartupMessage encoder requires str values
+        # for server_settings (passing int raises at wire-encode time).
+        # NOTE: If we ever route through PgBouncer in transaction mode, the RESET
+        # between transactions will strip this session GUC. At that point, switch
+        # to PgBouncer's `idle_transaction_timeout` config (pgbouncer.ini) instead.
+        "server_settings": {
+            "idle_in_transaction_session_timeout": "30000",
+        },
     }
     if command_timeout is not None:
         kwargs["command_timeout"] = command_timeout
