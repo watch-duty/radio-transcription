@@ -135,7 +135,7 @@ class AudioStitchingStateMachine:
         self, chunk_data: AudioChunkData, ctx: StitcherContext
     ) -> list[StateMachineAction]:
         """Flushes a late-arriving chunk immediately as an independent short transmission."""
-        logger.info(
+        logger.debug(
             "[%s] Processing late/overlapping chunk independently: %s",
             ctx.feed_id,
             ctx.current_gcs_uri,
