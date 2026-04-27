@@ -6,7 +6,6 @@ allowing the Beam pipeline to dynamically swap between different engines
 """
 
 import abc
-import logging
 import pathlib
 
 from google.api_core import client_options
@@ -15,7 +14,7 @@ from google.cloud import speech_v2 as cloud_speech
 from google.cloud.speech_v2 import SpeechClient
 
 from backend.pipeline.common.constants import BYTES_PER_SECOND_16KHZ_MONO
-from backend.pipeline.transcription.constants import (
+from backend.pipeline.transcription.common.constants import (
     CHIRP_UNINTELLIGIBLE_MARKER,
     DEFAULT_CHIRP_LANGUAGE_CODES,
     DEFAULT_CHIRP_LOCATION,
@@ -26,10 +25,13 @@ from backend.pipeline.transcription.constants import (
     DEFAULT_PHRASE_HINTS_FILE_PATH,
     DEFAULT_RETRY_MAX_SECONDS,
 )
-from backend.pipeline.transcription.enums import TranscriberType
-from backend.pipeline.transcription.utils import ConfigBase
+from backend.pipeline.transcription.common.enums import TranscriberType
+from backend.pipeline.transcription.common.logging import get_logger
+from backend.pipeline.transcription.common.utils import ConfigBase
 
-logger = logging.getLogger(__name__)
+logger = get_logger(
+    __name__, {"system": "transcription", "component": "transcribers"}
+)
 
 
 class Transcriber(abc.ABC):
@@ -166,6 +168,9 @@ class GoogleChirpV3Transcriber(Transcriber):
             raise RuntimeError(msg)
 
         duration_sec = len(audio_data) / BYTES_PER_SECOND_16KHZ_MONO
+        if duration_sec > 60.0:
+            msg = f"Audio payload too long for synchronous API: {duration_sec:.2f}s"
+            raise ValueError(msg)
 
         logger.info(
             "Transcribing %.3fs of audio",

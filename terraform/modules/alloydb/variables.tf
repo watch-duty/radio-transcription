@@ -144,7 +144,22 @@ variable "connection_pooling_enabled" {
 }
 
 variable "connection_pooling_flags" {
-  description = "Flags for Managed Connection Pooling configuration. Common keys: pool_mode (transaction|session), max_pool_size, max_client_connections, query_wait_timeout."
+  # IMPORTANT: AlloyDB's Managed Connection Pooling (MCP) uses its OWN flag
+  # namespace — NOT pgbouncer-canonical names. Do not use `default_pool_size`,
+  # `max_client_conn`, or `client_idle_timeout` here; AlloyDB's API returns
+  # HTTP 400 INVALID_ARGUMENT on unknown MCP flag keys at apply time.
+  #
+  # Empirically-verified valid MCP flag keys (via
+  # `curl -X PATCH ...?validateOnly=true` on the AlloyDB REST API):
+  #   - pool_mode
+  #   - max_pool_size
+  #   - max_client_connections
+  #
+  # Before adding any new flag here, verify AlloyDB accepts it by submitting
+  # a validateOnly=true PATCH to the existing dev instance. The
+  # deployment-repo CI includes an automated validateOnly gate that will
+  # catch unsupported keys at PR time rather than at merge-to-main apply.
+  description = "Flags for AlloyDB Managed Connection Pooling (MCP) — pool_mode, max_pool_size, max_client_connections. NOT pgbouncer-canonical names. See comment in this file + deployment-repo CI `alloydb-api-validate` job."
   type        = map(string)
   default = {
     pool_mode              = "transaction"

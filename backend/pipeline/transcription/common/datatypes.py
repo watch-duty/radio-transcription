@@ -8,10 +8,10 @@ from backend.pipeline.common.constants import (
     CHUNK_DURATION_SECONDS,
     MS_PER_SECOND,
 )
-from backend.pipeline.transcription.constants import (
+from backend.pipeline.transcription.common.constants import (
     DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
 )
-from backend.pipeline.transcription.enums import TranscriberType, VadType
+from backend.pipeline.transcription.common.enums import TranscriberType, VadType
 
 
 @dataclass(frozen=True)
@@ -48,19 +48,21 @@ class AudioChunkData:
 
 
 @dataclass(frozen=True)
+class FeedMetadata:
+    """Metadata about a feed, used for enriching the output."""
+
+    feed_name: str
+    external_id: str
+
+
+@dataclass(frozen=True)
 class ChunkMetadata:
     """Metadata for an audio chunk before download."""
 
     gcs_uri: str
     session_id: str
     duration_ms: int
-
-
-@dataclass(frozen=True)
-class FeedMetadata:
-    """Metadata about a feed, used for enriching the output."""
-
-    feed_name: str
+    feed_metadata: FeedMetadata
 
 
 @dataclass(frozen=True)
@@ -86,6 +88,7 @@ class TranscriptionResult:
     end_audio_offset_ms: int
     canonical_audio_uri: str
     playback_audio_uri: str
+    feed_metadata: FeedMetadata
     missing_prior_context: bool = False
     missing_post_context: bool = False
 
@@ -111,6 +114,8 @@ class TransmissionContext:
     buffer_duration_ms: int = 0
     order_timer_active: bool = False
     out_of_order_buffer: list[BufferedChunk] = field(default_factory=list)
+    feed_metadata: FeedMetadata | None = None
+    last_transmission_start_ms: int | None = None
 
 
 @dataclass
@@ -197,6 +202,7 @@ class FlushRequest:
     contributing_audio_uris: list[str]
     time_range: TimeRange
     transmission_id: str
+    feed_metadata: FeedMetadata
     missing_prior_context: bool
     missing_post_context: bool
     start_audio_offset_ms: int | None

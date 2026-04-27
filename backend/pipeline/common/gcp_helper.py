@@ -6,6 +6,9 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
+from google.cloud.pubsub_v1.publisher.exceptions import (
+    PublishToPausedOrderingKeyException,
+)
 
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 
@@ -150,6 +153,8 @@ async def upload_audio(
         # aiohttp.ClientResponseError is a subclass of ClientError, which
         # retry_with_lease_check treats as retryable — without this catch,
         # a 412 would be retried indefinitely instead of treated as success.
+        # Other ClientResponseError statuses (incl. transient 5xx) propagate
+        # so retry_with_lease_check can match them via the retryable tuple.
         if if_generation_match is not None and exc.status == 412:
             logger.info(
                 "GCS 412 (object exists): %s/%s -- treating as success",
@@ -215,17 +220,21 @@ def publish_audio_chunk_sync(
     This is the synchronous core used by both sync callers (e.g. Echo
     ingestion) and the async wrapper below.
     """
-    audio_chunk_msg = AudioChunk(gcs_uri=gcs_uri)
+    audio_chunk_msg = AudioChunk(
+        gcs_uri=gcs_uri,
+        feed_id=feed_id,
+        feed_name=feed_name,
+        duration_ms=duration_ms,
+        session_id=session_id,
+        external_id=external_id,
+    )
     audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
-    audio_chunk_msg.session_id = session_id
-    audio_chunk_msg.feed_name = feed_name
-    audio_chunk_msg.external_id = external_id
-    audio_chunk_msg.duration_ms = duration_ms
 
     attrs: dict[str, str] = {
         "feed_id": feed_id,
         "session_id": session_id,
         "gcs_uri": gcs_uri,
+        "timestamp_ms": str(int(start_timestamp.timestamp() * 1000)),
     }
     if source_type is not None:
         attrs["source_type"] = source_type
@@ -257,17 +266,21 @@ async def publish_audio_chunk(
     non-blockingly, ensuring other asyncio tasks remain responsive.
     """
     publisher = pubsub_client.get_publisher()
-    audio_chunk_msg = AudioChunk(gcs_uri=gcs_uri)
+    audio_chunk_msg = AudioChunk(
+        gcs_uri=gcs_uri,
+        feed_id=feed_id,
+        feed_name=feed_name,
+        duration_ms=duration_ms,
+        session_id=session_id,
+        external_id=external_id,
+    )
     audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
-    audio_chunk_msg.session_id = session_id
-    audio_chunk_msg.feed_name = feed_name
-    audio_chunk_msg.external_id = external_id
-    audio_chunk_msg.duration_ms = duration_ms
 
     attrs: dict[str, str] = {
         "feed_id": feed_id,
         "session_id": session_id,
         "gcs_uri": gcs_uri,
+        "timestamp_ms": str(int(start_timestamp.timestamp() * 1000)),
     }
     if source_type is not None:
         attrs["source_type"] = source_type
@@ -278,4 +291,23 @@ async def publish_audio_chunk(
         ordering_key=feed_id,
         **attrs,
     )
-    return await asyncio.wrap_future(future)
+    try:
+        return await asyncio.wrap_future(future)
+    except PublishToPausedOrderingKeyException:
+        # Clear the local Publisher pause flag so a post-un-quarantine
+        # re-lease on the same worker can publish. The exception still
+        # propagates to _process_feed's catch-all, which will quarantine
+        # the feed after threshold strikes.
+        # Defensive try/except: resume_publish is documented to raise
+        # RuntimeError (publisher stopped) or ValueError (unseen key).
+        # Neither should occur here in normal operation, but a crash on
+        # the failure-cleanup path itself would be worse than swallowing.
+        try:
+            publisher.resume_publish(topic_path, ordering_key=feed_id)
+        except (RuntimeError, ValueError):
+            logger.exception(
+                "resume_publish failed for feed=%s topic=%s",
+                feed_id,
+                topic_path,
+            )
+        raise

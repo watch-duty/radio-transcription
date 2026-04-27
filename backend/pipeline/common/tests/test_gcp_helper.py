@@ -5,6 +5,9 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
+from google.cloud.pubsub_v1.publisher.exceptions import (
+    PublishToPausedOrderingKeyException,
+)
 from multidict import CIMultiDict, CIMultiDictProxy
 from yarl import URL
 
@@ -403,13 +406,13 @@ class TestPublishAudioChunkSync(unittest.TestCase):
         mock_publisher.publish.assert_called_once()
         publish_args, publish_kwargs = mock_publisher.publish.call_args
         self.assertEqual(publish_args[0], "projects/test/topics/audio")
-        self.assertEqual(publish_kwargs["feed_id"], "feed-42")
         self.assertEqual(publish_kwargs["source_type"], "echo")
         self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
 
         chunk = AudioChunk()
         chunk.ParseFromString(publish_args[1])
         self.assertEqual(chunk.gcs_uri, "gs://bucket/audio.flac")
+        self.assertEqual(chunk.feed_id, "feed-42")
         self.assertTrue(chunk.HasField("start_timestamp"))
         self.assertEqual(
             chunk.start_timestamp.seconds, int(mock_now.timestamp())
@@ -473,6 +476,65 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chunk.feed_name, "Central Fire")
         self.assertEqual(chunk.external_id, "ext-id")
         self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
+
+    async def test_paused_ordering_key_calls_resume_publish(self) -> None:
+        """PublishToPausedOrderingKeyException triggers resume_publish before propagating raw."""
+        mock_pubsub_client, mock_publisher = _make_pubsub_client()
+        mock_now = datetime.datetime(2026, 4, 25, 12, 0, tzinfo=datetime.UTC)
+
+        fut = concurrent.futures.Future()
+        fut.set_exception(PublishToPausedOrderingKeyException("feed-42"))
+        mock_publisher.publish.return_value = fut
+
+        with self.assertRaises(PublishToPausedOrderingKeyException):
+            await gcp_helper.publish_audio_chunk(
+                mock_pubsub_client,
+                topic_path="projects/test/topics/audio",
+                feed_id="feed-42",
+                feed_name="Central Fire",
+                external_id="ext-id",
+                gcs_uri="gs://bucket/audio.flac",
+                session_id="test-session-1",
+                start_timestamp=mock_now,
+                duration_ms=15000,
+            )
+
+        mock_publisher.resume_publish.assert_called_once_with(
+            "projects/test/topics/audio",
+            ordering_key="feed-42",
+        )
+
+    async def test_resume_publish_failure_swallowed(self) -> None:
+        """RuntimeError or ValueError from resume_publish is swallowed; the original PausedOrderingKey exception still propagates."""
+        mock_now = datetime.datetime(2026, 4, 25, 12, 0, tzinfo=datetime.UTC)
+
+        for resume_exc in (
+            RuntimeError("publisher stopped"),
+            ValueError("unseen key"),
+        ):
+            with self.subTest(resume_exc=type(resume_exc).__name__):
+                mock_pubsub_client, mock_publisher = _make_pubsub_client()
+                fut = concurrent.futures.Future()
+                fut.set_exception(
+                    PublishToPausedOrderingKeyException("feed-42")
+                )
+                mock_publisher.publish.return_value = fut
+                mock_publisher.resume_publish.side_effect = resume_exc
+
+                with self.assertRaises(PublishToPausedOrderingKeyException):
+                    await gcp_helper.publish_audio_chunk(
+                        mock_pubsub_client,
+                        topic_path="projects/test/topics/audio",
+                        feed_id="feed-42",
+                        feed_name="Central Fire",
+                        external_id="ext-id",
+                        gcs_uri="gs://bucket/audio.flac",
+                        session_id="test-session-1",
+                        start_timestamp=mock_now,
+                        duration_ms=15000,
+                    )
+
+                mock_publisher.resume_publish.assert_called_once()
 
 
 class TestParseGcsUri(unittest.TestCase):

@@ -5,7 +5,6 @@ It is separated from the CLI entry point to improve testability and modularity.
 """
 
 import json
-import logging
 
 import apache_beam as beam
 from apache_beam.io.gcp.pubsub import (
@@ -19,8 +18,9 @@ from apache_beam.options.pipeline_options import (
     StandardOptions,
 )
 
-from backend.pipeline.transcription.constants import (
+from backend.pipeline.transcription.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
+    DEFAULT_BYPASS_STALE_TIMEOUT_MS,
     DEFAULT_MAX_TRANSMISSION_DURATION_MS,
     DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_SIGNIFICANT_GAP_MS,
@@ -29,27 +29,26 @@ from backend.pipeline.transcription.constants import (
     DEFAULT_VAD_PRE_ROLL_MS,
     MAIN_TAG,
 )
-from backend.pipeline.transcription.datatypes import (
+from backend.pipeline.transcription.common.datatypes import (
     OrderRestorerConfig,
     StitchAudioConfig,
     TranscribeAudioConfig,
 )
+from backend.pipeline.transcription.common.logging import get_logger
 from backend.pipeline.transcription.options import TranscriptionOptions
-from backend.pipeline.transcription.ordered_stitcher import (
+from backend.pipeline.transcription.transforms.stateful import (
     OrderedBypassFn,
     OrderedStitchAudioFn,
-)
-from backend.pipeline.transcription.stitcher import (
     TranscribeAudioFn,
 )
-from backend.pipeline.transcription.transforms import (
-    AddEventTimestamp,
-    ExtractFeedMetadataFn,
+from backend.pipeline.transcription.transforms.stateless import (
     ParseAndKeyFn,
-    SerializeAndEnrichFn,
+    SerializeFn,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(
+    __name__, {"system": "transcription", "component": "orchestration"}
+)
 
 
 def format_dlq_message(element: dict) -> PubsubMessage:
@@ -93,20 +92,13 @@ def get_pipeline(
         subscription=options.input_subscription,
         id_label=options.id_label or None,
         with_attributes=True,
+        timestamp_attribute="timestamp_ms",
     )
     # Group incoming messages into Key-Value pairs: (feed_id, gs://uri/to/audio)
     parsed = messages | "ParseAndKey" >> beam.ParDo(
         ParseAndKeyFn()
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
-    # Extract feed metadata for enrichment
-    feed_metadata = parsed[MAIN_TAG] | "ExtractFeedMetadata" >> beam.ParDo(
-        ExtractFeedMetadataFn()
-    )
-
-    timestamped = parsed[MAIN_TAG] | "AddTimestamp" >> beam.ParDo(
-        AddEventTimestamp()
-    ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
     dlq_list = []
 
@@ -136,7 +128,7 @@ def get_pipeline(
             significant_gap_ms=options.significant_gap_ms
             or DEFAULT_SIGNIFICANT_GAP_MS,
             stale_timeout_ms=options.stale_timeout_ms
-            or DEFAULT_STALE_TIMEOUT_MS,
+            or DEFAULT_BYPASS_STALE_TIMEOUT_MS,
             max_transmission_duration_ms=options.max_transmission_duration_ms
             or DEFAULT_MAX_TRANSMISSION_DURATION_MS,
             vad_pre_roll_ms=options.vad_pre_roll_ms or DEFAULT_VAD_PRE_ROLL_MS,
@@ -153,35 +145,31 @@ def get_pipeline(
             or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
         )
 
-        stitching_results = (
-            timestamped.main
-            | "OrderedBypassStitch"
-            >> beam.ParDo(
-                OrderedBypassFn(
-                    order_config=order_config,
-                    stitch_config=stitching_config,
-                )
-            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
-        )
-
+        stitching_results = parsed[
+            MAIN_TAG
+        ] | "OrderedBypassStitch" >> beam.ParDo(
+            OrderedBypassFn(
+                order_config=order_config,
+                stitch_config=stitching_config,
+            )
+        ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
         stitching_main = stitching_results.main
         dlq_list.append(stitching_results[DEAD_LETTER_QUEUE_TAG])
     else:
         # New merged path: Handles both ordering and stitching in a single DoFn
-        stitching_results = (
-            timestamped.main
-            | "OrderedStitchAudio"
-            >> beam.ParDo(
-                OrderedStitchAudioFn(
-                    order_config=OrderRestorerConfig(
-                        out_of_order_timeout_ms=options.out_of_order_timeout_ms
-                        or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
-                    ),
-                    stitch_config=download_config,
-                )
-            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
-        )
+        stitching_results = parsed[
+            MAIN_TAG
+        ] | "OrderedStitchAudio" >> beam.ParDo(
+            OrderedStitchAudioFn(
+                order_config=OrderRestorerConfig(
+                    out_of_order_timeout_ms=options.out_of_order_timeout_ms
+                    or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
+                ),
+                stitch_config=download_config,
+            )
+        ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
         stitching_main = stitching_results.main
+        dlq_list.append(stitching_results[DEAD_LETTER_QUEUE_TAG])
 
     transcripts = stitching_main | "TranscribeAudio" >> beam.ParDo(
         TranscribeAudioFn(
@@ -199,22 +187,11 @@ def get_pipeline(
         )
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
-    # Key transcripts by feed_id
-    keyed_transcripts = transcripts.main | "KeyTranscripts" >> beam.Map(
-        lambda res: (res.feed_id, res)
-    )
-
-    # Flatten with feed metadata
-    combined_for_enrichment = (
-        feed_metadata,
-        keyed_transcripts,
-    ) | "FlattenForEnrichment" >> beam.Flatten()
-
     # Convert the native TranscriptionResult into a serialized Protobuf and wrap in a Pub/Sub message
-    serialized = combined_for_enrichment | "SerializeAndEnrich" >> beam.ParDo(
-        SerializeAndEnrichFn()
-    )
-    serialized | "WriteToPubSub" >> WriteToPubSub(
+    serialized = transcripts.main | "Serialize" >> beam.ParDo(
+        SerializeFn()
+    ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+    serialized.main | "WriteToPubSub" >> WriteToPubSub(
         topic=options.output_topic,
         with_attributes=True,
     )
@@ -223,8 +200,8 @@ def get_pipeline(
     dlq_list.extend(
         [
             parsed[DEAD_LETTER_QUEUE_TAG],
-            timestamped[DEAD_LETTER_QUEUE_TAG],
             transcripts[DEAD_LETTER_QUEUE_TAG],
+            serialized[DEAD_LETTER_QUEUE_TAG],
         ]
     )
 

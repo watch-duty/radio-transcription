@@ -4,7 +4,7 @@ import argparse
 
 from apache_beam.options.pipeline_options import PipelineOptions
 
-from backend.pipeline.transcription.constants import (
+from backend.pipeline.transcription.common.constants import (
     DEFAULT_MAX_TRANSMISSION_DURATION_MS,
     DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_SIGNIFICANT_GAP_MS,
@@ -12,7 +12,7 @@ from backend.pipeline.transcription.constants import (
     DEFAULT_VAD_POST_ROLL_MS,
     DEFAULT_VAD_PRE_ROLL_MS,
 )
-from backend.pipeline.transcription.enums import (
+from backend.pipeline.transcription.common.enums import (
     TranscriberType,
     VadType,
 )

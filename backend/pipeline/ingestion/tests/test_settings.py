@@ -3,6 +3,7 @@ import uuid
 from unittest.mock import patch
 
 from backend.pipeline.ingestion.settings import NormalizerSettings
+from backend.pipeline.storage.feed_store import SourceType
 
 
 def _required_env() -> dict[str, str]:
@@ -46,6 +47,9 @@ class TestNormalizerSettings(unittest.TestCase):
             "HEALTH_CHECK_PORT": "9090",
             "HEALTH_CHECK_STARTUP_GRACE_SEC": "90.0",
             "SEGMENTED_PUBSUB_TOPIC_PATH": "projects/test-project/topics/test-segmented-topic",
+            "CAP_BCFY_FEEDS": "200",
+            "CAP_BCFY_CALLS": "400",
+            "CAP_OPENMHZ": "700",
         }
 
         with patch.dict("os.environ", env, clear=True):
@@ -86,6 +90,9 @@ class TestNormalizerSettings(unittest.TestCase):
             settings.segmented_pubsub_topic_path,
             "projects/test-project/topics/test-segmented-topic",
         )
+        self.assertEqual(settings.caps[SourceType.BCFY_FEEDS], 200)
+        self.assertEqual(settings.caps[SourceType.BCFY_CALLS], 400)
+        self.assertEqual(settings.caps[SourceType.OPENMHZ], 700)
 
     def test_edge_case_uses_defaults_and_generates_worker_id(self) -> None:
         """Uses defaults for optional settings when only required vars are set."""
@@ -93,13 +100,13 @@ class TestNormalizerSettings(unittest.TestCase):
             settings = NormalizerSettings()
 
         self.assertIsInstance(settings.worker_id, uuid.UUID)
-        self.assertEqual(settings.max_feeds_per_worker, 250)
+        self.assertEqual(settings.max_feeds_per_worker, 800)
         self.assertEqual(settings.lease_poll_interval_sec, 5.0)
         self.assertEqual(settings.heartbeat_interval_sec, 15.0)
         self.assertEqual(settings.heartbeat_stall_timeout_sec, 45.0)
         self.assertEqual(settings.graceful_shutdown_timeout_sec, 10.0)
-        self.assertEqual(settings.db.pool_min_size, 5)
-        self.assertEqual(settings.db.pool_max_size, 5)
+        self.assertEqual(settings.db.pool_min_size, 8)
+        self.assertEqual(settings.db.pool_max_size, 8)
         self.assertEqual(settings.db.command_timeout_sec, 30.0)
         self.assertEqual(settings.db.connect_timeout_sec, 10.0)
         self.assertEqual(settings.feed_failure_threshold, 5)
@@ -120,6 +127,9 @@ class TestNormalizerSettings(unittest.TestCase):
             "projects/test-project/topics/test-topic",
         )
         self.assertIsNone(settings.segmented_pubsub_topic_path)
+        self.assertEqual(settings.caps[SourceType.BCFY_FEEDS], 240)
+        self.assertEqual(settings.caps[SourceType.BCFY_CALLS], 600)
+        self.assertEqual(settings.caps[SourceType.OPENMHZ], 900)
 
     def test_edge_case_zero_and_negative_numeric_values_parse(self) -> None:
         """Allows zero/negative values because parsing does not enforce ranges."""
@@ -142,6 +152,28 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.db.pool_min_size, 0)
         self.assertEqual(settings.db.pool_max_size, -2)
         self.assertEqual(settings.abandonment_window_sec, -0.5)
+
+    def test_caps_partial_env_override(self) -> None:
+        """Setting CAP_<NAME> for one type overrides only that one; others use defaults."""
+        env = {**_required_env(), "CAP_BCFY_FEEDS": "999"}
+
+        with patch.dict("os.environ", env, clear=True):
+            settings = NormalizerSettings()
+
+        self.assertEqual(settings.caps[SourceType.BCFY_FEEDS], 999)
+        self.assertEqual(settings.caps[SourceType.BCFY_CALLS], 600)
+        self.assertEqual(settings.caps[SourceType.OPENMHZ], 900)
+
+    def test_caps_keys_match_default_caps_registry(self) -> None:
+        """settings.caps populates exactly the SourceTypes registered in _DEFAULT_CAPS."""
+        with patch.dict("os.environ", _required_env(), clear=True):
+            settings = NormalizerSettings()
+
+        # ECHO is intentionally absent: Echo feeds aren't VM-leased.
+        self.assertNotIn(SourceType.ECHO, settings.caps)
+        self.assertIn(SourceType.BCFY_FEEDS, settings.caps)
+        self.assertIn(SourceType.BCFY_CALLS, settings.caps)
+        self.assertIn(SourceType.OPENMHZ, settings.caps)
 
     def test_invalid_missing_required_env_var_raises(self) -> None:
         """Raises ValueError when a required environment variable is missing."""

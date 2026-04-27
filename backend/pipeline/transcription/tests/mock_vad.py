@@ -2,7 +2,7 @@
 
 import json
 
-from backend.pipeline.transcription.vads import VoiceActivityDetector
+from backend.pipeline.transcription.audio.vads import VoiceActivityDetector
 
 
 class MockVadPlugin(VoiceActivityDetector):

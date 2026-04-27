@@ -16,9 +16,9 @@ jobs:
       - name: Check for Module Changes
         id: filter
         run: |
-          # Check if any files in the terraform/modules directory changed
-          MOD_CHANGED=$(git diff --name-only HEAD^ HEAD | grep 'terraform/modules/' || true)
-          if [ -n "$MOD_CHANGED" ]; then
+          # Check if any files in terraform/modules/ or protos/ changed (infra inputs)
+          INFRA_CHANGED=$(git diff --name-only HEAD^ HEAD | grep -E '^(terraform/modules/|protos/)' || true)
+          if [ -n "$INFRA_CHANGED" ]; then
             echo "infra_change=true" >> $GITHUB_OUTPUT
           else
             echo "infra_change=false" >> $GITHUB_OUTPUT

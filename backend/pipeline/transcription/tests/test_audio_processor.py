@@ -9,9 +9,12 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import soundfile as sf
 
-from backend.pipeline.transcription.audio_processor import AudioProcessor
-from backend.pipeline.transcription.datatypes import AudioChunkData, TimeRange
-from backend.pipeline.transcription.enums import VadType
+from backend.pipeline.transcription.audio.audio_processor import AudioProcessor
+from backend.pipeline.transcription.common.datatypes import (
+    AudioChunkData,
+    TimeRange,
+)
+from backend.pipeline.transcription.common.enums import VadType
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +30,12 @@ class AudioProcessorTest(unittest.TestCase):
 
         self.processor = AudioProcessor(vad_type=VadType.TEN_VAD)
 
-    @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
-    @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
+    @patch(
+        "backend.pipeline.transcription.audio.audio_processor.get_gcs_client"
+    )
+    @patch(
+        "backend.pipeline.transcription.audio.audio_processor.get_vad_plugin"
+    )
     def test_setup_initializes_vad_and_gcs(
         self, mock_get_vad: MagicMock, mock_get_gcs: MagicMock
     ) -> None:
@@ -53,8 +60,12 @@ class AudioProcessorTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             processor.download_audio_and_detect("gs://test/file.flac", 0)
 
-    @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
-    @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
+    @patch(
+        "backend.pipeline.transcription.audio.audio_processor.get_gcs_client"
+    )
+    @patch(
+        "backend.pipeline.transcription.audio.audio_processor.get_vad_plugin"
+    )
     def test_check_vad_evaluates_speech(
         self, mock_get_vad: MagicMock, mock_get_gcs: MagicMock
     ) -> None:
@@ -73,11 +84,15 @@ class AudioProcessorTest(unittest.TestCase):
         self.assertTrue(result)
         mock_vad_instance.evaluate.assert_called_once()
 
-    @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
     @patch(
-        "backend.pipeline.transcription.audio_processor.compute_spectral_flatness"
+        "backend.pipeline.transcription.audio.audio_processor.get_gcs_client"
     )
-    @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
+    @patch(
+        "backend.pipeline.transcription.audio.audio_processor.compute_spectral_flatness"
+    )
+    @patch(
+        "backend.pipeline.transcription.audio.audio_processor.get_vad_plugin"
+    )
     def test_check_vad_drops_static(
         self,
         mock_get_vad: MagicMock,
@@ -101,8 +116,12 @@ class AudioProcessorTest(unittest.TestCase):
         # VAD evaluate should NOT be called because it should be dropped by heuristic
         mock_vad_instance.evaluate.assert_not_called()
 
-    @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
-    @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
+    @patch(
+        "backend.pipeline.transcription.audio.audio_processor.get_gcs_client"
+    )
+    @patch(
+        "backend.pipeline.transcription.audio.audio_processor.get_vad_plugin"
+    )
     def test_download_audio_and_detect_calculates_duration(
         self, mock_get_vad: MagicMock, mock_get_gcs: MagicMock
     ) -> None:
@@ -171,11 +190,15 @@ class AudioProcessorTest(unittest.TestCase):
     @unittest.skipIf(
         shutil.which("ffmpeg") is None, "ffmpeg is required for pydub I/O tests"
     )
-    @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
     @patch(
-        "backend.pipeline.transcription.audio_processor.AcousticGateDetector"
+        "backend.pipeline.transcription.audio.audio_processor.get_vad_plugin"
     )
-    @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
+    @patch(
+        "backend.pipeline.transcription.audio.audio_processor.AcousticGateDetector"
+    )
+    @patch(
+        "backend.pipeline.transcription.audio.audio_processor.get_gcs_client"
+    )
     def test_download_audio_and_detect(
         self,
         mock_get_gcs: MagicMock,
@@ -223,8 +246,12 @@ class AudioProcessorTest(unittest.TestCase):
         processor.gcs_client.bucket.assert_called_with("my-bucket")
         mock_bucket.get_blob.assert_called_with("audio/feed1/12345.flac")
 
-    @patch("backend.pipeline.transcription.audio_processor.get_vad_plugin")
-    @patch("backend.pipeline.transcription.audio_processor.get_gcs_client")
+    @patch(
+        "backend.pipeline.transcription.audio.audio_processor.get_vad_plugin"
+    )
+    @patch(
+        "backend.pipeline.transcription.audio.audio_processor.get_gcs_client"
+    )
     def test_download_audio_not_found(
         self, mock_get_gcs: MagicMock, mock_get_vad: MagicMock
     ) -> None:
