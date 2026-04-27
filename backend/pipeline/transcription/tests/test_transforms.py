@@ -459,7 +459,6 @@ class OrderedBypassTest(unittest.TestCase):
 
 
 class OrderedStitchAudioTest(unittest.TestCase):
-
     @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
     def test_late_chunk_empty_buffer_no_fallback(
         self, mock_audio_processor: MagicMock
@@ -570,6 +569,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
             1,
             "Main buffer should not be cleared",
         )
+
     @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
     def test_ordered_stitch_audio_flushes_on_stale_timer(
         self, mock_audio_processor: MagicMock
@@ -767,6 +767,3 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 assert 16000 in lengths
 
             assert_that(results, assert_results)
-
-
-
