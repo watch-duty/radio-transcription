@@ -90,7 +90,7 @@ async def capture_icecast_stream(  # noqa: PLR0915
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
     url_base: str,
-    _resources: CaptureResources,
+    resources: CaptureResources,
 ) -> AsyncIterator[CapturedChunk]:
     """
     Capture audio chunks from an Icecast stream using ffmpeg segment muxing.
@@ -103,9 +103,15 @@ async def capture_icecast_stream(  # noqa: PLR0915
         feed: Leased feed containing source_feed_id and metadata
         shutdown_event: Signals graceful shutdown request
         url_base: The base URL to prepend to the source_feed_id for stream access
-        _resources: Runtime-owned http_session and spawn_semaphore.
-            Phase 2 accepts but does not use; Phase 3 wires the
-            spawn_semaphore around the create_subprocess_exec call.
+        resources: Runtime-owned http_session (unused by icecast; bcfy_calls
+            consumes it) and spawn_semaphore (used). The spawn_semaphore is
+            a runtime-owned asyncio.Semaphore created in
+            NormalizerRuntime._main() with limit settings.ffmpeg_spawn_limit
+            (default 8). Per SPAWN-01 / D-07/D-08, the semaphore wraps the
+            spawn ONLY (the create_subprocess_exec call); the slot is
+            released as soon as the process handle is returned, NOT held
+            for the lifetime of ffmpeg. Long-running ffmpeg processes do
+            NOT block the next spawn.
 
     Yields:
         A CapturedChunk containing:
@@ -137,9 +143,14 @@ async def capture_icecast_stream(  # noqa: PLR0915
         segment_dir = Path(tmp_dir)
         segment_pattern = str(segment_dir / f"chunk_%06d.{AUDIO_FORMAT}")
 
-        process = await _create_ffmpeg_process(
-            url, segment_pattern, auth_header
-        )
+        # SPAWN-01: gate the ffmpeg spawn (NOT lifetime) on the
+        # runtime-owned semaphore (D-07, D-08, D-09; PITFALLS Pitfall 6).
+        # The slot is released as soon as create_subprocess_exec returns;
+        # long-lived ffmpeg processes do NOT hold a slot.
+        async with resources.spawn_semaphore:
+            process = await _create_ffmpeg_process(
+                url, segment_pattern, auth_header
+            )
         if (
             process.stderr is None
         ):  # pragma: no cover — guaranteed by stderr=PIPE

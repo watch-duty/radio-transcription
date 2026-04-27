@@ -197,7 +197,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             feed,
             shutdown_event,
             url_base="https://mock.example.com/",
-            _resources=_default_resources(),
+            resources=_default_resources(),
         )
         chunks = await _collect_chunks(gen)
 
@@ -233,7 +233,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             feed,
             shutdown_event,
             url_base="https://mock.example.com/",
-            _resources=_default_resources(),
+            resources=_default_resources(),
         )
 
         # Give it time to start and yield first chunk if available
@@ -265,7 +265,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             feed,
             shutdown_event,
             url_base="https://mock.example.com/",
-            _resources=_default_resources(),
+            resources=_default_resources(),
         )
         with self.assertRaises(ValueError) as context:
             await gen.__anext__()
@@ -285,7 +285,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             feed,
             shutdown_event,
             url_base="https://mock.example.com/",
-            _resources=_default_resources(),
+            resources=_default_resources(),
         )
         with self.assertRaises(ValueError) as context:
             await gen.__anext__()
@@ -307,7 +307,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             feed,
             shutdown_event,
             url_base="https://mock.example.com/",
-            _resources=_default_resources(),
+            resources=_default_resources(),
         )
         with self.assertRaises(ValueError) as context:
             await gen.__anext__()
@@ -338,7 +338,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             feed,
             shutdown_event,
             url_base="https://mock.example.com/",
-            _resources=_default_resources(),
+            resources=_default_resources(),
         )
 
         chunks = await _collect_chunks(gen)
@@ -366,7 +366,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             feed,
             shutdown_event,
             url_base="https://mock.example.com/",
-            _resources=_default_resources(),
+            resources=_default_resources(),
         )
         with self.assertRaises(RuntimeError) as context:
             await asyncio.wait_for(gen.__anext__(), timeout=1.0)
@@ -398,7 +398,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             feed,
             shutdown_event,
             url_base="https://mock.example.com/",
-            _resources=_default_resources(),
+            resources=_default_resources(),
         )
         with self.assertRaises(RuntimeError) as context:
             await asyncio.wait_for(gen.__anext__(), timeout=1.0)
@@ -427,7 +427,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             feed,
             shutdown_event,
             url_base="https://mock.example.com/",
-            _resources=_default_resources(),
+            resources=_default_resources(),
         )
         with self.assertRaises(RuntimeError):
             await asyncio.wait_for(gen.__anext__(), timeout=1.0)
@@ -460,7 +460,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             feed,
             shutdown_event,
             url_base="https://mock.example.com/",
-            _resources=_default_resources(),
+            resources=_default_resources(),
         )
         with self.assertRaises(RuntimeError) as context:
             await asyncio.wait_for(gen.__anext__(), timeout=2.0)
@@ -494,7 +494,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             feed,
             shutdown_event,
             url_base="https://mock.example.com/",
-            _resources=_default_resources(),
+            resources=_default_resources(),
         )
         chunks = await _collect_chunks(gen)
 
@@ -544,7 +544,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             feed,
             shutdown_event,
             url_base="https://mock.example.com/",
-            _resources=_default_resources(),
+            resources=_default_resources(),
         )
         results = await _collect_chunks_with_timestamps(gen)
 
@@ -610,7 +610,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             feed,
             shutdown_event,
             url_base="https://mock.example.com/",
-            _resources=_default_resources(),
+            resources=_default_resources(),
         )
         results = await _collect_chunks_with_timestamps(gen)
 
@@ -640,7 +640,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             feed,
             shutdown_event,
             url_base="https://mock.example.com/",
-            _resources=_default_resources(),
+            resources=_default_resources(),
         )
         results = await _collect_chunks_with_timestamps(gen)
 
@@ -689,7 +689,7 @@ class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
             cast("LeasedFeed", feed),
             shutdown,
             "http://example.com/",
-            _resources=_default_resources(),
+            resources=_default_resources(),
         )
         chunks = await _collect_chunks_with_timestamps(gen)
 

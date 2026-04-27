@@ -266,7 +266,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             feed,
             shutdown,
             url_base="https://mock.example.com/",
-            _resources=_default_resources(),
+            resources=_default_resources(),
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client,
@@ -329,7 +329,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             feed,
             shutdown,
             url_base="https://mock.example.com/",
-            _resources=_default_resources(),
+            resources=_default_resources(),
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client,
@@ -391,7 +391,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             feed,
             shutdown,
             url_base="https://mock.example.com/",
-            _resources=_default_resources(),
+            resources=_default_resources(),
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client,
@@ -443,7 +443,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 feed,
                 shutdown,
                 url_base="https://mock.example.com/",
-                _resources=_default_resources(),
+                resources=_default_resources(),
             ):
                 pass  # Should not yield any chunks
 
@@ -482,7 +482,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             feed,
             shutdown,
             url_base="https://mock.example.com/",
-            _resources=_default_resources(),
+            resources=_default_resources(),
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client,
@@ -525,7 +525,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 feed,
                 shutdown,
                 url_base="https://mock.example.com/",
-                _resources=_default_resources(),
+                resources=_default_resources(),
             ):
                 pass
 
