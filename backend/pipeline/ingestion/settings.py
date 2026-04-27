@@ -100,6 +100,18 @@ class NormalizerSettings:
             os.environ.get("GRACEFUL_SHUTDOWN_TIMEOUT_SEC", "90.0"),
         ),
     )
+    # Sub-timeout for the inner `asyncio.wait` of feed tasks during
+    # shutdown (SHUTDOWN-02). Default 30s leaves 90 - 30 - 2 = 58s for
+    # release_feeds_batch + pool/client closes inside the outer
+    # graceful_shutdown_timeout_sec budget. Pitfall 9: when the
+    # sub-timeout fires, pending tasks are explicitly re-cancelled and
+    # given a 2s settle window (hardcoded, NOT a setting) before
+    # release_feeds_batch — see _shutdown_sequence.
+    task_cancel_budget_sec: float = field(
+        default_factory=lambda: float(
+            os.environ.get("TASK_CANCEL_BUDGET_SEC", "30.0"),
+        ),
+    )
     # ffmpeg subprocess spawn-rate cap (SPAWN-01). Default 8 = 2x vCPU on
     # n2-standard-4. Wraps create_subprocess_exec ONLY (not lifetime), so
     # this caps spawn concurrency to absorb activation bursts without
@@ -249,3 +261,26 @@ class NormalizerSettings:
             os.environ.get("RSS_WATCHDOG_WARMUP_SEC", "60.0"),
         ),
     )
+
+    def __post_init__(self) -> None:
+        # SHUTDOWN-02: validate the inner sub-timeout fits inside the
+        # outer graceful budget with the hardcoded 2s settle window.
+        # Triggers at construction time (immediate, clear error) so an
+        # operator misconfiguration surfaces before the runtime starts
+        # rather than as a "shutdown takes too long" symptom under load.
+        # Uses `>` (not `>=`): equality is allowed at the boundary
+        # because release_feeds_batch + pool closes have additional
+        # implicit slack inside graceful_shutdown_timeout_sec; this
+        # validation only guards against overtly invalid configs (e.g.
+        # operator sets TASK_CANCEL_BUDGET_SEC=120 with graceful=90).
+        if (
+            self.task_cancel_budget_sec + 2.0
+            > self.graceful_shutdown_timeout_sec
+        ):
+            msg = (
+                f"task_cancel_budget_sec ({self.task_cancel_budget_sec}s) "
+                f"+ 2s settle exceeds graceful_shutdown_timeout_sec "
+                f"({self.graceful_shutdown_timeout_sec}s); adjust "
+                f"TASK_CANCEL_BUDGET_SEC or GRACEFUL_SHUTDOWN_TIMEOUT_SEC."
+            )
+            raise ValueError(msg)

@@ -29,6 +29,7 @@ class TestNormalizerSettings(unittest.TestCase):
             "HEARTBEAT_INTERVAL_SEC": "10.0",
             "HEARTBEAT_STALL_TIMEOUT_SEC": "30.0",
             "GRACEFUL_SHUTDOWN_TIMEOUT_SEC": "15.0",
+            "TASK_CANCEL_BUDGET_SEC": "12.0",
             "FFMPEG_SPAWN_LIMIT": "4",
             "CONTAINER_MEMORY_BYTES": "4294967296",
             "RSS_WATCHDOG_POLL_INTERVAL_SEC": "1.0",
@@ -69,6 +70,7 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.heartbeat_interval_sec, 10.0)
         self.assertEqual(settings.heartbeat_stall_timeout_sec, 30.0)
         self.assertEqual(settings.graceful_shutdown_timeout_sec, 15.0)
+        self.assertEqual(settings.task_cancel_budget_sec, 12.0)
         self.assertEqual(settings.ffmpeg_spawn_limit, 4)
         self.assertEqual(settings.container_memory_bytes_override, 4294967296)
         self.assertEqual(settings.rss_watchdog_poll_interval_sec, 1.0)
@@ -121,6 +123,7 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.heartbeat_interval_sec, 15.0)
         self.assertEqual(settings.heartbeat_stall_timeout_sec, 45.0)
         self.assertEqual(settings.graceful_shutdown_timeout_sec, 90.0)
+        self.assertEqual(settings.task_cancel_budget_sec, 30.0)
         self.assertEqual(settings.ffmpeg_spawn_limit, 8)
         self.assertIsNone(settings.container_memory_bytes_override)
         self.assertEqual(settings.rss_watchdog_poll_interval_sec, 2.0)
@@ -252,6 +255,43 @@ class TestNormalizerSettings(unittest.TestCase):
         with patch.dict("os.environ", env, clear=True):
             with self.assertRaises(ValueError):
                 NormalizerSettings()
+
+    def test_invalid_task_cancel_budget_exceeds_graceful_shutdown_raises(
+        self,
+    ) -> None:
+        """SHUTDOWN-02: ValueError raised when task_cancel_budget_sec +
+        2s settle exceeds graceful_shutdown_timeout_sec (D-03 / D-11).
+        """
+        env = {
+            **_required_env(),
+            "TASK_CANCEL_BUDGET_SEC": "120.0",
+            "GRACEFUL_SHUTDOWN_TIMEOUT_SEC": "90.0",
+        }
+
+        with patch.dict("os.environ", env, clear=True):
+            with self.assertRaises(ValueError) as context:
+                NormalizerSettings()
+
+        self.assertIn("task_cancel_budget_sec", str(context.exception))
+        self.assertIn("graceful_shutdown_timeout_sec", str(context.exception))
+
+    def test_edge_case_task_cancel_budget_at_boundary_does_not_raise(
+        self,
+    ) -> None:
+        """Boundary: task_cancel_budget_sec + 2.0 == graceful_shutdown_
+        timeout_sec is allowed (D-03 uses `>`, not `>=`).
+        """
+        env = {
+            **_required_env(),
+            "TASK_CANCEL_BUDGET_SEC": "88.0",
+            "GRACEFUL_SHUTDOWN_TIMEOUT_SEC": "90.0",
+        }
+
+        with patch.dict("os.environ", env, clear=True):
+            settings = NormalizerSettings()
+
+        self.assertEqual(settings.task_cancel_budget_sec, 88.0)
+        self.assertEqual(settings.graceful_shutdown_timeout_sec, 90.0)
 
 
 if __name__ == "__main__":

@@ -1285,7 +1285,7 @@ class NormalizerRuntime:
 
     # -- Shutdown sequence ------------------------------------------------
 
-    async def _shutdown_sequence(self) -> None:
+    async def _shutdown_sequence(self) -> None:  # noqa: PLR0912
         """
         Orderly teardown: stop /healthz HTTP server, cancel feed tasks,
         stop heartbeat thread, close GCS client and database pools.
@@ -1343,10 +1343,42 @@ class NormalizerRuntime:
         for task in self._feed_tasks.values():
             task.cancel()
         if self._feed_tasks:
-            await asyncio.wait(
+            _done, pending = await asyncio.wait(
                 self._feed_tasks.values(),
-                timeout=self._normalizer_settings.graceful_shutdown_timeout_sec,
+                timeout=self._normalizer_settings.task_cancel_budget_sec,
             )
+            if pending:
+                # PITFALLS.md Pitfall 9: asyncio.wait does NOT cancel
+                # pending tasks at timeout. The task.cancel() loop above
+                # only requested cancellation; tasks that swallow
+                # CancelledError or are mid-CPU-bound work are still
+                # alive after the sub-timeout. We MUST explicitly
+                # re-cancel and re-await with a short hard timeout, or
+                # pending tasks will observe a NULL worker_id after
+                # release_feeds_batch and trigger the heartbeat
+                # fence-violation os._exit(1) (pre-existing invariant 1
+                # in PITFALLS.md).
+                #
+                # Bounded log: count + sorted feed names only (NEVER
+                # full task repr). On an 800-feed shutdown, formatting
+                # `pending` directly expands to >1MB of Cloud Logging
+                # output (Pitfall 9 critical detail).
+                names = sorted(t.get_name() for t in pending)
+                logger.warning(
+                    "Sub-timeout: %d tasks still running after %ss — "
+                    "explicitly cancelling and proceeding to release. "
+                    "names=%s",
+                    len(pending),
+                    self._normalizer_settings.task_cancel_budget_sec,
+                    names,
+                )
+                for task in pending:
+                    task.cancel()
+                # Hard 2s settle so cancellation actually propagates
+                # before release_feeds_batch runs. Tasks that don't
+                # honor cancellation within 2s are abandoned —
+                # release_feeds_batch is the safety net.
+                await asyncio.wait(pending, timeout=2.0)
 
         # We MUST release leases AFTER cancelling tasks and waiting for them to
         # exit! If we release leases while tasks are still running, they might

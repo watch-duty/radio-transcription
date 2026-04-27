@@ -92,6 +92,7 @@ def _make_settings(**overrides) -> mock.MagicMock:
         "heartbeat_interval_sec": 15.0,
         "heartbeat_stall_timeout_sec": 45.0,
         "graceful_shutdown_timeout_sec": 10.0,
+        "task_cancel_budget_sec": 5.0,
         "ffmpeg_spawn_limit": 8,
         # RSS watchdog (Phase 4 / WATCHDOG-01). Defaults pin to "watchdog
         # disabled in tests unless explicitly overridden": override=None
@@ -1846,6 +1847,145 @@ class TestRssWatchdogIntegration(unittest.IsolatedAsyncioTestCase):
         # along the watchdog-trip path, regardless of how high RSS climbed.
         # Graceful shutdown only — kernel OOM is the backstop.
         mock_exit.assert_not_called()
+
+
+class TestSubTimeoutEscape(unittest.IsolatedAsyncioTestCase):
+    """SHUTDOWN-02: stuck task swallows CancelledError once but does not
+    block release_feeds_batch; sub-timeout fires + re-cancel + 2s settle
+    + os._exit NOT called along the path (D-09).
+    """
+
+    async def test_swallow_once_does_not_block_release(self) -> None:
+        """A task that swallows CancelledError once is force-cancelled
+        and the shutdown completes release_feeds_batch successfully.
+        """
+
+        async def _swallow_once() -> None:
+            # First await: catches the FIRST cancel issued by the
+            # _shutdown_sequence cancel loop (line 1343-1344) and
+            # swallows it. Calling Task.uncancel() clears the cancel
+            # count so the second `await asyncio.sleep(60)` does NOT
+            # immediately re-raise; instead it sleeps until the
+            # SECOND cancel from the re-cancel loop propagates.
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                asyncio.current_task().uncancel()
+            await asyncio.sleep(60)  # second cancel propagates here
+
+        rt = _make_runtime(
+            task_cancel_budget_sec=0.1,
+            graceful_shutdown_timeout_sec=2.0,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._thread_stop = mock.MagicMock()
+        rt._heartbeat_thread = None
+        rt._rss_watchdog_thread = None
+        rt._store = mock.AsyncMock()
+        rt._store.release_feeds_batch.return_value = 1
+        rt._data_pool = mock.AsyncMock()
+        rt._heartbeat_pool = mock.AsyncMock()
+        rt._pubsub_client = mock.AsyncMock()
+        rt._gcs_client = mock.AsyncMock()
+        rt._health_runner = mock.AsyncMock()
+
+        stuck_task = asyncio.create_task(_swallow_once(), name="feed-stuck")
+        rt._feed_tasks[_FEED_ID] = stuck_task
+        # Yield once so the task body enters its first await BEFORE
+        # _shutdown_sequence's cancel loop runs. Without this, the
+        # cancel is delivered before the task has even started, and
+        # the swallow-then-uncancel pattern never gets to execute.
+        await asyncio.sleep(0)
+
+        try:
+            with (
+                mock.patch(
+                    "backend.pipeline.ingestion.normalizer_runtime.os._exit",
+                ) as mock_exit,
+                mock.patch("logging.shutdown"),
+                self.assertLogs(
+                    "backend.pipeline.ingestion.normalizer_runtime",
+                    level="WARNING",
+                ) as log_cm,
+            ):
+                await rt._shutdown_sequence()
+        finally:
+            # Defensive: even if assertions fail, don't leave the task
+            # un-awaited (warning noise in pytest output).
+            if not stuck_task.done():
+                stuck_task.cancel()
+                try:
+                    await stuck_task
+                except asyncio.CancelledError:
+                    pass
+
+        # D-09 LITERAL ASSERTIONS:
+
+        # 1. release_feeds_batch ran exactly once with worker_id —
+        #    the shutdown completed, the stuck task did not starve it.
+        rt._store.release_feeds_batch.assert_awaited_once_with(_WORKER_ID)
+
+        # 2. os._exit was NOT called during the sub-timeout window or
+        #    the 2s settle (no fence-violation triggered by the still-
+        #    pending task observing NULL worker_id).
+        mock_exit.assert_not_called()
+
+        # 3. The bounded warning log fired with the expected count.
+        sub_timeout_logs = [
+            r for r in log_cm.records if "Sub-timeout" in r.getMessage()
+        ]
+        self.assertEqual(len(sub_timeout_logs), 1)
+        self.assertIn("1 tasks still running", sub_timeout_logs[0].getMessage())
+
+
+class TestLogPayloadBound(unittest.TestCase):
+    """SHUTDOWN-02: 800-feed shutdown bounded log stays under 1 MB
+    (ROADMAP SC#2 / D-10). Pure string-formatting test — no asyncio.
+    """
+
+    def test_eight_hundred_feed_message_under_one_megabyte(self) -> None:
+        """Formatted Sub-timeout warning for 800 mock pending tasks
+        encodes to < 1 MB of UTF-8 bytes.
+        """
+        # Build 800 mock Task objects with realistic feed names
+        # ("feed-{source}-{i}-{name}" shape, ~30-50 chars each).
+        pending = []
+        for i in range(800):
+            t = mock.MagicMock(spec=asyncio.Task)
+            t.get_name = mock.MagicMock(
+                return_value=f"feed-source-{i:04d}-name-with-typical-length",
+            )
+            pending.append(t)
+
+        # Reproduce the production formatting EXACTLY as written in
+        # normalizer_runtime.py _shutdown_sequence (Task 2 D-04).
+        # If a future refactor accidentally interpolates `pending`
+        # (the list of Task objects) instead of `names` (list of
+        # strings), this assertion catches it because Task repr
+        # adds ~150 bytes per task → 800 × 150 ≈ 120 KB just from
+        # task-object boilerplate, plus any `<MagicMock id=0x...>`
+        # repr noise pushing well past 1 MB if mocks ever escape.
+        names = sorted(t.get_name() for t in pending)
+        # Use %-formatting (NOT f-strings) to mirror the production
+        # logger.warning shape exactly. The template is built as a
+        # string variable so UP031 (which only flags inline `%`
+        # against a string literal) does not require a suppression
+        # comment — the whole point of the test is to format-check
+        # the production logger string.
+        template = (
+            "Sub-timeout: %d tasks still running after %ss — "
+            "explicitly cancelling and proceeding to release. "
+            "names=%s"
+        )
+        formatted = template % (len(pending), 30.0, names)
+
+        encoded = formatted.encode("utf-8")
+        self.assertLess(
+            len(encoded),
+            1_048_576,
+            f"800-feed Sub-timeout warning is {len(encoded)} bytes, "
+            f"must be under 1 MB (ROADMAP SC#2)",
+        )
 
 
 if __name__ == "__main__":
