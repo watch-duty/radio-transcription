@@ -19,7 +19,7 @@ def main() -> None:
     blocks until graceful shutdown completes.
     """
     setup_logging()
-    settings = NormalizerSettings(source_types=supported_source_types())
+    settings = NormalizerSettings()
 
     # Verify topic paths for all supported source types at startup
     for st in supported_source_types():

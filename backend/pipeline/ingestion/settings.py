@@ -67,9 +67,6 @@ class NormalizerSettings:
         ),
     )
 
-    # Source-type scoping (None = no filter, lease all types)
-    source_types: list[str] | None = None
-
     # Feed orchestration
     max_feeds_per_worker: int = field(
         default_factory=lambda: int(

@@ -177,7 +177,6 @@ class NormalizerRuntime:
         self._data_pool = await create_pool_with_retry(settings.db)
         self._store = FeedStore(
             self._data_pool,
-            source_types=settings.source_types,
             claim_types=list(settings.caps.keys()),
         )
 
@@ -194,7 +193,6 @@ class NormalizerRuntime:
         # never-called acquire SQL out of sync with the data store's.
         self._heartbeat_store = FeedStore(
             self._heartbeat_pool,
-            source_types=settings.source_types,
             claim_types=list(settings.caps.keys()),
         )
 
