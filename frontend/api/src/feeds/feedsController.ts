@@ -226,6 +226,50 @@ export class FeedsController extends Controller {
     }
   }
 
+  @Post('{feedId}/reset')
+  @Security('google_id_token')
+  @Response<{ message: string }>(404, 'Not Found')
+  @Extension('x-google-backend', 'radio-transcription-api')
+  public async resetFeed(
+    @Path() feedId: string,
+    @Res() notFound: TsoaResponse<404, { message: string }>
+  ): Promise<Feed> {
+    const client = await this.getClient();
+    try {
+      const response = await client.request({
+        url: `${FEEDS_STORE_API_URL}/${feedId}/reset`,
+        method: 'POST',
+      });
+      return convertFeedBackend(response.data as FeedBackend);
+    } catch (error: unknown) {
+      if (isAxiosError(error)) {
+        if (error.response?.status === 404) {
+          return notFound(404, { message: `Feed ${feedId} not found` });
+        }
+        const status = error.response?.status || 500;
+        const data = JSON.stringify(error.response?.data);
+        console.error(
+          JSON.stringify({
+            level: 'ERROR',
+            message: `Backend API error: ${status}`,
+            data: error.response?.data,
+          })
+        );
+        throw new Error(`Backend API error ${status}: ${data}`, {
+          cause: error,
+        });
+      }
+      console.error(
+        JSON.stringify({
+          level: 'ERROR',
+          message: `Unexpected error resetting feed ${feedId}`,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      );
+      throw new Error(`Error resetting feed ${feedId}`, { cause: error });
+    }
+  }
+
   @Delete('{feedId}')
   @Security('google_id_token')
   @SuccessResponse('204', 'No Content')
