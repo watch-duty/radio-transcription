@@ -21,7 +21,13 @@ from backend.pipeline.common.clients import gcs_client
 from backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector import (
     capture_bcfy_calls,
 )
-from backend.pipeline.storage.feed_store import FeedStore, LeasedFeed
+from backend.pipeline.storage.feed_store import (
+    FeedStore,
+    LeasedFeed,
+    SourceType,
+)
+
+_CLAIM: dict[SourceType, int] = {SourceType.BCFY_CALLS: 1}
 
 _REPO_ROOT = __import__("pathlib").Path(__file__).resolve().parents[5]
 _SQL_DIR = (
@@ -191,12 +197,15 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             return await resp.read()
 
     async def _lease_feed(self, name: str) -> LeasedFeed:
+        """Insert and acquire the feed via the production claim path."""
         await self._insert_feed(name)
-        feed = await self.store.lease_feed(self.worker_id)
-        if feed is None:
-            msg = "Expected a LeasedFeed, got None"
+        leased = await self.store.acquire_feeds_batch(self.worker_id, _CLAIM)
+        if not leased:
+            msg = (
+                "Expected a LeasedFeed from acquire_feeds_batch, got empty list"
+            )
             raise AssertionError(msg)
-        return feed
+        return leased[0]
 
     # -- Tests ------------------------------------------------------------
 
@@ -411,10 +420,13 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         """Feed without source_feed_id -> ValueError, no GCS/DB writes."""
         # Insert a valid feed
         feed_id = await self._insert_feed("no-id-feed")
-        feed = await self.store.lease_feed(self.worker_id)
-        if feed is None:
-            msg = "Expected a LeasedFeed, got None"
+        leased = await self.store.acquire_feeds_batch(self.worker_id, _CLAIM)
+        if not leased:
+            msg = (
+                "Expected a LeasedFeed from acquire_feeds_batch, got empty list"
+            )
             raise AssertionError(msg)
+        feed = leased[0]
 
         # Mock missing source_feed_id on the loaded feed object
         feed["source_feed_id"] = None
