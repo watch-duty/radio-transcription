@@ -46,7 +46,9 @@ class TranscriptsClient:
             requests.exceptions.HTTPError: If the request fails.
         """
         data = json_format.MessageToDict(
-            payload, preserving_proto_field_name=True
+            payload,
+            preserving_proto_field_name=True,
+            always_print_fields_with_no_presence=True,
         )
 
         if is_gcp_env():
