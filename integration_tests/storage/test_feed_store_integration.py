@@ -331,7 +331,10 @@ async def test_recovery_excludes_non_claim_source_types(
 
     returned_ids = {lease["id"] for lease in result}
     assert echo_id not in returned_ids, "ECHO must never be claim-recovered"
-    # Confirm only bcfy_feeds came back; openmhz row stays with the other worker.
+    # Confirm only bcfy_feeds came back. The openmhz row would be eligible
+    # for active-abandoned recovery (heartbeat_age=120s > abandonment=60s),
+    # so its exclusion proves the claim_types filter ($4) is doing the work,
+    # not lock ownership or staleness.
     assert returned_ids == {bcfy_id}
     assert all(
         lease["source_type"] == SourceType.BCFY_FEEDS for lease in result

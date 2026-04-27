@@ -83,9 +83,16 @@ class NormalizerSettings:
             os.environ.get("HEARTBEAT_INTERVAL_SEC", "15.0"),
         ),
     )
+    # Clamped to >=1.0: a non-positive timeout makes
+    # concurrent.futures.Future.result() raise TimeoutError immediately
+    # on every heartbeat tick, which the heartbeat thread interprets as
+    # an event-loop stall and triggers os._exit(1). Clamping at 1 second
+    # converts the misconfig failure mode from "instant fleet-wide death
+    # on first tick" into "every-cycle log noise" — recoverable.
     heartbeat_stall_timeout_sec: float = field(
-        default_factory=lambda: float(
-            os.environ.get("HEARTBEAT_STALL_TIMEOUT_SEC", "45.0"),
+        default_factory=lambda: max(
+            1.0,
+            float(os.environ.get("HEARTBEAT_STALL_TIMEOUT_SEC", "45.0")),
         ),
     )
     graceful_shutdown_timeout_sec: float = field(
