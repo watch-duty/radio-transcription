@@ -325,7 +325,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
     url_base: str,
-    _resources: CaptureResources,
+    resources: CaptureResources,
 ) -> AsyncIterator[CapturedChunk]:
     """Capture audio chunks from Broadcastify Calls API.
 
@@ -335,9 +335,12 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
         url_base: Full Broadcastify Calls API live endpoint URL to query.
             The function uses this URL directly after normalizing a
             trailing slash.
-        _resources: Runtime-owned http_session and spawn_semaphore.
-            Phase 2 accepts but does not use; Phase 3 wires
-            http_session into the polling loop (HTTP-01).
+        resources: Runtime-owned http_session (used) and spawn_semaphore
+            (unused for bcfy_calls; icecast consumes it). The
+            http_session is the runtime-owned aiohttp.ClientSession
+            created in NormalizerRuntime._main(); per HTTP-01, the
+            collector reuses it instead of constructing a new session
+            per poll. Lifecycle is owned by the runtime — do not close.
     """
     connection_session_id = str(uuid.uuid4())
     source_feed_id = feed.get("source_feed_id")
@@ -359,109 +362,109 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
     seen_urls = collections.deque(maxlen=1000)
     consecutive_failures = 0
 
-    async with aiohttp.ClientSession(
-        timeout=aiohttp.ClientTimeout(total=_API_TIMEOUT_SEC)
-    ) as session:
-        while not shutdown_event.is_set():
-            params: dict[str, Any] = {"groups": source_feed_id}
-            if last_bookmark_time_unix is not None:
-                params["pos"] = last_bookmark_time_unix
+    # HTTP-01: reuse runtime-owned session (D-04, D-05).
+    # The runtime owns lifecycle; do NOT close here.
+    session = resources.http_session
+    while not shutdown_event.is_set():
+        params: dict[str, Any] = {"groups": source_feed_id}
+        if last_bookmark_time_unix is not None:
+            params["pos"] = last_bookmark_time_unix
 
-            try:
-                bcfy_calls = await _fetch_calls(
-                    session,
-                    normalized_url_base,
-                    headers,
-                    params,
-                    feed_id,
-                    source_feed_id,
-                    shutdown_event,
-                )
+        try:
+            bcfy_calls = await _fetch_calls(
+                session,
+                normalized_url_base,
+                headers,
+                params,
+                feed_id,
+                source_feed_id,
+                shutdown_event,
+            )
 
-                calls = _extract_calls_from_response(bcfy_calls)
+            calls = _extract_calls_from_response(bcfy_calls)
 
-                if calls:
-                    for result in calls:
-                        if shutdown_event.is_set():
-                            break
+            if calls:
+                for result in calls:
+                    if shutdown_event.is_set():
+                        break
 
-                        # SLO: receipt_time stamp — bcfy_calls per-call iteration
-                        receipt_time = datetime.datetime.now(datetime.UTC)
+                    # SLO: receipt_time stamp — bcfy_calls per-call iteration
+                    receipt_time = datetime.datetime.now(datetime.UTC)
 
-                        audio_url = result.get("url")
-                        if not audio_url or audio_url in seen_urls:
-                            continue
+                    audio_url = result.get("url")
+                    if not audio_url or audio_url in seen_urls:
+                        continue
 
-                        chunk = await _create_chunk_from_call(
-                            session,
-                            result,
-                            audio_url,
-                            shutdown_event,
-                            connection_session_id,
-                            receipt_time,
-                        )
-                        if not chunk:
-                            if not shutdown_event.is_set():
-                                # SLO: call_download_failed emit — bcfy_calls _create_chunk_from_call returned None
-                                logger.warning(
-                                    "Call download failed",
-                                    extra={
-                                        "json_fields": {
-                                            "event_type": EVENT_TYPE_CALL_DOWNLOAD_FAILED,
-                                            "feed_id": str(feed["id"]),
-                                            "source_type": feed["source_type"],
-                                        },
+                    chunk = await _create_chunk_from_call(
+                        session,
+                        result,
+                        audio_url,
+                        shutdown_event,
+                        connection_session_id,
+                        receipt_time,
+                    )
+                    if not chunk:
+                        if not shutdown_event.is_set():
+                            # SLO: call_download_failed emit — bcfy_calls _create_chunk_from_call returned None
+                            logger.warning(
+                                "Call download failed",
+                                extra={
+                                    "json_fields": {
+                                        "event_type": EVENT_TYPE_CALL_DOWNLOAD_FAILED,
+                                        "feed_id": str(feed["id"]),
+                                        "source_type": feed["source_type"],
                                     },
-                                )
-                            continue
+                                },
+                            )
+                        continue
 
-                        yield chunk
+                    yield chunk
 
-                        # Only mark as seen and update pagination after a successful
-                        # yield, confirming the chunk was handed off to the pipeline.
-                        seen_urls.append(audio_url)
-                        # Reset consecutive failures on successful yield
-                        consecutive_failures = 0
-                # Update local last_bookmark_time_unix for pagination after processing all calls in the response, ensuring we don't skip any calls if an error occurs mid-page.
-                if bcfy_calls and "lastPos" in bcfy_calls:
-                    last_bookmark_time_unix = bcfy_calls["lastPos"]
+                    # Only mark as seen and update pagination after a successful
+                    # yield, confirming the chunk was handed off to the pipeline.
+                    seen_urls.append(audio_url)
+                    # Reset consecutive failures on successful yield
+                    consecutive_failures = 0
+            # Update local last_bookmark_time_unix for pagination after processing all calls in the response, ensuring we don't skip any calls if an error occurs mid-page.
+            if bcfy_calls and "lastPos" in bcfy_calls:
+                last_bookmark_time_unix = bcfy_calls["lastPos"]
 
-                # Wait before polling again, gracefully interruptible by shutdown
-                await _sleep_or_shutdown(shutdown_event, _POLL_INTERVAL_SEC)
+            # Wait before polling again, gracefully interruptible by shutdown
+            await _sleep_or_shutdown(shutdown_event, _POLL_INTERVAL_SEC)
 
-            except AuthError:
-                # Structured so it joins the other ingestion SLO/alert surfaces via
-                # event_type; token is deliberately NOT logged (bearer tokens in logs
-                # are a secrets-in-logs anti-pattern even when short-lived).
-                logger.warning(
-                    "Auth failure (401/403) for feed %s; refreshing token.",
-                    feed_id,
-                    extra={
-                        "json_fields": {
-                            "event_type": EVENT_TYPE_CALL_AUTH_FAILURE,
-                            "feed_id": str(feed_id),
-                            "source_type": feed["source_type"],
-                        },
+        except AuthError:
+            # Structured so it joins the other ingestion SLO/alert surfaces via
+            # event_type; token is deliberately NOT logged (bearer tokens in logs
+            # are a secrets-in-logs anti-pattern even when short-lived).
+            logger.warning(
+                "Auth failure (401/403) for feed %s; refreshing token.",
+                feed_id,
+                extra={
+                    "json_fields": {
+                        "event_type": EVENT_TYPE_CALL_AUTH_FAILURE,
+                        "feed_id": str(feed_id),
+                        "source_type": feed["source_type"],
                     },
-                )
-                try:
-                    jwt_token = await asyncio.to_thread(_get_jwt_token)
-                    headers["Authorization"] = f"Bearer {jwt_token}"
-                except Exception as e:
-                    # Use warning, not exception — the catch-all handler in
-                    # normalizer_runtime calls logger.exception, which already
-                    # includes this exception's traceback via __cause__.
-                    # Logging it here too duplicates the stack trace.
-                    logger.warning("Failed to refresh JWT token: %s", e)
-                    msg = "auth_failed"
-                    raise RuntimeError(msg) from e
-                consecutive_failures = await _handle_loop_failure(
-                    feed_id, consecutive_failures, shutdown_event
-                )
-            except RuntimeError:
-                raise
+                },
+            )
+            try:
+                jwt_token = await asyncio.to_thread(_get_jwt_token)
+                headers["Authorization"] = f"Bearer {jwt_token}"
             except Exception as e:
-                logger.exception("Error in capture_bcfy_calls loop: %s", e)
-                consecutive_failures = await _handle_loop_failure(
-                    feed_id, consecutive_failures, shutdown_event
-                )
+                # Use warning, not exception — the catch-all handler in
+                # normalizer_runtime calls logger.exception, which already
+                # includes this exception's traceback via __cause__.
+                # Logging it here too duplicates the stack trace.
+                logger.warning("Failed to refresh JWT token: %s", e)
+                msg = "auth_failed"
+                raise RuntimeError(msg) from e
+            consecutive_failures = await _handle_loop_failure(
+                feed_id, consecutive_failures, shutdown_event
+            )
+        except RuntimeError:
+            raise
+        except Exception as e:
+            logger.exception("Error in capture_bcfy_calls loop: %s", e)
+            consecutive_failures = await _handle_loop_failure(
+                feed_id, consecutive_failures, shutdown_event
+            )
