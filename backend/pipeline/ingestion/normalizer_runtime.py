@@ -3,6 +3,7 @@ import concurrent.futures
 import datetime
 import logging
 import os
+import pathlib
 import signal
 import threading
 import time
@@ -273,6 +274,91 @@ class NormalizerRuntime:
         except TimeoutError:
             return False
         return True
+
+    # cgroup memory paths -- frozen at class level so the path objects
+    # are constructed once at import time, not per call. Cached as
+    # pathlib.Path so each poll is just `.read_text()` + `int()`.
+    _CGROUP_V2_LIMIT_PATH = pathlib.Path("/sys/fs/cgroup/memory.max")
+    _CGROUP_V2_USAGE_PATH = pathlib.Path("/sys/fs/cgroup/memory.current")
+    _CGROUP_V1_LIMIT_PATH = pathlib.Path(
+        "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+    )
+    _CGROUP_V1_USAGE_PATH = pathlib.Path(
+        "/sys/fs/cgroup/memory/memory.usage_in_bytes",
+    )
+    # cgroup v1 "unbounded" sentinel (~ 2**63). PITFALLS.md Pitfall 2.
+    _CGROUP_V1_UNBOUNDED_SENTINEL_THRESHOLD = 2**62
+
+    @staticmethod
+    def _resolve_container_memory_bytes(
+        override: int | None = None,
+    ) -> int | None:
+        """
+        Return the container memory limit in bytes, or None if unbounded.
+
+        Priority order (D-01 / D-04):
+          1. override (e.g. settings.container_memory_bytes_override --
+             skip fs reads entirely so dev / test can pin a limit).
+          2. cgroup v2 unified hierarchy (/sys/fs/cgroup/memory.max).
+             Literal "max" -> None (PITFALLS.md Pitfall 2 -- DO NOT
+             fall back to psutil.virtual_memory(); host-namespaced).
+          3. cgroup v1 fallback (/sys/fs/cgroup/memory/memory.limit_in_bytes).
+             Values >= 2**62 are the v1 "unbounded" sentinel -> None.
+          4. None on any OSError chain (fs unreadable; caller disables
+             the watchdog).
+
+        Caller MUST treat None as "watchdog disabled" and emit a
+        WARNING per D-22 -- never fall back to host-namespaced memory.
+        """
+        if override is not None:
+            return override
+        # cgroup v2 (unified hierarchy; expected on COS / GKE / Cloud Run)
+        try:
+            raw = NormalizerRuntime._CGROUP_V2_LIMIT_PATH.read_text().strip()
+        except OSError:
+            pass
+        else:
+            if raw == "max":
+                return None
+            return int(raw)
+        # cgroup v1 fallback (legacy hosts; should not be reachable on COS)
+        try:
+            raw = NormalizerRuntime._CGROUP_V1_LIMIT_PATH.read_text().strip()
+        except OSError:
+            return None
+        val = int(raw)
+        if val >= NormalizerRuntime._CGROUP_V1_UNBOUNDED_SENTINEL_THRESHOLD:
+            return None
+        return val
+
+    @staticmethod
+    def _resolve_container_memory_usage_bytes() -> int | None:
+        """
+        Return current container memory usage in bytes, or None on read error.
+
+        Tries cgroup v2 (/sys/fs/cgroup/memory.current) first, falls back
+        to cgroup v1 (/sys/fs/cgroup/memory/memory.usage_in_bytes). Per
+        D-04, the "max"/sentinel handling lives in
+        _resolve_container_memory_bytes -- this helper only sees numeric
+        values once the limit phase has decided the watchdog should run.
+
+        Returns None if BOTH paths raise OSError. The caller (the
+        watchdog body in Plan 04-02) defensively pauses on None per
+        CONTEXT.md "Specifics": "if read_text raises OSError mid-run,
+        set _paused_for_memory defensively and emit a single ERROR log".
+        """
+        try:
+            return int(
+                NormalizerRuntime._CGROUP_V2_USAGE_PATH.read_text().strip(),
+            )
+        except OSError:
+            pass
+        try:
+            return int(
+                NormalizerRuntime._CGROUP_V1_USAGE_PATH.read_text().strip(),
+            )
+        except OSError:
+            return None
 
     # -- Leasing ----------------------------------------------------------
 
