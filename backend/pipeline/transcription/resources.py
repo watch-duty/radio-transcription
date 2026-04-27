@@ -4,13 +4,13 @@ import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
 
 from apache_beam.utils.shared import Shared
+from google.cloud import storage
 
-from backend.pipeline.transcription.enums import TranscriberType, VadType
-from backend.pipeline.transcription.transcribers import Transcriber
-from backend.pipeline.transcription.vads import VoiceActivityDetector
+from backend.pipeline.transcription.audio.vads import VoiceActivityDetector
+from backend.pipeline.transcription.common.enums import TranscriberType, VadType
+from backend.pipeline.transcription.services.transcribers import Transcriber
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class SharedResources:
     """
 
     vad: VoiceActivityDetector | None = None
-    gcs_client: Any | None = None
+    gcs_client: storage.Client | None = None
     transcriber: Transcriber | None = None
 
     _vad_lock: threading.Lock = field(default_factory=threading.Lock)
@@ -49,7 +49,7 @@ class SharedResources:
                     self.vad = factory(vad_type, config_json)
         return self.vad
 
-    def get_gcs(self, factory: Callable[[], Any]) -> Any:
+    def get_gcs(self, factory: Callable[[], storage.Client]) -> storage.Client:
         """Lazily initialize and return the Google Cloud Storage client."""
         if self.gcs_client is None:
             with self._gcs_lock:

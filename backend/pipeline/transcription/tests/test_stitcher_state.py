@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from backend.pipeline.transcription.datatypes import (
+from backend.pipeline.transcription.common.datatypes import (
     AppendBufferAction,
     AudioChunkData,
     DropAction,
@@ -14,8 +14,8 @@ from backend.pipeline.transcription.datatypes import (
     TimeRange,
     UpdateStateAction,
 )
-from backend.pipeline.transcription.enums import VadType
-from backend.pipeline.transcription.stitcher_state import (
+from backend.pipeline.transcription.common.enums import VadType
+from backend.pipeline.transcription.state.stitcher_state import (
     AudioStitchingStateMachine,
 )
 

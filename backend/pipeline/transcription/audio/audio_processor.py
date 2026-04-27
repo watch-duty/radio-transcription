@@ -7,7 +7,6 @@ import tempfile
 import urllib.parse
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 from google.cloud import storage
@@ -18,7 +17,16 @@ from backend.pipeline.common.constants import (
     M4A_BITRATE,
     SAMPLE_RATE_HZ,
 )
-from backend.pipeline.transcription.constants import (
+from backend.pipeline.transcription.audio.detectors import AcousticGateDetector
+from backend.pipeline.transcription.audio.dsp import (
+    compute_rms_energy,
+    compute_spectral_flatness,
+)
+from backend.pipeline.transcription.audio.vads import (
+    VoiceActivityDetector,
+    get_vad_plugin,
+)
+from backend.pipeline.transcription.common.constants import (
     DEFAULT_SED_FFT_SIZE,
     DEFAULT_SED_HOP_SIZE,
     HIGHPASS_FILTER_FREQ,
@@ -27,18 +35,9 @@ from backend.pipeline.transcription.constants import (
     VAD_FLATNESS_NOISE_THRESHOLD,
     VAD_RMS_SILENCE_THRESHOLD,
 )
-from backend.pipeline.transcription.datatypes import AudioChunkData
-from backend.pipeline.transcription.detectors import AcousticGateDetector
-from backend.pipeline.transcription.dsp import (
-    compute_rms_energy,
-    compute_spectral_flatness,
-)
-from backend.pipeline.transcription.enums import VadType
+from backend.pipeline.transcription.common.datatypes import AudioChunkData
+from backend.pipeline.transcription.common.enums import VadType
 from backend.pipeline.transcription.resources import SharedResources
-from backend.pipeline.transcription.vads import (
-    VoiceActivityDetector,
-    get_vad_plugin,
-)
 
 logger = logging.getLogger(__name__)
 logger = logging.LoggerAdapter(
@@ -65,7 +64,7 @@ class AudioProcessor:
         shared_resources: SharedResources | None = None,
         vad_factory: Callable[[VadType, str], VoiceActivityDetector]
         | None = None,
-        gcs_factory: Callable[[], Any] | None = None,
+        gcs_factory: Callable[[], storage.Client] | None = None,
     ) -> None:
         self.vad_type = vad_type
         self.vad_config = vad_config
@@ -75,7 +74,7 @@ class AudioProcessor:
         self.sed_detector = AcousticGateDetector()
 
         self.vad: VoiceActivityDetector | None = None
-        self.gcs_client: Any | None = None
+        self.gcs_client: storage.Client | None = None
 
     def setup(self) -> None:
         """Initializes the VAD plugin and GCS client once per worker."""

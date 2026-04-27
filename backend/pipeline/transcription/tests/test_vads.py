@@ -5,15 +5,18 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-from backend.pipeline.transcription.enums import VadType
-from backend.pipeline.transcription.vads import TenVadPlugin, get_vad_plugin
+from backend.pipeline.transcription.audio.vads import (
+    TenVadPlugin,
+    get_vad_plugin,
+)
+from backend.pipeline.transcription.common.enums import VadType
 
 
 class TestVadPlugins(unittest.TestCase):
     def test_get_vad_plugin_ten_vad(self) -> None:
         """Verifies that the factory method accurately instantiates the correct TenVadPlugin class when requested utilizing accurate JSON configuration structures."""
         with patch(
-            "backend.pipeline.transcription.vads.TenVadPlugin.setup"
+            "backend.pipeline.transcription.audio.vads.TenVadPlugin.setup"
         ) as mock_setup:
             plugin = get_vad_plugin(VadType.TEN_VAD, '{"threshold": 0.5}')
             self.assertIsInstance(plugin, TenVadPlugin)

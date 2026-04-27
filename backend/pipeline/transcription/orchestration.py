@@ -19,7 +19,7 @@ from apache_beam.options.pipeline_options import (
     StandardOptions,
 )
 
-from backend.pipeline.transcription.constants import (
+from backend.pipeline.transcription.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
     DEFAULT_MAX_TRANSMISSION_DURATION_MS,
     DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
@@ -29,18 +29,18 @@ from backend.pipeline.transcription.constants import (
     DEFAULT_VAD_PRE_ROLL_MS,
     MAIN_TAG,
 )
-from backend.pipeline.transcription.datatypes import (
+from backend.pipeline.transcription.common.datatypes import (
     OrderRestorerConfig,
     StitchAudioConfig,
     TranscribeAudioConfig,
 )
 from backend.pipeline.transcription.options import TranscriptionOptions
-from backend.pipeline.transcription.stateful_transforms import (
+from backend.pipeline.transcription.transforms.stateful import (
     OrderedBypassFn,
     OrderedStitchAudioFn,
     TranscribeAudioFn,
 )
-from backend.pipeline.transcription.transforms import (
+from backend.pipeline.transcription.transforms.stateless import (
     ParseAndKeyFn,
     SerializeFn,
 )
@@ -185,17 +185,22 @@ def get_pipeline(
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
     # Convert the native TranscriptionResult into a serialized Protobuf and wrap in a Pub/Sub message
-    serialized = transcripts.main | "Serialize" >> beam.ParDo(SerializeFn())
-    serialized | "WriteToPubSub" >> WriteToPubSub(
+    serialized = transcripts.main | "Serialize" >> beam.ParDo(
+        SerializeFn()
+    ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+    serialized.main | "WriteToPubSub" >> WriteToPubSub(
         topic=options.output_topic,
         with_attributes=True,
     )
 
     # Route all DLQ (Dead Letter Queue) outputs from intermediate steps to a dedicated topic
-    dlq_list = [
-        parsed[DEAD_LETTER_QUEUE_TAG],
-        transcripts[DEAD_LETTER_QUEUE_TAG],
-    ]
+    dlq_list.extend(
+        [
+            parsed[DEAD_LETTER_QUEUE_TAG],
+            transcripts[DEAD_LETTER_QUEUE_TAG],
+            serialized[DEAD_LETTER_QUEUE_TAG],
+        ]
+    )
 
     dlq_combined = tuple(dlq_list) | "FlattenDlqs" >> beam.Flatten()
 

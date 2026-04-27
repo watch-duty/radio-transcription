@@ -185,16 +185,13 @@ async def openmhz_collector(
 
             consecutive_ws_failures += 1
             if consecutive_ws_failures >= MAX_RECONNECT_FAILURES:
-                msg = (
-                    f"WebSocket failed {consecutive_ws_failures} "
-                    f"times consecutively for {short_name}"
-                )
                 logger.error(
                     "Escalating to runtime: short_name=%s "
                     "consecutive_failures=%d",
                     short_name,
                     consecutive_ws_failures,
                 )
+                msg = "reconnect_exhausted"
                 raise RuntimeError(msg)
 
             backoff = min(

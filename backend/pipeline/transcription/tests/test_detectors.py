@@ -4,8 +4,8 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 
 from backend.pipeline.common.constants import SAMPLE_RATE_HZ
-from backend.pipeline.transcription.datatypes import TimeRange
-from backend.pipeline.transcription.detectors import AcousticGateDetector
+from backend.pipeline.transcription.audio.detectors import AcousticGateDetector
+from backend.pipeline.transcription.common.datatypes import TimeRange
 
 
 class AcousticGateDetectorTest(unittest.TestCase):
@@ -26,8 +26,10 @@ class AcousticGateDetectorTest(unittest.TestCase):
         results = detector.detect(np.zeros(16000, dtype=np.int16))
         self.assertEqual(results, [])
 
-    @patch("backend.pipeline.transcription.detectors.compute_spectral_flatness")
-    @patch("backend.pipeline.transcription.detectors.compute_rms_energy")
+    @patch(
+        "backend.pipeline.transcription.audio.detectors.compute_spectral_flatness"
+    )
+    @patch("backend.pipeline.transcription.audio.detectors.compute_rms_energy")
     def test_detect_speech_like(
         self, mock_rms: MagicMock, mock_flatness: MagicMock
     ) -> None:

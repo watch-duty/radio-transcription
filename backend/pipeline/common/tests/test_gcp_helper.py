@@ -5,6 +5,9 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
+from google.cloud.pubsub_v1.publisher.exceptions import (
+    PublishToPausedOrderingKeyException,
+)
 from multidict import CIMultiDict, CIMultiDictProxy
 from yarl import URL
 
@@ -90,7 +93,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             bucket,
             expected_object_name,
             audio_chunk,
-            metadata={"trace_id": ""},
+            metadata=None,
             content_type="audio/flac",
         )
         self.assertEqual(result, expected_path)
@@ -130,7 +133,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             bucket,
             expected_object_name,
             audio_chunk,
-            metadata={"trace_id": ""},
+            metadata=None,
             content_type="audio/flac",
         )
         self.assertEqual(result, expected_path)
@@ -245,7 +248,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             "test-bucket",
             expected_object_name,
             b"\x00\x01" * 100,
-            metadata={"trace_id": ""},
+            metadata=None,
             content_type="audio/flac",
             parameters={"ifGenerationMatch": "0"},
         )
@@ -273,7 +276,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             bucket,
             object_name,
             audio,
-            metadata={"trace_id": ""},
+            metadata=None,
             content_type="audio/flac",
         )
         self.assertEqual(result, f"gs://{bucket}/{object_name}")
@@ -292,7 +295,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         metadata = call_kwargs.kwargs.get("metadata") or call_kwargs[1].get(
             "metadata"
         )
-        self.assertEqual(metadata, {"trace_id": ""})
+        self.assertIsNone(metadata)
 
     async def test_upload_with_if_generation_match(self) -> None:
         """ifGenerationMatch=0 is passed as parameters to storage.upload."""
@@ -310,7 +313,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             "bucket",
             "obj.flac",
             b"audio",
-            metadata={"trace_id": ""},
+            metadata=None,
             content_type="audio/flac",
             parameters={"ifGenerationMatch": "0"},
         )
@@ -404,7 +407,6 @@ class TestPublishAudioChunkSync(unittest.TestCase):
         publish_args, publish_kwargs = mock_publisher.publish.call_args
         self.assertEqual(publish_args[0], "projects/test/topics/audio")
         self.assertEqual(publish_kwargs["source_type"], "echo")
-
         self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
 
         chunk = AudioChunk()
@@ -474,6 +476,65 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chunk.feed_name, "Central Fire")
         self.assertEqual(chunk.external_id, "ext-id")
         self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
+
+    async def test_paused_ordering_key_calls_resume_publish(self) -> None:
+        """PublishToPausedOrderingKeyException triggers resume_publish before propagating raw."""
+        mock_pubsub_client, mock_publisher = _make_pubsub_client()
+        mock_now = datetime.datetime(2026, 4, 25, 12, 0, tzinfo=datetime.UTC)
+
+        fut = concurrent.futures.Future()
+        fut.set_exception(PublishToPausedOrderingKeyException("feed-42"))
+        mock_publisher.publish.return_value = fut
+
+        with self.assertRaises(PublishToPausedOrderingKeyException):
+            await gcp_helper.publish_audio_chunk(
+                mock_pubsub_client,
+                topic_path="projects/test/topics/audio",
+                feed_id="feed-42",
+                feed_name="Central Fire",
+                external_id="ext-id",
+                gcs_uri="gs://bucket/audio.flac",
+                session_id="test-session-1",
+                start_timestamp=mock_now,
+                duration_ms=15000,
+            )
+
+        mock_publisher.resume_publish.assert_called_once_with(
+            "projects/test/topics/audio",
+            ordering_key="feed-42",
+        )
+
+    async def test_resume_publish_failure_swallowed(self) -> None:
+        """RuntimeError or ValueError from resume_publish is swallowed; the original PausedOrderingKey exception still propagates."""
+        mock_now = datetime.datetime(2026, 4, 25, 12, 0, tzinfo=datetime.UTC)
+
+        for resume_exc in (
+            RuntimeError("publisher stopped"),
+            ValueError("unseen key"),
+        ):
+            with self.subTest(resume_exc=type(resume_exc).__name__):
+                mock_pubsub_client, mock_publisher = _make_pubsub_client()
+                fut = concurrent.futures.Future()
+                fut.set_exception(
+                    PublishToPausedOrderingKeyException("feed-42")
+                )
+                mock_publisher.publish.return_value = fut
+                mock_publisher.resume_publish.side_effect = resume_exc
+
+                with self.assertRaises(PublishToPausedOrderingKeyException):
+                    await gcp_helper.publish_audio_chunk(
+                        mock_pubsub_client,
+                        topic_path="projects/test/topics/audio",
+                        feed_id="feed-42",
+                        feed_name="Central Fire",
+                        external_id="ext-id",
+                        gcs_uri="gs://bucket/audio.flac",
+                        session_id="test-session-1",
+                        start_timestamp=mock_now,
+                        duration_ms=15000,
+                    )
+
+                mock_publisher.resume_publish.assert_called_once()
 
 
 class TestParseGcsUri(unittest.TestCase):

@@ -16,6 +16,7 @@ from google.cloud import secretmanager
 
 from backend.pipeline.ingestion.models import CapturedChunk
 from backend.pipeline.ingestion.slo_contract import (
+    EVENT_TYPE_CALL_AUTH_FAILURE,
     EVENT_TYPE_CALL_DOWNLOAD_FAILED,
 )
 
@@ -314,10 +315,7 @@ async def _handle_loop_failure(
     """Increment failure count, raise if exceeded, and sleep."""
     consecutive_failures += 1
     if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
-        msg = (
-            f"Feed {feed_id} exceeded {_MAX_CONSECUTIVE_FAILURES} "
-            "consecutive failures; marking as unhealthy"
-        )
+        msg = "source_unreachable"
         raise RuntimeError(msg)
     await _sleep_or_shutdown(shutdown_event, _POLL_INTERVAL_SEC)
     return consecutive_failures
@@ -426,16 +424,31 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                 await _sleep_or_shutdown(shutdown_event, _POLL_INTERVAL_SEC)
 
             except AuthError:
+                # Structured so it joins the other ingestion SLO/alert surfaces via
+                # event_type; token is deliberately NOT logged (bearer tokens in logs
+                # are a secrets-in-logs anti-pattern even when short-lived).
                 logger.warning(
-                    "Auth failure (401/403) for feed %s and token %s, refreshing token.",
+                    "Auth failure (401/403) for feed %s; refreshing token.",
                     feed_id,
-                    jwt_token,
+                    extra={
+                        "json_fields": {
+                            "event_type": EVENT_TYPE_CALL_AUTH_FAILURE,
+                            "feed_id": str(feed_id),
+                            "source_type": feed["source_type"],
+                        },
+                    },
                 )
                 try:
                     jwt_token = await asyncio.to_thread(_get_jwt_token)
                     headers["Authorization"] = f"Bearer {jwt_token}"
                 except Exception as e:
-                    logger.exception("Failed to refresh JWT token: %s", e)
+                    # Use warning, not exception — the catch-all handler in
+                    # normalizer_runtime calls logger.exception, which already
+                    # includes this exception's traceback via __cause__.
+                    # Logging it here too duplicates the stack trace.
+                    logger.warning("Failed to refresh JWT token: %s", e)
+                    msg = "auth_failed"
+                    raise RuntimeError(msg) from e
                 consecutive_failures = await _handle_loop_failure(
                     feed_id, consecutive_failures, shutdown_event
                 )

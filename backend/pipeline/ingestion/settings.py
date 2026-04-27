@@ -4,6 +4,7 @@ import os
 import uuid
 from dataclasses import dataclass, field
 
+from backend.pipeline.storage.feed_store import SourceType
 from backend.pipeline.storage.settings import AlloyDBSettings
 
 
@@ -14,6 +15,36 @@ def _require_env(name: str) -> str:
         msg = f"Required environment variable {name} is not set"
         raise ValueError(msg)
     return value
+
+
+# Per-type claim-budget defaults (scaling plan §4/§6). The set of keys
+# IS the canonical "what types this fleet claims" registry — adding a
+# new claimable source type means adding one entry here. The runtime
+# and FeedStore both iterate this set; neither references SourceType
+# members directly. ECHO is intentionally absent: Echo feeds are
+# served by a separate cloud function, not VM-leased.
+_DEFAULT_CAPS: dict[SourceType, int] = {
+    SourceType.BCFY_FEEDS: 240,
+    SourceType.BCFY_CALLS: 600,
+    SourceType.OPENMHZ: 900,
+}
+
+
+def _load_caps_from_env() -> dict[SourceType, int]:
+    """Build per-type caps from CAP_<NAME> env vars, defaulting via _DEFAULT_CAPS.
+
+    Caps are clamped to ``max(0, ...)`` so a misconfigured negative env
+    var can't propagate into the SQL as a negative ``LIMIT`` (PostgreSQL
+    rejects negative LIMITs and the resulting error would block every
+    leasing cycle indefinitely). A clamp at this boundary keeps the
+    corrupt-input failure mode local: the affected branch claims nothing
+    until ops fixes the env var, but the worker keeps processing other
+    types and stays healthy.
+    """
+    return {
+        t: max(0, int(os.environ.get(f"CAP_{t.name}", str(default))))
+        for t, default in _DEFAULT_CAPS.items()
+    }
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -36,13 +67,10 @@ class NormalizerSettings:
         ),
     )
 
-    # Source-type scoping (None = no filter, lease all types)
-    source_types: list[str] | None = None
-
     # Feed orchestration
     max_feeds_per_worker: int = field(
         default_factory=lambda: int(
-            os.environ.get("MAX_FEEDS_PER_WORKER", "250"),
+            os.environ.get("MAX_FEEDS_PER_WORKER", "800"),
         ),
     )
     lease_poll_interval_sec: float = field(
@@ -55,9 +83,16 @@ class NormalizerSettings:
             os.environ.get("HEARTBEAT_INTERVAL_SEC", "15.0"),
         ),
     )
+    # Clamped to >=1.0: a non-positive timeout makes
+    # concurrent.futures.Future.result() raise TimeoutError immediately
+    # on every heartbeat tick, which the heartbeat thread interprets as
+    # an event-loop stall and triggers os._exit(1). Clamping at 1 second
+    # converts the misconfig failure mode from "instant fleet-wide death
+    # on first tick" into "every-cycle log noise" — recoverable.
     heartbeat_stall_timeout_sec: float = field(
-        default_factory=lambda: float(
-            os.environ.get("HEARTBEAT_STALL_TIMEOUT_SEC", "45.0"),
+        default_factory=lambda: max(
+            1.0,
+            float(os.environ.get("HEARTBEAT_STALL_TIMEOUT_SEC", "45.0")),
         ),
     )
     graceful_shutdown_timeout_sec: float = field(
@@ -65,6 +100,13 @@ class NormalizerSettings:
             os.environ.get("GRACEFUL_SHUTDOWN_TIMEOUT_SEC", "10.0"),
         ),
     )
+
+    # Per-type claim budget caps (scaling plan §4/§6). Worker passes
+    # min(cap, cap - held, total_slack) as each CTE branch's LIMIT so
+    # PostgreSQL enforces the cap structurally via the query planner.
+    # Defaults + claimable type set live in module-level _DEFAULT_CAPS;
+    # CAP_<NAME> env vars override individual entries.
+    caps: dict[SourceType, int] = field(default_factory=_load_caps_from_env)
 
     # GCS
     audio_staging_bucket: str = field(
