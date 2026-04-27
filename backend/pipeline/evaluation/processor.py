@@ -65,9 +65,18 @@ class EvaluationEventProcessor:
             )
             return
 
+        def _raise(msg: str) -> None:
+            raise ValueError(msg)
+
+        if not new_audio.transmission_id:
+            _raise("transmission_id is required")
+        if not new_audio.feed_id:
+            _raise("feed_id is required")
+        if not new_audio.transcript:
+            _raise("transcript is required")
         if not new_audio.source_audio_uris:
             msg = f"TranscribedAudio missing source_audio_uris for feed_id: {new_audio.feed_id} (transmission: {new_audio.transmission_id})"
-            raise ValueError(msg)
+            _raise(msg)
 
         # 2. Evaluate
         # TODO (https://linear.app/watchduty/issue/GOO-245/): Handle evaluation failure.
