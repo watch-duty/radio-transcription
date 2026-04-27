@@ -14,6 +14,7 @@ def run_batch_evaluation(
     decode_fn, 
     storage_client,
     project_name,
+    selected_model,
     batch_size=4,
     limit=None
 ):
@@ -28,6 +29,7 @@ def run_batch_evaluation(
         decode_fn: Callable(output, model) -> str (transcription).
         storage_client: GCS storage client.
         project_name: Name of the project for path derivation.
+        selected_model: Name of the model (used for output keys).
         batch_size: Number of files to process in parallel.
         limit: Limit the number of entries to process.
     """
@@ -86,12 +88,9 @@ def run_batch_evaluation(
         # Decode and store results
         for j, ans in enumerate(outputs):
             transcript = decode_fn(ans, model)
-            results_list.append({
-                "audio_filepath": batch_entries[j]["audio_filepath"],
-                "offset": batch_entries[j].get("offset", 0.0),
-                "duration": batch_entries[j].get("duration", 0.0),
-                "pred_text": transcript.strip()
-            })
+            result_row = dict(batch_entries[j])
+            result_row[f"pred_text_{selected_model}"] = transcript.strip()
+            results_list.append(result_row)
             
         # Cleanup local files
         for local_path in local_files:
