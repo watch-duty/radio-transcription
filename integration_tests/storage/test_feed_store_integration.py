@@ -323,17 +323,20 @@ async def test_recovery_excludes_non_claim_source_types(
         bcfy_id,
     )
 
+    # Store only claims BCFY_FEEDS, so its generated recovery SQL only
+    # has a bcfy_feeds_recovery branch. Echo and openmhz can't be
+    # touched by the recovery sweep at all.
     result = await store.acquire_feeds_recovery(
         worker,
         abandonment_window_sec=60.0,
-        limit=10,
+        limits={SourceType.BCFY_FEEDS: 10},
     )
 
     returned_ids = {lease["id"] for lease in result}
     assert echo_id not in returned_ids, "ECHO must never be claim-recovered"
     # Confirm only bcfy_feeds came back. The openmhz row would be eligible
     # for active-abandoned recovery (heartbeat_age=120s > abandonment=60s),
-    # so its exclusion proves the claim_types filter ($4) is doing the work,
+    # so its exclusion proves the claim_types subset is doing the work,
     # not lock ownership or staleness.
     assert returned_ids == {bcfy_id}
     assert all(
@@ -376,10 +379,77 @@ async def test_recovery_with_full_claim_types_picks_up_all(
     result = await store.acquire_feeds_recovery(
         worker,
         abandonment_window_sec=60.0,
-        limit=10,
+        limits={
+            SourceType.BCFY_FEEDS: 10,
+            SourceType.BCFY_CALLS: 10,
+            SourceType.OPENMHZ: 10,
+        },
     )
 
     assert {lease["id"] for lease in result} == set(ids.values())
+
+
+async def test_recovery_respects_per_type_caps(
+    db_pool: asyncpg.Pool,
+) -> None:
+    """Recovery's per-type LIMIT bounds rows per branch, not just total.
+
+    Regression: prior to per-type LIMITs in recovery, a single aggregate
+    LIMIT could push held > cap when the at-cap type happened to be
+    failing-retryable. Example: cap_bcfy_feeds=240, held=200, slack=50;
+    primary returns 0 (all unclaimed bcfy_feeds are failing-retryable);
+    recovery with limit=50 would scoop 50 bcfy_feeds → held=250>cap.
+    With per-type LIMITs, the bcfy_feeds branch's LIMIT is bounded by
+    `cap - held = 40`, so recovery returns at most 40 of that type.
+    """
+    await db_pool.execute("TRUNCATE feeds CASCADE")
+    store = FeedStore(
+        db_pool,
+        claim_types=[
+            SourceType.BCFY_FEEDS,
+            SourceType.BCFY_CALLS,
+            SourceType.OPENMHZ,
+        ],
+    )
+    worker = uuid.uuid4()
+
+    # Insert 10 failing-retryable bcfy_feeds; we'll ask for at most 3.
+    bcfy_ids = []
+    for i in range(10):
+        fid = await _insert_feed(
+            db_pool,
+            f"bcfy-failing-{i}",
+            source_type="bcfy_feeds",
+            status="failing",
+            failure_count=1,
+            last_heartbeat_age_seconds=120,
+        )
+        await db_pool.execute(
+            "UPDATE feeds SET retry_after = NOW() - INTERVAL '10 seconds'"
+            " WHERE id = $1",
+            fid,
+        )
+        bcfy_ids.append(fid)
+
+    result = await store.acquire_feeds_recovery(
+        worker,
+        abandonment_window_sec=60.0,
+        # Per-type LIMITs strictly bound each branch; bcfy_feeds capped at 3.
+        limits={
+            SourceType.BCFY_FEEDS: 3,
+            SourceType.BCFY_CALLS: 100,
+            SourceType.OPENMHZ: 100,
+        },
+    )
+
+    bcfy_returned = [
+        lease
+        for lease in result
+        if lease["source_type"] == SourceType.BCFY_FEEDS
+    ]
+    assert len(bcfy_returned) == 3, (
+        f"recovery exceeded bcfy_feeds limit=3, got {len(bcfy_returned)}"
+    )
 
 
 # -- Tests: count_held_by_type ---------------------------------------

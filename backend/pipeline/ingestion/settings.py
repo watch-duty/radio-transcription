@@ -70,7 +70,7 @@ class NormalizerSettings:
     # Feed orchestration
     max_feeds_per_worker: int = field(
         default_factory=lambda: int(
-            os.environ.get("MAX_FEEDS_PER_WORKER", "250"),
+            os.environ.get("MAX_FEEDS_PER_WORKER", "800"),
         ),
     )
     lease_poll_interval_sec: float = field(

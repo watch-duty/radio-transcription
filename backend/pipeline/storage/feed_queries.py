@@ -155,8 +155,8 @@ GROUP BY source_type
 # is its own source_type partition.
 #
 # The failing-retryable + active-abandoned paths are served by the
-# separate ACQUIRE_FEEDS_RECOVERY_SQL, called when this primary path
-# underfills.
+# separate build_acquire_feeds_recovery_sql factory, called when this
+# primary path underfills.
 #
 # FOR NO KEY UPDATE (not FOR UPDATE): weaker lock, sufficient because we
 # only mutate status/worker_id/fencing_token/last_heartbeat — none of
@@ -232,28 +232,39 @@ def build_acquire_feeds_batch_sql(claim_types: Sequence[SourceType]) -> str:
     )
 
 
-# Recovery-path claim: failing-retryable + active-abandoned. Runs when the
-# primary per-type CTE (ACQUIRE_FEEDS_BATCH_SQL) returns fewer rows than
-# the worker's total slack. No per-type cap here: failing and abandoned
-# volumes are small by construction (pg_cron sweep drains active-abandoned
-# at 30 s cadence; failure events are rare).
+# Recovery-path claim: failing-retryable + active-abandoned. Runs when
+# the primary per-type CTE returns fewer rows than the worker's total
+# slack. Mirrors the primary path's per-type CTE structure so per-type
+# caps are enforced structurally — without per-type LIMITs the recovery
+# sweep could push held > cap when one type is at-cap and another type
+# is mostly failing-retryable. The sweep volumes themselves are small
+# by construction (pg_cron drains active-abandoned at 30 s cadence;
+# failure events are rare).
 #
-# ORDER BY retry_after ASC NULLS LAST, id prioritizes failing-retryable
-# (retry_after = past timestamp, set by REPORT_FAILURE_SQL) over
-# active-abandoned (retry_after = NULL, cleared on claim). Failing
-# rows are workers' only safety net — pg_cron does not reclaim them —
-# whereas active-abandoned has the 30 s pg_cron sweep as a backstop.
-# Within the failing bucket, oldest-retry first; within the
-# active-abandoned tail (NULL retry_after), id order for determinism.
+# Within each branch:
+# - WHERE matches failing-retryable OR active-abandoned of that type.
+# - ORDER BY retry_after ASC NULLS LAST, id prioritizes failing-retryable
+#   (retry_after = past timestamp, set by REPORT_FAILURE_SQL) over
+#   active-abandoned (retry_after = NULL, cleared on claim). Failing
+#   rows are workers' only safety net — pg_cron does not reclaim them —
+#   whereas active-abandoned has the 30 s pg_cron sweep as a backstop.
+#   Within the failing bucket, oldest-retry first; within the
+#   active-abandoned tail (NULL retry_after), id order for determinism.
+# - LIMIT $X is the per-type recovery LIMIT (passed by the caller after
+#   re-running _calculate_branch_limits with held + primary counts).
 #
-# Known performance limit: ORDER BY (retry_after, id) is served by the
-# idx_feeds_failing_retryable partial index for the failing branch, but
-# the active-abandoned branch relies on idx_feeds_active (id) followed by
-# a filter on last_heartbeat + a sort. At the structurally-small volumes
-# the design assumes (≤ ~500 failing-or-abandoned rows at a time, drained
-# by pg_cron), the sort stays in work_mem and is cheap. If either volume
-# ever spikes (pg_cron paused, failure storm), this query becomes an
-# expensive seq/sort path.
+# source_type literals are inlined per branch (same pattern as primary)
+# so the planner can use a `source_type = '<literal>'` constant. This
+# also means the claim_types filter is implicit: types absent from the
+# generator's input never get a CTE branch, so they're never claimed.
+#
+# Known performance limit: ORDER BY (retry_after, id) is served by
+# idx_feeds_failing_retryable for the failing branch; active-abandoned
+# uses idx_feeds_active (id) + filter on last_heartbeat + a sort. At
+# structurally-small volumes (≤ ~500 failing-or-abandoned rows at a
+# time, drained by pg_cron) the sort stays in work_mem and is cheap.
+# If either volume spikes (pg_cron paused, failure storm), this query
+# becomes an expensive seq/sort path.
 #
 # TODO(recovery-path-index): if recovery-path P99 exceeds 50 ms at  # noqa: TD003
 # production load OR the pg_cron sweep is paused for extended windows,
@@ -268,53 +279,75 @@ def build_acquire_feeds_batch_sql(claim_types: Sequence[SourceType]) -> str:
 # for this index, since it covers retry_after on active rows (where
 # retry_after is NULL and rarely mutated — low bloat in practice).
 #
-# MATERIALIZED is non-negotiable for the same planner reason as the primary
-# CTE: without it, the planner can inline the CTE into the outer UPDATE and
-# re-evaluate the SKIP LOCKED subquery per outer row, which would bypass
-# the LIMIT.
+# MATERIALIZED is non-negotiable for the same planner reason as the
+# primary CTE: without it, the planner can inline the CTE into the
+# outer UPDATE and re-evaluate the SKIP LOCKED subquery per outer row,
+# which would bypass the LIMIT.
 #
-# source_type filter ($4): restricts the recovery sweep to the worker's
-# claim_types. Without it, recovery would scoop up failing or
-# active-abandoned rows of any source_type — including types this worker
-# has no per-type cap for (so the per-type memory budget would be
-# bypassed) and types served by a separate pipeline (e.g. ECHO via Cloud
-# Function, never VM-leased). The primary CTE (ACQUIRE_FEEDS_BATCH_SQL)
-# already filters per-type via the literal `source_type = '...'` in each
-# branch; recovery now does the same, dynamically, via $4.
-#
-# Params: $1=worker_id, $2=abandonment_interval, $3=limit,
-#         $4=claim_types (text[] of source_type values).
-ACQUIRE_FEEDS_RECOVERY_SQL = """\
-WITH recovered AS MATERIALIZED (
-    SELECT id FROM feeds
-    WHERE source_type = ANY($4::text[])
-      AND (
-          (status = 'failing'::feed_status AND (retry_after IS NULL OR retry_after <= NOW()))
-          OR (status = 'active'::feed_status AND last_heartbeat < NOW() - $2::interval)
-      )
-    ORDER BY retry_after ASC NULLS LAST, id
-    LIMIT $3
-    FOR NO KEY UPDATE SKIP LOCKED
-),
-leased AS (
-    UPDATE feeds
-    SET status = 'active'::feed_status,
-        worker_id = $1,
-        fencing_token = fencing_token + 1,
-        last_heartbeat = NOW(),
-        retry_after = NULL
-    FROM recovered
-    WHERE feeds.id = recovered.id
-    RETURNING feeds.id, feeds.name, feeds.source_type,
-              feeds.last_processed_filename, feeds.last_bookmark_time,
-              feeds.fencing_token
-)
-SELECT leased.id, leased.name, leased.source_type,
-       leased.last_processed_filename, leased.last_bookmark_time,
-       leased.fencing_token, fpi.source_feed_id, fpi.external_id
-FROM leased
-JOIN feed_properties fpi ON fpi.feed_id = leased.id
-"""
+# Params: $1=worker_id, $2=abandonment_interval, $3..$(2+N)=per-type
+# recovery LIMITs in claim_types iteration order.
+def build_acquire_feeds_recovery_sql(claim_types: Sequence[SourceType]) -> str:
+    """Generate per-type recovery-claim SQL for the given claim_types.
+
+    Mirrors ``build_acquire_feeds_batch_sql`` but each branch's WHERE
+    matches failing-retryable OR active-abandoned (not unclaimed). The
+    LIMIT for branch i is parameter ``$3 + i`` in claim_types iteration
+    order; $1=worker_id, $2=abandonment_interval.
+    """
+    if not claim_types:
+        msg = "claim_types must contain at least one SourceType"
+        raise ValueError(msg)
+
+    # SAFETY: t.value strings come from the SourceType enum (closed set
+    # in feed_store.py), never user input. The Bandit S608 SQL-injection
+    # warning is a false positive in this context.
+    branches: list[str] = []
+    union_lines: list[str] = []
+    for i, t in enumerate(claim_types):
+        limit_param = i + 3
+        branches.append(
+            f"    {t.value}_recovery AS MATERIALIZED (\n"  # noqa: S608
+            f"        SELECT id FROM feeds\n"
+            f"        WHERE source_type = '{t.value}'\n"
+            f"          AND (\n"
+            f"              (status = 'failing'::feed_status AND (retry_after IS NULL OR retry_after <= NOW()))\n"
+            f"              OR (status = 'active'::feed_status AND last_heartbeat < NOW() - $2::interval)\n"
+            f"          )\n"
+            f"        ORDER BY retry_after ASC NULLS LAST, id\n"
+            f"        LIMIT ${limit_param}\n"
+            f"        FOR NO KEY UPDATE SKIP LOCKED\n"
+            f"    )"
+        )
+        union_lines.append(f"        SELECT id FROM {t.value}_recovery")  # noqa: S608
+    branches_sql = ",\n".join(branches) + ","
+    union_sql = "\n        UNION ALL\n".join(union_lines)
+
+    return (
+        "WITH\n"  # noqa: S608
+        f"{branches_sql}\n"
+        "    recovered AS MATERIALIZED (\n"
+        f"{union_sql}\n"
+        "    ),\n"
+        "leased AS (\n"
+        "    UPDATE feeds\n"
+        "    SET status = 'active'::feed_status,\n"
+        "        worker_id = $1,\n"
+        "        fencing_token = fencing_token + 1,\n"
+        "        last_heartbeat = NOW(),\n"
+        "        retry_after = NULL\n"
+        "    FROM recovered\n"
+        "    WHERE feeds.id = recovered.id\n"
+        "    RETURNING feeds.id, feeds.name, feeds.source_type,\n"
+        "              feeds.last_processed_filename, feeds.last_bookmark_time,\n"
+        "              feeds.fencing_token\n"
+        ")\n"
+        "SELECT leased.id, leased.name, leased.source_type,\n"
+        "       leased.last_processed_filename, leased.last_bookmark_time,\n"
+        "       leased.fencing_token, fpi.source_feed_id, fpi.external_id\n"
+        "FROM leased\n"
+        "JOIN feed_properties fpi ON fpi.feed_id = leased.id\n"
+    )
+
 
 REPORT_FAILURE_SQL = """\
 UPDATE feeds

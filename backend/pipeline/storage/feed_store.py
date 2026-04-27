@@ -5,7 +5,6 @@ import logging
 from typing import TYPE_CHECKING, TypedDict
 
 from backend.pipeline.storage.feed_queries import (
-    ACQUIRE_FEEDS_RECOVERY_SQL,
     COUNT_HELD_BY_TYPE_SQL,
     CREATE_FEED_SQL,
     DELETE_FEED_SQL,
@@ -19,6 +18,7 @@ from backend.pipeline.storage.feed_queries import (
     RESET_FEED_SQL,
     UPDATE_PROGRESS_SQL,
     build_acquire_feeds_batch_sql,
+    build_acquire_feeds_recovery_sql,
 )
 
 if TYPE_CHECKING:
@@ -140,6 +140,9 @@ class FeedStore:
             claim_types = [t for t in SourceType if t != SourceType.ECHO]
         self._claim_types: tuple[SourceType, ...] = tuple(claim_types)
         self._acquire_feeds_batch_sql = build_acquire_feeds_batch_sql(
+            self._claim_types,
+        )
+        self._acquire_feeds_recovery_sql = build_acquire_feeds_recovery_sql(
             self._claim_types,
         )
 
@@ -441,38 +444,49 @@ class FeedStore:
         self,
         worker_id: uuid.UUID,
         abandonment_window_sec: float,
-        limit: int,
+        limits: dict[SourceType, int],
     ) -> list[LeasedFeed]:
         """Recovery-path claim: failing-retryable + active-abandoned.
 
         Called by the worker when the per-type primary CTE returns fewer
-        rows than the worker's total slack. The query is filtered to this
-        store's ``claim_types``, so feeds of types this worker doesn't
-        claim (including ``ECHO``) are never returned. No per-type cap
-        within ``claim_types`` — failing and abandoned volumes are small
-        by construction, and the pg_cron sweep handles most
-        active-abandoned reclamation out-of-band.
+        rows than the worker's total slack. Mirrors ``acquire_feeds_batch``
+        in shape: each branch has its own LIMIT keyed on ``SourceType``
+        and its own SKIP LOCKED scope, so per-type caps are enforced
+        structurally even when one type's primary path returns 0 and the
+        recovery sweep would otherwise scoop up rows of an at-cap type.
 
         Args:
             worker_id: UUID of the worker requesting leases.
             abandonment_window_sec: Seconds before a heartbeat is considered stale.
-            limit: Maximum number of feeds to acquire.
+            limits: Per-type recovery LIMIT keyed by ``SourceType``.
+                Types absent from the dict are passed as 0 (their CTE
+                branch returns no rows). Types present but not in this
+                store's ``claim_types`` raise ``ValueError``.
 
         Returns:
-            List of ``LeasedFeed`` dicts (empty if none available or
-            ``limit <= 0``).
+            List of ``LeasedFeed`` dicts (empty if all limits are 0 or
+            no eligible rows exist).
         """
-        if limit <= 0:
+        unknown = set(limits) - set(self._claim_types)
+        if unknown:
+            msg = (
+                "limits contains source types not in this store's claim_types: "
+                f"{sorted(t.value for t in unknown)}"
+            )
+            raise ValueError(msg)
+
+        positional = [limits.get(t, 0) for t in self._claim_types]
+        if not any(v > 0 for v in positional):
+            # Every branch has LIMIT 0 — skip the round-trip.
             return []
 
         import datetime  # noqa: PLC0415
 
         rows = await self._pool.fetch(
-            ACQUIRE_FEEDS_RECOVERY_SQL,
+            self._acquire_feeds_recovery_sql,
             worker_id,
             datetime.timedelta(seconds=abandonment_window_sec),
-            limit,
-            [t.value for t in self._claim_types],
+            *positional,
         )
         return [self._row_to_leased_feed(row) for row in rows]
 

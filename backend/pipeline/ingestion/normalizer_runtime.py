@@ -313,10 +313,33 @@ class NormalizerRuntime:
                     # still earns its keep for failing-retryable and for
                     # reclaiming slack before the next sweep tick.
                     if len(primary) < total_slack:
+                        # Recovery must respect the SAME per-type caps
+                        # the primary path enforced. Without re-running
+                        # the apportion, recovery could push held > cap
+                        # for a type whose primary path returned 0
+                        # (e.g. all unclaimed of that type are
+                        # failing-retryable, not unclaimed). Compute a
+                        # fresh per-type limit dict from `held + primary
+                        # acquired-by-type` and the remaining slack.
+                        primary_by_type: dict[SourceType, int] = dict.fromkeys(
+                            caps, 0
+                        )
+                        for lease in primary:
+                            t = lease["source_type"]
+                            if t in primary_by_type:
+                                primary_by_type[t] += 1
+                        held_after_primary = {
+                            t: held.get(t, 0) + primary_by_type[t] for t in caps
+                        }
+                        recovery_limits = self._calculate_branch_limits(
+                            total_slack - len(primary),
+                            caps,
+                            held_after_primary,
+                        )
                         recovery = await self._store.acquire_feeds_recovery(
                             s.worker_id,
                             s.abandonment_window_sec,
-                            total_slack - len(primary),
+                            recovery_limits,
                         )
                         leases.extend(recovery)
 

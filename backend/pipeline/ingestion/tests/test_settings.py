@@ -100,7 +100,7 @@ class TestNormalizerSettings(unittest.TestCase):
             settings = NormalizerSettings()
 
         self.assertIsInstance(settings.worker_id, uuid.UUID)
-        self.assertEqual(settings.max_feeds_per_worker, 250)
+        self.assertEqual(settings.max_feeds_per_worker, 800)
         self.assertEqual(settings.lease_poll_interval_sec, 5.0)
         self.assertEqual(settings.heartbeat_interval_sec, 15.0)
         self.assertEqual(settings.heartbeat_stall_timeout_sec, 45.0)
