@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import datetime
 import os
 import unittest
@@ -12,7 +13,7 @@ from backend.pipeline.ingestion.collectors.icecast import icecast_collector
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
 )
-from backend.pipeline.ingestion.models import CapturedChunk
+from backend.pipeline.ingestion.models import CapturedChunk, CaptureResources
 from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 
 MOCK_ENV_VARS = {
@@ -695,6 +696,144 @@ class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
 
         self.assertGreaterEqual(len(chunks), 1)
         self.assertEqual(chunks[0].receipt_time, fixed_time)
+
+
+class TestIcecastSpawn01(unittest.IsolatedAsyncioTestCase):
+    """SPAWN-01: spawn_semaphore wraps the ffmpeg spawn ONLY, not lifetime.
+
+    Per Pitfall 6 / D-07/D-08: if the semaphore wrapped lifetime, a
+    long-running ffmpeg process would hold its slot for minutes,
+    capping the worker at FFMPEG_SPAWN_LIMIT concurrent feeds (instead
+    of FFMPEG_SPAWN_LIMIT concurrent spawns). The test verifies that
+    with Semaphore(2), four concurrent capture_icecast_stream calls
+    all advance past the spawn site within 1 second -- i.e., the
+    semaphore released after each spawn returned the process handle,
+    not held until the (mocked, never-completing) ffmpeg lifetime ends.
+
+    Per D-09 / Pitfall 7: implementation must use async with -- never
+    manual acquire/release. (The grep-based check covers the source-level
+    invariant; this test covers the runtime invariant.)
+    """
+
+    @patch.dict(os.environ, MOCK_ENV_VARS)
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast"
+        ".icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_spawn_semaphore_gates_spawn_not_lifetime(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Four concurrent spawns must all start within 1s under Semaphore(2)."""
+        spawn_count = 0
+        spawn_count_lock = asyncio.Lock()
+
+        async def _spawn_then_long_lived(
+            url: str, segment_pattern: str, auth_header: str = ""
+        ) -> AsyncMock:
+            """Mock a long-lived ffmpeg process.
+
+            Records that the spawn happened (atomically), then returns a
+            process whose .wait() is a never-resolving Future. If the
+            semaphore wraps spawn-only, the spawn returns immediately and
+            the slot frees up; subsequent spawns proceed. If the semaphore
+            wraps lifetime, only 2 spawns occur (the other 2 wait
+            indefinitely at the semaphore acquire).
+            """
+            nonlocal spawn_count
+            del url, segment_pattern, auth_header
+            async with spawn_count_lock:
+                spawn_count += 1
+                pid_value = 1000 + spawn_count
+
+            mock_proc = AsyncMock()
+            mock_proc.pid = pid_value
+            mock_proc.returncode = None
+            mock_proc.terminate = MagicMock()
+            mock_proc.stderr = _make_stderr_reader([])
+
+            # Long-lived: .wait() never resolves until test tears down.
+            never_resolving: asyncio.Future[int] = asyncio.Future()
+
+            async def _never_returns() -> int:
+                return await never_resolving
+
+            mock_proc.wait = AsyncMock(side_effect=_never_returns)
+            return mock_proc
+
+        mock_create_ffmpeg.side_effect = _spawn_then_long_lived
+
+        # Build a CaptureResources with Semaphore(2) -- the SPAWN-01 cap.
+        resources = CaptureResources(
+            http_session=AsyncMock(),
+            spawn_semaphore=asyncio.Semaphore(2),
+        )
+
+        # Launch 4 concurrent capture_icecast_stream generators. Each is
+        # an async generator; we only need to advance them past the spawn
+        # site, so we schedule a task that calls __anext__() once and
+        # discards the result. With the never-resolving wait, the generator
+        # blocks in the segment-read loop after the spawn returns.
+        shutdown_events: list[asyncio.Event] = []
+        generators = []
+        tasks = []
+
+        for i in range(4):
+            shutdown = asyncio.Event()
+            shutdown_events.append(shutdown)
+            feed = _make_feed(
+                f"spawn-test-feed-{i}", f"http://example.com/stream{i}"
+            )
+            gen = icecast_collector.capture_icecast_stream(
+                feed,
+                shutdown,
+                url_base="https://mock.example.com/",
+                resources=resources,
+            )
+            generators.append(gen)
+
+            async def _advance(g=gen) -> None:
+                with contextlib.suppress(BaseException):
+                    await g.__anext__()
+
+            tasks.append(asyncio.create_task(_advance()))
+
+        # Allow up to 1 second for all 4 spawns to be registered.
+        # If the semaphore wraps spawn-only, all 4 spawns happen rapidly
+        # (Semaphore(2) lets 2 in at once, but the spawn is essentially
+        # instant -- release fires before the loop blocks).
+        # If it wraps lifetime, only 2 spawns occur.
+        deadline = asyncio.get_event_loop().time() + 1.0
+        while asyncio.get_event_loop().time() < deadline:
+            if spawn_count >= 4:
+                break
+            await asyncio.sleep(0.01)
+
+        try:
+            self.assertEqual(
+                spawn_count,
+                4,
+                f"SPAWN-01: expected 4 spawns within 1s under "
+                f"Semaphore(2), got {spawn_count}. If the semaphore "
+                f"wraps lifetime instead of spawn-only (Pitfall 6), "
+                f"only 2 spawns will register because the first 2 "
+                f"hold their slots for the never-resolving ffmpeg "
+                f"lifetime, blocking the other 2 at acquire.",
+            )
+        finally:
+            # Tear down: signal shutdown on all 4 feeds, cancel tasks,
+            # close generators. The never-resolving futures will be
+            # garbage-collected; the test loop teardown handles the rest.
+            for ev in shutdown_events:
+                ev.set()
+            for t in tasks:
+                t.cancel()
+            for t in tasks:
+                with contextlib.suppress(BaseException):
+                    await t
+            for gen in generators:
+                with contextlib.suppress(BaseException):
+                    await gen.aclose()
 
 
 if __name__ == "__main__":
