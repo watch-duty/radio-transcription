@@ -61,11 +61,13 @@ The capture function must **never**:
 
 from __future__ import annotations
 
+import asyncio  # noqa: TC003 — runtime use: CaptureResources holds asyncio.Semaphore
 import dataclasses
 from typing import TYPE_CHECKING
 
+import aiohttp  # noqa: TC002 — runtime use: CaptureResources holds aiohttp.ClientSession
+
 if TYPE_CHECKING:
-    import asyncio
     import datetime
     from collections.abc import AsyncIterator, Callable
 
@@ -101,9 +103,42 @@ class CapturedChunk:
     receipt_time: datetime.datetime | None = None
 
 
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class CaptureResources:
+    """Runtime-owned resources passed to capture functions.
+
+    Constructed once in NormalizerRuntime._main() and lifecycle-managed
+    by the runtime: http_session is closed in _shutdown_sequence after
+    _gcs_client.close() (followed by a 250ms SSL-teardown sleep, per
+    aiohttp's documented graceful-shutdown idiom for SSL); the
+    Semaphore is loop-scoped and disappears with the loop.
+
+    Phase 2 wires this through the collector signatures only — the
+    bodies do NOT yet acquire either resource. Phase 3 (HTTP-01 +
+    SPAWN-01) wires the bcfy_calls collector to use http_session and
+    the icecast collector to use spawn_semaphore.
+
+    Attributes:
+        http_session: Shared aiohttp ClientSession with TCPConnector
+            tuned for the bcfy_calls polling workload (limit=0,
+            limit_per_host=64, ttl_dns_cache=300, keepalive_timeout=75).
+            NOT Optional — Phase 3 collectors will assume it's always
+            set; constructing real instances from day one keeps ty
+            strict.
+        spawn_semaphore: asyncio.Semaphore(N) where N = settings.
+            ffmpeg_spawn_limit (default 8). Wraps create_subprocess_exec
+            ONLY (spawn rate, not lifetime). Always used via async-with;
+            manual acquire/release is forbidden (PITFALLS.md Pitfall 7).
+    """
+
+    http_session: aiohttp.ClientSession
+    spawn_semaphore: asyncio.Semaphore
+
+
 if TYPE_CHECKING:
-    # 3-arg collector: (feed, shutdown_event, url_base) -> AsyncIterator[CapturedChunk]
+    # 4-arg collector: (feed, shutdown_event, url_base, resources)
+    # -> AsyncIterator[CapturedChunk]
     CollectorFn = Callable[
-        [LeasedFeed, asyncio.Event, str],
+        [LeasedFeed, asyncio.Event, str, CaptureResources],
         AsyncIterator[CapturedChunk],
     ]
