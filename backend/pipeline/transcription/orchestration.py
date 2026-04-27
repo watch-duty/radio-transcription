@@ -5,7 +5,6 @@ It is separated from the CLI entry point to improve testability and modularity.
 """
 
 import json
-import logging
 
 import apache_beam as beam
 from apache_beam.io.gcp.pubsub import (
@@ -34,6 +33,7 @@ from backend.pipeline.transcription.common.datatypes import (
     StitchAudioConfig,
     TranscribeAudioConfig,
 )
+from backend.pipeline.transcription.common.logging import get_logger
 from backend.pipeline.transcription.options import TranscriptionOptions
 from backend.pipeline.transcription.transforms.stateful import (
     OrderedBypassFn,
@@ -45,7 +45,9 @@ from backend.pipeline.transcription.transforms.stateless import (
     SerializeFn,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(
+    __name__, {"system": "transcription", "component": "orchestration"}
+)
 
 
 def format_dlq_message(element: dict) -> PubsubMessage:

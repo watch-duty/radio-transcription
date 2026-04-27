@@ -1,6 +1,5 @@
 """Apache Beam DoFns for mapping incoming stream messages and downloading audio chunks."""
 
-import logging
 from collections.abc import Iterator
 from typing import Any, Literal, override
 
@@ -26,12 +25,15 @@ from backend.pipeline.transcription.common.datatypes import (
     FeedMetadata,
     TranscriptionResult,
 )
+from backend.pipeline.transcription.common.logging import get_logger
 from backend.pipeline.transcription.options import (
     DataflowSystemOptions,  # noqa: F401
     TranscriptionOptions,  # noqa: F401
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(
+    __name__, {"system": "transcription", "component": "transforms"}
+)
 
 
 @beam.typehints.with_input_types(PubsubMessage)

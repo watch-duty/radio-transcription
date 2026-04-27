@@ -1,1 +1,1 @@
-"""Data models and schemas."""
+"""Common utilities and data models for transcription."""

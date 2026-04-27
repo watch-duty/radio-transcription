@@ -7,7 +7,6 @@ from being sent to the expensive transcription APIs.
 """
 
 import abc
-import logging
 
 import numpy as np
 import ten_vad
@@ -19,12 +18,10 @@ from backend.pipeline.transcription.common.constants import (
     DEFAULT_TENVAD_THRESHOLD,
 )
 from backend.pipeline.transcription.common.enums import VadType
+from backend.pipeline.transcription.common.logging import get_logger
 from backend.pipeline.transcription.common.utils import ConfigBase
 
-logger = logging.getLogger(__name__)
-logger = logging.LoggerAdapter(
-    logger, {"system": "transcription", "component": "vad"}
-)
+logger = get_logger(__name__, {"system": "transcription", "component": "vad"})
 
 
 class VoiceActivityDetector(abc.ABC):

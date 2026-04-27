@@ -6,7 +6,6 @@ allowing the Beam pipeline to dynamically swap between different engines
 """
 
 import abc
-import logging
 import pathlib
 
 from google.api_core import client_options
@@ -27,9 +26,12 @@ from backend.pipeline.transcription.common.constants import (
     DEFAULT_RETRY_MAX_SECONDS,
 )
 from backend.pipeline.transcription.common.enums import TranscriberType
+from backend.pipeline.transcription.common.logging import get_logger
 from backend.pipeline.transcription.common.utils import ConfigBase
 
-logger = logging.getLogger(__name__)
+logger = get_logger(
+    __name__, {"system": "transcription", "component": "transcribers"}
+)
 
 
 class Transcriber(abc.ABC):

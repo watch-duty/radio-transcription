@@ -1,6 +1,5 @@
 """Centralized worker-node singleton resource registry for Apache Beam state management."""
 
-import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -10,9 +9,12 @@ from google.cloud import storage
 
 from backend.pipeline.transcription.audio.vads import VoiceActivityDetector
 from backend.pipeline.transcription.common.enums import TranscriberType, VadType
+from backend.pipeline.transcription.common.logging import get_logger
 from backend.pipeline.transcription.services.transcribers import Transcriber
 
-logger = logging.getLogger(__name__)
+logger = get_logger(
+    __name__, {"system": "transcription", "component": "resources"}
+)
 
 # The unified process-level token for Beam garbage collection pooling
 SHARED_RESOURCE_HANDLE = Shared()

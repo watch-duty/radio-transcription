@@ -1,14 +1,14 @@
 """Utility functions for the radio transcription pipeline."""
 
-import logging
 import uuid
 from typing import Self
 
 import pydantic
 
 from backend.pipeline.transcription.common.datatypes import TimeRange
+from backend.pipeline.transcription.common.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, {"system": "transcription", "component": "utils"})
 
 
 class ConfigBase(pydantic.BaseModel):

@@ -45,6 +45,7 @@ from backend.pipeline.transcription.common.datatypes import (
     TransmissionContext,
     UpdateStateAction,
 )
+from backend.pipeline.transcription.common.logging import get_logger
 from backend.pipeline.transcription.common.utils import generate_transmission_id
 from backend.pipeline.transcription.resources import (
     SHARED_RESOURCE_HANDLE,
@@ -59,9 +60,8 @@ from backend.pipeline.transcription.state.stitcher_state import (
     AudioStitchingStateMachine,
 )
 
-logger = logging.getLogger(__name__)
-logger = logging.LoggerAdapter(
-    logger, {"system": "transcription", "component": "ordered-stitcher"}
+logger = get_logger(
+    __name__, {"system": "transcription", "component": "ordered-stitcher"}
 )
 
 
@@ -70,7 +70,7 @@ def _get_task_logger(
 ) -> logging.LoggerAdapter:
     """Creates a contextual LoggerAdapter for tracing items through the pipeline."""
     return logging.LoggerAdapter(
-        logging.getLogger(__name__),
+        get_logger(__name__),
         {
             "system": "transcription",
             "component": component,
@@ -173,13 +173,13 @@ def process_ordering(
     )
 
     if was_late:
-        task_logger.info(f"[Order] Late chunk: {metadata.gcs_uri}")
+        task_logger.debug(f"[Order] Late chunk: {metadata.gcs_uri}")
     if was_buffered:
-        task_logger.info(
+        task_logger.debug(
             f"[Order] Buffered chunk from future: {metadata.gcs_uri}"
         )
     if elements_to_emit:
-        task_logger.info(f"[Order] Releasing {len(elements_to_emit)} chunks")
+        task_logger.debug(f"[Order] Releasing {len(elements_to_emit)} chunks")
 
     # Update jitter buffer state
     curr_context = replace(
@@ -299,7 +299,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         task_logger = _get_task_logger(
             feed_id, curr_context.session_id, "transcription-stitcher"
         )
-        task_logger.info(f"[Process] Processing chunk {metadata.gcs_uri}")
+        task_logger.debug(f"[Process] Processing chunk {metadata.gcs_uri}")
 
         if curr_context.feed_metadata is None:
             curr_context = replace(
@@ -453,13 +453,13 @@ class OrderedStitchAudioFn(beam.DoFn):
         for chunk in elements_to_emit:
             try:
                 # 1. Download audio!
-                task_logger.info(
+                task_logger.debug(
                     f"[Download] Downloading audio for {chunk.gcs_uri}"
                 )
                 chunk_data = self.audio_processor.download_audio_and_detect(
                     chunk.gcs_uri, chunk.timestamp_ms
                 )
-                task_logger.info(
+                task_logger.debug(
                     f"[Download] Downloaded audio for {chunk.gcs_uri}"
                 )
 

@@ -1,5 +1,3 @@
-import logging
-
 import numpy as np
 from scipy.signal import medfilt
 
@@ -25,8 +23,11 @@ from backend.pipeline.transcription.common.constants import (
     MIN_AGD_FFT_SIZE,
 )
 from backend.pipeline.transcription.common.datatypes import TimeRange
+from backend.pipeline.transcription.common.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(
+    __name__, {"system": "transcription", "component": "detectors"}
+)
 
 
 class AcousticGateDetector:
