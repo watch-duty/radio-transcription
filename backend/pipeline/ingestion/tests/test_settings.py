@@ -28,7 +28,8 @@ class TestNormalizerSettings(unittest.TestCase):
             "LEASE_POLL_INTERVAL_SEC": "2.5",
             "HEARTBEAT_INTERVAL_SEC": "10.0",
             "HEARTBEAT_STALL_TIMEOUT_SEC": "30.0",
-            "GRACEFUL_SHUTDOWN_TIMEOUT_SEC": "8.0",
+            "GRACEFUL_SHUTDOWN_TIMEOUT_SEC": "15.0",
+            "FFMPEG_SPAWN_LIMIT": "4",
             "ALLOYDB_POOL_MIN_SIZE": "3",
             "ALLOYDB_POOL_MAX_SIZE": "25",
             "ALLOYDB_COMMAND_TIMEOUT_SEC": "40.0",
@@ -60,7 +61,8 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.lease_poll_interval_sec, 2.5)
         self.assertEqual(settings.heartbeat_interval_sec, 10.0)
         self.assertEqual(settings.heartbeat_stall_timeout_sec, 30.0)
-        self.assertEqual(settings.graceful_shutdown_timeout_sec, 8.0)
+        self.assertEqual(settings.graceful_shutdown_timeout_sec, 15.0)
+        self.assertEqual(settings.ffmpeg_spawn_limit, 4)
         self.assertEqual(settings.audio_staging_bucket, "staging-bucket")
         self.assertEqual(settings.db.pool_min_size, 3)
         self.assertEqual(settings.db.pool_max_size, 25)
@@ -104,7 +106,8 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.lease_poll_interval_sec, 5.0)
         self.assertEqual(settings.heartbeat_interval_sec, 15.0)
         self.assertEqual(settings.heartbeat_stall_timeout_sec, 45.0)
-        self.assertEqual(settings.graceful_shutdown_timeout_sec, 10.0)
+        self.assertEqual(settings.graceful_shutdown_timeout_sec, 90.0)
+        self.assertEqual(settings.ffmpeg_spawn_limit, 8)
         self.assertEqual(settings.db.pool_min_size, 8)
         self.assertEqual(settings.db.pool_max_size, 8)
         self.assertEqual(settings.db.command_timeout_sec, 30.0)
