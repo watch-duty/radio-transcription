@@ -301,12 +301,15 @@ class FeedStore:
         failure_threshold: int = 5,
         backoff_base_sec: int = 15,
         backoff_max_sec: int = 600,
+        *,
+        reason: str | None = None,
     ) -> str | None:
         """Report a feed failure with exponential backoff.
 
         Atomically increments ``failure_count``, computes ``retry_after``
         with exponential backoff + jitter, and transitions to
-        ``'quarantined'`` if *failure_threshold* is reached.
+        ``'quarantined'`` if *failure_threshold* is reached.  On quarantine
+        transition, ``quarantine_reason`` is populated from *reason*.
 
         Backoff formula: ``min(backoff_base_sec * 2^failure_count,
         backoff_max_sec) + random(0-10s) jitter``.
@@ -322,6 +325,12 @@ class FeedStore:
                 quarantine.
             backoff_base_sec: Base delay in seconds for the first retry.
             backoff_max_sec: Maximum backoff cap in seconds.
+            reason: Short snake_case tag for the failure mode
+                (e.g. ``"auth_failed"``).  Persisted to
+                ``feeds.quarantine_reason`` on transition to quarantined.
+                ``None`` (default) writes SQL NULL — preferred over an empty
+                string so triage queries can use ``WHERE quarantine_reason
+                IS NOT NULL``.
 
         Returns:
             The new feed status (``'failing'`` or ``'quarantined'``) if
@@ -337,6 +346,7 @@ class FeedStore:
             fencing_token,
             backoff_max_sec,
             backoff_base_sec,
+            reason,  # $7 — populates quarantine_reason on transition
         )
         if row is None:
             return None
@@ -348,6 +358,7 @@ class FeedStore:
                 extra={
                     "feed_id": str(feed_id),
                     "failure_count": row["failure_count"],
+                    "reason": reason,
                 },
             )
         else:
@@ -357,6 +368,7 @@ class FeedStore:
                     "feed_id": str(feed_id),
                     "failure_count": row["failure_count"],
                     "retry_after": str(row["retry_after"]),
+                    "reason": reason,
                 },
             )
         return status

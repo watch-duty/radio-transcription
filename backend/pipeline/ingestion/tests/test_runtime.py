@@ -182,24 +182,36 @@ class TestReapCompletedTasks(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn(_FEED_ID, rt._feed_tasks)
 
-    async def test_logs_exception(self) -> None:
-        """Tasks that raised are cleaned up and logged."""
+    async def test_logs_exception_and_does_not_call_exit(self) -> None:
+        """Tasks that raised are logged but the reaper NEVER calls os._exit (v1.1).
+
+        The catch-and-quarantine handler in _process_feed is the primary
+        fault-response path. The reaper just drains task.exception() so
+        asyncio does not emit "Task exception was never retrieved".
+        """
 
         async def _boom() -> None:
             msg = "boom"
             raise RuntimeError(msg)
 
         rt = _make_runtime()
+        rt._shutdown = asyncio.Event()
         task = asyncio.create_task(_boom())
         await asyncio.sleep(0)  # let task finish
         rt._feed_tasks[_FEED_ID] = task
 
-        with mock.patch(
-            "backend.pipeline.ingestion.normalizer_runtime.logger",
-        ) as mock_logger:
+        with (
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.logger",
+            ) as mock_logger,
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.os._exit",
+            ) as mock_exit,
+        ):
             rt._reap_completed_tasks()
 
         mock_logger.error.assert_called()
+        mock_exit.assert_not_called()
         self.assertNotIn(_FEED_ID, rt._feed_tasks)
 
 
@@ -1282,7 +1294,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
 
         async def _failing_capture(feed, shutdown):
             yield _make_captured_chunk(b"audio")
-            msg = "capture failed"
+            msg = "capture_failed"
             raise RuntimeError(msg)
 
         rt = NormalizerRuntime(
@@ -1318,7 +1330,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
 
         async def _failing_capture(feed, shutdown):
             yield _make_captured_chunk(b"audio")
-            msg = "capture failed"
+            msg = "capture_failed"
             raise RuntimeError(msg)
 
         rt = NormalizerRuntime(

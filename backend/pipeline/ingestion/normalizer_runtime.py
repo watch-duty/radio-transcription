@@ -416,23 +416,29 @@ class NormalizerRuntime:
                 return
 
     def _reap_completed_tasks(self) -> None:
-        """
-        Remove completed tasks and consume their exceptions.
+        """Remove completed tasks and consume their exceptions.
 
-        Must call ``task.exception()`` to retrieve the stored exception —
+        Must call ``task.exception()`` to retrieve the stored exception --
         without this, asyncio logs a "Task exception was never retrieved"
         warning at garbage collection time. ``.exception()`` on a cancelled
         task raises ``CancelledError``, hence the guard.
+
+        The catch-and-quarantine handler in ``_process_feed`` (D-01, v1.1)
+        is the primary fault-response path. The reaper exists to drain
+        ``task.exception()`` so asyncio does not emit
+        "Task exception was never retrieved" warnings, and to log meta-bugs
+        where the catch handler itself raised -- which would indicate the
+        DB write or telemetry call inside the catch arm crashed. Such
+        meta-bugs surface as ERROR logs here; the lease abandonment window
+        is the recovery safety net (D-04, v1.1).
         """
         for feed_id in [fid for fid, t in self._feed_tasks.items() if t.done()]:
             task = self._feed_tasks.pop(feed_id)
             try:
                 exc = task.exception()
             except asyncio.CancelledError:
-                pass  # normal — task was cancelled by shutdown
+                pass  # normal -- task was cancelled by shutdown
             else:
-                # Observability only — _process_feed already called
-                # record_failure before the task exited.
                 if exc is not None:
                     logger.error(
                         "Feed task %s failed: %s",
@@ -597,13 +603,25 @@ class NormalizerRuntime:
                             feed["name"],
                         )
                     session_id = _fallback_session_id
+                # Bump chunk_seq up-front for every captured chunk, success or
+                # failure. Reusing a seq across chunks is unsafe: combined with
+                # second-precision upload timestamps and the 412-treated-as-
+                # success path, a same-second retry could publish the next
+                # chunk's metadata pointing at the previous chunk's audio bytes.
+                seq_for_chunk = chunk_seq
+                chunk_seq += 1
+                # Pipeline phase: upload + publish + bookmark. Any failure here
+                # (network, gax, paused-key, our-code-bug) propagates to the
+                # outer except Exception arm, which records the reason and
+                # quarantines after threshold strikes. The worker is dumb;
+                # the operator triages from `quarantine_reason`.
                 gcs_uri = await retry_with_lease_check(
                     gcp_helper.upload_staged_audio,
                     self._gcs_client,
                     captured_chunk.audio_bytes,
                     feed,
                     settings.audio_staging_bucket,
-                    chunk_seq,
+                    seq_for_chunk,
                     fencing_token,
                     extension,
                     content_type,
@@ -641,7 +659,6 @@ class NormalizerRuntime:
                 logger.info(
                     "Published message %s for feed %s", message_id, feed["name"]
                 )
-                chunk_seq += 1
 
                 ok = await retry_with_lease_check(
                     self._store.update_feed_progress,
@@ -666,7 +683,7 @@ class NormalizerRuntime:
                     # If the batched heartbeat is healthy (renewing every 15s),
                     # leases cannot be stolen within the 60s abandonment window.
                     # A stolen lease means the heartbeat mechanism itself failed
-                    # systemically — cancelling one task while 249 others may
+                    # systemically -- cancelling one task while 249 others may
                     # also be compromised is unsafe. os._exit(1) is deliberate.
                     # MIG auto-heals within seconds; total downtime per feed:
                     # ~60s (abandonment window) + ~5s (instance restart).
@@ -676,17 +693,11 @@ class NormalizerRuntime:
                     )
                     # logging.shutdown() flushes background logging threads
                     # (e.g. Cloud Logging's CloudLoggingHandler) that os._exit
-                    # would bypass. This fence violation log is the only
-                    # post-mortem evidence of split-brain.
+                    # would bypass.
                     logging.shutdown()
                     os._exit(1)
 
-                # SLO: chunk_ingested emit — strictly-after-bookmark-ok
-                # D-11: wrapped json_fields shape for uniformity with quarantine.
-                # D-15: latency_clamped absent unless raw latency < 0 (only ever True).
-                # D-16: processing_latency_sec absent when receipt_time is None
-                # (NOT explicit null — Terraform alert filters handle key-existence).
-                # Cost note: ~500 GiB/month at 12k-feed fleet per research Pitfall 6.
+                # SLO: chunk_ingested emit -- strictly-after-bookmark-ok
                 chunk_ingested_payload: dict[str, object] = {
                     "event_type": EVENT_TYPE_CHUNK_INGESTED,
                     "feed_id": str(feed["id"]),
@@ -708,7 +719,7 @@ class NormalizerRuntime:
                 )
 
                 if self._shutdown.is_set():
-                    # Return without calling release_feed — _shutdown_sequence
+                    # Return without calling release_feed -- _shutdown_sequence
                     # handles all task cancellation and the 60s abandonment
                     # window is the safety net if batch release fails.
                     logger.info(
@@ -724,7 +735,7 @@ class NormalizerRuntime:
 
         except LeaseExpiredError:
             # Lease validity is uncertain (heartbeat DB error or fence
-            # violation).  Do NOT attempt report_feed_failure — the DB
+            # violation).  Do NOT attempt report_feed_failure -- the DB
             # connection that feeds it may be unreachable, causing this
             # coroutine to hang.  The 60s abandonment window is the
             # safety net; another worker will re-lease the feed.
@@ -734,9 +745,20 @@ class NormalizerRuntime:
             )
             return
 
-        except Exception:
-            logger.exception("Error processing feed %s", feed["name"])
-            # SAFETY: _releasing_feeds invariant — add BEFORE the first await
+        except Exception as e:
+            # Single catch-all: every failure (source-side, pipeline-side, code
+            # bug) goes through report_feed_failure with a reason string. The
+            # worker doesn't try to attribute fault; the operator reads the
+            # reason from `quarantine_reason` after threshold strikes and
+            # decides what to investigate. Transient failures auto-recover
+            # because failure_count resets to 0 on the next successful publish.
+            reason = str(e)[:100] if str(e) else type(e).__name__
+            logger.exception(
+                "Feed processing error: feed=%s reason=%s",
+                feed["name"],
+                reason,
+            )
+            # SAFETY: _releasing_feeds invariant -- add BEFORE the first await
             # that drops the lease (report_feed_failure sets worker_id=NULL).
             self._releasing_feeds.add(feed["id"])
             try:
@@ -745,6 +767,7 @@ class NormalizerRuntime:
                     worker_id,
                     fencing_token,
                     self._normalizer_settings.feed_failure_threshold,
+                    reason=reason,
                 )
                 if status == "quarantined":
                     await quarantine_telemetry.emit_quarantine_event(
