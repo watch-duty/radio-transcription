@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 import unittest
 import uuid
+from typing import TYPE_CHECKING, cast
 from unittest import mock
 
 from backend.pipeline.storage import feed_queries
@@ -12,6 +13,9 @@ from backend.pipeline.storage.feed_store import (
     LeasedFeed,
     SourceType,
 )
+
+if TYPE_CHECKING:
+    import asyncpg
 
 _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 _FEED_ID_B = uuid.UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
@@ -758,7 +762,10 @@ class TestRowToLeasedFeed(unittest.TestCase):
     def test_returns_leased_feed_from_valid_row(self) -> None:
         store = FeedStore(_make_pool())
 
-        result = store._row_to_leased_feed(_LEASE_ROW)
+        # asyncpg.Record exposes __getitem__ like a dict; tests pass a
+        # dict literal that quacks like Record. Cast tells the type
+        # checker we know what we're doing — runtime is unaffected.
+        result = store._row_to_leased_feed(cast("asyncpg.Record", _LEASE_ROW))
 
         self.assertEqual(result["id"], _FEED_ID)
         self.assertEqual(result["name"], "My Feed")
@@ -770,7 +777,7 @@ class TestRowToLeasedFeed(unittest.TestCase):
         store = FeedStore(_make_pool())
 
         with self.assertRaises(ValueError) as context:
-            store._row_to_leased_feed(bad_row)
+            store._row_to_leased_feed(cast("asyncpg.Record", bad_row))
 
         self.assertIn(
             "Unknown source type 'not_a_real_type'", str(context.exception)
