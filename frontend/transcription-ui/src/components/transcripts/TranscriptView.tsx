@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { GroupedVirtuoso, type VirtuosoHandle } from 'react-virtuoso';
 
@@ -53,6 +53,10 @@ type ListTranscriptsData = {
   transcripts: Transcript[];
 } & ListTranscriptsPage;
 
+const TRANSCRIPTS_POLLING_INTERVAL_MS = 15000; // 15 seconds
+const TRANSCRIPTS_POLLING_INTERVAL_DISPLAY_STRING = `${TRANSCRIPTS_POLLING_INTERVAL_MS / 1000}s`;
+const MAX_TRANSCRIPTS_POLLING_ITERATIONS = 10;
+
 export function TranscriptView({
   addAlert,
   triggerSnackbar,
@@ -83,6 +87,9 @@ export function TranscriptView({
   const [highlightedTransmissionId, setHighlightedTransmissionId] = useState<
     string | null
   >(targetTransmissionId);
+  const [isViewAtTopOfTranscripts, setIsViewAtTopOfTranscripts] =
+    useState(true);
+  const [isTranscriptsPolling, setIsTranscriptsPolling] = useState(false);
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const hasScrolledToTarget = useRef(false);
@@ -250,6 +257,140 @@ export function TranscriptView({
 
     return { groupCounts: counts, groupTitles: titles };
   }, [transcripts]);
+
+  // The timestamp of the newest transcript currently loaded in the UI.
+  // Used as a reference point when polling for newly arriving transcripts.
+  const newestTimestamp = transcripts[0]?.startTimestamp;
+
+  /**
+   * Fetches transcripts that have arrived after the current newest loaded transcript.
+   * Used by both the automatic background polling and the manual "Refresh" button.
+   * Handles pagination in case there are multiple pages of new transcripts.
+   */
+  const pollNewerTranscripts = useCallback(async () => {
+    if (!newestTimestamp || !searchedFeedId || !token) return [];
+
+    const allNewTranscripts: Transcript[] = [];
+    let currentNextToken: string | undefined = undefined;
+    let hasMore = true;
+    let iterations = 0;
+
+    try {
+      // Fetch all pages of new transcripts moving forward in time.
+      while (hasMore) {
+        if (iterations > MAX_TRANSCRIPTS_POLLING_ITERATIONS) {
+          console.warn(
+            'pollNewerTranscripts has more than 10 pages of new transcripts. This is unexpected. If this message continues, please report a bug.'
+          );
+        }
+
+        iterations++;
+        const response = await listTranscripts(
+          searchedFeedId,
+          token,
+          /*limit=*/ undefined,
+          currentNextToken,
+          // Query for transcripts with a start time greater than our current newest
+          /*startTime=*/ new Date(newestTimestamp).getTime(),
+          /*endTime=*/ undefined,
+          /*order=*/ 'asc'
+        );
+
+        if (response.transcripts && response.transcripts.length > 0) {
+          allNewTranscripts.push(...response.transcripts);
+        }
+
+        currentNextToken = response.nextToken;
+        hasMore = !!currentNextToken;
+      }
+    } catch (error) {
+      console.error('Error polling for new transcripts:', error);
+    }
+
+    // Reverse the array so the newest transcripts are at index 0 for prepending
+    return allNewTranscripts.reverse();
+  }, [newestTimestamp, searchedFeedId, token]);
+
+  /**
+   * Merges newly polled transcripts into the top of the infinite query cache.
+   * This updates the active view without triggering a full refetch of all loaded pages.
+   */
+  const updateCacheWithNewTranscripts = useCallback(
+    (newTranscripts: Transcript[]) => {
+      if (!token) return;
+      queryClient.setQueryData<InfiniteData<ListTranscriptsData>>(
+        ['listTranscripts', token, searchedFeedId, searchedTimestamp],
+        (oldData) => {
+          if (!oldData) return oldData;
+
+          // Filter out duplicates to prevent rendering issues if a transcript
+          // was caught in both the initial fetch and the poll.
+          const existingIds = new Set(
+            oldData.pages.flatMap((p) =>
+              p.transcripts.map((t) => t.transmissionId)
+            )
+          );
+          const filteredNew = newTranscripts.filter(
+            (t) => !existingIds.has(t.transmissionId)
+          );
+
+          if (filteredNew.length === 0) return oldData;
+
+          // Prepend the new transcripts to the first (newest) page of the query cache.
+          const newPages = [...oldData.pages];
+          newPages[0] = {
+            ...newPages[0],
+            transcripts: [...filteredNew, ...newPages[0].transcripts],
+          };
+          return { ...oldData, pages: newPages };
+        }
+      );
+    },
+    [token, searchedFeedId, searchedTimestamp, queryClient]
+  );
+
+  /**
+   * Background polling effect.
+   * Automatically fetches new transcripts every 15 seconds, provided the user is:
+   * 1. Scrolled to the top of the view.
+   * 2. Looking at the "live" head of the stream (no more un-fetched newer pages available).
+   */
+  useEffect(() => {
+    if (
+      // Skip polling if not viewing at the top of the transcripts to prevent fetching data when the user would not see it.
+      // User can always click refresh button if they want to.
+      !isViewAtTopOfTranscripts ||
+      // Skip polling if there are older historical pages ahead of us to load.
+      hasNewerTranscripts ||
+      !newestTimestamp ||
+      !searchedFeedId
+    ) {
+      return;
+    }
+
+    const interval = setInterval(async () => {
+      try {
+        setIsTranscriptsPolling(true);
+        const newTranscripts = await pollNewerTranscripts();
+        if (newTranscripts.length > 0) {
+          updateCacheWithNewTranscripts(newTranscripts);
+        }
+      } catch (error) {
+        console.error('Polling error:', error);
+      } finally {
+        setIsTranscriptsPolling(false);
+      }
+    }, TRANSCRIPTS_POLLING_INTERVAL_MS);
+
+    return () => clearInterval(interval);
+  }, [
+    isViewAtTopOfTranscripts,
+    hasNewerTranscripts,
+    newestTimestamp,
+    searchedFeedId,
+    pollNewerTranscripts,
+    updateCacheWithNewTranscripts,
+  ]);
 
   const {
     data: rules,
@@ -513,9 +654,7 @@ export function TranscriptView({
               sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}
             >
               {searchedFeed?.sourceUrl || searchedFeed?.archiveUrl ? (
-                <Box
-                  sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2 }}
-                >
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                   {searchedFeed.sourceUrl && (
                     <Link
                       href={searchedFeed.sourceUrl}
@@ -552,6 +691,40 @@ export function TranscriptView({
               ) : (
                 <Box />
               )}
+              {!hasNewerTranscripts && (
+                <Button
+                  size="small"
+                  variant="text"
+                  onClick={async () => {
+                    setIsTranscriptsPolling(true);
+                    try {
+                      const newTranscripts = await pollNewerTranscripts();
+                      if (newTranscripts.length > 0) {
+                        updateCacheWithNewTranscripts(newTranscripts);
+                      } else {
+                        triggerSnackbar('No newer transcripts found');
+                      }
+                    } catch (error) {
+                      console.error('Manual refresh error:', error);
+                    } finally {
+                      setIsTranscriptsPolling(false);
+                    }
+                  }}
+                  disabled={isTranscriptsFetching || isTranscriptsPolling}
+                  startIcon={
+                    isTranscriptsPolling ? (
+                      <CircularProgress size={16} color="inherit" />
+                    ) : (
+                      <RefreshIcon />
+                    )
+                  }
+                  sx={{ textTransform: 'none' }}
+                >
+                  {isTranscriptsPolling
+                    ? 'Refreshing...'
+                    : `Refresh (${TRANSCRIPTS_POLLING_INTERVAL_DISPLAY_STRING})`}
+                </Button>
+              )}
             </Box>
             <Paper
               variant="outlined"
@@ -566,6 +739,7 @@ export function TranscriptView({
               <GroupedVirtuoso
                 ref={virtuosoRef}
                 groupCounts={groupCounts}
+                atTopStateChange={(atTop) => setIsViewAtTopOfTranscripts(atTop)}
                 groupContent={(index) => {
                   const title = groupTitles[index];
                   return (
