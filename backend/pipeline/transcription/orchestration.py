@@ -144,6 +144,11 @@ def get_pipeline(
             or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
         )
 
+        order_config = OrderRestorerConfig(
+            out_of_order_timeout_ms=options.out_of_order_timeout_ms
+            or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
+        )
+
         stitching_results = parsed[
             MAIN_TAG
         ] | "OrderedBypassStitch" >> beam.ParDo(
