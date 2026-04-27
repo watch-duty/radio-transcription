@@ -45,6 +45,19 @@ class TranscriptsClient:
         Raises:
             requests.exceptions.HTTPError: If the request fails.
         """
+
+        def _raise(msg: str) -> None:
+            raise ValueError(msg)
+
+        if not payload.transmission_id:
+            _raise("transmission_id is required")
+        if not payload.feed_id:
+            _raise("feed_id is required")
+        if not payload.transcript:
+            _raise("transcript is required")
+        if not payload.source_audio_uris:
+            _raise("source_audio_uris is required")
+
         data = json_format.MessageToDict(
             payload,
             preserving_proto_field_name=True,
