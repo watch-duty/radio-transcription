@@ -488,7 +488,11 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
 
         await store.acquire_feeds_batch(
             _WORKER_ID,
-            {SourceType.BCFY_FEEDS: 0, SourceType.BCFY_CALLS: 10, SourceType.OPENMHZ: 10},
+            {
+                SourceType.BCFY_FEEDS: 0,
+                SourceType.BCFY_CALLS: 10,
+                SourceType.OPENMHZ: 10,
+            },
         )
 
         args = pool.fetch.call_args[0]
@@ -507,7 +511,8 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
         )
 
         await store.acquire_feeds_batch(
-            _WORKER_ID, {SourceType.BCFY_FEEDS: 5},
+            _WORKER_ID,
+            {SourceType.BCFY_FEEDS: 5},
         )
 
         args = pool.fetch.call_args[0]
@@ -545,7 +550,11 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError) as ctx:
             await store.acquire_feeds_batch(
                 _WORKER_ID,
-                {SourceType.BCFY_FEEDS: 1, SourceType.BCFY_CALLS: 1, SourceType.OPENMHZ: 1},
+                {
+                    SourceType.BCFY_FEEDS: 1,
+                    SourceType.BCFY_CALLS: 1,
+                    SourceType.OPENMHZ: 1,
+                },
             )
 
         self.assertIn(
@@ -558,35 +567,47 @@ class TestBuildAcquireFeedsBatchSql(unittest.TestCase):
     """Tests for build_acquire_feeds_batch_sql pure helper."""
 
     def test_one_branch_per_claim_type(self) -> None:
-        sql = feed_queries.build_acquire_feeds_batch_sql([SourceType.BCFY_FEEDS])
-        self.assertEqual(sql.count("AS MATERIALIZED ("), 2)  # 1 branch + claimed
+        sql = feed_queries.build_acquire_feeds_batch_sql(
+            [SourceType.BCFY_FEEDS]
+        )
+        self.assertEqual(
+            sql.count("AS MATERIALIZED ("), 2
+        )  # 1 branch + claimed
 
     def test_three_branches_for_production_set(self) -> None:
-        sql = feed_queries.build_acquire_feeds_batch_sql([
-            SourceType.BCFY_FEEDS,
-            SourceType.BCFY_CALLS,
-            SourceType.OPENMHZ,
-        ])
-        self.assertEqual(sql.count("AS MATERIALIZED ("), 4)  # 3 branches + claimed
+        sql = feed_queries.build_acquire_feeds_batch_sql(
+            [
+                SourceType.BCFY_FEEDS,
+                SourceType.BCFY_CALLS,
+                SourceType.OPENMHZ,
+            ]
+        )
+        self.assertEqual(
+            sql.count("AS MATERIALIZED ("), 4
+        )  # 3 branches + claimed
 
     def test_param_count_matches_claim_types(self) -> None:
         """N claim_types → LIMIT $2..$(1+N) appears in SQL."""
-        sql = feed_queries.build_acquire_feeds_batch_sql([
-            SourceType.BCFY_FEEDS,
-            SourceType.BCFY_CALLS,
-            SourceType.OPENMHZ,
-        ])
+        sql = feed_queries.build_acquire_feeds_batch_sql(
+            [
+                SourceType.BCFY_FEEDS,
+                SourceType.BCFY_CALLS,
+                SourceType.OPENMHZ,
+            ]
+        )
         self.assertIn("LIMIT $2", sql)
         self.assertIn("LIMIT $3", sql)
         self.assertIn("LIMIT $4", sql)
         self.assertNotIn("LIMIT $5", sql)
 
     def test_source_type_literals_inlined(self) -> None:
-        sql = feed_queries.build_acquire_feeds_batch_sql([
-            SourceType.BCFY_FEEDS,
-            SourceType.BCFY_CALLS,
-            SourceType.OPENMHZ,
-        ])
+        sql = feed_queries.build_acquire_feeds_batch_sql(
+            [
+                SourceType.BCFY_FEEDS,
+                SourceType.BCFY_CALLS,
+                SourceType.OPENMHZ,
+            ]
+        )
         self.assertIn("source_type = 'bcfy_feeds'", sql)
         self.assertIn("source_type = 'bcfy_calls'", sql)
         self.assertIn("source_type = 'openmhz'", sql)
@@ -661,11 +682,13 @@ class TestBuildAcquireFeedsBatchSql(unittest.TestCase):
             "FROM leased\n"
             "JOIN feed_properties fpi ON fpi.feed_id = leased.id\n"
         )
-        actual = feed_queries.build_acquire_feeds_batch_sql([
-            SourceType.BCFY_FEEDS,
-            SourceType.BCFY_CALLS,
-            SourceType.OPENMHZ,
-        ])
+        actual = feed_queries.build_acquire_feeds_batch_sql(
+            [
+                SourceType.BCFY_FEEDS,
+                SourceType.BCFY_CALLS,
+                SourceType.OPENMHZ,
+            ]
+        )
         self.assertEqual(actual, expected)
 
 
@@ -749,7 +772,9 @@ class TestRowToLeasedFeed(unittest.TestCase):
         with self.assertRaises(ValueError) as context:
             store._row_to_leased_feed(bad_row)
 
-        self.assertIn("Unknown source type 'not_a_real_type'", str(context.exception))
+        self.assertIn(
+            "Unknown source type 'not_a_real_type'", str(context.exception)
+        )
 
 
 class TestAcquireFeedsRecovery(unittest.IsolatedAsyncioTestCase):

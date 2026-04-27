@@ -1,4 +1,5 @@
 """SQL queries for feed storage operations."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -133,6 +134,7 @@ WHERE worker_id = $1 AND status = 'active'::feed_status
 GROUP BY source_type
 """
 
+
 # Primary per-type claim: one independent CTE per claim_type, each locking
 # its own rows with its own LIMIT. UNION ALL happens in a `claimed` CTE
 # across their IDs — the outer UPDATE joins the combined IDs. Each
@@ -228,6 +230,7 @@ def build_acquire_feeds_batch_sql(claim_types: Sequence[SourceType]) -> str:
         "FROM leased\n"
         "JOIN feed_properties fpi ON fpi.feed_id = leased.id\n"
     )
+
 
 # Recovery-path claim: failing-retryable + active-abandoned. Runs when the
 # primary per-type CTE (ACQUIRE_FEEDS_BATCH_SQL) returns fewer rows than

@@ -950,21 +950,27 @@ class TestCalculateBranchLimits(unittest.TestCase):
     def test_cold_start_bounds_sum_at_total_slack(self) -> None:
         # max_feeds_per_worker=250, all held=0 → sum must be exactly 250.
         held = dict.fromkeys(self.CAPS, 0)
-        limits = NormalizerRuntime._calculate_branch_limits(250, self.CAPS, held)
+        limits = NormalizerRuntime._calculate_branch_limits(
+            250, self.CAPS, held
+        )
         self.assertEqual(sum(limits.values()), 250)
         self.assertTrue(all(v >= 0 for v in limits.values()))
 
     def test_plan_target_800_bounds_sum(self) -> None:
         # max_feeds_per_worker=800 (scaling-plan target), all held=0.
         held = dict.fromkeys(self.CAPS, 0)
-        limits = NormalizerRuntime._calculate_branch_limits(800, self.CAPS, held)
+        limits = NormalizerRuntime._calculate_branch_limits(
+            800, self.CAPS, held
+        )
         self.assertEqual(sum(limits.values()), 800)
 
     def test_slack_exceeds_cap_sum_clamps_at_caps(self) -> None:
         # total_slack=2000 > sum(caps)=1740 → each branch gets its cap,
         # leftover slack is unassigned.
         held = dict.fromkeys(self.CAPS, 0)
-        limits = NormalizerRuntime._calculate_branch_limits(2000, self.CAPS, held)
+        limits = NormalizerRuntime._calculate_branch_limits(
+            2000, self.CAPS, held
+        )
         self.assertEqual(limits[SourceType.BCFY_FEEDS], 240)
         self.assertEqual(limits[SourceType.BCFY_CALLS], 600)
         self.assertEqual(limits[SourceType.OPENMHZ], 900)
@@ -976,7 +982,9 @@ class TestCalculateBranchLimits(unittest.TestCase):
             SourceType.BCFY_CALLS: 0,
             SourceType.OPENMHZ: 0,
         }
-        limits = NormalizerRuntime._calculate_branch_limits(250, self.CAPS, held)
+        limits = NormalizerRuntime._calculate_branch_limits(
+            250, self.CAPS, held
+        )
         self.assertEqual(limits[SourceType.BCFY_FEEDS], 0)
         self.assertEqual(sum(limits.values()), 250)
 
@@ -988,7 +996,9 @@ class TestCalculateBranchLimits(unittest.TestCase):
             SourceType.BCFY_CALLS: 0,
             SourceType.OPENMHZ: 0,
         }
-        limits = NormalizerRuntime._calculate_branch_limits(300, self.CAPS, held)
+        limits = NormalizerRuntime._calculate_branch_limits(
+            300, self.CAPS, held
+        )
         self.assertLessEqual(limits[SourceType.BCFY_FEEDS], 10)
         self.assertEqual(sum(limits.values()), 300)
 
@@ -1005,7 +1015,9 @@ class TestCalculateBranchLimits(unittest.TestCase):
             SourceType.BCFY_CALLS: 0,
             SourceType.OPENMHZ: 0,
         }
-        limits = NormalizerRuntime._calculate_branch_limits(1000, self.CAPS, held)
+        limits = NormalizerRuntime._calculate_branch_limits(
+            1000, self.CAPS, held
+        )
         # Each branch still bounded at its cap even with corrupted held.
         self.assertLessEqual(limits[SourceType.BCFY_FEEDS], 240)
         self.assertLessEqual(limits[SourceType.BCFY_CALLS], 600)
@@ -1016,7 +1028,9 @@ class TestCalculateBranchLimits(unittest.TestCase):
         # holds). The function must not KeyError; missing keys default
         # to held=0 → full headroom for that branch.
         held: dict[SourceType, int] = {SourceType.BCFY_FEEDS: 100}
-        limits = NormalizerRuntime._calculate_branch_limits(250, self.CAPS, held)
+        limits = NormalizerRuntime._calculate_branch_limits(
+            250, self.CAPS, held
+        )
         # BCFY_CALLS and OPENMHZ have no entry in `held` — both should
         # be treated as held=0 with full cap-sized headroom.
         self.assertEqual(sum(limits.values()), 250)

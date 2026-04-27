@@ -233,8 +233,12 @@ async def test_primary_cte_limit_zero_skips_type(
         },
     )
 
-    assert all(lease["source_type"] != SourceType.BCFY_FEEDS for lease in result)
-    assert any(lease["source_type"] == SourceType.BCFY_CALLS for lease in result)
+    assert all(
+        lease["source_type"] != SourceType.BCFY_FEEDS for lease in result
+    )
+    assert any(
+        lease["source_type"] == SourceType.BCFY_CALLS for lease in result
+    )
 
 
 async def test_primary_cte_sets_status_to_active(
@@ -282,8 +286,12 @@ async def test_recovery_excludes_non_claim_source_types(
 
     # An ECHO row in failing-retryable state with retry_after in the past.
     echo_id = await _insert_feed(
-        db_pool, "echo-failing", source_type="echo",
-        status="failing", failure_count=1, last_heartbeat_age_seconds=120,
+        db_pool,
+        "echo-failing",
+        source_type="echo",
+        status="failing",
+        failure_count=1,
+        last_heartbeat_age_seconds=120,
     )
     await db_pool.execute(
         "UPDATE feeds SET retry_after = NOW() - INTERVAL '10 seconds'"
@@ -293,14 +301,21 @@ async def test_recovery_excludes_non_claim_source_types(
     # An openmhz row in active-abandoned state — also outside claim_types.
     other_worker = uuid.uuid4()
     await _insert_feed(
-        db_pool, "openmhz-abandoned", source_type="openmhz",
-        status="active", worker_id=other_worker,
+        db_pool,
+        "openmhz-abandoned",
+        source_type="openmhz",
+        status="active",
+        worker_id=other_worker,
         last_heartbeat_age_seconds=120,
     )
     # A bcfy_feeds row in failing-retryable — this one IS a valid target.
     bcfy_id = await _insert_feed(
-        db_pool, "bcfy-failing", source_type="bcfy_feeds",
-        status="failing", failure_count=1, last_heartbeat_age_seconds=120,
+        db_pool,
+        "bcfy-failing",
+        source_type="bcfy_feeds",
+        status="failing",
+        failure_count=1,
+        last_heartbeat_age_seconds=120,
     )
     await db_pool.execute(
         "UPDATE feeds SET retry_after = NOW() - INTERVAL '10 seconds'"
@@ -309,14 +324,18 @@ async def test_recovery_excludes_non_claim_source_types(
     )
 
     result = await store.acquire_feeds_recovery(
-        worker, abandonment_window_sec=60.0, limit=10,
+        worker,
+        abandonment_window_sec=60.0,
+        limit=10,
     )
 
     returned_ids = {lease["id"] for lease in result}
     assert echo_id not in returned_ids, "ECHO must never be claim-recovered"
     # Confirm only bcfy_feeds came back; openmhz row stays with the other worker.
     assert returned_ids == {bcfy_id}
-    assert all(lease["source_type"] == SourceType.BCFY_FEEDS for lease in result)
+    assert all(
+        lease["source_type"] == SourceType.BCFY_FEEDS for lease in result
+    )
 
 
 async def test_recovery_with_full_claim_types_picks_up_all(
@@ -337,8 +356,12 @@ async def test_recovery_with_full_claim_types_picks_up_all(
     ids: dict[str, uuid.UUID] = {}
     for source_type in ("bcfy_feeds", "bcfy_calls", "openmhz"):
         fid = await _insert_feed(
-            db_pool, f"{source_type}-failing", source_type=source_type,
-            status="failing", failure_count=1, last_heartbeat_age_seconds=120,
+            db_pool,
+            f"{source_type}-failing",
+            source_type=source_type,
+            status="failing",
+            failure_count=1,
+            last_heartbeat_age_seconds=120,
         )
         await db_pool.execute(
             "UPDATE feeds SET retry_after = NOW() - INTERVAL '10 seconds'"
@@ -348,7 +371,9 @@ async def test_recovery_with_full_claim_types_picks_up_all(
         ids[source_type] = fid
 
     result = await store.acquire_feeds_recovery(
-        worker, abandonment_window_sec=60.0, limit=10,
+        worker,
+        abandonment_window_sec=60.0,
+        limit=10,
     )
 
     assert {lease["id"] for lease in result} == set(ids.values())
@@ -366,29 +391,48 @@ async def test_count_held_by_type_groups_only_active_owned_rows(
 
     # Owned + active: should count.
     await _insert_feed(
-        db_pool, "owned-bf-1", source_type="bcfy_feeds",
-        status="active", worker_id=worker, last_heartbeat_age_seconds=10,
+        db_pool,
+        "owned-bf-1",
+        source_type="bcfy_feeds",
+        status="active",
+        worker_id=worker,
+        last_heartbeat_age_seconds=10,
     )
     await _insert_feed(
-        db_pool, "owned-bf-2", source_type="bcfy_feeds",
-        status="active", worker_id=worker, last_heartbeat_age_seconds=10,
+        db_pool,
+        "owned-bf-2",
+        source_type="bcfy_feeds",
+        status="active",
+        worker_id=worker,
+        last_heartbeat_age_seconds=10,
     )
     await _insert_feed(
-        db_pool, "owned-bc-1", source_type="bcfy_calls",
-        status="active", worker_id=worker, last_heartbeat_age_seconds=10,
+        db_pool,
+        "owned-bc-1",
+        source_type="bcfy_calls",
+        status="active",
+        worker_id=worker,
+        last_heartbeat_age_seconds=10,
     )
     # Owned + active openmhz: zero rows expected → key still present with 0.
 
     # Other worker, active: must NOT count for our worker.
     await _insert_feed(
-        db_pool, "other-bf", source_type="bcfy_feeds",
-        status="active", worker_id=other_worker,
+        db_pool,
+        "other-bf",
+        source_type="bcfy_feeds",
+        status="active",
+        worker_id=other_worker,
         last_heartbeat_age_seconds=10,
     )
     # Owned but failing: must NOT count (status != active).
     await _insert_feed(
-        db_pool, "owned-failing", source_type="bcfy_feeds",
-        status="failing", worker_id=None, failure_count=1,
+        db_pool,
+        "owned-failing",
+        source_type="bcfy_feeds",
+        status="failing",
+        worker_id=None,
+        failure_count=1,
         last_heartbeat_age_seconds=120,
     )
     # Unclaimed: must NOT count.
@@ -410,8 +454,11 @@ async def test_count_held_by_type_empty_when_worker_holds_nothing(
     """Worker with no active leases gets all-zero dict (every type keyed)."""
     other_worker = uuid.uuid4()
     await _insert_feed(
-        db_pool, "active-other", source_type="bcfy_feeds",
-        status="active", worker_id=other_worker,
+        db_pool,
+        "active-other",
+        source_type="bcfy_feeds",
+        status="active",
+        worker_id=other_worker,
         last_heartbeat_age_seconds=10,
     )
 
@@ -441,7 +488,8 @@ async def test_update_progress_does_not_touch_last_heartbeat(
     """UPDATE_PROGRESS_SQL no longer writes last_heartbeat (HB-01)."""
     worker = uuid.uuid4()
     feed_id = await _insert_feed(
-        db_pool, "Progress Feed",
+        db_pool,
+        "Progress Feed",
         status="active",
         worker_id=worker,
         last_heartbeat_age_seconds=30,
@@ -449,13 +497,18 @@ async def test_update_progress_does_not_touch_last_heartbeat(
     before = await _read_last_heartbeat(db_pool, feed_id)
 
     ok = await store.update_feed_progress(
-        feed_id, worker, "gs://bucket/file.flac", fencing_token=0,
+        feed_id,
+        worker,
+        "gs://bucket/file.flac",
+        fencing_token=0,
         last_bookmark_time=None,
     )
 
     assert ok is True
     after = await _read_last_heartbeat(db_pool, feed_id)
-    assert after == before, "last_heartbeat must be unchanged by progress writes"
+    assert after == before, (
+        "last_heartbeat must be unchanged by progress writes"
+    )
 
 
 async def test_report_failure_does_not_touch_last_heartbeat(
@@ -464,7 +517,8 @@ async def test_report_failure_does_not_touch_last_heartbeat(
     """REPORT_FAILURE_SQL no longer writes last_heartbeat (HB-01)."""
     worker = uuid.uuid4()
     feed_id = await _insert_feed(
-        db_pool, "Failing Feed",
+        db_pool,
+        "Failing Feed",
         status="active",
         worker_id=worker,
         last_heartbeat_age_seconds=30,
@@ -487,7 +541,8 @@ async def test_heartbeat_skipped_when_recent(
     """A feed with last_heartbeat <15 s ago is NOT renewed; caller still owns it."""
     worker = uuid.uuid4()
     feed_id = await _insert_feed(
-        db_pool, "Recent Feed",
+        db_pool,
+        "Recent Feed",
         status="active",
         worker_id=worker,
         last_heartbeat_age_seconds=5,
@@ -509,7 +564,8 @@ async def test_heartbeat_renewed_when_stale(
     """A feed with last_heartbeat >15 s ago IS renewed, last_heartbeat advances."""
     worker = uuid.uuid4()
     feed_id = await _insert_feed(
-        db_pool, "Stale Feed",
+        db_pool,
+        "Stale Feed",
         status="active",
         worker_id=worker,
         last_heartbeat_age_seconds=30,
@@ -530,7 +586,8 @@ async def test_heartbeat_null_is_renewed(
     """NULL-safe branch: last_heartbeat IS NULL is eligible for renewal."""
     worker = uuid.uuid4()
     feed_id = await _insert_feed(
-        db_pool, "Null Heartbeat Feed",
+        db_pool,
+        "Null Heartbeat Feed",
         status="active",
         worker_id=worker,
         last_heartbeat_age_seconds=None,  # yields NULL

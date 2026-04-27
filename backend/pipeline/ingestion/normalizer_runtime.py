@@ -286,7 +286,9 @@ class NormalizerRuntime:
                     # so the allocation math is unit-testable without the
                     # surrounding asyncio loop.
                     limits = self._calculate_branch_limits(
-                        total_slack, caps, held,
+                        total_slack,
+                        caps,
+                        held,
                     )
                     logger.info(
                         "Attempting to acquire feeds "
@@ -311,12 +313,10 @@ class NormalizerRuntime:
                     # still earns its keep for failing-retryable and for
                     # reclaiming slack before the next sweep tick.
                     if len(primary) < total_slack:
-                        recovery = (
-                            await self._store.acquire_feeds_recovery(
-                                s.worker_id,
-                                s.abandonment_window_sec,
-                                total_slack - len(primary),
-                            )
+                        recovery = await self._store.acquire_feeds_recovery(
+                            s.worker_id,
+                            s.abandonment_window_sec,
+                            total_slack - len(primary),
                         )
                         leases.extend(recovery)
 
