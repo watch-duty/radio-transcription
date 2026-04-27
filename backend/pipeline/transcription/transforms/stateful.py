@@ -173,13 +173,13 @@ def process_ordering(
     )
 
     if was_late:
-        task_logger.info(f"[Order] Late chunk: {metadata.gcs_uri}")
+        task_logger.debug(f"[Order] Late chunk: {metadata.gcs_uri}")
     if was_buffered:
-        task_logger.info(
+        task_logger.debug(
             f"[Order] Buffered chunk from future: {metadata.gcs_uri}"
         )
     if elements_to_emit:
-        task_logger.info(f"[Order] Releasing {len(elements_to_emit)} chunks")
+        task_logger.debug(f"[Order] Releasing {len(elements_to_emit)} chunks")
 
     # Update jitter buffer state
     curr_context = replace(
