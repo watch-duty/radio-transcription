@@ -31,6 +31,7 @@ class TimeRange:
 class BufferedChunk:
     """Represents a chronologically sorted audio payload held in the jitter buffer."""
 
+    sequence_number: int
     timestamp_ms: int
     gcs_uri: str
 
@@ -63,6 +64,7 @@ class ChunkMetadata:
     session_id: str
     duration_ms: int
     feed_metadata: FeedMetadata
+    sequence_number: int | None = None
 
 
 @dataclass(frozen=True)
@@ -106,6 +108,7 @@ class TransmissionContext:
     stale_start_time_ms: int | None = None
     buffer_start_time_ms: int | None = None
     expected_next_chunk_start_ms: int | None = None
+    expected_next_seq: int | None = None
     start_audio_offset_ms: int | None = None
     end_audio_offset_ms: int | None = None
     contributing_audio_uris: list[str] = field(default_factory=list)

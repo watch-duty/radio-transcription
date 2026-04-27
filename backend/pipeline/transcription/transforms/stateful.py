@@ -112,10 +112,10 @@ class StaleTimerManager:
             self.event_timer.set(Timestamp(seconds=deadline_s))
 
             # 2. Set processing time timer based on wall-clock time
-            deadline_proc_s = (
+            deadline_proc_s = Timestamp(
                 time.time() + self.config.stale_timeout_ms / 1000.0
             )
-            self.proc_timer.set(Timestamp(seconds=deadline_proc_s))
+            self.proc_timer.set(deadline_proc_s)
         else:
             self.event_timer.clear()
             self.proc_timer.clear()
@@ -159,17 +159,17 @@ def process_ordering(
 
     # Process chunk through jitter buffer
     (
-        new_expected_next_ts,
+        new_expected_next_seq,
         new_buffer_elements,
         elements_to_emit,
         was_late,
         was_buffered,
     ) = sequence_buffer.process_chunk(
+        sequence_number=cast("int", metadata.sequence_number),
         current_ts_ms=current_ts_ms,
         gcs_uri=metadata.gcs_uri,
-        expected_next_ts=curr_context.expected_next_chunk_start_ms,
+        expected_next_seq=curr_context.expected_next_seq,
         buffer_elements=buffer_elements,
-        chunk_duration_ms=metadata.duration_ms,
     )
 
     if was_late:
@@ -184,7 +184,7 @@ def process_ordering(
     # Update jitter buffer state
     curr_context = replace(
         curr_context,
-        expected_next_chunk_start_ms=new_expected_next_ts,
+        expected_next_seq=new_expected_next_seq,
         out_of_order_buffer=new_buffer_elements,
     )
 

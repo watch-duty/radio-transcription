@@ -75,6 +75,11 @@ class ParseAndKeyFn(beam.DoFn):
                 msg = "AudioChunk missing required feed_name"
                 _raise(msg)
 
+            seq_num = (
+                chunk_proto.sequence_number
+                if chunk_proto.HasField("sequence_number")
+                else None
+            )
             yield (
                 feed_id,
                 ChunkMetadata(
@@ -85,6 +90,7 @@ class ParseAndKeyFn(beam.DoFn):
                         feed_name=chunk_proto.feed_name,
                         external_id=chunk_proto.external_id,
                     ),
+                    sequence_number=seq_num,
                 ),
             )
         except Exception as e:

@@ -25,4 +25,7 @@ message AudioChunk {
 
   // The unique identifier of the radio feed (formatted as an RFC 4122 UUID).
   string feed_id = 7;
+
+  // The sequential number of this chunk within the session.
+  optional int64 sequence_number = 8;
 }

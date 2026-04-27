@@ -29,70 +29,59 @@ class SequenceBuffer:
 
     def process_chunk(
         self,
+        sequence_number: int,
         current_ts_ms: int,
         gcs_uri: str,
-        expected_next_ts: int | None,
+        expected_next_seq: int | None,
         buffer_elements: list[BufferedChunk],
-        chunk_duration_ms: int | None = None,
     ) -> tuple[int, list[BufferedChunk], list[BufferedChunk], bool, bool]:
-        """Processes a single incoming audio chunk against the expected sequence progression.
-
-        This method acts as the core traffic cop for the jitter buffer:
-        1. Emits the chunk immediately if it perfectly matches our chronological expectation.
-        2. Bypasses the buffer (emits immediately) if the chunk arrives after the timeline has advanced past it.
-        3. Buffers the chunk if it arrives from the future, awaiting its predecessors.
-        """
+        """Processes a single incoming audio chunk against the expected sequence progression."""
         to_emit = []
         was_late = False
         was_buffered = False
 
-        # Initialize sequence if this is the very first chunk for this session.
-        if expected_next_ts is None:
-            expected_next_ts = current_ts_ms
+        if expected_next_seq is None:
+            expected_next_seq = sequence_number
 
-        # We allow a small epsilon to absorb float arithmetic tolerance.
-        epsilon_ms = DEFAULT_FLOAT_TOLERANCE_MS
-        difference = current_ts_ms - expected_next_ts
-
-        if abs(difference) <= epsilon_ms:
-            # HAPP PATH: The chunk matches our mathematical expectation exactly.
-            to_emit.append(BufferedChunk(current_ts_ms, gcs_uri))
-            # Advance the expected timestamp. Use provided duration if available (for varying lengths),
-            # otherwise fallback to fixed config duration.
-            duration = (
-                chunk_duration_ms
-                if chunk_duration_ms is not None
-                else self.config.chunk_duration_ms
-            )
-            expected_next_ts = current_ts_ms + duration
-
-            # Now that the sequence advanced, see if we already possess the newly expected chunks
-            # that were previously held in the buffer.
-            expected_next_ts, buffer_elements, drained = (
-                self.drain_ready_elements(
-                    expected_next_ts, buffer_elements, epsilon_ms
+        if sequence_number == expected_next_seq:
+            to_emit.append(
+                BufferedChunk(
+                    sequence_number=sequence_number,
+                    timestamp_ms=current_ts_ms,
+                    gcs_uri=gcs_uri,
                 )
             )
+            expected_next_seq = sequence_number + 1
+
+            expected_next_seq, buffer_elements, drained = (
+                self.drain_ready_sequences(expected_next_seq, buffer_elements)
+            )
             to_emit.extend(drained)
-        elif difference < -epsilon_ms:
-            # LATE PATH: The chunk arrived later than its position in the sequence, meaning
-            # the pipeline had already "given up" and moved past it. We emit it in isolation
-            # so it still gets transcribed separately as a distinct utterance.
+        elif sequence_number < expected_next_seq:
             was_late = True
             logger.info(
-                f"Yielding late chunk at {current_ts_ms} (expected {expected_next_ts}) for isolated transcription."
+                f"Yielding late chunk {sequence_number} (expected {expected_next_seq}) for isolated transcription."
             )
-            to_emit.append(BufferedChunk(current_ts_ms, gcs_uri))
+            to_emit.append(
+                BufferedChunk(
+                    sequence_number=sequence_number,
+                    timestamp_ms=current_ts_ms,
+                    gcs_uri=gcs_uri,
+                )
+            )
         else:
-            # FUTURE PATH: The difference > epsilon_ms, meaning this chunk arrived before
-            # its predecessor. We store it in state, parking it until the missing chunk arrives.
             was_buffered = True
             heapq.heappush(
-                buffer_elements, BufferedChunk(current_ts_ms, gcs_uri)
+                buffer_elements,
+                BufferedChunk(
+                    sequence_number=sequence_number,
+                    timestamp_ms=current_ts_ms,
+                    gcs_uri=gcs_uri,
+                ),
             )
 
         return (
-            expected_next_ts,
+            expected_next_seq,
             buffer_elements,
             to_emit,
             was_late,
@@ -123,3 +112,23 @@ class SequenceBuffer:
                 break
 
         return expected_next_ts, buffer_elements, to_emit
+
+    def drain_ready_sequences(
+        self,
+        expected_next_seq: int,
+        buffer_elements: list[BufferedChunk],
+    ) -> tuple[int, list[BufferedChunk], list[BufferedChunk]]:
+        """Recursively scans the active buffer to find any chunks that sequentially match the newly advanced expected_next_seq."""
+        to_emit = []
+        while buffer_elements:
+            smallest = buffer_elements[0]
+            if smallest.sequence_number == expected_next_seq:
+                heapq.heappop(buffer_elements)
+                to_emit.append(smallest)
+                expected_next_seq += 1
+            else:
+                break
+
+        return expected_next_seq, buffer_elements, to_emit
+
+        return expected_next_seq, buffer_elements, to_emit
