@@ -37,13 +37,22 @@ class SourceType(enum.StrEnum):
     Each value corresponds to a slug in the ``source_types`` database table.
 
     .. important::
-        This enum **must** be kept in sync with the following SQL files:
+        Adding a claimable source type is a three-place change:
 
-        - ``terraform/modules/alloydb/sql/ingestion/002_source_types.sql``
-        - ``terraform/modules/alloydb/sql/ingestion/006_seed_source_types.sql``
+        1. **This enum** — add the new member.
+        2. **DB seed** — add a row in
+           ``terraform/modules/alloydb/sql/ingestion/002_source_types.sql``
+           and ``006_seed_source_types.sql``.
+        3. **Per-type cap registry** — add an entry to
+           ``backend.pipeline.ingestion.settings._DEFAULT_CAPS``. This
+           dict drives ``NormalizerSettings.caps``, ``FeedStore``'s
+           generated acquire-batch SQL, and the ``claim_types`` filter on
+           the recovery path. **Skipping this step means VM workers
+           will silently never claim feeds of the new type** — neither
+           the primary CTE nor the recovery sweep will pick them up.
 
-        When adding or renaming a source type, update both this enum and the
-        SQL files together.
+        Renames must touch both this enum and the DB seed in the same
+        deploy.
     """
 
     BCFY_FEEDS = "bcfy_feeds"

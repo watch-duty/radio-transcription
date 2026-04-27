@@ -31,9 +31,18 @@ _DEFAULT_CAPS: dict[SourceType, int] = {
 
 
 def _load_caps_from_env() -> dict[SourceType, int]:
-    """Build per-type caps from CAP_<NAME> env vars, defaulting via _DEFAULT_CAPS."""
+    """Build per-type caps from CAP_<NAME> env vars, defaulting via _DEFAULT_CAPS.
+
+    Caps are clamped to ``max(0, ...)`` so a misconfigured negative env
+    var can't propagate into the SQL as a negative ``LIMIT`` (PostgreSQL
+    rejects negative LIMITs and the resulting error would block every
+    leasing cycle indefinitely). A clamp at this boundary keeps the
+    corrupt-input failure mode local: the affected branch claims nothing
+    until ops fixes the env var, but the worker keeps processing other
+    types and stays healthy.
+    """
     return {
-        t: int(os.environ.get(f"CAP_{t.name}", str(default)))
+        t: max(0, int(os.environ.get(f"CAP_{t.name}", str(default))))
         for t, default in _DEFAULT_CAPS.items()
     }
 
@@ -97,11 +106,14 @@ class NormalizerSettings:
 
     # Claim ramp filter (scaling plan §9.4). md5-based deterministic
     # bucketing; 100 = every feed claimable. Sub-100 values enable staged
-    # rollout during Phase 2 ramp stages.
+    # rollout during Phase 2 ramp stages. Clamped to [0, 100]: out-of-
+    # range values would silently skew the bucket distribution (e.g.
+    # negative pct makes the `% 100 < $2` predicate always false → no
+    # feeds claimable; values > 100 act as 100 → no ramp gating).
     claim_ramp_pct: int = field(
-        default_factory=lambda: int(
+        default_factory=lambda: max(0, min(100, int(
             os.environ.get("CLAIM_RAMP_PCT", "100"),
-        ),
+        ))),
     )
 
     # GCS

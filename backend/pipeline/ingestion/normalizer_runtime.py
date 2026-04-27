@@ -480,6 +480,13 @@ class NormalizerRuntime:
         remaining_slack = total_slack
         remaining_branches = len(sorted_types)
         for t in sorted_types:
+            # share recomputes per iteration: when an earlier branch is
+            # headroom-limited (limits[t] < share), the savings flow into
+            # the next branch's share automatically. Integer-division
+            # remainders likewise compound forward, so the last branch's
+            # share == remaining_slack and absorbs everything that fits.
+            # Any remaining_slack > 0 at end of loop implies every branch
+            # ended at headroom — there's nowhere to redistribute to.
             share = (
                 remaining_slack // remaining_branches
                 if remaining_branches > 0
@@ -488,17 +495,6 @@ class NormalizerRuntime:
             limits[t] = min(headroom[t], share)
             remaining_slack -= limits[t]
             remaining_branches -= 1
-        # Integer division leaves at most N-1 units of slack unassigned
-        # (the remainder). Give them to the largest-headroom branches that
-        # still have room.
-        if remaining_slack > 0:
-            for t in reversed(sorted_types):
-                if remaining_slack == 0:
-                    break
-                if limits[t] < headroom[t]:
-                    bump = min(headroom[t] - limits[t], remaining_slack)
-                    limits[t] += bump
-                    remaining_slack -= bump
         return limits
 
     @staticmethod
