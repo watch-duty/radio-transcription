@@ -10,10 +10,8 @@ import aiohttp
 import asyncpg
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
-from backend.pipeline.ingestion.normalizer_runtime import (
-    CapturedChunk,
-    NormalizerRuntime,
-)
+from backend.pipeline.ingestion.models import CapturedChunk, CaptureResources
+from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
 from backend.pipeline.storage.feed_store import (
     HeartbeatResult,
     LeasedFeed,
@@ -32,6 +30,20 @@ def _make_captured_chunk(audio_bytes: bytes) -> CapturedChunk:
         audio_bytes=audio_bytes,
         chunk_start_time=now,
         chunk_end_time=now + datetime.timedelta(seconds=CHUNK_DURATION_SECONDS),
+    )
+
+
+def _default_resources() -> CaptureResources:
+    """Build a no-op CaptureResources for unit tests.
+
+    Phase 2 collector bodies do NOT touch http_session or spawn_semaphore,
+    so a mock session + a real (loop-bound) Semaphore is sufficient.
+    Constructing a real aiohttp.ClientSession would open real sockets;
+    avoid in unit tests.
+    """
+    return CaptureResources(
+        http_session=mock.AsyncMock(spec=aiohttp.ClientSession),
+        spawn_semaphore=asyncio.Semaphore(8),
     )
 
 
@@ -80,6 +92,7 @@ def _make_settings(**overrides) -> mock.MagicMock:
         "heartbeat_interval_sec": 15.0,
         "heartbeat_stall_timeout_sec": 45.0,
         "graceful_shutdown_timeout_sec": 10.0,
+        "ffmpeg_spawn_limit": 8,
         "audio_staging_bucket": "test-bucket",
         "continuous_pubsub_topic_path": "projects/p/topics/t",
         "db": AlloyDBSettings(
@@ -126,13 +139,14 @@ def _make_settings(**overrides) -> mock.MagicMock:
 def _make_runtime(**settings_overrides) -> NormalizerRuntime:
     """Build a runtime with a mock capture_fn and settings."""
 
-    async def _dummy_capture(feed, shutdown):
+    async def _dummy_capture(feed, shutdown, _resources):
         yield _make_captured_chunk(b"chunk")
 
     settings = _make_settings(**settings_overrides)
     rt = NormalizerRuntime(capture_fn=_dummy_capture, settings=settings)
-    # Pre-initialize _lease_lost so tests don't need _main().
+    # Pre-initialize _lease_lost and _capture_resources so tests don't need _main().
     rt._lease_lost = asyncio.Event()
+    rt._capture_resources = _default_resources()
     return rt
 
 
@@ -302,12 +316,13 @@ class TestProcessFeedFenceViolation(unittest.IsolatedAsyncioTestCase):
     async def test_bookmark_fence_failure_exits_process(self) -> None:
         """When bookmark fence fails, os._exit is called."""
 
-        async def _one_chunk(feed, shutdown):
+        async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
         rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress.return_value = False
         rt._releasing_feeds = set()
@@ -330,13 +345,14 @@ class TestProcessFeedShutdown(unittest.IsolatedAsyncioTestCase):
     async def test_shutdown_skips_individual_release(self) -> None:
         """When shutdown is set, task returns without calling release_feed."""
 
-        async def _one_chunk(feed, shutdown):
+        async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
         rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._shutdown.set()
         rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress.return_value = True
         rt._releasing_feeds = set()
@@ -353,12 +369,13 @@ class TestProcessFeedNormalCompletion(unittest.IsolatedAsyncioTestCase):
     async def test_normal_completion_releases_feed(self) -> None:
         """When generator exhausts, release_feed is called."""
 
-        async def _one_chunk(feed, shutdown):
+        async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
         rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress.return_value = True
         rt._releasing_feeds = set()
@@ -371,12 +388,13 @@ class TestProcessFeedNormalCompletion(unittest.IsolatedAsyncioTestCase):
     async def test_releasing_feeds_cleaned_up_after_release(self) -> None:
         """_releasing_feeds is empty after release completes."""
 
-        async def _one_chunk(feed, shutdown):
+        async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
         rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress.return_value = True
         rt._releasing_feeds = set()
@@ -393,12 +411,13 @@ class TestProcessFeedTimestamps(unittest.IsolatedAsyncioTestCase):
     async def test_sets_start_timestamp_on_audio_chunk(self) -> None:
         """The start_timestamp field must be populated before publishing."""
 
-        async def _one_chunk(feed, shutdown):
+        async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
         rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress.return_value = True
         rt._releasing_feeds = set()
@@ -437,7 +456,7 @@ class TestProcessFeedSessionId(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """The session_id field must be populated and identical for all chunks in a session."""
 
-        async def _two_chunks(feed, shutdown):
+        async def _two_chunks(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio1")
             yield _make_captured_chunk(b"audio2")
 
@@ -446,6 +465,7 @@ class TestProcessFeedSessionId(unittest.IsolatedAsyncioTestCase):
         )
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress.return_value = True
         rt._releasing_feeds = set()
@@ -473,7 +493,7 @@ class TestProcessFeedTopicRouting(unittest.IsolatedAsyncioTestCase):
     async def test_routes_continuous_feed_to_default_topic(self) -> None:
         """Continuous feeds (BCFY_FEEDS) go to continuous_pubsub_topic_path."""
 
-        async def _one_chunk(feed, shutdown):
+        async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
         rt = _make_runtime(
@@ -494,7 +514,7 @@ class TestProcessFeedTopicRouting(unittest.IsolatedAsyncioTestCase):
     async def test_routes_segmented_feed_to_segmented_topic(self) -> None:
         """Segmented feeds (not BCFY_FEEDS) go to segmented_pubsub_topic_path."""
 
-        async def _one_chunk(feed, shutdown):
+        async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
         rt = _make_runtime(
@@ -527,7 +547,7 @@ class TestProcessFeedTopicRouting(unittest.IsolatedAsyncioTestCase):
     async def test_raises_if_segmented_topic_missing(self) -> None:
         """Raises ValueError if segmented feed processed but segmented topic missing."""
 
-        async def _one_chunk(feed, shutdown):
+        async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
         rt = _make_runtime(
@@ -1197,12 +1217,13 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
     async def test_transient_upload_failure_retries_and_succeeds(self) -> None:
         """GCS upload fails once then succeeds — pipeline continues."""
 
-        async def _one_chunk(feed, shutdown):
+        async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
         rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress.return_value = True
         rt._releasing_feeds = set()
@@ -1228,12 +1249,13 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """LeaseExpiredError aborts cleanly — no report_feed_failure call."""
 
-        async def _one_chunk(feed, shutdown):
+        async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
         rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
         rt._lease_lost.set()
         rt._store = mock.AsyncMock()
         rt._releasing_feeds = set()
@@ -1254,12 +1276,13 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
     async def test_lease_lost_during_bookmark_backoff_aborts(self) -> None:
         """Lease loss during bookmark retry aborts without DB write."""
 
-        async def _one_chunk(feed, shutdown):
+        async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
         rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
         # Bookmark fails with a retryable error, then lease is lost
         rt._store.update_feed_progress.side_effect = asyncpg.InterfaceError(
@@ -1292,7 +1315,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
     async def test_quarantine_emits_telemetry(self) -> None:
         """When report_feed_failure returns 'quarantined', telemetry fires."""
 
-        async def _failing_capture(feed, shutdown):
+        async def _failing_capture(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
             msg = "capture_failed"
             raise RuntimeError(msg)
@@ -1302,6 +1325,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         )
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress.return_value = True
         rt._store.report_feed_failure.return_value = "quarantined"
@@ -1328,7 +1352,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
     async def test_failing_status_does_not_emit_telemetry(self) -> None:
         """When report_feed_failure returns 'failing', no telemetry fires."""
 
-        async def _failing_capture(feed, shutdown):
+        async def _failing_capture(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
             msg = "capture_failed"
             raise RuntimeError(msg)
@@ -1338,6 +1362,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         )
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress.return_value = True
         rt._store.report_feed_failure.return_value = "failing"
@@ -1363,7 +1388,7 @@ class TestProcessFeedPublishAttributes(unittest.IsolatedAsyncioTestCase):
         """Runtime publishes with the session_id from CapturedChunk."""
         chunk_session_id = "chunk-supplied-session-id"
 
-        async def _one_chunk(feed, shutdown):
+        async def _one_chunk(feed, shutdown, _resources):
             now = datetime.datetime.now(datetime.UTC)
             yield CapturedChunk(
                 audio_bytes=b"audio",
@@ -1375,6 +1400,7 @@ class TestProcessFeedPublishAttributes(unittest.IsolatedAsyncioTestCase):
         rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress.return_value = True
         rt._releasing_feeds = set()
@@ -1391,7 +1417,7 @@ class TestProcessFeedPublishAttributes(unittest.IsolatedAsyncioTestCase):
         sid_a = "session-a"
         sid_b = "session-b"
 
-        async def _two_chunks(feed, shutdown):
+        async def _two_chunks(feed, shutdown, _resources):
             now = datetime.datetime.now(datetime.UTC)
             yield CapturedChunk(
                 audio_bytes=b"audio1",
@@ -1411,6 +1437,7 @@ class TestProcessFeedPublishAttributes(unittest.IsolatedAsyncioTestCase):
         )
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress.return_value = True
         rt._releasing_feeds = set()
@@ -1427,12 +1454,13 @@ class TestProcessFeedPublishAttributes(unittest.IsolatedAsyncioTestCase):
     async def test_fallback_session_id_when_none(self) -> None:
         """Runtime generates a fallback UUID and warns when session_id is None."""
 
-        async def _one_chunk(feed, shutdown):
+        async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")  # session_id=None
 
         rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress.return_value = True
         rt._releasing_feeds = set()
@@ -1458,12 +1486,13 @@ class TestProcessFeedPublishAttributes(unittest.IsolatedAsyncioTestCase):
     async def test_source_type_passed(self) -> None:
         """publish_audio_chunk receives source_type matching the feed."""
 
-        async def _one_chunk(feed, shutdown):
+        async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
         rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress.return_value = True
         rt._releasing_feeds = set()
