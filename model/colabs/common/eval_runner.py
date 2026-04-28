@@ -51,19 +51,12 @@ def run_batch_evaluation(
         for entry in batch:
             audio_gcs_uri = entry["audio_filepath"]
             
-            if audio_gcs_uri not in segment_counters:
-                segment_counters[audio_gcs_uri] = 0
-            else:
-                segment_counters[audio_gcs_uri] += 1
-                
-            seg_index = segment_counters[audio_gcs_uri]
-            seg_str = f"seg{seg_index:03d}"
-    
             audio_bucket, audio_blob_path = parse_gcs_uri(audio_gcs_uri)
+            # Use the file name directly for local storage
             file_name = os.path.splitext(os.path.basename(audio_blob_path))[0]
-            
-            segmented_blob_path = f"segmented_audio/{project_name}_audio/{file_name}/{file_name}__{seg_str}.flac"
-            local_path = f"./temp_{file_name}__{seg_str}.flac"
+            local_path = f"./temp_{file_name}.flac"
+            # Use the path from manifest directly, no counter-based derivation
+            segmented_blob_path = audio_blob_path
             
             try:
                 download_blob_to_file(storage_client, audio_bucket, segmented_blob_path, local_path)
