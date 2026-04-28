@@ -762,48 +762,56 @@ describe('TranscriptView', () => {
   });
 
   it('displays the feed outlined status Chip and human-friendly relative time string', async () => {
-    const testFeed = {
-      id: 'feed123',
-      name: 'Feed 123',
-      sourceType: 'bcfy_feeds' as const,
-      status: 'active' as const,
-      lastHeartbeat: new Date(Date.now() - 5 * 60 * 1000).toISOString(), // 5 mins ago
-    };
+    const fixedNow = new Date('2026-04-10T12:05:00Z');
+    vi.useFakeTimers();
+    vi.setSystemTime(fixedNow);
 
-    vi.mocked(listFeeds).mockResolvedValue([testFeed]);
+    try {
+      const testFeed = {
+        id: 'feed123',
+        name: 'Feed 123',
+        sourceType: 'bcfy_feeds' as const,
+        status: 'active' as const,
+        lastHeartbeat: new Date(fixedNow.getTime() - 5 * 60 * 1000).toISOString(),
+      };
 
-    vi.mocked(getFeed).mockResolvedValue(testFeed);
+      vi.mocked(listFeeds).mockResolvedValue([testFeed]);
 
-    vi.mocked(listTranscripts).mockResolvedValueOnce({
-      transcripts: [
-        {
-          feedId: 'feed123',
-          transmissionId: '1',
-          transcript: 'Hello world!',
-          canonicalAudioUri: 'gs:://foo.flac',
-          playbackAudioUri: 'gs:://foo.m4a',
-          startTimestamp: '2026-04-10T12:00:00Z',
-          endTimestamp: '2026-04-10T12:00:05Z',
-          missingPriorContext: false,
-          missingPostContext: false,
-          sourceAudioUris: ['gs:://foo.flac'],
-          startAudioOffset: '0s',
-          endAudioOffset: '5s',
-          evaluationDecisions: [],
-        },
-      ],
-      nextToken: undefined,
-    });
+      vi.mocked(getFeed).mockResolvedValue(testFeed);
 
-    renderTranscriptView(
-      <MemoryRouter initialEntries={['/?feedId=feed123']}>
-        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
-    );
+      vi.mocked(listTranscripts).mockResolvedValueOnce({
+        transcripts: [
+          {
+            feedId: 'feed123',
+            transmissionId: '1',
+            transcript: 'Hello world!',
+            canonicalAudioUri: 'gs:://foo.flac',
+            playbackAudioUri: 'gs:://foo.m4a',
+            startTimestamp: '2026-04-10T12:00:00Z',
+            endTimestamp: '2026-04-10T12:00:05Z',
+            missingPriorContext: false,
+            missingPostContext: false,
+            sourceAudioUris: ['gs:://foo.flac'],
+            startAudioOffset: '0s',
+            endAudioOffset: '5s',
+            evaluationDecisions: [],
+          },
+        ],
+        nextToken: undefined,
+      });
 
-    await waitFor(() => {
-      expect(screen.getByText('active')).toBeTruthy();
-      expect(screen.getByText('Last Updated: 5 mins ago')).toBeTruthy();
-    });
+      renderTranscriptView(
+        <MemoryRouter initialEntries={['/?feedId=feed123']}>
+          <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+        </MemoryRouter>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('active')).toBeTruthy();
+        expect(screen.getByText('Last Updated: 5 mins ago')).toBeTruthy();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

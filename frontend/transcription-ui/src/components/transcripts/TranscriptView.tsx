@@ -61,8 +61,12 @@ const MAX_TRANSCRIPTS_POLLING_ITERATIONS = 10;
 function getRelativeTimeString(dateString?: string): string {
   if (!dateString) return '';
   const date = new Date(dateString);
+  const dateMs = date.getTime();
+  if (Number.isNaN(dateMs)) {
+    return '';
+  }
   const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
+  const diffMs = Math.max(0, now.getTime() - dateMs);
   const diffMins = Math.floor(diffMs / (60 * 1000));
 
   if (diffMins < 1) {
