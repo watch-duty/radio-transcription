@@ -9,7 +9,7 @@ from backend.pipeline.common.constants import (
     MS_PER_SECOND,
 )
 from backend.pipeline.transcription.common.constants import (
-    DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
+    DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS,
 )
 from backend.pipeline.transcription.common.enums import TranscriberType, VadType
 
@@ -143,7 +143,7 @@ class StitcherContext:
 class OrderRestorerConfig:
     """Configuration parameters for the sequence Jitter Buffer."""
 
-    out_of_order_timeout_ms: int = DEFAULT_OUT_OF_ORDER_TIMEOUT_MS
+    out_of_order_timeout_ms: int = DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS
     chunk_duration_ms: int = CHUNK_DURATION_SECONDS * MS_PER_SECOND
 
 

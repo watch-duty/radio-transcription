@@ -21,8 +21,9 @@ from apache_beam.options.pipeline_options import (
 from backend.pipeline.transcription.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
     DEFAULT_BYPASS_STALE_TIMEOUT_MS,
+    DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_MAX_TRANSMISSION_DURATION_MS,
-    DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
+    DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_SIGNIFICANT_GAP_MS,
     DEFAULT_STALE_TIMEOUT_MS,
     DEFAULT_VAD_POST_ROLL_MS,
@@ -73,7 +74,8 @@ def get_pipeline(
 
     # Validate logical pipeline timeout configuration rules
     ooo_timeout = (
-        options.out_of_order_timeout_ms or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS
+        options.continuous_out_of_order_timeout_ms
+        or DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS
     )
     stale_timeout = options.stale_timeout_ms or DEFAULT_STALE_TIMEOUT_MS
 
@@ -140,13 +142,8 @@ def get_pipeline(
         )
 
         order_config = OrderRestorerConfig(
-            out_of_order_timeout_ms=options.out_of_order_timeout_ms
-            or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
-        )
-
-        order_config = OrderRestorerConfig(
-            out_of_order_timeout_ms=options.out_of_order_timeout_ms
-            or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
+            out_of_order_timeout_ms=options.segmented_out_of_order_timeout_ms
+            or DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS,
         )
 
         stitching_results = parsed[
@@ -167,8 +164,8 @@ def get_pipeline(
         ] | "OrderedStitchAudio" >> beam.ParDo(
             OrderedStitchAudioFn(
                 order_config=OrderRestorerConfig(
-                    out_of_order_timeout_ms=options.out_of_order_timeout_ms
-                    or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
+                    out_of_order_timeout_ms=options.continuous_out_of_order_timeout_ms
+                    or DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS,
                 ),
                 stitch_config=download_config,
             )
