@@ -4,15 +4,16 @@ import argparse
 
 from apache_beam.options.pipeline_options import PipelineOptions
 
-from backend.pipeline.transcription.constants import (
+from backend.pipeline.transcription.common.constants import (
+    DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_MAX_TRANSMISSION_DURATION_MS,
-    DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
+    DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_SIGNIFICANT_GAP_MS,
     DEFAULT_STALE_TIMEOUT_MS,
     DEFAULT_VAD_POST_ROLL_MS,
     DEFAULT_VAD_PRE_ROLL_MS,
 )
-from backend.pipeline.transcription.enums import (
+from backend.pipeline.transcription.common.enums import (
     TranscriberType,
     VadType,
 )
@@ -98,10 +99,16 @@ class TranscriptionOptions(PipelineOptions):
             help="Milliseconds before an incomplete transmission is flushed.",
         )
         parser.add_argument(
-            "--out_of_order_timeout_ms",
+            "--continuous_out_of_order_timeout_ms",
             type=int,
-            default=DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
-            help="Milliseconds to wait for missing chunks before accepting a gap.",
+            default=DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS,
+            help="Milliseconds to wait for missing chunks before accepting a gap in continuous feeds.",
+        )
+        parser.add_argument(
+            "--segmented_out_of_order_timeout_ms",
+            type=int,
+            default=DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS,
+            help="Milliseconds to wait for missing chunks before accepting a gap in segmented feeds.",
         )
         parser.add_argument(
             "--vad_pre_roll_ms",

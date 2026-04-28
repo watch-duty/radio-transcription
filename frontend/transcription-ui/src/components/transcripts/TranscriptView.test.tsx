@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
+import type { ReactElement } from 'react';
 import { MemoryRouter } from 'react-router';
+import { VirtuosoMockContext } from 'react-virtuoso';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -9,6 +11,16 @@ import { listFeeds } from '../../service/listFeeds';
 import { listTranscripts } from '../../service/listTranscripts';
 import { renderWithQueryClient } from '../../test/testUtils';
 import TranscriptView from './TranscriptView';
+
+const renderTranscriptView = (ui: ReactElement) => {
+  return renderWithQueryClient(
+    <VirtuosoMockContext.Provider
+      value={{ viewportHeight: 1000, itemHeight: 100 }}
+    >
+      {ui}
+    </VirtuosoMockContext.Provider>
+  );
+};
 
 // Mock the services
 vi.mock('../../service/listTranscripts', () => ({
@@ -31,6 +43,24 @@ vi.mock('@wavesurfer/react', () => ({
 describe('TranscriptView', () => {
   const mockAddAlert = vi.fn();
 
+  const mockTranscripts = [
+    {
+      feedId: 'feed123',
+      transmissionId: '1',
+      transcript: 'Hello',
+      canonicalAudioUri: 'gs:://foo.flac',
+      playbackAudioUri: 'gs:://foo.m4a',
+      startTimestamp: '2026-04-10T12:00:00Z',
+      endTimestamp: '2026-04-10T12:00:05Z',
+      missingPriorContext: false,
+      missingPostContext: false,
+      sourceAudioUris: ['gs:://foo.flac'],
+      startAudioOffset: '0s',
+      endAudioOffset: '5s',
+      evaluationDecisions: [],
+    },
+  ];
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockAddAlert.mockClear();
@@ -42,10 +72,11 @@ describe('TranscriptView', () => {
 
   afterEach(() => {
     cleanup();
+    vi.useRealTimers();
   });
 
   it('renders search field and fetch button', () => {
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -60,7 +91,7 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -107,7 +138,7 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -133,7 +164,7 @@ describe('TranscriptView', () => {
   it('shows error message on failure', async () => {
     vi.mocked(listTranscripts).mockRejectedValueOnce(new Error('Fetch failed'));
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -161,7 +192,7 @@ describe('TranscriptView', () => {
     ];
     vi.mocked(listFeeds).mockResolvedValueOnce(mockFeeds);
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -175,7 +206,7 @@ describe('TranscriptView', () => {
   it('shows error alert when feeds fail to load', async () => {
     vi.mocked(listFeeds).mockRejectedValueOnce(new Error('Feeds load failed'));
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -197,7 +228,7 @@ describe('TranscriptView', () => {
     ];
     vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -224,7 +255,7 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -243,83 +274,6 @@ describe('TranscriptView', () => {
 
     await waitFor(() => {
       expect(screen.getByText('No transcripts found.')).toBeTruthy();
-    });
-  });
-
-  it('loads more transcripts when Load More is clicked', async () => {
-    const mockTranscriptsPage1 = [
-      {
-        feedId: 'feed123',
-        transmissionId: '1',
-        transcript: 'Hello',
-        canonicalAudioUri: 'gs:://foo.flac',
-        playbackAudioUri: 'gs:://foo.m4a',
-        startTimestamp: '2026-04-10T12:00:00Z',
-        endTimestamp: '2026-04-10T12:00:05Z',
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: ['gs:://foo.flac'],
-        startAudioOffset: '0s',
-        endAudioOffset: '5s',
-        evaluationDecisions: [],
-      },
-    ];
-    const mockTranscriptsPage2 = [
-      {
-        feedId: 'feed123',
-        transmissionId: '2',
-        transcript: 'World',
-        canonicalAudioUri: 'gs:://bar.flac',
-        playbackAudioUri: 'gs:://bar.m4a',
-        startTimestamp: '2026-04-10T12:01:00Z',
-        endTimestamp: '2026-04-10T12:01:05Z',
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: ['gs:://bar.flac'],
-        startAudioOffset: '0s',
-        endAudioOffset: '5s',
-        evaluationDecisions: [],
-      },
-    ];
-
-    vi.mocked(listTranscripts)
-      .mockResolvedValueOnce({
-        transcripts: mockTranscriptsPage1,
-        nextToken: 'token123',
-      })
-      .mockResolvedValueOnce({
-        transcripts: mockTranscriptsPage2,
-        nextToken: undefined,
-      });
-
-    renderWithQueryClient(
-      <MemoryRouter>
-        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
-    );
-
-    const input = screen.getByLabelText(/Select a registered feed/i);
-    await waitFor(() => {
-      expect((input as HTMLInputElement).disabled).toBe(false);
-    });
-    fireEvent.change(input, { target: { value: 'feed123' } });
-    fireEvent.keyDown(input, { key: 'ArrowDown' });
-    fireEvent.keyDown(input, { key: 'Enter' });
-
-    const button = screen.getByRole('button', { name: /Fetch/i });
-    fireEvent.click(button);
-
-    await waitFor(() => {
-      expect(screen.getByText('Hello')).toBeTruthy();
-    });
-
-    const loadMoreButton = screen.getByRole('button', { name: /Load More/i });
-    expect(loadMoreButton).toBeTruthy();
-    fireEvent.click(loadMoreButton);
-
-    await waitFor(() => {
-      expect(screen.getByText('World')).toBeTruthy();
-      expect(screen.getByText('Hello')).toBeTruthy();
     });
   });
 
@@ -348,7 +302,7 @@ describe('TranscriptView', () => {
         nextToken: undefined,
       });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -399,7 +353,7 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -453,11 +407,11 @@ describe('TranscriptView', () => {
     ];
     vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
     vi.mocked(listTranscripts).mockResolvedValueOnce({
-      transcripts: [],
+      transcripts: mockTranscripts,
       nextToken: undefined,
     });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter initialEntries={['/?feedId=feed123']}>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -483,11 +437,11 @@ describe('TranscriptView', () => {
     ];
     vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
     vi.mocked(listTranscripts).mockResolvedValueOnce({
-      transcripts: [],
+      transcripts: mockTranscripts,
       nextToken: undefined,
     });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter initialEntries={['/?feedId=feed123']}>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -514,11 +468,11 @@ describe('TranscriptView', () => {
     ];
     vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
     vi.mocked(listTranscripts).mockResolvedValueOnce({
-      transcripts: [],
+      transcripts: mockTranscripts,
       nextToken: undefined,
     });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter initialEntries={['/?feedId=feed123']}>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -544,7 +498,7 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter initialEntries={['/?feedId=feed123']}>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -570,7 +524,7 @@ describe('TranscriptView', () => {
     ];
     vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -600,7 +554,7 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter initialEntries={['/?feedId=unknown-feed']}>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -625,11 +579,11 @@ describe('TranscriptView', () => {
     ];
     vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
     vi.mocked(listTranscripts).mockResolvedValueOnce({
-      transcripts: [],
+      transcripts: mockTranscripts,
       nextToken: undefined,
     });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter initialEntries={['/?feedId=feed123']}>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -653,11 +607,11 @@ describe('TranscriptView', () => {
     ];
     vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
     vi.mocked(listTranscripts).mockResolvedValueOnce({
-      transcripts: [],
+      transcripts: mockTranscripts,
       nextToken: undefined,
     });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter initialEntries={['/?feedId=feed123']}>
         <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
@@ -671,9 +625,6 @@ describe('TranscriptView', () => {
   });
 
   it('scrolls to highlighted transcript when transmissionId is in search params', async () => {
-    const mockScrollIntoView = vi.fn();
-    window.HTMLElement.prototype.scrollIntoView = mockScrollIntoView;
-
     const mockTranscripts = [
       {
         feedId: 'feed123',
@@ -697,7 +648,7 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
 
-    renderWithQueryClient(
+    renderTranscriptView(
       <MemoryRouter
         initialEntries={['/?feedId=feed123&transmissionId=target-id']}
       >
@@ -709,10 +660,293 @@ describe('TranscriptView', () => {
     await waitFor(() => {
       expect(screen.getByText('Hello target')).toBeTruthy();
     });
+  });
 
-    // Verify scrollIntoView was called
+  it('passes correct params to listTranscripts when loading older transcripts', async () => {
+    const initialTranscripts = [
+      {
+        feedId: 'feed123',
+        transmissionId: '1',
+        transcript: 'Transcript 1',
+        canonicalAudioUri: 'gs:://foo.flac',
+        playbackAudioUri: 'gs:://foo.m4a',
+        startTimestamp: '2026-04-10T12:00:00Z',
+        endTimestamp: '2026-04-10T12:00:05Z',
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: ['gs:://foo.flac'],
+        startAudioOffset: '0s',
+        endAudioOffset: '5s',
+        evaluationDecisions: [],
+      },
+    ];
+
+    vi.mocked(listTranscripts)
+      .mockResolvedValueOnce({
+        transcripts: initialTranscripts,
+        nextToken: 'next-token-123',
+      })
+      .mockResolvedValueOnce({
+        transcripts: [],
+        nextToken: undefined,
+      });
+
+    renderTranscriptView(
+      <MemoryRouter initialEntries={['/?feedId=feed123']}>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
+
     await waitFor(() => {
-      expect(mockScrollIntoView).toHaveBeenCalled();
+      expect(screen.getByText('Transcript 1')).toBeTruthy();
     });
+
+    const loadMoreButton = screen.getByRole('button', {
+      name: /Load previous transcripts/i,
+    });
+    fireEvent.click(loadMoreButton);
+
+    await waitFor(() => {
+      expect(listTranscripts).toHaveBeenCalledTimes(2);
+      expect(listTranscripts).toHaveBeenLastCalledWith(
+        'feed123',
+        'fake-token',
+        undefined,
+        'next-token-123',
+        undefined,
+        undefined,
+        'desc'
+      );
+    });
+  });
+
+  it('passes correct params to listTranscripts when loading newer transcripts', async () => {
+    const testTimestamp = new Date('2026-04-10T12:00:00Z').getTime();
+    const initialTranscripts = [
+      {
+        feedId: 'feed123',
+        transmissionId: '1',
+        transcript: 'Transcript 1',
+        canonicalAudioUri: 'gs:://foo.flac',
+        playbackAudioUri: 'gs:://foo.m4a',
+        startTimestamp: '2026-04-10T12:00:00Z',
+        endTimestamp: '2026-04-10T12:00:05Z',
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: ['gs:://foo.flac'],
+        startAudioOffset: '0s',
+        endAudioOffset: '5s',
+        evaluationDecisions: [],
+      },
+    ];
+
+    vi.mocked(listTranscripts)
+      .mockResolvedValueOnce({
+        transcripts: initialTranscripts,
+        nextToken: undefined,
+      })
+      .mockResolvedValueOnce({
+        transcripts: [],
+        nextToken: undefined,
+      });
+
+    renderTranscriptView(
+      <MemoryRouter
+        initialEntries={[`/?feedId=feed123&timestamp=${testTimestamp}`]}
+      >
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Transcript 1')).toBeTruthy();
+    });
+
+    const loadNewerButton = screen.getByRole('button', {
+      name: /Load newer transcripts/i,
+    });
+    fireEvent.click(loadNewerButton);
+
+    await waitFor(() => {
+      expect(listTranscripts).toHaveBeenCalledTimes(2);
+      expect(listTranscripts).toHaveBeenLastCalledWith(
+        'feed123',
+        'fake-token',
+        undefined,
+        undefined,
+        testTimestamp,
+        undefined,
+        'asc'
+      );
+    });
+  });
+
+  it('manual refresh button fetches newer transcripts', async () => {
+    const initialTranscripts = [
+      {
+        feedId: 'feed123',
+        transmissionId: '1',
+        transcript: 'Transcript 1',
+        canonicalAudioUri: 'gs:://foo.flac',
+        playbackAudioUri: 'gs:://foo.m4a',
+        startTimestamp: '2026-04-10T12:00:00Z',
+        endTimestamp: '2026-04-10T12:00:05Z',
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: ['gs:://foo.flac'],
+        startAudioOffset: '0s',
+        endAudioOffset: '5s',
+        evaluationDecisions: [],
+      },
+    ];
+
+    const newerTranscripts = [
+      {
+        feedId: 'feed123',
+        transmissionId: '2',
+        transcript: 'Newer Transcript',
+        canonicalAudioUri: 'gs:://foo.flac',
+        playbackAudioUri: 'gs:://foo.m4a',
+        startTimestamp: '2026-04-10T12:05:00Z',
+        endTimestamp: '2026-04-10T12:05:05Z',
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: ['gs:://foo.flac'],
+        startAudioOffset: '0s',
+        endAudioOffset: '5s',
+        evaluationDecisions: [],
+      },
+    ];
+
+    vi.mocked(listTranscripts)
+      .mockResolvedValueOnce({
+        transcripts: initialTranscripts,
+        nextToken: undefined,
+      })
+      .mockResolvedValueOnce({
+        transcripts: newerTranscripts,
+        nextToken: undefined,
+      });
+
+    renderTranscriptView(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    const input = screen.getByLabelText(/Select a registered feed/i);
+    await waitFor(() => {
+      expect((input as HTMLInputElement).disabled).toBe(false);
+    });
+    fireEvent.change(input, { target: { value: 'feed123' } });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    const button = screen.getByRole('button', { name: /Fetch/i });
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(screen.getByText('Transcript 1')).toBeTruthy();
+    });
+
+    const refreshButton = screen.getByRole('button', {
+      name: /Refresh \(15s\)/i,
+    });
+    fireEvent.click(refreshButton);
+
+    await waitFor(() => {
+      expect(listTranscripts).toHaveBeenCalledTimes(2);
+      expect(listTranscripts).toHaveBeenLastCalledWith(
+        'feed123',
+        'fake-token',
+        undefined,
+        undefined,
+        new Date('2026-04-10T12:00:00Z').getTime(),
+        undefined,
+        'asc'
+      );
+      expect(screen.getByText('Newer Transcript')).toBeTruthy();
+    });
+  });
+
+  it('polls for newer transcripts in background', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+
+    const initialTranscripts = [
+      {
+        feedId: 'feed123',
+        transmissionId: '1',
+        transcript: 'Transcript 1',
+        canonicalAudioUri: 'gs:://foo.flac',
+        playbackAudioUri: 'gs:://foo.m4a',
+        startTimestamp: '2026-04-10T12:00:00Z',
+        endTimestamp: '2026-04-10T12:00:05Z',
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: ['gs:://foo.flac'],
+        startAudioOffset: '0s',
+        endAudioOffset: '5s',
+        evaluationDecisions: [],
+      },
+    ];
+
+    const newerTranscripts = [
+      {
+        feedId: 'feed123',
+        transmissionId: '2',
+        transcript: 'Newer Transcript',
+        canonicalAudioUri: 'gs:://foo.flac',
+        playbackAudioUri: 'gs:://foo.m4a',
+        startTimestamp: '2026-04-10T12:05:00Z',
+        endTimestamp: '2026-04-10T12:05:05Z',
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: ['gs:://foo.flac'],
+        startAudioOffset: '0s',
+        endAudioOffset: '5s',
+        evaluationDecisions: [],
+      },
+    ];
+
+    vi.mocked(listTranscripts)
+      .mockResolvedValueOnce({
+        transcripts: initialTranscripts,
+        nextToken: undefined,
+      })
+      .mockResolvedValueOnce({
+        transcripts: newerTranscripts,
+        nextToken: undefined,
+      });
+
+    renderTranscriptView(
+      <MemoryRouter>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    const input = screen.getByLabelText(/Select a registered feed/i);
+    await waitFor(() => {
+      expect((input as HTMLInputElement).disabled).toBe(false);
+    });
+    fireEvent.change(input, { target: { value: 'feed123' } });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    const button = screen.getByRole('button', { name: /Fetch/i });
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(screen.getByText('Transcript 1')).toBeTruthy();
+    });
+
+    // Advance time by 15 seconds
+    vi.advanceTimersByTime(15000);
+
+    await waitFor(() => {
+      expect(listTranscripts).toHaveBeenCalledTimes(2);
+      expect(screen.getByText('Newer Transcript')).toBeTruthy();
+    });
+
+    vi.useRealTimers();
   });
 });

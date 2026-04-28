@@ -1,12 +1,14 @@
 """Utility functions for the radio transcription pipeline."""
 
-import logging
 import uuid
 from typing import Self
 
 import pydantic
 
-logger = logging.getLogger(__name__)
+from backend.pipeline.transcription.common.datatypes import TimeRange
+from backend.pipeline.transcription.common.logging import get_logger
+
+logger = get_logger(__name__, {"system": "transcription", "component": "utils"})
 
 
 class ConfigBase(pydantic.BaseModel):
@@ -30,12 +32,14 @@ class ConfigBase(pydantic.BaseModel):
 
 
 def generate_transmission_id(
-    feed_or_session_id: str, start_ms: int, end_ms: int
+    feed_or_session_id: str, time_range: TimeRange
 ) -> str:
     """Creates a deterministic UUID string using uuid5 to ensure pipeline retries produce the exact same ID.
 
     Uses raw VAD start and end times to ensure stability across pre-roll/post-roll configuration changes,
     and to prevent collisions if the same audio span is processed with different boundaries.
     """
-    deterministic_id = f"{feed_or_session_id}_{start_ms}_{end_ms}"
+    deterministic_id = (
+        f"{feed_or_session_id}_{time_range.start_ms}_{time_range.end_ms}"
+    )
     return str(uuid.uuid5(uuid.NAMESPACE_OID, deterministic_id))

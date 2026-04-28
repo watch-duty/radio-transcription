@@ -11,12 +11,18 @@ from apache_beam.options.pipeline_options import (
     PipelineOptions,
 )
 from apache_beam.testing.test_pipeline import TestPipeline as BeamTestPipeline
+from apache_beam.testing.test_stream import TestStream
 from apache_beam.testing.util import assert_that, equal_to
 from apache_beam.transforms.window import TimestampedValue
+from apache_beam.utils.timestamp import Timestamp
 
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
-from backend.pipeline.transcription.constants import DEAD_LETTER_QUEUE_TAG
-from backend.pipeline.transcription.datatypes import (
+from backend.pipeline.transcription.common.constants import (
+    DEAD_LETTER_QUEUE_TAG,
+)
+from backend.pipeline.transcription.common.datatypes import (
+    AudioChunkData,
+    BufferedChunk,
     ChunkMetadata,
     FeedMetadata,
     FlushRequest,
@@ -25,17 +31,18 @@ from backend.pipeline.transcription.datatypes import (
     TimeRange,
     TranscribeAudioConfig,
     TranscriptionResult,
+    TransmissionContext,
 )
-from backend.pipeline.transcription.enums import TranscriberType, VadType
-from backend.pipeline.transcription.ordered_stitcher import OrderedBypassFn
-from backend.pipeline.transcription.stitcher import (
+from backend.pipeline.transcription.common.enums import TranscriberType, VadType
+from backend.pipeline.transcription.services.transcribers import Transcriber
+from backend.pipeline.transcription.transforms.stateful import (
+    OrderedBypassFn,
+    OrderedStitchAudioFn,
     TranscribeAudioFn,
 )
-from backend.pipeline.transcription.transcribers import Transcriber
-from backend.pipeline.transcription.transforms import (
-    AddEventTimestamp,
+from backend.pipeline.transcription.transforms.stateless import (
     ParseAndKeyFn,
-    SerializeAndEnrichFn,
+    SerializeFn,
 )
 
 
@@ -103,8 +110,14 @@ def get_test_transcribe_config(**kwargs: Any) -> TranscribeAudioConfig:
 class ParseAndKeyTimestampTest(unittest.TestCase):
     def test_parse_and_key_success(self) -> None:
         """Verifies that well-formed Pub/Sub messages containing a serialized AudioChunk and feed_id are correctly unmarshalled and keyed by feed."""
-        chunk = AudioChunk(gcs_uri="gs://test-bucket/path/to/test.flac")
-        chunk.start_timestamp.FromMicroseconds(123456789000)
+        chunk = AudioChunk(
+            gcs_uri="gs://test-bucket/path/to/test.flac",
+            session_id="mock-session-id",
+            feed_name="mock-feed-name",
+            duration_ms=1000,
+            feed_id="test-feed",
+            external_id="mock-external-id",
+        )
         mock_msg = PubsubMessage(
             chunk.SerializeToString(),
             {"feed_id": "test-feed"},
@@ -120,7 +133,22 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
 
             assert_that(
                 parsed.main,
-                equal_to([("test-feed", chunk.SerializeToString())]),
+                equal_to(
+                    [
+                        (
+                            "test-feed",
+                            ChunkMetadata(
+                                gcs_uri="gs://test-bucket/path/to/test.flac",
+                                session_id="mock-session-id",
+                                duration_ms=1000,
+                                feed_metadata=FeedMetadata(
+                                    feed_name="mock-feed-name",
+                                    external_id="mock-external-id",
+                                ),
+                            ),
+                        )
+                    ]
+                ),
             )
             assert_that(
                 parsed[DEAD_LETTER_QUEUE_TAG],
@@ -144,11 +172,15 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
                 DEAD_LETTER_QUEUE_TAG, main="main"
             )
 
-            def assert_dlq(elements: list[dict[str, Any]]) -> None:
+            def assert_dlq(
+                elements: list[dict[str, str | bool | dict[str, str]]],
+            ) -> None:
 
                 assert len(elements) == 1
+                assert isinstance(elements[0]["error"], str)
                 assert (
-                    "Missing required payload attribute" in elements[0]["error"]
+                    "Failed to parse or validate payload"
+                    in elements[0]["error"]
                 )
 
             assert_that(parsed.main, equal_to([]), label="CheckEmptyMain")
@@ -157,50 +189,9 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             )
 
 
-class AddEventTimestampTest(unittest.TestCase):
-    def test_valid_timestamp_extraction(self) -> None:
-        """Verifies that AddEventTimestamp accurately regex-extracts and assigns the logical windowing timestamp natively from the chunk's standardized filename."""
-        chunk = AudioChunk(
-            gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
-            session_id="mock-session-id",
-        )
-        chunk.start_timestamp.FromMicroseconds(1678886400000000)
-        element = ("test-feed", chunk.SerializeToString())
-        fn = AddEventTimestamp()
-        result = list(fn.process(element))
-
-        self.assertEqual(len(result), 1)
-        self.assertIsInstance(result[0], TimestampedValue)
-        self.assertEqual(
-            result[0].value,  # type: ignore
-            (
-                "test-feed",
-                ChunkMetadata(
-                    gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/1678886400-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac",
-                    session_id="mock-session-id",
-                    duration_ms=0,
-                ),
-            ),
-        )
-        self.assertEqual(result[0].timestamp, 1678886400)  # type: ignore
-
-    def test_invalid_timestamp_raises_value_error(self) -> None:
-        """Verifies that chunks possessing malformed or unidentifiable file names result in safely tagging the element for DLQ observation instead of crashing."""
-        chunk = AudioChunk(
-            gcs_uri="gs://bucket/hash/feed_id/YYYY-MM-DD/invalid-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.flac"
-        )
-        element = ("test-feed", chunk.SerializeToString())
-        fn = AddEventTimestamp()
-
-        result = list(fn.process(element))
-        self.assertEqual(len(result), 1)
-        self.assertIsInstance(result[0], beam.pvalue.TaggedOutput)
-        self.assertEqual(result[0].tag, DEAD_LETTER_QUEUE_TAG)  # type: ignore
-
-
 class TranscribeAudioTest(unittest.TestCase):
-    @patch("backend.pipeline.transcription.stitcher.get_transcriber")
-    @patch("backend.pipeline.transcription.stitcher.AudioProcessor")
+    @patch("backend.pipeline.transcription.transforms.stateful.get_transcriber")
+    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
     def test_dlq_routing(
         self, mock_audio_processor: MagicMock, mock_get_transcriber: MagicMock
     ) -> None:
@@ -238,6 +229,10 @@ class TranscribeAudioTest(unittest.TestCase):
                             missing_post_context=False,
                             start_audio_offset_ms=0,
                             end_audio_offset_ms=500,
+                            feed_metadata=FeedMetadata(
+                                feed_name="fake-feed",
+                                external_id="fake-external",
+                            ),
                         ),
                     )
                 ]
@@ -250,9 +245,12 @@ class TranscribeAudioTest(unittest.TestCase):
                 )
             ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
 
-            def assert_dlq(elements: list[dict[str, Any]]) -> None:
+            def assert_dlq(
+                elements: list[dict[str, str | bool | dict[str, str]]],
+            ) -> None:
 
                 assert len(elements) == 1
+                assert isinstance(elements[0]["error"], str)
                 assert "Transcription API outage!" in elements[0]["error"]
 
             def assert_empty(elements):
@@ -267,12 +265,17 @@ class TranscribeAudioTest(unittest.TestCase):
 
 class SerializeAndEnrichTest(unittest.TestCase):
     def test_serialize_and_enrich(self) -> None:
-        """Verifies that SerializeAndEnrichFn correctly stores feed_name and enriches the transcript."""
+        """Verifies that SerializeAndEnrichFn correctly enriches and serializes the transcript."""
         options = PipelineOptions(
             flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
         )
 
         with BeamTestPipeline(options=options) as p:
+            feed_metadata = FeedMetadata(
+                feed_name="Test Feed Name",
+                external_id="test-external-id",
+            )
+
             res1 = TranscriptionResult(
                 feed_id="test-feed",
                 session_id="fake-session",
@@ -286,6 +289,7 @@ class SerializeAndEnrichTest(unittest.TestCase):
                 end_audio_offset_ms=200,
                 canonical_audio_uri="gs://bucket/1.flac",
                 playback_audio_uri="gs://bucket/1_playback.flac",
+                feed_metadata=feed_metadata,
             )
 
             res2 = TranscriptionResult(
@@ -301,23 +305,10 @@ class SerializeAndEnrichTest(unittest.TestCase):
                 end_audio_offset_ms=200,
                 canonical_audio_uri="gs://bucket/2.flac",
                 playback_audio_uri="gs://bucket/2_playback.flac",
+                feed_metadata=feed_metadata,
             )
 
-            elements = [
-                (
-                    "test-feed",
-                    FeedMetadata(
-                        feed_name="Test Feed Name",
-                        external_id="test-external-id",
-                    ),
-                ),
-                ("test-feed", res1),
-                ("test-feed", res2),
-            ]
-
-            results = (
-                p | beam.Create(elements) | beam.ParDo(SerializeAndEnrichFn())
-            )
+            results = p | beam.Create([res1, res2]) | beam.ParDo(SerializeFn())
 
             def assert_results(msgs):
                 from backend.pipeline.schema_types.transcribed_audio_pb2 import (  # noqa: PLC0415
@@ -344,37 +335,138 @@ class SerializeAndEnrichTest(unittest.TestCase):
 
             assert_that(results, assert_results)
 
+    def test_ordered_bypass_buffers_and_sets_timer(self) -> None:
+        """Verifies that OrderedBypassFn buffers chunks and sets the timer."""
+        stitch_config = get_test_stitch_config()
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        fn = OrderedBypassFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
 
-class OrderedBypassTest(unittest.TestCase):
-    @patch("backend.pipeline.transcription.ordered_stitcher.AudioProcessor")
-    def test_ordered_bypass_yields_correct_offsets(
+        mock_state = MagicMock()
+        mock_state.read.return_value = None
+        mock_timer = MagicMock()
+
+        metadata = ChunkMetadata(
+            gcs_uri="gs://test-bucket/path/to/test.flac",
+            session_id="mock-session-id",
+            duration_ms=1000,
+            feed_metadata=FeedMetadata(
+                feed_name="mock-feed", external_id="mock-external-id"
+            ),
+        )
+
+        list(
+            fn.process(
+                ("test-feed", metadata),
+                timestamp=Timestamp(100),
+                transmission_context_state=mock_state,
+                out_of_order_timer=mock_timer,
+            )
+        )
+
+        mock_timer.set.assert_called_once()
+        mock_state.write.assert_called_once()
+
+    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
+    def test_ordered_bypass_callback_flushes(
         self, mock_audio_processor: MagicMock
     ) -> None:
-        """Verifies that OrderedBypassFn sets end_audio_offset_ms correctly."""
+        """Verifies that handle_buffer_timeout flushes and yields."""
         mock_processor_inst = mock_audio_processor.return_value
         chunk_data = MagicMock()
         chunk_data.duration_ms = 1000
         chunk_data.audio = np.zeros(16000, dtype=np.int16)
         mock_processor_inst.download_audio_and_detect.return_value = chunk_data
 
-        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
         stitch_config = get_test_stitch_config()
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        fn = OrderedBypassFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn.setup()
+
+        mock_state = MagicMock()
+
+        curr_context = TransmissionContext(
+            out_of_order_buffer=[
+                BufferedChunk(timestamp_ms=100000, gcs_uri="gs://test.flac")
+            ],
+            feed_metadata=FeedMetadata(
+                feed_name="mock-feed", external_id="mock-id"
+            ),
+        )
+        mock_state.read.return_value = curr_context
+
+        results = list(
+            fn.handle_buffer_timeout(
+                feed_id="test-feed", transmission_context_state=mock_state
+            )
+        )
+
+        assert len(results) == 1
+        mock_state.write.assert_called_once()
+
+
+class OrderedStitchAudioTest(unittest.TestCase):
+    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
+    def test_ordered_stitch_audio_flushes_on_stale_timer(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that OrderedStitchAudioFn flushes buffered audio when the stale timer fires."""
+        mock_processor_inst = mock_audio_processor.return_value
+
+        chunk_data = AudioChunkData(
+            start_ms=100000,
+            audio=np.zeros(16000, dtype=np.int16),
+            sample_rate=16000,
+            speech_segments=[TimeRange(0, 1000)],
+            gcs_uri="gs://test-bucket/path/to/test.flac",
+            duration_ms=1000,
+        )
+        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+        mock_processor_inst.preprocess_audio.side_effect = lambda x: x
+        mock_processor_inst.check_vad.return_value = True
+
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        stitch_config = get_test_stitch_config(stale_timeout_ms=5000)
 
         options = PipelineOptions(
             flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
         )
+
+        metadata = ChunkMetadata(
+            gcs_uri="gs://test-bucket/path/to/test.flac",
+            session_id="mock-session-id",
+            duration_ms=1000,
+            feed_metadata=FeedMetadata(
+                feed_name="mock-feed", external_id="mock-external-id"
+            ),
+        )
+
         with BeamTestPipeline(options=options) as p:
-            metadata = ChunkMetadata(
-                gcs_uri="gs://test-bucket/path/to/test.flac",
-                session_id="mock-session-id",
-                duration_ms=1000,
+            test_stream = (
+                TestStream(
+                    coder=beam.coders.TupleCoder(
+                        (
+                            beam.coders.StrUtf8Coder(),
+                            beam.coders.PickleCoder(),
+                        )
+                    )
+                )
+                .advance_watermark_to(100)
+                .add_elements([TimestampedValue(("test-feed", metadata), 100)])
+                .advance_watermark_to(110)
+                .advance_watermark_to_infinity()
             )
 
-            elements = p | beam.Create([("test-feed", metadata)])
-
-            results = elements | beam.ParDo(
-                OrderedBypassFn(
-                    order_config=order_config, stitch_config=stitch_config
+            results = (
+                p
+                | test_stream
+                | beam.ParDo(
+                    OrderedStitchAudioFn(
+                        order_config=order_config, stitch_config=stitch_config
+                    )
                 )
             )
 
@@ -382,6 +474,135 @@ class OrderedBypassTest(unittest.TestCase):
                 assert len(msgs) == 1
                 feed_id, request = msgs[0]
                 assert feed_id == "test-feed"
-                assert request.end_audio_offset_ms == 1000
+                assert request.transmission_id is not None
+                assert isinstance(request.buffer, np.ndarray)
+
+            assert_that(results, assert_results)
+
+    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
+    def test_ordered_stitch_audio_handles_out_of_order_chunks(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that OrderedStitchAudioFn buffers out-of-order chunks and emits them in order."""
+        mock_processor_inst = mock_audio_processor.return_value
+
+        def download_side_effect(gcs_uri, timestamp_ms):
+            if "chunk1" in gcs_uri:
+                return AudioChunkData(
+                    start_ms=100000,
+                    audio=np.ones(16000, dtype=np.int16),
+                    sample_rate=16000,
+                    speech_segments=[TimeRange(0, 1000)],
+                    gcs_uri=gcs_uri,
+                    duration_ms=1000,
+                )
+            if "chunk2" in gcs_uri:
+                return AudioChunkData(
+                    start_ms=101000,
+                    audio=np.ones(16000, dtype=np.int16) * 2,
+                    sample_rate=16000,
+                    speech_segments=[TimeRange(0, 1000)],
+                    gcs_uri=gcs_uri,
+                    duration_ms=1000,
+                )
+            return AudioChunkData(
+                start_ms=102000,
+                audio=np.ones(16000, dtype=np.int16) * 3,
+                sample_rate=16000,
+                speech_segments=[TimeRange(0, 1000)],
+                gcs_uri=gcs_uri,
+                duration_ms=1000,
+            )
+
+        mock_processor_inst.download_audio_and_detect.side_effect = (
+            download_side_effect
+        )
+        mock_processor_inst.preprocess_audio.side_effect = lambda x: x
+        mock_processor_inst.check_vad.return_value = True
+
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=5000)
+        stitch_config = get_test_stitch_config(
+            stale_timeout_ms=5000, significant_gap_ms=5000
+        )
+
+        options = PipelineOptions(
+            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+        )
+
+        metadata_chunk1 = ChunkMetadata(
+            gcs_uri="gs://test-bucket/path/to/chunk1.flac",
+            session_id="mock-session-id",
+            duration_ms=1000,
+            feed_metadata=FeedMetadata(
+                feed_name="mock-feed", external_id="mock-external-id"
+            ),
+        )
+
+        metadata_chunk2 = ChunkMetadata(
+            gcs_uri="gs://test-bucket/path/to/chunk2.flac",
+            session_id="mock-session-id",
+            duration_ms=1000,
+            feed_metadata=FeedMetadata(
+                feed_name="mock-feed", external_id="mock-external-id"
+            ),
+        )
+
+        metadata_chunk3 = ChunkMetadata(
+            gcs_uri="gs://test-bucket/path/to/chunk3.flac",
+            session_id="mock-session-id",
+            duration_ms=1000,
+            feed_metadata=FeedMetadata(
+                feed_name="mock-feed", external_id="mock-external-id"
+            ),
+        )
+
+        with BeamTestPipeline(options=options) as p:
+            test_stream = (
+                TestStream(
+                    coder=beam.coders.TupleCoder(
+                        (
+                            beam.coders.StrUtf8Coder(),
+                            beam.coders.PickleCoder(),
+                        )
+                    )
+                )
+                .advance_watermark_to(100)
+                .add_elements(
+                    [TimestampedValue(("test-feed-ooo", metadata_chunk1), 100)]
+                )
+                .add_elements(
+                    [TimestampedValue(("test-feed-ooo", metadata_chunk3), 102)]
+                )
+                .add_elements(
+                    [TimestampedValue(("test-feed-ooo", metadata_chunk2), 101)]
+                )
+                .advance_watermark_to(115)
+                .advance_watermark_to_infinity()
+            )
+
+            results = (
+                p
+                | test_stream
+                | beam.ParDo(
+                    OrderedStitchAudioFn(
+                        order_config=order_config, stitch_config=stitch_config
+                    )
+                )
+            )
+
+            # NOTE: In an ideal production scenario (e.g. on Dataflow), all 3 chunks
+            # would be stitched into a single transmission (1 message).
+            # However, in this DirectRunner unit test, Chunk 1 gets processed in an
+            # earlier bundle and flushed before Chunks 2 and 3 arrive.
+            # Thus, we expect 2 messages here, but we still verify that Chunk 2 and
+            # Chunk 3 were successfully stitched together (one message has length 32000).
+            def assert_results(msgs):
+                assert len(msgs) == 2
+                for feed_id, request in msgs:
+                    assert feed_id == "test-feed-ooo"
+
+                lengths = [len(request.buffer) for feed_id, request in msgs]
+                assert 32000 in lengths
+                assert 16000 in lengths
 
             assert_that(results, assert_results)

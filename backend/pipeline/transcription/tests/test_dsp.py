@@ -1,6 +1,6 @@
 import numpy as np
 
-from backend.pipeline.transcription.dsp import (
+from backend.pipeline.transcription.audio.dsp import (
     compute_rms_energy,
     compute_spectral_flatness,
 )

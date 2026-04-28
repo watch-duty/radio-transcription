@@ -1,5 +1,14 @@
 """SQL queries for feed storage operations."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from backend.pipeline.storage.feed_store import SourceType
+
 LEASE_FEED_SQL = """\
 WITH available_feed AS (
     SELECT id
@@ -41,21 +50,23 @@ UPDATE_PROGRESS_SQL = """\
 UPDATE feeds
 SET last_processed_filename = $1,
     last_bookmark_time = COALESCE($5, last_bookmark_time),
-    last_heartbeat = NOW(),
     failure_count = 0
 WHERE id = $2 AND worker_id = $3 AND fencing_token = $4
 """
 
 RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL = """\
 WITH current_state AS (
-    SELECT id, worker_id, status
+    SELECT id, worker_id, status, last_heartbeat
     FROM feeds WHERE id = ANY($1::uuid[])
     FOR UPDATE
 ),
 do_update AS (
     UPDATE feeds SET last_heartbeat = NOW()
     FROM current_state
-    WHERE feeds.id = current_state.id AND current_state.worker_id = $2
+    WHERE feeds.id = current_state.id
+      AND current_state.worker_id = $2
+      AND (current_state.last_heartbeat IS NULL
+           OR current_state.last_heartbeat < NOW() - INTERVAL '15 seconds')
     RETURNING feeds.id
 )
 SELECT
@@ -75,50 +86,260 @@ SET worker_id = NULL,
 WHERE id = $1 AND worker_id = $2 AND fencing_token = $3
 """
 
+# SIGTERM drain: release every lease still owned by this worker in one
+# UPDATE. Primary use is _shutdown_sequence — after cancelling all feed
+# tasks (whose CancelledError path skips the normal-completion
+# release_feed), this single statement is what flips every active row
+# back to unclaimed. Secondary defensive role: catches stragglers where
+# an earlier per-feed release_feed call failed mid-lifetime and left
+# worker_id = us in the DB.
+#
+# WHERE worker_id = $1 is authoritative for both cases — symmetric with
+# count_held_by_type's DB-truth stance. unclaimed_since = NOW() matches
+# the convention in RELEASE_FEED_SQL so the autoscaler's
+# MIN(unclaimed_since) signal stays accurate across scale-in. No
+# last_heartbeat write — heartbeat renewal is now the sole writer of
+# that column (scaling plan §6.1).
 RELEASE_FEEDS_BATCH_SQL = """\
 UPDATE feeds
 SET worker_id = NULL,
     status = 'unclaimed'::feed_status,
     unclaimed_since = NOW()
-WHERE worker_id = $1 AND status = 'active'::feed_status
+WHERE worker_id = $1
 """
 
-ACQUIRE_FEEDS_BATCH_SQL = """\
-WITH available_feeds AS (
-    SELECT id
-    FROM feeds
-    WHERE (
-        status = 'unclaimed'::feed_status
-        OR (status = 'failing'::feed_status AND (retry_after IS NULL OR retry_after <= NOW()))
-        OR (status = 'active'::feed_status
-            AND last_heartbeat < NOW() - $2::interval)
-    )
-    AND ($4::text[] IS NULL OR source_type = ANY($4::text[]))
-    ORDER BY (status = 'unclaimed'::feed_status) DESC,
-             retry_after ASC NULLS FIRST,
-             last_heartbeat ASC NULLS FIRST
-    LIMIT $3
-    FOR UPDATE SKIP LOCKED
-),
-leased AS (
-    UPDATE feeds
-    SET worker_id = $1,
-        status = 'active'::feed_status,
-        retry_after = NULL,
-        last_heartbeat = NOW(),
-        fencing_token = fencing_token + 1
-    FROM available_feeds
-    WHERE feeds.id = available_feeds.id
-    RETURNING feeds.id, feeds.name, feeds.source_type,
-              feeds.last_processed_filename, feeds.last_bookmark_time,
-              feeds.fencing_token
-)
-SELECT leased.id, leased.name, leased.source_type,
-       leased.last_processed_filename, leased.last_bookmark_time,
-       leased.fencing_token, fpi.source_feed_id, fpi.external_id
-FROM leased
-JOIN feed_properties fpi ON fpi.feed_id = leased.id
+# Authoritative per-cycle replacement for the worker's in-memory
+# _held_by_type counter. The worker calls this once per leasing iteration
+# before _calculate_branch_limits so per-type LIMITs reflect DB truth,
+# not a running Python count that has to be kept in sync across every
+# path that mutates _feed_tasks (claim, reap, orphan cancel,
+# sweep-reclaim, shutdown).
+#
+# Why DB truth beats an incremental counter: the PR #334 review cycles
+# surfaced two silent leaks in the incremental pattern — one when the
+# orphan path cancelled a running task without decrementing (commit
+# c84b52d), one when the orphan task was already .done() between reap
+# and re-lease (commit 32afbc2). Both were O(N) per-event drifts that
+# never threw. Pulling the number from the DB each cycle makes the
+# entire class of drift bugs structurally impossible.
+#
+# Cost: one extra round-trip per worker per lease_poll_interval_sec
+# (default 5 s) → ~0.2 qps per worker → ~3.2 qps at 16-worker fleet.
+# Served by idx_feeds_active (id) WHERE status='active' partial index
+# (migration 018): ≤250 active rows per worker, sub-millisecond.
+COUNT_HELD_BY_TYPE_SQL = """\
+SELECT source_type, COUNT(*) AS n
+FROM feeds
+WHERE worker_id = $1 AND status = 'active'::feed_status
+GROUP BY source_type
 """
+
+
+# Primary per-type claim: one independent CTE per claim_type, each locking
+# its own rows with its own LIMIT. UNION ALL happens in a `claimed` CTE
+# across their IDs — the outer UPDATE joins the combined IDs. Each
+# per-type CTE gets its own MATERIALIZED pin to keep the SKIP LOCKED
+# subquery from being inlined and re-evaluated per outer row (which would
+# defeat the LIMIT under nested-loop plans).
+#
+# Worker computes each branch's LIMIT as max(0, min(cap, cap - held,
+# total_slack)) so the DB enforces per-type caps structurally — a worker
+# cannot be handed more memory-heavy bcfy_feeds rows than the cap allows
+# in a single claim call.
+#
+# **Why not a single-CTE UNION ALL with FOR NO KEY UPDATE on the combined
+# query?** PostgreSQL does not allow FOR UPDATE / FOR NO KEY UPDATE on a
+# UNION result (asyncpg raises FeatureNotSupportedError: "FOR NO KEY
+# UPDATE is not allowed with UNION/INTERSECT/EXCEPT"). Per-CTE locking
+# sidesteps this and also clarifies the intent: each branch's lock scope
+# is its own source_type partition.
+#
+# The failing-retryable + active-abandoned paths are served by the
+# separate build_acquire_feeds_recovery_sql factory, called when this
+# primary path underfills.
+#
+# FOR NO KEY UPDATE (not FOR UPDATE): weaker lock, sufficient because we
+# only mutate status/worker_id/fencing_token/last_heartbeat — none of
+# which are primary/unique keys. Reduces lock-manager contention at peak.
+#
+# ORDER BY id within each branch exploits the shipped composite partial
+# index `feeds_claim_by_type_idx ON feeds (source_type, id)
+# WHERE status = 'unclaimed'` — no sort node, index-scan only.
+#
+# Params: $1=worker_id, $2..$(1+N)=per-type LIMITs in claim_types order.
+# Source_type literals are inlined per branch so the planner can use
+# the (source_type, id) WHERE status='unclaimed' partial composite
+# index for an index-only scan; parametrizing them would defeat that.
+def _build_claim_query(
+    branches: list[str],
+    branch_names: list[str],
+    combined_cte_name: str,
+) -> str:
+    """Wrap pre-built per-type CTE branches in the outer UPDATE+SELECT.
+
+    Shared scaffolding used by both ``build_acquire_feeds_batch_sql``
+    (primary, unclaimed) and ``build_acquire_feeds_recovery_sql``
+    (failing-retryable + active-abandoned). The differing parts are the
+    per-branch WHERE / ORDER BY (encoded in ``branches``) and the
+    combined-CTE name (``combined_cte_name`` = ``claimed`` or
+    ``recovered``); the outer UPDATE that flips status to active and the
+    final feed_properties JOIN are identical between paths.
+
+    SAFETY: ``branches`` and ``branch_names`` contain interpolated
+    ``SourceType.value`` strings (closed enum, never user input). The
+    Bandit S608 SQL-injection warning is a false positive in this
+    context — same justification as the per-builder noqa comments.
+    """
+    branches_sql = ",\n".join(branches) + ","
+    union_sql = "\n        UNION ALL\n".join(
+        f"        SELECT id FROM {n}"  # noqa: S608
+        for n in branch_names
+    )
+    return (
+        "WITH\n"  # noqa: S608
+        f"{branches_sql}\n"
+        f"    {combined_cte_name} AS MATERIALIZED (\n"
+        f"{union_sql}\n"
+        "    ),\n"
+        "leased AS (\n"
+        "    UPDATE feeds\n"
+        "    SET status = 'active'::feed_status,\n"
+        "        worker_id = $1,\n"
+        "        fencing_token = fencing_token + 1,\n"
+        "        last_heartbeat = NOW(),\n"
+        "        retry_after = NULL\n"
+        f"    FROM {combined_cte_name}\n"
+        f"    WHERE feeds.id = {combined_cte_name}.id\n"
+        "    RETURNING feeds.id, feeds.name, feeds.source_type,\n"
+        "              feeds.last_processed_filename, feeds.last_bookmark_time,\n"
+        "              feeds.fencing_token\n"
+        ")\n"
+        "SELECT leased.id, leased.name, leased.source_type,\n"
+        "       leased.last_processed_filename, leased.last_bookmark_time,\n"
+        "       leased.fencing_token, fpi.source_feed_id, fpi.external_id\n"
+        "FROM leased\n"
+        "JOIN feed_properties fpi ON fpi.feed_id = leased.id\n"
+    )
+
+
+def build_acquire_feeds_batch_sql(claim_types: Sequence[SourceType]) -> str:
+    """Generate per-type batch-claim SQL for the given claim_types.
+
+    Returns a SQL string with one MATERIALIZED CTE per source_type, a
+    UNION-ALL `claimed` CTE collecting their IDs, and an outer UPDATE
+    that JOINs feed_properties for the LeasedFeed return shape. The
+    LIMIT for branch i is parameter ``$2 + i`` in claim_types iteration
+    order; $1 is worker_id.
+    """
+    if not claim_types:
+        msg = "claim_types must contain at least one SourceType"
+        raise ValueError(msg)
+
+    branches: list[str] = []
+    branch_names: list[str] = []
+    for i, t in enumerate(claim_types):
+        limit_param = i + 2
+        cte_name = f"{t.value}_claim"
+        branch_names.append(cte_name)
+        branches.append(
+            f"    {cte_name} AS MATERIALIZED (\n"  # noqa: S608
+            f"        SELECT id FROM feeds\n"
+            f"        WHERE source_type = '{t.value}' AND status = 'unclaimed'::feed_status\n"
+            f"        ORDER BY id\n"
+            f"        LIMIT ${limit_param}\n"
+            f"        FOR NO KEY UPDATE SKIP LOCKED\n"
+            f"    )"
+        )
+    return _build_claim_query(branches, branch_names, "claimed")
+
+
+# Recovery-path claim: failing-retryable + active-abandoned. Runs when
+# the primary per-type CTE returns fewer rows than the worker's total
+# slack. Mirrors the primary path's per-type CTE structure so per-type
+# caps are enforced structurally — without per-type LIMITs the recovery
+# sweep could push held > cap when one type is at-cap and another type
+# is mostly failing-retryable. The sweep volumes themselves are small
+# by construction (pg_cron drains active-abandoned at 30 s cadence;
+# failure events are rare).
+#
+# Within each branch:
+# - WHERE matches failing-retryable OR active-abandoned of that type.
+# - ORDER BY retry_after ASC NULLS LAST, id prioritizes failing-retryable
+#   (retry_after = past timestamp, set by REPORT_FAILURE_SQL) over
+#   active-abandoned (retry_after = NULL, cleared on claim). Failing
+#   rows are workers' only safety net — pg_cron does not reclaim them —
+#   whereas active-abandoned has the 30 s pg_cron sweep as a backstop.
+#   Within the failing bucket, oldest-retry first; within the
+#   active-abandoned tail (NULL retry_after), id order for determinism.
+# - LIMIT $X is the per-type recovery LIMIT (passed by the caller after
+#   re-running _calculate_branch_limits with held + primary counts).
+#
+# source_type literals are inlined per branch (same pattern as primary)
+# so the planner can use a `source_type = '<literal>'` constant. This
+# also means the claim_types filter is implicit: types absent from the
+# generator's input never get a CTE branch, so they're never claimed.
+#
+# Known performance limit: ORDER BY (retry_after, id) is served by
+# idx_feeds_failing_retryable for the failing branch; active-abandoned
+# uses idx_feeds_active (id) + filter on last_heartbeat + a sort. At
+# structurally-small volumes (≤ ~500 failing-or-abandoned rows at a
+# time, drained by pg_cron) the sort stays in work_mem and is cheap.
+# If either volume spikes (pg_cron paused, failure storm), this query
+# becomes an expensive seq/sort path.
+#
+# TODO(recovery-path-index): if recovery-path P99 exceeds 50 ms at  # noqa: TD003
+# production load OR the pg_cron sweep is paused for extended windows,
+# add migration:
+#
+#   CREATE INDEX CONCURRENTLY idx_feeds_recovery
+#       ON feeds (retry_after, id)
+#       WHERE status IN ('failing'::feed_status, 'active'::feed_status);
+#
+# The HOT protection CI check (terraform/modules/alloydb/sql/ci/
+# hot_protection_check.sql) would also need a second allow-list entry
+# for this index, since it covers retry_after on active rows (where
+# retry_after is NULL and rarely mutated — low bloat in practice).
+#
+# MATERIALIZED is non-negotiable for the same planner reason as the
+# primary CTE: without it, the planner can inline the CTE into the
+# outer UPDATE and re-evaluate the SKIP LOCKED subquery per outer row,
+# which would bypass the LIMIT.
+#
+# Params: $1=worker_id, $2=abandonment_interval, $3..$(2+N)=per-type
+# recovery LIMITs in claim_types iteration order.
+def build_acquire_feeds_recovery_sql(claim_types: Sequence[SourceType]) -> str:
+    """Generate per-type recovery-claim SQL for the given claim_types.
+
+    Mirrors ``build_acquire_feeds_batch_sql`` but each branch's WHERE
+    matches failing-retryable OR active-abandoned (not unclaimed). The
+    LIMIT for branch i is parameter ``$3 + i`` in claim_types iteration
+    order; $1=worker_id, $2=abandonment_interval.
+    """
+    if not claim_types:
+        msg = "claim_types must contain at least one SourceType"
+        raise ValueError(msg)
+
+    branches: list[str] = []
+    branch_names: list[str] = []
+    for i, t in enumerate(claim_types):
+        limit_param = i + 3
+        cte_name = f"{t.value}_recovery"
+        branch_names.append(cte_name)
+        branches.append(
+            f"    {cte_name} AS MATERIALIZED (\n"  # noqa: S608
+            f"        SELECT id FROM feeds\n"
+            f"        WHERE source_type = '{t.value}'\n"
+            f"          AND (\n"
+            f"              (status = 'failing'::feed_status AND (retry_after IS NULL OR retry_after <= NOW()))\n"
+            f"              OR (status = 'active'::feed_status AND last_heartbeat < NOW() - $2::interval)\n"
+            f"          )\n"
+            f"        ORDER BY retry_after ASC NULLS LAST, id\n"
+            f"        LIMIT ${limit_param}\n"
+            f"        FOR NO KEY UPDATE SKIP LOCKED\n"
+            f"    )"
+        )
+    return _build_claim_query(branches, branch_names, "recovered")
+
 
 REPORT_FAILURE_SQL = """\
 UPDATE feeds
@@ -127,12 +348,15 @@ SET status = CASE WHEN failure_count + 1 >= $3
                   ELSE 'failing'::feed_status END,
     failure_count = failure_count + 1,
     worker_id = NULL,
-    last_heartbeat = NOW(),
     retry_after = CASE WHEN failure_count + 1 < $3
                        THEN NOW() + LEAST($5 * INTERVAL '1 second',
                             $6 * INTERVAL '1 second' * POWER(2, failure_count))
                             + (RANDOM() * INTERVAL '10 seconds')
-                       ELSE NULL END
+                       ELSE NULL END,
+    -- COALESCE protects against an edge call passing reason=None during
+    -- the quarantine transition: keep the previously-recorded reason
+    -- rather than overwriting it with NULL. A real reason still wins.
+    quarantine_reason = CASE WHEN failure_count + 1 >= $3 THEN COALESCE($7, quarantine_reason) ELSE quarantine_reason END
 WHERE id = $1 AND worker_id = $2 AND fencing_token = $4
 RETURNING status::text, failure_count, retry_after
 """

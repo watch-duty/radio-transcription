@@ -177,7 +177,8 @@ class NormalizerRuntime:
         # SYN-ACK timeout), starving the pool of connections.
         self._data_pool = await create_pool_with_retry(settings.db)
         self._store = FeedStore(
-            self._data_pool, source_types=settings.source_types
+            self._data_pool,
+            claim_types=list(settings.caps.keys()),
         )
 
         # Dedicated 1-connection pool ensures heartbeat queries never queue
@@ -185,8 +186,15 @@ class NormalizerRuntime:
         # this, pool contention causes false stall-timeout kills.
         hb_settings = settings.db.replace(pool_min_size=1, pool_max_size=1)
         self._heartbeat_pool = await create_pool_with_retry(hb_settings)
+        # Heartbeat store doesn't claim feeds (only renews + counts), but
+        # we pass the same claim_types for symmetry — keeps both stores
+        # generated from the same set so a future divergence between
+        # caps.keys() and the FeedStore default (all SourceType minus
+        # ECHO) doesn't silently change the heartbeat store's
+        # never-called acquire SQL out of sync with the data store's.
         self._heartbeat_store = FeedStore(
-            self._heartbeat_pool, source_types=settings.source_types
+            self._heartbeat_pool,
+            claim_types=list(settings.caps.keys()),
         )
 
         self._heartbeat_thread = threading.Thread(
@@ -258,39 +266,130 @@ class NormalizerRuntime:
             # a thundering herd cold-start on recovery. Since the DB is down,
             # no other worker can steal leases either.
             try:
-                capacity = self._normalizer_settings.max_feeds_per_worker - len(
-                    self._feed_tasks
+                total_slack = (
+                    self._normalizer_settings.max_feeds_per_worker
+                    - len(self._feed_tasks)
                 )
-                if capacity > 0:
+                if total_slack > 0:
+                    s = self._normalizer_settings
+                    caps = s.caps
+                    # Pull the authoritative per-type held count from the
+                    # DB before apportioning. See FeedStore.count_held_by_type
+                    # for rationale: the previous in-memory counter leaked
+                    # twice during PR review cycles (orphan-on-running +
+                    # orphan-on-done), both silent O(N) drifts. DB-truth
+                    # per cycle is structurally drift-proof and costs one
+                    # extra round-trip per lease_poll_interval_sec.
+                    held = await self._store.count_held_by_type(s.worker_id)
+                    # Apportion total_slack across the per-type CTE
+                    # branches (see _calculate_branch_limits for the
+                    # algorithm + rationale). Extracted to a pure helper
+                    # so the allocation math is unit-testable without the
+                    # surrounding asyncio loop.
+                    limits = self._calculate_branch_limits(
+                        total_slack,
+                        caps,
+                        held,
+                    )
                     logger.info(
-                        "Attempting to acquire up to %d feeds (%d/%d active)",
-                        capacity,
-                        len(self._feed_tasks),
-                        self._normalizer_settings.max_feeds_per_worker,
+                        "Attempting to acquire feeds "
+                        "(slack=%d, caps=%s, held=%s, limits=%s, total_ask=%d)",
+                        total_slack,
+                        {t.value: v for t, v in caps.items()},
+                        {t.value: v for t, v in held.items()},
+                        {t.value: v for t, v in limits.items()},
+                        sum(limits.values()),
                     )
-                    leases = await self._store.acquire_feeds_batch(
-                        self._normalizer_settings.worker_id,
-                        self._normalizer_settings.abandonment_window_sec,
-                        limit=capacity,
+                    primary = await self._store.acquire_feeds_batch(
+                        s.worker_id,
+                        limits,
                     )
+                    leases: list[LeasedFeed] = list(primary)
+                    # When the primary per-type CTE underfills (caps bound
+                    # the ask below remaining slack, or there simply aren't
+                    # enough unclaimed feeds of the right types), try the
+                    # recovery path to sweep up failing-retryable +
+                    # active-abandoned rows. The pg_cron sweep reclaims most
+                    # active-abandoned rows at 30 s cadence, but this path
+                    # still earns its keep for failing-retryable and for
+                    # reclaiming slack before the next sweep tick.
+                    if len(primary) < total_slack:
+                        # Recovery must respect the SAME per-type caps
+                        # the primary path enforced. Without re-running
+                        # the apportion, recovery could push held > cap
+                        # for a type whose primary path returned 0
+                        # (e.g. all unclaimed of that type are
+                        # failing-retryable, not unclaimed). Compute a
+                        # fresh per-type limit dict from `held + primary
+                        # acquired-by-type` and the remaining slack.
+                        primary_by_type: dict[SourceType, int] = dict.fromkeys(
+                            caps, 0
+                        )
+                        for lease in primary:
+                            t = lease["source_type"]
+                            if t in primary_by_type:
+                                primary_by_type[t] += 1
+                        held_after_primary = {
+                            t: held.get(t, 0) + primary_by_type[t] for t in caps
+                        }
+                        recovery_limits = self._calculate_branch_limits(
+                            total_slack - len(primary),
+                            caps,
+                            held_after_primary,
+                        )
+                        recovery = await self._store.acquire_feeds_recovery(
+                            s.worker_id,
+                            s.abandonment_window_sec,
+                            recovery_limits,
+                        )
+                        leases.extend(recovery)
+
                     for lease in leases:
                         existing = self._feed_tasks.get(lease["id"])
-                        if existing is not None and not existing.done():
-                            # A stale heartbeat allowed the DB to re-lease a
-                            # feed we already hold.  The old task still runs
-                            # with its original (now-outdated) fencing token.
-                            # If left alive it will eventually fail a fenced
-                            # write and call os._exit(1), killing the whole
-                            # worker — including the healthy new task.
-                            # Cancel first; the CancelledError handler in
-                            # _process_feed exits cleanly without DB writes.
-                            logger.warning(
-                                "Cancelling orphaned task for feed %s "
-                                "(re-leased with token %d)",
-                                lease["name"],
-                                lease["fencing_token"],
+                        if existing is not None:
+                            # Whether or not `existing` is already .done(),
+                            # it's about to be overwritten in _feed_tasks
+                            # below and become unreachable from the
+                            # reaper's iteration over
+                            # self._feed_tasks.items(). We still need to
+                            # consume the old task's exception — the
+                            # reaper won't see it after the overwrite.
+                            # Branches:
+                            #   - not done: still running with an outdated
+                            #     fencing token; if left alive it would
+                            #     eventually fail a fenced write and call
+                            #     os._exit(1). Cancel it (the
+                            #     CancelledError path in _process_feed
+                            #     exits cleanly without DB writes).
+                            #   - done: task already exited between our
+                            #     last reap call and acquire_feeds_batch
+                            #     returning. Exception-consumption cleanup
+                            #     is still required for the same reason.
+                            if not existing.done():
+                                logger.warning(
+                                    "Cancelling orphaned task for feed %s "
+                                    "(re-leased with token %d)",
+                                    lease["name"],
+                                    lease["fencing_token"],
+                                )
+                                existing.cancel()
+                            else:
+                                logger.info(
+                                    "Reaping already-done task for feed %s "
+                                    "inline during re-lease (reaper won't see it "
+                                    "after overwrite)",
+                                    lease["name"],
+                                )
+                            # Consume the task's exception so asyncio
+                            # doesn't log "Task exception was never
+                            # retrieved" at GC time. For an already-done
+                            # task add_done_callback fires synchronously;
+                            # for one we just cancelled it fires after
+                            # cancel propagates. Either way the reaper
+                            # won't get to this task (it's unreachable).
+                            existing.add_done_callback(
+                                self._consume_orphan_exception,
                             )
-                            existing.cancel()
                         task = asyncio.create_task(
                             self._process_feed(lease),
                             name=f"feed-{lease['name']}",
@@ -298,8 +397,11 @@ class NormalizerRuntime:
                         self._feed_tasks[lease["id"]] = task
                     if leases:
                         logger.info(
-                            "Acquired %d feeds (%d/%d active)",
+                            "Acquired %d feeds (primary=%d, recovery=%d) "
+                            "— %d/%d active",
                             len(leases),
+                            len(primary),
+                            len(leases) - len(primary),
                             len(self._feed_tasks),
                             self._normalizer_settings.max_feeds_per_worker,
                         )
@@ -315,23 +417,29 @@ class NormalizerRuntime:
                 return
 
     def _reap_completed_tasks(self) -> None:
-        """
-        Remove completed tasks and consume their exceptions.
+        """Remove completed tasks and consume their exceptions.
 
-        Must call ``task.exception()`` to retrieve the stored exception —
+        Must call ``task.exception()`` to retrieve the stored exception --
         without this, asyncio logs a "Task exception was never retrieved"
         warning at garbage collection time. ``.exception()`` on a cancelled
         task raises ``CancelledError``, hence the guard.
+
+        The catch-and-quarantine handler in ``_process_feed`` (D-01, v1.1)
+        is the primary fault-response path. The reaper exists to drain
+        ``task.exception()`` so asyncio does not emit
+        "Task exception was never retrieved" warnings, and to log meta-bugs
+        where the catch handler itself raised -- which would indicate the
+        DB write or telemetry call inside the catch arm crashed. Such
+        meta-bugs surface as ERROR logs here; the lease abandonment window
+        is the recovery safety net (D-04, v1.1).
         """
         for feed_id in [fid for fid, t in self._feed_tasks.items() if t.done()]:
             task = self._feed_tasks.pop(feed_id)
             try:
                 exc = task.exception()
             except asyncio.CancelledError:
-                pass  # normal — task was cancelled by shutdown
+                pass  # normal -- task was cancelled by shutdown
             else:
-                # Observability only — _process_feed already called
-                # record_failure before the task exited.
                 if exc is not None:
                     logger.error(
                         "Feed task %s failed: %s",
@@ -339,6 +447,105 @@ class NormalizerRuntime:
                         exc,
                         exc_info=exc,
                     )
+
+    @staticmethod
+    def _calculate_branch_limits(
+        total_slack: int,
+        caps: dict[SourceType, int],
+        held: dict[SourceType, int],
+    ) -> dict[SourceType, int]:
+        """Water-filling apportion of total_slack across per-type branches.
+
+        Per-type caps bound each branch individually (16.9 MiB/feed x 240
+        bcfy_feeds rows is one worker's memory ceiling for that type). But
+        the claim query is a UNION ALL across three branches, so bounding
+        each branch by total_slack independently would let the SUM exceed
+        total_slack — e.g. at cold start with max_feeds_per_worker=250,
+        three branches of 250 each would return 740 feeds in one call,
+        blowing past the worker budget by 3x.
+
+        Algorithm: sort by ascending headroom, give each branch
+        min(headroom, fair_share) where fair_share is
+        `remaining_slack // remaining_branches`. Guarantees
+        sum(limits.values()) <= total_slack, redistributes slack that a
+        capped branch couldn't absorb to the branches behind it, and
+        avoids starving any type. O(N log N) on a 3-element dict —
+        effectively O(1). max() on per-type headroom is defensive against
+        a negative-held accounting bug (which would otherwise make
+        cap - held > cap).
+
+        Args:
+            total_slack: max_feeds_per_worker - len(_feed_tasks).
+            caps: per-SourceType env-var-driven cap ceilings.
+            held: DB-derived per-type active-lease count for this worker
+                (see FeedStore.count_held_by_type). May contain extra
+                keys beyond ``caps`` (e.g. ECHO always 0) — they are
+                ignored because the dict comprehension iterates ``caps``.
+                Keys in ``caps`` that are absent from ``held`` are
+                treated as 0; this keeps the function safe against any
+                future caller that passes a sparse dict.
+
+        Returns:
+            Dict mapping each SourceType in `caps` to its computed LIMIT.
+            Sum of values is <= total_slack and each value is >= 0.
+        """
+        # Clamp headroom at the cap, not just at zero: if `held` somehow
+        # went negative (double-decrement accounting bug), max(0, cap -
+        # held) > cap and would let a branch's LIMIT exceed the memory
+        # ceiling the cap represents. min(cap, ...) restores the "never
+        # exceeds cap" invariant regardless of held's sign.
+        headroom: dict[SourceType, int] = {
+            t: min(caps[t], max(0, caps[t] - held.get(t, 0))) for t in caps
+        }
+        limits: dict[SourceType, int] = dict.fromkeys(caps, 0)
+        # Sort types by ascending headroom so tight branches are sized
+        # first; the loop's integer-division share naturally widens for
+        # later branches as preceding branches consume less than their
+        # "fair" slice.
+        sorted_types = sorted(caps, key=lambda t: headroom[t])
+        remaining_slack = total_slack
+        remaining_branches = len(sorted_types)
+        for t in sorted_types:
+            # share recomputes per iteration: when an earlier branch is
+            # headroom-limited (limits[t] < share), the savings flow into
+            # the next branch's share automatically. Integer-division
+            # remainders likewise compound forward, so the last branch's
+            # share == remaining_slack and absorbs everything that fits.
+            # Any remaining_slack > 0 at end of loop implies every branch
+            # ended at headroom — there's nowhere to redistribute to.
+            share = (
+                remaining_slack // remaining_branches
+                if remaining_branches > 0
+                else 0
+            )
+            limits[t] = min(headroom[t], share)
+            remaining_slack -= limits[t]
+            remaining_branches -= 1
+        return limits
+
+    @staticmethod
+    def _consume_orphan_exception(task: asyncio.Task) -> None:
+        """Consume the exception from an orphaned (cancelled-and-replaced) task.
+
+        Called via ``add_done_callback`` on tasks that _leasing_loop
+        cancels when it re-leases a feed it already holds. The reaper
+        normally calls ``task.exception()`` on completed tasks to prevent
+        the "Task exception was never retrieved" warning at GC time, but
+        orphaned tasks aren't in _feed_tasks anymore, so the reaper can't
+        reach them. This callback does that job instead.
+        """
+        try:
+            exc = task.exception()
+        except asyncio.CancelledError:
+            pass  # expected path for the re-lease cancel race
+        else:
+            if exc is not None:
+                logger.error(
+                    "Orphaned feed task %s exited with error: %s",
+                    task.get_name(),
+                    exc,
+                    exc_info=exc,
+                )
 
     # -- Per-feed pipeline ------------------------------------------------
 
@@ -400,13 +607,25 @@ class NormalizerRuntime:
                                 feed["name"],
                             )
                         session_id = _fallback_session_id
+                    # Bump chunk_seq up-front for every captured chunk, success or
+                    # failure. Reusing a seq across chunks is unsafe: combined with
+                    # second-precision upload timestamps and the 412-treated-as-
+                    # success path, a same-second retry could publish the next
+                    # chunk's metadata pointing at the previous chunk's audio bytes.
+                    seq_for_chunk = chunk_seq
+                    chunk_seq += 1
+                    # Pipeline phase: upload + publish + bookmark. Any failure here
+                    # (network, gax, paused-key, our-code-bug) propagates to the
+                    # outer except Exception arm, which records the reason and
+                    # quarantines after threshold strikes. The worker is dumb;
+                    # the operator triages from `quarantine_reason`.
                     gcs_uri = await retry_with_lease_check(
                         gcp_helper.upload_staged_audio,
                         self._gcs_client,
                         captured_chunk.audio_bytes,
                         feed,
                         settings.audio_staging_bucket,
-                        chunk_seq,
+                        seq_for_chunk,
                         fencing_token,
                         extension,
                         content_type,
@@ -442,11 +661,8 @@ class NormalizerRuntime:
                         duration_ms=duration_ms,
                     )
                     logger.info(
-                        "Published message %s for feed %s",
-                        message_id,
-                        feed["name"],
+                        "Published message %s for feed %s", message_id, feed["name"]
                     )
-                    chunk_seq += 1
 
                     ok = await retry_with_lease_check(
                         self._store.update_feed_progress,
@@ -471,7 +687,7 @@ class NormalizerRuntime:
                         # If the batched heartbeat is healthy (renewing every 15s),
                         # leases cannot be stolen within the 60s abandonment window.
                         # A stolen lease means the heartbeat mechanism itself failed
-                        # systemically — cancelling one task while 249 others may
+                        # systemically -- cancelling one task while 249 others may
                         # also be compromised is unsafe. os._exit(1) is deliberate.
                         # MIG auto-heals within seconds; total downtime per feed:
                         # ~60s (abandonment window) + ~5s (instance restart).
@@ -481,17 +697,11 @@ class NormalizerRuntime:
                         )
                         # logging.shutdown() flushes background logging threads
                         # (e.g. Cloud Logging's CloudLoggingHandler) that os._exit
-                        # would bypass. This fence violation log is the only
-                        # post-mortem evidence of split-brain.
+                        # would bypass.
                         logging.shutdown()
                         os._exit(1)
 
-                    # SLO: chunk_ingested emit — strictly-after-bookmark-ok
-                    # D-11: wrapped json_fields shape for uniformity with quarantine.
-                    # D-15: latency_clamped absent unless raw latency < 0 (only ever True).
-                    # D-16: processing_latency_sec absent when receipt_time is None
-                    # (NOT explicit null — Terraform alert filters handle key-existence).
-                    # Cost note: ~500 GiB/month at 12k-feed fleet per research Pitfall 6.
+                    # SLO: chunk_ingested emit -- strictly-after-bookmark-ok
                     chunk_ingested_payload: dict[str, object] = {
                         "event_type": EVENT_TYPE_CHUNK_INGESTED,
                         "feed_id": str(feed["id"]),
@@ -513,15 +723,24 @@ class NormalizerRuntime:
                     )
 
                     if self._shutdown.is_set():
-                        # Return without calling release_feed — _shutdown_sequence
+                        # Return without calling release_feed -- _shutdown_sequence
                         # handles all task cancellation and the 60s abandonment
                         # window is the safety net if batch release fails.
                         logger.info(
-                            "Shutdown -- stopping feed %s cleanly after chunk %d",
-                            feed["name"],
-                            chunk_seq,
+                            "Chunk ingested",
+                            extra={"json_fields": chunk_ingested_payload},
                         )
-                        return
+
+                        if self._shutdown.is_set():
+                            # Return without calling release_feed — _shutdown_sequence
+                            # handles all task cancellation and the 60s abandonment
+                            # window is the safety net if batch release fails.
+                            logger.info(
+                                "Shutdown -- stopping feed %s cleanly after chunk %d",
+                                feed["name"],
+                                chunk_seq,
+                            )
+                            return
 
         except asyncio.CancelledError:
             logger.info("Feed %s task cancelled", feed["name"])
@@ -529,7 +748,7 @@ class NormalizerRuntime:
 
         except LeaseExpiredError:
             # Lease validity is uncertain (heartbeat DB error or fence
-            # violation).  Do NOT attempt report_feed_failure — the DB
+            # violation).  Do NOT attempt report_feed_failure -- the DB
             # connection that feeds it may be unreachable, causing this
             # coroutine to hang.  The 60s abandonment window is the
             # safety net; another worker will re-lease the feed.
@@ -539,9 +758,20 @@ class NormalizerRuntime:
             )
             return
 
-        except Exception:
-            logger.exception("Error processing feed %s", feed["name"])
-            # SAFETY: _releasing_feeds invariant — add BEFORE the first await
+        except Exception as e:
+            # Single catch-all: every failure (source-side, pipeline-side, code
+            # bug) goes through report_feed_failure with a reason string. The
+            # worker doesn't try to attribute fault; the operator reads the
+            # reason from `quarantine_reason` after threshold strikes and
+            # decides what to investigate. Transient failures auto-recover
+            # because failure_count resets to 0 on the next successful publish.
+            reason = str(e)[:100] if str(e) else type(e).__name__
+            logger.exception(
+                "Feed processing error: feed=%s reason=%s",
+                feed["name"],
+                reason,
+            )
+            # SAFETY: _releasing_feeds invariant -- add BEFORE the first await
             # that drops the lease (report_feed_failure sets worker_id=NULL).
             self._releasing_feeds.add(feed["id"])
             try:
@@ -550,6 +780,7 @@ class NormalizerRuntime:
                     worker_id,
                     fencing_token,
                     self._normalizer_settings.feed_failure_threshold,
+                    reason=reason,
                 )
                 if status == "quarantined":
                     await quarantine_telemetry.emit_quarantine_event(
@@ -674,9 +905,37 @@ class NormalizerRuntime:
             self._normalizer_settings.worker_id,
         )
 
-        renewed_ids = {r["id"] for r in results if r["renewed"]}
+        # Retention signal is now DB-authoritative worker ownership, not
+        # `renewed`. Skip-if-recent (feed_queries.py
+        # RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL) short-circuits the UPDATE
+        # when last_heartbeat is already <15 s fresh — those rows return
+        # with renewed=False but current_worker=us. Using `renewed` as the
+        # gate would then fire spurious fence-violation os._exit(1) on
+        # every newly-claimed feed whose first heartbeat tick falls inside
+        # the fresh window. The correct invariant is: a feed is retained
+        # iff the DB row still shows our worker_id.
+        #
+        # Race tolerance: `current_worker` is a point-in-time read from
+        # within a `SELECT ... FOR UPDATE` CTE, so it is consistent at
+        # that transaction's boundary. Between this check and a later
+        # fenced write by the task itself (progress / release / failure),
+        # another party could in theory steal the lease — but that path
+        # requires the pg_cron sweep (30 s cadence, 60 s abandonment
+        # threshold) OR another worker's recovery-CTE to fire, neither
+        # of which can happen while our last_heartbeat stays < 60 s old.
+        # Fenced writes on the task side are the authoritative lease-lost
+        # detection at write time; they call update_feed_progress /
+        # release_feed / report_feed_failure with WHERE worker_id=$1 AND
+        # fencing_token=$2 and return False if our lease was taken. The
+        # existing retry_with_lease_check wrapper + _lease_lost event
+        # gracefully handles that outcome without depending on the
+        # heartbeat's retained_ids observation.
+        worker_id = self._normalizer_settings.worker_id
+        retained_ids = {
+            r["id"] for r in results if r["current_worker"] == worker_id
+        }
 
-        # A feed missing from renewed_ids is NOT a violation if:
+        # A feed missing from retained_ids is NOT a violation if:
         #   - active[fid].done(): task finished between snapshot and DB response
         #   - fid in _releasing_feeds: task is mid-await on release_feed /
         #     record_failure — DB has set worker_id=NULL but task hasn't returned.
@@ -689,14 +948,15 @@ class NormalizerRuntime:
         lost_ids = {
             fid
             for fid in active
-            if fid not in renewed_ids
+            if fid not in retained_ids
             and not active[fid].done()
             and fid not in self._releasing_feeds
         }
         if not lost_ids:
             logger.debug(
-                "Heartbeat renewed for %d feeds",
-                len(renewed_ids),
+                "Heartbeat retained %d feeds (%d actually written)",
+                len(retained_ids),
+                sum(1 for r in results if r["renewed"]),
             )
             return
 
@@ -785,22 +1045,25 @@ class NormalizerRuntime:
         # exit! If we release leases while tasks are still running, they might
         # see their lease as NULL during a progress update and trigger an
         # accidental fence violation (os._exit(1)).
+        #
+        # Single WHERE worker_id = $1 UPDATE: catches every row the DB
+        # thinks we own, including stragglers from earlier per-feed
+        # release_feed failures. The per-type CTE + SKIP LOCKED on the
+        # claim side makes concurrent polling after a fleet-wide UNCLAIMED
+        # flip self-balancing across surviving workers, so the
+        # batched+jittered stagger the scaling plan originally prescribed
+        # is no longer needed.
+        worker_id = self._normalizer_settings.worker_id
         logger.info(
-            "Releasing all leases for worker %s",
-            self._normalizer_settings.worker_id,
+            "Releasing all leases owned by worker %s",
+            worker_id,
         )
         try:
-            count = await self._store.release_feeds_batch(
-                self._normalizer_settings.worker_id
-            )
-            logger.info(
-                "Successfully released %d leases for worker %s",
-                count,
-                self._normalizer_settings.worker_id,
-            )
+            total_released = await self._store.release_feeds_batch(worker_id)
+            logger.info("Released %d leases", total_released)
         except Exception:
             logger.exception(
-                "Failed to batch-release feeds on shutdown (safety net will recover)"
+                "Failed to release feeds on shutdown (safety net will recover)"
             )
 
         await self._pubsub_client.close()

@@ -5,6 +5,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import type { Transcript } from '@transcription/common';
 
 import { getAudioUrl } from '../../utils/audioUtils';
+import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { AudioDisplay } from './AudioDisplay';
 
 vi.mock('@wavesurfer/react', () => ({
@@ -107,8 +108,8 @@ describe('AudioDisplay', () => {
       {
         transmissionId: '2',
         feedId: 'feed1',
-        startTimestamp: new Date('2026-04-20T08:40:00Z').toISOString(),
-        endTimestamp: new Date('2026-04-20T08:40:05Z').toISOString(),
+        startTimestamp: new Date('2026-04-20T08:20:00Z').toISOString(),
+        endTimestamp: new Date('2026-04-20T08:20:05Z').toISOString(),
         transcript: 'Test 2',
         canonicalAudioUri: 'audio2.flac',
         playbackAudioUri: 'audio2.m4a',
@@ -262,9 +263,9 @@ describe('AudioDisplay', () => {
       expect(labels30.length).toBe(4);
       const [h0_30, m0_30] = labels30[0].split(':').map(Number);
       const [h3_30, m3_30] = labels30[3].split(':').map(Number);
-      let diff30 = h3_30 * 60 + m3_30 - (h0_30 * 60 + m0_30);
-      if (diff30 < 0) diff30 += 24 * 60;
-      expect(diff30).toBe(15);
+      let diff = h3_30 * 60 + m3_30 - (h0_30 * 60 + m0_30);
+      if (diff < 0) diff += 24 * 60;
+      expect(diff).toBe(MAX_WINDOW_DURATION_MS / 60 / 1000);
     });
   });
 

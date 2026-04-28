@@ -4,15 +4,15 @@ This is the CLI entry point for the transcription pipeline.
 It handles argument parsing and environment configuration before launching the Beam orchestration.
 """
 
-import logging
 import sys
 
 from apache_beam.options.pipeline_options import PipelineOptions
 
+from backend.pipeline.transcription.common.logging import get_logger
 from backend.pipeline.transcription.options import TranscriptionOptions
 from backend.pipeline.transcription.orchestration import get_pipeline
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, {"system": "transcription", "component": "main"})
 
 
 def main() -> None:
