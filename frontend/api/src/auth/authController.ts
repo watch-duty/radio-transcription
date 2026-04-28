@@ -37,13 +37,16 @@ function setRefreshTokenCookie(
   refreshToken: string
 ): void {
   res.cookie('refresh_token', refreshToken, {
-    // Tells the browser that this cookie should only be accessed via HTTP(S) requests, and should not be accessible by client-side scripts (like JavaScript).
+    // Tells the browser that this cookie should only be accessed via HTTP(S) requests
+    // and should not be accessible by client-side scripts (like JavaScript).
     httpOnly: true,
-    // Tells the browser that this cookie should only be sent with secure (HTTPS) requests. Allows http://localhost for development.
+    // Tells the browser that this cookie should only be sent with secure (HTTPS) requests.
+    // Allows http://localhost for development.
     secure:
       !ALLOWED_ORIGIN.includes('localhost') &&
       !ALLOWED_ORIGIN.includes('127.0.0.1'),
-    // Tells the browser to only send this cookie with requests that are same-site or cross-site with the same top-level site.
+    // Tells the browser to only send this cookie with requests that are same-site
+    // or cross-site with the same top-level site.
     sameSite: 'lax',
     // Lifetime of the cookie in milliseconds.
     maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
