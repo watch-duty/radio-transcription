@@ -1,28 +1,10 @@
 // @vitest-environment jsdom
-import { MemoryRouter } from 'react-router';
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { RouterProvider, createMemoryRouter } from 'react-router';
 
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-} from '@testing-library/react';
-
-import { authLogin } from '../service/authLogin';
 import Login from './Login';
-
-// Mock useNavigate
-const mockNavigate = vi.fn();
-vi.mock('react-router', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('react-router')>();
-  return {
-    ...actual,
-    useNavigate: () => mockNavigate,
-  };
-});
+import { authLogin } from '../service/authLogin';
 
 // Mock authLogin
 vi.mock('../service/authLogin', () => ({
@@ -67,23 +49,24 @@ describe('Login component', () => {
   });
 
   it('renders login component and provides google signIn provider', () => {
-    render(
-      <MemoryRouter>
-        <Login />
-      </MemoryRouter>
+    const router = createMemoryRouter(
+      [{ path: '/login', element: <Login /> }],
+      { initialEntries: ['/login'] }
     );
 
-    // Check for the presence of a button that initiates signIn for provider 'Google'
+    render(<RouterProvider router={router} />);
+
     const button = screen.getByRole('button', { name: /google/i });
     expect(button).toBeTruthy();
   });
 
   it('triggers signin callback when clicked', () => {
-    render(
-      <MemoryRouter>
-        <Login />
-      </MemoryRouter>
+    const router = createMemoryRouter(
+      [{ path: '/login', element: <Login /> }],
+      { initialEntries: ['/login'] }
     );
+
+    render(<RouterProvider router={router} />);
 
     const button = screen.getByRole('button', { name: /google/i });
     fireEvent.click(button);
@@ -103,11 +86,18 @@ describe('Login component', () => {
 
     vi.mocked(authLogin).mockResolvedValueOnce('mocked-jwt-token');
 
-    render(
-      <MemoryRouter>
-        <Login />
-      </MemoryRouter>
+    const router = createMemoryRouter(
+      [
+        { path: '/transcripts', element: <div>Transcripts</div> },
+        { path: '/login', element: <Login /> },
+      ],
+      {
+        initialEntries: ['/transcripts', '/login'],
+        initialIndex: 1,
+      }
     );
+
+    render(<RouterProvider router={router} />);
 
     await act(async () => {
       await capturedOptions!.onSuccess({ code: 'test-code' });
@@ -115,7 +105,7 @@ describe('Login component', () => {
 
     expect(authLogin).toHaveBeenCalledWith('test-code');
     expect(mockSetToken).toHaveBeenCalledWith('mocked-jwt-token');
-    expect(mockNavigate).toHaveBeenCalledWith(-1);
+    expect(router.state.location.pathname).toBe('/transcripts');
   });
 
   it('navigates to root directory when referrer does not match host', async () => {
@@ -130,11 +120,18 @@ describe('Login component', () => {
 
     vi.mocked(authLogin).mockResolvedValueOnce('mocked-jwt-token');
 
-    render(
-      <MemoryRouter>
-        <Login />
-      </MemoryRouter>
+    const router = createMemoryRouter(
+      [
+        { path: '/', element: <div>Root</div> },
+        { path: '/login', element: <Login /> },
+      ],
+      {
+        initialEntries: ['/login'],
+        initialIndex: 0,
+      }
     );
+
+    render(<RouterProvider router={router} />);
 
     await act(async () => {
       await capturedOptions!.onSuccess({ code: 'test-code' });
@@ -142,7 +139,7 @@ describe('Login component', () => {
 
     expect(authLogin).toHaveBeenCalledWith('test-code');
     expect(mockSetToken).toHaveBeenCalledWith('mocked-jwt-token');
-    expect(mockNavigate).toHaveBeenCalledWith('/', { replace: true });
+    expect(router.state.location.pathname).toBe('/');
   });
 
   it('navigates to root directory when referrer is empty', async () => {
@@ -157,11 +154,18 @@ describe('Login component', () => {
 
     vi.mocked(authLogin).mockResolvedValueOnce('mocked-jwt-token');
 
-    render(
-      <MemoryRouter>
-        <Login />
-      </MemoryRouter>
+    const router = createMemoryRouter(
+      [
+        { path: '/', element: <div>Root</div> },
+        { path: '/login', element: <Login /> },
+      ],
+      {
+        initialEntries: ['/login'],
+        initialIndex: 0,
+      }
     );
+
+    render(<RouterProvider router={router} />);
 
     await act(async () => {
       await capturedOptions!.onSuccess({ code: 'test-code' });
@@ -169,18 +173,19 @@ describe('Login component', () => {
 
     expect(authLogin).toHaveBeenCalledWith('test-code');
     expect(mockSetToken).toHaveBeenCalledWith('mocked-jwt-token');
-    expect(mockNavigate).toHaveBeenCalledWith('/', { replace: true });
+    expect(router.state.location.pathname).toBe('/');
   });
 
   it('logs console.error on authentication failure', async () => {
     const errorInstance = new Error('API error');
     vi.mocked(authLogin).mockRejectedValueOnce(errorInstance);
 
-    render(
-      <MemoryRouter>
-        <Login />
-      </MemoryRouter>
+    const router = createMemoryRouter(
+      [{ path: '/login', element: <Login /> }],
+      { initialEntries: ['/login'] }
     );
+
+    render(<RouterProvider router={router} />);
 
     await act(async () => {
       await capturedOptions!.onSuccess({ code: 'test-code' });
@@ -188,6 +193,6 @@ describe('Login component', () => {
 
     expect(console.error).toHaveBeenCalledWith('Login failed:', errorInstance);
     expect(mockSetToken).not.toHaveBeenCalled();
-    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(router.state.location.pathname).toBe('/login');
   });
 });
