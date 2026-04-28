@@ -1,10 +1,18 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { RouterProvider, createMemoryRouter } from 'react-router';
 
-import Login from './Login';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from '@testing-library/react';
+
 import { authLogin } from '../service/authLogin';
+import Login from './Login';
 
 // Mock authLogin
 vi.mock('../service/authLogin', () => ({
