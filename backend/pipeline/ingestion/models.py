@@ -99,6 +99,7 @@ class CapturedChunk:
     chunk_end_time: datetime.datetime
     session_id: str | None = None
     receipt_time: datetime.datetime | None = None
+    sequence_number: int | None = None
 
 
 if TYPE_CHECKING:

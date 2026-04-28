@@ -80,6 +80,9 @@ class ParseAndKeyFn(beam.DoFn):
                 if chunk_proto.HasField("sequence_number")
                 else None
             )
+            if seq_num is None:
+                msg = "AudioChunk missing required sequence_number"
+                _raise(msg)
             yield (
                 feed_id,
                 ChunkMetadata(

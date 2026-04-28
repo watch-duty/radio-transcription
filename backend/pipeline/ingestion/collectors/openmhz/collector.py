@@ -124,6 +124,7 @@ async def openmhz_collector(
 
     consecutive_ws_failures = 0
     download_session = AsyncSession()
+    sequence_number = 0
 
     try:
         while not shutdown_event.is_set():
@@ -172,7 +173,9 @@ async def openmhz_collector(
                             + datetime.timedelta(seconds=call.length_sec),
                             session_id=connection_session_id,
                             receipt_time=receipt_time,
+                            sequence_number=sequence_number,
                         )
+                        sequence_number += 1
             except Exception:
                 logger.warning(
                     "Transport error: short_name=%s",

@@ -105,7 +105,6 @@ def get_test_transcribe_config(**kwargs: Any) -> TranscribeAudioConfig:
 
 
 class ParseAndKeyTimestampTest(unittest.TestCase):
-    @unittest.skip("Skipping due to sequence number refactor")
     def test_parse_and_key_success(self) -> None:
         """Verifies that well-formed Pub/Sub messages containing a serialized AudioChunk and feed_id are correctly unmarshalled and keyed by feed."""
         chunk = AudioChunk(
@@ -115,6 +114,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             duration_ms=1000,
             feed_id="test-feed",
             external_id="mock-external-id",
+            sequence_number=1,
         )
         mock_msg = PubsubMessage(
             chunk.SerializeToString(),
@@ -143,7 +143,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
                                     feed_name="mock-feed-name",
                                     external_id="mock-external-id",
                                 ),
-                                sequence_number=None,
+                                sequence_number=1,
                             ),
                         )
                     ]
