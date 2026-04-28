@@ -829,7 +829,12 @@ class OrderedBypassFn(beam.DoFn):
 
         # Set timer if this is the first element
         if len(buffer_elements) == 1:
-            out_of_order_timer.set(Timestamp(time.time() + 5))
+            out_of_order_timeout_s = (
+                self.order_config.out_of_order_timeout_ms / 1000.0
+            )
+            out_of_order_timer.set(
+                Timestamp(time.time() + out_of_order_timeout_s)
+            )
             curr_context = replace(curr_context, order_timer_active=True)
 
         curr_context = replace(
