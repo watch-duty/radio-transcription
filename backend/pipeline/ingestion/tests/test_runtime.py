@@ -1854,7 +1854,12 @@ class TestSubTimeoutEscape(unittest.IsolatedAsyncioTestCase):
             try:
                 await asyncio.sleep(60)
             except asyncio.CancelledError:
-                asyncio.current_task().uncancel()
+                # asyncio.current_task() returns Optional[Task] — inside a
+                # running task it is never None, but ty can't narrow that
+                # without an explicit check.
+                current = asyncio.current_task()
+                assert current is not None
+                current.uncancel()
             await asyncio.sleep(60)  # second cancel propagates here
 
         rt = _make_runtime(

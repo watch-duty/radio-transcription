@@ -246,10 +246,10 @@ class NormalizerRuntime:
 
         quarantine_telemetry.configure(settings.google_cloud_project)
 
-        # SHUTDOWN-01 / Phase 2 scaffolding for HTTP-01 + SPAWN-01.
-        # Constructed inside _main() because both primitives require a
-        # running event loop. TCPConnector kwargs per research
-        # SUMMARY.md (limit_per_host=64 absorbs activation bursts;
+        # HTTP-01: runtime-owned aiohttp.ClientSession. Constructed inside
+        # _main() because the connector requires a running event loop.
+        # TCPConnector kwargs per research SUMMARY.md
+        # (limit_per_host=64 absorbs activation bursts;
         # ttl_dns_cache=300 survives cold-start herd; keepalive_timeout=75
         # is > 60s poll cadence). NO enable_cleanup_closed — ignored on
         # Python 3.13.1+ (aiohttp 3.13.5 docs). Session is closed in

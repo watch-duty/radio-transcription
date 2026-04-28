@@ -120,9 +120,8 @@ class CaptureResources:
         http_session: Shared aiohttp ClientSession with TCPConnector
             tuned for the bcfy_calls polling workload (limit=0,
             limit_per_host=64, ttl_dns_cache=300, keepalive_timeout=75).
-            NOT Optional — Phase 3 collectors will assume it's always
-            set; constructing real instances from day one keeps ty
-            strict.
+            NOT Optional — collectors assume it is always set, and
+            keeping the type strict avoids per-call None-checks.
     """
 
     http_session: aiohttp.ClientSession
