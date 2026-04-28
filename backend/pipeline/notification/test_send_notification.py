@@ -80,7 +80,7 @@ class TestSendNotification(TestCase):
             source_audio_uris=["gs://foo/bar.flac"],
             feed_name="asdf",
             external_id="ext-id",
-            app_url="https://app.example.com?feedId=&transmissionId=1234&duration=5",
+            app_url="https://app.example.com?feedId=&transmissionId=1234&timestamp=1000000&duration=5",
         )
         expected_notification.start_audio_offset.seconds = 10
         expected_notification.end_audio_offset.seconds = 20
