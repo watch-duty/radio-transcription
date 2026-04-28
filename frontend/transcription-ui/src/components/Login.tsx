@@ -18,9 +18,14 @@ export function Login() {
       try {
         const token = await authLogin(code);
         setToken(token);
-        // Navigate back to the page that initiated the login. This can be a
-        // protected page if the user was not authenticated.
-        navigate(-1);
+        // Navigate the user back to the previous page if it was an internal link, otherwise go to the home page.
+        const isInternal =
+          document.referrer && document.referrer.includes(window.location.host);
+        if (isInternal) {
+          navigate(-1);
+        } else {
+          navigate('/', { replace: true });
+        }
       } catch (error) {
         console.error('Login failed:', error);
       }
