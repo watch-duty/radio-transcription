@@ -226,11 +226,6 @@ class NormalizerSettings:
     # PITFALLS.md Pitfalls 1, 2, 3, 16, 18, 20. Hysteresis margin is
     # hard-coded as pause_threshold - 0.10 (D-20) -- exposing it as a
     # setting would invite the 5pp temptation rejected by D-08.
-    container_memory_bytes_override: int | None = field(
-        default_factory=lambda: (
-            int(v) if (v := os.environ.get("CONTAINER_MEMORY_BYTES")) else None
-        ),
-    )
     rss_watchdog_poll_interval_sec: float = field(
         default_factory=lambda: float(
             os.environ.get("RSS_WATCHDOG_POLL_INTERVAL_SEC", "2.0"),

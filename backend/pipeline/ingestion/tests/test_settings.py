@@ -31,7 +31,6 @@ class TestNormalizerSettings(unittest.TestCase):
             "GRACEFUL_SHUTDOWN_TIMEOUT_SEC": "15.0",
             "TASK_CANCEL_BUDGET_SEC": "12.0",
             "FFMPEG_SPAWN_LIMIT": "4",
-            "CONTAINER_MEMORY_BYTES": "4294967296",
             "RSS_WATCHDOG_POLL_INTERVAL_SEC": "1.0",
             "RSS_WATCHDOG_PAUSE_THRESHOLD": "0.65",
             "RSS_WATCHDOG_EXIT_THRESHOLD": "0.85",
@@ -72,7 +71,6 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.graceful_shutdown_timeout_sec, 15.0)
         self.assertEqual(settings.task_cancel_budget_sec, 12.0)
         self.assertEqual(settings.ffmpeg_spawn_limit, 4)
-        self.assertEqual(settings.container_memory_bytes_override, 4294967296)
         self.assertEqual(settings.rss_watchdog_poll_interval_sec, 1.0)
         self.assertEqual(settings.rss_watchdog_pause_threshold, 0.65)
         self.assertEqual(settings.rss_watchdog_exit_threshold, 0.85)
@@ -125,7 +123,6 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.graceful_shutdown_timeout_sec, 90.0)
         self.assertEqual(settings.task_cancel_budget_sec, 30.0)
         self.assertEqual(settings.ffmpeg_spawn_limit, 8)
-        self.assertIsNone(settings.container_memory_bytes_override)
         self.assertEqual(settings.rss_watchdog_poll_interval_sec, 2.0)
         self.assertEqual(settings.rss_watchdog_pause_threshold, 0.70)
         self.assertEqual(settings.rss_watchdog_exit_threshold, 0.90)
@@ -179,15 +176,6 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.db.pool_min_size, 0)
         self.assertEqual(settings.db.pool_max_size, -2)
         self.assertEqual(settings.abandonment_window_sec, -0.5)
-
-    def test_edge_case_empty_container_memory_bytes_returns_none(self) -> None:
-        """CONTAINER_MEMORY_BYTES set to empty string falls through walrus to None."""
-        env = {**_required_env(), "CONTAINER_MEMORY_BYTES": ""}
-
-        with patch.dict("os.environ", env, clear=True):
-            settings = NormalizerSettings()
-
-        self.assertIsNone(settings.container_memory_bytes_override)
 
     def test_caps_partial_env_override(self) -> None:
         """Setting CAP_<NAME> for one type overrides only that one; others use defaults."""

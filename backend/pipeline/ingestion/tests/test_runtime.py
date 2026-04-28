@@ -101,7 +101,6 @@ def _make_settings(**overrides) -> mock.MagicMock:
         # don't drive _main. For tests that DO exercise the watchdog body,
         # rss_watchdog_warmup_sec=0.0 makes the warmup deadline trivially
         # in the past so the test can drive samples directly.
-        "container_memory_bytes_override": None,
         "rss_watchdog_poll_interval_sec": 0.05,
         "rss_watchdog_pause_threshold": 0.70,
         "rss_watchdog_exit_threshold": 0.90,

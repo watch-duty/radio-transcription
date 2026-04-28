@@ -1,8 +1,8 @@
 """WATCHDOG-01 D-29 parser unit tests.
 
 Tests the cgroup memory limit + usage parsers in NormalizerRuntime,
-covering cgroup v2, cgroup v1 fallback, the literal "max", the v1
-unbounded sentinel >= 2**62, and the override path that skips fs reads.
+covering cgroup v2, cgroup v1 fallback, the literal "max", and the
+v1 unbounded sentinel >= 2**62.
 
 These helpers are pure (no side effects, no asyncio) so we use
 unittest.TestCase rather than IsolatedAsyncioTestCase.
@@ -63,17 +63,6 @@ class TestResolveContainerMemoryLimit(unittest.TestCase):
         ):
             result = NormalizerRuntime._resolve_container_memory_bytes()
         self.assertIsNone(result)
-
-    def test_override_short_circuits_fs_reads(self) -> None:
-        """When override is provided, no fs read happens."""
-        with mock.patch(
-            "pathlib.Path.read_text",
-            side_effect=AssertionError("fs read should not happen"),
-        ):
-            result = NormalizerRuntime._resolve_container_memory_bytes(
-                override=5_000_000_000,
-            )
-        self.assertEqual(result, 5_000_000_000)
 
 
 class TestResolveContainerMemoryUsage(unittest.TestCase):

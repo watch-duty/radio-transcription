@@ -232,13 +232,10 @@ class NormalizerRuntime:
         # limit). Joined in _shutdown_sequence immediately after the
         # heartbeat thread join and BEFORE feed-task cancellation
         # (PITFALLS Pitfall 1).
-        watchdog_limit = self._resolve_container_memory_bytes(
-            self._normalizer_settings.container_memory_bytes_override,
-        )
+        watchdog_limit = self._resolve_container_memory_bytes()
         if watchdog_limit is None:
             logger.warning(
-                "RSS watchdog disabled — no cgroup memory limit detected "
-                "(set CONTAINER_MEMORY_BYTES to override)",
+                "RSS watchdog disabled — no cgroup memory limit detected",
             )
         else:
             self._rss_watchdog_thread = threading.Thread(
@@ -322,28 +319,22 @@ class NormalizerRuntime:
     _CGROUP_V1_UNBOUNDED_SENTINEL_THRESHOLD = 2**62
 
     @staticmethod
-    def _resolve_container_memory_bytes(
-        override: int | None = None,
-    ) -> int | None:
+    def _resolve_container_memory_bytes() -> int | None:
         """
         Return the container memory limit in bytes, or None if unbounded.
 
         Priority order (D-01 / D-04):
-          1. override (e.g. settings.container_memory_bytes_override --
-             skip fs reads entirely so dev / test can pin a limit).
-          2. cgroup v2 unified hierarchy (/sys/fs/cgroup/memory.max).
+          1. cgroup v2 unified hierarchy (/sys/fs/cgroup/memory.max).
              Literal "max" -> None (PITFALLS.md Pitfall 2 -- DO NOT
              fall back to psutil.virtual_memory(); host-namespaced).
-          3. cgroup v1 fallback (/sys/fs/cgroup/memory/memory.limit_in_bytes).
+          2. cgroup v1 fallback (/sys/fs/cgroup/memory/memory.limit_in_bytes).
              Values >= 2**62 are the v1 "unbounded" sentinel -> None.
-          4. None on any OSError chain (fs unreadable; caller disables
+          3. None on any OSError chain (fs unreadable; caller disables
              the watchdog).
 
         Caller MUST treat None as "watchdog disabled" and emit a
         WARNING per D-22 -- never fall back to host-namespaced memory.
         """
-        if override is not None:
-            return override
         # cgroup v2 (unified hierarchy; expected on COS / GKE / Cloud Run)
         try:
             raw = NormalizerRuntime._CGROUP_V2_LIMIT_PATH.read_text().strip()
