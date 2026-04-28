@@ -38,8 +38,8 @@ function setRefreshTokenCookie(
 ): void {
   // Allow http://localhost for development.
   const isLocal =
-    !ALLOWED_ORIGIN.includes('localhost') &&
-    !ALLOWED_ORIGIN.includes('127.0.0.1');
+    ALLOWED_ORIGIN.includes('localhost') ||
+    ALLOWED_ORIGIN.includes('127.0.0.1');
   res.cookie('refresh_token', refreshToken, {
     // Tells the browser that this cookie should only be accessed via HTTP(S) requests
     // and should not be accessible by client-side scripts (like JavaScript).
