@@ -42,7 +42,7 @@ export function Login() {
           textAlign: 'center',
           width: '20%',
           borderRadius: '4px',
-          padding: '16px',
+          padding: 2,
           display: 'flex',
           flexDirection: 'column',
           gap: 1,
@@ -65,7 +65,7 @@ export function Login() {
           sx={{
             textTransform: 'none',
             borderRadius: '4px',
-            padding: '10px 24px',
+            padding: 1,
             fontWeight: 600,
           }}
         >
