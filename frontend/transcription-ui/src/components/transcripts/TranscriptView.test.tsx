@@ -763,7 +763,7 @@ describe('TranscriptView', () => {
 
   it('displays the feed outlined status Chip and human-friendly relative time string', async () => {
     const fixedNow = new Date('2026-04-10T12:05:00Z');
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(fixedNow);
 
     try {
@@ -772,7 +772,9 @@ describe('TranscriptView', () => {
         name: 'Feed 123',
         sourceType: 'bcfy_feeds' as const,
         status: 'active' as const,
-        lastHeartbeat: new Date(fixedNow.getTime() - 5 * 60 * 1000).toISOString(),
+        lastHeartbeat: new Date(
+          fixedNow.getTime() - 5 * 60 * 1000
+        ).toISOString(),
       };
 
       vi.mocked(listFeeds).mockResolvedValue([testFeed]);
