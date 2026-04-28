@@ -4,11 +4,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AuthController } from './authController.js';
 
-const { mockGetToken, mockRefreshAccessToken, mockSetCredentials } = vi.hoisted(
+const { mockGetToken, mockRefreshAccessToken, mockSetCredentials, mockState } = vi.hoisted(
   () => ({
     mockGetToken: vi.fn(),
     mockRefreshAccessToken: vi.fn(),
     mockSetCredentials: vi.fn(),
+    mockState: {
+      allowedOrigin: 'http://localhost:5173',
+    },
   })
 );
 
@@ -24,7 +27,9 @@ vi.mock('google-auth-library', () => {
 });
 
 vi.mock('../config.js', () => ({
-  ALLOWED_ORIGIN: 'http://localhost:5173',
+  get ALLOWED_ORIGIN() {
+    return mockState.allowedOrigin;
+  },
   GOOGLE_AUTH_CLIENT_ID: 'test-google-client-id',
   GOOGLE_AUTH_CLIENT_SECRET: 'test-google-client-secret',
 }));
@@ -32,6 +37,7 @@ vi.mock('../config.js', () => ({
 describe('AuthController', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockState.allowedOrigin = 'http://localhost:5173';
   });
 
   describe('login', () => {
@@ -60,6 +66,39 @@ describe('AuthController', () => {
         'test_refresh_token',
         expect.objectContaining({
           httpOnly: true,
+          secure: false,
+          sameSite: 'lax',
+        })
+      );
+    });
+
+    it('should successfully set cookie with secure=true and sameSite="none" for non-localhost cross-origin request', async () => {
+      mockState.allowedOrigin = 'https://app.mywebsite.org';
+
+      mockGetToken.mockResolvedValueOnce({
+        tokens: {
+          refresh_token: 'prod_refresh_token',
+          id_token: 'test_id_token',
+        },
+      });
+
+      const controller = new AuthController();
+      const mockCookie = vi.fn();
+      const mockReq = {
+        res: {
+          cookie: mockCookie,
+        },
+      } as unknown as express.Request;
+
+      const result = await controller.login({ code: 'test_code' }, mockReq);
+
+      expect(result).toEqual({ idToken: 'test_id_token' });
+      expect(mockCookie).toHaveBeenCalledWith(
+        'refresh_token',
+        'prod_refresh_token',
+        expect.objectContaining({
+          httpOnly: true,
+          secure: true,
           sameSite: 'none',
         })
       );
@@ -140,7 +179,8 @@ describe('AuthController', () => {
         'rotated_refresh_token',
         expect.objectContaining({
           httpOnly: true,
-          sameSite: 'none',
+          secure: false,
+          sameSite: 'lax',
         })
       );
     });
