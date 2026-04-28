@@ -1535,7 +1535,6 @@ class TestBcfyCallsHttp01(unittest.IsolatedAsyncioTestCase):
         runtime_session = AsyncMock()
         resources = bcfy_calls_collector.CaptureResources(
             http_session=runtime_session,
-            spawn_semaphore=asyncio.Semaphore(8),
         )
 
         async for _ in bcfy_calls_collector.capture_bcfy_calls(

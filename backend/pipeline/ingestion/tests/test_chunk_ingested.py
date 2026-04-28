@@ -153,7 +153,6 @@ def _build_runtime_for_one_chunk(
     rt._lease_lost = asyncio.Event()
     rt._capture_resources = CaptureResources(
         http_session=mock.AsyncMock(spec=aiohttp.ClientSession),
-        spawn_semaphore=asyncio.Semaphore(8),
     )
     rt._store = mock.AsyncMock()
     rt._store.update_feed_progress.return_value = bookmark_ok

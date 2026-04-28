@@ -20,7 +20,6 @@ def _default_resources() -> CaptureResources:
     """No-op CaptureResources for unit tests."""
     return CaptureResources(
         http_session=mock.AsyncMock(spec=aiohttp.ClientSession),
-        spawn_semaphore=asyncio.Semaphore(8),
     )
 
 

@@ -113,8 +113,9 @@ async def openmhz_collector(
         feed: Leased feed containing source_feed_id.
         shutdown_event: Signals graceful shutdown request.
         url_base: OpenMHZ API base URL.
-        _resources: Runtime-owned http_session and spawn_semaphore.
-            Phase 2 accepts but does not use.
+        _resources: Runtime-owned CaptureResources. Accepted but unused
+            (openmhz uses curl_cffi for HTTP, not the runtime aiohttp
+            session).
 
     Raises:
         ValueError: If ``source_feed_id`` is missing from the feed.

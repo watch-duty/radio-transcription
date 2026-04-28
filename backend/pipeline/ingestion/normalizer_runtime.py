@@ -43,8 +43,8 @@ from backend.pipeline.storage.feed_store import (
 
 FeedID = uuid.UUID
 # 3-arg interface: route_capturer binds url_base internally and forwards
-# the runtime-owned CaptureResources (http_session + spawn_semaphore) to
-# the underlying 4-arg CollectorFn.
+# the runtime-owned CaptureResources (currently just http_session) to the
+# underlying 4-arg CollectorFn.
 # See CollectorFn in models.py for the 4-arg raw collector signature.
 CaptureFn = Callable[
     [LeasedFeed, asyncio.Event, CaptureResources],
@@ -121,13 +121,11 @@ class NormalizerRuntime:
         self._heartbeat_thread: threading.Thread | None = None
         self._store: FeedStore = None  # type: ignore # set in _main()
         self._heartbeat_store: FeedStore = None  # type: ignore # set in _main()
-        # aiohttp ClientSession + ffmpeg spawn semaphore are constructed in
-        # _main() because both require a running event loop. Lifecycle:
-        # session is closed in _shutdown_sequence after _gcs_client.close()
-        # with a 250ms SSL-teardown sleep (Pitfall 12). Semaphore is
-        # loop-scoped and disappears with the loop.
+        # aiohttp ClientSession is constructed in _main() because it
+        # requires a running event loop. Lifecycle: session is closed in
+        # _shutdown_sequence after _gcs_client.close() with a 250ms
+        # SSL-teardown sleep (Pitfall 12).
         self._http_session: aiohttp.ClientSession = None  # type: ignore # set in _main()
-        self._ffmpeg_spawn_sem: asyncio.Semaphore = None  # type: ignore # set in _main()
         # _paused_for_memory: threading.Event (NOT bare bool) — read by the
         # asyncio leasing loop, set/cleared by the watchdog OS thread. See
         # PITFALLS.md Pitfall 20 — bool atomicity is a CPython implementation
@@ -266,10 +264,8 @@ class NormalizerRuntime:
             ),
             timeout=aiohttp.ClientTimeout(total=30, connect=10),
         )
-        self._ffmpeg_spawn_sem = asyncio.Semaphore(settings.ffmpeg_spawn_limit)
         self._capture_resources = CaptureResources(
             http_session=self._http_session,
-            spawn_semaphore=self._ffmpeg_spawn_sem,
         )
 
         # Start /healthz HTTP server. Runs on the same event loop as the

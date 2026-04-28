@@ -61,13 +61,13 @@ The capture function must **never**:
 
 from __future__ import annotations
 
-import asyncio  # noqa: TC003 — runtime use: CaptureResources holds asyncio.Semaphore
 import dataclasses
 from typing import TYPE_CHECKING
 
 import aiohttp  # noqa: TC002 — runtime use: CaptureResources holds aiohttp.ClientSession
 
 if TYPE_CHECKING:
+    import asyncio
     import datetime
     from collections.abc import AsyncIterator, Callable
 
@@ -110,13 +110,11 @@ class CaptureResources:
     Constructed once in NormalizerRuntime._main() and lifecycle-managed
     by the runtime: http_session is closed in _shutdown_sequence after
     _gcs_client.close() (followed by a 250ms SSL-teardown sleep, per
-    aiohttp's documented graceful-shutdown idiom for SSL); the
-    Semaphore is loop-scoped and disappears with the loop.
+    aiohttp's documented graceful-shutdown idiom for SSL).
 
-    Phase 2 wires this through the collector signatures only — the
-    bodies do NOT yet acquire either resource. Phase 3 (HTTP-01 +
-    SPAWN-01) wires the bcfy_calls collector to use http_session and
-    the icecast collector to use spawn_semaphore.
+    Forward-compatible container — additional runtime-owned resources
+    (e.g. the deferred ffmpeg spawn semaphore) can be added without
+    another signature break.
 
     Attributes:
         http_session: Shared aiohttp ClientSession with TCPConnector
@@ -125,14 +123,9 @@ class CaptureResources:
             NOT Optional — Phase 3 collectors will assume it's always
             set; constructing real instances from day one keeps ty
             strict.
-        spawn_semaphore: asyncio.Semaphore(N) where N = settings.
-            ffmpeg_spawn_limit (default 8). Wraps create_subprocess_exec
-            ONLY (spawn rate, not lifetime). Always used via async-with;
-            manual acquire/release is forbidden (PITFALLS.md Pitfall 7).
     """
 
     http_session: aiohttp.ClientSession
-    spawn_semaphore: asyncio.Semaphore
 
 
 if TYPE_CHECKING:

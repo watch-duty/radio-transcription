@@ -36,14 +36,11 @@ def _make_captured_chunk(audio_bytes: bytes) -> CapturedChunk:
 def _default_resources() -> CaptureResources:
     """Build a no-op CaptureResources for unit tests.
 
-    Phase 2 collector bodies do NOT touch http_session or spawn_semaphore,
-    so a mock session + a real (loop-bound) Semaphore is sufficient.
-    Constructing a real aiohttp.ClientSession would open real sockets;
-    avoid in unit tests.
+    A mock session is sufficient; constructing a real
+    aiohttp.ClientSession would open real sockets (avoid in unit tests).
     """
     return CaptureResources(
         http_session=mock.AsyncMock(spec=aiohttp.ClientSession),
-        spawn_semaphore=asyncio.Semaphore(8),
     )
 
 
@@ -93,7 +90,6 @@ def _make_settings(**overrides) -> mock.MagicMock:
         "heartbeat_stall_timeout_sec": 45.0,
         "graceful_shutdown_timeout_sec": 10.0,
         "task_cancel_budget_sec": 5.0,
-        "ffmpeg_spawn_limit": 8,
         # RSS watchdog (Phase 4 / WATCHDOG-01). Defaults pin to "watchdog
         # disabled in tests unless explicitly overridden": override=None
         # would normally trigger fs reads at __init__ — but the watchdog

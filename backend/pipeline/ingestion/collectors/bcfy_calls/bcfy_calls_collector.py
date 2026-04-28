@@ -334,11 +334,10 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
         url_base: Full Broadcastify Calls API live endpoint URL to query.
             The function uses this URL directly after normalizing a
             trailing slash.
-        resources: Runtime-owned http_session (used) and spawn_semaphore
-            (unused for bcfy_calls; icecast consumes it). The
-            http_session is the runtime-owned aiohttp.ClientSession
-            created in NormalizerRuntime._main(); per HTTP-01, the
-            collector reuses it instead of constructing a new session
+        resources: Runtime-owned CaptureResources. The http_session is
+            the runtime-owned aiohttp.ClientSession created in
+            NormalizerRuntime._main(); per HTTP-01, the collector
+            reuses it instead of constructing a new session
             per poll. Lifecycle is owned by the runtime — do not close.
     """
     connection_session_id = str(uuid.uuid4())

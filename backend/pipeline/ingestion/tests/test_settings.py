@@ -30,7 +30,6 @@ class TestNormalizerSettings(unittest.TestCase):
             "HEARTBEAT_STALL_TIMEOUT_SEC": "30.0",
             "GRACEFUL_SHUTDOWN_TIMEOUT_SEC": "15.0",
             "TASK_CANCEL_BUDGET_SEC": "12.0",
-            "FFMPEG_SPAWN_LIMIT": "4",
             "RSS_WATCHDOG_POLL_INTERVAL_SEC": "1.0",
             "RSS_WATCHDOG_PAUSE_THRESHOLD": "0.65",
             "RSS_WATCHDOG_EXIT_THRESHOLD": "0.85",
@@ -70,7 +69,6 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.heartbeat_stall_timeout_sec, 30.0)
         self.assertEqual(settings.graceful_shutdown_timeout_sec, 15.0)
         self.assertEqual(settings.task_cancel_budget_sec, 12.0)
-        self.assertEqual(settings.ffmpeg_spawn_limit, 4)
         self.assertEqual(settings.rss_watchdog_poll_interval_sec, 1.0)
         self.assertEqual(settings.rss_watchdog_pause_threshold, 0.65)
         self.assertEqual(settings.rss_watchdog_exit_threshold, 0.85)
@@ -122,7 +120,6 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.heartbeat_stall_timeout_sec, 45.0)
         self.assertEqual(settings.graceful_shutdown_timeout_sec, 90.0)
         self.assertEqual(settings.task_cancel_budget_sec, 30.0)
-        self.assertEqual(settings.ffmpeg_spawn_limit, 8)
         self.assertEqual(settings.rss_watchdog_poll_interval_sec, 2.0)
         self.assertEqual(settings.rss_watchdog_pause_threshold, 0.70)
         self.assertEqual(settings.rss_watchdog_exit_threshold, 0.90)

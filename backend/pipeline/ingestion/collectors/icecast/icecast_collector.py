@@ -103,15 +103,8 @@ async def capture_icecast_stream(  # noqa: PLR0915
         feed: Leased feed containing source_feed_id and metadata
         shutdown_event: Signals graceful shutdown request
         url_base: The base URL to prepend to the source_feed_id for stream access
-        resources: Runtime-owned http_session (unused by icecast; bcfy_calls
-            consumes it) and spawn_semaphore (used). The spawn_semaphore is
-            a runtime-owned asyncio.Semaphore created in
-            NormalizerRuntime._main() with limit settings.ffmpeg_spawn_limit
-            (default 8). Per SPAWN-01 / D-07/D-08, the semaphore wraps the
-            spawn ONLY (the create_subprocess_exec call); the slot is
-            released as soon as the process handle is returned, NOT held
-            for the lifetime of ffmpeg. Long-running ffmpeg processes do
-            NOT block the next spawn.
+        resources: Runtime-owned CaptureResources (currently unused by
+            icecast — http_session is consumed by bcfy_calls).
 
     Yields:
         A CapturedChunk containing:
@@ -143,14 +136,9 @@ async def capture_icecast_stream(  # noqa: PLR0915
         segment_dir = Path(tmp_dir)
         segment_pattern = str(segment_dir / f"chunk_%06d.{AUDIO_FORMAT}")
 
-        # SPAWN-01: gate the ffmpeg spawn (NOT lifetime) on the
-        # runtime-owned semaphore (D-07, D-08, D-09; PITFALLS Pitfall 6).
-        # The slot is released as soon as create_subprocess_exec returns;
-        # long-lived ffmpeg processes do NOT hold a slot.
-        async with resources.spawn_semaphore:
-            process = await _create_ffmpeg_process(
-                url, segment_pattern, auth_header
-            )
+        process = await _create_ffmpeg_process(
+            url, segment_pattern, auth_header
+        )
         if (
             process.stderr is None
         ):  # pragma: no cover — guaranteed by stderr=PIPE

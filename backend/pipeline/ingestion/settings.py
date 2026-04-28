@@ -112,18 +112,6 @@ class NormalizerSettings:
             os.environ.get("TASK_CANCEL_BUDGET_SEC", "30.0"),
         ),
     )
-    # ffmpeg subprocess spawn-rate cap (SPAWN-01). Default 8 = 2x vCPU on
-    # n2-standard-4. Wraps create_subprocess_exec ONLY (not lifetime), so
-    # this caps spawn concurrency to absorb activation bursts without
-    # throttling steady-state ffmpeg processes. Phase 2 constructs the
-    # semaphore from this value; Phase 3 wires async-with acquire into
-    # the icecast collector body. Env-tunable for ops to dial up/down.
-    ffmpeg_spawn_limit: int = field(
-        default_factory=lambda: int(
-            os.environ.get("FFMPEG_SPAWN_LIMIT", "8"),
-        ),
-    )
-
     # Per-type claim budget caps (scaling plan §4/§6). Worker passes
     # min(cap, cap - held, total_slack) as each CTE branch's LIMIT so
     # PostgreSQL enforces the cap structurally via the query planner.
