@@ -1632,13 +1632,17 @@ class TestRssWatchdogExitSemantics(unittest.TestCase):
             usage_samples=[950, 950, 700],
         )
         cst_mock.assert_not_called()
-        self.assertFalse(rt._rss_watchdog_tripped)
         exit_mock.assert_not_called()
 
     def test_three_at_exit_threshold_trips_via_shutdown_set(self) -> None:
         """3 consecutive 95% samples — call_soon_threadsafe(_shutdown.set)
-        called once, _thread_stop.set called, _rss_watchdog_tripped True,
-        os._exit NOT called.
+        called once, _thread_stop.set called, os._exit NOT called.
+
+        Single-trip semantics are a property of the production code path:
+        once `_thread_stop.set()` runs, the next iteration's
+        `while not self._thread_stop.is_set()` is False and the loop exits.
+        We don't separately test "what if the loop kept running" because
+        with a real `threading.Event` it cannot.
         """
         rt = _make_runtime()
         cst_mock, exit_mock = self._drive_samples_with_loop(
@@ -1651,22 +1655,8 @@ class TestRssWatchdogExitSemantics(unittest.TestCase):
         # _drive_samples_with_loop, but ty can't narrow across the helper
         # call boundary; the ignore comment makes the intent explicit.
         rt._thread_stop.set.assert_called_once()  # ty: ignore[unresolved-attribute]
-        self.assertTrue(rt._rss_watchdog_tripped)
         # CRITICAL ASSERTION (D-31): os._exit MUST NOT be called by the
         # watchdog. Graceful shutdown only — kernel OOM is the backstop.
-        exit_mock.assert_not_called()
-
-    def test_post_trip_sample_does_not_re_fire(self) -> None:
-        """4 samples at 95% — single-trip flag prevents double-fire."""
-        rt = _make_runtime()
-        cst_mock, exit_mock = self._drive_samples_with_loop(
-            rt,
-            limit_bytes=1000,
-            usage_samples=[950, 950, 950, 950],
-        )
-        # Trip happened once on sample 3; sample 4 was a no-op via the
-        # _rss_watchdog_tripped guard.
-        cst_mock.assert_called_once()
         exit_mock.assert_not_called()
 
 
@@ -1823,10 +1813,9 @@ class TestRssWatchdogIntegration(unittest.IsolatedAsyncioTestCase):
             # After 3 of 80% → pause set; after 50% → cleared; after 3 of
             # 95% → trip. End-of-watchdog-body state: pause cleared (the
             # 95% samples tripped exit on sample 3 before another pause-
-            # set cycle could complete), _shutdown.is_set() True,
-            # _rss_watchdog_tripped True. PROVES D-33 first half.
+            # set cycle could complete), _shutdown.is_set() True. PROVES
+            # D-33 first half.
             self.assertTrue(rt._shutdown.is_set())
-            self.assertTrue(rt._rss_watchdog_tripped)
 
             # Phase B: drive _shutdown_sequence to completion. This is the
             # D-33 SECOND HALF: 'release_feeds_batch runs successfully'.

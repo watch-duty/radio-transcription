@@ -133,9 +133,6 @@ class NormalizerRuntime:
         # PITFALLS.md Pitfall 20 — bool atomicity is a CPython implementation
         # detail; threading.Event is a contract.
         self._paused_for_memory = threading.Event()
-        # Single-trip flag (Pitfall 1): once tripped, subsequent samples no-op
-        # even if _shutdown_sequence hasn't yet reached the watchdog join.
-        self._rss_watchdog_tripped: bool = False
         self._rss_watchdog_thread: threading.Thread | None = None
         self._capture_resources: CaptureResources = None  # type: ignore # set in _main()
         # Size the aiohttp connection pool to match the feed concurrency so
@@ -1033,7 +1030,7 @@ class NormalizerRuntime:
             # sleep_time clamps to 0 — fires immediately to catch up.
             next_tick += interval
 
-    def _rss_watchdog_loop(self, limit_bytes: int) -> None:  # noqa: PLR0912, PLR0915
+    def _rss_watchdog_loop(self, limit_bytes: int) -> None:  # noqa: PLR0912
         """
         OS daemon thread: poll cgroup RSS, gate _paused_for_memory, trip _shutdown.
 
@@ -1042,8 +1039,9 @@ class NormalizerRuntime:
         _paused_for_memory so the leasing loop stops claiming new feeds.
         After 3 consecutive samples >= exit_threshold, triggers graceful
         shutdown via _loop.call_soon_threadsafe(_shutdown.set) AND sets
-        _thread_stop. Single-trip flag (_rss_watchdog_tripped) ensures
-        subsequent samples no-op (PITFALLS Pitfall 1).
+        _thread_stop — the latter causes the next loop iteration to exit
+        via the `while not self._thread_stop.is_set()` check, giving us
+        the single-trip semantics required by PITFALLS Pitfall 1.
 
         NEVER calls os._exit(1) — that path is reserved for fence violations
         and the stall watchdog. Kernel OOM is the backstop for fast leaks
@@ -1082,13 +1080,6 @@ class NormalizerRuntime:
         while not self._thread_stop.is_set():
             if self._thread_stop.wait(timeout=poll_interval):
                 break
-
-            # Single-trip semantics — once tripped, the next iteration
-            # will exit because _thread_stop is set; this guard is a
-            # belt-and-suspenders for the narrow window between
-            # _thread_stop.set() and the loop reading it.
-            if self._rss_watchdog_tripped:
-                continue
 
             # Warmup grace — D-11 + D-32: counters do NOT increment during
             # warmup. Orthogonal to the consecutive-sample debounce; both
@@ -1136,7 +1127,9 @@ class NormalizerRuntime:
                 # PITFALLS Pitfall 1 + REQUIREMENTS WATCHDOG-01.
                 self._loop.call_soon_threadsafe(self._shutdown.set)
                 self._thread_stop.set()
-                self._rss_watchdog_tripped = True
+                # Single-trip: the next iteration's `while not
+                # self._thread_stop.is_set()` will be False, exiting the
+                # loop. No explicit guard needed here.
                 continue
 
             # Pause-set debounce (D-09 / D-30).
