@@ -1,5 +1,4 @@
 import * as express from 'express';
-
 import { OAuth2Client } from 'google-auth-library';
 import {
   Body,
@@ -32,6 +31,24 @@ const client = new OAuth2Client(
   'postmessage'
 );
 
+function setRefreshTokenCookie(
+  res: express.Response,
+  refreshToken: string
+): void {
+  res.cookie('refresh_token', refreshToken, {
+    // Tells the browser that this cookie should only be accessed via HTTP(S) requests, and should not be accessible by client-side scripts (like JavaScript).
+    httpOnly: true,
+    // Tells the browser that this cookie should only be sent with secure (HTTPS) requests. Allows http://localhost for development.
+    secure:
+      !ALLOWED_ORIGIN.includes('localhost') &&
+      !ALLOWED_ORIGIN.includes('127.0.0.1'),
+    // Tells the browser to only send this cookie with requests that are same-site or cross-site with the same top-level site.
+    sameSite: 'lax',
+    // Lifetime of the cookie in milliseconds.
+    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+  });
+}
+
 @Route('api/v1/auth')
 @Tags('Auth')
 export class AuthController extends Controller {
@@ -44,20 +61,8 @@ export class AuthController extends Controller {
     try {
       const { tokens } = await client.getToken(requestBody.code);
 
-      if (tokens.refresh_token) {
-        // Set refresh token as an HttpOnly cookie
-        request.res?.cookie('refresh_token', tokens.refresh_token, {
-          // Tells the browser that this cookie should only be accessed via HTTP(S) requests, and should not be accessible by client-side scripts (like JavaScript).
-          httpOnly: true,
-          // Tells the browser that this cookie should only be sent with secure (HTTPS) requests. Allows http://localhost for development.
-          secure:
-            !ALLOWED_ORIGIN.includes('localhost') &&
-            !ALLOWED_ORIGIN.includes('127.0.0.1'),
-          // Tells the browser to only send this cookie with requests that are same-site or cross-site with the same top-level site.
-          sameSite: 'lax',
-          // Lifetime of the cookie in milliseconds.
-          maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-        });
+      if (tokens.refresh_token && request.res) {
+        setRefreshTokenCookie(request.res, tokens.refresh_token);
       }
 
       if (!tokens.id_token) {
@@ -91,6 +96,11 @@ export class AuthController extends Controller {
       if (!res.credentials.id_token) {
         this.setStatus(400);
         throw new Error('Failed to refresh ID token');
+      }
+
+      // Rotate token if your authentication system issues fresh token credentials
+      if (res.credentials.refresh_token && request.res) {
+        setRefreshTokenCookie(request.res, res.credentials.refresh_token);
       }
 
       return { idToken: res.credentials.id_token };
