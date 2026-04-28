@@ -117,7 +117,7 @@ export class FeedsController extends Controller {
       });
       return response.data.map(convertFeedBackend);
     } catch (error: unknown) {
-      handleBackendError(error, 'listing feeds');
+      handleBackendError(error, 'fetching feeds');
     }
   }
 
