@@ -12,6 +12,7 @@ message AudioChunk {
   // A unique identifier for the continuous capture session that produced this chunk.
   // This indicates a contiguous sequence of chunks; a new session_id signals a break
   // or a newly initialized stream.
+  // Required for continuous feeds ONLY. For segmented feeds, this can be empty or omitted.
   string session_id = 3;
 
   // The duration of the audio chunk in milliseconds.

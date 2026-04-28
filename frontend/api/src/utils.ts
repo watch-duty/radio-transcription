@@ -13,3 +13,29 @@ export function isAxiosError(
     typeof response === 'object' && response !== null && 'status' in response
   );
 }
+
+export function handleBackendError(
+  error: unknown,
+  actionMessage: string
+): never {
+  if (isAxiosError(error)) {
+    const status = error.response?.status || 500;
+    const data = JSON.stringify(error.response?.data);
+    console.error(
+      JSON.stringify({
+        level: 'ERROR',
+        message: `Backend API error: ${status}`,
+        data: error.response?.data,
+      })
+    );
+    throw new Error(`Backend API error ${status}: ${data}`, { cause: error });
+  }
+  console.error(
+    JSON.stringify({
+      level: 'ERROR',
+      message: `Unexpected error ${actionMessage}`,
+      error: error instanceof Error ? error.message : String(error),
+    })
+  );
+  throw new Error(`Error ${actionMessage}`, { cause: error });
+}
