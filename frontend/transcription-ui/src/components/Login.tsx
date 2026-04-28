@@ -19,7 +19,8 @@ export function Login() {
         const token = await authLogin(code);
         setToken(token);
         // Navigate the user back to the previous page if it was an internal link, otherwise go to the home page.
-        const isInternal = document.referrer && document.referrer.includes(window.location.host);
+        const isInternal =
+          document.referrer && document.referrer.includes(window.location.host);
         if (isInternal) {
           navigate(-1);
         } else {

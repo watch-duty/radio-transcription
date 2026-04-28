@@ -1,11 +1,18 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 
-import Login from './Login';
-import { useAuth } from '../context/AuthContext';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from '@testing-library/react';
+
 import { authLogin } from '../service/authLogin';
+import Login from './Login';
 
 // Mock useNavigate
 const mockNavigate = vi.fn();
@@ -32,11 +39,16 @@ vi.mock('../context/AuthContext', () => ({
 }));
 
 // Mock useGoogleLogin from @react-oauth/google
+interface UseGoogleLoginOptions {
+  onSuccess: (response: { code: string }) => Promise<void> | void;
+  flow?: string;
+}
+
 const mockLoginFn = vi.fn();
-let capturedOptions: any = null;
+let capturedOptions: UseGoogleLoginOptions | null = null;
 
 vi.mock('@react-oauth/google', () => ({
-  useGoogleLogin: vi.fn((opts) => {
+  useGoogleLogin: vi.fn((opts: UseGoogleLoginOptions) => {
     capturedOptions = opts;
     return mockLoginFn;
   }),
@@ -98,7 +110,7 @@ describe('Login component', () => {
     );
 
     await act(async () => {
-      await capturedOptions.onSuccess({ code: 'test-code' });
+      await capturedOptions!.onSuccess({ code: 'test-code' });
     });
 
     expect(authLogin).toHaveBeenCalledWith('test-code');
@@ -125,7 +137,7 @@ describe('Login component', () => {
     );
 
     await act(async () => {
-      await capturedOptions.onSuccess({ code: 'test-code' });
+      await capturedOptions!.onSuccess({ code: 'test-code' });
     });
 
     expect(authLogin).toHaveBeenCalledWith('test-code');
@@ -152,7 +164,7 @@ describe('Login component', () => {
     );
 
     await act(async () => {
-      await capturedOptions.onSuccess({ code: 'test-code' });
+      await capturedOptions!.onSuccess({ code: 'test-code' });
     });
 
     expect(authLogin).toHaveBeenCalledWith('test-code');
@@ -171,7 +183,7 @@ describe('Login component', () => {
     );
 
     await act(async () => {
-      await capturedOptions.onSuccess({ code: 'test-code' });
+      await capturedOptions!.onSuccess({ code: 'test-code' });
     });
 
     expect(console.error).toHaveBeenCalledWith('Login failed:', errorInstance);
