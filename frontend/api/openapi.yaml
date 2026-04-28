@@ -300,6 +300,22 @@ components:
       properties: {}
       type: object
       additionalProperties: {}
+    LoginResponse:
+      properties:
+        idToken:
+          type: string
+      required:
+        - idToken
+      type: object
+      additionalProperties: false
+    LoginRequest:
+      properties:
+        code:
+          type: string
+      required:
+        - code
+      type: object
+      additionalProperties: false
   securitySchemes:
     google_id_token:
       type: oauth2
@@ -690,6 +706,53 @@ paths:
         - Docs
       security:
         - google_id_token: []
+      parameters: []
+      x-google-backend: radio-transcription-api
+  /api/v1/auth/google:
+    post:
+      operationId: Login
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+      tags:
+        - Auth
+      security: []
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      x-google-backend: radio-transcription-api
+  /api/v1/auth/session:
+    get:
+      operationId: Refresh
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+      tags:
+        - Auth
+      security: []
+      parameters: []
+      x-google-backend: radio-transcription-api
+  /api/v1/auth/logout:
+    post:
+      operationId: Logout
+      responses:
+        "204":
+          description: No content
+      tags:
+        - Auth
+      security: []
       parameters: []
       x-google-backend: radio-transcription-api
 servers:

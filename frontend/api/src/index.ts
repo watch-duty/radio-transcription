@@ -1,5 +1,6 @@
 import express, { json, urlencoded } from 'express';
 
+import cookieParser from 'cookie-parser';
 import cors from 'cors';
 
 import { ALLOWED_ORIGIN } from './config.js';
@@ -21,6 +22,7 @@ app.use(
 );
 
 app.use(json());
+app.use(cookieParser());
 
 RegisterRoutes(app);
 
