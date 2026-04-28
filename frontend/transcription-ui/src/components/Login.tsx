@@ -18,8 +18,9 @@ export function Login() {
       try {
         const token = await authLogin(code);
         setToken(token);
-        // Navigate to the home screen.
-        navigate('/');
+        // Navigate back to the page that initiated the login. This can be a
+        // protected page if the user was not authenticated.
+        navigate(-1);
       } catch (error) {
         console.error('Login failed:', error);
       }
