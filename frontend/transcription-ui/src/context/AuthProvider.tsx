@@ -7,8 +7,9 @@ import Typography from '@mui/material/Typography';
 import { authSession } from '../service/authSession';
 import { AuthContext } from './AuthContext';
 
-const REFRESH_TOKEN_INTERVAL = 50 * 60 * 1000; // 50 minutes
+const REFRESH_TOKEN_INTERVAL = 55 * 60 * 1000; // 55 minutes
 const REFRESH_TOKEN_FAILURE_DELAY = 30 * 1000; // 30 seconds
+const MAX_REFRESH_ATTEMPTS = 10; // Max attempts to refresh token
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [token, setToken] = useState<string | null>(null);
@@ -42,7 +43,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
     const refreshTimer = setTimeout(async () => {
       let refreshed = false;
-      while (!refreshed) {
+      let attempts = 0;
+      while (!refreshed && attempts < MAX_REFRESH_ATTEMPTS) {
+        attempts++;
         try {
           const token = await authSession();
           setToken(token);
@@ -54,6 +57,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             setTimeout(resolve, REFRESH_TOKEN_FAILURE_DELAY)
           );
         }
+        // TODO: Improve UI error handling for API requests
+        // https://linear.app/watchduty/issue/GOO-369/improve-ui-error-handling-for-api-requests
       }
     }, REFRESH_TOKEN_INTERVAL);
 
