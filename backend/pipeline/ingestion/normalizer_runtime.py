@@ -661,7 +661,9 @@ class NormalizerRuntime:
                         duration_ms=duration_ms,
                     )
                     logger.info(
-                        "Published message %s for feed %s", message_id, feed["name"]
+                        "Published message %s for feed %s",
+                        message_id,
+                        feed["name"],
                     )
 
                     ok = await retry_with_lease_check(
