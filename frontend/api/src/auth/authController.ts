@@ -45,9 +45,9 @@ function setRefreshTokenCookie(
     secure:
       !ALLOWED_ORIGIN.includes('localhost') &&
       !ALLOWED_ORIGIN.includes('127.0.0.1'),
-    // Tells the browser to only send this cookie with requests that are same-site
-    // or cross-site with the same top-level site.
-    sameSite: 'lax',
+    // Allows the cookie to be sent with cross-site requests, which happens when the UI
+    // and API are deployed to different domains.
+    sameSite: 'none',
     // Lifetime of the cookie in milliseconds.
     maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
   });
