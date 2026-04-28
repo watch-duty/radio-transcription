@@ -1,5 +1,6 @@
 export type SourceType = 'bcfy_feeds' | 'bcfy_calls' | 'echo' | 'openmhz';
 
+// Keep in sync with terraform/modules/alloydb/sql/ingestion/001_feed_status.sql
 export type FeedStatus =
   | 'unclaimed'
   | 'active'

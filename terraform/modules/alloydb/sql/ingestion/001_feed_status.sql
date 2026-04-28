@@ -3,6 +3,7 @@
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'feed_status') THEN
+        -- Keep in sync with frontend/common/src/types/feeds.ts
         CREATE TYPE feed_status AS ENUM (
             'unclaimed',
             'active',
