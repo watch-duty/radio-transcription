@@ -429,7 +429,7 @@ export function TranscriptView({
 
   const { data: currentFeed } = useQuery({
     queryKey: ['getFeed', token, searchedFeedId],
-    queryFn: () => getFeed(searchedFeedId ?? '', token ?? ''),
+    queryFn: () => getFeed(searchedFeedId, token ?? ''),
     enabled: !!token && !!searchedFeedId,
     refetchInterval: FEED_POLLING_INTERVAL_MS,
     refetchOnWindowFocus: false,
