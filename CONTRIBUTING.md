@@ -183,6 +183,8 @@ RULES_API_URL=<your URL for rules API>
 FEEDS_STORE_API_URL=<your URL for feeds store API>
 PROJECT_ID=<your project ID>
 API_PUBLIC_URL=http://localhost:5173
+GOOGLE_AUTH_CLIENT_ID=<your Google Auth client ID>
+GOOGLE_AUTH_CLIENT_SECRET=<your Google Auth client secret>
 EOF
 ```
 
