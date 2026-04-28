@@ -60,7 +60,7 @@ class ChunkMetadata:
     """Metadata for an audio chunk before download."""
 
     gcs_uri: str
-    session_id: str
+    session_id: str  # Required for continuous feeds ONLY.
     duration_ms: int
     feed_metadata: FeedMetadata
 
