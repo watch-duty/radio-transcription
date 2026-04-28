@@ -591,7 +591,6 @@ class NormalizerRuntime:
                         f"expected CapturedChunk"
                     )
                     raise TypeError(msg)  # noqa: TRY301
-
                 tracer = trace.get_tracer(__name__)
                 with tracer.start_as_current_span("process_captured_chunk"):
                     # session_id is owned by the capture function. Fall back
@@ -729,20 +728,11 @@ class NormalizerRuntime:
                         # handles all task cancellation and the 60s abandonment
                         # window is the safety net if batch release fails.
                         logger.info(
-                            "Chunk ingested",
-                            extra={"json_fields": chunk_ingested_payload},
+                            "Shutdown -- stopping feed %s cleanly after chunk %d",
+                            feed["name"],
+                            chunk_seq,
                         )
-
-                        if self._shutdown.is_set():
-                            # Return without calling release_feed — _shutdown_sequence
-                            # handles all task cancellation and the 60s abandonment
-                            # window is the safety net if batch release fails.
-                            logger.info(
-                                "Shutdown -- stopping feed %s cleanly after chunk %d",
-                                feed["name"],
-                                chunk_seq,
-                            )
-                            return
+                        return
 
         except asyncio.CancelledError:
             logger.info("Feed %s task cancelled", feed["name"])
