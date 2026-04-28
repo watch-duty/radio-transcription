@@ -34,7 +34,7 @@ interface FeedBackend extends BaseFeedBackend {
   id: string;
   source_feed_id: string;
   external_id: string;
-  status?: FeedStatus;
+  status: FeedStatus;
   last_heartbeat?: string;
 }
 
@@ -91,7 +91,7 @@ function convertFeedBackend(response: FeedBackend): Feed {
     externalId: response.external_id,
     sourceUrl: getSourceUrl(response.source_type, response.source_feed_id),
     archiveUrl: getArchiveUrl(response.source_type, response.source_feed_id),
-    status: response.status as FeedStatus,
+    status: response.status,
     lastHeartbeat: response.last_heartbeat,
   };
 }
