@@ -4,10 +4,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import type { Transcript } from '@transcription/common';
 
+import { getAudioUrl } from '../../utils/audioUtils';
+import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { AudioDisplay } from './AudioDisplay';
 
 vi.mock('@wavesurfer/react', () => ({
-  default: () => <div data-testid="wavesurfer-player" />,
+  default: (props: { url: string }) => (
+    <div data-testid="wavesurfer-player" data-url={props.url} />
+  ),
 }));
 
 describe('AudioDisplay', () => {
@@ -31,6 +35,7 @@ describe('AudioDisplay', () => {
         endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
         transcript: 'Test 1',
         canonicalAudioUri: 'audio1.flac',
+        playbackAudioUri: 'audio1.m4a',
         evaluationDecisions: [],
         missingPriorContext: false,
         missingPostContext: false,
@@ -63,6 +68,7 @@ describe('AudioDisplay', () => {
         endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
         transcript: 'Test 1',
         canonicalAudioUri: 'audio1.flac',
+        playbackAudioUri: 'audio1.m4a',
         evaluationDecisions: ['rule1'],
         missingPriorContext: false,
         missingPostContext: false,
@@ -91,6 +97,7 @@ describe('AudioDisplay', () => {
         endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
         transcript: 'Test 1',
         canonicalAudioUri: 'audio1.flac',
+        playbackAudioUri: 'audio1.m4a',
         evaluationDecisions: [],
         missingPriorContext: false,
         missingPostContext: false,
@@ -101,10 +108,11 @@ describe('AudioDisplay', () => {
       {
         transmissionId: '2',
         feedId: 'feed1',
-        startTimestamp: new Date('2026-04-20T08:40:00Z').toISOString(),
-        endTimestamp: new Date('2026-04-20T08:40:05Z').toISOString(),
+        startTimestamp: new Date('2026-04-20T08:20:00Z').toISOString(),
+        endTimestamp: new Date('2026-04-20T08:20:05Z').toISOString(),
         transcript: 'Test 2',
         canonicalAudioUri: 'audio2.flac',
+        playbackAudioUri: 'audio2.m4a',
         evaluationDecisions: [],
         missingPriorContext: false,
         missingPostContext: false,
@@ -149,6 +157,7 @@ describe('AudioDisplay', () => {
         endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
         transcript: 'Test 1',
         canonicalAudioUri: 'audio1.flac',
+        playbackAudioUri: 'audio1.m4a',
         evaluationDecisions: [],
         missingPriorContext: false,
         missingPostContext: false,
@@ -166,6 +175,7 @@ describe('AudioDisplay', () => {
         endTimestamp: new Date('2026-04-20T10:00:05Z').toISOString(),
         transcript: 'Test 2',
         canonicalAudioUri: 'audio2.flac',
+        playbackAudioUri: 'audio1.m4a',
         evaluationDecisions: [],
         missingPriorContext: false,
         missingPostContext: false,
@@ -200,6 +210,7 @@ describe('AudioDisplay', () => {
       expect(labelsAfter).not.toEqual(labelsBefore);
     });
   });
+
   it('should adjust window duration based on userDuration capped at 15 minutes', async () => {
     const mockTranscripts: Transcript[] = [
       {
@@ -209,6 +220,7 @@ describe('AudioDisplay', () => {
         endTimestamp: new Date('2026-04-20T09:15:00Z').toISOString(),
         transcript: 'Test 1',
         canonicalAudioUri: 'audio1.flac',
+        playbackAudioUri: 'audio1.m4a',
         evaluationDecisions: [],
         missingPriorContext: false,
         missingPostContext: false,
@@ -251,9 +263,43 @@ describe('AudioDisplay', () => {
       expect(labels30.length).toBe(4);
       const [h0_30, m0_30] = labels30[0].split(':').map(Number);
       const [h3_30, m3_30] = labels30[3].split(':').map(Number);
-      let diff30 = h3_30 * 60 + m3_30 - (h0_30 * 60 + m0_30);
-      if (diff30 < 0) diff30 += 24 * 60;
-      expect(diff30).toBe(15);
+      let diff = h3_30 * 60 + m3_30 - (h0_30 * 60 + m0_30);
+      if (diff < 0) diff += 24 * 60;
+      expect(diff).toBe(MAX_WINDOW_DURATION_MS / 60 / 1000);
     });
+  });
+
+  it('passes playbackAudioUri to WavesurferPlayer (transformed via getAudioUrl)', () => {
+    const mockTranscripts: Transcript[] = [
+      {
+        transmissionId: '1',
+        feedId: 'feed1',
+        startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
+        endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
+        transcript: 'Test 1',
+        canonicalAudioUri: 'audio1.flac',
+        playbackAudioUri: 'gs://bucket/audio1.m4a',
+        evaluationDecisions: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+        startAudioOffset: '0',
+        endAudioOffset: '0',
+      },
+    ];
+
+    render(
+      <AudioDisplay
+        transcripts={mockTranscripts}
+        currentlyPlayingTransmissionId={null}
+      />
+    );
+
+    const wavesurfer = screen.getByTestId('wavesurfer-player');
+    expect(wavesurfer).toBeTruthy();
+    expect(wavesurfer.getAttribute('data-url')).toBe(
+      getAudioUrl(mockTranscripts[0].playbackAudioUri)
+    );
+    expect(wavesurfer.getAttribute('data-url')).toContain('.m4a');
   });
 });

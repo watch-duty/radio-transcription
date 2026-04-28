@@ -1,7 +1,7 @@
 import unittest
 
-from backend.pipeline.transcription.datatypes import OrderRestorerConfig
-from backend.pipeline.transcription.sequence_buffer import (
+from backend.pipeline.transcription.common.datatypes import OrderRestorerConfig
+from backend.pipeline.transcription.state.sequence_buffer import (
     BufferedChunk,
     SequenceBuffer,
 )
@@ -35,7 +35,9 @@ class TestSequenceBuffer(unittest.TestCase):
 
         self.assertEqual(expected_next_ts, 4000)  # 1000 + 3000
         self.assertEqual(buffered, [])
-        self.assertEqual(to_emit, ["gs://chunk1"])
+        self.assertEqual(
+            to_emit, [BufferedChunk(timestamp_ms=1000, gcs_uri="gs://chunk1")]
+        )
         self.assertFalse(was_late)
         self.assertFalse(was_buffered)
 
@@ -56,7 +58,9 @@ class TestSequenceBuffer(unittest.TestCase):
 
         self.assertEqual(expected_next_ts, 7000)  # 4000 + 3000
         self.assertEqual(buffered, [])
-        self.assertEqual(to_emit, ["gs://chunk2"])
+        self.assertEqual(
+            to_emit, [BufferedChunk(timestamp_ms=4000, gcs_uri="gs://chunk2")]
+        )
         self.assertFalse(was_late)
         self.assertFalse(was_buffered)
 
@@ -110,7 +114,14 @@ class TestSequenceBuffer(unittest.TestCase):
         self.assertEqual(
             buffered[0].gcs_uri, "gs://chunk6"
         )  # Chunk 6 is still stranded awaiting Chunk 5
-        self.assertEqual(to_emit, ["gs://chunk2", "gs://chunk3", "gs://chunk4"])
+        self.assertEqual(
+            to_emit,
+            [
+                BufferedChunk(timestamp_ms=4000, gcs_uri="gs://chunk2"),
+                BufferedChunk(timestamp_ms=7000, gcs_uri="gs://chunk3"),
+                BufferedChunk(timestamp_ms=10000, gcs_uri="gs://chunk4"),
+            ],
+        )
         self.assertFalse(was_late)
         self.assertFalse(was_buffered)
 
@@ -132,7 +143,8 @@ class TestSequenceBuffer(unittest.TestCase):
         self.assertEqual(expected_next_ts, 10000)  # Unchanged
         self.assertEqual(buffered, [])
         self.assertEqual(
-            to_emit, ["gs://chunk-late"]
+            to_emit,
+            [BufferedChunk(timestamp_ms=1000, gcs_uri="gs://chunk-late")],
         )  # Emitted for isolated rendering
         self.assertTrue(was_late)
         self.assertFalse(was_buffered)
@@ -156,6 +168,9 @@ class TestSequenceBuffer(unittest.TestCase):
         # regardless of the actual float-truncated timestamp of the accepted chunk!
         self.assertEqual(expected_next_ts, 6990)
         self.assertEqual(buffered, [])
-        self.assertEqual(to_emit, ["gs://chunk-tolerance"])
+        self.assertEqual(
+            to_emit,
+            [BufferedChunk(timestamp_ms=3990, gcs_uri="gs://chunk-tolerance")],
+        )
         self.assertFalse(was_late)
         self.assertFalse(was_buffered)

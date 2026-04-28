@@ -404,7 +404,7 @@ class StitchAudioFn(beam.DoFn):
                             start_ms=int(start_time_ms),
                             end_ms=int(end_time_ms),
                         ),
-                        trace_id=curr_context.trace_id or "fallback-trace-id",
+                        trace_id=curr_context.trace_id,
                         missing_prior_context=bool(
                             curr_context.missing_prior_context
                         ),

@@ -12,6 +12,12 @@ Constants:
     EVENT_TYPE_CALL_DOWNLOAD_FAILED: structured-log event_type for LOG-02
     EVENT_TYPE_FEED_QUARANTINED:    structured-log event_type for existing
                                     quarantine_telemetry (pinned to match shipped value)
+    EVENT_TYPE_CALL_AUTH_FAILURE:   structured-log event_type emitted when the
+                                    bcfy_calls collector gets a 401/403 from
+                                    Broadcastify and has to refresh its JWT.
+                                    No Terraform metric references this yet; the
+                                    constant exists so future alerts/metrics can
+                                    key on a stable literal.
     METRIC_TYPE_QUARANTINE_EVENTS:  metric type URL for existing quarantine metric
                                     (pinned to match shipped value — migrated from
                                     quarantine_telemetry.py's private _METRIC_TYPE)
@@ -21,6 +27,7 @@ Constants:
 from __future__ import annotations
 
 __all__ = [
+    "EVENT_TYPE_CALL_AUTH_FAILURE",
     "EVENT_TYPE_CALL_DOWNLOAD_FAILED",
     "EVENT_TYPE_CHUNK_INGESTED",
     "EVENT_TYPE_FEED_QUARANTINED",
@@ -36,6 +43,7 @@ __all__ = [
 EVENT_TYPE_CHUNK_INGESTED: str = "chunk_ingested"
 EVENT_TYPE_CALL_DOWNLOAD_FAILED: str = "call_download_failed"
 EVENT_TYPE_FEED_QUARANTINED: str = "feed_quarantined"
+EVENT_TYPE_CALL_AUTH_FAILURE: str = "call_auth_failure"
 
 # ---------------------------------------------------------------------------
 # Cloud Monitoring metric type for the existing quarantine_events metric.

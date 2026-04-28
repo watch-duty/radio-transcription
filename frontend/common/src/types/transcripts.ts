@@ -8,6 +8,7 @@ export interface Transcript {
   missingPostContext: boolean;
   sourceAudioUris: string[];
   canonicalAudioUri: string;
+  playbackAudioUri: string;
   startAudioOffset: string;
   endAudioOffset: string;
   evaluationDecisions: string[];

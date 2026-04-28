@@ -1,14 +1,19 @@
 """A framework-agnostic chronological jitter buffer abstracting gap logic away from Beam state."""
 
-import logging
+import heapq
 
-from backend.pipeline.transcription.constants import DEFAULT_FLOAT_TOLERANCE_MS
-from backend.pipeline.transcription.datatypes import (
+from backend.pipeline.transcription.common.constants import (
+    DEFAULT_FLOAT_TOLERANCE_MS,
+)
+from backend.pipeline.transcription.common.datatypes import (
     BufferedChunk,
     OrderRestorerConfig,
 )
+from backend.pipeline.transcription.common.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(
+    __name__, {"system": "transcription", "component": "sequence-buffer"}
+)
 
 
 class SequenceBuffer:
@@ -29,7 +34,7 @@ class SequenceBuffer:
         expected_next_ts: int | None,
         buffer_elements: list[BufferedChunk],
         chunk_duration_ms: int | None = None,
-    ) -> tuple[int, list[BufferedChunk], list[str], bool, bool]:
+    ) -> tuple[int, list[BufferedChunk], list[BufferedChunk], bool, bool]:
         """Processes a single incoming audio chunk against the expected sequence progression.
 
         This method acts as the core traffic cop for the jitter buffer:
@@ -51,7 +56,7 @@ class SequenceBuffer:
 
         if abs(difference) <= epsilon_ms:
             # HAPP PATH: The chunk matches our mathematical expectation exactly.
-            to_emit.append(gcs_uri)
+            to_emit.append(BufferedChunk(current_ts_ms, gcs_uri))
             # Advance the expected timestamp. Use provided duration if available (for varying lengths),
             # otherwise fallback to fixed config duration.
             duration = (
@@ -77,12 +82,14 @@ class SequenceBuffer:
             logger.info(
                 f"Yielding late chunk at {current_ts_ms} (expected {expected_next_ts}) for isolated transcription."
             )
-            to_emit.append(gcs_uri)
+            to_emit.append(BufferedChunk(current_ts_ms, gcs_uri))
         else:
             # FUTURE PATH: The difference > epsilon_ms, meaning this chunk arrived before
             # its predecessor. We store it in state, parking it until the missing chunk arrives.
             was_buffered = True
-            buffer_elements.append(BufferedChunk(current_ts_ms, gcs_uri))
+            heapq.heappush(
+                buffer_elements, BufferedChunk(current_ts_ms, gcs_uri)
+            )
 
         return (
             expected_next_ts,
@@ -97,26 +104,22 @@ class SequenceBuffer:
         expected_next_ts: int,
         buffer_elements: list[BufferedChunk],
         epsilon_ms: int = DEFAULT_FLOAT_TOLERANCE_MS,
-    ) -> tuple[int, list[BufferedChunk], list[str]]:
+    ) -> tuple[int, list[BufferedChunk], list[BufferedChunk]]:
         """Recursively scans the active buffer to find any chunks that sequentially match the newly advanced expected_next_ts.
 
         If found, yields them and steps the timestamp forward.
         """
-        if not buffer_elements:
-            return expected_next_ts, buffer_elements, []
-
-        sorted_elements = sorted(buffer_elements)
-        retained = []
         to_emit = []
-
-        for chunk in sorted_elements:
-            difference = chunk.timestamp_ms - expected_next_ts
+        while buffer_elements:
+            smallest = buffer_elements[0]
+            difference = smallest.timestamp_ms - expected_next_ts
             if abs(difference) <= epsilon_ms:
-                to_emit.append(chunk.gcs_uri)
+                heapq.heappop(buffer_elements)
+                to_emit.append(smallest)
                 expected_next_ts = (
-                    chunk.timestamp_ms + self.config.chunk_duration_ms
+                    smallest.timestamp_ms + self.config.chunk_duration_ms
                 )
             else:
-                retained.append(chunk)
+                break
 
-        return expected_next_ts, retained, to_emit
+        return expected_next_ts, buffer_elements, to_emit

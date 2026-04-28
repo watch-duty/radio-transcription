@@ -5,6 +5,9 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
+from google.cloud.pubsub_v1.publisher.exceptions import (
+    PublishToPausedOrderingKeyException,
+)
 from multidict import CIMultiDict, CIMultiDictProxy
 from yarl import URL
 
@@ -80,7 +83,6 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             feed,
             bucket,
             chunk_seq,
-            "dummy-trace-id",
         )
 
         # Assert
@@ -91,7 +93,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             bucket,
             expected_object_name,
             audio_chunk,
-            metadata={"trace_id": "dummy-trace-id"},
+            metadata={"trace_id": ""},
             content_type="audio/flac",
         )
         self.assertEqual(result, expected_path)
@@ -121,7 +123,6 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             feed,
             bucket,
             chunk_seq,
-            "dummy-trace-id",
         )
 
         # Assert
@@ -132,7 +133,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             bucket,
             expected_object_name,
             audio_chunk,
-            metadata={"trace_id": "dummy-trace-id"},
+            metadata={"trace_id": ""},
             content_type="audio/flac",
         )
         self.assertEqual(result, expected_path)
@@ -163,7 +164,6 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
                 feed,
                 bucket,
                 chunk_seq,
-                "dummy-trace-id",
             )
 
         self.assertIn("GCS upload failed", str(context.exception))
@@ -181,10 +181,18 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
 
         # Act - Upload twice with the same client
         await gcp_helper.upload_staged_audio(
-            mock_gcs_client, audio_chunk, feed, bucket, 1, "dummy-trace-id"
+            mock_gcs_client,
+            audio_chunk,
+            feed,
+            bucket,
+            1,
         )
         await gcp_helper.upload_staged_audio(
-            mock_gcs_client, audio_chunk, feed, bucket, 2, "dummy-trace-id"
+            mock_gcs_client,
+            audio_chunk,
+            feed,
+            bucket,
+            2,
         )
 
         # Assert - Both uploads went through the storage returned by the client
@@ -215,7 +223,6 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             feed,
             bucket,
             chunk_seq,
-            "dummy-trace-id",
         )
 
         # Assert
@@ -245,7 +252,6 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             feed,
             "test-bucket",
             42,
-            "dummy-trace-id",
             fencing_token=7,
         )
 
@@ -258,7 +264,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             "test-bucket",
             expected_object_name,
             b"\x00\x01" * 100,
-            metadata={"trace_id": "dummy-trace-id"},
+            metadata={"trace_id": ""},
             content_type="audio/flac",
             parameters={"ifGenerationMatch": "0"},
         )
@@ -280,14 +286,13 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             audio,
             bucket,
             object_name,
-            "dummy-trace-id",
         )
 
         mock_storage.upload.assert_called_once_with(
             bucket,
             object_name,
             audio,
-            metadata={"trace_id": "dummy-trace-id"},
+            metadata={"trace_id": ""},
             content_type="audio/flac",
         )
         self.assertEqual(result, f"gs://{bucket}/{object_name}")
@@ -307,7 +312,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         metadata = call_kwargs.kwargs.get("metadata") or call_kwargs[1].get(
             "metadata"
         )
-        self.assertIsNone(metadata)
+        self.assertEqual(metadata, {"trace_id": ""})
 
     async def test_upload_with_if_generation_match(self) -> None:
         """ifGenerationMatch=0 is passed as parameters to storage.upload."""
@@ -318,7 +323,6 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             b"audio",
             "bucket",
             "obj.flac",
-            "dummy-trace-id",
             if_generation_match=0,
         )
 
@@ -326,7 +330,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             "bucket",
             "obj.flac",
             b"audio",
-            metadata={"trace_id": "dummy-trace-id"},
+            metadata={"trace_id": ""},
             content_type="audio/flac",
             parameters={"ifGenerationMatch": "0"},
         )
@@ -347,7 +351,6 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             b"audio",
             "bucket",
             "obj.flac",
-            "dummy-trace-id",
             if_generation_match=0,
         )
 
@@ -369,7 +372,6 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
                 b"audio",
                 "bucket",
                 "obj.flac",
-                "dummy-trace-id",
             )
 
     async def test_upload_non_412_error_raises_with_precondition(self) -> None:
@@ -388,7 +390,6 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
                 b"audio",
                 "bucket",
                 "obj.flac",
-                "dummy-trace-id",
                 if_generation_match=0,
             )
 
@@ -415,7 +416,6 @@ class TestPublishAudioChunkSync(unittest.TestCase):
             session_id="test-session-1",
             start_timestamp=mock_now,
             duration_ms=15000,
-            trace_id="dummy-trace-id",
             source_type="echo",
         )
 
@@ -423,14 +423,13 @@ class TestPublishAudioChunkSync(unittest.TestCase):
         mock_publisher.publish.assert_called_once()
         publish_args, publish_kwargs = mock_publisher.publish.call_args
         self.assertEqual(publish_args[0], "projects/test/topics/audio")
-        self.assertEqual(publish_kwargs["feed_id"], "feed-42")
         self.assertEqual(publish_kwargs["source_type"], "echo")
-        self.assertEqual(publish_kwargs["trace_id"], "dummy-trace-id")
         self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
 
         chunk = AudioChunk()
         chunk.ParseFromString(publish_args[1])
         self.assertEqual(chunk.gcs_uri, "gs://bucket/audio.flac")
+        self.assertEqual(chunk.feed_id, "feed-42")
         self.assertTrue(chunk.HasField("start_timestamp"))
         self.assertEqual(
             chunk.start_timestamp.seconds, int(mock_now.timestamp())
@@ -456,7 +455,6 @@ class TestPublishAudioChunkSync(unittest.TestCase):
                 2026, 3, 5, 12, 0, tzinfo=datetime.UTC
             ),
             duration_ms=15000,
-            trace_id="dummy-trace-id",
         )
 
         publish_kwargs = mock_publisher.publish.call_args.kwargs
@@ -485,7 +483,6 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
             session_id="test-session-1",
             start_timestamp=mock_now,
             duration_ms=15000,
-            trace_id="dummy-trace-id",
         )
 
         self.assertEqual(result, "message-123")
@@ -496,6 +493,65 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chunk.feed_name, "Central Fire")
         self.assertEqual(chunk.external_id, "ext-id")
         self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
+
+    async def test_paused_ordering_key_calls_resume_publish(self) -> None:
+        """PublishToPausedOrderingKeyException triggers resume_publish before propagating raw."""
+        mock_pubsub_client, mock_publisher = _make_pubsub_client()
+        mock_now = datetime.datetime(2026, 4, 25, 12, 0, tzinfo=datetime.UTC)
+
+        fut = concurrent.futures.Future()
+        fut.set_exception(PublishToPausedOrderingKeyException("feed-42"))
+        mock_publisher.publish.return_value = fut
+
+        with self.assertRaises(PublishToPausedOrderingKeyException):
+            await gcp_helper.publish_audio_chunk(
+                mock_pubsub_client,
+                topic_path="projects/test/topics/audio",
+                feed_id="feed-42",
+                feed_name="Central Fire",
+                external_id="ext-id",
+                gcs_uri="gs://bucket/audio.flac",
+                session_id="test-session-1",
+                start_timestamp=mock_now,
+                duration_ms=15000,
+            )
+
+        mock_publisher.resume_publish.assert_called_once_with(
+            "projects/test/topics/audio",
+            ordering_key="feed-42",
+        )
+
+    async def test_resume_publish_failure_swallowed(self) -> None:
+        """RuntimeError or ValueError from resume_publish is swallowed; the original PausedOrderingKey exception still propagates."""
+        mock_now = datetime.datetime(2026, 4, 25, 12, 0, tzinfo=datetime.UTC)
+
+        for resume_exc in (
+            RuntimeError("publisher stopped"),
+            ValueError("unseen key"),
+        ):
+            with self.subTest(resume_exc=type(resume_exc).__name__):
+                mock_pubsub_client, mock_publisher = _make_pubsub_client()
+                fut = concurrent.futures.Future()
+                fut.set_exception(
+                    PublishToPausedOrderingKeyException("feed-42")
+                )
+                mock_publisher.publish.return_value = fut
+                mock_publisher.resume_publish.side_effect = resume_exc
+
+                with self.assertRaises(PublishToPausedOrderingKeyException):
+                    await gcp_helper.publish_audio_chunk(
+                        mock_pubsub_client,
+                        topic_path="projects/test/topics/audio",
+                        feed_id="feed-42",
+                        feed_name="Central Fire",
+                        external_id="ext-id",
+                        gcs_uri="gs://bucket/audio.flac",
+                        session_id="test-session-1",
+                        start_timestamp=mock_now,
+                        duration_ms=15000,
+                    )
+
+                mock_publisher.resume_publish.assert_called_once()
 
 
 class TestParseGcsUri(unittest.TestCase):

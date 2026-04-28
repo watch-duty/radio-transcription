@@ -173,11 +173,12 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         mock_sleep.return_value = False
 
         shutdown = asyncio.Event()
-        with self.assertRaises(RuntimeError, msg="consecutively"):
+        with self.assertRaises(RuntimeError) as ctx:
             async for _ in openmhz_collector(
                 _TEST_FEED, shutdown, "https://api.openmhz.com/"
             ):
                 pass
+        self.assertEqual(str(ctx.exception), "reconnect_exhausted")
 
         # The Nth failure raises before sleeping, so N-1 sleeps
         self.assertEqual(mock_sleep.call_count, MAX_RECONNECT_FAILURES - 1)

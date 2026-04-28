@@ -34,6 +34,9 @@ class TestEvaluationEventProcessor(unittest.TestCase):
         self.transcribed_audio.transmission_id = "12345"
         self.transcribed_audio.feed_id = "1234"
         self.transcribed_audio.transcript = "Test transcript"
+        self.transcribed_audio.source_audio_uris.append(
+            "gs://bucket/audio.flac"
+        )
 
         # Create a sample EvaluatedTranscribedAudio proto
         self.evaluated_payload = evaluated_pb2.EvaluatedTranscribedAudio()

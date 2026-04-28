@@ -1,7 +1,6 @@
 import logging
 from unittest import TestCase, mock
 
-from backend.pipeline.common import logging as pipeline_logging
 from backend.pipeline.common.logging import setup_logging
 
 
@@ -9,8 +8,12 @@ class TestLogging(TestCase):
     def setUp(self) -> None:
         setup_logging.cache_clear()
 
+    @mock.patch("backend.pipeline.common.logging.trace.set_tracer_provider")
+    @mock.patch("backend.pipeline.common.logging.CloudTraceSpanExporter")
     @mock.patch("backend.pipeline.common.logging.cloud_logging")
-    def test_setup_logging_gcp(self, mock_cloud_logging) -> None:
+    def test_setup_logging_gcp(
+        self, mock_cloud_logging, mock_exporter, mock_set_provider
+    ) -> None:
         # Mock cloud_logging to look like the real library
         mock_client_inst = mock.Mock()
         mock_cloud_logging.Client.return_value = mock_client_inst
@@ -19,15 +22,22 @@ class TestLogging(TestCase):
         with mock.patch(
             "backend.pipeline.common.logging.is_gcp_env", return_value=True
         ):
-            # First call should initialize cloud logging
-            setup_logging()
-            mock_cloud_logging.Client.assert_called_once()
-            mock_client_inst.setup_logging.assert_called_once()
+            with mock.patch.dict(
+                "os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"}
+            ):
+                # First call should initialize cloud logging and tracing
+                setup_logging()
+                mock_cloud_logging.Client.assert_called_once()
+                mock_client_inst.setup_logging.assert_called_once()
+                mock_exporter.assert_called_once_with(project_id="test-project")
+                mock_set_provider.assert_called_once()
 
-            # Second call should do nothing (idempotency)
-            setup_logging()
-            mock_cloud_logging.Client.assert_called_once()
-            mock_client_inst.setup_logging.assert_called_once()
+                # Second call should do nothing (idempotency due to cache)
+                setup_logging()
+                mock_cloud_logging.Client.assert_called_once()
+                mock_client_inst.setup_logging.assert_called_once()
+                mock_exporter.assert_called_once()
+                mock_set_provider.assert_called_once()
 
     @mock.patch("logging.basicConfig")
     def test_setup_logging_local(self, mock_basic_config) -> None:
@@ -45,39 +55,3 @@ class TestLogging(TestCase):
             # Second call should do nothing (idempotency)
             setup_logging()
             mock_basic_config.assert_called_once()
-
-
-class TestTraceId(TestCase):
-    def test_set_trace_id_explicit(self) -> None:
-        trace_id = "test-trace-id"
-        returned_id = pipeline_logging.set_trace_id(trace_id)
-        self.assertEqual(returned_id, trace_id)
-
-        record = logging.LogRecord(
-            "test", logging.INFO, "test.py", 1, "msg", (), None
-        )
-        filter_inst = pipeline_logging.TraceIdFilter()
-        filter_inst.filter(record)
-        self.assertEqual(getattr(record, "trace_id"), trace_id)  # noqa: B009
-
-    def test_set_trace_id_generate(self) -> None:
-        returned_id = pipeline_logging.set_trace_id()
-        self.assertTrue(returned_id)
-
-        record = logging.LogRecord(
-            "test", logging.INFO, "test.py", 1, "msg", (), None
-        )
-        filter_inst = pipeline_logging.TraceIdFilter()
-        filter_inst.filter(record)
-        self.assertEqual(getattr(record, "trace_id"), returned_id)  # noqa: B009
-
-    def test_clear_trace_id(self) -> None:
-        pipeline_logging.set_trace_id("test")
-        pipeline_logging.set_trace_id("")
-
-        record = logging.LogRecord(
-            "test", logging.INFO, "test.py", 1, "msg", (), None
-        )
-        filter_inst = pipeline_logging.TraceIdFilter()
-        filter_inst.filter(record)
-        self.assertEqual(getattr(record, "trace_id"), "")  # noqa: B009

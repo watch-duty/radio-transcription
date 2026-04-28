@@ -8,10 +8,10 @@ from backend.pipeline.common.constants import (
     CHUNK_DURATION_SECONDS,
     MS_PER_SECOND,
 )
-from backend.pipeline.transcription.constants import (
-    DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
+from backend.pipeline.transcription.common.constants import (
+    DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS,
 )
-from backend.pipeline.transcription.enums import TranscriberType, VadType
+from backend.pipeline.transcription.common.enums import TranscriberType, VadType
 
 
 @dataclass(frozen=True)
@@ -43,18 +43,8 @@ class AudioChunkData:
     audio: np.ndarray
     speech_segments: list[TimeRange]
     gcs_uri: str
-    trace_id: str
-    duration_ms: int = 0
-    sample_rate: int = 16000
-
-
-@dataclass(frozen=True)
-class ChunkMetadata:
-    """Metadata for an audio chunk before download."""
-
-    gcs_uri: str
-    session_id: str
     duration_ms: int
+    sample_rate: int
     trace_id: str
 
 
@@ -63,6 +53,17 @@ class FeedMetadata:
     """Metadata about a feed, used for enriching the output."""
 
     feed_name: str
+    external_id: str
+
+
+@dataclass(frozen=True)
+class ChunkMetadata:
+    """Metadata for an audio chunk before download."""
+
+    gcs_uri: str
+    session_id: str  # Required for continuous feeds ONLY.
+    duration_ms: int
+    feed_metadata: FeedMetadata
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,7 @@ class DownloadedChunkPayload:
 
     gcs_uri: str
     chunk_data: AudioChunkData
+    session_id: str
 
 
 @dataclass(frozen=True)
@@ -78,17 +80,19 @@ class TranscriptionResult:
     """Intermediate transcription result holding payload data before Protobuf serialization, bypassing Protobuf pickling issues during Dataflow shuffle."""
 
     feed_id: str
+    session_id: str
     contributing_audio_uris: list[str]
     transcript: str
     time_range: TimeRange
     transmission_id: str
     trace_id: str
+    start_audio_offset_ms: int
+    end_audio_offset_ms: int
+    canonical_audio_uri: str
+    playback_audio_uri: str
+    feed_metadata: FeedMetadata
     missing_prior_context: bool = False
     missing_post_context: bool = False
-    start_audio_offset_ms: int | None = None
-    end_audio_offset_ms: int | None = None
-    canonical_audio_uri: str | None = None
-    playback_audio_uri: str | None = None
 
 
 @dataclass(frozen=True)
@@ -99,17 +103,22 @@ class TransmissionContext:
     We use standard dataclasses here because native Protobuf classes cannot be cleanly pickled.
     """
 
+    session_id: str | None = None
     last_end_time_ms: int | None = None
     stale_start_time_ms: int | None = None
     buffer_start_time_ms: int | None = None
-    contributing_audio_uris: list[str] = field(default_factory=list)
-    missing_prior_context: bool = False
-    missing_post_context: bool = False
     expected_next_chunk_start_ms: int | None = None
     start_audio_offset_ms: int | None = None
     end_audio_offset_ms: int | None = None
+    contributing_audio_uris: list[str] = field(default_factory=list)
+    missing_prior_context: bool = False
+    missing_post_context: bool = False
     buffer_duration_ms: int = 0
-    trace_id: str | None = None
+    order_timer_active: bool = False
+    out_of_order_buffer: list[BufferedChunk] = field(default_factory=list)
+    feed_metadata: FeedMetadata | None = None
+    last_transmission_start_ms: int | None = None
+    trace_id: str
 
 
 @dataclass
@@ -119,15 +128,16 @@ class StitcherContext:
     feed_id: str
     # The fully qualified GCS URI of the raw audio file currently being parsed.
     current_gcs_uri: str
+    session_id: str | None
     # Ordered list of URIs that have been accumulated into the current transmission buffer thus far.
     contributing_audio_uris: list[str]
     file_start_ms: int
-    last_segment_end_time_ms: int | None = None
-    transmission_start_time_ms: int | None = None
-    buffer_start_time_ms: int | None = None
-    missing_prior_context: bool = False
-    expected_next_chunk_start_ms: int | None = None
-    start_audio_offset_ms: int | None = None
+    last_segment_end_time_ms: int | None
+    transmission_start_time_ms: int | None
+    buffer_start_time_ms: int | None
+    missing_prior_context: bool
+    expected_next_chunk_start_ms: int | None
+    start_audio_offset_ms: int | None
     end_audio_offset_ms: int | None = None
     buffer_duration_ms: int = 0
     trace_id: str | None = None
@@ -137,7 +147,7 @@ class StitcherContext:
 class OrderRestorerConfig:
     """Configuration parameters for the sequence Jitter Buffer."""
 
-    out_of_order_timeout_ms: int = DEFAULT_OUT_OF_ORDER_TIMEOUT_MS
+    out_of_order_timeout_ms: int = DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS
     chunk_duration_ms: int = CHUNK_DURATION_SECONDS * MS_PER_SECOND
 
 
@@ -154,6 +164,8 @@ class StitchAudioConfig:
     vad_pre_roll_ms: int
     vad_post_roll_ms: int
     route_to_dlq: bool = True
+    backfill_lateness_threshold_ms: int = 300000
+    bypass_stitching: bool = False
 
     def __post_init__(self) -> None:
         """Validates the dataclass variables."""
@@ -190,14 +202,16 @@ class FlushRequest:
 
     buffer: np.ndarray
     feed_id: str
+    session_id: str
     contributing_audio_uris: list[str]
     time_range: TimeRange
     transmission_id: str
     trace_id: str
-    missing_prior_context: bool = False
-    missing_post_context: bool = False
-    start_audio_offset_ms: int | None = None
-    end_audio_offset_ms: int | None = None
+    feed_metadata: FeedMetadata
+    missing_prior_context: bool
+    missing_post_context: bool
+    start_audio_offset_ms: int | None
+    end_audio_offset_ms: int | None
 
 
 @dataclass(frozen=True)
@@ -230,11 +244,12 @@ class FlushAction(StateMachineAction):
     contributing_audio_uris: list[str]
     missing_prior_context: bool
     missing_post_context: bool
-    start_audio_offset_ms: int | None
-    end_audio_offset_ms: int | None
+    start_audio_offset_ms: int
     trace_id: str
+    end_audio_offset_ms: int
     clear_state: bool = True
-    isolated_audio_buffer: list[np.ndarray] | None = None
+    isolated_audio_buffer: list[np.ndarray] = field(default_factory=list)
+    isolated_audio_buffer_uris: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

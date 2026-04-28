@@ -5,7 +5,7 @@ import logging
 from typing import TYPE_CHECKING, TypedDict
 
 from backend.pipeline.storage.feed_queries import (
-    ACQUIRE_FEEDS_BATCH_SQL,
+    COUNT_HELD_BY_TYPE_SQL,
     CREATE_FEED_SQL,
     DELETE_FEED_SQL,
     GET_FEED_SQL,
@@ -17,11 +17,14 @@ from backend.pipeline.storage.feed_queries import (
     REPORT_FAILURE_SQL,
     RESET_FEED_SQL,
     UPDATE_PROGRESS_SQL,
+    build_acquire_feeds_batch_sql,
+    build_acquire_feeds_recovery_sql,
 )
 
 if TYPE_CHECKING:
     import datetime
     import uuid
+    from collections.abc import Sequence
 
     import asyncpg
 
@@ -34,13 +37,22 @@ class SourceType(enum.StrEnum):
     Each value corresponds to a slug in the ``source_types`` database table.
 
     .. important::
-        This enum **must** be kept in sync with the following SQL files:
+        Adding a claimable source type is a three-place change:
 
-        - ``terraform/modules/alloydb/sql/ingestion/002_source_types.sql``
-        - ``terraform/modules/alloydb/sql/ingestion/006_seed_source_types.sql``
+        1. **This enum** — add the new member.
+        2. **DB seed** — add a row in
+           ``terraform/modules/alloydb/sql/ingestion/002_source_types.sql``
+           and ``006_seed_source_types.sql``.
+        3. **Per-type cap registry** — add an entry to
+           ``backend.pipeline.ingestion.settings._DEFAULT_CAPS``. This
+           dict drives ``NormalizerSettings.caps``, ``FeedStore``'s
+           generated acquire-batch SQL, and the ``claim_types`` filter on
+           the recovery path. **Skipping this step means VM workers
+           will silently never claim feeds of the new type** — neither
+           the primary CTE nor the recovery sweep will pick them up.
 
-        When adding or renaming a source type, update both this enum and the
-        SQL files together.
+        Renames must touch both this enum and the DB seed in the same
+        deploy.
     """
 
     BCFY_FEEDS = "bcfy_feeds"
@@ -105,6 +117,14 @@ class FeedStore:
             lease queries.  When set, only feeds whose ``source_type``
             matches one of the values will be leased.  ``None`` disables
             filtering (all types are eligible).
+        claim_types: Optional ordered sequence of ``SourceType`` values
+            this store will claim via ``acquire_feeds_batch``. The SQL
+            is generated at construction time with one MATERIALIZED CTE
+            per type. Defaults to every ``SourceType`` except ``ECHO``
+            (Echo feeds are served by a separate cloud function and
+            are never leased here). ``NormalizerRuntime`` passes
+            ``list(settings.caps.keys())`` so the SQL shape and the
+            runtime's per-type budgets are seeded from the same set.
 
     """
 
@@ -112,9 +132,19 @@ class FeedStore:
         self,
         pool: asyncpg.Pool,
         source_types: list[str] | None = None,
+        claim_types: Sequence[SourceType] | None = None,
     ) -> None:
         self._pool = pool
         self._source_types = source_types
+        if claim_types is None:
+            claim_types = [t for t in SourceType if t != SourceType.ECHO]
+        self._claim_types: tuple[SourceType, ...] = tuple(claim_types)
+        self._acquire_feeds_batch_sql = build_acquire_feeds_batch_sql(
+            self._claim_types,
+        )
+        self._acquire_feeds_recovery_sql = build_acquire_feeds_recovery_sql(
+            self._claim_types,
+        )
 
     def _row_to_feed(self, row: asyncpg.Record) -> Feed:
         """Convert a database row to a Feed dict with validation."""
@@ -139,6 +169,31 @@ class FeedStore:
             external_id=row["external_id"],
         )
 
+    def _row_to_leased_feed(self, row: asyncpg.Record) -> LeasedFeed:
+        """Convert a claim/lease-path row to a LeasedFeed dict.
+
+        Shared between lease_feed (single-row), acquire_feeds_batch (primary
+        per-type CTE), and acquire_feeds_recovery (failing-retryable +
+        active-abandoned). Keeping the mapping in one place ensures all three
+        claim paths agree on how source_type is validated and which columns
+        end up in the TypedDict.
+        """
+        try:
+            source_type = SourceType(row["source_type"])
+        except ValueError as e:
+            msg = f"Unknown source type {row['source_type']!r} for feed {row['id']}"
+            raise ValueError(msg) from e
+        return LeasedFeed(
+            id=row["id"],
+            name=row["name"],
+            external_id=row["external_id"],
+            source_type=source_type,
+            last_processed_filename=row["last_processed_filename"],
+            last_bookmark_time=row["last_bookmark_time"],
+            fencing_token=row["fencing_token"],
+            source_feed_id=row["source_feed_id"],
+        )
+
     async def lease_feed(self, worker_id: uuid.UUID) -> LeasedFeed | None:
         """
         Atomically find, lock, and lease an available feed.
@@ -160,23 +215,7 @@ class FeedStore:
         )
         if row is None:
             return None
-
-        try:
-            source_type = SourceType(row["source_type"])
-        except ValueError as e:
-            msg = f"Unknown source type {row['source_type']!r} for feed {row['id']}"
-            raise ValueError(msg) from e
-
-        return LeasedFeed(
-            id=row["id"],
-            name=row["name"],
-            external_id=row["external_id"],
-            source_type=source_type,
-            last_processed_filename=row["last_processed_filename"],
-            last_bookmark_time=row["last_bookmark_time"],
-            fencing_token=row["fencing_token"],
-            source_feed_id=row["source_feed_id"],
-        )
+        return self._row_to_leased_feed(row)
 
     async def update_feed_progress(
         self,
@@ -262,12 +301,15 @@ class FeedStore:
         failure_threshold: int = 5,
         backoff_base_sec: int = 15,
         backoff_max_sec: int = 600,
+        *,
+        reason: str | None = None,
     ) -> str | None:
         """Report a feed failure with exponential backoff.
 
         Atomically increments ``failure_count``, computes ``retry_after``
         with exponential backoff + jitter, and transitions to
-        ``'quarantined'`` if *failure_threshold* is reached.
+        ``'quarantined'`` if *failure_threshold* is reached.  On quarantine
+        transition, ``quarantine_reason`` is populated from *reason*.
 
         Backoff formula: ``min(backoff_base_sec * 2^failure_count,
         backoff_max_sec) + random(0-10s) jitter``.
@@ -283,6 +325,12 @@ class FeedStore:
                 quarantine.
             backoff_base_sec: Base delay in seconds for the first retry.
             backoff_max_sec: Maximum backoff cap in seconds.
+            reason: Short snake_case tag for the failure mode
+                (e.g. ``"auth_failed"``).  Persisted to
+                ``feeds.quarantine_reason`` on transition to quarantined.
+                ``None`` (default) writes SQL NULL — preferred over an empty
+                string so triage queries can use ``WHERE quarantine_reason
+                IS NOT NULL``.
 
         Returns:
             The new feed status (``'failing'`` or ``'quarantined'``) if
@@ -298,6 +346,7 @@ class FeedStore:
             fencing_token,
             backoff_max_sec,
             backoff_base_sec,
+            reason,  # $7 — populates quarantine_reason on transition
         )
         if row is None:
             return None
@@ -309,6 +358,7 @@ class FeedStore:
                 extra={
                     "feed_id": str(feed_id),
                     "failure_count": row["failure_count"],
+                    "reason": reason,
                 },
             )
         else:
@@ -318,6 +368,7 @@ class FeedStore:
                     "feed_id": str(feed_id),
                     "failure_count": row["failure_count"],
                     "retry_after": str(row["retry_after"]),
+                    "reason": reason,
                 },
             )
         return status
@@ -356,74 +407,170 @@ class FeedStore:
         )
         return result == "UPDATE 1"
 
-    async def release_feeds_batch(self, worker_id: uuid.UUID) -> int:
+    async def acquire_feeds_batch(
+        self,
+        worker_id: uuid.UUID,
+        limits: dict[SourceType, int],
+    ) -> list[LeasedFeed]:
         """
-        Release all active leases held by this worker.
+        Batch-acquire unclaimed feeds via the per-type UNION ALL MATERIALIZED CTE.
 
-        Used during graceful shutdown to allow other workers to immediately claim
-        the feeds without waiting for timeout expiration.
+        Each branch is independently capped by its per-type LIMIT so adversarial
+        heap clustering (e.g. a batch of newly-added bcfy_feeds landing
+        together) cannot hand a worker a memory-heavy mono-type batch.
+        Passing 0 for a branch's LIMIT structurally skips that type — the
+        branch's inner SELECT returns no rows and contributes nothing to the
+        outer UPDATE.
+
+        Recovery-path claims (failing-retryable + active-abandoned) are served
+        by the separate ``acquire_feeds_recovery`` method, called when this
+        primary path returns fewer rows than the worker's total slack.
 
         Args:
-            worker_id: UUID of the worker releasing leases.
+            worker_id: UUID of the worker requesting leases.
+            limits: Per-type LIMIT keyed by ``SourceType``. Types absent
+                from the dict are passed as 0 (their CTE branch returns
+                no rows). Types present but not in this store's
+                ``claim_types`` raise ``ValueError`` — the SQL was
+                generated for a fixed set at construction.
 
         Returns:
-            The number of feeds released.
+            List of ``LeasedFeed`` dicts (empty if none available).
+        """
+        unknown = set(limits) - set(self._claim_types)
+        if unknown:
+            msg = (
+                "limits contains source types not in this store's claim_types: "
+                f"{sorted(t.value for t in unknown)}"
+            )
+            raise ValueError(msg)
+        positional = [limits.get(t, 0) for t in self._claim_types]
+        rows = await self._pool.fetch(
+            self._acquire_feeds_batch_sql,
+            worker_id,
+            *positional,
+        )
+        return [self._row_to_leased_feed(row) for row in rows]
+
+    async def acquire_feeds_recovery(
+        self,
+        worker_id: uuid.UUID,
+        abandonment_window_sec: float,
+        limits: dict[SourceType, int],
+    ) -> list[LeasedFeed]:
+        """Recovery-path claim: failing-retryable + active-abandoned.
+
+        Called by the worker when the per-type primary CTE returns fewer
+        rows than the worker's total slack. Mirrors ``acquire_feeds_batch``
+        in shape: each branch has its own LIMIT keyed on ``SourceType``
+        and its own SKIP LOCKED scope, so per-type caps are enforced
+        structurally even when one type's primary path returns 0 and the
+        recovery sweep would otherwise scoop up rows of an at-cap type.
+
+        Args:
+            worker_id: UUID of the worker requesting leases.
+            abandonment_window_sec: Seconds before a heartbeat is considered stale.
+            limits: Per-type recovery LIMIT keyed by ``SourceType``.
+                Types absent from the dict are passed as 0 (their CTE
+                branch returns no rows). Types present but not in this
+                store's ``claim_types`` raise ``ValueError``.
+
+        Returns:
+            List of ``LeasedFeed`` dicts (empty if all limits are 0 or
+            no eligible rows exist).
+        """
+        unknown = set(limits) - set(self._claim_types)
+        if unknown:
+            msg = (
+                "limits contains source types not in this store's claim_types: "
+                f"{sorted(t.value for t in unknown)}"
+            )
+            raise ValueError(msg)
+
+        positional = [limits.get(t, 0) for t in self._claim_types]
+        if not any(v > 0 for v in positional):
+            # Every branch has LIMIT 0 — skip the round-trip.
+            return []
+
+        import datetime  # noqa: PLC0415
+
+        rows = await self._pool.fetch(
+            self._acquire_feeds_recovery_sql,
+            worker_id,
+            datetime.timedelta(seconds=abandonment_window_sec),
+            *positional,
+        )
+        return [self._row_to_leased_feed(row) for row in rows]
+
+    async def count_held_by_type(
+        self,
+        worker_id: uuid.UUID,
+    ) -> dict[SourceType, int]:
+        """Count active leases held by ``worker_id``, grouped by source_type.
+
+        Authoritative per-cycle replacement for the worker's in-memory
+        ``_held_by_type`` counter. The leasing loop calls this once per
+        iteration and passes the result straight into
+        ``_calculate_branch_limits``; the DB is the source of truth, so
+        sweep-reclaims and cross-worker steals are reflected immediately
+        without any in-process bookkeeping.
+
+        The returned dict always contains an entry for every ``SourceType``
+        value — types the worker doesn't currently hold map to 0. This
+        lets the caller skip ``.get(t, 0)`` dances at use sites. ``ECHO``
+        is always 0 in practice (Echo feeds are served by a separate
+        cloud function, never leased by this worker) but the key is
+        populated anyway so the invariant "every SourceType in the dict"
+        holds.
+
+        Unknown ``source_type`` strings returned by the DB are silently
+        skipped. ``CREATE_FEED_SQL`` enforces referential integrity
+        against ``source_types``, so this should never trigger in
+        practice — the skip path is defensive against a hypothetical
+        schema drift.
+
+        Args:
+            worker_id: UUID of the worker whose held leases to count.
+
+        Returns:
+            Dict mapping every ``SourceType`` to the count of active
+            leases owned by this worker for that type (0 if none).
+        """
+        rows = await self._pool.fetch(COUNT_HELD_BY_TYPE_SQL, worker_id)
+        counts: dict[SourceType, int] = dict.fromkeys(SourceType, 0)
+        for row in rows:
+            try:
+                counts[SourceType(row["source_type"])] = row["n"]
+            except ValueError:
+                continue
+        return counts
+
+    async def release_feeds_batch(self, worker_id: uuid.UUID) -> int:
+        """Release every active lease still owned by this worker.
+
+        Primary use: ``_shutdown_sequence`` calls this once after
+        cancelling all feed tasks. The cancelled tasks return without
+        running their normal-completion ``release_feed`` (see the
+        ``_process_feed`` shutdown branch), so this single
+        ``WHERE worker_id = $1`` UPDATE is what actually flips them
+        back to ``unclaimed``.
+
+        Secondary defensive role: catches any straggler row where an
+        earlier per-feed ``release_feed`` call failed mid-lifetime
+        (transient DB error, task reaped before the finally block could
+        retry) and the row was sitting in the DB with ``worker_id = us``
+        until pg_cron reclaimed it.
+
+        Args:
+            worker_id: UUID of the worker releasing its leases.
+
+        Returns:
+            The number of feeds actually released.
         """
         result = await self._pool.execute(RELEASE_FEEDS_BATCH_SQL, worker_id)
         if result.startswith("UPDATE "):
             return int(result.split()[1])
         return 0
-
-    async def acquire_feeds_batch(
-        self,
-        worker_id: uuid.UUID,
-        abandonment_window_sec: float,
-        limit: int,
-    ) -> list[LeasedFeed]:
-        """
-        Batch-acquire up to *limit* available feeds in a single query.
-
-        Uses FOR UPDATE SKIP LOCKED to avoid contention with other workers.
-
-        Args:
-            worker_id: UUID of the worker requesting leases.
-            abandonment_window_sec: Seconds before a heartbeat is considered stale.
-            limit: Maximum number of feeds to acquire.
-
-        Returns:
-            List of ``LeasedFeed`` dicts (empty if none available).
-
-        """
-        import datetime  # noqa: PLC0415
-
-        rows = await self._pool.fetch(
-            ACQUIRE_FEEDS_BATCH_SQL,
-            worker_id,
-            datetime.timedelta(seconds=abandonment_window_sec),
-            limit,
-            self._source_types,
-        )
-
-        leased_feeds = []
-        for row in rows:
-            try:
-                source_type = SourceType(row["source_type"])
-            except ValueError as e:
-                msg = f"Unknown source type {row['source_type']!r} for feed {row['id']}"
-                raise ValueError(msg) from e
-            leased_feeds.append(
-                LeasedFeed(
-                    id=row["id"],
-                    name=row["name"],
-                    external_id=row["external_id"],
-                    source_type=source_type,
-                    last_processed_filename=row["last_processed_filename"],
-                    last_bookmark_time=row["last_bookmark_time"],
-                    fencing_token=row["fencing_token"],
-                    source_feed_id=row["source_feed_id"],
-                )
-            )
-        return leased_feeds
 
     async def create_feed(
         self,
