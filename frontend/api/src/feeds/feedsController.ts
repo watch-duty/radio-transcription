@@ -18,7 +18,7 @@ import {
 } from 'tsoa';
 
 import { FEEDS_STORE_API_URL } from '../config.js';
-import { isAxiosError } from '../utils.js';
+import { handleBackendError, isAxiosError } from '../utils.js';
 
 interface BaseFeedBackend {
   name: string;
@@ -111,35 +111,13 @@ export class FeedsController extends Controller {
   public async listFeeds(): Promise<Feed[]> {
     const client = await this.getClient();
     try {
-      const response = await client.request({
+      const response = await client.request<FeedBackend[]>({
         url: FEEDS_STORE_API_URL,
         method: 'GET',
       });
-      const data = response.data as FeedBackend[];
-      return data.map(convertFeedBackend);
+      return response.data.map(convertFeedBackend);
     } catch (error: unknown) {
-      if (isAxiosError(error)) {
-        const status = error.response?.status || 500;
-        const data = JSON.stringify(error.response?.data);
-        console.error(
-          JSON.stringify({
-            level: 'ERROR',
-            message: `Backend API error: ${status}`,
-            data: error.response?.data,
-          })
-        );
-        throw new Error(`Backend API error ${status}: ${data}`, {
-          cause: error,
-        });
-      }
-      console.error(
-        JSON.stringify({
-          level: 'ERROR',
-          message: 'Unexpected error fetching feeds',
-          error: error instanceof Error ? error.message : String(error),
-        })
-      );
-      throw new Error('Error fetching feeds', { cause: error });
+      handleBackendError(error, 'listing feeds');
     }
   }
 
@@ -153,37 +131,18 @@ export class FeedsController extends Controller {
   ): Promise<Feed> {
     const client = await this.getClient();
     try {
-      const response = await client.request({
+      const response = await client.request<FeedBackend>({
         url: `${FEEDS_STORE_API_URL}/${feedId}`,
         method: 'GET',
       });
-      return convertFeedBackend(response.data as FeedBackend);
+      return convertFeedBackend(response.data);
     } catch (error: unknown) {
       if (isAxiosError(error)) {
         if (error.response?.status === 404) {
           return notFound(404, { message: `Feed ${feedId} not found` });
         }
-        const status = error.response?.status || 500;
-        const data = JSON.stringify(error.response?.data);
-        console.error(
-          JSON.stringify({
-            level: 'ERROR',
-            message: `Backend API error: ${status}`,
-            data: error.response?.data,
-          })
-        );
-        throw new Error(`Backend API error ${status}: ${data}`, {
-          cause: error,
-        });
       }
-      console.error(
-        JSON.stringify({
-          level: 'ERROR',
-          message: `Unexpected error fetching feed ${feedId}`,
-          error: error instanceof Error ? error.message : String(error),
-        })
-      );
-      throw new Error(`Error fetching feed ${feedId}`, { cause: error });
+      handleBackendError(error, `fetching feed ${feedId}`);
     }
   }
 
@@ -194,35 +153,14 @@ export class FeedsController extends Controller {
   public async createFeed(@Body() requestBody: FeedCreate): Promise<Feed> {
     const client = await this.getClient();
     try {
-      const response = await client.request({
+      const response = await client.request<FeedBackend>({
         url: FEEDS_STORE_API_URL,
         method: 'POST',
         data: convertFeedCreate(requestBody),
       });
-      return convertFeedBackend(response.data as FeedBackend);
+      return convertFeedBackend(response.data);
     } catch (error: unknown) {
-      if (isAxiosError(error)) {
-        const status = error.response?.status || 500;
-        const data = JSON.stringify(error.response?.data);
-        console.error(
-          JSON.stringify({
-            level: 'ERROR',
-            message: `Backend API error: ${status}`,
-            data: error.response?.data,
-          })
-        );
-        throw new Error(`Backend API error ${status}: ${data}`, {
-          cause: error,
-        });
-      }
-      console.error(
-        JSON.stringify({
-          level: 'ERROR',
-          message: 'Unexpected error creating feed',
-          error: error instanceof Error ? error.message : String(error),
-        })
-      );
-      throw new Error('Error creating feed', { cause: error });
+      handleBackendError(error, 'creating feed');
     }
   }
 
@@ -236,37 +174,18 @@ export class FeedsController extends Controller {
   ): Promise<Feed> {
     const client = await this.getClient();
     try {
-      const response = await client.request({
+      const response = await client.request<FeedBackend>({
         url: `${FEEDS_STORE_API_URL}/${feedId}/reset`,
         method: 'POST',
       });
-      return convertFeedBackend(response.data as FeedBackend);
+      return convertFeedBackend(response.data);
     } catch (error: unknown) {
       if (isAxiosError(error)) {
         if (error.response?.status === 404) {
           return notFound(404, { message: `Feed ${feedId} not found` });
         }
-        const status = error.response?.status || 500;
-        const data = JSON.stringify(error.response?.data);
-        console.error(
-          JSON.stringify({
-            level: 'ERROR',
-            message: `Backend API error: ${status}`,
-            data: error.response?.data,
-          })
-        );
-        throw new Error(`Backend API error ${status}: ${data}`, {
-          cause: error,
-        });
       }
-      console.error(
-        JSON.stringify({
-          level: 'ERROR',
-          message: `Unexpected error resetting feed ${feedId}`,
-          error: error instanceof Error ? error.message : String(error),
-        })
-      );
-      throw new Error(`Error resetting feed ${feedId}`, { cause: error });
+      handleBackendError(error, `resetting feed ${feedId}`);
     }
   }
 
@@ -290,27 +209,8 @@ export class FeedsController extends Controller {
         if (error.response?.status === 404) {
           return notFound(404, { message: `Feed ${feedId} not found` });
         }
-        const status = error.response?.status || 500;
-        const data = JSON.stringify(error.response?.data);
-        console.error(
-          JSON.stringify({
-            level: 'ERROR',
-            message: `Backend API error: ${status}`,
-            data: error.response?.data,
-          })
-        );
-        throw new Error(`Backend API error ${status}: ${data}`, {
-          cause: error,
-        });
       }
-      console.error(
-        JSON.stringify({
-          level: 'ERROR',
-          message: `Unexpected error deleting feed ${feedId}`,
-          error: error instanceof Error ? error.message : String(error),
-        })
-      );
-      throw new Error(`Error deleting feed ${feedId}`, { cause: error });
+      handleBackendError(error, `deleting feed ${feedId}`);
     }
   }
 }
