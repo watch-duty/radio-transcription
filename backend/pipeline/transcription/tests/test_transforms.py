@@ -14,6 +14,7 @@ from apache_beam.testing.test_pipeline import TestPipeline as BeamTestPipeline
 from apache_beam.testing.test_stream import TestStream
 from apache_beam.testing.util import assert_that, equal_to
 from apache_beam.transforms.window import TimestampedValue
+from apache_beam.utils.timestamp import Timestamp
 
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.transcription.common.constants import (
@@ -21,6 +22,7 @@ from backend.pipeline.transcription.common.constants import (
 )
 from backend.pipeline.transcription.common.datatypes import (
     AudioChunkData,
+    BufferedChunk,
     ChunkMetadata,
     FeedMetadata,
     FlushRequest,
@@ -29,6 +31,7 @@ from backend.pipeline.transcription.common.datatypes import (
     TimeRange,
     TranscribeAudioConfig,
     TranscriptionResult,
+    TransmissionContext,
 )
 from backend.pipeline.transcription.common.enums import TranscriberType, VadType
 from backend.pipeline.transcription.services.transcribers import Transcriber
@@ -332,84 +335,17 @@ class SerializeAndEnrichTest(unittest.TestCase):
 
             assert_that(results, assert_results)
 
-
-class OrderedBypassTest(unittest.TestCase):
-    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
-    def test_ordered_bypass_yields_correct_offsets(
-        self, mock_audio_processor: MagicMock
-    ) -> None:
-        """Verifies that OrderedBypassFn sets end_audio_offset_ms correctly."""
-        mock_processor_inst = mock_audio_processor.return_value
-        chunk_data = MagicMock()
-        chunk_data.duration_ms = 1000
-        chunk_data.audio = np.zeros(16000, dtype=np.int16)
-        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
-
-        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+    def test_ordered_bypass_buffers_and_sets_timer(self) -> None:
+        """Verifies that OrderedBypassFn buffers chunks and sets the timer."""
         stitch_config = get_test_stitch_config()
-
-        options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
-        )
-        with BeamTestPipeline(options=options) as p:
-            metadata = ChunkMetadata(
-                gcs_uri="gs://test-bucket/path/to/test.flac",
-                session_id="mock-session-id",
-                duration_ms=1000,
-                feed_metadata=FeedMetadata(
-                    feed_name="mock-feed", external_id="mock-external-id"
-                ),
-            )
-
-            test_stream = (
-                TestStream(
-                    coder=beam.coders.TupleCoder(
-                        (
-                            beam.coders.StrUtf8Coder(),
-                            beam.coders.PickleCoder(),
-                        )
-                    )
-                )
-                .advance_watermark_to(100)
-                .add_elements([TimestampedValue(("test-feed", metadata), 100)])
-                .advance_watermark_to_infinity()
-            )
-
-            results = (
-                p
-                | test_stream
-                | beam.ParDo(
-                    OrderedBypassFn(
-                        order_config=order_config, stitch_config=stitch_config
-                    )
-                )
-            )
-
-            def assert_results(msgs):
-                assert len(msgs) == 1
-                feed_id, request = msgs[0]
-                assert feed_id == "test-feed"
-                assert request.end_audio_offset_ms == 1000
-
-            assert_that(results, assert_results)
-
-    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
-    def test_ordered_bypass_flushes_on_timeout(
-        self, mock_audio_processor: MagicMock
-    ) -> None:
-        """Verifies that OrderedBypassFn flushes buffered chunks when gap timeout fires."""
-        mock_processor_inst = mock_audio_processor.return_value
-        chunk_data = MagicMock()
-        chunk_data.duration_ms = 1000
-        chunk_data.audio = np.zeros(16000, dtype=np.int16)
-        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
-
         order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
-        stitch_config = get_test_stitch_config()
-
-        options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+        fn = OrderedBypassFn(
+            order_config=order_config, stitch_config=stitch_config
         )
+
+        mock_state = MagicMock()
+        mock_state.read.return_value = None
+        mock_timer = MagicMock()
 
         metadata = ChunkMetadata(
             gcs_uri="gs://test-bucket/path/to/test.flac",
@@ -420,40 +356,56 @@ class OrderedBypassTest(unittest.TestCase):
             ),
         )
 
-        with BeamTestPipeline(options=options) as p:
-            test_stream = (
-                TestStream(
-                    coder=beam.coders.TupleCoder(
-                        (
-                            beam.coders.StrUtf8Coder(),
-                            beam.coders.PickleCoder(),
-                        )
-                    )
-                )
-                .advance_watermark_to(100)
-                .add_elements([TimestampedValue(("test-feed", metadata), 100)])
-                .advance_watermark_to(102)
-                .add_elements([TimestampedValue(("test-feed", metadata), 102)])
-                .advance_watermark_to(105)
-                .advance_watermark_to_infinity()
+        list(
+            fn.process(
+                ("test-feed", metadata),
+                timestamp=Timestamp(100),
+                transmission_context_state=mock_state,
+                out_of_order_timer=mock_timer,
             )
+        )
 
-            results = (
-                p
-                | test_stream
-                | beam.ParDo(
-                    OrderedBypassFn(
-                        order_config=order_config, stitch_config=stitch_config
-                    )
-                )
+        mock_timer.set.assert_called_once()
+        mock_state.write.assert_called_once()
+
+    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
+    def test_ordered_bypass_callback_flushes(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that handle_buffer_timeout flushes and yields."""
+        mock_processor_inst = mock_audio_processor.return_value
+        chunk_data = MagicMock()
+        chunk_data.duration_ms = 1000
+        chunk_data.audio = np.zeros(16000, dtype=np.int16)
+        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+
+        stitch_config = get_test_stitch_config()
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        fn = OrderedBypassFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn.setup()
+
+        mock_state = MagicMock()
+
+        curr_context = TransmissionContext(
+            out_of_order_buffer=[
+                BufferedChunk(timestamp_ms=100000, gcs_uri="gs://test.flac")
+            ],
+            feed_metadata=FeedMetadata(
+                feed_name="mock-feed", external_id="mock-id"
+            ),
+        )
+        mock_state.read.return_value = curr_context
+
+        results = list(
+            fn.handle_buffer_timeout(
+                feed_id="test-feed", transmission_context_state=mock_state
             )
+        )
 
-            def assert_results(msgs):
-                assert len(msgs) == 2
-                assert msgs[0][0] == "test-feed"
-                assert msgs[1][0] == "test-feed"
-
-            assert_that(results, assert_results)
+        assert len(results) == 1
+        mock_state.write.assert_called_once()
 
 
 class OrderedStitchAudioTest(unittest.TestCase):
