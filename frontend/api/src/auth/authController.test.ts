@@ -1,11 +1,16 @@
 import type * as express from 'express';
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockGetToken, mockRefreshAccessToken, mockSetCredentials } = vi.hoisted(() => ({
-  mockGetToken: vi.fn(),
-  mockRefreshAccessToken: vi.fn(),
-  mockSetCredentials: vi.fn(),
-}));
+import { AuthController } from './authController.js';
+
+const { mockGetToken, mockRefreshAccessToken, mockSetCredentials } = vi.hoisted(
+  () => ({
+    mockGetToken: vi.fn(),
+    mockRefreshAccessToken: vi.fn(),
+    mockSetCredentials: vi.fn(),
+  })
+);
 
 vi.mock('google-auth-library', () => {
   const OAuth2Client = vi.fn().mockImplementation(() => {
@@ -23,8 +28,6 @@ vi.mock('../config.js', () => ({
   GOOGLE_AUTH_CLIENT_ID: 'test-google-client-id',
   GOOGLE_AUTH_CLIENT_SECRET: 'test-google-client-secret',
 }));
-
-import { AuthController } from './authController.js';
 
 describe('AuthController', () => {
   beforeEach(() => {
@@ -85,7 +88,9 @@ describe('AuthController', () => {
     });
 
     it('should bubble exceptions up with status 401 on google auth failures', async () => {
-      mockGetToken.mockRejectedValueOnce(new Error('Invalid authorization token'));
+      mockGetToken.mockRejectedValueOnce(
+        new Error('Invalid authorization token')
+      );
 
       const controller = new AuthController();
       const mockReq = {
