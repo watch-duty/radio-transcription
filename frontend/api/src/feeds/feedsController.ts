@@ -1,4 +1,9 @@
-import type { Feed, FeedCreate, SourceType } from '@transcription/common';
+import type {
+  Feed,
+  FeedCreate,
+  FeedStatus,
+  SourceType,
+} from '@transcription/common';
 import { GoogleAuth } from 'google-auth-library';
 import {
   Body,
@@ -29,6 +34,8 @@ interface FeedBackend extends BaseFeedBackend {
   id: string;
   source_feed_id: string;
   external_id: string;
+  status?: FeedStatus;
+  last_heartbeat?: string;
 }
 
 interface FeedCreateBackend extends BaseFeedBackend {
@@ -84,6 +91,8 @@ function convertFeedBackend(response: FeedBackend): Feed {
     externalId: response.external_id,
     sourceUrl: getSourceUrl(response.source_type, response.source_feed_id),
     archiveUrl: getArchiveUrl(response.source_type, response.source_feed_id),
+    status: response.status as FeedStatus,
+    lastHeartbeat: response.last_heartbeat,
   };
 }
 

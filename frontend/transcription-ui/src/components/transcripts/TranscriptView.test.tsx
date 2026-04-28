@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 
+import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { listTranscripts } from '../../service/listTranscripts';
 import { renderWithQueryClient } from '../../test/testUtils';
@@ -29,6 +30,10 @@ vi.mock('../../service/listTranscripts', () => ({
 
 vi.mock('../../service/listFeeds', () => ({
   listFeeds: vi.fn(),
+}));
+
+vi.mock('../../service/getFeed', () => ({
+  getFeed: vi.fn(),
 }));
 
 // Mock AuthContext
@@ -68,6 +73,13 @@ describe('TranscriptView', () => {
     vi.mocked(listFeeds).mockResolvedValue([
       { id: 'feed123', name: 'feed123', sourceType: 'bcfy_feeds' as const },
     ]);
+    vi.mocked(getFeed).mockResolvedValue({
+      id: 'feed123',
+      name: 'feed123',
+      sourceType: 'bcfy_feeds' as const,
+      status: 'active' as const,
+      lastHeartbeat: '2026-04-10T12:00:00Z',
+    });
   });
 
   afterEach(() => {
@@ -747,5 +759,51 @@ describe('TranscriptView', () => {
     });
 
     vi.useRealTimers();
+  });
+
+  it('displays the feed outlined status Chip and human-friendly relative time string', async () => {
+    const testFeed = {
+      id: 'feed123',
+      name: 'Feed 123',
+      sourceType: 'bcfy_feeds' as const,
+      status: 'active' as const,
+      lastHeartbeat: new Date(Date.now() - 5 * 60 * 1000).toISOString(), // 5 mins ago
+    };
+
+    vi.mocked(listFeeds).mockResolvedValue([testFeed]);
+
+    vi.mocked(getFeed).mockResolvedValue(testFeed);
+
+    vi.mocked(listTranscripts).mockResolvedValueOnce({
+      transcripts: [
+        {
+          feedId: 'feed123',
+          transmissionId: '1',
+          transcript: 'Hello world!',
+          canonicalAudioUri: 'gs:://foo.flac',
+          playbackAudioUri: 'gs:://foo.m4a',
+          startTimestamp: '2026-04-10T12:00:00Z',
+          endTimestamp: '2026-04-10T12:00:05Z',
+          missingPriorContext: false,
+          missingPostContext: false,
+          sourceAudioUris: ['gs:://foo.flac'],
+          startAudioOffset: '0s',
+          endAudioOffset: '5s',
+          evaluationDecisions: [],
+        },
+      ],
+      nextToken: undefined,
+    });
+
+    renderTranscriptView(
+      <MemoryRouter initialEntries={['/?feedId=feed123']}>
+        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('active')).toBeTruthy();
+      expect(screen.getByText('Last Updated: 5 mins ago')).toBeTruthy();
+    });
   });
 });
