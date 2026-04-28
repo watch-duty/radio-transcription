@@ -6,10 +6,10 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
-from opentelemetry import trace
 from google.cloud.pubsub_v1.publisher.exceptions import (
     PublishToPausedOrderingKeyException,
 )
+from opentelemetry import trace
 
 from backend.pipeline.common import logging as pipeline_logging
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
