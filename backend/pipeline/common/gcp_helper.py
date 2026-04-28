@@ -250,7 +250,7 @@ def publish_audio_chunk_sync(
             ordering_key=feed_id,
             **attrs,
         )
-    return future.result()
+        return future.result()
 
 
 async def publish_audio_chunk(

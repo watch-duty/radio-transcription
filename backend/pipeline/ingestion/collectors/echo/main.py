@@ -149,11 +149,11 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
         # Upload MP3 directly to staging bucket.
         # if_generation_match=0 skips redundant writes but we
         # always proceed to publish (prior invocation may have crashed after upload).
+        date_dir = parts[1]
+        mp3_path = f"echo/{feed['id']}/{date_dir}/{Path(name).name}"
+        staging_uri = f"gs://{STAGING_BUCKET}/{mp3_path}"
+        blob = gcs_client.bucket(STAGING_BUCKET).blob(mp3_path)
         with tracer.start_as_current_span("upload_echo_staged_audio"):
-            date_dir = parts[1]
-            mp3_path = f"echo/{feed['id']}/{date_dir}/{Path(name).name}"
-            staging_uri = f"gs://{STAGING_BUCKET}/{mp3_path}"
-            blob = gcs_client.bucket(STAGING_BUCKET).blob(mp3_path)
             try:
                 blob.upload_from_string(
                     mp3_bytes,
