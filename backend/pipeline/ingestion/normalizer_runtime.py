@@ -72,9 +72,13 @@ class NormalizerRuntime:
     Composition over inheritance — the capture function is passed in, not subclassed.
 
     INVARIANT: ``asyncio.sleep()`` and ``time.sleep()`` must not appear
-    anywhere in this file. All waits use ``_sleep_or_shutdown`` or
-    ``Event.wait(timeout=)`` so every wait point is interruptible by
-    SIGTERM for prompt graceful shutdown.
+    anywhere in this file EXCEPT the single ``asyncio.sleep(0.25)``
+    SSL-teardown idiom in ``_shutdown_sequence`` (HTTP-01 / aiohttp
+    Pitfall 12 — see comment at that site). Every other wait point uses
+    ``_sleep_or_shutdown`` or ``Event.wait(timeout=)`` so it is
+    interruptible by SIGTERM for prompt graceful shutdown. The
+    teardown sleep runs after ``_shutdown`` is already set, so
+    interruptibility is moot at that point.
 
     Args:
         capture_fn: Async generator factory ``(feed, shutdown_event) -> AsyncIterator[CapturedChunk]``.
@@ -315,7 +319,7 @@ class NormalizerRuntime:
     _CGROUP_V1_UNBOUNDED_SENTINEL_THRESHOLD = 2**62
 
     @staticmethod
-    def _resolve_container_memory_bytes() -> int | None:
+    def _resolve_container_memory_bytes() -> int | None:  # noqa: PLR0911
         """
         Return the container memory limit in bytes, or None if unbounded.
 
@@ -325,8 +329,9 @@ class NormalizerRuntime:
              fall back to psutil.virtual_memory(); host-namespaced).
           2. cgroup v1 fallback (/sys/fs/cgroup/memory/memory.limit_in_bytes).
              Values >= 2**62 are the v1 "unbounded" sentinel -> None.
-          3. None on any OSError chain (fs unreadable; caller disables
-             the watchdog).
+          3. None on OSError, malformed/non-integer content, or a
+             non-positive limit (a 0 limit would cause ZeroDivisionError
+             in the watchdog ratio computation).
 
         Caller MUST treat None as "watchdog disabled" and emit a
         WARNING per D-22 -- never fall back to host-namespaced memory.
@@ -339,14 +344,24 @@ class NormalizerRuntime:
         else:
             if raw == "max":
                 return None
-            return int(raw)
+            try:
+                val = int(raw)
+            except ValueError:
+                return None
+            return val if val > 0 else None
         # cgroup v1 fallback (legacy hosts; should not be reachable on COS)
         try:
             raw = NormalizerRuntime._CGROUP_V1_LIMIT_PATH.read_text().strip()
         except OSError:
             return None
-        val = int(raw)
-        if val >= NormalizerRuntime._CGROUP_V1_UNBOUNDED_SENTINEL_THRESHOLD:
+        try:
+            val = int(raw)
+        except ValueError:
+            return None
+        if (
+            val >= NormalizerRuntime._CGROUP_V1_UNBOUNDED_SENTINEL_THRESHOLD
+            or val <= 0
+        ):
             return None
         return val
 
@@ -370,13 +385,13 @@ class NormalizerRuntime:
             return int(
                 NormalizerRuntime._CGROUP_V2_USAGE_PATH.read_text().strip(),
             )
-        except OSError:
+        except (OSError, ValueError):
             pass
         try:
             return int(
                 NormalizerRuntime._CGROUP_V1_USAGE_PATH.read_text().strip(),
             )
-        except OSError:
+        except (OSError, ValueError):
             return None
 
     # -- Leasing ----------------------------------------------------------

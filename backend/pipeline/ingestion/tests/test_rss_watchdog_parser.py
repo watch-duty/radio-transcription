@@ -64,6 +64,33 @@ class TestResolveContainerMemoryLimit(unittest.TestCase):
             result = NormalizerRuntime._resolve_container_memory_bytes()
         self.assertIsNone(result)
 
+    def test_v2_malformed_value_returns_none(self) -> None:
+        """Garbage in memory.max -> None (defensive ValueError catch)."""
+        with mock.patch(
+            "pathlib.Path.read_text",
+            return_value="not-an-integer\n",
+        ):
+            result = NormalizerRuntime._resolve_container_memory_bytes()
+        self.assertIsNone(result)
+
+    def test_v2_zero_limit_returns_none(self) -> None:
+        """A 0 limit would cause ZeroDivisionError in the watchdog ratio."""
+        with mock.patch(
+            "pathlib.Path.read_text",
+            return_value="0\n",
+        ):
+            result = NormalizerRuntime._resolve_container_memory_bytes()
+        self.assertIsNone(result)
+
+    def test_v1_malformed_value_returns_none(self) -> None:
+        """Garbage in memory.limit_in_bytes -> None (defensive ValueError)."""
+        with mock.patch(
+            "pathlib.Path.read_text",
+            side_effect=[OSError("v2 missing"), "garbage\n"],
+        ):
+            result = NormalizerRuntime._resolve_container_memory_bytes()
+        self.assertIsNone(result)
+
 
 class TestResolveContainerMemoryUsage(unittest.TestCase):
     """D-29 unit tests for _resolve_container_memory_usage_bytes."""
@@ -91,6 +118,15 @@ class TestResolveContainerMemoryUsage(unittest.TestCase):
         with mock.patch(
             "pathlib.Path.read_text",
             side_effect=[OSError("v2 missing"), OSError("v1 missing")],
+        ):
+            result = NormalizerRuntime._resolve_container_memory_usage_bytes()
+        self.assertIsNone(result)
+
+    def test_malformed_value_returns_none(self) -> None:
+        """Garbage in memory.current -> None (defensive ValueError catch)."""
+        with mock.patch(
+            "pathlib.Path.read_text",
+            return_value="not-an-integer\n",
         ):
             result = NormalizerRuntime._resolve_container_memory_usage_bytes()
         self.assertIsNone(result)

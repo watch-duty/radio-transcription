@@ -40,7 +40,11 @@ RUN apt-get update && \
 # MALLOC_ARENA_MAX=2 is a belt-and-suspenders fallback (only effective
 # if jemalloc fails to load — under normal operation it is a no-op since
 # jemalloc bypasses glibc malloc).
-RUN ln -sf "$(find /usr/lib -name libjemalloc.so.2 | head -1)" /usr/local/lib/libjemalloc.so.2
+RUN JEMALLOC_PATH="$(find /usr/lib -name libjemalloc.so.2 | head -1)" && \
+    if [ -z "$JEMALLOC_PATH" ]; then \
+        echo "ERROR: libjemalloc.so.2 not found under /usr/lib — package install or path layout may have changed" >&2 && exit 1; \
+    fi && \
+    ln -sf "$JEMALLOC_PATH" /usr/local/lib/libjemalloc.so.2
 ENV LD_PRELOAD=/usr/local/lib/libjemalloc.so.2
 ENV MALLOC_ARENA_MAX=2
 

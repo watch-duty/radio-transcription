@@ -920,6 +920,41 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
         rt._pubsub_client.close.assert_awaited_once()
         rt._gcs_client.close.assert_awaited_once()
 
+    async def test_http_session_closes_after_gcs(self) -> None:
+        """HTTP-01 ordering: aiohttp session closes AFTER _gcs_client.
+
+        PITFALLS.md Pitfall 4 + Pitfall 12: the runtime-owned
+        aiohttp.ClientSession must be closed alongside _gcs_client
+        (after asyncio.wait of feed tasks), and the close must be
+        followed by a 250ms SSL-teardown sleep.
+        """
+        rt = _make_runtime()
+        rt._shutdown = asyncio.Event()
+        rt._thread_stop = mock.MagicMock()
+        rt._heartbeat_thread = None
+        rt._store = mock.AsyncMock()
+        rt._data_pool = mock.AsyncMock()
+        rt._heartbeat_pool = mock.AsyncMock()
+        rt._pubsub_client = mock.AsyncMock()
+        rt._gcs_client = mock.AsyncMock()
+        rt._http_session = mock.AsyncMock(spec=aiohttp.ClientSession)
+
+        call_order: list[str] = []
+        rt._gcs_client.close.side_effect = lambda: call_order.append("gcs")
+        rt._http_session.close.side_effect = lambda: call_order.append(
+            "http_session"
+        )
+
+        with mock.patch(
+            "backend.pipeline.ingestion.normalizer_runtime.close_pool",
+            new_callable=mock.AsyncMock,
+        ):
+            await rt._shutdown_sequence()
+
+        rt._http_session.close.assert_awaited_once()
+        # Strict ordering: gcs first, then http_session (Pitfall 4).
+        self.assertEqual(call_order, ["gcs", "http_session"])
+
     async def test_health_runner_cleanup_runs_before_heartbeat_stop(
         self,
     ) -> None:
