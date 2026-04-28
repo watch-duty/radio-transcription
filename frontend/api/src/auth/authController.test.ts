@@ -4,16 +4,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AuthController } from './authController.js';
 
-const { mockGetToken, mockRefreshAccessToken, mockSetCredentials, mockState } = vi.hoisted(
-  () => ({
+const { mockGetToken, mockRefreshAccessToken, mockSetCredentials, mockState } =
+  vi.hoisted(() => ({
     mockGetToken: vi.fn(),
     mockRefreshAccessToken: vi.fn(),
     mockSetCredentials: vi.fn(),
     mockState: {
       allowedOrigin: 'http://localhost:5173',
     },
-  })
-);
+  }));
 
 vi.mock('google-auth-library', () => {
   const OAuth2Client = vi.fn().mockImplementation(() => {
