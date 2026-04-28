@@ -60,7 +60,7 @@ describe('AuthController', () => {
         'test_refresh_token',
         expect.objectContaining({
           httpOnly: true,
-          sameSite: 'lax',
+          sameSite: 'none',
         })
       );
     });
@@ -140,7 +140,7 @@ describe('AuthController', () => {
         'rotated_refresh_token',
         expect.objectContaining({
           httpOnly: true,
-          sameSite: 'lax',
+          sameSite: 'none',
         })
       );
     });
