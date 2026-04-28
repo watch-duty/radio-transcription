@@ -108,7 +108,7 @@ describe('AuthController', () => {
   });
 
   describe('refresh', () => {
-    it('should successfully return refreshed idToken without token rotation', async () => {
+    it('should successfully return refreshed idToken and set rotated cookie when available', async () => {
       mockRefreshAccessToken.mockResolvedValueOnce({
         credentials: {
           id_token: 'refreshed_id_token',
@@ -134,8 +134,15 @@ describe('AuthController', () => {
         refresh_token: 'test_refresh_token',
       });
 
-      // Existing controller implementation does not currently overwrite/rotate the cookie
-      expect(mockCookie).not.toHaveBeenCalled();
+      // Rotated cookie configuration check
+      expect(mockCookie).toHaveBeenCalledWith(
+        'refresh_token',
+        'rotated_refresh_token',
+        expect.objectContaining({
+          httpOnly: true,
+          sameSite: 'lax',
+        })
+      );
     });
 
     it('should throw 401 if no refresh token exists in session cookies', async () => {
