@@ -35,7 +35,7 @@ interface FeedBackend extends BaseFeedBackend {
   source_feed_id: string;
   external_id: string;
   status: FeedStatus;
-  last_heartbeat?: string;
+  last_heartbeat: string | null;
 }
 
 interface FeedCreateBackend extends BaseFeedBackend {
