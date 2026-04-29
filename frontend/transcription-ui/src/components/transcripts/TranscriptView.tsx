@@ -641,7 +641,7 @@ export function TranscriptView({
             {currentFeed.status && (
               <Chip
                 label={
-                  FEED_STATUS_UI_CONFIG[currentFeed.status]?.display ??
+                  FEED_STATUS_UI_CONFIG[currentFeed.status]?.displayText ??
                   currentFeed.status
                 }
                 variant="outlined"

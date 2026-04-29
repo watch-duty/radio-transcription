@@ -71,7 +71,12 @@ describe('TranscriptView', () => {
     mockAddAlert.mockClear();
     // Default mock for listFeeds to prevent errors on mount
     vi.mocked(listFeeds).mockResolvedValue([
-      { id: 'feed123', name: 'feed123', sourceType: 'bcfy_feeds' as const },
+      {
+        id: 'feed123',
+        name: 'feed123',
+        sourceType: 'bcfy_feeds' as const,
+        status: 'active' as const,
+      },
     ]);
     vi.mocked(getFeed).mockResolvedValue({
       id: 'feed123',
@@ -200,7 +205,12 @@ describe('TranscriptView', () => {
 
   it('loads feeds on mount', async () => {
     const mockFeeds = [
-      { id: 'feed1', name: 'Feed 1', sourceType: 'bcfy_feeds' as const },
+      {
+        id: 'feed1',
+        name: 'Feed 1',
+        sourceType: 'bcfy_feeds' as const,
+        status: 'active' as const,
+      },
     ];
     vi.mocked(listFeeds).mockResolvedValueOnce(mockFeeds);
 
@@ -236,7 +246,12 @@ describe('TranscriptView', () => {
 
   it('refreshes feeds when refresh button is clicked', async () => {
     const mockFeeds = [
-      { id: 'feed1', name: 'Feed 1', sourceType: 'bcfy_feeds' as const },
+      {
+        id: 'feed1',
+        name: 'Feed 1',
+        sourceType: 'bcfy_feeds' as const,
+        status: 'active' as const,
+      },
     ];
     vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
 
@@ -415,6 +430,7 @@ describe('TranscriptView', () => {
         sourceType: 'bcfy_feeds' as const,
         sourceUrl: 'https://partner.broadcastify.com/12345',
         archiveUrl: 'https://www.broadcastify.com/archives/feed/12345',
+        status: 'active' as const,
       },
     ];
     vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
