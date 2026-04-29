@@ -46,12 +46,8 @@ export function getRelativeTimeString(dateString?: string): string {
   const diffMs = now.getTime() - dateMs;
   const diffSeconds = Math.floor(diffMs / 1000);
 
-  if (diffSeconds < 30) {
-    return 'just now';
-  }
-
   if (diffSeconds < 60) {
-    return new RelativeTimeFormat('en').format(-diffSeconds, 'second');
+    return 'just now';
   }
 
   const diffMinutes = Math.floor(diffSeconds / 60);

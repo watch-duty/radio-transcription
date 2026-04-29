@@ -52,9 +52,9 @@ export type ListTranscriptsData = {
 } & ListTranscriptsPage;
 
 const TRANSCRIPTS_POLLING_INTERVAL_MS = 15000; // 15 seconds
-const FEED_POLLING_INTERVAL_MS = 15000; // 15 seconds
 const TRANSCRIPTS_POLLING_INTERVAL_DISPLAY_STRING = `${TRANSCRIPTS_POLLING_INTERVAL_MS / 1000}s`;
 const MAX_TRANSCRIPTS_POLLING_ITERATIONS = 10;
+const FEED_POLLING_INTERVAL_MS = 15000; // 15 seconds
 
 export function TranscriptView({
   addAlert,

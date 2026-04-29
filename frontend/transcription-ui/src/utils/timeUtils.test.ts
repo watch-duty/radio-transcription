@@ -66,21 +66,12 @@ describe('timeUtils', () => {
       expect(getRelativeTimeString('invalid date')).toBe('');
     });
 
-    it('returns "just now" for events within 30 seconds', () => {
+    it('returns "just now" for events under 60 seconds', () => {
       expect(getRelativeTimeString('2026-04-28T18:59:45Z')).toBe('just now');
       expect(getRelativeTimeString('2026-04-28T18:59:31Z')).toBe('just now');
-    });
-
-    it('returns formatted seconds for events between 30 and 59 seconds', () => {
-      expect(getRelativeTimeString('2026-04-28T18:59:30Z')).toBe(
-        '30 seconds ago'
-      );
-      expect(getRelativeTimeString('2026-04-28T18:59:15Z')).toBe(
-        '45 seconds ago'
-      );
-      expect(getRelativeTimeString('2026-04-28T18:59:01Z')).toBe(
-        '59 seconds ago'
-      );
+      expect(getRelativeTimeString('2026-04-28T18:59:30Z')).toBe('just now');
+      expect(getRelativeTimeString('2026-04-28T18:59:15Z')).toBe('just now');
+      expect(getRelativeTimeString('2026-04-28T18:59:01Z')).toBe('just now');
     });
 
     it('returns formatted minutes for events under 60 minutes', () => {
