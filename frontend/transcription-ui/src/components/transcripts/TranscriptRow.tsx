@@ -158,7 +158,7 @@ export function TranscriptRow({
               <ContentCopyIcon fontSize="small" />
             </IconButton>
           </Tooltip>
-          <Tooltip title="Copy link to transmission">
+          <Tooltip title="Copy link to transcript">
             <IconButton
               size="small"
               aria-label="copy deeplink"
