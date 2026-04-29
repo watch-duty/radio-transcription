@@ -133,12 +133,12 @@ export function TranscriptView({
    */
   useEffect(() => {
     const feedTimer = setInterval(() => {
-      // Invalidate the listFeeds query which triggers it to refresh. 
+      // Invalidate the listFeeds query which triggers it to refresh.
       queryClient.invalidateQueries({ queryKey: ['listFeeds', token] });
     }, FEEDS_POLLING_INTERVAL_MS);
 
     return () => clearInterval(feedTimer);
-  }, [token]);
+  }, [token, queryClient]);
 
   const {
     data: listTranscriptsResponse,

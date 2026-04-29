@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import Autocomplete from '@mui/material/Autocomplete';
 import Box from '@mui/material/Box';
@@ -28,11 +28,16 @@ export function FeedSearch({
 }: FeedSearchProps) {
   const [inputValue, setInputValue] = useState('');
 
-  // Synchronize the displayed input text whenever the selection changes externally
-  // (e.g., initial load from a URL query parameter, clicking a deep link, or browser back/forward navigation)
-  useEffect(() => {
+  // Track previous feed ID to adjust local text when selected option changes externally (deep links, URL load).
+  // Comparing IDs avoids triggering updates during background polling (where object reference changes but the feed remains the same).
+  const [prevSelectedId, setPrevSelectedId] = useState<string | undefined>(
+    selectedFeed?.id
+  );
+
+  if (selectedFeed?.id !== prevSelectedId) {
+    setPrevSelectedId(selectedFeed?.id);
     setInputValue(selectedFeed ? selectedFeed.name : '');
-  }, [selectedFeed?.id]); // Use the ID primitive so background data polling updates don't reset input text while typing
+  }
 
   const sortedFeeds = useMemo(() => {
     return [...(feeds ?? [])].sort((a, b) => a.name.localeCompare(b.name));
@@ -42,10 +47,11 @@ export function FeedSearch({
     const search = inputValue.trim().toLowerCase();
     if (!search) return sortedFeeds;
 
-    return sortedFeeds.filter((feed) =>
-      feed.id.toLowerCase().includes(search) ||
-      feed.name.toLowerCase().includes(search) ||
-      (feed.externalId && feed.externalId.toLowerCase().includes(search))
+    return sortedFeeds.filter(
+      (feed) =>
+        feed.id.toLowerCase().includes(search) ||
+        feed.name.toLowerCase().includes(search) ||
+        (feed.externalId && feed.externalId.toLowerCase().includes(search))
     );
   }, [sortedFeeds, inputValue]);
 
@@ -69,7 +75,11 @@ export function FeedSearch({
         // 'reset' is fired internally by MUI whenever state or options update.
         // If 'event' is defined/truthy, this signifies a real user action (dropdown selection).
         // Programmatic updates pass event=null, which we intentionally ignore to avoid overriding active typing.
-        if (reason === 'input' || reason === 'clear' || (reason === 'reset' && event)) {
+        if (
+          reason === 'input' ||
+          reason === 'clear' ||
+          (reason === 'reset' && event)
+        ) {
           setInputValue(nextInputValue);
         }
       }}
