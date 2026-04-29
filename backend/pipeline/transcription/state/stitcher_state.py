@@ -29,8 +29,6 @@ class AudioStitchingStateMachine:
         self, chunk_data: AudioChunkData, ctx: StitcherContext
     ) -> list[StateMachineAction]:
         """Evaluates an incoming chunk against the state machine to produce imperative actions."""
-        if ctx.trace_id is None:
-            ctx.trace_id = chunk_data.trace_id
         # 0. Detect if this is an out-of-order LATE chunk
         is_late_chunk = (
             ctx.expected_next_chunk_start_ms is not None
@@ -131,7 +129,6 @@ class AudioStitchingStateMachine:
             end_audio_offset_ms=end_ms - ctx.buffer_start_time_ms,
             clear_state=True,
             isolated_audio_buffer=[],
-            trace_id=ctx.trace_id,
         )
 
     def _process_late_chunk_independently(

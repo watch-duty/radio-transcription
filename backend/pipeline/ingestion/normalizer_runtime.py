@@ -591,7 +591,6 @@ class NormalizerRuntime:
                         f"expected CapturedChunk"
                     )
                     raise TypeError(msg)  # noqa: TRY301
-
                 tracer = trace.get_tracer(__name__)
                 with tracer.start_as_current_span("process_captured_chunk"):
                     # session_id is owned by the capture function. Fall back

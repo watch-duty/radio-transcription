@@ -33,6 +33,7 @@ class BufferedChunk:
 
     timestamp_ms: int
     gcs_uri: str
+    trace_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,7 @@ class ChunkMetadata:
     session_id: str  # Required for continuous feeds ONLY.
     duration_ms: int
     feed_metadata: FeedMetadata
+    trace_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -85,12 +87,12 @@ class TranscriptionResult:
     transcript: str
     time_range: TimeRange
     transmission_id: str
-    trace_id: str
     start_audio_offset_ms: int
     end_audio_offset_ms: int
     canonical_audio_uri: str
     playback_audio_uri: str
     feed_metadata: FeedMetadata
+    trace_id: str = ""
     missing_prior_context: bool = False
     missing_post_context: bool = False
 
@@ -118,6 +120,7 @@ class TransmissionContext:
     out_of_order_buffer: list[BufferedChunk] = field(default_factory=list)
     feed_metadata: FeedMetadata | None = None
     last_transmission_start_ms: int | None = None
+    trace_id: str = ""
 
 
 @dataclass

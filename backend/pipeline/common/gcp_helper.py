@@ -11,7 +11,7 @@ from google.cloud.pubsub_v1.publisher.exceptions import (
 )
 from opentelemetry import trace
 
-from backend.pipeline.common import logging as pipeline_logging
+from backend.pipeline.common import tracing_utils
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 
 if TYPE_CHECKING:
@@ -133,7 +133,7 @@ async def upload_audio(
     """
     storage = gcs_client.get_storage()
     upload_kwargs: dict[str, Any] = {
-        "metadata": {"trace_id": pipeline_logging.get_current_trace_id()},
+        "metadata": {"trace_id": tracing_utils.get_current_trace_id()},
         "content_type": content_type,
     }
     if if_generation_match is not None:
@@ -232,7 +232,7 @@ def publish_audio_chunk_sync(
             duration_ms=duration_ms,
             session_id=session_id,
             external_id=external_id,
-            trace_id=pipeline_logging.get_current_trace_id(),
+            trace_id=tracing_utils.get_current_trace_id(),
         )
         audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
 
@@ -245,7 +245,6 @@ def publish_audio_chunk_sync(
         if source_type is not None:
             attrs["source_type"] = source_type
 
-    with tracer.start_as_current_span("publish_raw_audio_chunk"):
         future = publisher.publish(
             topic_path,
             audio_chunk_msg.SerializeToString(),
@@ -281,7 +280,7 @@ async def publish_audio_chunk(
             duration_ms=duration_ms,
             session_id=session_id,
             external_id=external_id,
-            trace_id=pipeline_logging.get_current_trace_id(),
+            trace_id=tracing_utils.get_current_trace_id(),
         )
         audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
 
@@ -294,7 +293,6 @@ async def publish_audio_chunk(
         if source_type is not None:
             attrs["source_type"] = source_type
 
-    with tracer.start_as_current_span("publish_raw_audio_chunk"):
         future = publisher.publish(
             topic_path,
             audio_chunk_msg.SerializeToString(),

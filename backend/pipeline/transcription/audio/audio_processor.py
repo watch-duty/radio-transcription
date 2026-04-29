@@ -107,11 +107,7 @@ class AudioProcessor:
             logger.error(err_msg)
             raise FileNotFoundError(err_msg)
 
-        trace_id = blob.metadata.get("trace_id") if blob.metadata else None
-        if not trace_id:
-            import uuid
-
-            trace_id = str(uuid.uuid4())
+        trace_id = blob.metadata.get("trace_id") if blob.metadata else ""
 
         in_mem_file = io.BytesIO()
         blob.download_to_file(in_mem_file)

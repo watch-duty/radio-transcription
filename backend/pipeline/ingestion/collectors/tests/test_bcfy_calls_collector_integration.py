@@ -326,11 +326,7 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             feed, shutdown, "http://api.example.com/"
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
-                self.gcs,
-                chunk.audio_bytes,
-                feed,
-                _TEST_BUCKET,
-                seq,
+                self.gcs, chunk.audio_bytes, feed, _TEST_BUCKET, seq
             )
             await self.store.update_feed_progress(
                 feed["id"],

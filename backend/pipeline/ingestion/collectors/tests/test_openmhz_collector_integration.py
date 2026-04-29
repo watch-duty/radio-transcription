@@ -310,11 +310,7 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             feed, shutdown, "https://api.openmhz.com/"
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
-                self.gcs_client,
-                chunk.audio_bytes,
-                feed,
-                _TEST_BUCKET,
-                seq,
+                self.gcs_client, chunk.audio_bytes, feed, _TEST_BUCKET, seq
             )
             await self.store.update_feed_progress(
                 feed["id"],
@@ -374,11 +370,7 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             feed, shutdown, "https://api.openmhz.com/"
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
-                self.gcs_client,
-                chunk.audio_bytes,
-                feed,
-                _TEST_BUCKET,
-                seq,
+                self.gcs_client, chunk.audio_bytes, feed, _TEST_BUCKET, seq
             )
             await self.store.update_feed_progress(
                 feed["id"],
@@ -419,11 +411,7 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             feed, shutdown, "https://api.openmhz.com/"
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
-                self.gcs_client,
-                chunk.audio_bytes,
-                feed,
-                _TEST_BUCKET,
-                0,
+                self.gcs_client, chunk.audio_bytes, feed, _TEST_BUCKET, 0
             )
             gcs_paths.append(gcs_path)
             shutdown.set()

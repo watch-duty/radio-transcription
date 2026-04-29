@@ -89,6 +89,7 @@ def get_test_stitch_config(**kwargs: Any) -> StitchAudioConfig:
         "max_transmission_duration_ms": 600000,
         "vad_pre_roll_ms": 0,
         "vad_post_roll_ms": 0,
+        "route_to_dlq": False,
     }
     defaults.update(kwargs)
     return StitchAudioConfig(**defaults)  # type: ignore
@@ -423,6 +424,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
             speech_segments=[TimeRange(0, 1000)],
             gcs_uri="gs://test-bucket/path/to/test.flac",
             duration_ms=1000,
+            trace_id="",
         )
         mock_processor_inst.download_audio_and_detect.return_value = chunk_data
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
@@ -495,6 +497,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                     speech_segments=[TimeRange(0, 1000)],
                     gcs_uri=gcs_uri,
                     duration_ms=1000,
+                    trace_id="",
                 )
             if "chunk2" in gcs_uri:
                 return AudioChunkData(
@@ -504,6 +507,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                     speech_segments=[TimeRange(0, 1000)],
                     gcs_uri=gcs_uri,
                     duration_ms=1000,
+                    trace_id="",
                 )
             return AudioChunkData(
                 start_ms=102000,
@@ -512,6 +516,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 speech_segments=[TimeRange(0, 1000)],
                 gcs_uri=gcs_uri,
                 duration_ms=1000,
+                trace_id="",
             )
 
         mock_processor_inst.download_audio_and_detect.side_effect = (
