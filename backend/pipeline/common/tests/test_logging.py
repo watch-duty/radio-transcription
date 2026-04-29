@@ -8,8 +8,8 @@ class TestLogging(TestCase):
     def setUp(self) -> None:
         setup_logging.cache_clear()
 
-    @mock.patch("backend.pipeline.common.logging.trace.set_tracer_provider")
-    @mock.patch("backend.pipeline.common.logging.CloudTraceSpanExporter")
+    @mock.patch("backend.pipeline.common.tracing_utils.set_tracer_provider")
+    @mock.patch("backend.pipeline.common.tracing_utils.CloudTraceSpanExporter")
     @mock.patch("backend.pipeline.common.logging.cloud_logging")
     def test_setup_logging_gcp(
         self, mock_cloud_logging, mock_exporter, mock_set_provider
