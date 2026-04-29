@@ -50,7 +50,6 @@ export type ListTranscriptsData = {
 const TRANSCRIPTS_POLLING_INTERVAL_MS = 15000; // 15 seconds
 const TRANSCRIPTS_POLLING_INTERVAL_DISPLAY_STRING = `${TRANSCRIPTS_POLLING_INTERVAL_MS / 1000}s`;
 const MAX_TRANSCRIPTS_POLLING_ITERATIONS = 10;
-const FEEDS_POLLING_INTERVAL_MS = 15000; // 1 minute
 
 export function TranscriptView({
   addAlert,
@@ -127,18 +126,6 @@ export function TranscriptView({
       });
     }
   }, [feedsError, addAlert]);
-
-  /**
-   * Effect for updating feeds on an interval.
-   */
-  useEffect(() => {
-    const feedTimer = setInterval(() => {
-      // Invalidate the listFeeds query which triggers it to refresh.
-      queryClient.invalidateQueries({ queryKey: ['listFeeds', token] });
-    }, FEEDS_POLLING_INTERVAL_MS);
-
-    return () => clearInterval(feedTimer);
-  }, [token, queryClient]);
 
   const {
     data: listTranscriptsResponse,

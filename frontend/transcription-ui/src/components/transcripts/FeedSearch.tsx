@@ -1,19 +1,14 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 
 import Autocomplete from '@mui/material/Autocomplete';
 import Box from '@mui/material/Box';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
-
-export interface FeedOption {
-  id: string;
-  name: string;
-  externalId?: string;
-}
+import type { Feed } from '@transcription/common';
 
 export interface FeedSearchProps {
-  feeds: FeedOption[];
-  selectedFeed: FeedOption | null;
+  feeds: Feed[];
+  selectedFeed: Feed | null;
   onFeedSelect: (feedId: string) => void;
   isFetching: boolean;
   isLoading: boolean;
@@ -26,19 +21,6 @@ export function FeedSearch({
   isFetching,
   isLoading,
 }: FeedSearchProps) {
-  const [inputValue, setInputValue] = useState('');
-
-  // Track previous feed ID to adjust local text when selected option changes externally (deep links, URL load).
-  // Comparing IDs avoids triggering updates during background polling (where object reference changes but the feed remains the same).
-  const [prevSelectedId, setPrevSelectedId] = useState<string | undefined>(
-    selectedFeed?.id
-  );
-
-  if (selectedFeed?.id !== prevSelectedId) {
-    setPrevSelectedId(selectedFeed?.id);
-    setInputValue(selectedFeed ? selectedFeed.name : '');
-  }
-
   const sortedFeeds = useMemo(() => {
     return [...(feeds ?? [])].sort((a, b) => a.name.localeCompare(b.name));
   }, [feeds]);
@@ -47,50 +29,22 @@ export function FeedSearch({
     <Autocomplete
       disablePortal
       options={sortedFeeds}
-      filterOptions={(options, state) => {
-        const search = state.inputValue.trim().toLowerCase();
-
-        // If displayed input text matches currently selected option label exactly,
-        // user is viewing selection, NOT actively filtering. Return unfiltered candidates.
-        if (selectedFeed && state.inputValue === selectedFeed.name) {
-          return options;
-        }
-
-        if (!search) return options;
-
-        return options.filter(
-          (feed) =>
-            feed.id.toLowerCase().includes(search) ||
-            feed.name.toLowerCase().includes(search) ||
-            (feed.externalId && feed.externalId.toLowerCase().includes(search))
-        );
-      }}
       getOptionLabel={(option) => option.name}
       size="small"
       sx={{ width: '20%' }}
       value={selectedFeed}
-      onChange={(_, option) => {
-        const nextId = option ? option.id : '';
-        onFeedSelect(nextId);
-        setInputValue(option ? option.name : '');
-      }}
-      inputValue={inputValue}
-      onInputChange={(event, nextInputValue, reason) => {
-        // Safeguard against background polling updates:
-        // 'reset' is fired internally by MUI whenever state or options update.
-        // If 'event' is defined/truthy, this signifies a real user action (dropdown selection).
-        // Programmatic updates pass event=null, which we intentionally ignore to avoid overriding active typing.
-        if (
-          reason === 'input' ||
-          reason === 'clear' ||
-          (reason === 'reset' && event)
-        ) {
-          setInputValue(nextInputValue);
-        }
-      }}
+      onChange={(_, option) => option && onFeedSelect(option.id)}
+      // Explicitly disallowing custom input - the user should always pick from registered feeds
       freeSolo={false}
       loading={isFetching}
       disabled={isLoading}
+      filterOptions={(options, { inputValue }) =>
+        options.filter(
+          (option) =>
+            option.name.toLowerCase().includes(inputValue.toLowerCase()) ||
+            option.id.toLowerCase().includes(inputValue.toLowerCase())
+        )
+      }
       renderInput={(params) => (
         <TextField {...params} label="Select a registered feed" />
       )}
