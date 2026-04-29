@@ -945,15 +945,25 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
             "http_session"
         )
 
-        with mock.patch(
-            "backend.pipeline.ingestion.normalizer_runtime.close_pool",
-            new_callable=mock.AsyncMock,
+        with (
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.close_pool",
+                new_callable=mock.AsyncMock,
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.normalizer_runtime.asyncio.sleep",
+                new_callable=mock.AsyncMock,
+            ) as mock_sleep,
         ):
             await rt._shutdown_sequence()
 
         rt._http_session.close.assert_awaited_once()
         # Strict ordering: gcs first, then http_session (Pitfall 4).
         self.assertEqual(call_order, ["gcs", "http_session"])
+        # Pitfall 12: 250ms sleep AFTER session close to let SSL transports
+        # flush. Without this, "ResourceWarning: unclosed transport" would
+        # spam the shutdown logs.
+        mock_sleep.assert_awaited_once_with(0.25)
 
     async def test_health_runner_cleanup_runs_before_heartbeat_stop(
         self,

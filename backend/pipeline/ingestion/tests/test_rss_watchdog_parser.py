@@ -91,6 +91,24 @@ class TestResolveContainerMemoryLimit(unittest.TestCase):
             result = NormalizerRuntime._resolve_container_memory_bytes()
         self.assertIsNone(result)
 
+    def test_v1_zero_limit_returns_none(self) -> None:
+        """Cgroup v1 zero limit would cause ZeroDivisionError in watchdog."""
+        with mock.patch(
+            "pathlib.Path.read_text",
+            side_effect=[OSError("v2 missing"), "0\n"],
+        ):
+            result = NormalizerRuntime._resolve_container_memory_bytes()
+        self.assertIsNone(result)
+
+    def test_v1_negative_limit_returns_none(self) -> None:
+        """Cgroup v1 negative value (corrupted read) -> None."""
+        with mock.patch(
+            "pathlib.Path.read_text",
+            side_effect=[OSError("v2 missing"), "-1\n"],
+        ):
+            result = NormalizerRuntime._resolve_container_memory_bytes()
+        self.assertIsNone(result)
+
 
 class TestResolveContainerMemoryUsage(unittest.TestCase):
     """D-29 unit tests for _resolve_container_memory_usage_bytes."""
