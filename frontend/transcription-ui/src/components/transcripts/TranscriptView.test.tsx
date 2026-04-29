@@ -810,7 +810,7 @@ describe('TranscriptView', () => {
 
       await waitFor(() => {
         expect(screen.getByText('active')).toBeTruthy();
-        expect(screen.getByText('Last Updated: 5 mins ago')).toBeTruthy();
+        expect(screen.getByText('Last Updated: 5 minutes ago')).toBeTruthy();
       });
     } finally {
       vi.useRealTimers();

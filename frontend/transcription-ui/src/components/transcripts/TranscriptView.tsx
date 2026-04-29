@@ -22,7 +22,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
-import type { Transcript } from '@transcription/common';
+import { type FeedStatus, type Transcript } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { getFeed } from '../../service/getFeed';
@@ -31,6 +31,7 @@ import { listRules } from '../../service/listRules';
 import { listTranscripts } from '../../service/listTranscripts';
 import {
   getInitialTimestamp,
+  getRelativeTimeString,
   roundUpToNearestMinute,
 } from '../../utils/timeUtils';
 import AudioDisplay from '../audio/AudioDisplay';
@@ -55,42 +56,18 @@ export type ListTranscriptsData = {
 const TRANSCRIPTS_POLLING_INTERVAL_MS = 15000; // 15 seconds
 const FEED_POLLING_INTERVAL_MS = 15000; // 15 seconds
 const TRANSCRIPTS_POLLING_INTERVAL_DISPLAY_STRING = `${TRANSCRIPTS_POLLING_INTERVAL_MS / 1000}s`;
-
 const MAX_TRANSCRIPTS_POLLING_ITERATIONS = 10;
 
-function getRelativeTimeString(dateString?: string): string {
-  if (!dateString) return '';
-  const date = new Date(dateString);
-  const dateMs = date.getTime();
-  if (Number.isNaN(dateMs)) {
-    return '';
-  }
-  const now = new Date();
-  const diffMs = Math.max(0, now.getTime() - dateMs);
-  const diffMins = Math.floor(diffMs / (60 * 1000));
-
-  if (diffMins < 1) {
-    return 'just now';
-  }
-  if (diffMins === 1) {
-    return '1 min ago';
-  }
-  if (diffMins < 60) {
-    return `${diffMins} mins ago`;
-  }
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours === 1) {
-    return '1 hour ago';
-  }
-  if (diffHours < 24) {
-    return `${diffHours} hours ago`;
-  }
-  const diffDays = Math.floor(diffHours / 24);
-  if (diffDays === 1) {
-    return 'yesterday';
-  }
-  return `${diffDays} days ago`;
-}
+const FEED_STATUS_UI_CONFIG: Record<
+  FeedStatus,
+  { displayText: string; color: 'success' | 'warning' | 'error' | 'default' }
+> = {
+  active: { displayText: 'active', color: 'success' },
+  failing: { displayText: 'failing', color: 'warning' },
+  quarantined: { displayText: 'inactive', color: 'error' },
+  unclaimed: { displayText: 'pending', color: 'default' },
+  deactivated: { displayText: 'inactive', color: 'default' },
+};
 
 export function TranscriptView({
   addAlert,
@@ -663,17 +640,14 @@ export function TranscriptView({
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: 1 }}>
             {currentFeed.status && (
               <Chip
-                label={currentFeed.status}
+                label={
+                  FEED_STATUS_UI_CONFIG[currentFeed.status]?.display ??
+                  currentFeed.status
+                }
                 variant="outlined"
                 size="small"
                 color={
-                  currentFeed.status === 'active'
-                    ? 'success'
-                    : currentFeed.status === 'failing'
-                      ? 'warning'
-                      : currentFeed.status === 'quarantined'
-                        ? 'error'
-                        : 'default'
+                  FEED_STATUS_UI_CONFIG[currentFeed.status]?.color ?? 'default'
                 }
               />
             )}
