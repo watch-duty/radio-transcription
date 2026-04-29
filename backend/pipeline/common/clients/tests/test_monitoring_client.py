@@ -351,12 +351,15 @@ class TestMonitoringClientDoubleGauge(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(dict(real_series.metric.labels), {"k": "v"})
 
         # Calling positionally without naming `resource_labels` must fail
-        # (signature should mark it kw-only via `*` separator).
+        # at runtime (signature marks it kw-only via `*` separator). The
+        # static checker also catches this — those diagnostics are
+        # expected and intentionally suppressed so the test exercises the
+        # runtime guard, not the static one.
         with self.assertRaises(TypeError):
-            await client.write_time_series_double(
+            await client.write_time_series_double(  # ty: ignore[missing-argument]
                 "custom.googleapis.com/x",
                 {},
                 1.0,
-                "global",
+                "global",  # ty: ignore[too-many-positional-arguments]
                 {"project_id": "p"},
             )

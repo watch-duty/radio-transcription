@@ -62,7 +62,9 @@ class TestSuccessPath:
 
         assert result == ("ok", 200)
         mock_publish.assert_awaited_once()
-        kwargs = mock_publish.await_args.kwargs
+        # await_args is `_Call | None`; assert_awaited_once above
+        # guarantees non-None at runtime.
+        kwargs = mock_publish.await_args.kwargs  # ty: ignore[unresolved-attribute]
         assert kwargs["metric_type"] == main.METRIC_TYPE
         assert kwargs["value"] == 42.5
         assert kwargs["resource_labels"] == {"project_id": "test-project"}
@@ -94,7 +96,7 @@ class TestSuccessPath:
 
         assert result == ("ok", 200)
         mock_publish.assert_awaited_once()
-        assert mock_publish.await_args.kwargs["value"] == 0.0
+        assert mock_publish.await_args.kwargs["value"] == 0.0  # ty: ignore[unresolved-attribute]
 
 
 class TestFailurePaths:
@@ -237,7 +239,8 @@ class TestFailurePaths:
         ):
             main.oldest_feed_publisher(mock.MagicMock())
 
-        kwargs = mock_connect.await_args.kwargs
+        # await_args is `_Call | None`; the call above guarantees non-None.
+        kwargs = mock_connect.await_args.kwargs  # ty: ignore[unresolved-attribute]
         assert kwargs["statement_cache_size"] == 0
         assert kwargs["timeout"] == main.CONNECT_TIMEOUT_SEC
         assert kwargs["timeout"] == 10.0
