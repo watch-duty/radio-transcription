@@ -28,10 +28,11 @@ export function FeedSearch({
 }: FeedSearchProps) {
   const [inputValue, setInputValue] = useState('');
 
-  // Sync search field text with programmatically chosen selectors (URL or deep links)
+  // Synchronize the displayed input text whenever the selection changes externally
+  // (e.g., initial load from a URL query parameter, clicking a deep link, or browser back/forward navigation)
   useEffect(() => {
     setInputValue(selectedFeed ? selectedFeed.name : '');
-  }, [selectedFeed?.id]);
+  }, [selectedFeed?.id]); // Use the ID primitive so background data polling updates don't reset input text while typing
 
   const sortedFeeds = useMemo(() => {
     return [...(feeds ?? [])].sort((a, b) => a.name.localeCompare(b.name));
@@ -64,7 +65,10 @@ export function FeedSearch({
       }}
       inputValue={inputValue}
       onInputChange={(event, nextInputValue, reason) => {
-        // Distinguish between user interaction vs internal programmatic re-render syncs
+        // Safeguard against background polling updates:
+        // 'reset' is fired internally by MUI whenever state or options update.
+        // If 'event' is defined/truthy, this signifies a real user action (dropdown selection).
+        // Programmatic updates pass event=null, which we intentionally ignore to avoid overriding active typing.
         if (reason === 'input' || reason === 'clear' || (reason === 'reset' && event)) {
           setInputValue(nextInputValue);
         }
