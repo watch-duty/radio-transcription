@@ -91,7 +91,7 @@ export function TranscriptView({
   const {
     data: feeds,
     error: feedsError,
-    isLoading: feedsLoading, // First fetch
+    isFetching: feedsFetching,
   } = useQuery({
     queryKey: ['listFeeds', token],
     queryFn: () => listFeeds(token!),
@@ -506,7 +506,7 @@ export function TranscriptView({
           feeds={feeds ?? []}
           selectedFeed={selectedFeed}
           onFeedSelect={setFeedId}
-          isLoading={feedsLoading}
+          isFetching={feedsFetching}
         />
 
         <DateTimePicker
@@ -545,7 +545,7 @@ export function TranscriptView({
               setSearchedTimestamp(timestamp);
             }
           }}
-          disabled={feedsLoading || isTranscriptsInitialLoading || !feedId}
+          disabled={feedsFetching || isTranscriptsInitialLoading || !feedId}
           sx={{ minWidth: '100px', height: '40px' }}
         >
           {isTranscriptsInitialLoading ? (

@@ -41,7 +41,7 @@ describe('FeedSearch', () => {
         feeds={mockFeeds}
         selectedFeed={null}
         onFeedSelect={mockOnFeedSelect}
-        isLoading={false}
+        isFetching={false}
       />
     );
 
@@ -54,7 +54,7 @@ describe('FeedSearch', () => {
         feeds={mockFeeds}
         selectedFeed={mockFeeds[1]} // Alpha Feed
         onFeedSelect={mockOnFeedSelect}
-        isLoading={false}
+        isFetching={false}
       />
     );
 
@@ -70,7 +70,7 @@ describe('FeedSearch', () => {
         feeds={mockFeeds}
         selectedFeed={null}
         onFeedSelect={mockOnFeedSelect}
-        isLoading={false}
+        isFetching={false}
       />
     );
 
@@ -92,7 +92,7 @@ describe('FeedSearch', () => {
         feeds={null as unknown as Feed[]}
         selectedFeed={null}
         onFeedSelect={mockOnFeedSelect}
-        isLoading={false}
+        isFetching={false}
       />
     );
 
@@ -104,13 +104,13 @@ describe('FeedSearch', () => {
     expect(options).toHaveLength(0);
   });
 
-  it('disables the input when isLoading is true', () => {
+  it('disables the input when isFetching is true', () => {
     render(
       <FeedSearch
         feeds={mockFeeds}
         selectedFeed={null}
         onFeedSelect={mockOnFeedSelect}
-        isLoading={true}
+        isFetching={true}
       />
     );
 
@@ -126,7 +126,7 @@ describe('FeedSearch', () => {
         feeds={mockFeeds}
         selectedFeed={null}
         onFeedSelect={mockOnFeedSelect}
-        isLoading={false}
+        isFetching={false}
       />
     );
 
@@ -146,7 +146,7 @@ describe('FeedSearch', () => {
         feeds={mockFeeds}
         selectedFeed={null}
         onFeedSelect={mockOnFeedSelect}
-        isLoading={false}
+        isFetching={false}
       />
     );
 
@@ -167,7 +167,7 @@ describe('FeedSearch', () => {
         feeds={mockFeeds}
         selectedFeed={null}
         onFeedSelect={mockOnFeedSelect}
-        isLoading={false}
+        isFetching={false}
       />
     );
 
