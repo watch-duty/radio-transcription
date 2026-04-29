@@ -14,6 +14,17 @@ ${env_file_content}
     # for k=2 worker density (each worker may hold hundreds of long-lived
     # connections). Applied via `sysctl --system` in runcmd.
     net.ipv4.ip_local_port_range = 10000 65535
+
+    # TCP keepalive tuning (HANDOFF-01 from radio-transcription PR #359
+    # worker hardening). Detect half-open connections (NAT idle drops,
+    # network blips) before asyncpg/aiohttp issues a query against a dead
+    # socket. 60 + 3 * 10 = 90s detection budget aligns with the worker's
+    # 90s graceful shutdown (SHUTDOWN-01 in PR #359). Default kernel values
+    # are 7200s/75s/9 (~2h before declared dead) — far too lenient for our
+    # workload. Applied via `sysctl --system` in runcmd.
+    net.ipv4.tcp_keepalive_time = 60
+    net.ipv4.tcp_keepalive_intvl = 10
+    net.ipv4.tcp_keepalive_probes = 3
 %{ if enable_autohealing }
 - path: /etc/nginx-aggregator/healthz.conf
   permissions: "0644"
@@ -126,8 +137,16 @@ ${env_file_content}
         --env-file /etc/container-env/${service_name}.env \
         -e WORKER_INDEX=%i \
         ${container_image}'
-    ExecStop=/usr/bin/docker stop -t 30 ${service_name}-%i
-    TimeoutStopSec=45
+    # HANDOFF-01 from radio-transcription PR #359: stop-timeout must
+    # accommodate the worker's 90s graceful_shutdown_timeout_sec
+    # (SHUTDOWN-01) plus ~10s of release_feeds_batch + asyncpg pool close
+    # + aiohttp session close. Docker's default `-t 10` would SIGKILL the
+    # worker mid-`release_feeds_batch` UPDATE, leaving leases stuck for
+    # 60s until the abandoned-lease pg_cron sweep recovers them.
+    # TimeoutStopSec must exceed the docker -t value with margin so
+    # systemd doesn't kill the docker stop process before it completes.
+    ExecStop=/usr/bin/docker stop -t 100 ${service_name}-%i
+    TimeoutStopSec=120
 
     [Install]
     WantedBy=multi-user.target
