@@ -1213,7 +1213,7 @@ class TestCaptureBcfyCallsReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
 
         results = []
         async for chunk in bcfy_calls_collector.capture_bcfy_calls(
-            cast("LeasedFeed", feed),
+            feed,
             shutdown,
             "https://api.example/",
             _default_resources(),

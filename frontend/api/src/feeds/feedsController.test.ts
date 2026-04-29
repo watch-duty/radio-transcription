@@ -124,6 +124,59 @@ describe('FeedsController', () => {
     });
   });
 
+  describe('resetFeed', () => {
+    it('should return converted feed on success', async () => {
+      mockRequest.mockResolvedValueOnce({ data: mockBackendFeed });
+
+      const controller = new FeedsController();
+      const result = await controller.resetFeed('feed_123', vi.fn());
+
+      expect(result).toEqual(expectedFrontendFeed);
+      expect(mockRequest).toHaveBeenCalledWith({
+        url: 'http://feeds-api.example.com/feed_123/reset',
+        method: 'POST',
+      });
+    });
+
+    it('should call notFound on 404', async () => {
+      const mockNotFound = vi.fn();
+      const error = new Error('Not Found') as Error & {
+        response?: { status: number };
+      };
+      error.response = { status: 404 };
+      mockRequest.mockRejectedValueOnce(error);
+
+      const controller = new FeedsController();
+      await controller.resetFeed('feed_123', mockNotFound);
+
+      expect(mockNotFound).toHaveBeenCalledWith(404, {
+        message: 'Feed feed_123 not found',
+      });
+    });
+
+    it('should throw on non-404 API error', async () => {
+      const error = new Error('Server Error') as Error & {
+        response?: { status: number; data?: unknown };
+      };
+      error.response = { status: 500, data: 'Internal Server Error' };
+      mockRequest.mockRejectedValueOnce(error);
+
+      const controller = new FeedsController();
+      await expect(controller.resetFeed('feed_123', vi.fn())).rejects.toThrow(
+        'Backend API error 500'
+      );
+    });
+
+    it('should throw on unexpected error', async () => {
+      mockRequest.mockRejectedValueOnce(new Error('Network Error'));
+
+      const controller = new FeedsController();
+      await expect(controller.resetFeed('feed_123', vi.fn())).rejects.toThrow(
+        'Error resetting feed feed_123'
+      );
+    });
+  });
+
   describe('deleteFeed', () => {
     it('should return 204 on success', async () => {
       mockRequest.mockResolvedValueOnce({ status: 204 });

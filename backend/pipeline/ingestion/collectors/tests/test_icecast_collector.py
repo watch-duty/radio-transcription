@@ -686,7 +686,7 @@ class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
         feed = _make_feed("test", source_feed_id="sid")
         shutdown = asyncio.Event()
         gen = icecast_collector.capture_icecast_stream(
-            cast("LeasedFeed", feed),
+            feed,
             shutdown,
             "http://example.com/",
             resources=_default_resources(),

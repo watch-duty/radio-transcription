@@ -5,7 +5,6 @@ It is separated from the CLI entry point to improve testability and modularity.
 """
 
 import json
-import logging
 
 import apache_beam as beam
 from apache_beam.io.gcp.pubsub import (
@@ -21,8 +20,10 @@ from apache_beam.options.pipeline_options import (
 
 from backend.pipeline.transcription.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
+    DEFAULT_BYPASS_STALE_TIMEOUT_MS,
+    DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_MAX_TRANSMISSION_DURATION_MS,
-    DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
+    DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_SIGNIFICANT_GAP_MS,
     DEFAULT_STALE_TIMEOUT_MS,
     DEFAULT_VAD_POST_ROLL_MS,
@@ -34,6 +35,7 @@ from backend.pipeline.transcription.common.datatypes import (
     StitchAudioConfig,
     TranscribeAudioConfig,
 )
+from backend.pipeline.transcription.common.logging import get_logger
 from backend.pipeline.transcription.options import TranscriptionOptions
 from backend.pipeline.transcription.transforms.stateful import (
     OrderedBypassFn,
@@ -45,7 +47,9 @@ from backend.pipeline.transcription.transforms.stateless import (
     SerializeFn,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(
+    __name__, {"system": "transcription", "component": "orchestration"}
+)
 
 
 def format_dlq_message(element: dict) -> PubsubMessage:
@@ -70,7 +74,8 @@ def get_pipeline(
 
     # Validate logical pipeline timeout configuration rules
     ooo_timeout = (
-        options.out_of_order_timeout_ms or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS
+        options.continuous_out_of_order_timeout_ms
+        or DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS
     )
     stale_timeout = options.stale_timeout_ms or DEFAULT_STALE_TIMEOUT_MS
 
@@ -124,7 +129,7 @@ def get_pipeline(
             significant_gap_ms=options.significant_gap_ms
             or DEFAULT_SIGNIFICANT_GAP_MS,
             stale_timeout_ms=options.stale_timeout_ms
-            or DEFAULT_STALE_TIMEOUT_MS,
+            or DEFAULT_BYPASS_STALE_TIMEOUT_MS,
             max_transmission_duration_ms=options.max_transmission_duration_ms
             or DEFAULT_MAX_TRANSMISSION_DURATION_MS,
             vad_pre_roll_ms=options.vad_pre_roll_ms or DEFAULT_VAD_PRE_ROLL_MS,
@@ -137,8 +142,8 @@ def get_pipeline(
         )
 
         order_config = OrderRestorerConfig(
-            out_of_order_timeout_ms=options.out_of_order_timeout_ms
-            or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
+            out_of_order_timeout_ms=options.segmented_out_of_order_timeout_ms
+            or DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS,
         )
 
         stitching_results = parsed[
@@ -149,7 +154,6 @@ def get_pipeline(
                 stitch_config=stitching_config,
             )
         ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
-
         stitching_main = stitching_results.main
         dlq_list.append(stitching_results[DEAD_LETTER_QUEUE_TAG])
     else:
@@ -159,8 +163,8 @@ def get_pipeline(
         ] | "OrderedStitchAudio" >> beam.ParDo(
             OrderedStitchAudioFn(
                 order_config=OrderRestorerConfig(
-                    out_of_order_timeout_ms=options.out_of_order_timeout_ms
-                    or DEFAULT_OUT_OF_ORDER_TIMEOUT_MS,
+                    out_of_order_timeout_ms=options.continuous_out_of_order_timeout_ms
+                    or DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS,
                 ),
                 stitch_config=download_config,
             )

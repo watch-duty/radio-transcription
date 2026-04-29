@@ -6,6 +6,7 @@ import Box from '@mui/material/Box';
 import Snackbar from '@mui/material/Snackbar';
 
 import AppContainer from './components/AppContainer';
+import Login from './components/Login';
 import FeedsView from './components/feeds/FeedsView';
 import RulesView from './components/rules/RulesView';
 import TranscriptView from './components/transcripts/TranscriptView';
@@ -56,7 +57,7 @@ function App() {
   }, []);
 
   if (!token) {
-    return <AppContainer>Please login to continue.</AppContainer>;
+    return <Login />;
   }
 
   // Define the application routes below.
@@ -101,6 +102,7 @@ function App() {
             </Suspense>
           }
         />
+        <Route path="/login" element={<Login />} />
       </Routes>
     </AppContainer>
   );

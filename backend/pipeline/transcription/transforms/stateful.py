@@ -45,6 +45,7 @@ from backend.pipeline.transcription.common.datatypes import (
     TransmissionContext,
     UpdateStateAction,
 )
+from backend.pipeline.transcription.common.logging import get_logger
 from backend.pipeline.transcription.common.utils import generate_transmission_id
 from backend.pipeline.transcription.resources import (
     SHARED_RESOURCE_HANDLE,
@@ -59,9 +60,8 @@ from backend.pipeline.transcription.state.stitcher_state import (
     AudioStitchingStateMachine,
 )
 
-logger = logging.getLogger(__name__)
-logger = logging.LoggerAdapter(
-    logger, {"system": "transcription", "component": "ordered-stitcher"}
+logger = get_logger(
+    __name__, {"system": "transcription", "component": "ordered-stitcher"}
 )
 
 
@@ -70,7 +70,7 @@ def _get_task_logger(
 ) -> logging.LoggerAdapter:
     """Creates a contextual LoggerAdapter for tracing items through the pipeline."""
     return logging.LoggerAdapter(
-        logging.getLogger(__name__),
+        get_logger(__name__),
         {
             "system": "transcription",
             "component": component,
@@ -173,13 +173,13 @@ def process_ordering(
     )
 
     if was_late:
-        task_logger.info(f"[Order] Late chunk: {metadata.gcs_uri}")
+        task_logger.debug(f"[Order] Late chunk: {metadata.gcs_uri}")
     if was_buffered:
-        task_logger.info(
+        task_logger.debug(
             f"[Order] Buffered chunk from future: {metadata.gcs_uri}"
         )
     if elements_to_emit:
-        task_logger.info(f"[Order] Releasing {len(elements_to_emit)} chunks")
+        task_logger.debug(f"[Order] Releasing {len(elements_to_emit)} chunks")
 
     # Update jitter buffer state
     curr_context = replace(
@@ -299,7 +299,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         task_logger = _get_task_logger(
             feed_id, curr_context.session_id, "transcription-stitcher"
         )
-        task_logger.info(f"[Process] Processing chunk {metadata.gcs_uri}")
+        task_logger.debug(f"[Process] Processing chunk {metadata.gcs_uri}")
 
         if curr_context.feed_metadata is None:
             curr_context = replace(
@@ -361,9 +361,14 @@ class OrderedStitchAudioFn(beam.DoFn):
             curr_ctx.contributing_audio_uris
         )
 
-        audio_buffer = action.isolated_audio_buffer or list(
-            transmission_buffer.read()
-        )
+        if not action.clear_state:
+            # Late chunk processing: only use isolated buffer
+            audio_buffer = action.isolated_audio_buffer
+        else:
+            # Normal or stale flush: fall back to main buffer if isolated is empty
+            audio_buffer = action.isolated_audio_buffer or list(
+                transmission_buffer.read()
+            )
         if audio_buffer:
             # Create a deterministic UUID using our shared helper so that Beam retries produce the exact same ID
             transmission_id = generate_transmission_id(
@@ -453,13 +458,13 @@ class OrderedStitchAudioFn(beam.DoFn):
         for chunk in elements_to_emit:
             try:
                 # 1. Download audio!
-                task_logger.info(
+                task_logger.debug(
                     f"[Download] Downloading audio for {chunk.gcs_uri}"
                 )
                 chunk_data = self.audio_processor.download_audio_and_detect(
                     chunk.gcs_uri, chunk.timestamp_ms
                 )
-                task_logger.info(
+                task_logger.debug(
                     f"[Download] Downloaded audio for {chunk.gcs_uri}"
                 )
 
@@ -766,8 +771,8 @@ class OrderedStitchAudioFn(beam.DoFn):
 @beam.typehints.with_input_types(tuple[str, ChunkMetadata])
 @beam.typehints.with_output_types(tuple[str, FlushRequest])
 class OrderedBypassFn(beam.DoFn):
-    """A stateful Beam DoFn that handles chronological ordering and downloading,
-    but bypasses the stitching state machine, yielding FlushRequests immediately.
+    """A stateful Beam DoFn that handles chronological ordering by buffering for a fixed time window,
+    bypassing the stitching state machine.
     """
 
     TRANSMISSION_CONTEXT_SPEC = ReadModifyWriteStateSpec(
@@ -776,7 +781,7 @@ class OrderedBypassFn(beam.DoFn):
     TRANSMISSION_CONTEXT_STATE = beam.DoFn.StateParam(TRANSMISSION_CONTEXT_SPEC)
 
     OUT_OF_ORDER_TIMER_SPEC = TimerSpec(
-        "out_of_order_timer", beam.TimeDomain.WATERMARK
+        "out_of_order_timer", beam.TimeDomain.REAL_TIME
     )
     OUT_OF_ORDER_TIMER = beam.DoFn.TimerParam(OUT_OF_ORDER_TIMER_SPEC)
 
@@ -809,31 +814,69 @@ class OrderedBypassFn(beam.DoFn):
             Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
         ]
     ]:
-        """Processes incoming chunks, orders them, and yields FlushRequests immediately."""
-        feed_id, _metadata = element
+        """Processes incoming chunks, buffers them, and sets a timer if needed."""
+        _feed_id, metadata = element
         curr_context = (
             transmission_context_state.read() or TransmissionContext()
         )
         if curr_context.feed_metadata is None:
             curr_context = replace(
-                curr_context, feed_metadata=_metadata.feed_metadata
+                curr_context, feed_metadata=metadata.feed_metadata
             )
 
-        # Handle session change and ordering via helper function
-        elements_to_emit, curr_context, _session_changed = process_ordering(
-            element,
-            timestamp,
-            curr_context,
-            out_of_order_timer,
-            self.order_config,
+        current_ts_ms = int(float(timestamp) * MS_PER_SECOND)
+
+        # Append to buffer
+        buffer_elements = curr_context.out_of_order_buffer or []
+        buffer_elements.append(
+            BufferedChunk(timestamp_ms=current_ts_ms, gcs_uri=metadata.gcs_uri)
         )
 
-        # Always write updated context!
+        # Set timer if this is the first element
+        if len(buffer_elements) == 1:
+            out_of_order_timeout_s = (
+                self.order_config.out_of_order_timeout_ms / 1000.0
+            )
+            out_of_order_timer.set(
+                Timestamp(time.time() + out_of_order_timeout_s)
+            )
+            curr_context = replace(curr_context, order_timer_active=True)
+
+        curr_context = replace(
+            curr_context, out_of_order_buffer=buffer_elements
+        )
         transmission_context_state.write(curr_context)
 
-        if elements_to_emit:
+        yield from []
+
+    @on_timer(OUT_OF_ORDER_TIMER_SPEC)
+    def handle_buffer_timeout(
+        self,
+        feed_id: str = beam.DoFn.KeyParam,  # type: ignore
+        transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
+    ) -> Iterator[
+        tuple[str, FlushRequest]
+        | beam.pvalue.TaggedOutput[
+            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
+        ]
+    ]:
+        """Handles the buffer timeout by sorting and releasing all chunks."""
+        curr_context = (
+            transmission_context_state.read() or TransmissionContext()
+        )
+        curr_context = replace(curr_context, order_timer_active=False)
+
+        buffer_elements = curr_context.out_of_order_buffer
+        if buffer_elements:
+            sorted_elements = sorted(
+                buffer_elements, key=lambda x: x.timestamp_ms
+            )
+
+            curr_context = replace(curr_context, out_of_order_buffer=[])
+            transmission_context_state.write(curr_context)
+
             yield from self._download_and_yield(
-                elements_to_emit, feed_id, curr_context
+                sorted_elements, feed_id, curr_context
             )
 
     def _download_and_yield(
@@ -891,62 +934,6 @@ class OrderedBypassFn(beam.DoFn):
                     DEAD_LETTER_QUEUE_TAG,
                     {"error": str(e), "feed_id": feed_id},
                 )
-
-    @on_timer(OUT_OF_ORDER_TIMER_SPEC)
-    def handle_gap_timeout(
-        self,
-        feed_id: str = beam.DoFn.KeyParam,  # type: ignore
-        transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
-        out_of_order_timer: RuntimeTimer = OUT_OF_ORDER_TIMER,  # type: ignore
-    ) -> Iterator[
-        tuple[str, FlushRequest]
-        | beam.pvalue.TaggedOutput[
-            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
-        ]
-    ]:
-        """Handles the gap timeout by advancing the expected sequence."""
-        curr_context = (
-            transmission_context_state.read() or TransmissionContext()
-        )
-        curr_context = replace(curr_context, order_timer_active=False)
-        transmission_context_state.write(curr_context)
-
-        buffer_elements = curr_context.out_of_order_buffer
-        if buffer_elements:
-            sorted_elements = sorted(buffer_elements)
-            new_expected = sorted_elements[0].timestamp_ms
-
-            logging.getLogger(__name__).warning(
-                f"[{feed_id}] Gap timeout! Advancing expected from {curr_context.expected_next_chunk_start_ms} to {new_expected}."
-            )
-
-            curr_context = replace(
-                curr_context,
-                expected_next_chunk_start_ms=new_expected,
-                missing_prior_context=True,
-            )
-            transmission_context_state.write(curr_context)
-
-            sequence_buffer = SequenceBuffer(self.order_config)
-
-            new_expected_next_ts, new_buffer_elements, elements_to_emit = (
-                sequence_buffer.drain_ready_elements(
-                    expected_next_ts=new_expected,
-                    buffer_elements=buffer_elements,
-                    epsilon_ms=DEFAULT_FLOAT_TOLERANCE_MS,
-                )
-            )
-
-            curr_context = replace(
-                curr_context,
-                expected_next_chunk_start_ms=new_expected_next_ts,
-                out_of_order_buffer=new_buffer_elements,
-            )
-            transmission_context_state.write(curr_context)
-
-            yield from self._download_and_yield(
-                elements_to_emit, feed_id, curr_context
-            )
 
 
 SEQUENTIAL_BARRIER_SPEC = ReadModifyWriteStateSpec(
@@ -1141,12 +1128,30 @@ class TranscribeAudioFn(beam.DoFn):
             if transcribed:
                 self.transcription_count.inc()
                 yield transcribed
-        except Exception as e:
+        except (ValueError, Exception) as e:
             if not self.config.route_to_dlq:
                 raise
             self.dlq_count.inc()
-            logger.exception("Error transcribing buffer for feed %s", feed_id)
-            msg = str(e)
+
+            is_validation = isinstance(e, ValueError)
+            error_type = (
+                "validation_failure" if is_validation else "unexpected_error"
+            )
+
+            if is_validation:
+                logger.warning(
+                    f"Validation failure during transcription for feed {feed_id}: {e}"
+                )
+            else:
+                logger.exception(
+                    "Unexpected error transcribing buffer for feed %s", feed_id
+                )
+
             yield beam.pvalue.TaggedOutput(
-                DEAD_LETTER_QUEUE_TAG, {"error": msg, "feed_id": feed_id}
+                DEAD_LETTER_QUEUE_TAG,
+                {
+                    "error": str(e),
+                    "feed_id": feed_id,
+                    "error_type": error_type,
+                },
             )

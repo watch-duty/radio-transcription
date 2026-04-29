@@ -1,7 +1,6 @@
 """Stateless acoustic manipulation and Voice Activity Detection (VAD) utilities."""
 
 import io
-import logging
 import subprocess
 import tempfile
 import urllib.parse
@@ -37,11 +36,11 @@ from backend.pipeline.transcription.common.constants import (
 )
 from backend.pipeline.transcription.common.datatypes import AudioChunkData
 from backend.pipeline.transcription.common.enums import VadType
+from backend.pipeline.transcription.common.logging import get_logger
 from backend.pipeline.transcription.resources import SharedResources
 
-logger = logging.getLogger(__name__)
-logger = logging.LoggerAdapter(
-    logger, {"system": "transcription", "component": "audio-processor"}
+logger = get_logger(
+    __name__, {"system": "transcription", "component": "audio-processor"}
 )
 
 

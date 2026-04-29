@@ -9,7 +9,9 @@ import aiohttp
 from google.cloud.pubsub_v1.publisher.exceptions import (
     PublishToPausedOrderingKeyException,
 )
+from opentelemetry import trace
 
+from backend.pipeline.common import logging as pipeline_logging
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 
 if TYPE_CHECKING:
@@ -20,6 +22,7 @@ if TYPE_CHECKING:
     from backend.pipeline.storage.feed_store import LeasedFeed
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 # -----------------------------------------------------------------------------
 # Private helper functions
@@ -72,30 +75,31 @@ async def upload_staged_audio(
         ValueError: If encoded metadata size exceeds GCS metadata limits.
 
     """
-    timestamp = datetime.datetime.now(tz=datetime.UTC).strftime(
-        "%Y%m%dT%H%M%SZ",
-    )
-    # Token-qualified paths give each lease holder a unique namespace.
-    # GCS ifGenerationMatch is per-object OCC — it cannot enforce "reject
-    # if token < max_seen."  Putting the token in the path sidesteps this:
-    # different lease holders write to different paths, so a zombie can
-    # never overwrite the current holder's objects.
-    if fencing_token is not None:
-        object_name = (
-            f"{feed['source_type']}/{feed['id']}/"
-            f"token-{fencing_token}/{timestamp}_{chunk_seq}.{extension}"
+    with tracer.start_as_current_span("upload_staged_audio"):
+        timestamp = datetime.datetime.now(tz=datetime.UTC).strftime(
+            "%Y%m%dT%H%M%SZ",
         )
-    else:
-        object_name = f"{feed['source_type']}/{feed['id']}/{timestamp}_{chunk_seq}.{extension}"
+        # Token-qualified paths give each lease holder a unique namespace.
+        # GCS ifGenerationMatch is per-object OCC — it cannot enforce "reject
+        # if token < max_seen."  Putting the token in the path sidesteps this:
+        # different lease holders write to different paths, so a zombie can
+        # never overwrite the current holder's objects.
+        if fencing_token is not None:
+            object_name = (
+                f"{feed['source_type']}/{feed['id']}/"
+                f"token-{fencing_token}/{timestamp}_{chunk_seq}.{extension}"
+            )
+        else:
+            object_name = f"{feed['source_type']}/{feed['id']}/{timestamp}_{chunk_seq}.{extension}"
 
-    return await upload_audio(
-        gcs_client,
-        audio_chunk,
-        bucket,
-        object_name,
-        if_generation_match=0 if fencing_token is not None else None,
-        content_type=content_type,
-    )
+        return await upload_audio(
+            gcs_client,
+            audio_chunk,
+            bucket,
+            object_name,
+            if_generation_match=0 if fencing_token is not None else None,
+            content_type=content_type,
+        )
 
 
 async def upload_audio(
@@ -129,7 +133,7 @@ async def upload_audio(
     """
     storage = gcs_client.get_storage()
     upload_kwargs: dict[str, Any] = {
-        "metadata": None,
+        "metadata": {"trace_id": pipeline_logging.get_current_trace_id()},
         "content_type": content_type,
     }
     if if_generation_match is not None:
@@ -239,13 +243,14 @@ def publish_audio_chunk_sync(
     if source_type is not None:
         attrs["source_type"] = source_type
 
-    future = publisher.publish(
-        topic_path,
-        audio_chunk_msg.SerializeToString(),
-        ordering_key=feed_id,
-        **attrs,
-    )
-    return future.result()
+    with tracer.start_as_current_span("publish_raw_audio_chunk"):
+        future = publisher.publish(
+            topic_path,
+            audio_chunk_msg.SerializeToString(),
+            ordering_key=feed_id,
+            **attrs,
+        )
+        return future.result()
 
 
 async def publish_audio_chunk(
@@ -285,29 +290,30 @@ async def publish_audio_chunk(
     if source_type is not None:
         attrs["source_type"] = source_type
 
-    future = publisher.publish(
-        topic_path,
-        audio_chunk_msg.SerializeToString(),
-        ordering_key=feed_id,
-        **attrs,
-    )
-    try:
-        return await asyncio.wrap_future(future)
-    except PublishToPausedOrderingKeyException:
-        # Clear the local Publisher pause flag so a post-un-quarantine
-        # re-lease on the same worker can publish. The exception still
-        # propagates to _process_feed's catch-all, which will quarantine
-        # the feed after threshold strikes.
-        # Defensive try/except: resume_publish is documented to raise
-        # RuntimeError (publisher stopped) or ValueError (unseen key).
-        # Neither should occur here in normal operation, but a crash on
-        # the failure-cleanup path itself would be worse than swallowing.
+    with tracer.start_as_current_span("publish_raw_audio_chunk"):
+        future = publisher.publish(
+            topic_path,
+            audio_chunk_msg.SerializeToString(),
+            ordering_key=feed_id,
+            **attrs,
+        )
         try:
-            publisher.resume_publish(topic_path, ordering_key=feed_id)
-        except (RuntimeError, ValueError):
-            logger.exception(
-                "resume_publish failed for feed=%s topic=%s",
-                feed_id,
-                topic_path,
-            )
-        raise
+            return await asyncio.wrap_future(future)
+        except PublishToPausedOrderingKeyException:
+            # Clear the local Publisher pause flag so a post-un-quarantine
+            # re-lease on the same worker can publish. The exception still
+            # propagates to _process_feed's catch-all, which will quarantine
+            # the feed after threshold strikes.
+            # Defensive try/except: resume_publish is documented to raise
+            # RuntimeError (publisher stopped) or ValueError (unseen key).
+            # Neither should occur here in normal operation, but a crash on
+            # the failure-cleanup path itself would be worse than swallowing.
+            try:
+                publisher.resume_publish(topic_path, ordering_key=feed_id)
+            except (RuntimeError, ValueError):
+                logger.exception(
+                    "resume_publish failed for feed=%s topic=%s",
+                    feed_id,
+                    topic_path,
+                )
+            raise
