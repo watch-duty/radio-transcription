@@ -6,7 +6,7 @@ from fastapi import status
 from fastapi.testclient import TestClient
 
 from backend.pipeline.common.auth import verify_oidc_token
-from backend.pipeline.storage.feed_store import SourceType
+from backend.pipeline.storage.feed_store import FeedStatus, SourceType
 from backend.services.feeds.main import app
 from backend.services.feeds.models import Feed
 
@@ -44,6 +44,8 @@ class TestFeedsAPI(unittest.TestCase):
             source_type=SourceType.BCFY_FEEDS,
             source_feed_id="123",
             external_id="ext_123",
+            status=FeedStatus.ACTIVE,
+            last_heartbeat=None,
         )
         self.mock_service.create_feed.return_value = mock_feed
 
@@ -64,7 +66,7 @@ class TestFeedsAPI(unittest.TestCase):
         }
         response = self.client.post("/v1/feeds", json=payload)
         self.assertEqual(
-            response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY
+            response.status_code, status.HTTP_422_UNPROCESSABLE_CONTENT
         )
 
     def test_get_feed_success(self) -> None:
@@ -76,6 +78,8 @@ class TestFeedsAPI(unittest.TestCase):
             source_type=SourceType.BCFY_FEEDS,
             source_feed_id="123",
             external_id="ext_123",
+            status=FeedStatus.ACTIVE,
+            last_heartbeat=None,
         )
         self.mock_service.get_feed.return_value = mock_feed
 
@@ -125,6 +129,8 @@ class TestFeedsAPI(unittest.TestCase):
             source_type=SourceType.BCFY_FEEDS,
             source_feed_id="123",
             external_id="ext_123",
+            status=FeedStatus.ACTIVE,
+            last_heartbeat=None,
         )
         self.mock_service.reset_feed.return_value = mock_feed
 

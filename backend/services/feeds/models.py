@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import datetime  # noqa: TC003
 import uuid  # noqa: TC003
 
 from pydantic import BaseModel, ConfigDict
 
-from backend.pipeline.storage.feed_store import SourceType  # noqa: TC001
+from backend.pipeline.storage.feed_store import (  # noqa: TC001
+    FeedStatus,
+    SourceType,
+)
 
 
 class FeedBase(BaseModel):
@@ -26,5 +30,7 @@ class Feed(FeedBase):
     id: uuid.UUID
     source_feed_id: str
     external_id: str
+    status: FeedStatus
+    last_heartbeat: datetime.datetime | None
 
     model_config = ConfigDict(from_attributes=True)

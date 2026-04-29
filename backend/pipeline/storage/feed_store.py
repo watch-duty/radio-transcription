@@ -61,6 +61,24 @@ class SourceType(enum.StrEnum):
     OPENMHZ = "openmhz"
 
 
+class FeedStatus(enum.StrEnum):
+    """Lifecycle status of a feed, stored in the ``feeds.status`` column."""
+
+    # Eligible for leasing by any worker.
+    UNCLAIMED = "unclaimed"
+    # Currently leased by a worker.
+    ACTIVE = "active"
+    # Lease held but feed is experiencing errors; still eligible for
+    # leasing and processing.
+    FAILING = "failing"
+    # Ineligible for leasing due to repeated failures; requires manual
+    # triage and reset.
+    QUARANTINED = "quarantined"
+    # Permanently ineligible for leasing; used for feeds that are deleted
+    # or retired but kept for historical/triage purposes.
+    DEACTIVATED = "deactivated"
+
+
 class LeasedFeed(TypedDict):
     """Feed details returned after a successful lease acquisition."""
 
@@ -89,7 +107,7 @@ class Feed(TypedDict):
     id: uuid.UUID
     name: str
     source_type: SourceType
-    status: str
+    status: FeedStatus
     failure_count: int
     worker_id: uuid.UUID | None
     last_heartbeat: datetime.datetime | None
@@ -152,12 +170,17 @@ class FeedStore:
         except ValueError as e:
             msg = f"Unknown source type {row['source_type']!r} for feed {row['id']}"
             raise ValueError(msg) from e
+        try:
+            status = FeedStatus(row["status"])
+        except ValueError as e:
+            msg = f"Unknown status {row['status']!r} for feed {row['id']}"
+            raise ValueError(msg) from e
 
         return Feed(
             id=row["id"],
             name=row["name"],
             source_type=source_type,
-            status=row["status"],
+            status=status,
             failure_count=row["failure_count"],
             worker_id=row["worker_id"],
             last_heartbeat=row["last_heartbeat"],
