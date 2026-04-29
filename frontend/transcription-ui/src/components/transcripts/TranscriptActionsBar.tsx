@@ -29,11 +29,11 @@ const FEED_STATUS_UI_CONFIG: Record<
   FeedStatus,
   { displayText: string; severity: 'success' | 'warning' | 'error' | 'info' }
 > = {
-  active: { displayText: 'active', severity: 'success' },
-  failing: { displayText: 'failing', severity: 'warning' },
-  quarantined: { displayText: 'inactive', severity: 'error' },
-  unclaimed: { displayText: 'pending', severity: 'info' },
-  deactivated: { displayText: 'inactive', severity: 'info' },
+  active: { displayText: 'Active', severity: 'success' },
+  failing: { displayText: 'Failing', severity: 'warning' },
+  quarantined: { displayText: 'Inactive', severity: 'error' },
+  unclaimed: { displayText: 'Pending', severity: 'info' },
+  deactivated: { displayText: 'Inactive', severity: 'info' },
 };
 
 export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
@@ -47,6 +47,8 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   pollingIntervalDisplay,
   onRefresh,
 }) => {
+  const statusConfig = status ? FEED_STATUS_UI_CONFIG[status] : undefined;
+
   return (
     <Box
       sx={{
@@ -92,23 +94,16 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
           {status && (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Alert
-                severity={FEED_STATUS_UI_CONFIG[status]?.severity ?? 'info'}
+                severity={statusConfig?.severity ?? 'info'}
                 variant="outlined"
                 sx={{
                   py: 0,
                   px: 1,
                   display: 'flex',
                   alignItems: 'center',
-                  '& .MuiAlert-message': {
-                    padding: '2px 0',
-                  },
-                  '& .MuiAlert-icon': {
-                    fontSize: '18px',
-                    marginRight: '4px',
-                  },
                 }}
               >
-                {FEED_STATUS_UI_CONFIG[status]?.displayText ?? status}
+                {statusConfig?.displayText ?? status}
               </Alert>
               {lastHeartbeat && (
                 <Typography
@@ -116,7 +111,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
                   color="text.secondary"
                   sx={{ whiteSpace: 'nowrap' }}
                 >
-                  Last Updated: {getRelativeTimeString(lastHeartbeat)}
+                  Last updated: {getRelativeTimeString(lastHeartbeat)}
                 </Typography>
               )}
             </Box>

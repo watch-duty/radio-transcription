@@ -121,8 +121,8 @@ describe('TranscriptActionsBar', () => {
         />
       );
 
-      expect(screen.getByText('active')).toBeTruthy();
-      expect(screen.getByText('Last Updated: 5 minutes ago')).toBeTruthy();
+      expect(screen.getByText('Active')).toBeTruthy();
+      expect(screen.getByText('Last updated: 5 minutes ago')).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }

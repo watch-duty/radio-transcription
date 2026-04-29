@@ -4,6 +4,7 @@ import en from 'relative-time-format/locale/en';
 export const MAX_WINDOW_DURATION_MS = 30 * 60 * 1000; // 30 minutes
 
 RelativeTimeFormat.addLocale(en);
+const rtf = new RelativeTimeFormat('en');
 
 export function getInitialTimestamp(
   searchParams: URLSearchParams
@@ -52,14 +53,14 @@ export function getRelativeTimeString(dateString?: string): string {
 
   const diffMinutes = Math.floor(diffSeconds / 60);
   if (diffMinutes < 60) {
-    return new RelativeTimeFormat('en').format(-diffMinutes, 'minute');
+    return rtf.format(-diffMinutes, 'minute');
   }
 
   const diffHours = Math.floor(diffMinutes / 60);
   if (diffHours < 24) {
-    return new RelativeTimeFormat('en').format(-diffHours, 'hour');
+    return rtf.format(-diffHours, 'hour');
   }
 
   const diffDays = Math.floor(diffHours / 24);
-  return new RelativeTimeFormat('en').format(-diffDays, 'day');
+  return rtf.format(-diffDays, 'day');
 }
