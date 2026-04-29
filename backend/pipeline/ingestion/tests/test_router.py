@@ -5,12 +5,22 @@ import unittest
 import uuid
 from unittest import mock
 
+import aiohttp
+
+from backend.pipeline.ingestion.models import CaptureResources
 from backend.pipeline.ingestion.router import (
     _COLLECTORS,
     route_capturer,
     supported_source_types,
 )
 from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
+
+
+def _default_resources() -> CaptureResources:
+    """No-op CaptureResources for unit tests."""
+    return CaptureResources(
+        http_session=mock.AsyncMock(spec=aiohttp.ClientSession),
+    )
 
 
 def _make_feed(source_type: SourceType) -> LeasedFeed:
@@ -38,14 +48,17 @@ class TestRouteCapturerRegistered(unittest.TestCase):
 
                 feed = _make_feed(source_type)
                 shutdown_event = mock.MagicMock(spec=asyncio.Event)
+                resources = _default_resources()
 
                 with mock.patch.dict(
                     "backend.pipeline.ingestion.router._COLLECTORS",
                     {source_type: (mock_fn, url_base)},
                 ):
-                    result = route_capturer(feed, shutdown_event)
+                    result = route_capturer(feed, shutdown_event, resources)
 
-                mock_fn.assert_called_once_with(feed, shutdown_event, url_base)
+                mock_fn.assert_called_once_with(
+                    feed, shutdown_event, url_base, resources
+                )
                 self.assertIs(result, sentinel)
 
 
@@ -55,6 +68,7 @@ class TestRouteCapturerUnsupported(unittest.TestCase):
     def test_raises_value_error_for_unregistered_source_type(self) -> None:
         feed = _make_feed(SourceType.BCFY_CALLS)
         shutdown_event = mock.MagicMock(spec=asyncio.Event)
+        resources = _default_resources()
 
         with mock.patch.dict(
             "backend.pipeline.ingestion.router._COLLECTORS",
@@ -62,7 +76,7 @@ class TestRouteCapturerUnsupported(unittest.TestCase):
             clear=True,
         ):
             with self.assertRaises(ValueError) as ctx:
-                route_capturer(feed, shutdown_event)
+                route_capturer(feed, shutdown_event, resources)
 
         self.assertIn("bcfy_calls", str(ctx.exception))
 

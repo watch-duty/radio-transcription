@@ -9,43 +9,6 @@ if TYPE_CHECKING:
 
     from backend.pipeline.storage.feed_store import SourceType
 
-LEASE_FEED_SQL = """\
-WITH available_feed AS (
-    SELECT id
-    FROM feeds
-    WHERE (
-        status = 'unclaimed'::feed_status
-        OR (status = 'failing'::feed_status AND (retry_after IS NULL OR retry_after <= NOW()))
-        OR (status = 'active'::feed_status
-            AND last_heartbeat < NOW() - INTERVAL '60 seconds')
-    )
-    AND ($2::text[] IS NULL OR source_type = ANY($2::text[]))
-    ORDER BY (status = 'unclaimed'::feed_status) DESC,
-             retry_after ASC NULLS FIRST,
-             last_heartbeat ASC NULLS FIRST
-    LIMIT 1
-    FOR UPDATE SKIP LOCKED
-),
-leased AS (
-    UPDATE feeds
-    SET worker_id = $1,
-        status = 'active'::feed_status,
-        retry_after = NULL,
-        last_heartbeat = NOW(),
-        fencing_token = fencing_token + 1
-    FROM available_feed
-    WHERE feeds.id = available_feed.id
-    RETURNING feeds.id, feeds.name, feeds.source_type,
-              feeds.last_processed_filename, feeds.last_bookmark_time,
-              feeds.fencing_token
-)
-SELECT leased.id, leased.name, leased.source_type,
-       leased.last_processed_filename, leased.last_bookmark_time,
-       leased.fencing_token, fpi.source_feed_id, fpi.external_id
-FROM leased
-JOIN feed_properties fpi ON fpi.feed_id = leased.id
-"""
-
 UPDATE_PROGRESS_SQL = """\
 UPDATE feeds
 SET last_processed_filename = $1,

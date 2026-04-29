@@ -52,7 +52,10 @@ class TestLocalIcecastCollector(unittest.IsolatedAsyncioTestCase):
         """Writes captured bytes to disk and calls capture_icecast_stream once."""
 
         async def _fake_capture(
-            _feed: dict[str, Any], _shutdown_event: Any, _url_base: str
+            _feed: dict[str, Any],
+            _shutdown_event: Any,
+            _url_base: str,
+            _resources: Any,
         ):
             yield CapturedChunk(
                 audio_bytes=b"first-bytes",
@@ -93,7 +96,7 @@ class TestLocalIcecastCollector(unittest.IsolatedAsyncioTestCase):
 
             # Ensure capture function was called with expected feed metadata.
             capture_mock.assert_called_once()
-            feed_arg, shutdown_event_arg, url_base_arg = (
+            feed_arg, shutdown_event_arg, url_base_arg, _resources_arg = (
                 capture_mock.call_args.args
             )
             self.assertEqual(feed_arg["id"], fixed_feed_id)
@@ -127,7 +130,10 @@ class TestLocalIcecastCollector(unittest.IsolatedAsyncioTestCase):
         """Falls back to current working directory when output dir env var is unset."""
 
         async def _fake_capture(
-            _feed: dict[str, Any], _shutdown_event: Any, _url_base: str
+            _feed: dict[str, Any],
+            _shutdown_event: Any,
+            _url_base: str,
+            _resources: Any,
         ):
             yield CapturedChunk(
                 audio_bytes=b"cwd-bytes",

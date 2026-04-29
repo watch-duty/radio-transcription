@@ -3,6 +3,7 @@ import concurrent.futures
 import datetime
 import logging
 import os
+import pathlib
 import signal
 import threading
 import time
@@ -22,7 +23,7 @@ from backend.pipeline.ingestion import (
     quarantine_telemetry,
 )
 from backend.pipeline.ingestion.health_server import HealthState
-from backend.pipeline.ingestion.models import CapturedChunk
+from backend.pipeline.ingestion.models import CapturedChunk, CaptureResources
 from backend.pipeline.ingestion.retry import (
     LeaseExpiredError,
     retry_with_lease_check,
@@ -42,9 +43,14 @@ from backend.pipeline.storage.feed_store import (
 )
 
 FeedID = uuid.UUID
-# 2-arg interface: route_capturer binds url_base internally.
-# See CollectorFn in models.py for the 3-arg raw collector signature.
-CaptureFn = Callable[[LeasedFeed, asyncio.Event], AsyncIterator[CapturedChunk]]
+# 3-arg interface: route_capturer binds url_base internally and forwards
+# the runtime-owned CaptureResources (currently just http_session) to the
+# underlying 4-arg CollectorFn.
+# See CollectorFn in models.py for the 4-arg raw collector signature.
+CaptureFn = Callable[
+    [LeasedFeed, asyncio.Event, CaptureResources],
+    AsyncIterator[CapturedChunk],
+]
 logger = logging.getLogger(__name__)
 
 
@@ -67,9 +73,13 @@ class NormalizerRuntime:
     Composition over inheritance — the capture function is passed in, not subclassed.
 
     INVARIANT: ``asyncio.sleep()`` and ``time.sleep()`` must not appear
-    anywhere in this file. All waits use ``_sleep_or_shutdown`` or
-    ``Event.wait(timeout=)`` so every wait point is interruptible by
-    SIGTERM for prompt graceful shutdown.
+    anywhere in this file EXCEPT the single ``asyncio.sleep(0.25)``
+    SSL-teardown idiom in ``_shutdown_sequence`` (HTTP-01 / aiohttp
+    Pitfall 12 — see comment at that site). Every other wait point uses
+    ``_sleep_or_shutdown`` or ``Event.wait(timeout=)`` so it is
+    interruptible by SIGTERM for prompt graceful shutdown. The
+    teardown sleep runs after ``_shutdown`` is already set, so
+    interruptibility is moot at that point.
 
     Args:
         capture_fn: Async generator factory ``(feed, shutdown_event) -> AsyncIterator[CapturedChunk]``.
@@ -116,6 +126,18 @@ class NormalizerRuntime:
         self._heartbeat_thread: threading.Thread | None = None
         self._store: FeedStore = None  # type: ignore # set in _main()
         self._heartbeat_store: FeedStore = None  # type: ignore # set in _main()
+        # aiohttp ClientSession is constructed in _main() because it
+        # requires a running event loop. Lifecycle: session is closed in
+        # _shutdown_sequence after _gcs_client.close() with a 250ms
+        # SSL-teardown sleep (Pitfall 12).
+        self._http_session: aiohttp.ClientSession = None  # type: ignore # set in _main()
+        # _paused_for_memory: threading.Event (NOT bare bool) — read by the
+        # asyncio leasing loop, set/cleared by the watchdog OS thread. See
+        # PITFALLS.md Pitfall 20 — bool atomicity is a CPython implementation
+        # detail; threading.Event is a contract.
+        self._paused_for_memory = threading.Event()
+        self._rss_watchdog_thread: threading.Thread | None = None
+        self._capture_resources: CaptureResources = None  # type: ignore # set in _main()
         # Size the aiohttp connection pool to match the feed concurrency so
         # GCS uploads are never queued waiting for a free connection slot.
         # Without this, the default limit of 100 means ~150 uploads always
@@ -204,17 +226,68 @@ class NormalizerRuntime:
         )
         self._heartbeat_thread.start()
 
+        # WATCHDOG-01: cgroup-aware self-RSS daemon thread (Phase 4).
+        # Resolved limit drives whether the thread starts at all (D-22):
+        # if cgroup limit is "max" or v1 sentinel, _resolve_* returns None
+        # and we must NOT start the thread (the leasing loop's
+        # _paused_for_memory.is_set() check trivially returns False forever
+        # — acceptable, since the watchdog cannot do its job without a
+        # limit). Joined in _shutdown_sequence immediately after the
+        # heartbeat thread join and BEFORE feed-task cancellation
+        # (PITFALLS Pitfall 1).
+        watchdog_limit = self._resolve_container_memory_bytes()
+        if watchdog_limit is None:
+            logger.warning(
+                "RSS watchdog disabled — no cgroup memory limit detected",
+            )
+        else:
+            self._rss_watchdog_thread = threading.Thread(
+                target=self._rss_watchdog_loop,
+                args=(watchdog_limit,),
+                daemon=True,
+                name="rss-watchdog",
+            )
+            self._rss_watchdog_thread.start()
+
         quarantine_telemetry.configure(settings.google_cloud_project)
 
-        # Start /healthz HTTP server. Runs on the same event loop as the
-        # leasing/heartbeat coroutines — this is load-bearing: if the loop is
-        # wedged, the handler stops responding and GCP autohealing takes over.
-        self._health_runner = await health_server.start(
-            settings,
-            self._health_state,
-        )
-
+        # try/finally wraps session creation, capture_resources, and
+        # health_server.start so an exception in any of those triggers
+        # _shutdown_sequence — closes the aiohttp session and joins
+        # heartbeat/watchdog threads cleanly (each guarded by None/is_alive
+        # checks so partial init is safe).
         try:
+            # HTTP-01: runtime-owned aiohttp.ClientSession. Constructed
+            # inside _main() because the connector requires a running event
+            # loop. TCPConnector kwargs per research SUMMARY.md
+            # (limit_per_host=64 absorbs activation bursts;
+            # ttl_dns_cache=300 survives cold-start herd; keepalive_timeout=75
+            # is > 60s poll cadence). NO enable_cleanup_closed — ignored on
+            # Python 3.13.1+ (aiohttp 3.13.5 docs). Session is closed in
+            # _shutdown_sequence AFTER _gcs_client.close(), followed by
+            # await asyncio.sleep(0.25) for SSL teardown (Pitfall 12).
+            self._http_session = aiohttp.ClientSession(
+                connector=aiohttp.TCPConnector(
+                    limit=0,
+                    limit_per_host=64,
+                    ttl_dns_cache=300,
+                    keepalive_timeout=75,
+                ),
+                timeout=aiohttp.ClientTimeout(total=30, connect=10),
+            )
+            self._capture_resources = CaptureResources(
+                http_session=self._http_session,
+            )
+
+            # Start /healthz HTTP server. Runs on the same event loop as the
+            # leasing/heartbeat coroutines — this is load-bearing: if the
+            # loop is wedged, the handler stops responding and GCP
+            # autohealing takes over.
+            self._health_runner = await health_server.start(
+                settings,
+                self._health_state,
+            )
+
             await self._leasing_loop()
         finally:
             await self._shutdown_sequence()
@@ -238,9 +311,99 @@ class NormalizerRuntime:
             return False
         return True
 
+    # cgroup memory paths -- frozen at class level so the path objects
+    # are constructed once at import time, not per call. Cached as
+    # pathlib.Path so each poll is just `.read_text()` + `int()`.
+    _CGROUP_V2_LIMIT_PATH = pathlib.Path("/sys/fs/cgroup/memory.max")
+    _CGROUP_V2_USAGE_PATH = pathlib.Path("/sys/fs/cgroup/memory.current")
+    _CGROUP_V1_LIMIT_PATH = pathlib.Path(
+        "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+    )
+    _CGROUP_V1_USAGE_PATH = pathlib.Path(
+        "/sys/fs/cgroup/memory/memory.usage_in_bytes",
+    )
+    # cgroup v1 "unbounded" sentinel (~ 2**63). PITFALLS.md Pitfall 2.
+    _CGROUP_V1_UNBOUNDED_SENTINEL_THRESHOLD = 2**62
+
+    @staticmethod
+    def _resolve_container_memory_bytes() -> int | None:  # noqa: PLR0911
+        """
+        Return the container memory limit in bytes, or None if unbounded.
+
+        Priority order (D-01 / D-04):
+          1. cgroup v2 unified hierarchy (/sys/fs/cgroup/memory.max).
+             Literal "max" -> None (PITFALLS.md Pitfall 2 -- DO NOT
+             fall back to psutil.virtual_memory(); host-namespaced).
+          2. cgroup v1 fallback (/sys/fs/cgroup/memory/memory.limit_in_bytes).
+             Values >= 2**62 are the v1 "unbounded" sentinel -> None.
+          3. None on OSError, malformed/non-integer content, or a
+             non-positive limit (a 0 limit would cause ZeroDivisionError
+             in the watchdog ratio computation).
+
+        Caller MUST treat None as "watchdog disabled" and emit a
+        WARNING per D-22 -- never fall back to host-namespaced memory.
+        """
+        # cgroup v2 (unified hierarchy; expected on COS / GKE / Cloud Run)
+        try:
+            raw = NormalizerRuntime._CGROUP_V2_LIMIT_PATH.read_text().strip()
+        except OSError:
+            pass
+        else:
+            if raw == "max":
+                return None
+            try:
+                val = int(raw)
+            except ValueError:
+                return None
+            return val if val > 0 else None
+        # cgroup v1 fallback (legacy hosts; should not be reachable on COS)
+        try:
+            raw = NormalizerRuntime._CGROUP_V1_LIMIT_PATH.read_text().strip()
+        except OSError:
+            return None
+        try:
+            val = int(raw)
+        except ValueError:
+            return None
+        if (
+            val >= NormalizerRuntime._CGROUP_V1_UNBOUNDED_SENTINEL_THRESHOLD
+            or val <= 0
+        ):
+            return None
+        return val
+
+    @staticmethod
+    def _resolve_container_memory_usage_bytes() -> int | None:
+        """
+        Return current container memory usage in bytes, or None on read error.
+
+        Tries cgroup v2 (/sys/fs/cgroup/memory.current) first, falls back
+        to cgroup v1 (/sys/fs/cgroup/memory/memory.usage_in_bytes). Per
+        D-04, the "max"/sentinel handling lives in
+        _resolve_container_memory_bytes -- this helper only sees numeric
+        values once the limit phase has decided the watchdog should run.
+
+        Returns None if BOTH paths raise OSError. The caller (the
+        watchdog body in Plan 04-02) defensively pauses on None per
+        CONTEXT.md "Specifics": "if read_text raises OSError mid-run,
+        set _paused_for_memory defensively and emit a single ERROR log".
+        """
+        try:
+            return int(
+                NormalizerRuntime._CGROUP_V2_USAGE_PATH.read_text().strip(),
+            )
+        except (OSError, ValueError):
+            pass
+        try:
+            return int(
+                NormalizerRuntime._CGROUP_V1_USAGE_PATH.read_text().strip(),
+            )
+        except (OSError, ValueError):
+            return None
+
     # -- Leasing ----------------------------------------------------------
 
-    async def _leasing_loop(self) -> None:
+    async def _leasing_loop(self) -> None:  # noqa: PLR0912
         """
         Continuously lease feeds in batches and spawn processing tasks.
 
@@ -256,7 +419,27 @@ class NormalizerRuntime:
         running at 249 for ~14s is negligible.
         """
         while True:
+            # Memory back-pressure (WATCHDOG-01 / D-26..D-28): if RSS
+            # crossed the pause threshold, don't claim more feeds. Existing
+            # leases continue running (held leases are renewed by the
+            # heartbeat — pause means "stop claiming MORE", not "abandon
+            # current ones"). Use _sleep_or_shutdown so SIGTERM still
+            # interrupts the pause — PITFALLS.md Pitfall 5 ("never bare
+            # asyncio.sleep").
+            #
+            # Reap completed tasks BEFORE the pause check so a completed task
+            # that raised an exception has its error retrieved promptly even
+            # while the watchdog is paused — otherwise asyncio emits "Task
+            # exception was never retrieved" warnings and tasks linger in
+            # _feed_tasks until pause clears.
             self._reap_completed_tasks()
+
+            if self._paused_for_memory.is_set():
+                if await self._sleep_or_shutdown(
+                    self._normalizer_settings.rss_watchdog_poll_interval_sec,
+                ):
+                    return
+                continue
 
             # try/except: a transient DB error (connection reset, brief
             # AlloyDB maintenance) must not kill a worker with 200+ healthy
@@ -583,6 +766,7 @@ class NormalizerRuntime:
             async for captured_chunk in self._capture_fn(
                 feed,
                 self._shutdown,
+                self._capture_resources,
             ):
                 if not isinstance(captured_chunk, CapturedChunk):
                     msg = (
@@ -865,6 +1049,136 @@ class NormalizerRuntime:
             # sleep_time clamps to 0 — fires immediately to catch up.
             next_tick += interval
 
+    def _rss_watchdog_loop(self, limit_bytes: int) -> None:  # noqa: PLR0912
+        """
+        OS daemon thread: poll cgroup RSS, gate _paused_for_memory, trip _shutdown.
+
+        Mirrors the heartbeat-loop pattern (no asyncio primitives — this is
+        an OS thread). After 3 consecutive samples >= pause_threshold, sets
+        _paused_for_memory so the leasing loop stops claiming new feeds.
+        After 3 consecutive samples >= exit_threshold, triggers graceful
+        shutdown via _loop.call_soon_threadsafe(_shutdown.set) AND sets
+        _thread_stop — the latter causes the next loop iteration to exit
+        via the `while not self._thread_stop.is_set()` check, giving us
+        the single-trip semantics required by PITFALLS Pitfall 1.
+
+        NEVER calls os._exit(1) — that path is reserved for fence violations
+        and the stall watchdog. Kernel OOM is the backstop for fast leaks
+        (REQUIREMENTS WATCHDOG-01 explicit).
+
+        Logging is transition-only (D-25): startup, pause-set, pause-clear,
+        trip. No periodic-poll logging — at 2s polling, 1800 lines/hour
+        would dominate Cloud Logging quota.
+        """
+        s = self._normalizer_settings
+        poll_interval = s.rss_watchdog_poll_interval_sec
+        pause_threshold = s.rss_watchdog_pause_threshold
+        exit_threshold = s.rss_watchdog_exit_threshold
+        # Hysteresis margin is hard-coded as pause_threshold - 0.10 per D-20
+        # — exposing it as a setting invites the 5pp temptation (D-08).
+        resume_threshold = pause_threshold - 0.10
+        pause_consec_target = s.rss_watchdog_pause_consecutive_samples
+        exit_consec_target = s.rss_watchdog_exit_consecutive_samples
+        warmup_sec = s.rss_watchdog_warmup_sec
+        watchdog_start = time.monotonic()
+
+        pause_consec = 0
+        exit_consec = 0
+        # One-shot flag for "OSError reading cgroup mid-run" — defensive
+        # pause + single ERROR log (CONTEXT.md "Specifics"). We do NOT
+        # trip exit on read failures (heavier action than failure mode
+        # warrants).
+        usage_read_error_logged = False
+
+        # D-21 startup log line (mandatory per ROADMAP SC#1).
+        logger.info(
+            "RSS watchdog limit = %d MB (cgroup detected)",
+            limit_bytes // (1024 * 1024),
+        )
+
+        while not self._thread_stop.is_set():
+            if self._thread_stop.wait(timeout=poll_interval):
+                break
+
+            # Warmup grace — D-11 + D-32: counters do NOT increment during
+            # warmup. Orthogonal to the consecutive-sample debounce; both
+            # protect against different failure modes.
+            if (time.monotonic() - watchdog_start) < warmup_sec:
+                continue
+
+            usage = self._resolve_container_memory_usage_bytes()
+            if usage is None:
+                # Defensive pause + single ERROR log (CONTEXT.md "Specifics":
+                # better to pause than to silently disable; do NOT trip exit).
+                if not self._paused_for_memory.is_set():
+                    self._paused_for_memory.set()
+                if not usage_read_error_logged:
+                    logger.error(
+                        "RSS watchdog: failed to read cgroup memory.current "
+                        "— defensively pausing claims",
+                    )
+                    usage_read_error_logged = True
+                continue
+
+            # A successful read clears the one-shot error-log gate so a
+            # later transient failure logs again.
+            usage_read_error_logged = False
+
+            ratio = usage / limit_bytes
+
+            # Exit-threshold debounce (D-09 / D-31).
+            if ratio >= exit_threshold:
+                exit_consec += 1
+            else:
+                exit_consec = 0
+
+            if exit_consec >= exit_consec_target:
+                logger.error(
+                    "RSS watchdog: %.1f%% >= exit threshold for %d samples "
+                    "— initiating graceful shutdown",
+                    ratio * 100.0,
+                    exit_consec,
+                )
+                # D-18: trip path sets BOTH _thread_stop (so the watchdog
+                # exits its own loop on the next iteration) AND
+                # _shutdown via call_soon_threadsafe (so the asyncio main
+                # loop sees the shutdown event). NEVER os._exit(1) —
+                # PITFALLS Pitfall 1 + REQUIREMENTS WATCHDOG-01.
+                self._loop.call_soon_threadsafe(self._shutdown.set)
+                self._thread_stop.set()
+                # Single-trip: the next iteration's `while not
+                # self._thread_stop.is_set()` will be False, exiting the
+                # loop. No explicit guard needed here.
+                continue
+
+            # Pause-set debounce (D-09 / D-30).
+            if ratio >= pause_threshold:
+                pause_consec += 1
+            else:
+                pause_consec = 0
+
+            if (
+                pause_consec >= pause_consec_target
+                and not self._paused_for_memory.is_set()
+            ):
+                self._paused_for_memory.set()
+                logger.warning(
+                    "RSS watchdog: %.1f%% >= pause threshold for %d samples "
+                    "— pausing claims",
+                    ratio * 100.0,
+                    pause_consec,
+                )
+
+            # Pause-clear (D-10): single sample below the hysteresis floor.
+            # No separate consecutive-sample counter — the 10pp band already
+            # absorbs noise.
+            if self._paused_for_memory.is_set() and ratio < resume_threshold:
+                self._paused_for_memory.clear()
+                logger.info(
+                    "RSS watchdog: %.1f%% — resuming claims",
+                    ratio * 100.0,
+                )
+
     async def _heartbeat_cycle(self) -> None:
         """
         Renew heartbeats and detect fence violations.
@@ -983,7 +1297,7 @@ class NormalizerRuntime:
 
     # -- Shutdown sequence ------------------------------------------------
 
-    async def _shutdown_sequence(self) -> None:
+    async def _shutdown_sequence(self) -> None:  # noqa: PLR0912
         """
         Orderly teardown: stop /healthz HTTP server, cancel feed tasks,
         stop heartbeat thread, close GCS client and database pools.
@@ -1024,14 +1338,59 @@ class NormalizerRuntime:
         ):
             await asyncio.to_thread(self._heartbeat_thread.join, timeout=5)
 
+        # Stop watchdog thread AFTER heartbeat (so a watchdog trip doesn't
+        # cause the heartbeat to observe in-flight release_feeds_batch as
+        # fence violations) and BEFORE task cancellation (so a stuck
+        # cgroup read can't race with closing pools).
+        # 3s join (vs heartbeat's 5s): watchdog body has no DB I/O; only a
+        # path-stuck-on-cgroup-read could legitimately stall, and that's
+        # rare enough that 3s is generous.
+        if (
+            self._rss_watchdog_thread is not None
+            and self._rss_watchdog_thread.is_alive()
+        ):
+            await asyncio.to_thread(self._rss_watchdog_thread.join, timeout=3)
+
         # Cancel all feed tasks
         for task in self._feed_tasks.values():
             task.cancel()
         if self._feed_tasks:
-            await asyncio.wait(
+            _done, pending = await asyncio.wait(
                 self._feed_tasks.values(),
-                timeout=self._normalizer_settings.graceful_shutdown_timeout_sec,
+                timeout=self._normalizer_settings.task_cancel_budget_sec,
             )
+            if pending:
+                # PITFALLS.md Pitfall 9: asyncio.wait does NOT cancel
+                # pending tasks at timeout. The task.cancel() loop above
+                # only requested cancellation; tasks that swallow
+                # CancelledError or are mid-CPU-bound work are still
+                # alive after the sub-timeout. We MUST explicitly
+                # re-cancel and re-await with a short hard timeout, or
+                # pending tasks will observe a NULL worker_id after
+                # release_feeds_batch and trigger the heartbeat
+                # fence-violation os._exit(1) (pre-existing invariant 1
+                # in PITFALLS.md).
+                #
+                # Bounded log: count + sorted feed names only (NEVER
+                # full task repr). On an 800-feed shutdown, formatting
+                # `pending` directly expands to >1MB of Cloud Logging
+                # output (Pitfall 9 critical detail).
+                names = sorted(t.get_name() for t in pending)
+                logger.warning(
+                    "Sub-timeout: %d tasks still running after %ss — "
+                    "explicitly cancelling and proceeding to release. "
+                    "names=%s",
+                    len(pending),
+                    self._normalizer_settings.task_cancel_budget_sec,
+                    names,
+                )
+                for task in pending:
+                    task.cancel()
+                # Hard 2s settle so cancellation actually propagates
+                # before release_feeds_batch runs. Tasks that don't
+                # honor cancellation within 2s are abandoned —
+                # release_feeds_batch is the safety net.
+                await asyncio.wait(pending, timeout=2.0)
 
         # We MUST release leases AFTER cancelling tasks and waiting for them to
         # exit! If we release leases while tasks are still running, they might
@@ -1060,6 +1419,17 @@ class NormalizerRuntime:
 
         await self._pubsub_client.close()
         await self._gcs_client.close()
+
+        # Close runtime-owned aiohttp session AFTER _gcs_client.close()
+        # per shutdown-ordering invariant (PITFALLS.md Pitfall 4 — close
+        # session after asyncio.wait of feed tasks; placing alongside
+        # _gcs_client.close() satisfies that). The 250ms sleep gives SSL
+        # transports time to flush so we don't emit
+        # "ResourceWarning: unclosed transport" (PITFALLS.md Pitfall 12 —
+        # enable_cleanup_closed is dead on Python 3.13.1+).
+        if self._http_session is not None:
+            await self._http_session.close()
+            await asyncio.sleep(0.25)
 
         # Heartbeat pool close may raise if the heartbeat cycle was
         # mid-query when we stopped the thread — harmless during shutdown.

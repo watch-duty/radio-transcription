@@ -17,7 +17,16 @@ from testcontainers.postgres import PostgresContainer
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client
 from backend.pipeline.ingestion.collectors.icecast import icecast_collector
-from backend.pipeline.storage.feed_store import FeedStore
+from backend.pipeline.ingestion.collectors.tests.conftest import (
+    _default_resources,
+)
+from backend.pipeline.storage.feed_store import (
+    FeedStore,
+    LeasedFeed,
+    SourceType,
+)
+
+_CLAIM: dict[SourceType, int] = {SourceType.BCFY_FEEDS: 1}
 
 MOCK_ENV_VARS = {
     "BROADCASTIFY_USERNAME": "test_user",
@@ -221,6 +230,17 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             resp.raise_for_status()
             return await resp.read()
 
+    async def _lease_feed(self, name: str) -> LeasedFeed:
+        """Insert and acquire the feed via the production claim path."""
+        await self._insert_feed(name)
+        leased = await self.store.acquire_feeds_batch(self.worker_id, _CLAIM)
+        if not leased:
+            msg = (
+                "Expected a LeasedFeed from acquire_feeds_batch, got empty list"
+            )
+            raise AssertionError(msg)
+        return leased[0]
+
     # -- Tests ------------------------------------------------------------
 
     @patch(
@@ -232,11 +252,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Happy path: lease -> capture 1 chunk -> upload to GCS -> bookmark in DB."""
         # Arrange: insert feed, lease it
-        await self._insert_feed("integration-feed")
-        feed = await self.store.lease_feed(self.worker_id)
-        if feed is None:
-            msg = "Expected a LeasedFeed, got None"
-            raise AssertionError(msg)
+        feed = await self._lease_feed("integration-feed")
 
         # Mock ffmpeg: one finalized FLAC segment
         flac_chunk = _FLAC_MAGIC + b"\x80" * 1024
@@ -247,7 +263,10 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         chunks_uploaded = []
         last_chunk_ts = None
         async for capture_chunk in icecast_collector.capture_icecast_stream(
-            feed, shutdown, url_base="https://mock.example.com/"
+            feed,
+            shutdown,
+            url_base="https://mock.example.com/",
+            resources=_default_resources(),
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client,
@@ -292,11 +311,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self, mock_create_ffmpeg
     ) -> None:
         """3 segments captured and uploaded to GCS."""
-        await self._insert_feed("multi-chunk-feed")
-        feed = await self.store.lease_feed(self.worker_id)
-        if feed is None:
-            msg = "Expected a LeasedFeed, got None"
-            raise AssertionError(msg)
+        feed = await self._lease_feed("multi-chunk-feed")
 
         # Mock ffmpeg: three finalized FLAC segments
         segments = [
@@ -311,7 +326,10 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         chunk_timestamps = []
         seq = 0
         async for capture_chunk in icecast_collector.capture_icecast_stream(
-            feed, shutdown, url_base="https://mock.example.com/"
+            feed,
+            shutdown,
+            url_base="https://mock.example.com/",
+            resources=_default_resources(),
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client,
@@ -355,11 +373,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         mock_create_ffmpeg,
     ) -> None:
         """Shutdown after 1st chunk: generator stops, only 1 GCS object exists."""
-        await self._insert_feed("shutdown-feed")
-        feed = await self.store.lease_feed(self.worker_id)
-        if feed is None:
-            msg = "Expected a LeasedFeed, got None"
-            raise AssertionError(msg)
+        feed = await self._lease_feed("shutdown-feed")
 
         # Mock ffmpeg: 3 finalized segments; shutdown is checked between yields
         segments = [
@@ -374,7 +388,10 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         last_chunk_ts = None
         seq = 0
         async for capture_chunk in icecast_collector.capture_icecast_stream(
-            feed, shutdown, url_base="https://mock.example.com/"
+            feed,
+            shutdown,
+            url_base="https://mock.example.com/",
+            resources=_default_resources(),
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client,
@@ -413,11 +430,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         mock_create_ffmpeg,
     ) -> None:
         """Ffmpeg exit code 1 -> RuntimeError -> feed status = 'failing'."""
-        await self._insert_feed("error-feed")
-        feed = await self.store.lease_feed(self.worker_id)
-        if feed is None:
-            msg = "Expected a LeasedFeed, got None"
-            raise AssertionError(msg)
+        feed = await self._lease_feed("error-feed")
 
         # Mock ffmpeg: no segments and non-zero exit
         mock_create_ffmpeg.side_effect = self._mock_create_ffmpeg(
@@ -430,6 +443,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 feed,
                 shutdown,
                 url_base="https://mock.example.com/",
+                resources=_default_resources(),
             ):
                 pass  # Should not yield any chunks
 
@@ -455,11 +469,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         mock_create_ffmpeg,
     ) -> None:
         """Upload FLAC segment bytes to GCS and verify exact roundtrip content."""
-        await self._insert_feed("flac-roundtrip-feed")
-        feed = await self.store.lease_feed(self.worker_id)
-        if feed is None:
-            msg = "Expected a LeasedFeed, got None"
-            raise AssertionError(msg)
+        feed = await self._lease_feed("flac-roundtrip-feed")
 
         expected_segment = _FLAC_MAGIC + bytes(range(64)) * 8
         mock_create_ffmpeg.side_effect = self._mock_create_ffmpeg(
@@ -469,7 +479,10 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         gcs_path = None
         async for capture_chunk in icecast_collector.capture_icecast_stream(
-            feed, shutdown, url_base="https://mock.example.com/"
+            feed,
+            shutdown,
+            url_base="https://mock.example.com/",
+            resources=_default_resources(),
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client,
@@ -495,10 +508,13 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         """Feed without icecast properties -> ValueError, no GCS upload."""
         # Insert a valid feed
         feed_id = await self._insert_feed("no-url-feed")
-        feed = await self.store.lease_feed(self.worker_id)
-        if feed is None:
-            msg = "Expected a LeasedFeed, got None"
+        leased = await self.store.acquire_feeds_batch(self.worker_id, _CLAIM)
+        if not leased:
+            msg = (
+                "Expected a LeasedFeed from acquire_feeds_batch, got empty list"
+            )
             raise AssertionError(msg)
+        feed = leased[0]
 
         # Mock missing source_feed_id on the loaded feed object
         feed["source_feed_id"] = None
@@ -509,6 +525,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 feed,
                 shutdown,
                 url_base="https://mock.example.com/",
+                resources=_default_resources(),
             ):
                 pass
 

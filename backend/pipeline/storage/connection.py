@@ -63,6 +63,15 @@ async def create_pool(
         "min_size": min_size,
         "max_size": max_size,
         "statement_cache_size": 0,  # Required for PgBouncer transaction-mode pooling.
+        # DB-01: `idle_in_transaction_session_timeout = 30000` (30s) is enforced
+        # server-side via AlloyDB cluster `database_flags`, NOT via asyncpg
+        # `server_settings` — see radio-transcription-deployment/terraform/
+        # modules/storage/main.tf. We connect through AlloyDB managed pooling
+        # (PgBouncer in transaction mode, `pool_mode = "transaction"`) on port
+        # 6432; per-connection SET GUCs would be RESET between transactions
+        # (PITFALLS.md Pitfall 10), so a `server_settings` here would be
+        # redundant with the cluster flag and only effective for the first
+        # transaction on a freshly-acquired connection.
     }
     if command_timeout is not None:
         kwargs["command_timeout"] = command_timeout

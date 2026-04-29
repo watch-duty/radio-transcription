@@ -15,7 +15,11 @@ if TYPE_CHECKING:
     import asyncio
     from collections.abc import AsyncIterator
 
-    from backend.pipeline.ingestion.models import CapturedChunk, CollectorFn
+    from backend.pipeline.ingestion.models import (
+        CapturedChunk,
+        CaptureResources,
+        CollectorFn,
+    )
     from backend.pipeline.ingestion.settings import NormalizerSettings
     from backend.pipeline.storage.feed_store import LeasedFeed
 
@@ -61,7 +65,9 @@ def resolve_topic_path(
 
 
 def route_capturer(
-    feed: LeasedFeed, shutdown_event: asyncio.Event
+    feed: LeasedFeed,
+    shutdown_event: asyncio.Event,
+    resources: CaptureResources,
 ) -> AsyncIterator[CapturedChunk]:
     """Routes the feed to the appropriate capture function."""
     source_type = feed["source_type"]
@@ -71,4 +77,4 @@ def route_capturer(
         raise ValueError(msg)
 
     capture_fn, url_base = entry
-    return capture_fn(feed, shutdown_event, url_base)
+    return capture_fn(feed, shutdown_event, url_base, resources)
