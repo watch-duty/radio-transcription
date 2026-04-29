@@ -210,3 +210,153 @@ class TestMonitoringClient(unittest.IsolatedAsyncioTestCase):
             dict(real_series.resource.labels),
             {"instance_id": "i1"},
         )
+
+
+class TestMonitoringClientDoubleGauge(unittest.IsolatedAsyncioTestCase):
+    """Tests for the DOUBLE-typed write path used by the Publisher."""
+
+    @mock.patch(
+        "backend.pipeline.common.clients.monitoring_client.monitoring_v3"
+    )
+    async def test_double_write_sets_double_value(
+        self,
+        mock_monitoring: mock.MagicMock,
+    ) -> None:
+        """A DOUBLE write produces a Point with double_value populated."""
+        mock_async_client = mock.AsyncMock()
+        mock_monitoring.MetricServiceAsyncClient.return_value = (
+            mock_async_client
+        )
+        real_series = monitoring_v3.TimeSeries()
+        mock_monitoring.TimeSeries.return_value = real_series
+        # Real Point + TimeInterval — see comment in TestMonitoringClient
+        # tests above for why proto-plus type-checks require this.
+        mock_monitoring.Point.side_effect = monitoring_v3.Point
+        mock_monitoring.TimeInterval.side_effect = monitoring_v3.TimeInterval
+
+        client = monitoring_client.MonitoringClient("test-project")
+        await client.write_time_series_double(
+            metric_type=(
+                "custom.googleapis.com/feeds/oldest_unclaimed_age_seconds"
+            ),
+            labels={},
+            value=42.5,
+            resource_labels={"project_id": "test-project"},
+        )
+
+        mock_async_client.create_time_series.assert_awaited_once()
+        call_kwargs = mock_async_client.create_time_series.call_args[1]
+        self.assertEqual(call_kwargs["name"], "projects/test-project")
+        self.assertEqual(len(call_kwargs["time_series"]), 1)
+        # Verify the Point's value-oneof selected double_value (not int64_value)
+        self.assertEqual(len(real_series.points), 1)
+        point = real_series.points[0]
+        self.assertEqual(point.value.double_value, 42.5)
+
+    @mock.patch(
+        "backend.pipeline.common.clients.monitoring_client.monitoring_v3"
+    )
+    async def test_int64_path_unchanged_regression(
+        self,
+        mock_monitoring: mock.MagicMock,
+    ) -> None:
+        """Existing INT64 write_time_series still sets int64_value, not double."""
+        mock_async_client = mock.AsyncMock()
+        mock_monitoring.MetricServiceAsyncClient.return_value = (
+            mock_async_client
+        )
+        real_series = monitoring_v3.TimeSeries()
+        mock_monitoring.TimeSeries.return_value = real_series
+        mock_monitoring.Point.side_effect = monitoring_v3.Point
+        mock_monitoring.TimeInterval.side_effect = monitoring_v3.TimeInterval
+
+        client = monitoring_client.MonitoringClient("p")
+        await client.write_time_series(
+            metric_type="custom.googleapis.com/feeds/quarantine_events",
+            labels={},
+            value=7,
+            resource_labels={"project_id": "p"},
+        )
+
+        self.assertEqual(len(real_series.points), 1)
+        point = real_series.points[0]
+        self.assertEqual(point.value.int64_value, 7)
+        # double_value is the proto-default (0.0) when the int64 oneof slot
+        # is selected — a sanity check that the INT64 path didn't switch to
+        # double under us.
+        self.assertEqual(point.value.double_value, 0.0)
+
+    @mock.patch(
+        "backend.pipeline.common.clients.monitoring_client.monitoring_v3"
+    )
+    async def test_zero_value_is_published(
+        self,
+        mock_monitoring: mock.MagicMock,
+    ) -> None:
+        """value=0.0 is a valid datapoint (COALESCE → 0.0 for empty unclaimed set)."""
+        mock_async_client = mock.AsyncMock()
+        mock_monitoring.MetricServiceAsyncClient.return_value = (
+            mock_async_client
+        )
+        real_series = monitoring_v3.TimeSeries()
+        mock_monitoring.TimeSeries.return_value = real_series
+        mock_monitoring.Point.side_effect = monitoring_v3.Point
+        mock_monitoring.TimeInterval.side_effect = monitoring_v3.TimeInterval
+
+        client = monitoring_client.MonitoringClient("p")
+        await client.write_time_series_double(
+            metric_type="custom.googleapis.com/feeds/oldest_unclaimed_age_seconds",
+            labels={},
+            value=0.0,
+            resource_labels={"project_id": "p"},
+        )
+
+        mock_async_client.create_time_series.assert_awaited_once()
+        self.assertEqual(len(real_series.points), 1)
+        self.assertEqual(real_series.points[0].value.double_value, 0.0)
+
+    @mock.patch(
+        "backend.pipeline.common.clients.monitoring_client.monitoring_v3"
+    )
+    async def test_resource_type_default_global_and_kw_only(
+        self,
+        mock_monitoring: mock.MagicMock,
+    ) -> None:
+        """resource_type defaults to 'global' and resource_labels is keyword-only."""
+        mock_async_client = mock.AsyncMock()
+        mock_monitoring.MetricServiceAsyncClient.return_value = (
+            mock_async_client
+        )
+        real_series = monitoring_v3.TimeSeries()
+        mock_monitoring.TimeSeries.return_value = real_series
+        mock_monitoring.Point.side_effect = monitoring_v3.Point
+        mock_monitoring.TimeInterval.side_effect = monitoring_v3.TimeInterval
+
+        client = monitoring_client.MonitoringClient("my-project")
+        await client.write_time_series_double(
+            metric_type=(
+                "custom.googleapis.com/feeds/oldest_unclaimed_age_seconds"
+            ),
+            labels={"k": "v"},
+            value=1.5,
+            resource_labels={"project_id": "my-project"},
+        )
+
+        # Default resource_type is "global"
+        self.assertEqual(real_series.resource.type, "global")
+        self.assertEqual(
+            dict(real_series.resource.labels), {"project_id": "my-project"}
+        )
+        # Metric labels propagated
+        self.assertEqual(dict(real_series.metric.labels), {"k": "v"})
+
+        # Calling positionally without naming `resource_labels` must fail
+        # (signature should mark it kw-only via `*` separator).
+        with self.assertRaises(TypeError):
+            await client.write_time_series_double(
+                "custom.googleapis.com/x",
+                {},
+                1.0,
+                "global",
+                {"project_id": "p"},
+            )
