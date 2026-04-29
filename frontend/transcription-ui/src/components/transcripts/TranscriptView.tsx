@@ -8,7 +8,6 @@ import type { AlertProps } from '@mui/material/Alert';
 import Autocomplete from '@mui/material/Autocomplete';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
-import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
 import IconButton from '@mui/material/IconButton';
 import TextField from '@mui/material/TextField';
@@ -22,7 +21,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
-import { type FeedStatus, type Transcript } from '@transcription/common';
+import { type Transcript } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { getFeed } from '../../service/getFeed';
@@ -31,7 +30,6 @@ import { listRules } from '../../service/listRules';
 import { listTranscripts } from '../../service/listTranscripts';
 import {
   getInitialTimestamp,
-  getRelativeTimeString,
   roundUpToNearestMinute,
 } from '../../utils/timeUtils';
 import AudioDisplay from '../audio/AudioDisplay';
@@ -57,17 +55,6 @@ const TRANSCRIPTS_POLLING_INTERVAL_MS = 15000; // 15 seconds
 const FEED_POLLING_INTERVAL_MS = 15000; // 15 seconds
 const TRANSCRIPTS_POLLING_INTERVAL_DISPLAY_STRING = `${TRANSCRIPTS_POLLING_INTERVAL_MS / 1000}s`;
 const MAX_TRANSCRIPTS_POLLING_ITERATIONS = 10;
-
-const FEED_STATUS_UI_CONFIG: Record<
-  FeedStatus,
-  { displayText: string; color: 'success' | 'warning' | 'error' | 'default' }
-> = {
-  active: { displayText: 'active', color: 'success' },
-  failing: { displayText: 'failing', color: 'warning' },
-  quarantined: { displayText: 'inactive', color: 'error' },
-  unclaimed: { displayText: 'pending', color: 'default' },
-  deactivated: { displayText: 'inactive', color: 'default' },
-};
 
 export function TranscriptView({
   addAlert,
@@ -129,8 +116,6 @@ export function TranscriptView({
   const selectedFeed = useMemo(() => {
     return feedIdToFeedMap.get(feedId) || null;
   }, [feedIdToFeedMap, feedId]);
-
-  const searchedFeed = feedIdToFeedMap.get(searchedFeedId) || null;
 
   /**
    * Effect for handling feeds errors.
@@ -410,6 +395,7 @@ export function TranscriptView({
     enabled: !!token && !!searchedFeedId,
     refetchInterval: FEED_POLLING_INTERVAL_MS,
     refetchOnWindowFocus: false,
+    initialData: feedIdToFeedMap.get(searchedFeedId) || undefined,
   });
 
   const {
@@ -636,33 +622,6 @@ export function TranscriptView({
           Clear
         </Button>
 
-        {currentFeed && (
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: 1 }}>
-            {currentFeed.status && (
-              <Chip
-                label={
-                  FEED_STATUS_UI_CONFIG[currentFeed.status]?.displayText ??
-                  currentFeed.status
-                }
-                variant="outlined"
-                size="small"
-                color={
-                  FEED_STATUS_UI_CONFIG[currentFeed.status]?.color ?? 'default'
-                }
-              />
-            )}
-            {currentFeed.lastHeartbeat && (
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                sx={{ whiteSpace: 'nowrap' }}
-              >
-                Last Updated: {getRelativeTimeString(currentFeed.lastHeartbeat)}
-              </Typography>
-            )}
-          </Box>
-        )}
-
         <Box sx={{ flexGrow: 1 }} />
 
         <Tooltip title="Copy link to feed">
@@ -714,8 +673,10 @@ export function TranscriptView({
         {transcripts.length > 0 ? (
           <>
             <TranscriptActionsBar
-              sourceUrl={searchedFeed?.sourceUrl}
-              archiveUrl={searchedFeed?.archiveUrl}
+              sourceUrl={currentFeed?.sourceUrl}
+              archiveUrl={currentFeed?.archiveUrl}
+              status={currentFeed?.status}
+              lastHeartbeat={currentFeed?.lastHeartbeat}
               hasNewerTranscripts={hasNewerTranscripts}
               isTranscriptsFetching={isTranscriptsFetching}
               isTranscriptsPolling={isTranscriptsPolling}

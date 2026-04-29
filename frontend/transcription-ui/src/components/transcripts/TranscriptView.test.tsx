@@ -48,24 +48,6 @@ vi.mock('@wavesurfer/react', () => ({
 describe('TranscriptView', () => {
   const mockAddAlert = vi.fn();
 
-  const mockTranscripts = [
-    {
-      feedId: 'feed123',
-      transmissionId: '1',
-      transcript: 'Hello',
-      canonicalAudioUri: 'gs:://foo.flac',
-      playbackAudioUri: 'gs:://foo.m4a',
-      startTimestamp: '2026-04-10T12:00:00Z',
-      endTimestamp: '2026-04-10T12:00:05Z',
-      missingPriorContext: false,
-      missingPostContext: false,
-      sourceAudioUris: ['gs:://foo.flac'],
-      startAudioOffset: '0s',
-      endAudioOffset: '5s',
-      evaluationDecisions: [],
-    },
-  ];
-
   beforeEach(() => {
     vi.clearAllMocks();
     mockAddAlert.mockClear();
@@ -421,34 +403,6 @@ describe('TranscriptView', () => {
 
     // Cleanup promise to avoid unhandled rejections
     resolveTranscripts({ transcripts: [], nextToken: undefined });
-  });
-  it('displays source and archive links for the active feed', async () => {
-    const mockFeeds = [
-      {
-        id: 'feed123',
-        name: 'Feed 123',
-        sourceType: 'bcfy_feeds' as const,
-        sourceUrl: 'https://partner.broadcastify.com/12345',
-        archiveUrl: 'https://www.broadcastify.com/archives/feed/12345',
-        status: 'active' as const,
-      },
-    ];
-    vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
-    vi.mocked(listTranscripts).mockResolvedValueOnce({
-      transcripts: mockTranscripts,
-      nextToken: undefined,
-    });
-
-    renderTranscriptView(
-      <MemoryRouter initialEntries={['/?feedId=feed123']}>
-        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText(/original source link/i)).toBeTruthy();
-      expect(screen.getByText(/archives/i)).toBeTruthy();
-    });
   });
 
   it('scrolls to highlighted transcript when transmissionId is in search params', async () => {

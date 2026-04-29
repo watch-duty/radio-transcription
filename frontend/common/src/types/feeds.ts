@@ -19,7 +19,7 @@ export interface Feed extends BaseFeed {
   externalId?: string;
   sourceUrl?: string;
   archiveUrl?: string;
-  status?: FeedStatus;
+  status: FeedStatus;
   lastHeartbeat?: string;
 }
 

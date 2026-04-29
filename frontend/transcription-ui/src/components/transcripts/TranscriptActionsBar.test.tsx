@@ -100,4 +100,31 @@ describe('TranscriptActionsBar', () => {
       screen.queryByRole('button', { name: /Refresh \(15s\)/i })
     ).toBeNull();
   });
+
+  it('displays the feed outlined status Alert and human-friendly relative time string', () => {
+    const fixedNow = new Date('2026-04-10T12:05:00Z');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(fixedNow);
+
+    try {
+      render(
+        <TranscriptActionsBar
+          status="active"
+          lastHeartbeat={new Date(
+            fixedNow.getTime() - 5 * 60 * 1000
+          ).toISOString()}
+          hasNewerTranscripts={false}
+          isTranscriptsFetching={false}
+          isTranscriptsPolling={false}
+          pollingIntervalDisplay="15s"
+          onRefresh={vi.fn()}
+        />
+      );
+
+      expect(screen.getByText('active')).toBeTruthy();
+      expect(screen.getByText('Last Updated: 5 minutes ago')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
