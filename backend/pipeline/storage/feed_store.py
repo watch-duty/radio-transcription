@@ -64,11 +64,19 @@ class SourceType(enum.StrEnum):
 class FeedStatus(enum.StrEnum):
     """Lifecycle status of a feed, stored in the ``feeds.status`` column."""
 
-    UNCLAIMED = "unclaimed"  # Eligible for leasing by any worker.
-    ACTIVE = "active"  # Currently leased by a worker.
-    FAILING = "failing"  # Lease held but feed is experiencing errors; still eligible for leasing and processing.
-    QUARANTINED = "quarantined"  # Ineligible for leasing due to repeated failures; requires manual triage and reset.
-    DEACTIVATED = "deactivated"  # Permanently ineligible for leasing; used for feeds that are deleted or retired but kept for historical/triage purposes.
+    # Eligible for leasing by any worker.
+    UNCLAIMED = "unclaimed"
+    # Currently leased by a worker.
+    ACTIVE = "active"
+    # Lease held but feed is experiencing errors; still eligible for
+    # leasing and processing.
+    FAILING = "failing"
+    # Ineligible for leasing due to repeated failures; requires manual
+    # triage and reset.
+    QUARANTINED = "quarantined"
+    # Permanently ineligible for leasing; used for feeds that are deleted
+    # or retired but kept for historical/triage purposes.
+    DEACTIVATED = "deactivated"
 
 
 class LeasedFeed(TypedDict):
