@@ -250,37 +250,43 @@ class NormalizerRuntime:
 
         quarantine_telemetry.configure(settings.google_cloud_project)
 
-        # HTTP-01: runtime-owned aiohttp.ClientSession. Constructed inside
-        # _main() because the connector requires a running event loop.
-        # TCPConnector kwargs per research SUMMARY.md
-        # (limit_per_host=64 absorbs activation bursts;
-        # ttl_dns_cache=300 survives cold-start herd; keepalive_timeout=75
-        # is > 60s poll cadence). NO enable_cleanup_closed — ignored on
-        # Python 3.13.1+ (aiohttp 3.13.5 docs). Session is closed in
-        # _shutdown_sequence AFTER _gcs_client.close(), followed by
-        # await asyncio.sleep(0.25) for SSL teardown (Pitfall 12).
-        self._http_session = aiohttp.ClientSession(
-            connector=aiohttp.TCPConnector(
-                limit=0,
-                limit_per_host=64,
-                ttl_dns_cache=300,
-                keepalive_timeout=75,
-            ),
-            timeout=aiohttp.ClientTimeout(total=30, connect=10),
-        )
-        self._capture_resources = CaptureResources(
-            http_session=self._http_session,
-        )
-
-        # Start /healthz HTTP server. Runs on the same event loop as the
-        # leasing/heartbeat coroutines — this is load-bearing: if the loop is
-        # wedged, the handler stops responding and GCP autohealing takes over.
-        self._health_runner = await health_server.start(
-            settings,
-            self._health_state,
-        )
-
+        # try/finally wraps session creation, capture_resources, and
+        # health_server.start so an exception in any of those triggers
+        # _shutdown_sequence — closes the aiohttp session and joins
+        # heartbeat/watchdog threads cleanly (each guarded by None/is_alive
+        # checks so partial init is safe).
         try:
+            # HTTP-01: runtime-owned aiohttp.ClientSession. Constructed
+            # inside _main() because the connector requires a running event
+            # loop. TCPConnector kwargs per research SUMMARY.md
+            # (limit_per_host=64 absorbs activation bursts;
+            # ttl_dns_cache=300 survives cold-start herd; keepalive_timeout=75
+            # is > 60s poll cadence). NO enable_cleanup_closed — ignored on
+            # Python 3.13.1+ (aiohttp 3.13.5 docs). Session is closed in
+            # _shutdown_sequence AFTER _gcs_client.close(), followed by
+            # await asyncio.sleep(0.25) for SSL teardown (Pitfall 12).
+            self._http_session = aiohttp.ClientSession(
+                connector=aiohttp.TCPConnector(
+                    limit=0,
+                    limit_per_host=64,
+                    ttl_dns_cache=300,
+                    keepalive_timeout=75,
+                ),
+                timeout=aiohttp.ClientTimeout(total=30, connect=10),
+            )
+            self._capture_resources = CaptureResources(
+                http_session=self._http_session,
+            )
+
+            # Start /healthz HTTP server. Runs on the same event loop as the
+            # leasing/heartbeat coroutines — this is load-bearing: if the
+            # loop is wedged, the handler stops responding and GCP
+            # autohealing takes over.
+            self._health_runner = await health_server.start(
+                settings,
+                self._health_state,
+            )
+
             await self._leasing_loop()
         finally:
             await self._shutdown_sequence()
@@ -419,14 +425,20 @@ class NormalizerRuntime:
             # current ones"). Use _sleep_or_shutdown so SIGTERM still
             # interrupts the pause — PITFALLS.md Pitfall 5 ("never bare
             # asyncio.sleep").
+            #
+            # Reap completed tasks BEFORE the pause check so a completed task
+            # that raised an exception has its error retrieved promptly even
+            # while the watchdog is paused — otherwise asyncio emits "Task
+            # exception was never retrieved" warnings and tasks linger in
+            # _feed_tasks until pause clears.
+            self._reap_completed_tasks()
+
             if self._paused_for_memory.is_set():
                 if await self._sleep_or_shutdown(
                     self._normalizer_settings.rss_watchdog_poll_interval_sec,
                 ):
                     return
                 continue
-
-            self._reap_completed_tasks()
 
             # try/except: a transient DB error (connection reset, brief
             # AlloyDB maintenance) must not kill a worker with 200+ healthy

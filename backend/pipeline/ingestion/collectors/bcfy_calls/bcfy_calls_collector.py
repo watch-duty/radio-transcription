@@ -423,7 +423,9 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                     seen_urls.append(audio_url)
                     # Reset consecutive failures on successful yield
                     consecutive_failures = 0
-            # Update local last_bookmark_time_unix for pagination after processing all calls in the response, ensuring we don't skip any calls if an error occurs mid-page.
+            # Update last_bookmark_time_unix for pagination AFTER processing
+            # all calls in the response — ensures we don't skip any calls if
+            # an error occurs mid-page.
             if bcfy_calls and "lastPos" in bcfy_calls:
                 last_bookmark_time_unix = bcfy_calls["lastPos"]
 

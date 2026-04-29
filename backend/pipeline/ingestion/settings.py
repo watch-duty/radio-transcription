@@ -95,6 +95,13 @@ class NormalizerSettings:
             float(os.environ.get("HEARTBEAT_STALL_TIMEOUT_SEC", "45.0")),
         ),
     )
+    # Documented overall shutdown-budget envelope (NOT an enforced timeout).
+    # Used by `__post_init__` to bound `task_cancel_budget_sec + 2s settle`
+    # at config time. Real enforcement comes from the container `--stop-timeout`
+    # and GCE 120s ACPI cap (HANDOFF-01); inside `_shutdown_sequence` we
+    # deliberately do NOT wrap the sequence in `asyncio.wait_for(...)` because
+    # cancelling mid-`release_feeds_batch` would leave leases stuck for the
+    # 60s abandonment window — letting the OS reap at 120s is safer.
     graceful_shutdown_timeout_sec: float = field(
         default_factory=lambda: float(
             os.environ.get("GRACEFUL_SHUTDOWN_TIMEOUT_SEC", "90.0"),
