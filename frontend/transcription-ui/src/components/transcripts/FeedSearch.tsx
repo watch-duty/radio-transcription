@@ -10,7 +10,6 @@ export interface FeedSearchProps {
   feeds: Feed[];
   selectedFeed: Feed | null;
   onFeedSelect: (feedId: string) => void;
-  isFetching: boolean;
   isLoading: boolean;
 }
 
@@ -18,7 +17,6 @@ export function FeedSearch({
   feeds,
   selectedFeed,
   onFeedSelect,
-  isFetching,
   isLoading,
 }: FeedSearchProps) {
   const sortedFeeds = useMemo(() => {
@@ -36,7 +34,7 @@ export function FeedSearch({
       onChange={(_, option) => option && onFeedSelect(option.id)}
       // Explicitly disallowing custom input - the user should always pick from registered feeds
       freeSolo={false}
-      loading={isFetching}
+      loading={isLoading}
       disabled={isLoading}
       filterOptions={(options, { inputValue }) =>
         options.filter(

@@ -41,7 +41,6 @@ describe('FeedSearch', () => {
         feeds={mockFeeds}
         selectedFeed={null}
         onFeedSelect={mockOnFeedSelect}
-        isFetching={false}
         isLoading={false}
       />
     );
@@ -55,7 +54,6 @@ describe('FeedSearch', () => {
         feeds={mockFeeds}
         selectedFeed={mockFeeds[1]} // Alpha Feed
         onFeedSelect={mockOnFeedSelect}
-        isFetching={false}
         isLoading={false}
       />
     );
@@ -72,7 +70,6 @@ describe('FeedSearch', () => {
         feeds={mockFeeds}
         selectedFeed={null}
         onFeedSelect={mockOnFeedSelect}
-        isFetching={false}
         isLoading={false}
       />
     );
@@ -95,7 +92,6 @@ describe('FeedSearch', () => {
         feeds={null as unknown as Feed[]}
         selectedFeed={null}
         onFeedSelect={mockOnFeedSelect}
-        isFetching={false}
         isLoading={false}
       />
     );
@@ -114,7 +110,6 @@ describe('FeedSearch', () => {
         feeds={mockFeeds}
         selectedFeed={null}
         onFeedSelect={mockOnFeedSelect}
-        isFetching={false}
         isLoading={true}
       />
     );
@@ -125,31 +120,12 @@ describe('FeedSearch', () => {
     expect(input.disabled).toBe(true);
   });
 
-  it('shows loading indication when isFetching is true and opened with no feeds', () => {
-    render(
-      <FeedSearch
-        feeds={[]}
-        selectedFeed={null}
-        onFeedSelect={mockOnFeedSelect}
-        isFetching={true}
-        isLoading={false}
-      />
-    );
-
-    const input = screen.getByLabelText(/Select a registered feed/i);
-    fireEvent.focus(input);
-    fireEvent.keyDown(input, { key: 'ArrowDown' });
-
-    expect(screen.getByText(/loading/i)).toBeTruthy();
-  });
-
   it('calls onFeedSelect with chosen option id on selection', () => {
     render(
       <FeedSearch
         feeds={mockFeeds}
         selectedFeed={null}
         onFeedSelect={mockOnFeedSelect}
-        isFetching={false}
         isLoading={false}
       />
     );
@@ -170,7 +146,6 @@ describe('FeedSearch', () => {
         feeds={mockFeeds}
         selectedFeed={null}
         onFeedSelect={mockOnFeedSelect}
-        isFetching={false}
         isLoading={false}
       />
     );
@@ -192,7 +167,6 @@ describe('FeedSearch', () => {
         feeds={mockFeeds}
         selectedFeed={null}
         onFeedSelect={mockOnFeedSelect}
-        isFetching={false}
         isLoading={false}
       />
     );

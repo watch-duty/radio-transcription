@@ -92,7 +92,6 @@ export function TranscriptView({
     data: feeds,
     error: feedsError,
     isLoading: feedsLoading, // First fetch
-    isFetching: feedsFetching, // All fetches including polling
   } = useQuery({
     queryKey: ['listFeeds', token],
     queryFn: () => listFeeds(token!),
@@ -507,7 +506,6 @@ export function TranscriptView({
           feeds={feeds ?? []}
           selectedFeed={selectedFeed}
           onFeedSelect={setFeedId}
-          isFetching={feedsFetching}
           isLoading={feedsLoading}
         />
 
