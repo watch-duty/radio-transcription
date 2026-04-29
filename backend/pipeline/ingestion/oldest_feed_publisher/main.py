@@ -35,8 +35,11 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "")
 ALLOYDB_HOST = os.environ.get("ALLOYDB_HOST", "")
-ALLOYDB_PORT = os.environ.get("ALLOYDB_PORT", "6432")
-ALLOYDB_USER = os.environ.get("ALLOYDB_USER", "worker")
+# `or` fallback (vs `os.environ.get(name, default)`) defends against
+# explicitly-empty env injection — if ALLOYDB_PORT is set to "" the dict.get
+# default doesn't kick in, and `int("")` would raise downstream at connect.
+ALLOYDB_PORT = os.environ.get("ALLOYDB_PORT") or "6432"
+ALLOYDB_USER = os.environ.get("ALLOYDB_USER") or "worker"
 ALLOYDB_DB = os.environ.get("ALLOYDB_DB", "")
 ALLOYDB_PASSWORD = os.environ.get("ALLOYDB_PASSWORD", "")
 
