@@ -3,14 +3,10 @@ import { useSearchParams } from 'react-router';
 import type { VirtuosoHandle } from 'react-virtuoso';
 
 import LinkIcon from '@mui/icons-material/Link';
-import RefreshIcon from '@mui/icons-material/Refresh';
 import type { AlertProps } from '@mui/material/Alert';
-import Autocomplete from '@mui/material/Autocomplete';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
-import IconButton from '@mui/material/IconButton';
-import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
@@ -33,6 +29,7 @@ import {
 } from '../../utils/timeUtils';
 import AudioDisplay from '../audio/AudioDisplay';
 import DateTimePicker from '../common/DateTimePicker';
+import FeedSearch from './FeedSearch';
 import TranscriptActionsBar from './TranscriptActionsBar';
 import TranscriptDisplay from './TranscriptDisplay';
 
@@ -53,6 +50,7 @@ export type ListTranscriptsData = {
 const TRANSCRIPTS_POLLING_INTERVAL_MS = 15000; // 15 seconds
 const TRANSCRIPTS_POLLING_INTERVAL_DISPLAY_STRING = `${TRANSCRIPTS_POLLING_INTERVAL_MS / 1000}s`;
 const MAX_TRANSCRIPTS_POLLING_ITERATIONS = 10;
+const FEEDS_POLLING_INTERVAL_MS = 15000; // 1 minute
 
 export function TranscriptView({
   addAlert,
@@ -94,7 +92,8 @@ export function TranscriptView({
   const {
     data: feeds,
     error: feedsError,
-    isFetching: feedsFetching,
+    isLoading: feedsLoading, // First fetch
+    isFetching: feedsFetching, // All fetches including polling
   } = useQuery({
     queryKey: ['listFeeds', token],
     queryFn: () => listFeeds(token!),
@@ -128,6 +127,18 @@ export function TranscriptView({
       });
     }
   }, [feedsError, addAlert]);
+
+  /**
+   * Effect for updating feeds on an interval.
+   */
+  useEffect(() => {
+    const feedTimer = setInterval(() => {
+      // Invalidate the listFeeds query which triggers it to refresh. 
+      queryClient.invalidateQueries({ queryKey: ['listFeeds', token] });
+    }, FEEDS_POLLING_INTERVAL_MS);
+
+    return () => clearInterval(feedTimer);
+  }, [token]);
 
   const {
     data: listTranscriptsResponse,
@@ -505,51 +516,13 @@ export function TranscriptView({
           width: '100%',
         }}
       >
-        <Autocomplete
-          disablePortal
-          options={(feeds ?? []).sort((a, b) => a.name.localeCompare(b.name))}
-          getOptionLabel={(option) => option.name}
-          size="small"
-          sx={{ width: '20%' }}
-          value={selectedFeed}
-          onChange={(_, option) => option && setFeedId(option.id)}
-          // Explicitly disallowing custom input - the user should always pick from registered feeds
-          freeSolo={false}
-          loading={feedsFetching}
-          disabled={feedsFetching}
-          filterOptions={(options, { inputValue }) =>
-            options.filter((option) =>
-              option.name.toLowerCase().includes(inputValue.toLowerCase())
-            )
-          }
-          renderInput={(params) => (
-            <TextField {...params} label="Select a registered feed" />
-          )}
-          renderOption={(props, option) => {
-            const { key, ...optionProps } = props;
-            return (
-              <Box key={key} component="li" {...optionProps}>
-                <Typography noWrap>{option.name}</Typography>
-              </Box>
-            );
-          }}
+        <FeedSearch
+          feeds={feeds ?? []}
+          selectedFeed={selectedFeed}
+          onFeedSelect={setFeedId}
+          isFetching={feedsFetching}
+          isLoading={feedsLoading}
         />
-        <IconButton
-          onClick={() => {
-            // Invalidate and refresh feeds.
-            queryClient.invalidateQueries({ queryKey: ['listFeeds', token] });
-          }}
-          disabled={feedsFetching}
-          size="small"
-          sx={{ ml: -1 }}
-          aria-label="refresh feeds"
-        >
-          {feedsFetching ? (
-            <CircularProgress size={24} color="inherit" />
-          ) : (
-            <RefreshIcon />
-          )}
-        </IconButton>
 
         <DateTimePicker
           label="Timestamp (optional)"
@@ -587,7 +560,7 @@ export function TranscriptView({
               setSearchedTimestamp(timestamp);
             }
           }}
-          disabled={feedsFetching || isTranscriptsInitialLoading || !feedId}
+          disabled={feedsLoading || isTranscriptsInitialLoading || !feedId}
           sx={{ minWidth: '100px', height: '40px' }}
         >
           {isTranscriptsInitialLoading ? (
