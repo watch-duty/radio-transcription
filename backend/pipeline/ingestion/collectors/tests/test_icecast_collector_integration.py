@@ -255,7 +255,6 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 feed,
                 _TEST_BUCKET,
                 len(chunks_uploaded),
-                "dummy-trace-id",
             )
             ok = await self.store.update_feed_progress(
                 feed["id"],
@@ -320,7 +319,6 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 feed,
                 _TEST_BUCKET,
                 seq,
-                "dummy-trace-id",
             )
             await self.store.update_feed_progress(
                 feed["id"],
@@ -384,7 +382,6 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 feed,
                 _TEST_BUCKET,
                 seq,
-                "dummy-trace-id",
             )
             await self.store.update_feed_progress(
                 feed["id"],
@@ -480,7 +477,6 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 feed,
                 _TEST_BUCKET,
                 0,
-                "dummy-trace-id",
             )
             break  # Only need first chunk
 

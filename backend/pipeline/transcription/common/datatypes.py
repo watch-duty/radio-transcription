@@ -118,7 +118,6 @@ class TransmissionContext:
     out_of_order_buffer: list[BufferedChunk] = field(default_factory=list)
     feed_metadata: FeedMetadata | None = None
     last_transmission_start_ms: int | None = None
-    trace_id: str
 
 
 @dataclass
@@ -140,7 +139,6 @@ class StitcherContext:
     start_audio_offset_ms: int | None
     end_audio_offset_ms: int | None = None
     buffer_duration_ms: int = 0
-    trace_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -206,7 +204,6 @@ class FlushRequest:
     contributing_audio_uris: list[str]
     time_range: TimeRange
     transmission_id: str
-    trace_id: str
     feed_metadata: FeedMetadata
     missing_prior_context: bool
     missing_post_context: bool
@@ -245,7 +242,6 @@ class FlushAction(StateMachineAction):
     missing_prior_context: bool
     missing_post_context: bool
     start_audio_offset_ms: int
-    trace_id: str
     end_audio_offset_ms: int
     clear_state: bool = True
     isolated_audio_buffer: list[np.ndarray] = field(default_factory=list)

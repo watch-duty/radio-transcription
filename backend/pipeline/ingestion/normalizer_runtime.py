@@ -729,20 +729,11 @@ class NormalizerRuntime:
                         # handles all task cancellation and the 60s abandonment
                         # window is the safety net if batch release fails.
                         logger.info(
-                            "Chunk ingested",
-                            extra={"json_fields": chunk_ingested_payload},
+                            "Shutdown -- stopping feed %s cleanly after chunk %d",
+                            feed["name"],
+                            chunk_seq,
                         )
-
-                        if self._shutdown.is_set():
-                            # Return without calling release_feed — _shutdown_sequence
-                            # handles all task cancellation and the 60s abandonment
-                            # window is the safety net if batch release fails.
-                            logger.info(
-                                "Shutdown -- stopping feed %s cleanly after chunk %d",
-                                feed["name"],
-                                chunk_seq,
-                            )
-                            return
+                        return
 
         except asyncio.CancelledError:
             logger.info("Feed %s task cancelled", feed["name"])

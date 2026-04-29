@@ -149,11 +149,11 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
         # Upload MP3 directly to staging bucket.
         # if_generation_match=0 skips redundant writes but we
         # always proceed to publish (prior invocation may have crashed after upload).
+        date_dir = parts[1]
+        mp3_path = f"echo/{feed['id']}/{date_dir}/{Path(name).name}"
+        staging_uri = f"gs://{STAGING_BUCKET}/{mp3_path}"
+        blob = gcs_client.bucket(STAGING_BUCKET).blob(mp3_path)
         with tracer.start_as_current_span("upload_echo_staged_audio"):
-            date_dir = parts[1]
-            mp3_path = f"echo/{feed['id']}/{date_dir}/{Path(name).name}"
-            staging_uri = f"gs://{STAGING_BUCKET}/{mp3_path}"
-            blob = gcs_client.bucket(STAGING_BUCKET).blob(mp3_path)
             try:
                 blob.upload_from_string(
                     mp3_bytes,
@@ -169,7 +169,6 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
         feed_id_str = str(feed["id"])
         session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, staging_uri))
         publisher = pubsub_client.get_publisher()
-        trace_id = str(uuid.uuid4())
 
         # Calculate duration of audio bytes using shared helper
         duration_ms = get_audio_duration(mp3_bytes)
@@ -184,7 +183,6 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
             session_id,
             start_ts,
             duration_ms=duration_ms,
-            trace_id=trace_id,
             source_type="echo",
         )
 

@@ -305,7 +305,6 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             b"audio",
             "bucket",
             "obj.flac",
-            "",
         )
 
         call_kwargs = mock_storage.upload.call_args
@@ -424,6 +423,7 @@ class TestPublishAudioChunkSync(unittest.TestCase):
         publish_args, publish_kwargs = mock_publisher.publish.call_args
         self.assertEqual(publish_args[0], "projects/test/topics/audio")
         self.assertEqual(publish_kwargs["source_type"], "echo")
+
         self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
 
         chunk = AudioChunk()

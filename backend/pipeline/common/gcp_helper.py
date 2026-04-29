@@ -40,7 +40,6 @@ async def upload_staged_audio(
     feed: LeasedFeed,
     bucket: str,
     chunk_seq: int,
-    trace_id: str,
     fencing_token: int | None = None,
     extension: str = "flac",
     content_type: str = "audio/flac",
@@ -246,6 +245,7 @@ def publish_audio_chunk_sync(
         if source_type is not None:
             attrs["source_type"] = source_type
 
+    with tracer.start_as_current_span("publish_raw_audio_chunk"):
         future = publisher.publish(
             topic_path,
             audio_chunk_msg.SerializeToString(),
@@ -294,6 +294,7 @@ async def publish_audio_chunk(
         if source_type is not None:
             attrs["source_type"] = source_type
 
+    with tracer.start_as_current_span("publish_raw_audio_chunk"):
         future = publisher.publish(
             topic_path,
             audio_chunk_msg.SerializeToString(),

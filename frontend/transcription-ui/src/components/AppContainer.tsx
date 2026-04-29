@@ -11,6 +11,7 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import VoiceChatIcon from '@mui/icons-material/VoiceChat';
 import AppBar from '@mui/material/AppBar';
 import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
 import Divider from '@mui/material/Divider';
 import Drawer from '@mui/material/Drawer';
 import IconButton from '@mui/material/IconButton';
@@ -23,7 +24,8 @@ import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import { styled, useTheme } from '@mui/material/styles';
 
-import Login from './Login';
+import { useAuth } from '../context/AuthContext';
+import { authLogout } from '../service/authLogout';
 
 const drawerWidth = 240;
 
@@ -43,6 +45,7 @@ export default function AppContainer({
 }) {
   const navigate = useNavigate();
   const theme = useTheme();
+  const { token, setToken } = useAuth();
   const [open, setOpen] = useState(false);
 
   const handleDrawerOpen = () => {
@@ -74,7 +77,21 @@ export default function AppContainer({
           >
             Radio Transcription
           </Typography>
-          <Login />
+          {token && (
+            <Button
+              onClick={async () => {
+                await authLogout();
+                setToken(null);
+                navigate('/login');
+              }}
+              color="inherit"
+              sx={{
+                textTransform: 'none',
+              }}
+            >
+              Sign out
+            </Button>
+          )}
         </Toolbar>
       </AppBar>
       <Drawer
