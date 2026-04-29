@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
-import { GroupedVirtuoso, type VirtuosoHandle } from 'react-virtuoso';
+import type { VirtuosoHandle } from 'react-virtuoso';
 
-import InventoryIcon from '@mui/icons-material/Inventory';
 import LinkIcon from '@mui/icons-material/Link';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import type { AlertProps } from '@mui/material/Alert';
@@ -11,9 +10,6 @@ import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
 import IconButton from '@mui/material/IconButton';
-import Link from '@mui/material/Link';
-import ListItem from '@mui/material/ListItem';
-import Paper from '@mui/material/Paper';
 import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
@@ -37,19 +33,20 @@ import {
 } from '../../utils/timeUtils';
 import AudioDisplay from '../audio/AudioDisplay';
 import DateTimePicker from '../common/DateTimePicker';
-import TranscriptRow from './TranscriptRow';
+import TranscriptActionsBar from './TranscriptActionsBar';
+import TranscriptDisplay from './TranscriptDisplay';
 
 interface TranscriptViewProps {
   addAlert: (alert: AlertProps) => void;
   triggerSnackbar: (message: string) => void;
 }
 
-type ListTranscriptsPage = {
+export type ListTranscriptsPage = {
   nextToken?: string;
   order: 'asc' | 'desc';
 };
 
-type ListTranscriptsData = {
+export type ListTranscriptsData = {
   transcripts: Transcript[];
 } & ListTranscriptsPage;
 
@@ -469,6 +466,22 @@ export function TranscriptView({
     setHighlightedTransmissionId(transmissionId);
   };
 
+  const handleManualRefresh = useCallback(async () => {
+    setIsTranscriptsPolling(true);
+    try {
+      const newTranscripts = await pollNewerTranscripts();
+      if (newTranscripts.length > 0) {
+        updateCacheWithNewTranscripts(newTranscripts);
+      } else {
+        triggerSnackbar('No newer transcripts found');
+      }
+    } catch (error) {
+      console.error('Manual refresh error:', error);
+    } finally {
+      setIsTranscriptsPolling(false);
+    }
+  }, [pollNewerTranscripts, updateCacheWithNewTranscripts, triggerSnackbar]);
+
   if (!token) {
     return null;
   }
@@ -650,228 +663,37 @@ export function TranscriptView({
       >
         {transcripts.length > 0 ? (
           <>
-            <Box
-              sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}
-            >
-              {searchedFeed?.sourceUrl || searchedFeed?.archiveUrl ? (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                  {searchedFeed.sourceUrl && (
-                    <Link
-                      href={searchedFeed.sourceUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      variant="body2"
-                      sx={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 0.5,
-                      }}
-                    >
-                      <LinkIcon fontSize="small" />
-                      Original source link
-                    </Link>
-                  )}
-                  {searchedFeed.archiveUrl && (
-                    <Link
-                      href={searchedFeed.archiveUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      variant="body2"
-                      sx={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 0.5,
-                      }}
-                    >
-                      <InventoryIcon fontSize="small" />
-                      Archives
-                    </Link>
-                  )}
-                </Box>
-              ) : (
-                <Box />
-              )}
-              {!hasNewerTranscripts && (
-                <Button
-                  size="small"
-                  variant="text"
-                  onClick={async () => {
-                    setIsTranscriptsPolling(true);
-                    try {
-                      const newTranscripts = await pollNewerTranscripts();
-                      if (newTranscripts.length > 0) {
-                        updateCacheWithNewTranscripts(newTranscripts);
-                      } else {
-                        triggerSnackbar('No newer transcripts found');
-                      }
-                    } catch (error) {
-                      console.error('Manual refresh error:', error);
-                    } finally {
-                      setIsTranscriptsPolling(false);
-                    }
-                  }}
-                  disabled={isTranscriptsFetching || isTranscriptsPolling}
-                  startIcon={
-                    isTranscriptsPolling ? (
-                      <CircularProgress size={16} color="inherit" />
-                    ) : (
-                      <RefreshIcon />
-                    )
-                  }
-                  sx={{ textTransform: 'none' }}
-                >
-                  {isTranscriptsPolling
-                    ? 'Refreshing...'
-                    : `Refresh (${TRANSCRIPTS_POLLING_INTERVAL_DISPLAY_STRING})`}
-                </Button>
-              )}
-            </Box>
-            <Paper
-              variant="outlined"
-              sx={{
-                display: 'flex',
-                flexDirection: 'column',
-                flexGrow: 1,
-                minHeight: 0,
-                overflow: 'hidden',
-              }}
-            >
-              <GroupedVirtuoso
-                ref={virtuosoRef}
-                groupCounts={groupCounts}
-                atTopStateChange={(atTop) => setIsViewAtTopOfTranscripts(atTop)}
-                groupContent={(index) => {
-                  const title = groupTitles[index];
-                  return (
-                    <ListItem
-                      sx={{
-                        position: 'sticky',
-                        top: 0,
-                        zIndex: 1,
-                        py: 0,
-                        px: 0,
-                        bgcolor: 'background.paper',
-                      }}
-                    >
-                      <Box
-                        sx={{
-                          width: '100%',
-                          py: 0.5,
-                          px: 2,
-                          bgcolor: 'action.hover',
-                        }}
-                      >
-                        <Typography
-                          variant="caption"
-                          color="text.secondary"
-                          sx={{ fontWeight: 'bold' }}
-                        >
-                          {title}
-                        </Typography>
-                      </Box>
-                    </ListItem>
-                  );
-                }}
-                itemContent={(index) => {
-                  const transcript = transcripts[index];
-                  return (
-                    <TranscriptRow
-                      key={transcript.transmissionId}
-                      transcript={transcript}
-                      index={index}
-                      totalTranscripts={transcripts.length}
-                      ruleIdToNameMap={ruleIdToNameMap}
-                      rulesLoading={rulesLoading}
-                      onPlay={onPlay}
-                      currentlyPlayingTransmissionId={
-                        currentlyPlayingTransmissionId
-                      }
-                      triggerSnackbar={triggerSnackbar}
-                      showHeader={false}
-                      isHighlighted={
-                        transcript.transmissionId === highlightedTransmissionId
-                      }
-                    />
-                  );
-                }}
-                components={{
-                  Header: () =>
-                    hasNewerTranscripts ? (
-                      <Box
-                        sx={{
-                          display: 'flex',
-                          justifyContent: 'center',
-                          py: 1,
-                        }}
-                      >
-                        {isFetchingNewerTranscripts ? (
-                          <CircularProgress size={40} />
-                        ) : (
-                          <Button
-                            variant="text"
-                            onClick={async () => {
-                              const result = await fetchNewerTranscripts();
-                              if (
-                                result.data &&
-                                (
-                                  result.data.pages[0] as {
-                                    transcripts: Transcript[];
-                                  }
-                                )?.transcripts.length === 0
-                              ) {
-                                triggerSnackbar('No newer transcripts found');
-                              }
-                            }}
-                            disabled={isTranscriptsFetching}
-                            sx={{ minWidth: '160px' }}
-                          >
-                            Load newer transcripts
-                          </Button>
-                        )}
-                      </Box>
-                    ) : null,
-                  Footer: () => {
-                    if (hasOlderTranscripts) {
-                      return (
-                        <Box
-                          sx={{
-                            display: 'flex',
-                            justifyContent: 'center',
-                            py: 1,
-                          }}
-                        >
-                          {isFetchingOlderTranscripts ? (
-                            <CircularProgress size={40} />
-                          ) : (
-                            <Button
-                              variant="text"
-                              onClick={() => fetchOlderTranscripts()}
-                              disabled={isTranscriptsFetching}
-                              sx={{ minWidth: '160px' }}
-                            >
-                              Load previous transcripts
-                            </Button>
-                          )}
-                        </Box>
-                      );
-                    }
-                    return (
-                      <Box
-                        sx={{
-                          display: 'flex',
-                          justifyContent: 'center',
-                          py: 2,
-                        }}
-                      >
-                        <Typography variant="caption" color="text.secondary">
-                          No more transcripts found
-                        </Typography>
-                      </Box>
-                    );
-                  },
-                }}
-              />
-            </Paper>
+            <TranscriptActionsBar
+              sourceUrl={searchedFeed?.sourceUrl}
+              archiveUrl={searchedFeed?.archiveUrl}
+              hasNewerTranscripts={hasNewerTranscripts}
+              isTranscriptsFetching={isTranscriptsFetching}
+              isTranscriptsPolling={isTranscriptsPolling}
+              pollingIntervalDisplay={
+                TRANSCRIPTS_POLLING_INTERVAL_DISPLAY_STRING
+              }
+              onRefresh={handleManualRefresh}
+            />
+            <TranscriptDisplay
+              ref={virtuosoRef}
+              transcripts={transcripts}
+              groupCounts={groupCounts}
+              groupTitles={groupTitles}
+              setIsViewAtTopOfTranscripts={setIsViewAtTopOfTranscripts}
+              hasNewerTranscripts={hasNewerTranscripts}
+              isFetchingNewerTranscripts={isFetchingNewerTranscripts}
+              fetchNewerTranscripts={fetchNewerTranscripts}
+              isTranscriptsFetching={isTranscriptsFetching}
+              hasOlderTranscripts={hasOlderTranscripts}
+              isFetchingOlderTranscripts={isFetchingOlderTranscripts}
+              fetchOlderTranscripts={fetchOlderTranscripts}
+              triggerSnackbar={triggerSnackbar}
+              ruleIdToNameMap={ruleIdToNameMap}
+              rulesLoading={rulesLoading}
+              onPlay={onPlay}
+              currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
+              highlightedTransmissionId={highlightedTransmissionId}
+            />
           </>
         ) : isTranscriptsInitialLoading ? (
           <Box
