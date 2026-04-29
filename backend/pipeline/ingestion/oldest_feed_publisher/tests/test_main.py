@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from unittest import mock
 
 import asyncpg
@@ -9,12 +8,9 @@ from google.api_core.exceptions import GoogleAPIError
 
 from backend.pipeline.ingestion.oldest_feed_publisher import main
 
-if TYPE_CHECKING:
-    from collections.abc import Generator
-
 
 @pytest.fixture
-def configured(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
+def configured(monkeypatch: pytest.MonkeyPatch) -> None:
     """Set required env vars + reset module-level monitoring client."""
     monkeypatch.setattr(main, "PROJECT_ID", "test-project")
     monkeypatch.setattr(main, "ALLOYDB_HOST", "10.0.0.1")
@@ -23,7 +19,6 @@ def configured(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
     monkeypatch.setattr(main, "ALLOYDB_DB", "appdb")
     monkeypatch.setattr(main, "ALLOYDB_PASSWORD", "s3cret")
     monkeypatch.setattr(main, "_monitoring_client", None)
-    yield
 
 
 def _make_mock_conn(
@@ -132,9 +127,7 @@ class TestFailurePaths:
         mock_publish.assert_not_awaited()
         # Error log surfaced (logger.exception → ERROR level + traceback)
         assert any("publisher failed" in r.message for r in caplog.records)
-        assert any(
-            r.levelname == "ERROR" for r in caplog.records
-        )
+        assert any(r.levelname == "ERROR" for r in caplog.records)
 
     def test_query_failure_closes_conn_no_publish(
         self, configured: None
