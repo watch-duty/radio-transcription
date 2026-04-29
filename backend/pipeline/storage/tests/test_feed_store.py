@@ -10,7 +10,6 @@ from backend.pipeline.storage import feed_queries
 from backend.pipeline.storage.feed_store import (
     FeedStore,
     HeartbeatResult,
-    LeasedFeed,
     SourceType,
 )
 
@@ -45,74 +44,6 @@ def _make_pool(
     pool.execute.return_value = execute_result
     pool.fetch.return_value = fetch_result or []
     return pool
-
-
-class TestLeaseFeed(unittest.IsolatedAsyncioTestCase):
-    """Tests for FeedStore.lease_feed."""
-
-    async def test_returns_feed_when_available(self) -> None:
-        """A leased feed is returned as a LeasedFeed dict."""
-        pool = _make_pool(fetchrow_result=_LEASE_ROW)
-        store = FeedStore(pool)
-
-        result = await store.lease_feed(_WORKER_ID)
-
-        expected: LeasedFeed = {
-            "id": _FEED_ID,
-            "name": "My Feed",
-            "external_id": "ext-id",
-            "source_type": SourceType.BCFY_FEEDS,
-            "last_processed_filename": None,
-            "last_bookmark_time": None,
-            "fencing_token": 1,
-            "source_feed_id": "123",
-        }
-        self.assertEqual(result, expected)
-
-    async def test_returns_none_when_no_feed_available(self) -> None:
-        """None is returned when no feed can be leased."""
-        pool = _make_pool(fetchrow_result=None)
-        store = FeedStore(pool)
-
-        result = await store.lease_feed(_WORKER_ID)
-
-        self.assertIsNone(result)
-
-    async def test_passes_worker_id_as_parameter(self) -> None:
-        """The worker_id and source_types are passed as parameters to the query."""
-        pool = _make_pool(fetchrow_result=None)
-        store = FeedStore(pool)
-
-        await store.lease_feed(_WORKER_ID)
-
-        args = pool.fetchrow.call_args[0]
-        self.assertEqual(args[1], _WORKER_ID)
-        self.assertIsNone(args[2])  # source_types default
-
-    async def test_passes_source_types_filter(self) -> None:
-        """When FeedStore is constructed with source_types, the filter is passed to the query."""
-        pool = _make_pool(fetchrow_result=None)
-        store = FeedStore(pool, source_types=["bcfy_feeds"])
-
-        await store.lease_feed(_WORKER_ID)
-
-        args = pool.fetchrow.call_args[0]
-        self.assertEqual(args[2], ["bcfy_feeds"])
-
-    async def test_raises_value_error_on_unknown_source_type(self) -> None:
-        """ValueError is raised with details if the DB returns an unknown source type slug."""
-        bad_row = _LEASE_ROW.copy()
-        bad_row["source_type"] = "unknown_slug"
-        pool = _make_pool(fetchrow_result=bad_row)
-        store = FeedStore(pool)
-
-        with self.assertRaises(ValueError) as ctx:
-            await store.lease_feed(_WORKER_ID)
-
-        self.assertIn(
-            f"Unknown source type 'unknown_slug' for feed {_FEED_ID}",
-            str(ctx.exception),
-        )
 
 
 class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):

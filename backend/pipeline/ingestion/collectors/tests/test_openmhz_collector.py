@@ -16,6 +16,9 @@ from backend.pipeline.ingestion.collectors.openmhz.collector import (
     MAX_RECONNECT_FAILURES,
     openmhz_collector,
 )
+from backend.pipeline.ingestion.collectors.tests.conftest import (
+    _default_resources,
+)
 from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 
 _TEST_FEED = LeasedFeed(
@@ -79,7 +82,10 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         results = []
         async for chunk in openmhz_collector(
-            _TEST_FEED, shutdown, "https://api.openmhz.com/"
+            _TEST_FEED,
+            shutdown,
+            "https://api.openmhz.com/",
+            _default_resources(),
         ):
             results.append(chunk)
             shutdown.set()
@@ -105,7 +111,10 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         results = []
         async for chunk in openmhz_collector(
-            _TEST_FEED, shutdown, "https://api.openmhz.com/"
+            _TEST_FEED,
+            shutdown,
+            "https://api.openmhz.com/",
+            _default_resources(),
         ):
             results.append(chunk)
             shutdown.set()
@@ -130,7 +139,10 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         results = []
         async for chunk in openmhz_collector(
-            _TEST_FEED, shutdown, "https://api.openmhz.com/"
+            _TEST_FEED,
+            shutdown,
+            "https://api.openmhz.com/",
+            _default_resources(),
         ):
             results.append(chunk)
             shutdown.set()
@@ -154,7 +166,10 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         with self.assertRaises(ValueError, msg="missing source_feed_id"):
             async for _ in openmhz_collector(
-                feed, shutdown, "https://api.openmhz.com/"
+                feed,
+                shutdown,
+                "https://api.openmhz.com/",
+                _default_resources(),
             ):
                 pass
 
@@ -175,7 +190,10 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         with self.assertRaises(RuntimeError) as ctx:
             async for _ in openmhz_collector(
-                _TEST_FEED, shutdown, "https://api.openmhz.com/"
+                _TEST_FEED,
+                shutdown,
+                "https://api.openmhz.com/",
+                _default_resources(),
             ):
                 pass
         self.assertEqual(str(ctx.exception), "reconnect_exhausted")
@@ -198,7 +216,10 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         results = []
         async for chunk in openmhz_collector(
-            _TEST_FEED, shutdown, "https://api.openmhz.com/"
+            _TEST_FEED,
+            shutdown,
+            "https://api.openmhz.com/",
+            _default_resources(),
         ):
             results.append(chunk)
             if len(results) == 2:
@@ -247,7 +268,10 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         results = []
         async for chunk in openmhz_collector(
-            _TEST_FEED, shutdown, "https://api.openmhz.com/"
+            _TEST_FEED,
+            shutdown,
+            "https://api.openmhz.com/",
+            _default_resources(),
         ):
             results.append(chunk)
             if len(results) == 2:
@@ -284,7 +308,10 @@ class TestOpenmhzReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         results = []
         async for chunk in openmhz_collector(
-            _TEST_FEED, shutdown, "https://api.openmhz.com/"
+            _TEST_FEED,
+            shutdown,
+            "https://api.openmhz.com/",
+            _default_resources(),
         ):
             results.append(chunk)
             shutdown.set()
@@ -318,7 +345,10 @@ class TestOpenmhzCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
             level="WARNING",
         ) as cm:
             async for _ in openmhz_collector(
-                _TEST_FEED, shutdown, "https://api.openmhz.com/"
+                _TEST_FEED,
+                shutdown,
+                "https://api.openmhz.com/",
+                _default_resources(),
             ):
                 pass  # no yield because download failed
 
@@ -367,7 +397,10 @@ class TestOpenmhzCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
             level="WARNING",
         ) as cm:
             async for _ in openmhz_collector(
-                _TEST_FEED, shutdown, "https://api.openmhz.com/"
+                _TEST_FEED,
+                shutdown,
+                "https://api.openmhz.com/",
+                _default_resources(),
             ):
                 shutdown.set()
             # Placeholder emit so assertLogs doesn't raise on zero-record capture.
@@ -405,7 +438,10 @@ class TestOpenmhzCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
             level="WARNING",
         ) as cm:
             async for _ in openmhz_collector(
-                _TEST_FEED, shutdown, "https://api.openmhz.com/"
+                _TEST_FEED,
+                shutdown,
+                "https://api.openmhz.com/",
+                _default_resources(),
             ):
                 pass
             # Placeholder emit so assertLogs doesn't raise on zero-record capture.

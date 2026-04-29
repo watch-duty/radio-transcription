@@ -8,11 +8,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import aiohttp
+
 from backend.pipeline.common.constants import AUDIO_FORMAT
 from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.ingestion.collectors.icecast.icecast_collector import (
     capture_icecast_stream,
 )
+from backend.pipeline.ingestion.models import CaptureResources
 from backend.pipeline.ingestion.router import BCFY_FEEDS_URL_BASE
 from backend.pipeline.storage.feed_store import SourceType
 
@@ -54,25 +57,31 @@ async def run_local_capture() -> None:
     shutdown_event = asyncio.Event()
 
     chunk_count = 0
-    async for captured_chunk in capture_icecast_stream(
-        feed, shutdown_event, BCFY_FEEDS_URL_BASE
-    ):
-        chunk_count += 1
-        timestamp = datetime.now(UTC).isoformat(timespec="milliseconds")
-        file_timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S_%fZ")
-        file_name = f"chunk_{chunk_count:06d}_{file_timestamp}.{AUDIO_FORMAT}"
-        file_path = output_dir / file_name
-        await asyncio.to_thread(
-            file_path.write_bytes, captured_chunk.audio_bytes
-        )
-        logger.info(
-            "Local capture chunk %d received (%d bytes) at %s (start: %s) -> %s",
-            chunk_count,
-            len(captured_chunk.audio_bytes),
-            timestamp,
-            captured_chunk.chunk_start_time.isoformat(timespec="milliseconds"),
-            file_path,
-        )
+    async with aiohttp.ClientSession() as http_session:
+        resources = CaptureResources(http_session=http_session)
+        async for captured_chunk in capture_icecast_stream(
+            feed, shutdown_event, BCFY_FEEDS_URL_BASE, resources
+        ):
+            chunk_count += 1
+            timestamp = datetime.now(UTC).isoformat(timespec="milliseconds")
+            file_timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S_%fZ")
+            file_name = (
+                f"chunk_{chunk_count:06d}_{file_timestamp}.{AUDIO_FORMAT}"
+            )
+            file_path = output_dir / file_name
+            await asyncio.to_thread(
+                file_path.write_bytes, captured_chunk.audio_bytes
+            )
+            logger.info(
+                "Local capture chunk %d received (%d bytes) at %s (start: %s) -> %s",
+                chunk_count,
+                len(captured_chunk.audio_bytes),
+                timestamp,
+                captured_chunk.chunk_start_time.isoformat(
+                    timespec="milliseconds"
+                ),
+                file_path,
+            )
 
 
 def main() -> None:

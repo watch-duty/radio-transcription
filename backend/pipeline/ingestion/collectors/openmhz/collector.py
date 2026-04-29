@@ -13,7 +13,7 @@ from curl_cffi.requests import AsyncSession
 from backend.pipeline.ingestion.collectors.openmhz._ws_transport import (
     websocket_transport,
 )
-from backend.pipeline.ingestion.models import CapturedChunk
+from backend.pipeline.ingestion.models import CapturedChunk, CaptureResources
 from backend.pipeline.ingestion.slo_contract import (
     EVENT_TYPE_CALL_DOWNLOAD_FAILED,
 )
@@ -103,10 +103,19 @@ async def openmhz_collector(
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
     url_base: str,
+    _resources: CaptureResources,
 ) -> AsyncIterator[CapturedChunk]:
     """Capture OpenMHZ call recordings via WebSocket.
 
     Yields :class:`CapturedChunk` for each call received.
+
+    Args:
+        feed: Leased feed containing source_feed_id.
+        shutdown_event: Signals graceful shutdown request.
+        url_base: OpenMHZ API base URL.
+        _resources: Runtime-owned CaptureResources. Accepted but unused
+            (openmhz uses curl_cffi for HTTP, not the runtime aiohttp
+            session).
 
     Raises:
         ValueError: If ``source_feed_id`` is missing from the feed.

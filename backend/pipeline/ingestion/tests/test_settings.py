@@ -28,7 +28,14 @@ class TestNormalizerSettings(unittest.TestCase):
             "LEASE_POLL_INTERVAL_SEC": "2.5",
             "HEARTBEAT_INTERVAL_SEC": "10.0",
             "HEARTBEAT_STALL_TIMEOUT_SEC": "30.0",
-            "GRACEFUL_SHUTDOWN_TIMEOUT_SEC": "8.0",
+            "GRACEFUL_SHUTDOWN_TIMEOUT_SEC": "15.0",
+            "TASK_CANCEL_BUDGET_SEC": "12.0",
+            "RSS_WATCHDOG_POLL_INTERVAL_SEC": "1.0",
+            "RSS_WATCHDOG_PAUSE_THRESHOLD": "0.65",
+            "RSS_WATCHDOG_EXIT_THRESHOLD": "0.85",
+            "RSS_WATCHDOG_PAUSE_CONSECUTIVE_SAMPLES": "5",
+            "RSS_WATCHDOG_EXIT_CONSECUTIVE_SAMPLES": "5",
+            "RSS_WATCHDOG_WARMUP_SEC": "30.0",
             "ALLOYDB_POOL_MIN_SIZE": "3",
             "ALLOYDB_POOL_MAX_SIZE": "25",
             "ALLOYDB_COMMAND_TIMEOUT_SEC": "40.0",
@@ -60,7 +67,14 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.lease_poll_interval_sec, 2.5)
         self.assertEqual(settings.heartbeat_interval_sec, 10.0)
         self.assertEqual(settings.heartbeat_stall_timeout_sec, 30.0)
-        self.assertEqual(settings.graceful_shutdown_timeout_sec, 8.0)
+        self.assertEqual(settings.graceful_shutdown_timeout_sec, 15.0)
+        self.assertEqual(settings.task_cancel_budget_sec, 12.0)
+        self.assertEqual(settings.rss_watchdog_poll_interval_sec, 1.0)
+        self.assertEqual(settings.rss_watchdog_pause_threshold, 0.65)
+        self.assertEqual(settings.rss_watchdog_exit_threshold, 0.85)
+        self.assertEqual(settings.rss_watchdog_pause_consecutive_samples, 5)
+        self.assertEqual(settings.rss_watchdog_exit_consecutive_samples, 5)
+        self.assertEqual(settings.rss_watchdog_warmup_sec, 30.0)
         self.assertEqual(settings.audio_staging_bucket, "staging-bucket")
         self.assertEqual(settings.db.pool_min_size, 3)
         self.assertEqual(settings.db.pool_max_size, 25)
@@ -104,7 +118,14 @@ class TestNormalizerSettings(unittest.TestCase):
         self.assertEqual(settings.lease_poll_interval_sec, 5.0)
         self.assertEqual(settings.heartbeat_interval_sec, 15.0)
         self.assertEqual(settings.heartbeat_stall_timeout_sec, 45.0)
-        self.assertEqual(settings.graceful_shutdown_timeout_sec, 10.0)
+        self.assertEqual(settings.graceful_shutdown_timeout_sec, 90.0)
+        self.assertEqual(settings.task_cancel_budget_sec, 30.0)
+        self.assertEqual(settings.rss_watchdog_poll_interval_sec, 2.0)
+        self.assertEqual(settings.rss_watchdog_pause_threshold, 0.70)
+        self.assertEqual(settings.rss_watchdog_exit_threshold, 0.90)
+        self.assertEqual(settings.rss_watchdog_pause_consecutive_samples, 3)
+        self.assertEqual(settings.rss_watchdog_exit_consecutive_samples, 3)
+        self.assertEqual(settings.rss_watchdog_warmup_sec, 60.0)
         self.assertEqual(settings.db.pool_min_size, 8)
         self.assertEqual(settings.db.pool_max_size, 8)
         self.assertEqual(settings.db.command_timeout_sec, 30.0)
@@ -219,6 +240,43 @@ class TestNormalizerSettings(unittest.TestCase):
         with patch.dict("os.environ", env, clear=True):
             with self.assertRaises(ValueError):
                 NormalizerSettings()
+
+    def test_invalid_task_cancel_budget_exceeds_graceful_shutdown_raises(
+        self,
+    ) -> None:
+        """SHUTDOWN-02: ValueError raised when task_cancel_budget_sec +
+        2s settle exceeds graceful_shutdown_timeout_sec (D-03 / D-11).
+        """
+        env = {
+            **_required_env(),
+            "TASK_CANCEL_BUDGET_SEC": "120.0",
+            "GRACEFUL_SHUTDOWN_TIMEOUT_SEC": "90.0",
+        }
+
+        with patch.dict("os.environ", env, clear=True):
+            with self.assertRaises(ValueError) as context:
+                NormalizerSettings()
+
+        self.assertIn("task_cancel_budget_sec", str(context.exception))
+        self.assertIn("graceful_shutdown_timeout_sec", str(context.exception))
+
+    def test_edge_case_task_cancel_budget_at_boundary_does_not_raise(
+        self,
+    ) -> None:
+        """Boundary: task_cancel_budget_sec + 2.0 == graceful_shutdown_
+        timeout_sec is allowed (D-03 uses `>`, not `>=`).
+        """
+        env = {
+            **_required_env(),
+            "TASK_CANCEL_BUDGET_SEC": "88.0",
+            "GRACEFUL_SHUTDOWN_TIMEOUT_SEC": "90.0",
+        }
+
+        with patch.dict("os.environ", env, clear=True):
+            settings = NormalizerSettings()
+
+        self.assertEqual(settings.task_cancel_budget_sec, 88.0)
+        self.assertEqual(settings.graceful_shutdown_timeout_sec, 90.0)
 
 
 if __name__ == "__main__":

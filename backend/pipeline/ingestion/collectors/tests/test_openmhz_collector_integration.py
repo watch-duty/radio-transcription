@@ -23,10 +23,19 @@ from backend.pipeline.ingestion.collectors.openmhz._types import CallEvent
 from backend.pipeline.ingestion.collectors.openmhz.collector import (
     openmhz_collector,
 )
-from backend.pipeline.storage.feed_store import FeedStore, LeasedFeed
+from backend.pipeline.ingestion.collectors.tests.conftest import (
+    _default_resources,
+)
+from backend.pipeline.storage.feed_store import (
+    FeedStore,
+    LeasedFeed,
+    SourceType,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+
+_CLAIM: dict[SourceType, int] = {SourceType.OPENMHZ: 1}
 
 _REPO_ROOT = Path(__file__).resolve().parents[5]
 _SQL_DIR = (
@@ -224,13 +233,15 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             return await resp.read()
 
     async def _lease_feed(self, name: str) -> LeasedFeed:
-        """Insert, lease, and return the feed."""
+        """Insert and acquire the feed via the production claim path."""
         await self._insert_feed(name)
-        feed = await self.store.lease_feed(self.worker_id)
-        if feed is None:
-            msg = "Expected a LeasedFeed, got None"
+        leased = await self.store.acquire_feeds_batch(self.worker_id, _CLAIM)
+        if not leased:
+            msg = (
+                "Expected a LeasedFeed from acquire_feeds_batch, got empty list"
+            )
             raise AssertionError(msg)
-        return feed
+        return leased[0]
 
     # -- Tests ------------------------------------------------------------
 
@@ -251,7 +262,10 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         chunks_uploaded = []
         async for chunk in openmhz_collector(
-            feed, shutdown, "https://api.openmhz.com/"
+            feed,
+            shutdown,
+            "https://api.openmhz.com/",
+            _default_resources(),
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client,
@@ -307,7 +321,10 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         gcs_paths = []
         seq = 0
         async for chunk in openmhz_collector(
-            feed, shutdown, "https://api.openmhz.com/"
+            feed,
+            shutdown,
+            "https://api.openmhz.com/",
+            _default_resources(),
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client, chunk.audio_bytes, feed, _TEST_BUCKET, seq
@@ -367,7 +384,10 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         gcs_paths = []
         seq = 0
         async for chunk in openmhz_collector(
-            feed, shutdown, "https://api.openmhz.com/"
+            feed,
+            shutdown,
+            "https://api.openmhz.com/",
+            _default_resources(),
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client, chunk.audio_bytes, feed, _TEST_BUCKET, seq
@@ -408,7 +428,10 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         gcs_paths = []
         async for chunk in openmhz_collector(
-            feed, shutdown, "https://api.openmhz.com/"
+            feed,
+            shutdown,
+            "https://api.openmhz.com/",
+            _default_resources(),
         ):
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client, chunk.audio_bytes, feed, _TEST_BUCKET, 0
@@ -425,10 +448,13 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         """Feed without feed_properties -> ValueError, no GCS upload."""
         # Insert a valid feed
         feed_id = await self._insert_feed("no-id-feed")
-        feed = await self.store.lease_feed(self.worker_id)
-        if feed is None:
-            msg = "Expected a LeasedFeed, got None"
+        leased = await self.store.acquire_feeds_batch(self.worker_id, _CLAIM)
+        if not leased:
+            msg = (
+                "Expected a LeasedFeed from acquire_feeds_batch, got empty list"
+            )
             raise AssertionError(msg)
+        feed = leased[0]
 
         # Mock missing source_feed_id on the loaded feed object
         feed["source_feed_id"] = None
@@ -436,7 +462,10 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         with self.assertRaises(ValueError) as ctx:
             async for _ in openmhz_collector(
-                feed, shutdown, "https://api.openmhz.com/"
+                feed,
+                shutdown,
+                "https://api.openmhz.com/",
+                _default_resources(),
             ):
                 pass
 
