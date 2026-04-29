@@ -43,23 +43,28 @@ export function FeedSearch({
     return [...(feeds ?? [])].sort((a, b) => a.name.localeCompare(b.name));
   }, [feeds]);
 
-  const filteredOptions = useMemo(() => {
-    const search = inputValue.trim().toLowerCase();
-    if (!search) return sortedFeeds;
-
-    return sortedFeeds.filter(
-      (feed) =>
-        feed.id.toLowerCase().includes(search) ||
-        feed.name.toLowerCase().includes(search) ||
-        (feed.externalId && feed.externalId.toLowerCase().includes(search))
-    );
-  }, [sortedFeeds, inputValue]);
-
   return (
     <Autocomplete
       disablePortal
       options={sortedFeeds}
-      filterOptions={() => filteredOptions}
+      filterOptions={(options, state) => {
+        const search = state.inputValue.trim().toLowerCase();
+
+        // If displayed input text matches currently selected option label exactly,
+        // user is viewing selection, NOT actively filtering. Return unfiltered candidates.
+        if (selectedFeed && state.inputValue === selectedFeed.name) {
+          return options;
+        }
+
+        if (!search) return options;
+
+        return options.filter(
+          (feed) =>
+            feed.id.toLowerCase().includes(search) ||
+            feed.name.toLowerCase().includes(search) ||
+            (feed.externalId && feed.externalId.toLowerCase().includes(search))
+        );
+      }}
       getOptionLabel={(option) => option.name}
       size="small"
       sx={{ width: '20%' }}
