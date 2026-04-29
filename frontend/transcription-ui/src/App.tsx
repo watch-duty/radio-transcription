@@ -1,6 +1,7 @@
 import { Suspense, lazy, useCallback, useState } from 'react';
 import { Route, Routes } from 'react-router';
 
+import { ThemeProvider, createTheme, useMediaQuery } from '@mui/material';
 import Alert, { type AlertProps } from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Snackbar from '@mui/material/Snackbar';
@@ -56,55 +57,64 @@ function App() {
     });
   }, []);
 
-  if (!token) {
-    return <Login />;
-  }
+  const prefersDarkMode = useMediaQuery('(prefers-color-scheme: dark)');
+  const theme = createTheme({
+    palette: {
+      mode: prefersDarkMode ? 'dark' : 'light',
+    },
+  });
 
-  // Define the application routes below.
   return (
-    <AppContainer>
-      <Snackbar
-        open={!!snackbarMessage}
-        autoHideDuration={3000}
-        onClose={() => setSnackbarMessage(null)}
-        message={snackbarMessage}
-      />
-      <Box sx={{ width: '100%', mb: 2 }}>
-        {alerts.map((alert, index) => (
-          <Alert
-            key={index}
-            onClose={() =>
-              setAlerts((alerts) => alerts.filter((_, i) => i !== index))
-            }
-            severity={alert.severity}
-          >
-            {alert.children}
-          </Alert>
-        ))}
-      </Box>
-      <Routes>
-        <Route
-          path="/"
-          element={
-            <TranscriptView
-              addAlert={addAlert}
-              triggerSnackbar={triggerSnackbar}
+    <ThemeProvider theme={theme}>
+      {!token ? (
+        <Login />
+      ) : (
+        <AppContainer>
+          <Snackbar
+            open={!!snackbarMessage}
+            autoHideDuration={3000}
+            onClose={() => setSnackbarMessage(null)}
+            message={snackbarMessage}
+          />
+          <Box sx={{ width: '100%', mb: 2 }}>
+            {alerts.map((alert, index) => (
+              <Alert
+                key={index}
+                onClose={() =>
+                  setAlerts((alerts) => alerts.filter((_, i) => i !== index))
+                }
+                severity={alert.severity}
+              >
+                {alert.children}
+              </Alert>
+            ))}
+          </Box>
+          {/* Define the application routes below. */}
+          <Routes>
+            <Route
+              path="/"
+              element={
+                <TranscriptView
+                  addAlert={addAlert}
+                  triggerSnackbar={triggerSnackbar}
+                />
+              }
             />
-          }
-        />
-        <Route path="/rules" element={<RulesView />} />
-        <Route path="/feeds" element={<FeedsView />} />
-        <Route
-          path="/docs"
-          element={
-            <Suspense fallback={<div>Loading documentation...</div>}>
-              <DocsView />
-            </Suspense>
-          }
-        />
-        <Route path="/login" element={<Login />} />
-      </Routes>
-    </AppContainer>
+            <Route path="/rules" element={<RulesView />} />
+            <Route path="/feeds" element={<FeedsView />} />
+            <Route
+              path="/docs"
+              element={
+                <Suspense fallback={<div>Loading documentation...</div>}>
+                  <DocsView />
+                </Suspense>
+              }
+            />
+            <Route path="/login" element={<Login />} />
+          </Routes>
+        </AppContainer>
+      )}
+    </ThemeProvider>
   );
 }
 
