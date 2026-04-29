@@ -170,12 +170,17 @@ class FeedStore:
         except ValueError as e:
             msg = f"Unknown source type {row['source_type']!r} for feed {row['id']}"
             raise ValueError(msg) from e
+        try:
+            status = FeedStatus(row["status"])
+        except ValueError as e:
+            msg = f"Unknown status {row['status']!r} for feed {row['id']}"
+            raise ValueError(msg) from e
 
         return Feed(
             id=row["id"],
             name=row["name"],
             source_type=source_type,
-            status=row["status"],
+            status=status,
             failure_count=row["failure_count"],
             worker_id=row["worker_id"],
             last_heartbeat=row["last_heartbeat"],
