@@ -2,28 +2,31 @@ import os
 import json
 import torch
 import logging
+from typing import Callable, Any, Optional
+from google.cloud import storage
 from .gcs_utils import parse_gcs_uri, download_blob_to_file, upload_file_to_blob
 
 logger = logging.getLogger(__name__)
 
-def run_batch_evaluation(
-    model, 
-    manifest_data, 
-    prompt_fn, 
-    inference_fn,
-    decode_fn, 
-    storage_client,
-    project_name,
-    selected_model,
-    batch_size=4,
-    limit=None
-):
+def run_inference_pipeline(
+    model: Any, 
+    manifest_data: list[dict[str, Any]], 
+    prompt_fn: Callable[[dict[str, Any], str], Any], 
+    inference_fn: Callable[[Any, list[Any]], list[Any]],
+    decode_fn: Callable[[Any, Any], str], 
+    storage_client: storage.Client,
+    project_name: str,
+    selected_model: str,
+    batch_size: int = 4,
+    limit: Optional[int] = None,
+    preprocess_fn: Optional[Callable[[str, str], bool]] = None
+) -> list[dict[str, Any]]:
     """
     Runs a batch evaluation for a model.
     
     Args:
-        model: The loaded model instance.
-        manifest_data: List of manifest entries.
+        model: The loaded model instance. This function is model-agnostic and can be used with various model types (e.g., NeMo models like SALM, Whisper, etc.) as it delegates inference and decoding to the provided callables.
+        manifest_data: List of manifest entries. Assumes 'audio_filepath' points to a separate audio file already segmented.
         prompt_fn: Callable(entry, local_path) -> prompt structure.
         inference_fn: Callable(model, prompts) -> list of raw outputs.
         decode_fn: Callable(output, model) -> str (transcription).
@@ -32,6 +35,7 @@ def run_batch_evaluation(
         selected_model: Name of the model (used for output keys).
         batch_size: Number of files to process in parallel.
         limit: Limit the number of entries to process.
+        preprocess_fn: Optional callable to preprocess audio file before prompting. Callable(input_path, output_path) -> bool.
     """
     if limit:
         manifest_data = manifest_data[:limit]
@@ -50,23 +54,28 @@ def run_batch_evaluation(
         # Prepare batch
         for entry in batch:
             audio_gcs_uri = entry["audio_filepath"]
-            
             audio_bucket, audio_blob_path = parse_gcs_uri(audio_gcs_uri)
             # Use the file name directly for local storage
             file_name = os.path.splitext(os.path.basename(audio_blob_path))[0]
             local_path = f"./temp_{file_name}.flac"
-            # Use the path from manifest directly, no counter-based derivation
-            segmented_blob_path = audio_blob_path
-            
             try:
-                download_blob_to_file(storage_client, audio_bucket, segmented_blob_path, local_path)
+                download_blob_to_file(storage_client, audio_bucket, audio_blob_path, local_path)
                 local_files.append(local_path)
-                batch_entries.append(entry)
                 
+                current_path = local_path
+                if preprocess_fn:
+                    preprocessed_path = f"./temp_prep_{file_name}.wav"
+                    if preprocess_fn(local_path, preprocessed_path):
+                        current_path = preprocessed_path
+                        local_files.append(preprocessed_path)
+                    else:
+                        logger.warning(f"Preprocessing failed for {local_path}, using original.")
+                
+                batch_entries.append(entry)
                 # Generate prompt for this model
-                prompts.append(prompt_fn(entry, local_path))
+                prompts.append(prompt_fn(entry, current_path))
             except Exception as e:
-                logger.error(f"Failed to process {segmented_blob_path}: {e}")
+                logger.error(f"Failed to process {audio_blob_path}: {e}")
                 continue
             
         if not prompts:
