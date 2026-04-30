@@ -1,3 +1,5 @@
+import pytest
+
 from backend.pipeline.transcription.options import TranscriptionOptions
 from backend.pipeline.transcription.orchestration import get_pipeline
 
@@ -45,3 +47,57 @@ def test_pipeline_topology_typehints_with_bypass_stitching() -> None:
 
     pipeline = get_pipeline(options)
     assert pipeline is not None
+
+
+def test_pipeline_invalid_timeout_without_bypass() -> None:
+    """Verifies failure when out_of_order_timeout_ms >= stale_timeout_ms (standard path)."""
+    options = TranscriptionOptions(
+        flags=[
+            "--project",
+            "test-project",
+            "--input_subscription",
+            "projects/test-project/subscriptions/in",
+            "--output_topic",
+            "projects/test-project/topics/out",
+            "--dlq_topic",
+            "projects/test-project/topics/dlq",
+            "--out_of_order_timeout_ms",
+            "80000",
+            "--stale_timeout_ms",
+            "70000",
+        ]
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"stale_timeout_ms .* must be strictly greater than out_of_order_timeout_ms",
+    ):
+        get_pipeline(options)
+
+
+def test_pipeline_invalid_timeout_with_bypass() -> None:
+    """Verifies failure when out_of_order_timeout_ms >= stale_timeout_ms with bypass enabled."""
+    options = TranscriptionOptions(
+        flags=[
+            "--project",
+            "test-project",
+            "--input_subscription",
+            "projects/test-project/subscriptions/in",
+            "--output_topic",
+            "projects/test-project/topics/out",
+            "--dlq_topic",
+            "projects/test-project/topics/dlq",
+            "--bypass_stitching",
+            "true",
+            "--out_of_order_timeout_ms",
+            "80000",
+            "--stale_timeout_ms",
+            "70000",
+        ]
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"stale_timeout_ms .* must be strictly greater than out_of_order_timeout_ms",
+    ):
+        get_pipeline(options)
