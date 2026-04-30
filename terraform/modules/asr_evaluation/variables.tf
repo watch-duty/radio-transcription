@@ -14,6 +14,12 @@ variable "machine_type" {
   default     = "n1-standard-4"
 }
 
+variable "provisioning_model" {
+  description = "The type of instance to create"
+  type        = string
+  default     = "SPOT"
+}
+
 variable "gpu_type" {
   description = "The type of GPU to attach"
   type        = string
