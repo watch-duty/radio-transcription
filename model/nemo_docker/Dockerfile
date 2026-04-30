@@ -23,7 +23,10 @@ COPY model/notebook_docker/requirements.txt /tmp/notebook_requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     wget https://raw.githubusercontent.com/NVIDIA/NeMo/v2.7.2/tools/speech_data_explorer/requirements.txt -O /tmp/requirements.txt && \
     pip install -r /tmp/requirements.txt && \
-    pip install -r /tmp/notebook_requirements.txt
+    pip install -r /tmp/notebook_requirements.txt && \
+    pip install peft && \
+    pip install --upgrade torch torchvision torchaudio && \
+    pip install "nemo_toolkit[asr,tts] @ git+https://github.com/NVIDIA/NeMo.git"
 
 # Download ONLY the directories needed from NeMO github repo.
 WORKDIR /workspace/nemo
