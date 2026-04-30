@@ -26,4 +26,7 @@ message AudioChunk {
 
   // The unique identifier of the radio feed (formatted as an RFC 4122 UUID).
   string feed_id = 7;
+
+  // The trace ID for tracking the transmission's progress through the pipeline.
+  string trace_id = 8;
 }

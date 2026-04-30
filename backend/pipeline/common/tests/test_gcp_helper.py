@@ -159,7 +159,11 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
         # Act & Assert
         with self.assertRaises(Exception) as context:
             await gcp_helper.upload_staged_audio(
-                mock_gcs_client, audio_chunk, feed, bucket, chunk_seq
+                mock_gcs_client,
+                audio_chunk,
+                feed,
+                bucket,
+                chunk_seq,
             )
 
         self.assertIn("GCS upload failed", str(context.exception))
@@ -177,10 +181,18 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
 
         # Act - Upload twice with the same client
         await gcp_helper.upload_staged_audio(
-            mock_gcs_client, audio_chunk, feed, bucket, 1
+            mock_gcs_client,
+            audio_chunk,
+            feed,
+            bucket,
+            1,
         )
         await gcp_helper.upload_staged_audio(
-            mock_gcs_client, audio_chunk, feed, bucket, 2
+            mock_gcs_client,
+            audio_chunk,
+            feed,
+            bucket,
+            2,
         )
 
         # Assert - Both uploads went through the storage returned by the client
@@ -206,7 +218,11 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
 
         # Act
         result = await gcp_helper.upload_staged_audio(
-            mock_gcs_client, audio_chunk, feed, bucket, chunk_seq
+            mock_gcs_client,
+            audio_chunk,
+            feed,
+            bucket,
+            chunk_seq,
         )
 
         # Assert

@@ -21,6 +21,7 @@ from apache_beam.utils.timestamp import Timestamp
 
 from backend.pipeline.common.constants import MS_PER_SECOND, SAMPLE_RATE_HZ
 from backend.pipeline.common.storage.gcs_uploader import GCSAudioUploader
+from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.transcription.audio.audio_processor import AudioProcessor
 from backend.pipeline.transcription.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
@@ -256,6 +257,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         self.stitch_config = stitch_config
 
     def setup(self) -> None:
+        setup_tracing()
         self.audio_processor = AudioProcessor(
             self.stitch_config.vad_type,
             self.stitch_config.vad_config,
@@ -795,6 +797,7 @@ class OrderedBypassFn(beam.DoFn):
         self.audio_processor: AudioProcessor | None = None
 
     def setup(self) -> None:
+        setup_tracing()
         self.audio_processor = AudioProcessor(
             self.stitch_config.vad_type,
             self.stitch_config.vad_config,
@@ -986,6 +989,7 @@ class TranscribeAudioFn(beam.DoFn):
     @override
     def setup(self) -> None:
         """Initializes internal clients once per worker."""
+        setup_tracing()
         # Grab the global pool singleton
         self.shared_resources = SHARED_RESOURCE_HANDLE.acquire(SharedResources)
 
