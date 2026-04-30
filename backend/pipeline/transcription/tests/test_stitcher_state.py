@@ -45,7 +45,6 @@ def mock_audio_chunk(
     duration_ms: int,
     speech_segments: list[tuple[float, float]],
     gcs_uri: str = "gs://fake/1.flac",
-    trace_id: str = "dummy-trace-id",
 ) -> AudioChunkData:
     return AudioChunkData(
         start_ms=start_ms,
@@ -54,7 +53,6 @@ def mock_audio_chunk(
             TimeRange(int(s * 1000), int(e * 1000)) for s, e in speech_segments
         ],
         gcs_uri=gcs_uri,
-        trace_id=trace_id,
         duration_ms=duration_ms,
         sample_rate=16000,
     )
