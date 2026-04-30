@@ -38,8 +38,8 @@ class TestSuccessPath:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         del configured
-        # COUNT(*)::DOUBLE PRECISION returns integer-valued floats; 42.0 is
-        # the realistic shape (vs. fractional values that latency would have).
+        # COUNT(*) returns BIGINT → Python int via asyncpg; 42 is a
+        # realistic queue depth (well under single_instance_assignment=100).
         mock_pool = _make_mock_pool(fetchval_result=42)
         mock_publish = mock.AsyncMock()
 

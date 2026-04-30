@@ -82,6 +82,15 @@ logger = logging.getLogger(__name__)
 # loop per request and orphan the pool — pool.fetchval on the second
 # invocation would raise "Task got Future attached to a different loop"
 # or hang on the loop-bound semaphore.
+#
+# Concurrency assumption: this `_loop.run_until_complete(...)` pattern is
+# NOT thread-safe — calling it from two threads simultaneously raises
+# "This event loop is already running". Safe here because the deployment-
+# repo Terraform sets `max_instance_request_concurrency = 1` on the Cloud
+# Run service (terraform/modules/services/ingestion/oldest_feed_publisher/
+# main.tf), so GCP routes at most one request at a time to a given
+# instance. If anyone relaxes that to N>1, this code must add a
+# threading.Lock around the run_until_complete call.
 _loop = asyncio.new_event_loop()
 
 # Reused across warm invocations.
