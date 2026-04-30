@@ -108,6 +108,7 @@ def run_test_baseline_inference_evaluation(
     prompt_fn,
     inference_fn,
     decode_fn,
+    normalize_fn=None,
     dataset_name="librispeech_asr",
     dataset_config="clean",
     split="test",
@@ -119,6 +120,7 @@ def run_test_baseline_inference_evaluation(
     from evaluate import load
     import tempfile
     import soundfile as sf
+    import re
 
     logger.info(f"Loading dataset {dataset_name} in streaming mode...")
     dataset = load_dataset(
@@ -138,6 +140,14 @@ def run_test_baseline_inference_evaluation(
 
     logger.info(f"Running inference on {num_examples} examples with batch size {batch_size}...")
 
+    # Use default normalizer if none provided
+    if normalize_fn is None:
+        def default_normalize(text):
+            text = text.upper()
+            text = re.sub(r'[^A-Z\s]', '', text)
+            return re.sub(r'\s+', ' ', text).strip()
+        normalize_fn = default_normalize
+
     def process_current_batch():
         nonlocal batch_prompts, batch_refs, batch_temp_paths, predictions, references
         if not batch_prompts:
@@ -149,8 +159,13 @@ def run_test_baseline_inference_evaluation(
             for j, out in enumerate(outputs):
                 if out != "[ERROR]":
                     pred = decode_fn(out, model)
-                    predictions.append(pred.strip())
-                    references.append(batch_refs[j].strip())
+                    
+                    # Apply normalization
+                    pred_norm = normalize_fn(pred)
+                    ref_norm = normalize_fn(batch_refs[j])
+                        
+                    predictions.append(pred_norm)
+                    references.append(ref_norm)
                 else:
                     logger.error(f"Error processing example in batch")
 
