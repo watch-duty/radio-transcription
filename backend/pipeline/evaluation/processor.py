@@ -121,6 +121,7 @@ class EvaluationEventProcessor:
                     self.output_topic_path,
                     encoded_data,
                     ordering_key=evaluated_payload.feed_id,
+                    trace_id=trace_id,
                 )
                 message_id = future.result()
                 logger.info(
