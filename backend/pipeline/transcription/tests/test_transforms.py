@@ -89,7 +89,6 @@ def get_test_stitch_config(**kwargs: Any) -> StitchAudioConfig:
         "max_transmission_duration_ms": 600000,
         "vad_pre_roll_ms": 0,
         "vad_post_roll_ms": 0,
-        "route_to_dlq": False,
     }
     defaults.update(kwargs)
     return StitchAudioConfig(**defaults)  # type: ignore
