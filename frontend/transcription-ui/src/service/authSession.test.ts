@@ -19,7 +19,8 @@ describe('authSession', () => {
       ok: true,
       text: async () => JSON.stringify(responsePayload),
       headers: {
-        get: (key: string) => (key === 'content-type' ? 'application/json' : null),
+        get: (key: string) =>
+          key === 'content-type' ? 'application/json' : null,
       },
     });
 

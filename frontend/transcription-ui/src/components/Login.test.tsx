@@ -199,7 +199,9 @@ describe('Login component', () => {
       await capturedOptions!.onSuccess({ code: 'test-code' });
     });
 
-    expect(screen.getByText('Unable to sign in. Please try again.')).toBeTruthy();
+    expect(
+      screen.getByText('Unable to sign in. Please try again.')
+    ).toBeTruthy();
     expect(mockSetToken).not.toHaveBeenCalled();
     expect(router.state.location.pathname).toBe('/login');
   });

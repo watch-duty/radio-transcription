@@ -39,7 +39,9 @@ function LoginModal({ open, setOpen }: LoginModalProps) {
         <Typography variant="h6" component="h2">
           Login
         </Typography>
-        <Typography>Your session has expired. Click below to sign in.</Typography>
+        <Typography>
+          Your session has expired. Click below to sign in.
+        </Typography>
         <Button
           variant="contained"
           onClick={() => {

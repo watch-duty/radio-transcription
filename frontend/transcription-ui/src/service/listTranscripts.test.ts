@@ -25,7 +25,8 @@ describe('listTranscripts', () => {
       ok: true,
       text: async () => JSON.stringify(mockData),
       headers: {
-        get: (key: string) => (key === 'content-type' ? 'application/json' : null),
+        get: (key: string) =>
+          key === 'content-type' ? 'application/json' : null,
       },
     });
 
@@ -51,7 +52,8 @@ describe('listTranscripts', () => {
       ok: true,
       text: async () => JSON.stringify({}),
       headers: {
-        get: (key: string) => (key === 'content-type' ? 'application/json' : null),
+        get: (key: string) =>
+          key === 'content-type' ? 'application/json' : null,
       },
     });
 
