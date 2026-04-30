@@ -81,110 +81,6 @@ async def _get_feed_status(pool: asyncpg.Pool, feed_id: uuid.UUID) -> dict:
     return dict(row)
 
 
-# -- Tests: lease_feed ------------------------------------------------
-
-
-async def test_lease_returns_feed_with_feed_properties(
-    db_pool: asyncpg.Pool, store: FeedStore
-) -> None:
-    """Leased feed includes source_feed_id from LEFT JOIN."""
-    worker = uuid.uuid4()
-    await _insert_feed(
-        db_pool,
-        "Icecast Feed",
-        source_feed_id="123",
-        external_id="ext-123",
-    )
-
-    result = await store.lease_feed(worker)
-
-    assert result is not None
-    assert result["name"] == "Icecast Feed"
-    assert result["source_type"] == SourceType.BCFY_FEEDS
-    assert result["source_feed_id"] == "123"
-    assert result["fencing_token"] == 1
-
-
-async def test_lease_returns_none_when_no_feeds(store: FeedStore) -> None:
-    """Empty database returns None."""
-    result = await store.lease_feed(uuid.uuid4())
-    assert result is None
-
-
-async def test_lease_prioritizes_unclaimed_over_failing(
-    db_pool: asyncpg.Pool, store: FeedStore
-) -> None:
-    """Unclaimed feeds are leased before failing feeds."""
-    worker = uuid.uuid4()
-    await _insert_feed(
-        db_pool,
-        "Failing Feed",
-        status="failing",
-        failure_count=1,
-        last_heartbeat_age_seconds=120,
-    )
-    await _insert_feed(db_pool, "Unclaimed Feed")
-
-    result = await store.lease_feed(worker)
-
-    assert result is not None
-    assert result["name"] == "Unclaimed Feed"
-
-
-async def test_lease_skips_active_feeds_with_fresh_heartbeat(
-    db_pool: asyncpg.Pool, store: FeedStore
-) -> None:
-    """Active feed with a recent heartbeat is not available."""
-    worker = uuid.uuid4()
-    other_worker = uuid.uuid4()
-    await _insert_feed(
-        db_pool,
-        "Active Feed",
-        status="active",
-        worker_id=other_worker,
-        last_heartbeat_age_seconds=10,
-    )
-
-    result = await store.lease_feed(worker)
-
-    assert result is None
-
-
-async def test_lease_reclaims_stale_active_feed(
-    db_pool: asyncpg.Pool, store: FeedStore
-) -> None:
-    """Active feed with heartbeat older than 60s becomes available."""
-    worker = uuid.uuid4()
-    old_worker = uuid.uuid4()
-    await _insert_feed(
-        db_pool,
-        "Stale Feed",
-        status="active",
-        worker_id=old_worker,
-        last_heartbeat_age_seconds=120,
-    )
-
-    result = await store.lease_feed(worker)
-
-    assert result is not None
-    assert result["name"] == "Stale Feed"
-
-
-async def test_concurrent_leases_get_different_feeds(
-    db_pool: asyncpg.Pool, store: FeedStore
-) -> None:
-    """Two sequential leases return different feeds (SKIP LOCKED)."""
-    await _insert_feed(db_pool, "Feed A")
-    await _insert_feed(db_pool, "Feed B")
-
-    result_a = await store.lease_feed(uuid.uuid4())
-    result_b = await store.lease_feed(uuid.uuid4())
-
-    assert result_a is not None
-    assert result_b is not None
-    assert result_a["id"] != result_b["id"]
-
-
 # -- Tests: acquire_feeds_batch (per-type CTE) -----------------------
 
 
@@ -785,8 +681,12 @@ async def test_failing_feed_not_leased_before_retry_after(
         last_heartbeat_age_seconds=10,
     )
     await store.report_feed_failure(feed_id, worker, 0)
-    result = await store.lease_feed(uuid.uuid4())
-    assert result is None
+    leased = await store.acquire_feeds_recovery(
+        uuid.uuid4(),
+        abandonment_window_sec=60.0,
+        limits={SourceType.BCFY_FEEDS: 1},
+    )
+    assert leased == []
 
 
 async def test_failing_feed_leased_after_retry_after_expires(
@@ -807,9 +707,13 @@ async def test_failing_feed_leased_after_retry_after_expires(
         " WHERE id = $1",
         feed_id,
     )
-    result = await store.lease_feed(uuid.uuid4())
-    assert result is not None
-    assert result["id"] == feed_id
+    leased = await store.acquire_feeds_recovery(
+        uuid.uuid4(),
+        abandonment_window_sec=60.0,
+        limits={SourceType.BCFY_FEEDS: 1},
+    )
+    assert len(leased) == 1
+    assert leased[0]["id"] == feed_id
 
 
 async def test_lease_preserves_failure_count(
@@ -831,8 +735,12 @@ async def test_lease_preserves_failure_count(
         feed_id,
     )
     new_worker = uuid.uuid4()
-    result = await store.lease_feed(new_worker)
-    assert result is not None
+    leased = await store.acquire_feeds_recovery(
+        new_worker,
+        abandonment_window_sec=60.0,
+        limits={SourceType.BCFY_FEEDS: 1},
+    )
+    assert len(leased) == 1
     row = await db_pool.fetchrow(
         "SELECT failure_count, retry_after FROM feeds WHERE id = $1",
         feed_id,
@@ -860,8 +768,13 @@ async def test_successful_processing_resets_failure_count(
         feed_id,
     )
     new_worker = uuid.uuid4()
-    result = await store.lease_feed(new_worker)
-    assert result is not None
+    leased = await store.acquire_feeds_recovery(
+        new_worker,
+        abandonment_window_sec=60.0,
+        limits={SourceType.BCFY_FEEDS: 1},
+    )
+    assert len(leased) == 1
+    result = leased[0]
     await store.update_feed_progress(
         result["id"],
         new_worker,
@@ -1030,14 +943,22 @@ async def test_fencing_token_increments_on_each_lease(
     worker = uuid.uuid4()
     await _insert_feed(db_pool, "My Feed")
 
-    result1 = await store.lease_feed(worker)
-    assert result1 is not None
+    leased1 = await store.acquire_feeds_batch(
+        worker,
+        limits={SourceType.BCFY_FEEDS: 1},
+    )
+    assert len(leased1) == 1
+    result1 = leased1[0]
     assert result1["fencing_token"] == 1
 
     await store.release_feed(result1["id"], worker, 1)
 
-    result2 = await store.lease_feed(worker)
-    assert result2 is not None
+    leased2 = await store.acquire_feeds_batch(
+        worker,
+        limits={SourceType.BCFY_FEEDS: 1},
+    )
+    assert len(leased2) == 1
+    result2 = leased2[0]
     assert result2["fencing_token"] == 2
 
 
@@ -1116,8 +1037,12 @@ async def test_last_bookmark_time_round_trips_through_lease(
     await _insert_feed(db_pool, "Bookmark Feed")
 
     # Lease the feed.
-    result1 = await store.lease_feed(worker)
-    assert result1 is not None
+    leased1 = await store.acquire_feeds_batch(
+        worker,
+        limits={SourceType.BCFY_FEEDS: 1},
+    )
+    assert len(leased1) == 1
+    result1 = leased1[0]
     assert result1["last_bookmark_time"] is None
 
     # Record a bookmark.
@@ -1133,9 +1058,13 @@ async def test_last_bookmark_time_round_trips_through_lease(
 
     # Release and re-lease.
     await store.release_feed(result1["id"], worker, result1["fencing_token"])
-    result2 = await store.lease_feed(uuid.uuid4())
+    leased2 = await store.acquire_feeds_batch(
+        uuid.uuid4(),
+        limits={SourceType.BCFY_FEEDS: 1},
+    )
+    assert len(leased2) == 1
+    result2 = leased2[0]
 
-    assert result2 is not None
     assert result2["id"] == result1["id"]
     assert result2["last_bookmark_time"] == bookmark
 

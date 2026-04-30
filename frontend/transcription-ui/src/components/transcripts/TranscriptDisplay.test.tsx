@@ -1,0 +1,178 @@
+// @vitest-environment jsdom
+import { MemoryRouter } from 'react-router';
+import { VirtuosoMockContext } from 'react-virtuoso';
+
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { cleanup, render, screen } from '@testing-library/react';
+import type { Transcript } from '@transcription/common';
+
+import { TranscriptDisplay } from './TranscriptDisplay';
+
+vi.mock('./TranscriptRow', () => ({
+  default: (props: { transcript: Transcript; index: number }) => (
+    <div data-testid={`transcript-row-${props.index}`}>
+      {props.transcript.transcript}
+    </div>
+  ),
+}));
+
+describe('TranscriptDisplay', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const mockTranscripts: Transcript[] = [
+    {
+      feedId: 'feed123',
+      transmissionId: 'tx-1',
+      transcript: 'Hello from component first',
+      canonicalAudioUri: 'gs://audio.flac',
+      playbackAudioUri: 'gs://audio.m4a',
+      startTimestamp: '2026-04-10T12:00:00Z',
+      endTimestamp: '2026-04-10T12:00:05Z',
+      missingPriorContext: false,
+      missingPostContext: false,
+      sourceAudioUris: [],
+      startAudioOffset: '0s',
+      endAudioOffset: '5s',
+      evaluationDecisions: [],
+    },
+  ];
+
+  it('renders virtualization list rows with correct dynamic metrics', () => {
+    const mockSetTop = vi.fn();
+
+    render(
+      <VirtuosoMockContext.Provider
+        value={{ viewportHeight: 1000, itemHeight: 100 }}
+      >
+        <MemoryRouter>
+          <TranscriptDisplay
+            transcripts={mockTranscripts}
+            groupCounts={[1]}
+            groupTitles={['Friday, April 10, 2026']}
+            setIsViewAtTopOfTranscripts={mockSetTop}
+            hasNewerTranscripts={false}
+            isFetchingNewerTranscripts={false}
+            fetchNewerTranscripts={vi.fn()}
+            isTranscriptsFetching={false}
+            hasOlderTranscripts={false}
+            isFetchingOlderTranscripts={false}
+            fetchOlderTranscripts={vi.fn()}
+            triggerSnackbar={vi.fn()}
+            ruleIdToNameMap={new Map()}
+            rulesLoading={false}
+            onPlay={vi.fn()}
+            currentlyPlayingTransmissionId={null}
+            highlightedTransmissionId={null}
+          />
+        </MemoryRouter>
+      </VirtuosoMockContext.Provider>
+    );
+
+    expect(screen.getByText('Friday, April 10, 2026')).toBeTruthy();
+    expect(screen.getByTestId('transcript-row-0')).toBeTruthy();
+    expect(screen.getByText('Hello from component first')).toBeTruthy();
+  });
+
+  it('renders newer data loader indicator when parameter conditions require it', () => {
+    render(
+      <VirtuosoMockContext.Provider
+        value={{ viewportHeight: 1000, itemHeight: 100 }}
+      >
+        <MemoryRouter>
+          <TranscriptDisplay
+            transcripts={mockTranscripts}
+            groupCounts={[1]}
+            groupTitles={['Friday, April 10, 2026']}
+            setIsViewAtTopOfTranscripts={vi.fn()}
+            hasNewerTranscripts={true}
+            isFetchingNewerTranscripts={false}
+            fetchNewerTranscripts={vi.fn()}
+            isTranscriptsFetching={false}
+            hasOlderTranscripts={false}
+            isFetchingOlderTranscripts={false}
+            fetchOlderTranscripts={vi.fn()}
+            triggerSnackbar={vi.fn()}
+            ruleIdToNameMap={new Map()}
+            rulesLoading={false}
+            onPlay={vi.fn()}
+            currentlyPlayingTransmissionId={null}
+            highlightedTransmissionId={null}
+          />
+        </MemoryRouter>
+      </VirtuosoMockContext.Provider>
+    );
+
+    expect(
+      screen.getByRole('button', { name: /Load newer transcripts/i })
+    ).toBeTruthy();
+  });
+
+  it('renders older data loader indicator when hasOlderTranscripts is true', () => {
+    render(
+      <VirtuosoMockContext.Provider
+        value={{ viewportHeight: 1000, itemHeight: 100 }}
+      >
+        <MemoryRouter>
+          <TranscriptDisplay
+            transcripts={mockTranscripts}
+            groupCounts={[1]}
+            groupTitles={['Friday, April 10, 2026']}
+            setIsViewAtTopOfTranscripts={vi.fn()}
+            hasNewerTranscripts={false}
+            isFetchingNewerTranscripts={false}
+            fetchNewerTranscripts={vi.fn()}
+            isTranscriptsFetching={false}
+            hasOlderTranscripts={true}
+            isFetchingOlderTranscripts={false}
+            fetchOlderTranscripts={vi.fn()}
+            triggerSnackbar={vi.fn()}
+            ruleIdToNameMap={new Map()}
+            rulesLoading={false}
+            onPlay={vi.fn()}
+            currentlyPlayingTransmissionId={null}
+            highlightedTransmissionId={null}
+          />
+        </MemoryRouter>
+      </VirtuosoMockContext.Provider>
+    );
+
+    expect(
+      screen.getByRole('button', { name: /Load previous transcripts/i })
+    ).toBeTruthy();
+  });
+
+  it('shows no more transcripts found message when reached historical endpoint', () => {
+    render(
+      <VirtuosoMockContext.Provider
+        value={{ viewportHeight: 1000, itemHeight: 100 }}
+      >
+        <MemoryRouter>
+          <TranscriptDisplay
+            transcripts={mockTranscripts}
+            groupCounts={[1]}
+            groupTitles={['Friday, April 10, 2026']}
+            setIsViewAtTopOfTranscripts={vi.fn()}
+            hasNewerTranscripts={false}
+            isFetchingNewerTranscripts={false}
+            fetchNewerTranscripts={vi.fn()}
+            isTranscriptsFetching={false}
+            hasOlderTranscripts={false}
+            isFetchingOlderTranscripts={false}
+            fetchOlderTranscripts={vi.fn()}
+            triggerSnackbar={vi.fn()}
+            ruleIdToNameMap={new Map()}
+            rulesLoading={false}
+            onPlay={vi.fn()}
+            currentlyPlayingTransmissionId={null}
+            highlightedTransmissionId={null}
+          />
+        </MemoryRouter>
+      </VirtuosoMockContext.Provider>
+    );
+
+    expect(screen.getByText('No more transcripts found')).toBeTruthy();
+  });
+});

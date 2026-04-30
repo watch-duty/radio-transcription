@@ -25,11 +25,11 @@ import uuid
 from typing import Any, cast
 from unittest import mock
 
+import aiohttp
+
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
-from backend.pipeline.ingestion.normalizer_runtime import (
-    CapturedChunk,
-    NormalizerRuntime,
-)
+from backend.pipeline.ingestion.models import CapturedChunk, CaptureResources
+from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
 from backend.pipeline.storage.feed_store import (
     LeasedFeed,
     SourceType,
@@ -144,12 +144,16 @@ def _build_runtime_for_one_chunk(
     async def _one_chunk(
         feed: LeasedFeed,
         shutdown: asyncio.Event,
+        _resources: CaptureResources,
     ):
         yield chunk
 
     rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
     rt._shutdown = asyncio.Event()
     rt._lease_lost = asyncio.Event()
+    rt._capture_resources = CaptureResources(
+        http_session=mock.AsyncMock(spec=aiohttp.ClientSession),
+    )
     rt._store = mock.AsyncMock()
     rt._store.update_feed_progress.return_value = bookmark_ok
     rt._releasing_feeds = set()

@@ -64,6 +64,8 @@ from __future__ import annotations
 import dataclasses
 from typing import TYPE_CHECKING
 
+import aiohttp  # noqa: TC002 — runtime use: CaptureResources holds aiohttp.ClientSession
+
 if TYPE_CHECKING:
     import asyncio
     import datetime
@@ -100,9 +102,34 @@ class CapturedChunk:
     receipt_time: datetime.datetime | None = None
 
 
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class CaptureResources:
+    """Runtime-owned resources passed to capture functions.
+
+    Constructed once in NormalizerRuntime._main() and lifecycle-managed
+    by the runtime: http_session is closed in _shutdown_sequence after
+    _gcs_client.close() (followed by a 250ms SSL-teardown sleep, per
+    aiohttp's documented graceful-shutdown idiom for SSL).
+
+    Forward-compatible container — additional runtime-owned resources
+    (e.g. the deferred ffmpeg spawn semaphore) can be added without
+    another signature break.
+
+    Attributes:
+        http_session: Shared aiohttp ClientSession with TCPConnector
+            tuned for the bcfy_calls polling workload (limit=0,
+            limit_per_host=64, ttl_dns_cache=300, keepalive_timeout=75).
+            NOT Optional — collectors assume it is always set, and
+            keeping the type strict avoids per-call None-checks.
+    """
+
+    http_session: aiohttp.ClientSession
+
+
 if TYPE_CHECKING:
-    # 3-arg collector: (feed, shutdown_event, url_base) -> AsyncIterator[CapturedChunk]
+    # 4-arg collector: (feed, shutdown_event, url_base, resources)
+    # -> AsyncIterator[CapturedChunk]
     CollectorFn = Callable[
-        [LeasedFeed, asyncio.Event, str],
+        [LeasedFeed, asyncio.Event, str, CaptureResources],
         AsyncIterator[CapturedChunk],
     ]

@@ -154,7 +154,6 @@ def get_pipeline(
                 stitch_config=stitching_config,
             )
         ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
-
         stitching_main = stitching_results.main
         dlq_list.append(stitching_results[DEAD_LETTER_QUEUE_TAG])
     else:

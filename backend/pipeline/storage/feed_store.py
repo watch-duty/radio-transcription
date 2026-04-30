@@ -9,7 +9,6 @@ from backend.pipeline.storage.feed_queries import (
     CREATE_FEED_SQL,
     DELETE_FEED_SQL,
     GET_FEED_SQL,
-    LEASE_FEED_SQL,
     LIST_FEEDS_SQL,
     RELEASE_FEED_SQL,
     RELEASE_FEEDS_BATCH_SQL,
@@ -62,6 +61,24 @@ class SourceType(enum.StrEnum):
     OPENMHZ = "openmhz"
 
 
+class FeedStatus(enum.StrEnum):
+    """Lifecycle status of a feed, stored in the ``feeds.status`` column."""
+
+    # Eligible for leasing by any worker.
+    UNCLAIMED = "unclaimed"
+    # Currently leased by a worker.
+    ACTIVE = "active"
+    # Lease held but feed is experiencing errors; still eligible for
+    # leasing and processing.
+    FAILING = "failing"
+    # Ineligible for leasing due to repeated failures; requires manual
+    # triage and reset.
+    QUARANTINED = "quarantined"
+    # Permanently ineligible for leasing; used for feeds that are deleted
+    # or retired but kept for historical/triage purposes.
+    DEACTIVATED = "deactivated"
+
+
 class LeasedFeed(TypedDict):
     """Feed details returned after a successful lease acquisition."""
 
@@ -90,7 +107,7 @@ class Feed(TypedDict):
     id: uuid.UUID
     name: str
     source_type: SourceType
-    status: str
+    status: FeedStatus
     failure_count: int
     worker_id: uuid.UUID | None
     last_heartbeat: datetime.datetime | None
@@ -153,12 +170,17 @@ class FeedStore:
         except ValueError as e:
             msg = f"Unknown source type {row['source_type']!r} for feed {row['id']}"
             raise ValueError(msg) from e
+        try:
+            status = FeedStatus(row["status"])
+        except ValueError as e:
+            msg = f"Unknown status {row['status']!r} for feed {row['id']}"
+            raise ValueError(msg) from e
 
         return Feed(
             id=row["id"],
             name=row["name"],
             source_type=source_type,
-            status=row["status"],
+            status=status,
             failure_count=row["failure_count"],
             worker_id=row["worker_id"],
             last_heartbeat=row["last_heartbeat"],
@@ -172,11 +194,11 @@ class FeedStore:
     def _row_to_leased_feed(self, row: asyncpg.Record) -> LeasedFeed:
         """Convert a claim/lease-path row to a LeasedFeed dict.
 
-        Shared between lease_feed (single-row), acquire_feeds_batch (primary
-        per-type CTE), and acquire_feeds_recovery (failing-retryable +
-        active-abandoned). Keeping the mapping in one place ensures all three
-        claim paths agree on how source_type is validated and which columns
-        end up in the TypedDict.
+        Shared between acquire_feeds_batch (primary per-type CTE) and
+        acquire_feeds_recovery (failing-retryable + active-abandoned).
+        Keeping the mapping in one place ensures both claim paths agree
+        on how source_type is validated and which columns end up in the
+        TypedDict.
         """
         try:
             source_type = SourceType(row["source_type"])
@@ -193,29 +215,6 @@ class FeedStore:
             fencing_token=row["fencing_token"],
             source_feed_id=row["source_feed_id"],
         )
-
-    async def lease_feed(self, worker_id: uuid.UUID) -> LeasedFeed | None:
-        """
-        Atomically find, lock, and lease an available feed.
-
-        Finds the highest-priority available feed (unclaimed or failing with a
-        stale heartbeat), assigns it to the given worker, and returns the feed
-        details including source-specific properties from ``feed_properties``.
-
-        Args:
-            worker_id: UUID of the worker requesting the lease.
-
-        Returns:
-            A ``LeasedFeed`` dictionary if a feed was leased, or ``None`` if no
-            feeds are available.
-
-        """
-        row = await self._pool.fetchrow(
-            LEASE_FEED_SQL, worker_id, self._source_types
-        )
-        if row is None:
-            return None
-        return self._row_to_leased_feed(row)
 
     async def update_feed_progress(
         self,
