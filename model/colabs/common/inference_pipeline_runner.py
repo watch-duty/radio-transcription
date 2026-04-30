@@ -112,8 +112,9 @@ def run_test_baseline_inference_evaluation(
     dataset_config="clean",
     split="test",
     num_examples=20,
+    batch_size=4,
 ):
-    """Runs a baseline evaluation on a public dataset (e.g. Librispeech) using streaming."""
+    """Runs a baseline evaluation on a public dataset (e.g. Librispeech) using streaming and batching."""
     from datasets import load_dataset
     from evaluate import load
     import tempfile
@@ -125,14 +126,48 @@ def run_test_baseline_inference_evaluation(
     )
     wer = load("wer")
 
-    small_dataset = dataset.take(num_examples)
+    if num_examples and num_examples > 0:
+        dataset = dataset.take(num_examples)
 
     predictions = []
     references = []
 
-    logger.info(f"Running inference on {num_examples} examples...")
+    batch_prompts = []
+    batch_refs = []
+    batch_temp_paths = []
 
-    for i, example in enumerate(small_dataset):
+    logger.info(f"Running inference on {num_examples} examples with batch size {batch_size}...")
+
+    def process_current_batch():
+        nonlocal batch_prompts, batch_refs, batch_temp_paths, predictions, references
+        if not batch_prompts:
+            return
+        try:
+            with torch.no_grad():
+                outputs = inference_fn(model, batch_prompts)
+
+            for j, out in enumerate(outputs):
+                if out != "[ERROR]":
+                    pred = decode_fn(out, model)
+                    predictions.append(pred.strip())
+                    references.append(batch_refs[j].strip())
+                else:
+                    logger.error(f"Error processing example in batch")
+
+        except Exception as e:
+            logger.error(f"Failed processing batch: {e}")
+        finally:
+            # Cleanup temp files for this batch
+            for tp in batch_temp_paths:
+                if os.path.exists(tp):
+                    os.remove(tp)
+            
+            # Reset batch accumulators
+            batch_prompts = []
+            batch_refs = []
+            batch_temp_paths = []
+
+    for i, example in enumerate(dataset):
         audio_array = example["audio"]["array"]
         sampling_rate = example["audio"]["sampling_rate"]
         reference_text = example["text"]
@@ -140,36 +175,22 @@ def run_test_baseline_inference_evaluation(
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
             temp_path = temp_file.name
             sf.write(temp_path, audio_array, sampling_rate)
+            
+        batch_temp_paths.append(temp_path)
+        batch_prompts.append(prompt_fn(None, temp_path))
+        batch_refs.append(reference_text)
 
-        try:
-            # Generate prompt
-            prompt = prompt_fn(None, temp_path)
+        if len(batch_prompts) == batch_size:
+            process_current_batch()
+            if i % (batch_size * 2) == 0:
+                 logger.info(f"Processed {i+1} examples...")
 
-            # Run inference
-            with torch.no_grad():
-                outputs = inference_fn(model, [prompt])
-
-            if outputs and outputs[0] != "[ERROR]":
-                pred = decode_fn(outputs[0], model)
-                pred_norm = pred.strip()
-                ref_norm = reference_text.strip()
-                predictions.append(pred_norm)
-                references.append(ref_norm)
-
-                if i % 10 == 0:
-                    logger.info(f"Processed {i} examples...")
-            else:
-                logger.error(f"[{i}] Error processing example")
-
-        except Exception as e:
-            logger.error(f"[{i}] Failed: {e}")
-        finally:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
+    # Process any remaining items in the last batch
+    process_current_batch()
 
     wer_score = None
     if predictions:
         wer_score = wer.compute(predictions=predictions, references=references)
-        logger.info(f"WER on {num_examples} examples: {wer_score}")
+        logger.info(f"WER on {len(predictions)} examples: {wer_score}")
 
     return wer_score, predictions, references

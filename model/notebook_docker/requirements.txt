@@ -9,3 +9,5 @@ loguru
 jiwer
 num2words
 nemo_text_processing
+mistral-common
+accelerate
