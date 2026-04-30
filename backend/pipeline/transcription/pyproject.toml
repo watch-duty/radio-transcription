@@ -22,9 +22,10 @@ dependencies = [
     "google-cloud-storage>=2.18.2",
     "tenacity>=9.1.4",
     "soundfile>=0.13.1",
-    "opentelemetry-api",
-    "opentelemetry-sdk",
-    "opentelemetry-exporter-gcp-trace",
+    # OpenTelemetry lower-bound pins derived from existing root repository lockfile dependencies configurations
+    "opentelemetry-api>=1.41.1",
+    "opentelemetry-sdk>=1.41.1",
+    "opentelemetry-exporter-gcp-trace>=1.12.0",
 ]
 
 [tool.setuptools]
