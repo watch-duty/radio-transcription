@@ -35,8 +35,7 @@ resource "google_compute_instance" "eval_instance" {
 
   resource_policies = []
 
-  metadata = {
-    startup_script = <<-EOT
+  metadata_startup_script = <<-EOT
     #!/bin/bash
     sleep $(( ${var.auto_shutdown_hours} * 3600 ))
     while true; do
@@ -48,7 +47,6 @@ resource "google_compute_instance" "eval_instance" {
       fi
     done
   EOT
-  }
 
   service_account {
     # Best practice is to use a dedicated service account, but defaulting to compute default for simplicity if not specified.
