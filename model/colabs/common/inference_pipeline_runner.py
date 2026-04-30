@@ -101,3 +101,75 @@ def run_inference_pipeline(
                 
     logger.info(f"Processed {len(results_list)} results.")
     return results_list
+
+
+def run_test_baseline_inference_evaluation(
+    model,
+    prompt_fn,
+    inference_fn,
+    decode_fn,
+    dataset_name="librispeech_asr",
+    dataset_config="clean",
+    split="test",
+    num_examples=20,
+):
+    """Runs a baseline evaluation on a public dataset (e.g. Librispeech) using streaming."""
+    from datasets import load_dataset
+    from evaluate import load
+    import tempfile
+    import soundfile as sf
+
+    logger.info(f"Loading dataset {dataset_name} in streaming mode...")
+    dataset = load_dataset(
+        dataset_name, dataset_config, split=split, streaming=True
+    )
+    wer = load("wer")
+
+    small_dataset = dataset.take(num_examples)
+
+    predictions = []
+    references = []
+
+    logger.info(f"Running inference on {num_examples} examples...")
+
+    for i, example in enumerate(small_dataset):
+        audio_array = example["audio"]["array"]
+        sampling_rate = example["audio"]["sampling_rate"]
+        reference_text = example["text"]
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+            temp_path = temp_file.name
+            sf.write(temp_path, audio_array, sampling_rate)
+
+        try:
+            # Generate prompt
+            prompt = prompt_fn(None, temp_path)
+
+            # Run inference
+            with torch.no_grad():
+                outputs = inference_fn(model, [prompt])
+
+            if outputs and outputs[0] != "[ERROR]":
+                pred = decode_fn(outputs[0], model)
+                pred_norm = pred.strip()
+                ref_norm = reference_text.strip()
+                predictions.append(pred_norm)
+                references.append(ref_norm)
+
+                if i % 10 == 0:
+                    logger.info(f"Processed {i} examples...")
+            else:
+                logger.error(f"[{i}] Error processing example")
+
+        except Exception as e:
+            logger.error(f"[{i}] Failed: {e}")
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+    wer_score = None
+    if predictions:
+        wer_score = wer.compute(predictions=predictions, references=references)
+        logger.info(f"WER on {num_examples} examples: {wer_score}")
+
+    return wer_score, predictions, references
