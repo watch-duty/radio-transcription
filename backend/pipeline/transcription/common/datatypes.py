@@ -93,6 +93,7 @@ class TranscriptionResult:
     feed_metadata: FeedMetadata
     missing_prior_context: bool = False
     missing_post_context: bool = False
+    traceparent: str | None = None
 
 
 @dataclass(frozen=True)

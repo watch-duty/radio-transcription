@@ -349,6 +349,7 @@ class SerializeAndEnrichTest(unittest.TestCase):
                 canonical_audio_uri="gs://bucket/1.flac",
                 playback_audio_uri="gs://bucket/1_playback.flac",
                 feed_metadata=feed_metadata,
+                traceparent="00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
             )
 
             res2 = TranscriptionResult(
@@ -365,6 +366,7 @@ class SerializeAndEnrichTest(unittest.TestCase):
                 canonical_audio_uri="gs://bucket/2.flac",
                 playback_audio_uri="gs://bucket/2_playback.flac",
                 feed_metadata=feed_metadata,
+                traceparent="00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
             )
 
             results = p | beam.Create([res1, res2]) | beam.ParDo(SerializeFn())
@@ -375,6 +377,12 @@ class SerializeAndEnrichTest(unittest.TestCase):
                 )
 
                 assert len(msgs) == 2
+
+                for m in msgs:
+                    assert (
+                        m.attributes.get("traceparent")
+                        == "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+                    )
 
                 protos = []
                 for m in msgs:

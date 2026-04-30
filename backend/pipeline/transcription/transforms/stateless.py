@@ -189,9 +189,13 @@ class SerializeFn(beam.DoFn):
             proto.end_timestamp.FromMicroseconds(
                 value.time_range.end_ms * MICROSECONDS_PER_MS
             )
+            attrs: dict[str, str] = {}
+            if value.traceparent:
+                attrs["traceparent"] = value.traceparent
+
             yield PubsubMessage(
                 data=proto.SerializeToString(),
-                attributes={},
+                attributes=attrs,
                 ordering_key=value.feed_id,
             )
         except Exception as e:
