@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from unittest import mock
 
 import asyncpg
@@ -122,6 +123,55 @@ class TestSuccessPath:
 
         # Three Scheduler ticks → one pool created, fetched three times.
         mock_create.assert_awaited_once()
+
+    def test_persistent_event_loop_used_across_invocations(
+        self, configured: None
+    ) -> None:
+        """Each handler invocation runs in the same module-level loop.
+
+        REGRESSION GUARD: an earlier version used `asyncio.run(_run())`,
+        which creates a fresh event loop per invocation. asyncpg pools are
+        loop-bound — reusing a pool created in a closed loop raises
+        "Task got Future attached to a different loop" or hangs on the
+        loop-bound semaphore. This test fails if `_loop` is replaced by
+        `asyncio.run` again.
+
+        We capture the running loop id from inside the async coroutine
+        across three invocations and assert they're all the same loop.
+        """
+        del configured
+        captured_loop_ids: list[int] = []
+
+        async def capturing_fetchval(*args: object, **kwargs: object) -> int:
+            del args, kwargs
+            captured_loop_ids.append(id(asyncio.get_running_loop()))
+            return 1
+
+        mock_pool = mock.AsyncMock()
+        mock_pool.fetchval = mock.AsyncMock(side_effect=capturing_fetchval)
+        mock_create = mock.AsyncMock(return_value=mock_pool)
+
+        with (
+            mock.patch.object(main, "create_pool_from_settings", mock_create),
+            mock.patch.object(
+                main.MonitoringClient,
+                "write_time_series",
+                mock.AsyncMock(),
+            ),
+        ):
+            main.oldest_feed_publisher(mock.MagicMock())
+            main.oldest_feed_publisher(mock.MagicMock())
+            main.oldest_feed_publisher(mock.MagicMock())
+
+        assert len(captured_loop_ids) == 3
+        assert (
+            captured_loop_ids[0] == captured_loop_ids[1] == captured_loop_ids[2]
+        ), (
+            f"Handler must reuse a persistent event loop across invocations "
+            f"(got {captured_loop_ids}). asyncpg pools are loop-bound; "
+            f"using asyncio.run would orphan the pool on the second tick."
+        )
+        assert captured_loop_ids[0] == id(main._loop)
         assert mock_pool.fetchval.await_count == 3
 
 

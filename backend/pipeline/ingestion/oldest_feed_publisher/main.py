@@ -26,9 +26,13 @@ signal, handled by alerts (deferred to a follow-up PR).
 
 Connection model: a 1-connection asyncpg pool reused across warm
 invocations (Cloud Run reuses the container instance until it scales
-in or restarts). max_inactive_connection_lifetime defends against the
-Cloud-Run-freezes-the-container-between-requests case where a stale
-connection would otherwise be retrieved at the next tick.
+in or restarts). The pool is bound to the module-level event loop
+created at import time — `asyncio.run` would create a fresh loop per
+request and orphan the pool (asyncpg pools are loop-bound and become
+unusable when their loop closes). max_inactive_connection_lifetime
+defends against the Cloud-Run-freezes-the-container-between-requests
+case where a stale connection would otherwise be retrieved at the
+next tick.
 """
 
 from __future__ import annotations
@@ -71,6 +75,14 @@ QUERY_TIMEOUT_SEC = 5.0
 # ---------------------------------------------------------------------------
 setup_logging()
 logger = logging.getLogger(__name__)
+
+# Persistent event loop, created once at module import. The asyncpg pool
+# created inside this loop stays bound to it for the lifetime of the
+# Cloud Run instance. Using `asyncio.run` instead would create a fresh
+# loop per request and orphan the pool — pool.fetchval on the second
+# invocation would raise "Task got Future attached to a different loop"
+# or hang on the loop-bound semaphore.
+_loop = asyncio.new_event_loop()
 
 # Reused across warm invocations.
 _monitoring_client: MonitoringClient | None = None
@@ -135,7 +147,7 @@ def oldest_feed_publisher(request: flask.Request) -> tuple[str, int]:
         logger.error("missing required env var: GOOGLE_CLOUD_PROJECT")
         return ("err", 500)
     try:
-        asyncio.run(_run())
+        _loop.run_until_complete(_run())
     except Exception:
         logger.exception("publisher failed; skipping write")
         return ("err", 500)
