@@ -19,6 +19,7 @@ import {
 import { type Transcript } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
+import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { listTranscripts } from '../../service/listTranscripts';
@@ -49,6 +50,7 @@ export type ListTranscriptsData = {
 const TRANSCRIPTS_POLLING_INTERVAL_MS = 15000; // 15 seconds
 const TRANSCRIPTS_POLLING_INTERVAL_DISPLAY_STRING = `${TRANSCRIPTS_POLLING_INTERVAL_MS / 1000}s`;
 const MAX_TRANSCRIPTS_POLLING_ITERATIONS = 10;
+const FEED_POLLING_INTERVAL_MS = 15000; // 15 seconds
 
 export function TranscriptView({
   triggerSnackbar,
@@ -117,8 +119,6 @@ export function TranscriptView({
   const selectedFeed = useMemo(() => {
     return feedIdToFeedMap.get(feedId) || null;
   }, [feedIdToFeedMap, feedId]);
-
-  const searchedFeed = feedIdToFeedMap.get(searchedFeedId) || null;
 
   const {
     data: listTranscriptsResponse,
@@ -386,6 +386,16 @@ export function TranscriptView({
     updateCacheWithNewTranscripts,
   ]);
 
+  const { data: currentFeed } = useQuery({
+    queryKey: ['getFeed', token, searchedFeedId],
+    queryFn: () => getFeed(searchedFeedId, token ?? ''),
+    enabled: !!token && !!searchedFeedId,
+    refetchInterval: FEED_POLLING_INTERVAL_MS,
+    refetchOnWindowFocus: false,
+    initialData: feedIdToFeedMap.get(searchedFeedId) || undefined,
+  });
+
+
   const {
     data: rules,
     error: rulesError,
@@ -616,8 +626,10 @@ export function TranscriptView({
         {transcripts.length > 0 ? (
           <>
             <TranscriptActionsBar
-              sourceUrl={searchedFeed?.sourceUrl}
-              archiveUrl={searchedFeed?.archiveUrl}
+              sourceUrl={currentFeed?.sourceUrl}
+              archiveUrl={currentFeed?.archiveUrl}
+              status={currentFeed?.status}
+              lastHeartbeat={currentFeed?.lastHeartbeat}
               hasNewerTranscripts={hasNewerTranscripts}
               isTranscriptsFetching={isTranscriptsFetching}
               isTranscriptsPolling={isTranscriptsPolling}
