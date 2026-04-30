@@ -2,14 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import type { VirtuosoHandle } from 'react-virtuoso';
 
-import RefreshIcon from '@mui/icons-material/Refresh';
 import type { AlertProps } from '@mui/material/Alert';
-import Autocomplete from '@mui/material/Autocomplete';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
-import IconButton from '@mui/material/IconButton';
-import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import {
@@ -31,6 +27,7 @@ import {
 } from '../../utils/timeUtils';
 import AudioDisplay from '../audio/AudioDisplay';
 import DateTimePicker from '../common/DateTimePicker';
+import FeedSearch from './FeedSearch';
 import TranscriptActionsBar from './TranscriptActionsBar';
 import TranscriptDisplay from './TranscriptDisplay';
 
@@ -507,51 +504,12 @@ export function TranscriptView({
           width: '100%',
         }}
       >
-        <Autocomplete
-          disablePortal
-          options={(feeds ?? []).sort((a, b) => a.name.localeCompare(b.name))}
-          getOptionLabel={(option) => option.name}
-          size="small"
-          sx={{ width: '20%' }}
-          value={selectedFeed}
-          onChange={(_, option) => option && setFeedId(option.id)}
-          // Explicitly disallowing custom input - the user should always pick from registered feeds
-          freeSolo={false}
-          loading={feedsFetching}
-          disabled={feedsFetching}
-          filterOptions={(options, { inputValue }) =>
-            options.filter((option) =>
-              option.name.toLowerCase().includes(inputValue.toLowerCase())
-            )
-          }
-          renderInput={(params) => (
-            <TextField {...params} label="Select a registered feed" />
-          )}
-          renderOption={(props, option) => {
-            const { key, ...optionProps } = props;
-            return (
-              <Box key={key} component="li" {...optionProps}>
-                <Typography noWrap>{option.name}</Typography>
-              </Box>
-            );
-          }}
+        <FeedSearch
+          feeds={feeds ?? []}
+          selectedFeed={selectedFeed}
+          onFeedSelect={setFeedId}
+          isFetching={feedsFetching}
         />
-        <IconButton
-          onClick={() => {
-            // Invalidate and refresh feeds.
-            queryClient.invalidateQueries({ queryKey: ['listFeeds', token] });
-          }}
-          disabled={feedsFetching}
-          size="small"
-          sx={{ ml: -1 }}
-          aria-label="refresh feeds"
-        >
-          {feedsFetching ? (
-            <CircularProgress size={24} color="inherit" />
-          ) : (
-            <RefreshIcon />
-          )}
-        </IconButton>
 
         <DateTimePicker
           label="Timestamp (optional)"

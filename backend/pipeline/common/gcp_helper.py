@@ -10,8 +10,11 @@ from google.cloud.pubsub_v1.publisher.exceptions import (
     PublishToPausedOrderingKeyException,
 )
 from opentelemetry import trace
+from opentelemetry.trace.propagation.tracecontext import (
+    TraceContextTextMapPropagator,
+)
 
-from backend.pipeline.common import logging as pipeline_logging
+from backend.pipeline.common import tracing_utils
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 
 if TYPE_CHECKING:
@@ -133,7 +136,7 @@ async def upload_audio(
     """
     storage = gcs_client.get_storage()
     upload_kwargs: dict[str, Any] = {
-        "metadata": {"trace_id": pipeline_logging.get_current_trace_id()},
+        "metadata": {"trace_id": tracing_utils.get_current_trace_id()},
         "content_type": content_type,
     }
     if if_generation_match is not None:
@@ -224,26 +227,31 @@ def publish_audio_chunk_sync(
     This is the synchronous core used by both sync callers (e.g. Echo
     ingestion) and the async wrapper below.
     """
-    audio_chunk_msg = AudioChunk(
-        gcs_uri=gcs_uri,
-        feed_id=feed_id,
-        feed_name=feed_name,
-        duration_ms=duration_ms,
-        session_id=session_id,
-        external_id=external_id,
-    )
-    audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
-
-    attrs: dict[str, str] = {
-        "feed_id": feed_id,
-        "session_id": session_id,
-        "gcs_uri": gcs_uri,
-        "timestamp_ms": str(int(start_timestamp.timestamp() * 1000)),
-    }
-    if source_type is not None:
-        attrs["source_type"] = source_type
-
     with tracer.start_as_current_span("publish_raw_audio_chunk"):
+        audio_chunk_msg = AudioChunk(
+            gcs_uri=gcs_uri,
+            feed_id=feed_id,
+            feed_name=feed_name,
+            duration_ms=duration_ms,
+            session_id=session_id,
+            external_id=external_id,
+        )
+        audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
+
+        attrs: dict[str, str] = {
+            "feed_id": feed_id,
+            "session_id": session_id,
+            "gcs_uri": gcs_uri,
+            "timestamp_ms": str(int(start_timestamp.timestamp() * 1000)),
+        }
+        if source_type is not None:
+            attrs["source_type"] = source_type
+
+        carrier: dict[str, str] = {}
+        TraceContextTextMapPropagator().inject(carrier)
+        if "traceparent" in carrier:
+            attrs["traceparent"] = carrier["traceparent"]
+
         future = publisher.publish(
             topic_path,
             audio_chunk_msg.SerializeToString(),
@@ -270,27 +278,32 @@ async def publish_audio_chunk(
     Leverages asyncio.wrap_future to await the background gRPC thread pool
     non-blockingly, ensuring other asyncio tasks remain responsive.
     """
-    publisher = pubsub_client.get_publisher()
-    audio_chunk_msg = AudioChunk(
-        gcs_uri=gcs_uri,
-        feed_id=feed_id,
-        feed_name=feed_name,
-        duration_ms=duration_ms,
-        session_id=session_id,
-        external_id=external_id,
-    )
-    audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
-
-    attrs: dict[str, str] = {
-        "feed_id": feed_id,
-        "session_id": session_id,
-        "gcs_uri": gcs_uri,
-        "timestamp_ms": str(int(start_timestamp.timestamp() * 1000)),
-    }
-    if source_type is not None:
-        attrs["source_type"] = source_type
-
     with tracer.start_as_current_span("publish_raw_audio_chunk"):
+        publisher = pubsub_client.get_publisher()
+        audio_chunk_msg = AudioChunk(
+            gcs_uri=gcs_uri,
+            feed_id=feed_id,
+            feed_name=feed_name,
+            duration_ms=duration_ms,
+            session_id=session_id,
+            external_id=external_id,
+        )
+        audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
+
+        attrs: dict[str, str] = {
+            "feed_id": feed_id,
+            "session_id": session_id,
+            "gcs_uri": gcs_uri,
+            "timestamp_ms": str(int(start_timestamp.timestamp() * 1000)),
+        }
+        if source_type is not None:
+            attrs["source_type"] = source_type
+
+        carrier: dict[str, str] = {}
+        TraceContextTextMapPropagator().inject(carrier)
+        if "traceparent" in carrier:
+            attrs["traceparent"] = carrier["traceparent"]
+
         future = publisher.publish(
             topic_path,
             audio_chunk_msg.SerializeToString(),

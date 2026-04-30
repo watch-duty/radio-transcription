@@ -1,25 +1,12 @@
 import functools
 import logging
-import os
 
 from google.cloud import logging as cloud_logging
-from opentelemetry import trace
-from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 from backend.pipeline.common.env import is_gcp_env
+from backend.pipeline.common.tracing_utils import setup_tracing
 
 logger = logging.getLogger(__name__)
-
-
-def get_current_trace_id() -> str:
-    """Returns the trace ID for the current context from OpenTelemetry."""
-    span = trace.get_current_span()
-    span_context = span.get_span_context()
-    if span_context.is_valid:
-        return format(span_context.trace_id, "032x")
-    return ""
 
 
 @functools.cache
@@ -34,12 +21,7 @@ def setup_logging() -> None:
         client = cloud_logging.Client()
         client.setup_logging()
 
-        # Set up for tracing
-        project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or ""
-        provider = TracerProvider()
-        exporter = CloudTraceSpanExporter(project_id=project_id)
-        provider.add_span_processor(BatchSpanProcessor(exporter))
-        trace.set_tracer_provider(provider)
+        setup_tracing(use_batch=False)
     else:
         # Standardized format for local development or unsupported environments
         logging.basicConfig(

@@ -6,10 +6,15 @@ from typing import Any, Literal, override
 import apache_beam as beam
 from apache_beam.io.gcp.pubsub import PubsubMessage
 from google.protobuf.duration_pb2 import Duration  # type: ignore
+from opentelemetry import trace
 
 from backend.pipeline.common.constants import (
     MICROSECONDS_PER_MS,
     NANOS_PER_MS,
+)
+from backend.pipeline.common.tracing_utils import (
+    extract_trace_context,
+    setup_tracing,
 )
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import (
     AudioChunk,
@@ -47,6 +52,11 @@ class ParseAndKeyFn(beam.DoFn):
     """
 
     @override
+    def setup(self) -> None:
+        """Initializes tracing for the worker."""
+        setup_tracing()
+
+    @override
     def process(
         self, element: PubsubMessage, *args: Any, **kwargs: Any
     ) -> Iterator[
@@ -60,43 +70,60 @@ class ParseAndKeyFn(beam.DoFn):
         def _raise(msg: str) -> None:
             raise ValueError(msg)
 
+        outputs = []
         try:
             chunk_proto = AudioChunk()
             chunk_proto.ParseFromString(element.data)
             feed_id = chunk_proto.feed_id
+            context = extract_trace_context(element.attributes)
+            tracer = trace.get_tracer(__name__)
+            with tracer.start_as_current_span(
+                "receive_audio_chunk_for_normalization", context=context
+            ):
+                if not chunk_proto.gcs_uri:
+                    msg = "AudioChunk missing required gcs_uri"
+                    _raise(msg)
+                if not chunk_proto.session_id:
+                    msg = "AudioChunk missing required session_id"
+                    _raise(msg)
+                if not chunk_proto.feed_name:
+                    msg = "AudioChunk missing required feed_name"
+                    _raise(msg)
 
-            if not chunk_proto.gcs_uri:
-                msg = "AudioChunk missing required gcs_uri"
-                _raise(msg)
-            if not chunk_proto.session_id:
-                msg = "AudioChunk missing required session_id"
-                _raise(msg)
-            if not chunk_proto.feed_name:
-                msg = "AudioChunk missing required feed_name"
-                _raise(msg)
-
-            yield (
-                feed_id,
-                ChunkMetadata(
-                    gcs_uri=chunk_proto.gcs_uri,
-                    session_id=chunk_proto.session_id,
-                    duration_ms=chunk_proto.duration_ms,
-                    feed_metadata=FeedMetadata(
-                        feed_name=chunk_proto.feed_name,
-                        external_id=chunk_proto.external_id,
-                    ),
-                ),
-            )
+                traceparent = (
+                    element.attributes.get("traceparent")
+                    if element.attributes
+                    else None
+                )
+                outputs.append(
+                    (
+                        feed_id,
+                        ChunkMetadata(
+                            gcs_uri=chunk_proto.gcs_uri,
+                            session_id=chunk_proto.session_id,
+                            duration_ms=chunk_proto.duration_ms,
+                            feed_metadata=FeedMetadata(
+                                feed_name=chunk_proto.feed_name,
+                                external_id=chunk_proto.external_id,
+                            ),
+                            traceparent=traceparent,
+                        ),
+                    )
+                )
         except Exception as e:
             msg = f"Failed to parse or validate payload: {e}"
             logger.exception(msg)
-            yield beam.pvalue.TaggedOutput(
-                DEAD_LETTER_QUEUE_TAG,
-                {
-                    "error": msg,
-                    "attributes": dict(element.attributes),
-                },
+            outputs.append(
+                beam.pvalue.TaggedOutput(
+                    DEAD_LETTER_QUEUE_TAG,
+                    {
+                        "error": msg,
+                        "attributes": dict(element.attributes),
+                    },
+                )
             )
+
+        yield from outputs
 
 
 @beam.typehints.with_input_types(TranscriptionResult)
@@ -161,9 +188,13 @@ class SerializeFn(beam.DoFn):
             proto.end_timestamp.FromMicroseconds(
                 value.time_range.end_ms * MICROSECONDS_PER_MS
             )
+            attrs: dict[str, str] = {}
+            if value.traceparent:
+                attrs["traceparent"] = value.traceparent
+
             yield PubsubMessage(
                 data=proto.SerializeToString(),
-                attributes={},
+                attributes=attrs,
                 ordering_key=value.feed_id,
             )
         except Exception as e:

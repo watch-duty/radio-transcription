@@ -26,4 +26,6 @@ message AudioChunk {
 
   // The unique identifier of the radio feed (formatted as an RFC 4122 UUID).
   string feed_id = 7;
+
+  reserved 8;
 }

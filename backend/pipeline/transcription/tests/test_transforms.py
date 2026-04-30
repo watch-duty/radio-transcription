@@ -15,7 +15,9 @@ from apache_beam.testing.test_stream import TestStream
 from apache_beam.testing.util import assert_that, equal_to
 from apache_beam.transforms.window import TimestampedValue
 from apache_beam.utils.timestamp import Timestamp
+from opentelemetry.trace import get_current_span
 
+from backend.pipeline.common.tracing_utils import extract_trace_context
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.transcription.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
@@ -188,6 +190,52 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
                 parsed[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ"
             )
 
+    def test_parse_and_key_span_lifecycle(self) -> None:
+        """Verifies that ParseAndKeyFn doesn't leak trace context scope on execution."""
+        chunk = AudioChunk(
+            gcs_uri="gs://test-bucket/path/to/test.flac",
+            session_id="mock-session-id",
+            feed_name="mock-feed-name",
+            duration_ms=1000,
+            feed_id="test-feed",
+            external_id="mock-external-id",
+        )
+        mock_msg = PubsubMessage(
+            chunk.SerializeToString(),
+            {"feed_id": "test-feed"},
+        )
+
+        fn = ParseAndKeyFn()
+        fn.setup()
+
+        span_before = get_current_span()
+        self.assertFalse(span_before.get_span_context().is_valid)
+
+        result = fn.process(mock_msg)
+        items = list(result)
+
+        self.assertEqual(len(items), 1)
+
+        span_after = get_current_span()
+        self.assertFalse(span_after.get_span_context().is_valid)
+
+    def test_parse_and_key_traceparent_propagation(self) -> None:
+        """Verifies that trace contexts propagate correctly from Pub/Sub metadata attributes."""
+        traceparent_val = (
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+        )
+        attrs = {"traceparent": traceparent_val}
+
+        ctx = extract_trace_context(attrs)
+        span = get_current_span(ctx)
+        span_ctx = span.get_span_context()
+
+        self.assertEqual(
+            format(span_ctx.trace_id, "032x"),
+            "4bf92f3577b34da6a3ce929d0e0e4736",
+        )
+        self.assertEqual(format(span_ctx.span_id, "016x"), "00f067aa0ba902b7")
+
 
 class TranscribeAudioTest(unittest.TestCase):
     @patch("backend.pipeline.transcription.transforms.stateful.get_transcriber")
@@ -290,6 +338,7 @@ class SerializeAndEnrichTest(unittest.TestCase):
                 canonical_audio_uri="gs://bucket/1.flac",
                 playback_audio_uri="gs://bucket/1_playback.flac",
                 feed_metadata=feed_metadata,
+                traceparent="00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
             )
 
             res2 = TranscriptionResult(
@@ -306,6 +355,7 @@ class SerializeAndEnrichTest(unittest.TestCase):
                 canonical_audio_uri="gs://bucket/2.flac",
                 playback_audio_uri="gs://bucket/2_playback.flac",
                 feed_metadata=feed_metadata,
+                traceparent="00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
             )
 
             results = p | beam.Create([res1, res2]) | beam.ParDo(SerializeFn())
@@ -316,6 +366,12 @@ class SerializeAndEnrichTest(unittest.TestCase):
                 )
 
                 assert len(msgs) == 2
+
+                for m in msgs:
+                    assert (
+                        m.attributes.get("traceparent")
+                        == "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+                    )
 
                 protos = []
                 for m in msgs:
