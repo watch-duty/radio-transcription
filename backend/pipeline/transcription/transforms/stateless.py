@@ -179,7 +179,7 @@ class SerializeFn(beam.DoFn):
             )
             yield PubsubMessage(
                 data=proto.SerializeToString(),
-                attributes={},
+                attributes={"trace_id": value.trace_id},
                 ordering_key=value.feed_id,
             )
         except Exception as e:

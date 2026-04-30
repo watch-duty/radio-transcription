@@ -1143,6 +1143,7 @@ class TranscribeAudioFn(beam.DoFn):
             canonical_audio_uri=canonical_audio_uri,
             playback_audio_uri=playback_audio_uri,
             feed_metadata=request.feed_metadata,
+            trace_id=request.trace_id,
         )
 
     @override
