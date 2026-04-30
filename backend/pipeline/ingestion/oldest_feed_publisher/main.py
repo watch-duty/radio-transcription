@@ -1,13 +1,28 @@
-"""Oldest-feed publisher Cloud Run function.
+"""Feed-queue publisher Cloud Run function.
 
-Triggered every 60 s by Cloud Scheduler. Queries AlloyDB for the oldest
-unclaimed feed's age in seconds, publishes it as a DOUBLE GAUGE point to
-custom.googleapis.com/feeds/oldest_unclaimed_age_seconds, returns 200.
+Triggered every 60 s by Cloud Scheduler. Queries AlloyDB for the count of
+feeds in `unclaimed` status, publishes it as a DOUBLE GAUGE point to
+custom.googleapis.com/feeds/unclaimed_count, returns 200.
+
+The MIG autoscaler consumes this metric as its primary scaling signal
+(per-group additive metric with single_instance_assignment math —
+each VM responsible for absorbing N unclaimed feeds; autoscaler scales
+to keep total queue <= N * VMs). Queue length is a LEADING indicator -
+grows the moment claim rate falls behind arrival rate, well before any
+individual feed has been waiting long enough to breach the SLO.
+
+NOTE on naming: the directory `oldest_feed_publisher/` and Cloud Run
+service name `oldest-feed-publisher-${env}` predate this metric pivot
+(originally published `oldest_unclaimed_age_seconds` latency metric).
+Renaming would force destroy+recreate of the Cloud Run service; not
+worth the operational churn. A follow-up PR will likely re-add the
+latency metric (publishing both from this same service for SLO alerting),
+restoring the directory name's accuracy.
 
 On failure (DB error, monitoring write error, missing env), logs ERROR
-and returns 500 — does NOT publish a sentinel value (GCP autoscalers
+and returns 500 — does NOT publish a sentinel value. GCP autoscalers
 reject negative custom metric values; metric staleness is the failure
-signal, handled by alerts in a follow-up PR per Phase 2 CONTEXT D-06).
+signal, handled by alerts (deferred to a follow-up PR).
 
 Per Phase 2 CONTEXT D-02: per-invocation asyncpg.connect/close — no
 module-level pool. ~50 ms overhead per call is invisible at 1 call/min;
@@ -43,14 +58,14 @@ ALLOYDB_USER = os.environ.get("ALLOYDB_USER") or "worker"
 ALLOYDB_DB = os.environ.get("ALLOYDB_DB", "")
 ALLOYDB_PASSWORD = os.environ.get("ALLOYDB_PASSWORD", "")
 
-METRIC_TYPE = "custom.googleapis.com/feeds/oldest_unclaimed_age_seconds"
+METRIC_TYPE = "custom.googleapis.com/feeds/unclaimed_count"
 
-# PUB-07: COALESCE returns 0.0 when no unclaimed rows exist (autoscaler
-# then sees "fully caught up" — correct behavior; not a sentinel).
+# COUNT(*) is naturally non-negative and never NULL — no COALESCE needed.
+# Cast to DOUBLE PRECISION because MonitoringClient.write_time_series_double()
+# expects a Python float (mirrors the existing quarantine_events pattern;
+# DOUBLE GAUGE is type-consistent with the autoscaler's metric block).
 QUERY = (
-    "SELECT COALESCE("
-    "EXTRACT(epoch FROM NOW() - MIN(unclaimed_since)), 0.0"
-    ") FROM feeds WHERE status = 'unclaimed'"
+    "SELECT COUNT(*)::DOUBLE PRECISION FROM feeds WHERE status = 'unclaimed'"
 )
 
 # Timeouts: per Phase 2 CONTEXT "Claude's Discretion" — recommended baseline.
@@ -88,8 +103,8 @@ def _require_environment() -> None:
         raise RuntimeError(msg)
 
 
-async def _query_oldest_age() -> float:
-    """Connect to AlloyDB via PgBouncer, run PUB-07 query, return age seconds.
+async def _query_unclaimed_count() -> float:
+    """Connect to AlloyDB via PgBouncer, run COUNT query, return queue depth.
 
     Per D-02: per-invocation connect/close, no module-level pool. Per
     connection.py: statement_cache_size=0 for PgBouncer transaction-mode
@@ -109,8 +124,8 @@ async def _query_oldest_age() -> float:
         value = await conn.fetchval(QUERY, timeout=QUERY_TIMEOUT_SEC)
     finally:
         await conn.close()
-    # asyncpg returns Decimal/None depending on PG type; COALESCE makes
-    # None impossible, but cast defensively for the DOUBLE write contract.
+    # COUNT(*)::DOUBLE PRECISION returns float; defensive cast handles
+    # asyncpg's PG-type-to-Python conversion edge cases.
     return float(value) if value is not None else 0.0
 
 
@@ -127,9 +142,9 @@ async def _publish(value: float) -> None:
 
 
 async def _run() -> None:
-    value = await _query_oldest_age()
+    value = await _query_unclaimed_count()
     await _publish(value)
-    logger.info("published oldest_unclaimed_age_seconds=%.3f", value)
+    logger.info("published unclaimed_count=%.0f", value)
 
 
 @functions_framework.http

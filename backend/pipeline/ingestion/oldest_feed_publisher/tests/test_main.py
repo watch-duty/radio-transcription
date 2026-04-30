@@ -42,7 +42,9 @@ class TestSuccessPath:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         del configured
-        mock_conn = _make_mock_conn(fetchval_result=42.5)
+        # COUNT(*)::DOUBLE PRECISION returns integer-valued floats; 42.0 is
+        # the realistic shape (vs. fractional values that latency would have).
+        mock_conn = _make_mock_conn(fetchval_result=42.0)
         mock_publish = mock.AsyncMock()
 
         with (
@@ -66,17 +68,18 @@ class TestSuccessPath:
         # guarantees non-None at runtime.
         kwargs = mock_publish.await_args.kwargs  # ty: ignore[unresolved-attribute]
         assert kwargs["metric_type"] == main.METRIC_TYPE
-        assert kwargs["value"] == 42.5
+        assert kwargs["value"] == 42.0
         assert kwargs["resource_labels"] == {"project_id": "test-project"}
         assert kwargs["resource_type"] == "global"
-        # INFO log must surface the published value
-        assert any("42.500" in r.message for r in caplog.records)
+        # INFO log must surface the published count (rendered with %.0f)
+        assert any("unclaimed_count=42" in r.message for r in caplog.records)
         mock_conn.close.assert_awaited_once()
 
     def test_zero_value_still_publishes(self, configured: None) -> None:
         del configured
-        # COALESCE → 0.0 is a valid datapoint (empty unclaimed set), not
-        # a sentinel — Publisher MUST still publish it.
+        # COUNT(*) = 0 is a valid datapoint (no unclaimed feeds — fully
+        # caught up), not a sentinel — Publisher MUST still publish it so
+        # the autoscaler sees the queue is empty and can scale in.
         mock_conn = _make_mock_conn(fetchval_result=0.0)
         mock_publish = mock.AsyncMock()
 
@@ -156,13 +159,13 @@ class TestFailurePaths:
 
         assert result == ("err", 500)
         mock_publish.assert_not_awaited()
-        # The try/finally in _query_oldest_age must close the connection
+        # The try/finally in _query_unclaimed_count must close the connection
         # even when the query raises.
         mock_conn.close.assert_awaited_once()
 
     def test_publish_failure_returns_500(self, configured: None) -> None:
         del configured
-        mock_conn = _make_mock_conn(fetchval_result=12.3)
+        mock_conn = _make_mock_conn(fetchval_result=12.0)
         mock_publish = mock.AsyncMock(
             side_effect=GoogleAPIError("monitoring quota exceeded")
         )
