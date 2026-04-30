@@ -17,17 +17,15 @@ import {
   Post,
   Put,
   Queries,
-  Res,
   Response,
   Route,
   Security,
   SuccessResponse,
   Tags,
-  TsoaResponse,
 } from 'tsoa';
 
 import { RULES_API_URL } from '../config.js';
-import { isAxiosError } from '../utils.js';
+import { HttpError, handleBackendError } from '../utils.js';
 
 interface ScopeResponse {
   level: ScopeLevel;
@@ -226,12 +224,15 @@ export class RulesController extends Controller {
 
   @Get('')
   @Security('google_id_token')
+  @Response<{ message: string }>(401, 'Unauthorized')
+  @Response<{ message: string }>(403, 'Forbidden')
+  @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async listRules(
     @Queries() query: ListRulesQueryParams
   ): Promise<Rule[]> {
-    const client = await this.getClient();
     try {
+      const client = await this.getClient();
       const params = new URLSearchParams();
       if (query.ruleIds) {
         query.ruleIds.forEach((id) => params.append('rule_ids', id));
@@ -246,42 +247,45 @@ export class RulesController extends Controller {
       const data = response.data as RuleResponse[];
       return data.map(convertRuleResponse);
     } catch (error: unknown) {
-      console.error('Error fetching rules:', error);
-      throw new Error('Error fetching rules', { cause: error });
+      const { status, message } = handleBackendError(error, 'fetching rules');
+      throw new HttpError(status, message);
     }
   }
 
   @Get('{ruleId}')
   @Security('google_id_token')
+  @Response<{ message: string }>(401, 'Unauthorized')
+  @Response<{ message: string }>(403, 'Forbidden')
   @Response<{ message: string }>(404, 'Not Found')
+  @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
-  public async getRule(
-    @Path() ruleId: string,
-    @Res() notFound: TsoaResponse<404, { message: string }>
-  ): Promise<Rule> {
-    const client = await this.getClient();
+  public async getRule(@Path() ruleId: string): Promise<Rule> {
     try {
+      const client = await this.getClient();
       const response = await client.request({
         url: `${RULES_API_URL}/${ruleId}`,
         method: 'GET',
       });
       return convertRuleResponse(response.data as RuleResponse);
     } catch (error: unknown) {
-      if (isAxiosError(error) && error.response?.status === 404) {
-        return notFound(404, { message: `Rule ${ruleId} not found` });
-      }
-      console.error(`Error fetching rule ${ruleId}:`, error);
-      throw new Error(`Error fetching rule ${ruleId}`, { cause: error });
+      const { status, message } = handleBackendError(
+        error,
+        `fetching rule ${ruleId}`
+      );
+      throw new HttpError(status, message);
     }
   }
 
   @Post('')
   @Security('google_id_token')
   @SuccessResponse('201', 'Created')
+  @Response<{ message: string }>(401, 'Unauthorized')
+  @Response<{ message: string }>(403, 'Forbidden')
+  @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async createRule(@Body() requestBody: RuleCreate): Promise<Rule> {
-    const client = await this.getClient();
     try {
+      const client = await this.getClient();
       const response = await client.request({
         url: RULES_API_URL!,
         method: 'POST',
@@ -289,22 +293,24 @@ export class RulesController extends Controller {
       });
       return convertRuleResponse(response.data as RuleResponse);
     } catch (error: unknown) {
-      console.error('Error creating rule:', error);
-      throw new Error('Error creating rule', { cause: error });
+      const { status, message } = handleBackendError(error, 'creating rule');
+      throw new HttpError(status, message);
     }
   }
 
   @Put('{ruleId}')
   @Security('google_id_token')
+  @Response<{ message: string }>(401, 'Unauthorized')
+  @Response<{ message: string }>(403, 'Forbidden')
   @Response<{ message: string }>(404, 'Not Found')
+  @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async updateRule(
     @Path() ruleId: string,
-    @Body() requestBody: RuleUpdate,
-    @Res() notFound: TsoaResponse<404, { message: string }>
+    @Body() requestBody: RuleUpdate
   ): Promise<Rule> {
-    const client = await this.getClient();
     try {
+      const client = await this.getClient();
       const response = await client.request({
         url: `${RULES_API_URL}/${ruleId}`,
         method: 'PUT',
@@ -312,35 +318,35 @@ export class RulesController extends Controller {
       });
       return convertRuleResponse(response.data as RuleResponse);
     } catch (error: unknown) {
-      if (isAxiosError(error) && error.response?.status === 404) {
-        return notFound(404, { message: `Rule ${ruleId} not found` });
-      }
-      console.error(`Error updating rule ${ruleId}:`, error);
-      throw new Error(`Error updating rule ${ruleId}`, { cause: error });
+      const { status, message } = handleBackendError(
+        error,
+        `updating rule ${ruleId}`
+      );
+      throw new HttpError(status, message);
     }
   }
 
   @Delete('{ruleId}')
   @Security('google_id_token')
   @SuccessResponse('204', 'No Content')
+  @Response<{ message: string }>(401, 'Unauthorized')
+  @Response<{ message: string }>(403, 'Forbidden')
   @Response<{ message: string }>(404, 'Not Found')
+  @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
-  public async deleteRule(
-    @Path() ruleId: string,
-    @Res() notFound: TsoaResponse<404, { message: string }>
-  ): Promise<void> {
-    const client = await this.getClient();
+  public async deleteRule(@Path() ruleId: string): Promise<void> {
     try {
+      const client = await this.getClient();
       await client.request({
         url: `${RULES_API_URL}/${ruleId}`,
         method: 'DELETE',
       });
     } catch (error: unknown) {
-      if (isAxiosError(error) && error.response?.status === 404) {
-        return notFound(404, { message: `Rule ${ruleId} not found` });
-      }
-      console.error(`Error deleting rule ${ruleId}:`, error);
-      throw new Error(`Error deleting rule ${ruleId}`, { cause: error });
+      const { status, message } = handleBackendError(
+        error,
+        `deleting rule ${ruleId}`
+      );
+      throw new HttpError(status, message);
     }
   }
 }

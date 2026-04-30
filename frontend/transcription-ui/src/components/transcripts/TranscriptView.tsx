@@ -3,7 +3,6 @@ import { useSearchParams } from 'react-router';
 import type { VirtuosoHandle } from 'react-virtuoso';
 
 import LinkIcon from '@mui/icons-material/Link';
-import type { AlertProps } from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -17,7 +16,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
-import type { Transcript } from '@transcription/common';
+import { type Transcript } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { listFeeds } from '../../service/listFeeds';
@@ -34,8 +33,8 @@ import TranscriptActionsBar from './TranscriptActionsBar';
 import TranscriptDisplay from './TranscriptDisplay';
 
 interface TranscriptViewProps {
-  addAlert: (alert: AlertProps) => void;
   triggerSnackbar: (message: string) => void;
+  handleError: (error: Error, titleMessage?: string) => void;
 }
 
 export type ListTranscriptsPage = {
@@ -52,8 +51,8 @@ const TRANSCRIPTS_POLLING_INTERVAL_DISPLAY_STRING = `${TRANSCRIPTS_POLLING_INTER
 const MAX_TRANSCRIPTS_POLLING_ITERATIONS = 10;
 
 export function TranscriptView({
-  addAlert,
   triggerSnackbar,
+  handleError,
 }: TranscriptViewProps) {
   const theme = useTheme();
   const { token } = useAuth();
@@ -90,14 +89,22 @@ export function TranscriptView({
 
   const {
     data: feeds,
+    isError: isFeedsError,
     error: feedsError,
     isFetching: feedsFetching,
+    isSuccess: isFeedsSuccess,
   } = useQuery({
     queryKey: ['listFeeds', token],
     queryFn: () => listFeeds(token!),
     enabled: !!token,
     refetchOnWindowFocus: false,
   });
+
+  useEffect(() => {
+    if (isFeedsError) {
+      handleError(feedsError, 'Loading Feeds');
+    }
+  }, [isFeedsError, feedsError, handleError]);
 
   // Memoizing the feed ID to feed map so we don't have to recreate it on every render.
   const feedIdToFeedMap = useMemo(() => {
@@ -114,18 +121,6 @@ export function TranscriptView({
 
   const searchedFeed = feedIdToFeedMap.get(searchedFeedId) || null;
 
-  /**
-   * Effect for handling feeds errors.
-   */
-  useEffect(() => {
-    if (feedsError) {
-      addAlert({
-        severity: 'error',
-        children: `An error occurred while trying to load feeds: ${feedsError}`,
-      });
-    }
-  }, [feedsError, addAlert]);
-
   const {
     data: listTranscriptsResponse,
     fetchNextPage: fetchOlderTranscripts,
@@ -134,6 +129,7 @@ export function TranscriptView({
     hasPreviousPage: hasNewerTranscripts,
     isFetchingNextPage: isFetchingOlderTranscripts,
     isFetchingPreviousPage: isFetchingNewerTranscripts,
+    isError: isTranscriptsError,
     error: transcriptsError,
     isLoading: isTranscriptsInitialLoading, // isLoading is the first load, which we use to show the main loading spinner
     isFetching: isTranscriptsFetching, // isFetching is any load, which we use to show that we're loading additional data
@@ -206,9 +202,15 @@ export function TranscriptView({
         nextToken: undefined,
       };
     },
-    enabled: !!token && !!searchedFeedId,
+    enabled: !!token && !!searchedFeedId && isFeedsSuccess,
     refetchOnWindowFocus: false,
   });
+
+  useEffect(() => {
+    if (isTranscriptsError) {
+      handleError(transcriptsError, 'Loading transcripts');
+    }
+  }, [isTranscriptsError, transcriptsError, handleError]);
 
   const transcripts = useMemo(
     () =>
@@ -388,14 +390,21 @@ export function TranscriptView({
 
   const {
     data: rules,
+    isError: isRulesError,
     error: rulesError,
     isLoading: rulesLoading,
   } = useQuery({
     queryKey: ['listRules', token],
     queryFn: () => listRules(token ?? ''),
-    enabled: !!token,
+    enabled: !!token && isFeedsSuccess,
     refetchOnWindowFocus: false,
   });
+
+  useEffect(() => {
+    if (isRulesError) {
+      handleError(rulesError, 'Loading rules');
+    }
+  }, [isRulesError, rulesError, handleError]);
 
   // Memoizing the rule ID to name map so we don't have to recreate it on every render.
   const ruleIdToNameMap: Map<string, string> = useMemo(() => {
@@ -404,18 +413,6 @@ export function TranscriptView({
     }
     return new Map(rules.map((rule) => [rule.ruleId, rule.ruleName]));
   }, [rules]);
-
-  /**
-   * Effect for handling rules errors.
-   */
-  useEffect(() => {
-    if (rulesError) {
-      addAlert({
-        severity: 'error',
-        children: `An error occurred while trying to load rules: ${rulesError}`,
-      });
-    }
-  }, [rulesError, addAlert]);
 
   useEffect(() => {
     hasScrolledToTarget.current = false;
@@ -653,7 +650,7 @@ export function TranscriptView({
               highlightedTransmissionId={highlightedTransmissionId}
             />
           </>
-        ) : isTranscriptsInitialLoading ? (
+        ) : feedsFetching || isTranscriptsInitialLoading ? (
           <Box
             sx={{
               display: 'flex',
@@ -663,18 +660,18 @@ export function TranscriptView({
           >
             <CircularProgress />
           </Box>
-        ) : transcriptsError ? (
+        ) : isTranscriptsError ? (
           <Typography
             color="error"
             align="center"
             sx={{ mt: theme.spacing(2) }}
           >
-            Error loading transcripts.
+            Error loading transcripts
           </Typography>
         ) : isTranscriptsSuccess ? (
           <Box sx={{ mt: theme.spacing(2), textAlign: 'center' }}>
             <Typography color="textSecondary" align="center">
-              No transcripts found.
+              No transcripts found
             </Typography>
           </Box>
         ) : null}

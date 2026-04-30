@@ -1,19 +1,11 @@
 import type { Feed } from '@transcription/common';
 
+import { apiFetch } from '../utils/apiUtils';
+
 export async function listFeeds(token: string): Promise<Feed[]> {
-  const response = await fetch(
-    `${import.meta.env.VITE_API_BASE_URL}/api/v1/feeds`,
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    }
-  );
-
-  if (!response.ok) {
-    throw new Error(`Error: ${response.status} ${response.statusText}`);
-  }
-
-  const data = await response.json();
-  return data;
+  return apiFetch<Feed[]>(`${import.meta.env.VITE_API_BASE_URL}/api/v1/feeds`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
 }

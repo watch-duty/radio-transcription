@@ -17,7 +17,10 @@ describe('authSession', () => {
 
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => responsePayload,
+      text: async () => JSON.stringify(responsePayload),
+      headers: {
+        get: (key: string) => (key === 'content-type' ? 'application/json' : null),
+      },
     });
 
     const token = await authSession();
@@ -35,6 +38,10 @@ describe('authSession', () => {
   it('should error if backend returns not ok status code', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: false,
+      text: async () => 'Session failed',
+      headers: {
+        get: () => null,
+      },
     });
 
     await expect(authSession()).rejects.toThrow('Session failed');

@@ -18,7 +18,10 @@ describe('listFeeds', () => {
 
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => mockData,
+      text: async () => JSON.stringify(mockData),
+      headers: {
+        get: (key: string) => (key === 'content-type' ? 'application/json' : null),
+      },
     });
 
     const feeds = await listFeeds('tokenXYZ');
@@ -40,10 +43,14 @@ describe('listFeeds', () => {
       ok: false,
       status: 500,
       statusText: 'Internal Server Error',
+      headers: {
+        get: () => null,
+      },
+      text: async () => 'Internal Server Error',
     });
 
     await expect(listFeeds('tokenXYZ')).rejects.toThrow(
-      'Error: 500 Internal Server Error'
+      /500.*Internal Server Error/
     );
   });
 });
