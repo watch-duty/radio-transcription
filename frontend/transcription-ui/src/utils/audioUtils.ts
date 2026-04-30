@@ -11,6 +11,7 @@
  * @returns The URL that can be used by the browser.
  */
 export function getAudioUrl(uri: string): string {
+  if (!uri) return uri;
   const base = import.meta.env.DEV
     ? '/gcs/'
     : 'https://storage.googleapis.com/';
