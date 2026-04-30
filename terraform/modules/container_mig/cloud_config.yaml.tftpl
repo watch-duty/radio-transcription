@@ -131,8 +131,24 @@ ${env_file_content}
     # real integer. WORKER_INDEX=%i is metadata for log labeling only;
     # worker code does not load-bear on it (verified absent from
     # backend/pipeline/ingestion/ in planning).
+    #
+    # `--sysctl` flags re-apply the host /etc/sysctl.d/99-port-range.conf
+    # values inside the worker's network namespace. Worker containers run
+    # with default Docker bridge networking (-p 127.0.0.1:808X:8080), which
+    # places them in their OWN netns, and net.* sysctls are per-netns —
+    # they DO NOT inherit from the host. Without these flags, workers would
+    # silently use kernel defaults (32768-60999 ephemeral ports, 7200s
+    # keepalive idle), which defeats the entire HANDOFF-01 contract from
+    # PR #359 worker hardening. The host /etc/sysctl.d/ values still apply
+    # to (a) the host network stack and (b) the nginx aggregator container
+    # (which runs --network host so it shares the host netns), so we keep
+    # both for belt-and-suspenders coverage.
     ExecStart=/bin/sh -c '/usr/bin/docker run --rm --name ${service_name}-%i \
         --ulimit nofile=65535:65535 \
+        --sysctl net.ipv4.ip_local_port_range="10000 65535" \
+        --sysctl net.ipv4.tcp_keepalive_time=60 \
+        --sysctl net.ipv4.tcp_keepalive_intvl=10 \
+        --sysctl net.ipv4.tcp_keepalive_probes=3 \
         -p 127.0.0.1:$((8080 + %i)):8080 \
         --env-file /etc/container-env/${service_name}.env \
         -e WORKER_INDEX=%i \
