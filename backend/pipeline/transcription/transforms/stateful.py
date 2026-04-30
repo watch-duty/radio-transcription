@@ -288,6 +288,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         feed_id, metadata = element
         trace_id = metadata.trace_id
 
+        results = []
         with with_tracer_context(trace_id, "stitching_process", __name__):
             current_ts_ms = int(float(timestamp) * MS_PER_SECOND)
             curr_context = (
@@ -339,17 +340,23 @@ class OrderedStitchAudioFn(beam.DoFn):
                     >= self.stitch_config.backfill_lateness_threshold_ms
                 )
 
-                yield from self._download_and_stitch(
-                    elements_to_emit,
-                    curr_context,
-                    transmission_context_state,
-                    transmission_buffer_state,
-                    last_start_ms_state,
-                    timer_manager,
-                    feed_id,
-                    is_backfill=is_backfill,
-                    previous_expected_ts=previous_expected_ts,
+                results.extend(
+                    list(
+                        self._download_and_stitch(
+                            elements_to_emit,
+                            curr_context,
+                            transmission_context_state,
+                            transmission_buffer_state,
+                            last_start_ms_state,
+                            timer_manager,
+                            feed_id,
+                            is_backfill=is_backfill,
+                            previous_expected_ts=previous_expected_ts,
+                        )
+                    )
                 )
+
+        yield from results
 
     def _apply_flush_action(
         self,
@@ -604,6 +611,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         )
         trace_id = curr_context.trace_id
 
+        results = []
         with with_tracer_context(trace_id, "handle_audio_gap", __name__):
             curr_context = replace(curr_context, order_timer_active=False)
             transmission_context_state.write(curr_context)
@@ -650,16 +658,22 @@ class OrderedStitchAudioFn(beam.DoFn):
                     # Assume backfill in timeout!
                     is_backfill = True
 
-                    yield from self._download_and_stitch(
-                        elements_to_emit,
-                        curr_context,
-                        transmission_context_state,
-                        transmission_buffer_state,
-                        last_start_ms_state,
-                        timer_manager,
-                        feed_id,
-                        is_backfill=is_backfill,
+                    results.extend(
+                        list(
+                            self._download_and_stitch(
+                                elements_to_emit,
+                                curr_context,
+                                transmission_context_state,
+                                transmission_buffer_state,
+                                last_start_ms_state,
+                                timer_manager,
+                                feed_id,
+                                is_backfill=is_backfill,
+                            )
+                        )
                     )
+
+        yield from results
 
     @on_timer(STALE_TIMER_EVENT_SPEC)
     def handle_stale_transmission_event(
@@ -895,6 +909,7 @@ class OrderedBypassFn(beam.DoFn):
         )
         trace_id = curr_context.trace_id
 
+        results = []
         with with_tracer_context(trace_id, "handle_buffer", __name__):
             curr_context = replace(curr_context, order_timer_active=False)
 
@@ -907,9 +922,15 @@ class OrderedBypassFn(beam.DoFn):
                 curr_context = replace(curr_context, out_of_order_buffer=[])
                 transmission_context_state.write(curr_context)
 
-                yield from self._download_and_yield(
-                    sorted_elements, feed_id, curr_context
+                results.extend(
+                    list(
+                        self._download_and_yield(
+                            sorted_elements, feed_id, curr_context
+                        )
+                    )
                 )
+
+        yield from results
 
     def _download_and_yield(
         self,
