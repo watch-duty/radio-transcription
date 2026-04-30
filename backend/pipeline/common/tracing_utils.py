@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+import threading
 
 from opentelemetry.context import Context
 from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
@@ -25,13 +26,23 @@ from opentelemetry.trace.propagation.tracecontext import (
 
 from backend.pipeline.common.env import is_gcp_env
 
+_setup_lock = threading.Lock()
+
 
 def setup_tracing(*, use_batch: bool = True) -> None:
-    """Sets up tracing for the context.
+    """Sets up tracing for the context thread-safely.
 
     Messages are sent to CloudTrace through the span provider and processor.
     """
-    if is_gcp_env():
+    if not is_gcp_env():
+        return
+
+    current_provider = get_tracer_provider()
+    if isinstance(current_provider, TracerProvider):
+        return
+
+    with _setup_lock:
+        # Double check locking pattern after acquiring lock
         current_provider = get_tracer_provider()
         if isinstance(current_provider, TracerProvider):
             return
