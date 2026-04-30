@@ -90,6 +90,11 @@ class ParseAndKeyFn(beam.DoFn):
                     msg = "AudioChunk missing required feed_name"
                     _raise(msg)
 
+                traceparent = (
+                    element.attributes.get("traceparent")
+                    if element.attributes
+                    else None
+                )
                 outputs.append(
                     (
                         feed_id,
@@ -101,6 +106,7 @@ class ParseAndKeyFn(beam.DoFn):
                                 feed_name=chunk_proto.feed_name,
                                 external_id=chunk_proto.external_id,
                             ),
+                            traceparent=traceparent,
                         ),
                     )
                 )
@@ -117,7 +123,8 @@ class ParseAndKeyFn(beam.DoFn):
                 )
             )
 
-        return iter(outputs)
+        for item in outputs:  # noqa: UP028
+            yield item
 
 
 @beam.typehints.with_input_types(TranscriptionResult)
