@@ -123,8 +123,7 @@ class ParseAndKeyFn(beam.DoFn):
                 )
             )
 
-        for item in outputs:  # noqa: UP028
-            yield item
+        yield from outputs
 
 
 @beam.typehints.with_input_types(TranscriptionResult)

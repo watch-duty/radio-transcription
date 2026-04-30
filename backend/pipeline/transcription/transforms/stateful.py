@@ -532,7 +532,9 @@ class OrderedStitchAudioFn(beam.DoFn):
                     start_audio_offset_ms=curr_context.start_audio_offset_ms,
                     end_audio_offset_ms=None,
                     buffer_duration_ms=curr_context.buffer_duration_ms,
-                    traceparent=curr_context.traceparent or chunk.traceparent,
+                    traceparent=curr_context.traceparent
+                    if curr_context.traceparent is not None
+                    else chunk.traceparent,
                 )
 
                 # 3. Process through state machine!
@@ -1181,5 +1183,4 @@ class TranscribeAudioFn(beam.DoFn):
                 )
             )
 
-        for item in outputs:  # noqa: UP028
-            yield item
+        yield from outputs

@@ -236,17 +236,6 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
         )
         self.assertEqual(format(span_ctx.span_id, "016x"), "00f067aa0ba902b7")
 
-    def test_parse_and_key_trace_id_fallback(self) -> None:
-        """Verifies that fallback Pseudo-Random Span derivation is used when traceparent is missing."""
-        trace_id_val = "0123456789abcdef0123456789abcdef"
-        ctx = extract_trace_context(None, trace_id_val)
-        span = get_current_span(ctx)
-        span_ctx = span.get_span_context()
-
-        self.assertEqual(format(span_ctx.trace_id, "032x"), trace_id_val)
-        self.assertNotEqual(span_ctx.span_id, 0)
-        self.assertNotEqual(span_ctx.span_id, 1)
-
 
 class TranscribeAudioTest(unittest.TestCase):
     @patch("backend.pipeline.transcription.transforms.stateful.get_transcriber")

@@ -1,6 +1,5 @@
 """Utilities for distributed tracing in Apache Beam."""
 
-import hashlib
 import os
 import threading
 
@@ -12,12 +11,8 @@ from opentelemetry.sdk.trace.export import (
     SimpleSpanProcessor,
 )
 from opentelemetry.trace import (
-    NonRecordingSpan,
-    SpanContext,
-    TraceFlags,
     get_current_span,
     get_tracer_provider,
-    set_span_in_context,
     set_tracer_provider,
 )
 from opentelemetry.trace.propagation.tracecontext import (
@@ -33,6 +28,10 @@ def setup_tracing(*, use_batch: bool = True) -> None:
     """Sets up tracing for the context thread-safely.
 
     Messages are sent to CloudTrace through the span provider and processor.
+
+    NOTE: This configuration only protects against duplicate concurrent initialization
+    within a single Python worker process space. Distributed Dataflow worker instances
+    will spin up separate process environments.
     """
     if not is_gcp_env():
         return
@@ -68,14 +67,11 @@ def get_current_trace_id() -> str:
     return ""
 
 
-def extract_trace_context(
-    attributes: dict[str, str] | None, fallback_trace_id: str | None = None
-) -> Context:
+def extract_trace_context(attributes: dict[str, str] | None) -> Context:
     """Restores OpenTelemetry trace context from Message Attributes using W3C TraceContext.
 
     Args:
         attributes: Pub/Sub Message metadata attribute key-value pairs.
-        fallback_trace_id: Trace ID string from Proto payload in case properties don't carry context.
 
     Returns:
         An OpenTelemetry Context.
@@ -83,34 +79,4 @@ def extract_trace_context(
     if attributes and "traceparent" in attributes:
         return TraceContextTextMapPropagator().extract(carrier=attributes)
 
-    if fallback_trace_id:
-        try:
-            # Instead of hardcoding static `span_id=1`, derive a reproducible pseudo-random 64-bit integer
-            # from the trace ID to create valid Parent context mappings.
-            hasher = hashlib.sha256(fallback_trace_id.encode("utf-8"))
-            derived_span_id = int(hasher.hexdigest()[:16], 16)
-
-            parent_context = SpanContext(
-                trace_id=int(fallback_trace_id, 16),
-                span_id=derived_span_id,
-                is_remote=True,
-                trace_flags=TraceFlags(1),
-            )
-            parent_span = NonRecordingSpan(parent_context)
-            return set_span_in_context(parent_span)
-        except ValueError:
-            pass
-
     return Context()
-
-
-def create_trace_context(trace_id: str) -> Context:
-    """Creates a tracing context from a trace_id string.
-
-    Args:
-        trace_id: A 32-character hex string representing the trace ID.
-
-    Returns:
-        An OpenTelemetry Context object.
-    """
-    return extract_trace_context(None, trace_id)
