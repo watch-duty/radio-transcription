@@ -62,7 +62,7 @@ def create_trace_context(trace_id: str) -> Context:
 
     parent_context = SpanContext(
         trace_id=int(trace_id, 16),
-        span_id=0,
+        span_id=1,
         is_remote=True,
         trace_flags=TraceFlags(1),
     )
