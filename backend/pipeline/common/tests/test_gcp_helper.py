@@ -460,9 +460,81 @@ class TestPublishAudioChunkSync(unittest.TestCase):
         publish_kwargs = mock_publisher.publish.call_args.kwargs
         self.assertNotIn("source_type", publish_kwargs)
 
+    def test_injects_traceparent_attribute_sync(self) -> None:
+        """Verifies that sync publish logic serializes active traceparent context."""
+        mock_future = MagicMock()
+        mock_future.result.return_value = "msg-1"
+        _, mock_publisher = _make_pubsub_client()
+        mock_publisher.publish.return_value = mock_future
+
+        def mock_inject(carrier, context=None):
+            carrier["traceparent"] = (
+                "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+            )
+
+        with patch(
+            "opentelemetry.trace.propagation.tracecontext.TraceContextTextMapPropagator.inject",
+            side_effect=mock_inject,
+        ):
+            gcp_helper.publish_audio_chunk_sync(
+                mock_publisher,
+                topic_path="projects/test/topics/audio",
+                feed_id="feed-1",
+                feed_name="Central Fire",
+                external_id="ext-id",
+                gcs_uri="gs://bucket/audio.flac",
+                session_id="sess-1",
+                start_timestamp=datetime.datetime(
+                    2026, 3, 5, 12, 0, tzinfo=datetime.UTC
+                ),
+                duration_ms=15000,
+            )
+
+        publish_kwargs = mock_publisher.publish.call_args.kwargs
+        self.assertEqual(
+            publish_kwargs.get("traceparent"),
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        )
+
 
 class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
     """Test suite for the async publish_audio_chunk wrapper."""
+
+    async def test_injects_traceparent_attribute_async(self) -> None:
+        """Verifies that async publish logic serializes active traceparent context."""
+        mock_pubsub_client, mock_publisher = _make_pubsub_client()
+        mock_now = datetime.datetime(2026, 3, 5, 12, 0, tzinfo=datetime.UTC)
+
+        fut = concurrent.futures.Future()
+        fut.set_result("message-123")
+        mock_publisher.publish.return_value = fut
+
+        def mock_inject(carrier, context=None):
+            carrier["traceparent"] = (
+                "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+            )
+
+        with patch(
+            "opentelemetry.trace.propagation.tracecontext.TraceContextTextMapPropagator.inject",
+            side_effect=mock_inject,
+        ):
+            await gcp_helper.publish_audio_chunk(
+                mock_pubsub_client,
+                topic_path="projects/test/topics/audio",
+                feed_id="feed-42",
+                feed_name="Central Fire",
+                external_id="ext-id",
+                gcs_uri="gs://bucket/audio.flac",
+                session_id="test-session-1",
+                start_timestamp=mock_now,
+                duration_ms=15000,
+            )
+
+        publish_kwargs = mock_publisher.publish.call_args.kwargs
+        self.assertEqual(
+            publish_kwargs.get("traceparent"),
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        )
 
     async def test_delegates_to_publish(self) -> None:
         """Async wrapper directly calls publisher.publish and uses wrap_future."""
