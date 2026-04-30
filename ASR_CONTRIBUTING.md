@@ -111,3 +111,34 @@ If you make changes to the `requirements.txt` or the Dockerfiles, use these comm
     ```bash
     docker compose -f asr-eval-docker-compose.yml up asr-eval-cpu
     ```
+
+## Running Baseline Evaluations
+
+If you want to evaluate a model on a public dataset (like LibriSpeech) to get a baseline Word Error Rate (WER) score, you can use the `run_test_baseline_inference_evaluation` function in `inference_pipeline_runner.py`.
+
+This function uses Hugging Face datasets in streaming mode, so it doesn't require downloading the full dataset.
+
+### Example Usage
+
+Add this to a cell in your model notebook:
+
+```python
+from common.inference_pipeline_runner import run_test_baseline_inference_evaluation
+
+# Run the baseline evaluation on Librispeech
+wer_score, predictions, references = run_test_baseline_inference_evaluation(
+    model=model, 
+    prompt_fn=prompt_formatter,
+    inference_fn=inference_fn,
+    decode_fn=decode_fn,
+    num_examples=20,  # Number of examples to test, 0 means test on the whole dataset
+    dataset_name="librispeech_asr",
+    dataset_config="clean",
+    split="test"
+)
+
+print(f"Final WER Score: {wer_score}")
+```
+
+> [!IMPORTANT]
+> Ensure that your `prompt_fn` can handle `None` being passed as the `entry` argument, as public datasets do not have the custom metadata structure of your specific manifests.
