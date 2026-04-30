@@ -420,6 +420,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                     end_audio_offset_ms=action.end_audio_offset_ms,
                     transmission_id=transmission_id,
                     feed_metadata=curr_ctx.feed_metadata,
+                    trace_id=curr_ctx.trace_id,
                 ),
             )
 
@@ -502,6 +503,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                             feed_metadata=cast(
                                 "FeedMetadata", curr_context.feed_metadata
                             ),
+                            trace_id=curr_context.trace_id,
                         ),
                     )
                     continue
@@ -766,6 +768,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                             feed_metadata=cast(
                                 "FeedMetadata", curr_context.feed_metadata
                             ),
+                            trace_id=curr_context.trace_id,
                         ),
                     )
                 except Exception as e:
@@ -956,6 +959,7 @@ class OrderedBypassFn(beam.DoFn):
                         feed_metadata=cast(
                             "FeedMetadata", curr_context.feed_metadata
                         ),
+                        trace_id=curr_context.trace_id,
                     ),
                 )
             except Exception as e:
@@ -1156,35 +1160,43 @@ class TranscribeAudioFn(beam.DoFn):
     ]:
         """Submits the consolidated flushed buffer strictly sequentially to the external transcription API."""
         feed_id, request = element
-        try:
-            transcribed = self._export_and_transcribe(request)
-            if transcribed:
-                self.transcription_count.inc()
-                yield transcribed
-        except (ValueError, Exception) as e:
-            if not self.config.route_to_dlq:
-                raise
-            self.dlq_count.inc()
+        trace_id = request.trace_id
 
-            is_validation = isinstance(e, ValueError)
-            error_type = (
-                "validation_failure" if is_validation else "unexpected_error"
-            )
+        with with_tracer_context(
+            trace_id, "TranscribeAudioFn.process", __name__
+        ):
+            try:
+                transcribed = self._export_and_transcribe(request)
+                if transcribed:
+                    self.transcription_count.inc()
+                    yield transcribed
+            except (ValueError, Exception) as e:
+                if not self.config.route_to_dlq:
+                    raise
+                self.dlq_count.inc()
 
-            if is_validation:
-                logger.warning(
-                    f"Validation failure during transcription for feed {feed_id}: {e}"
-                )
-            else:
-                logger.exception(
-                    "Unexpected error transcribing buffer for feed %s", feed_id
+                is_validation = isinstance(e, ValueError)
+                error_type = (
+                    "validation_failure"
+                    if is_validation
+                    else "unexpected_error"
                 )
 
-            yield beam.pvalue.TaggedOutput(
-                DEAD_LETTER_QUEUE_TAG,
-                {
-                    "error": str(e),
-                    "feed_id": feed_id,
-                    "error_type": error_type,
-                },
-            )
+                if is_validation:
+                    logger.warning(
+                        f"Validation failure during transcription for feed {feed_id}: {e}"
+                    )
+                else:
+                    logger.exception(
+                        "Unexpected error transcribing buffer for feed %s",
+                        feed_id,
+                    )
+
+                yield beam.pvalue.TaggedOutput(
+                    DEAD_LETTER_QUEUE_TAG,
+                    {
+                        "error": str(e),
+                        "feed_id": feed_id,
+                        "error_type": error_type,
+                    },
+                )

@@ -209,6 +209,7 @@ class FlushRequest:
     missing_post_context: bool
     start_audio_offset_ms: int | None
     end_audio_offset_ms: int | None
+    trace_id: str = ""
 
 
 @dataclass(frozen=True)
