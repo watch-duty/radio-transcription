@@ -22,7 +22,7 @@ def run_inference_pipeline(
     preprocess_fn: Optional[Callable[[str, str], bool]] = None
 ) -> list[dict[str, Any]]:
     """
-    Runs a batch evaluation for a model.
+    Runs a batch inference for a model.
     
     Args:
         model: The loaded model instance. This function is model-agnostic and can be used with various model types (e.g., NeMo models like SALM, Whisper, etc.) as it delegates inference and decoding to the provided callables.

@@ -5,8 +5,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Gemma recommends using Fourier method for resampling (e.g. scipy.signal.resample or librosa.sample(res_type ='scipy')
-# https://ai.google.dev/gemma/docs/capabilities/audio
 def preprocess_audio_for_model(input_path: str, output_path: str, target_sr: int = 16000) -> bool:
     """
     Preprocesses audio file to meet typical ML model requirements:
