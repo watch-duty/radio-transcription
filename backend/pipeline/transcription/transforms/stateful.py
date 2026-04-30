@@ -21,7 +21,10 @@ from apache_beam.utils.timestamp import Timestamp
 
 from backend.pipeline.common.constants import MS_PER_SECOND, SAMPLE_RATE_HZ
 from backend.pipeline.common.storage.gcs_uploader import GCSAudioUploader
-from backend.pipeline.common.tracing_utils import setup_tracing
+from backend.pipeline.common.tracing_utils import (
+    setup_tracing,
+    with_tracer_context,
+)
 from backend.pipeline.transcription.audio.audio_processor import AudioProcessor
 from backend.pipeline.transcription.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
@@ -819,38 +822,47 @@ class OrderedBypassFn(beam.DoFn):
     ]:
         """Processes incoming chunks, buffers them, and sets a timer if needed."""
         _feed_id, metadata = element
-        curr_context = (
-            transmission_context_state.read() or TransmissionContext()
-        )
-        if curr_context.feed_metadata is None:
+        trace_id = metadata.trace_id
+
+        with with_tracer_context(
+            trace_id, "stitching_bypass_process", __name__
+        ):
+            curr_context = (
+                transmission_context_state.read() or TransmissionContext()
+            )
+            if curr_context.feed_metadata is None:
+                curr_context = replace(
+                    curr_context, feed_metadata=metadata.feed_metadata
+                )
+
+            current_ts_ms = int(float(timestamp) * MS_PER_SECOND)
+
+            # Append to buffer
+            buffer_elements = curr_context.out_of_order_buffer or []
+            buffer_elements.append(
+                BufferedChunk(
+                    timestamp_ms=current_ts_ms, gcs_uri=metadata.gcs_uri
+                )
+            )
+
+            # Set timer if this is the first element
+            if len(buffer_elements) == 1:
+                out_of_order_timeout_s = (
+                    self.order_config.out_of_order_timeout_ms / 1000.0
+                )
+                out_of_order_timer.set(
+                    Timestamp(time.time() + out_of_order_timeout_s)
+                )
+                curr_context = replace(curr_context, order_timer_active=True)
+
             curr_context = replace(
-                curr_context, feed_metadata=metadata.feed_metadata
+                curr_context,
+                out_of_order_buffer=buffer_elements,
+                trace_id=trace_id,
             )
+            transmission_context_state.write(curr_context)
 
-        current_ts_ms = int(float(timestamp) * MS_PER_SECOND)
-
-        # Append to buffer
-        buffer_elements = curr_context.out_of_order_buffer or []
-        buffer_elements.append(
-            BufferedChunk(timestamp_ms=current_ts_ms, gcs_uri=metadata.gcs_uri)
-        )
-
-        # Set timer if this is the first element
-        if len(buffer_elements) == 1:
-            out_of_order_timeout_s = (
-                self.order_config.out_of_order_timeout_ms / 1000.0
-            )
-            out_of_order_timer.set(
-                Timestamp(time.time() + out_of_order_timeout_s)
-            )
-            curr_context = replace(curr_context, order_timer_active=True)
-
-        curr_context = replace(
-            curr_context, out_of_order_buffer=buffer_elements
-        )
-        transmission_context_state.write(curr_context)
-
-        yield from []
+            yield from []
 
     @on_timer(OUT_OF_ORDER_TIMER_SPEC)
     def handle_buffer_timeout(
@@ -867,20 +879,23 @@ class OrderedBypassFn(beam.DoFn):
         curr_context = (
             transmission_context_state.read() or TransmissionContext()
         )
-        curr_context = replace(curr_context, order_timer_active=False)
+        trace_id = curr_context.trace_id
 
-        buffer_elements = curr_context.out_of_order_buffer
-        if buffer_elements:
-            sorted_elements = sorted(
-                buffer_elements, key=lambda x: x.timestamp_ms
-            )
+        with with_tracer_context(trace_id, "handle_buffer", __name__):
+            curr_context = replace(curr_context, order_timer_active=False)
 
-            curr_context = replace(curr_context, out_of_order_buffer=[])
-            transmission_context_state.write(curr_context)
+            buffer_elements = curr_context.out_of_order_buffer
+            if buffer_elements:
+                sorted_elements = sorted(
+                    buffer_elements, key=lambda x: x.timestamp_ms
+                )
 
-            yield from self._download_and_yield(
-                sorted_elements, feed_id, curr_context
-            )
+                curr_context = replace(curr_context, out_of_order_buffer=[])
+                transmission_context_state.write(curr_context)
+
+                yield from self._download_and_yield(
+                    sorted_elements, feed_id, curr_context
+                )
 
     def _download_and_yield(
         self,

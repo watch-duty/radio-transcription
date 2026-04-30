@@ -1,6 +1,8 @@
 """Utilities for distributed tracing in Apache Beam."""
 
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 from opentelemetry.context import Context
 from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
@@ -11,9 +13,11 @@ from opentelemetry.sdk.trace.export import (
 )
 from opentelemetry.trace import (
     NonRecordingSpan,
+    Span,
     SpanContext,
     TraceFlags,
     get_current_span,
+    get_tracer,
     set_span_in_context,
     set_tracer_provider,
 )
@@ -68,3 +72,20 @@ def create_trace_context(trace_id: str) -> Context:
     )
     parent_span = NonRecordingSpan(parent_context)
     return set_span_in_context(parent_span)
+
+
+@contextmanager
+def with_tracer_context(
+    trace_id: str, span_name: str, tracer_name: str
+) -> Iterator[Span]:
+    """Context manager to create a trace context and start a span.
+
+    Args:
+        trace_id: The trace ID string.
+        span_name: The name of the span to create.
+        tracer_name: The name of the tracer (usually __name__).
+    """
+    context = create_trace_context(trace_id)
+    tracer = get_tracer(tracer_name)
+    with tracer.start_as_current_span(span_name, context=context) as span:
+        yield span

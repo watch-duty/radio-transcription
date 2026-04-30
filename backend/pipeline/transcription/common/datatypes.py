@@ -63,6 +63,7 @@ class ChunkMetadata:
     session_id: str  # Required for continuous feeds ONLY.
     duration_ms: int
     feed_metadata: FeedMetadata
+    trace_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -116,6 +117,7 @@ class TransmissionContext:
     out_of_order_buffer: list[BufferedChunk] = field(default_factory=list)
     feed_metadata: FeedMetadata | None = None
     last_transmission_start_ms: int | None = None
+    trace_id: str = ""
 
 
 @dataclass

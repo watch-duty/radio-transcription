@@ -100,6 +100,7 @@ class ParseAndKeyFn(beam.DoFn):
                             feed_name=chunk_proto.feed_name,
                             external_id=chunk_proto.external_id,
                         ),
+                        trace_id=trace_id,
                     ),
                 )
         except Exception as e:
