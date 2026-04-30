@@ -743,6 +743,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         curr_context = transmission_context.read() or TransmissionContext()
         traceparent = curr_context.traceparent or ""
 
+        results = []
         with with_tracer_context(
             traceparent, "handle_stale_transmission", __name__
         ):
@@ -771,24 +772,26 @@ class OrderedStitchAudioFn(beam.DoFn):
                         time_range,
                     )
 
-                    yield (
-                        key,
-                        FlushRequest(
-                            buffer=np.concatenate(audio_buffer),
-                            feed_id=key,
-                            session_id=curr_context.session_id,
-                            contributing_audio_uris=processed_uris,
-                            time_range=time_range,
-                            missing_prior_context=curr_context.missing_prior_context,
-                            missing_post_context=True,
-                            start_audio_offset_ms=curr_context.start_audio_offset_ms,
-                            end_audio_offset_ms=end_time_ms
-                            - curr_context.buffer_start_time_ms,
-                            transmission_id=transmission_id,
-                            feed_metadata=cast(
-                                "FeedMetadata", curr_context.feed_metadata
+                    results.append(
+                        (
+                            key,
+                            FlushRequest(
+                                buffer=np.concatenate(audio_buffer),
+                                feed_id=key,
+                                session_id=curr_context.session_id,
+                                contributing_audio_uris=processed_uris,
+                                time_range=time_range,
+                                missing_prior_context=curr_context.missing_prior_context,
+                                missing_post_context=True,
+                                start_audio_offset_ms=curr_context.start_audio_offset_ms,
+                                end_audio_offset_ms=end_time_ms
+                                - curr_context.buffer_start_time_ms,
+                                transmission_id=transmission_id,
+                                feed_metadata=cast(
+                                    "FeedMetadata", curr_context.feed_metadata
+                                ),
                             ),
-                        ),
+                        )
                     )
                 except Exception as e:
                     if not self.stitch_config.route_to_dlq:
@@ -797,9 +800,11 @@ class OrderedStitchAudioFn(beam.DoFn):
                         "Error yielding stale buffer for feed %s", key
                     )
                     msg = str(e)
-                    yield beam.pvalue.TaggedOutput(
-                        DEAD_LETTER_QUEUE_TAG,
-                        {"error": msg, "feed_id": key, "stale_flush": True},
+                    results.append(
+                        beam.pvalue.TaggedOutput(
+                            DEAD_LETTER_QUEUE_TAG,
+                            {"error": msg, "feed_id": key, "stale_flush": True},
+                        )
                     )
 
             transmission_context.write(
@@ -807,6 +812,8 @@ class OrderedStitchAudioFn(beam.DoFn):
             )
             transmission_buffer.clear()
             timer_manager.clear()
+
+        yield from results
 
 
 @beam.typehints.with_input_types(tuple[str, ChunkMetadata])
