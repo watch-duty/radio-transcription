@@ -75,8 +75,7 @@ class ParseAndKeyFn(beam.DoFn):
             chunk_proto = AudioChunk()
             chunk_proto.ParseFromString(element.data)
             feed_id = chunk_proto.feed_id
-            trace_id = chunk_proto.trace_id
-            context = extract_trace_context(element.attributes, trace_id)
+            context = extract_trace_context(element.attributes)
             tracer = trace.get_tracer(__name__)
             with tracer.start_as_current_span(
                 "receive_audio_chunk_for_normalization", context=context

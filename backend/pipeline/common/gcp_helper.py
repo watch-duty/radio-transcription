@@ -235,7 +235,6 @@ def publish_audio_chunk_sync(
             duration_ms=duration_ms,
             session_id=session_id,
             external_id=external_id,
-            trace_id=tracing_utils.get_current_trace_id(),
         )
         audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
 
@@ -288,7 +287,6 @@ async def publish_audio_chunk(
             duration_ms=duration_ms,
             session_id=session_id,
             external_id=external_id,
-            trace_id=tracing_utils.get_current_trace_id(),
         )
         audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
 

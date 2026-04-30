@@ -199,7 +199,6 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             duration_ms=1000,
             feed_id="test-feed",
             external_id="mock-external-id",
-            trace_id="0123456789abcdef0123456789abcdef",
         )
         mock_msg = PubsubMessage(
             chunk.SerializeToString(),
