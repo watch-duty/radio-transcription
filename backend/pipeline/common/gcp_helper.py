@@ -10,6 +10,9 @@ from google.cloud.pubsub_v1.publisher.exceptions import (
     PublishToPausedOrderingKeyException,
 )
 from opentelemetry import trace
+from opentelemetry.trace.propagation.tracecontext import (
+    TraceContextTextMapPropagator,
+)
 
 from backend.pipeline.common import tracing_utils
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
@@ -245,6 +248,11 @@ def publish_audio_chunk_sync(
         if source_type is not None:
             attrs["source_type"] = source_type
 
+        carrier: dict[str, str] = {}
+        TraceContextTextMapPropagator().inject(carrier)
+        if "traceparent" in carrier:
+            attrs["traceparent"] = carrier["traceparent"]
+
         future = publisher.publish(
             topic_path,
             audio_chunk_msg.SerializeToString(),
@@ -292,6 +300,11 @@ async def publish_audio_chunk(
         }
         if source_type is not None:
             attrs["source_type"] = source_type
+
+        carrier: dict[str, str] = {}
+        TraceContextTextMapPropagator().inject(carrier)
+        if "traceparent" in carrier:
+            attrs["traceparent"] = carrier["traceparent"]
 
         future = publisher.publish(
             topic_path,

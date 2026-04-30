@@ -13,7 +13,7 @@ from backend.pipeline.common.constants import (
     NANOS_PER_MS,
 )
 from backend.pipeline.common.tracing_utils import (
-    create_trace_context,
+    extract_trace_context,
     setup_tracing,
 )
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import (
@@ -70,12 +70,13 @@ class ParseAndKeyFn(beam.DoFn):
         def _raise(msg: str) -> None:
             raise ValueError(msg)
 
+        outputs = []
         try:
             chunk_proto = AudioChunk()
             chunk_proto.ParseFromString(element.data)
             feed_id = chunk_proto.feed_id
             trace_id = chunk_proto.trace_id
-            context = create_trace_context(trace_id)
+            context = extract_trace_context(element.attributes, trace_id)
             tracer = trace.get_tracer(__name__)
             with tracer.start_as_current_span(
                 "receive_audio_chunk_for_normalization", context=context
@@ -90,28 +91,34 @@ class ParseAndKeyFn(beam.DoFn):
                     msg = "AudioChunk missing required feed_name"
                     _raise(msg)
 
-                yield (
-                    feed_id,
-                    ChunkMetadata(
-                        gcs_uri=chunk_proto.gcs_uri,
-                        session_id=chunk_proto.session_id,
-                        duration_ms=chunk_proto.duration_ms,
-                        feed_metadata=FeedMetadata(
-                            feed_name=chunk_proto.feed_name,
-                            external_id=chunk_proto.external_id,
+                outputs.append(
+                    (
+                        feed_id,
+                        ChunkMetadata(
+                            gcs_uri=chunk_proto.gcs_uri,
+                            session_id=chunk_proto.session_id,
+                            duration_ms=chunk_proto.duration_ms,
+                            feed_metadata=FeedMetadata(
+                                feed_name=chunk_proto.feed_name,
+                                external_id=chunk_proto.external_id,
+                            ),
                         ),
-                    ),
+                    )
                 )
         except Exception as e:
             msg = f"Failed to parse or validate payload: {e}"
             logger.exception(msg)
-            yield beam.pvalue.TaggedOutput(
-                DEAD_LETTER_QUEUE_TAG,
-                {
-                    "error": msg,
-                    "attributes": dict(element.attributes),
-                },
+            outputs.append(
+                beam.pvalue.TaggedOutput(
+                    DEAD_LETTER_QUEUE_TAG,
+                    {
+                        "error": msg,
+                        "attributes": dict(element.attributes),
+                    },
+                )
             )
+
+        return iter(outputs)
 
 
 @beam.typehints.with_input_types(TranscriptionResult)
