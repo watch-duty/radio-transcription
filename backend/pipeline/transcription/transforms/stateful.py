@@ -18,10 +18,12 @@ from apache_beam.transforms.userstate import (
     on_timer,
 )
 from apache_beam.utils.timestamp import Timestamp
+from opentelemetry import trace
 
 from backend.pipeline.common.constants import MS_PER_SECOND, SAMPLE_RATE_HZ
 from backend.pipeline.common.storage.gcs_uploader import GCSAudioUploader
 from backend.pipeline.common.tracing_utils import (
+    extract_trace_context,
     setup_tracing,
     with_tracer_context,
 )
@@ -174,6 +176,7 @@ def process_ordering(
         expected_next_ts=curr_context.expected_next_chunk_start_ms,
         buffer_elements=buffer_elements,
         chunk_duration_ms=metadata.duration_ms,
+        traceparent=metadata.traceparent,
     )
 
     if was_late:
@@ -286,10 +289,10 @@ class OrderedStitchAudioFn(beam.DoFn):
     ]:
         """Processes incoming chunks, orders them, downloads audio, and stitches them."""
         feed_id, metadata = element
-        trace_id = metadata.trace_id
+        traceparent = metadata.traceparent or ""
 
         results = []
-        with with_tracer_context(trace_id, "stitching_process", __name__):
+        with with_tracer_context(traceparent, "stitching_process", __name__):
             current_ts_ms = int(float(timestamp) * MS_PER_SECOND)
             curr_context = (
                 transmission_context_state.read() or TransmissionContext()
@@ -427,6 +430,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                     end_audio_offset_ms=action.end_audio_offset_ms,
                     transmission_id=transmission_id,
                     feed_metadata=curr_ctx.feed_metadata,
+                    traceparent=action.traceparent,
                 ),
             )
 
@@ -509,6 +513,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                             feed_metadata=cast(
                                 "FeedMetadata", curr_context.feed_metadata
                             ),
+                            traceparent=chunk.traceparent,
                         ),
                     )
                     continue
@@ -539,6 +544,9 @@ class OrderedStitchAudioFn(beam.DoFn):
                     start_audio_offset_ms=curr_context.start_audio_offset_ms,
                     end_audio_offset_ms=None,
                     buffer_duration_ms=curr_context.buffer_duration_ms,
+                    traceparent=curr_context.traceparent
+                    if curr_context.traceparent is not None
+                    else chunk.traceparent,
                 )
 
                 # 3. Process through state machine!
@@ -609,10 +617,10 @@ class OrderedStitchAudioFn(beam.DoFn):
         curr_context = (
             transmission_context_state.read() or TransmissionContext()
         )
-        trace_id = curr_context.trace_id
+        traceparent = curr_context.traceparent or ""
 
         results = []
-        with with_tracer_context(trace_id, "handle_audio_gap", __name__):
+        with with_tracer_context(traceparent, "handle_audio_gap", __name__):
             curr_context = replace(curr_context, order_timer_active=False)
             transmission_context_state.write(curr_context)
 
@@ -733,10 +741,10 @@ class OrderedStitchAudioFn(beam.DoFn):
     ]:
         """Common logic for handling stale transmissions."""
         curr_context = transmission_context.read() or TransmissionContext()
-        trace_id = curr_context.trace_id
+        traceparent = curr_context.traceparent or ""
 
         with with_tracer_context(
-            trace_id, "handle_stale_transmission", __name__
+            traceparent, "handle_stale_transmission", __name__
         ):
             start_time_ms = curr_context.stale_start_time_ms
             end_time_ms = curr_context.last_end_time_ms
@@ -850,10 +858,10 @@ class OrderedBypassFn(beam.DoFn):
     ]:
         """Processes incoming chunks, buffers them, and sets a timer if needed."""
         _feed_id, metadata = element
-        trace_id = metadata.trace_id
+        traceparent = metadata.traceparent or ""
 
         with with_tracer_context(
-            trace_id, "stitching_bypass_process", __name__
+            traceparent, "stitching_bypass_process", __name__
         ):
             curr_context = (
                 transmission_context_state.read() or TransmissionContext()
@@ -886,7 +894,7 @@ class OrderedBypassFn(beam.DoFn):
             curr_context = replace(
                 curr_context,
                 out_of_order_buffer=buffer_elements,
-                trace_id=trace_id,
+                traceparent=traceparent,
             )
             transmission_context_state.write(curr_context)
 
@@ -907,10 +915,10 @@ class OrderedBypassFn(beam.DoFn):
         curr_context = (
             transmission_context_state.read() or TransmissionContext()
         )
-        trace_id = curr_context.trace_id
+        traceparent = curr_context.traceparent or ""
 
         results = []
-        with with_tracer_context(trace_id, "handle_buffer", __name__):
+        with with_tracer_context(traceparent, "handle_buffer", __name__):
             curr_context = replace(curr_context, order_timer_active=False)
 
             buffer_elements = curr_context.out_of_order_buffer
@@ -1177,11 +1185,22 @@ class TranscribeAudioFn(beam.DoFn):
     ]:
         """Submits the consolidated flushed buffer strictly sequentially to the external transcription API."""
         feed_id, request = element
+        context = extract_trace_context(
+            {"traceparent": request.traceparent}
+            if request.traceparent
+            else None
+        )
+        tracer = trace.get_tracer(__name__)
+
+        outputs = []
         try:
-            transcribed = self._export_and_transcribe(request)
-            if transcribed:
-                self.transcription_count.inc()
-                yield transcribed
+            with tracer.start_as_current_span(
+                "transcribe_audio", context=context
+            ):
+                transcribed = self._export_and_transcribe(request)
+                if transcribed:
+                    self.transcription_count.inc()
+                    outputs.append(transcribed)
         except (ValueError, Exception) as e:
             if not self.config.route_to_dlq:
                 raise
@@ -1201,11 +1220,15 @@ class TranscribeAudioFn(beam.DoFn):
                     "Unexpected error transcribing buffer for feed %s", feed_id
                 )
 
-            yield beam.pvalue.TaggedOutput(
-                DEAD_LETTER_QUEUE_TAG,
-                {
-                    "error": str(e),
-                    "feed_id": feed_id,
-                    "error_type": error_type,
-                },
+            outputs.append(
+                beam.pvalue.TaggedOutput(
+                    DEAD_LETTER_QUEUE_TAG,
+                    {
+                        "error": str(e),
+                        "feed_id": feed_id,
+                        "error_type": error_type,
+                    },
+                )
             )
+
+        yield from outputs

@@ -13,7 +13,7 @@ from backend.pipeline.common.constants import (
     NANOS_PER_MS,
 )
 from backend.pipeline.common.tracing_utils import (
-    create_trace_context,
+    extract_trace_context,
     setup_tracing,
 )
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import (
@@ -70,12 +70,12 @@ class ParseAndKeyFn(beam.DoFn):
         def _raise(msg: str) -> None:
             raise ValueError(msg)
 
+        outputs = []
         try:
             chunk_proto = AudioChunk()
             chunk_proto.ParseFromString(element.data)
             feed_id = chunk_proto.feed_id
-            trace_id = chunk_proto.trace_id
-            context = create_trace_context(trace_id)
+            context = extract_trace_context(element.attributes)
             tracer = trace.get_tracer(__name__)
             with tracer.start_as_current_span(
                 "receive_audio_chunk_for_normalization", context=context
@@ -90,29 +90,40 @@ class ParseAndKeyFn(beam.DoFn):
                     msg = "AudioChunk missing required feed_name"
                     _raise(msg)
 
-                yield (
-                    feed_id,
-                    ChunkMetadata(
-                        gcs_uri=chunk_proto.gcs_uri,
-                        session_id=chunk_proto.session_id,
-                        duration_ms=chunk_proto.duration_ms,
-                        feed_metadata=FeedMetadata(
-                            feed_name=chunk_proto.feed_name,
-                            external_id=chunk_proto.external_id,
+                traceparent = (
+                    element.attributes.get("traceparent")
+                    if element.attributes
+                    else None
+                )
+                outputs.append(
+                    (
+                        feed_id,
+                        ChunkMetadata(
+                            gcs_uri=chunk_proto.gcs_uri,
+                            session_id=chunk_proto.session_id,
+                            duration_ms=chunk_proto.duration_ms,
+                            feed_metadata=FeedMetadata(
+                                feed_name=chunk_proto.feed_name,
+                                external_id=chunk_proto.external_id,
+                            ),
+                            traceparent=traceparent,
                         ),
-                        trace_id=trace_id,
-                    ),
+                    )
                 )
         except Exception as e:
             msg = f"Failed to parse or validate payload: {e}"
             logger.exception(msg)
-            yield beam.pvalue.TaggedOutput(
-                DEAD_LETTER_QUEUE_TAG,
-                {
-                    "error": msg,
-                    "attributes": dict(element.attributes),
-                },
+            outputs.append(
+                beam.pvalue.TaggedOutput(
+                    DEAD_LETTER_QUEUE_TAG,
+                    {
+                        "error": msg,
+                        "attributes": dict(element.attributes),
+                    },
+                )
             )
+
+        yield from outputs
 
 
 @beam.typehints.with_input_types(TranscriptionResult)
@@ -177,9 +188,13 @@ class SerializeFn(beam.DoFn):
             proto.end_timestamp.FromMicroseconds(
                 value.time_range.end_ms * MICROSECONDS_PER_MS
             )
+            attrs: dict[str, str] = {}
+            if value.traceparent:
+                attrs["traceparent"] = value.traceparent
+
             yield PubsubMessage(
                 data=proto.SerializeToString(),
-                attributes={},
+                attributes=attrs,
                 ordering_key=value.feed_id,
             )
         except Exception as e:
