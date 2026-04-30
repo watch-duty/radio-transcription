@@ -55,6 +55,42 @@ services:
       - rules-management
       - transcripts-api
       - postgres
+  transcription-continuous:
+    build:
+      context: .
+      dockerfile: backend/pipeline/transcription/Dockerfile
+    entrypoint: ["python3", "backend/pipeline/transcription/main.py"]
+    command: >
+      --input_subscription projects/local-project/subscriptions/continuous-audio-sub
+      --output_topic projects/local-project/topics/transcription-text-topic
+      --project local-project
+      --id_label ""
+    env_file:
+      - ./local_dev/LOCAL.env
+    networks:
+      - pipeline-network
+    depends_on:
+      - pubsub-emulator
+      - pubsub-init
+
+  transcription-segmented:
+    build:
+      context: .
+      dockerfile: backend/pipeline/transcription/Dockerfile
+    entrypoint: ["python3", "backend/pipeline/transcription/main.py"]
+    command: >
+      --input_subscription projects/local-project/subscriptions/segmented-audio-sub
+      --output_topic projects/local-project/topics/transcription-text-topic
+      --project local-project
+      --bypass_stitching true
+      --id_label ""
+    env_file:
+      - ./local_dev/LOCAL.env
+    networks:
+      - pipeline-network
+    depends_on:
+      - pubsub-emulator
+      - pubsub-init
 
   postgres:
     image: postgres:15-alpine

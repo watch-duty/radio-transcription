@@ -84,26 +84,42 @@ def create_push_subscription(
         )
 
 
+def create_pull_subscription(subscription_id: str, topic_path: str) -> None:
+    """Creates a pull subscription in the Pub/Sub emulator.
+
+    Ignores pre-existing subscriptions.
+
+    Args:
+        subscription_id: The ID of the subscription to create.
+        topic_path: The full resource path of the topic to subscribe to.
+    """
+    url = f"{PUBSUB_ENDPOINT}/projects/{PROJECT_ID}/subscriptions/{subscription_id}"
+    payload = {
+        "topic": topic_path,
+    }
+    response = requests.put(url, json=payload, timeout=10)
+    if response.status_code in (200, 409):
+        logger.info("Subscription '%s' ready.", subscription_id)
+    else:
+        logger.error(
+            "Failed to create subscription '%s': %s",
+            subscription_id,
+            response.text,
+        )
+
+
 if __name__ == "__main__":
     wait_for_emulator()
 
-    # Set up Pub/Sub between Capturer and Normalizer in Audio Ingestion Service
-    STAGING_TOPIC = os.environ["STAGING_TOPIC"]
-    create_topic(STAGING_TOPIC)
-    create_push_subscription(
-        "normalizer-sub",
-        STAGING_TOPIC,
-        f"http://{os.environ['NORMALIZER_SERVICE_HOST']}/",
-    )
+    # Pub/Sub for Continuous Audio
+    CONTINUOUS_TOPIC = os.environ["CONTINUOUS_TOPIC"]
+    create_topic(CONTINUOUS_TOPIC)
+    create_pull_subscription("continuous-audio-sub", CONTINUOUS_TOPIC)
 
-    # Pub/Sub between Audio Ingestion and Transcription Services
-    CANONICAL_TOPIC = os.environ["CANONICAL_TOPIC"]
-    create_topic(CANONICAL_TOPIC)
-    create_push_subscription(
-        "transcription-sub",
-        CANONICAL_TOPIC,
-        f"http://{os.environ['TRANSCRIPTION_SERVICE_HOST']}/",
-    )
+    # Pub/Sub for Segmented Audio
+    SEGMENTED_TOPIC = os.environ["SEGMENTED_TOPIC"]
+    create_topic(SEGMENTED_TOPIC)
+    create_pull_subscription("segmented-audio-sub", SEGMENTED_TOPIC)
 
     # Pub/Sub between Transcription and Rules Evaluation Services
     TRANSCRIPTION_TOPIC = os.environ["TRANSCRIPTION_TOPIC"]
