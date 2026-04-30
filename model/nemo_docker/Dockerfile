@@ -28,6 +28,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade torch torchvision torchaudio && \
     pip install "nemo_toolkit[asr,tts] @ git+https://github.com/NVIDIA/NeMo.git"
 
+RUN /opt/venv/bin/pip install --no-cache-dir -U git+https://github.com/huggingface/transformers.git
+
 # Download ONLY the directories needed from NeMO github repo.
 WORKDIR /workspace/nemo
 RUN git init && \
