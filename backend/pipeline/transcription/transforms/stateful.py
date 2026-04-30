@@ -286,66 +286,70 @@ class OrderedStitchAudioFn(beam.DoFn):
     ]:
         """Processes incoming chunks, orders them, downloads audio, and stitches them."""
         feed_id, metadata = element
-        current_ts_ms = int(float(timestamp) * MS_PER_SECOND)
-        curr_context = (
-            transmission_context_state.read() or TransmissionContext()
-        )
-        previous_expected_ts = curr_context.expected_next_chunk_start_ms
+        trace_id = metadata.trace_id
 
-        # Handle session change and ordering via helper function
-        elements_to_emit, curr_context, session_changed = process_ordering(
-            element,
-            timestamp,
-            curr_context,
-            out_of_order_timer,
-            self.order_config,
-        )
-
-        task_logger = _get_task_logger(
-            feed_id, curr_context.session_id, "transcription-stitcher"
-        )
-        task_logger.debug(f"[Process] Processing chunk {metadata.gcs_uri}")
-
-        if curr_context.feed_metadata is None:
-            curr_context = replace(
-                curr_context, feed_metadata=metadata.feed_metadata
+        with with_tracer_context(trace_id, "stitching_process", __name__):
+            current_ts_ms = int(float(timestamp) * MS_PER_SECOND)
+            curr_context = (
+                transmission_context_state.read() or TransmissionContext()
             )
-        if session_changed:
-            # Also clear stitching state!
-            transmission_buffer_state.clear()
-            stale_timer_event.clear()
-            stale_timer_proc.clear()
+            previous_expected_ts = curr_context.expected_next_chunk_start_ms
 
-        # Always write updated context!
-        transmission_context_state.write(curr_context)
-
-        # Handle ready elements (Download and Stitch!)
-        if elements_to_emit:
-            if not self.audio_processor:
-                msg = "AudioProcessor not initialized. setup() must be called."
-                raise RuntimeError(msg)
-
-            timer_manager = StaleTimerManager(
-                stale_timer_event, stale_timer_proc, self.stitch_config
-            )
-
-            # Determine if we are in backfill mode (based on the CURRENT element's lateness!)
-            lateness = time.time() * MS_PER_SECOND - current_ts_ms
-            is_backfill = (
-                lateness >= self.stitch_config.backfill_lateness_threshold_ms
-            )
-
-            yield from self._download_and_stitch(
-                elements_to_emit,
+            # Handle session change and ordering via helper function
+            elements_to_emit, curr_context, session_changed = process_ordering(
+                element,
+                timestamp,
                 curr_context,
-                transmission_context_state,
-                transmission_buffer_state,
-                last_start_ms_state,
-                timer_manager,
-                feed_id,
-                is_backfill=is_backfill,
-                previous_expected_ts=previous_expected_ts,
+                out_of_order_timer,
+                self.order_config,
             )
+
+            task_logger = _get_task_logger(
+                feed_id, curr_context.session_id, "transcription-stitcher"
+            )
+            task_logger.debug(f"[Process] Processing chunk {metadata.gcs_uri}")
+
+            if curr_context.feed_metadata is None:
+                curr_context = replace(
+                    curr_context, feed_metadata=metadata.feed_metadata
+                )
+            if session_changed:
+                # Also clear stitching state!
+                transmission_buffer_state.clear()
+                stale_timer_event.clear()
+                stale_timer_proc.clear()
+
+            # Always write updated context!
+            transmission_context_state.write(curr_context)
+
+            # Handle ready elements (Download and Stitch!)
+            if elements_to_emit:
+                if not self.audio_processor:
+                    msg = "AudioProcessor not initialized. setup() must be called."
+                    raise RuntimeError(msg)
+
+                timer_manager = StaleTimerManager(
+                    stale_timer_event, stale_timer_proc, self.stitch_config
+                )
+
+                # Determine if we are in backfill mode (based on the CURRENT element's lateness!)
+                lateness = time.time() * MS_PER_SECOND - current_ts_ms
+                is_backfill = (
+                    lateness
+                    >= self.stitch_config.backfill_lateness_threshold_ms
+                )
+
+                yield from self._download_and_stitch(
+                    elements_to_emit,
+                    curr_context,
+                    transmission_context_state,
+                    transmission_buffer_state,
+                    last_start_ms_state,
+                    timer_manager,
+                    feed_id,
+                    is_backfill=is_backfill,
+                    previous_expected_ts=previous_expected_ts,
+                )
 
     def _apply_flush_action(
         self,
@@ -598,61 +602,64 @@ class OrderedStitchAudioFn(beam.DoFn):
         curr_context = (
             transmission_context_state.read() or TransmissionContext()
         )
-        curr_context = replace(curr_context, order_timer_active=False)
-        transmission_context_state.write(curr_context)
+        trace_id = curr_context.trace_id
 
-        buffer_elements = curr_context.out_of_order_buffer
-        if buffer_elements:
-            sorted_elements = sorted(buffer_elements)
-            new_expected = sorted_elements[0].timestamp_ms
-
-            logger.warning(
-                f"[{feed_id}] Gap timeout! Advancing expected from {curr_context.expected_next_chunk_start_ms} to {new_expected}."
-            )
-
-            curr_context = replace(
-                curr_context,
-                expected_next_chunk_start_ms=new_expected,
-                missing_prior_context=True,
-            )
+        with with_tracer_context(trace_id, "handle_audio_gap", __name__):
+            curr_context = replace(curr_context, order_timer_active=False)
             transmission_context_state.write(curr_context)
 
-            sequence_buffer = SequenceBuffer(self.order_config)
+            buffer_elements = curr_context.out_of_order_buffer
+            if buffer_elements:
+                sorted_elements = sorted(buffer_elements)
+                new_expected = sorted_elements[0].timestamp_ms
 
-            new_expected_next_ts, new_buffer_elements, elements_to_emit = (
-                sequence_buffer.drain_ready_elements(
-                    expected_next_ts=new_expected,
-                    buffer_elements=buffer_elements,
-                    epsilon_ms=DEFAULT_FLOAT_TOLERANCE_MS,
-                )
-            )
-
-            curr_context = replace(
-                curr_context,
-                expected_next_chunk_start_ms=new_expected_next_ts,
-                out_of_order_buffer=new_buffer_elements,
-            )
-            transmission_context_state.write(curr_context)
-
-            # Handle ready elements
-            if elements_to_emit:
-                timer_manager = StaleTimerManager(
-                    stale_timer_event, stale_timer_proc, self.stitch_config
+                logger.warning(
+                    f"[{feed_id}] Gap timeout! Advancing expected from {curr_context.expected_next_chunk_start_ms} to {new_expected}."
                 )
 
-                # Assume backfill in timeout!
-                is_backfill = True
-
-                yield from self._download_and_stitch(
-                    elements_to_emit,
+                curr_context = replace(
                     curr_context,
-                    transmission_context_state,
-                    transmission_buffer_state,
-                    last_start_ms_state,
-                    timer_manager,
-                    feed_id,
-                    is_backfill=is_backfill,
+                    expected_next_chunk_start_ms=new_expected,
+                    missing_prior_context=True,
                 )
+                transmission_context_state.write(curr_context)
+
+                sequence_buffer = SequenceBuffer(self.order_config)
+
+                new_expected_next_ts, new_buffer_elements, elements_to_emit = (
+                    sequence_buffer.drain_ready_elements(
+                        expected_next_ts=new_expected,
+                        buffer_elements=buffer_elements,
+                        epsilon_ms=DEFAULT_FLOAT_TOLERANCE_MS,
+                    )
+                )
+
+                curr_context = replace(
+                    curr_context,
+                    expected_next_chunk_start_ms=new_expected_next_ts,
+                    out_of_order_buffer=new_buffer_elements,
+                )
+                transmission_context_state.write(curr_context)
+
+                # Handle ready elements
+                if elements_to_emit:
+                    timer_manager = StaleTimerManager(
+                        stale_timer_event, stale_timer_proc, self.stitch_config
+                    )
+
+                    # Assume backfill in timeout!
+                    is_backfill = True
+
+                    yield from self._download_and_stitch(
+                        elements_to_emit,
+                        curr_context,
+                        transmission_context_state,
+                        transmission_buffer_state,
+                        last_start_ms_state,
+                        timer_manager,
+                        feed_id,
+                        is_backfill=is_backfill,
+                    )
 
     @on_timer(STALE_TIMER_EVENT_SPEC)
     def handle_stale_transmission_event(
@@ -712,65 +719,72 @@ class OrderedStitchAudioFn(beam.DoFn):
     ]:
         """Common logic for handling stale transmissions."""
         curr_context = transmission_context.read() or TransmissionContext()
-        start_time_ms = curr_context.stale_start_time_ms
-        end_time_ms = curr_context.last_end_time_ms
-        processed_uris = curr_context.contributing_audio_uris
-        audio_buffer = list(transmission_buffer.read())
+        trace_id = curr_context.trace_id
 
-        if (
-            audio_buffer
-            and start_time_ms is not None
-            and end_time_ms is not None
-            and curr_context.buffer_start_time_ms is not None
+        with with_tracer_context(
+            trace_id, "handle_stale_transmission", __name__
         ):
-            if curr_context.session_id is None:
-                msg = "Session ID cannot be None in _handle_stale_transmission"
-                raise ValueError(msg)
+            start_time_ms = curr_context.stale_start_time_ms
+            end_time_ms = curr_context.last_end_time_ms
+            processed_uris = curr_context.contributing_audio_uris
+            audio_buffer = list(transmission_buffer.read())
 
-            try:
-                # Create a deterministic UUID
-                time_range = TimeRange(
-                    start_ms=start_time_ms, end_ms=end_time_ms
-                )
-                transmission_id = generate_transmission_id(
-                    curr_context.session_id,
-                    time_range,
-                )
+            if (
+                audio_buffer
+                and start_time_ms is not None
+                and end_time_ms is not None
+                and curr_context.buffer_start_time_ms is not None
+            ):
+                if curr_context.session_id is None:
+                    msg = "Session ID cannot be None in _handle_stale_transmission"
+                    raise ValueError(msg)
 
-                yield (
-                    key,
-                    FlushRequest(
-                        buffer=np.concatenate(audio_buffer),
-                        feed_id=key,
-                        session_id=curr_context.session_id,
-                        contributing_audio_uris=processed_uris,
-                        time_range=time_range,
-                        missing_prior_context=curr_context.missing_prior_context,
-                        missing_post_context=True,
-                        start_audio_offset_ms=curr_context.start_audio_offset_ms,
-                        end_audio_offset_ms=end_time_ms
-                        - curr_context.buffer_start_time_ms,
-                        transmission_id=transmission_id,
-                        feed_metadata=cast(
-                            "FeedMetadata", curr_context.feed_metadata
+                try:
+                    # Create a deterministic UUID
+                    time_range = TimeRange(
+                        start_ms=start_time_ms, end_ms=end_time_ms
+                    )
+                    transmission_id = generate_transmission_id(
+                        curr_context.session_id,
+                        time_range,
+                    )
+
+                    yield (
+                        key,
+                        FlushRequest(
+                            buffer=np.concatenate(audio_buffer),
+                            feed_id=key,
+                            session_id=curr_context.session_id,
+                            contributing_audio_uris=processed_uris,
+                            time_range=time_range,
+                            missing_prior_context=curr_context.missing_prior_context,
+                            missing_post_context=True,
+                            start_audio_offset_ms=curr_context.start_audio_offset_ms,
+                            end_audio_offset_ms=end_time_ms
+                            - curr_context.buffer_start_time_ms,
+                            transmission_id=transmission_id,
+                            feed_metadata=cast(
+                                "FeedMetadata", curr_context.feed_metadata
+                            ),
                         ),
-                    ),
-                )
-            except Exception as e:
-                if not self.stitch_config.route_to_dlq:
-                    raise
-                logger.exception("Error yielding stale buffer for feed %s", key)
-                msg = str(e)
-                yield beam.pvalue.TaggedOutput(
-                    DEAD_LETTER_QUEUE_TAG,
-                    {"error": msg, "feed_id": key, "stale_flush": True},
-                )
+                    )
+                except Exception as e:
+                    if not self.stitch_config.route_to_dlq:
+                        raise
+                    logger.exception(
+                        "Error yielding stale buffer for feed %s", key
+                    )
+                    msg = str(e)
+                    yield beam.pvalue.TaggedOutput(
+                        DEAD_LETTER_QUEUE_TAG,
+                        {"error": msg, "feed_id": key, "stale_flush": True},
+                    )
 
-        transmission_context.write(
-            TransmissionContext(feed_metadata=curr_context.feed_metadata)
-        )
-        transmission_buffer.clear()
-        timer_manager.clear()
+            transmission_context.write(
+                TransmissionContext(feed_metadata=curr_context.feed_metadata)
+            )
+            transmission_buffer.clear()
+            timer_manager.clear()
 
 
 @beam.typehints.with_input_types(tuple[str, ChunkMetadata])
@@ -862,7 +876,7 @@ class OrderedBypassFn(beam.DoFn):
             )
             transmission_context_state.write(curr_context)
 
-            yield from []
+        yield from []
 
     @on_timer(OUT_OF_ORDER_TIMER_SPEC)
     def handle_buffer_timeout(
