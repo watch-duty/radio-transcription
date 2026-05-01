@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from opentelemetry import trace
 
 from backend.pipeline.common.exceptions import AlreadyExistsError
-from backend.pipeline.common.tracing_utils import create_trace_context
+from backend.pipeline.common.tracing_utils import extract_trace_context
 from backend.pipeline.schema_types import (
     transcribed_audio_pb2 as transcribed_pb2,
 )
@@ -60,9 +60,7 @@ class EvaluationEventProcessor:
         """
         pubsub_message = cloud_event.data.get("message", {})
         attributes = pubsub_message.get("attributes", {})
-        trace_id = attributes.get("trace_id", "")
-
-        context = create_trace_context(trace_id)
+        context = extract_trace_context(attributes)
         tracer = trace.get_tracer(__name__)
 
         with tracer.start_as_current_span("evaluate_rules", context=context):
