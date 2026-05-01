@@ -4,10 +4,8 @@ import base64
 import logging
 from typing import TYPE_CHECKING
 
-from opentelemetry import trace
-
 from backend.pipeline.common.exceptions import AlreadyExistsError
-from backend.pipeline.common.tracing_utils import create_trace_context
+from backend.pipeline.common.tracing_utils import with_tracer_context
 from backend.pipeline.schema_types import (
     transcribed_audio_pb2 as transcribed_pb2,
 )
@@ -59,13 +57,10 @@ class EvaluationEventProcessor:
             cloud_event: The CloudEvent triggered by Pub/Sub.
         """
         pubsub_message = cloud_event.data.get("message", {})
-        attributes = pubsub_message.get("attributes", {})
-        trace_id = attributes.get("trace_id", "")
+        attributes = pubsub_message.get("attributes", {}) or {}
+        traceparent = attributes.get("traceparent", "")
 
-        context = create_trace_context(trace_id)
-        tracer = trace.get_tracer(__name__)
-
-        with tracer.start_as_current_span("evaluate_rules", context=context):
+        with with_tracer_context(traceparent, "evaluate_rules", __name__):
             # 1. Decode the Incoming Message
             # TODO (https://linear.app/watchduty/issue/GOO-245/): Handle parse failure.
             new_audio = self._parse_cloud_event(cloud_event)

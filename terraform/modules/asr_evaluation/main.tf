@@ -28,14 +28,15 @@ resource "google_compute_instance" "eval_instance" {
   scheduling {
     on_host_maintenance         = "TERMINATE" # Required for GPU instances
     automatic_restart           = false
-    preemptible                 = true
-    provisioning_model          = "SPOT"
-    instance_termination_action = "STOP"
+    provisioning_model          = var.provisioning_model
+    preemptible                 = var.provisioning_model == "SPOT" ? true : false
+    instance_termination_action = var.provisioning_model == "SPOT" ? "STOP" : ""
   }
 
   resource_policies = []
 
-  metadata_startup_script = <<-EOT
+  metadata = {
+    startup_script = <<-EOT
     #!/bin/bash
     sleep $(( ${var.auto_shutdown_hours} * 3600 ))
     while true; do
@@ -47,6 +48,7 @@ resource "google_compute_instance" "eval_instance" {
       fi
     done
   EOT
+  }
 
   service_account {
     # Best practice is to use a dedicated service account, but defaulting to compute default for simplicity if not specified.

@@ -33,6 +33,7 @@ class BufferedChunk:
 
     timestamp_ms: int
     gcs_uri: str
+    traceparent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -63,7 +64,7 @@ class ChunkMetadata:
     session_id: str  # Required for continuous feeds ONLY.
     duration_ms: int
     feed_metadata: FeedMetadata
-    trace_id: str = ""
+    traceparent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -92,7 +93,7 @@ class TranscriptionResult:
     feed_metadata: FeedMetadata
     missing_prior_context: bool = False
     missing_post_context: bool = False
-    trace_id: str = ""
+    traceparent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -118,7 +119,7 @@ class TransmissionContext:
     out_of_order_buffer: list[BufferedChunk] = field(default_factory=list)
     feed_metadata: FeedMetadata | None = None
     last_transmission_start_ms: int | None = None
-    trace_id: str = ""
+    traceparent: str | None = None
 
 
 @dataclass
@@ -140,6 +141,7 @@ class StitcherContext:
     start_audio_offset_ms: int | None
     end_audio_offset_ms: int | None = None
     buffer_duration_ms: int = 0
+    traceparent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -210,7 +212,7 @@ class FlushRequest:
     missing_post_context: bool
     start_audio_offset_ms: int | None
     end_audio_offset_ms: int | None
-    trace_id: str = ""
+    traceparent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -248,6 +250,7 @@ class FlushAction(StateMachineAction):
     clear_state: bool = True
     isolated_audio_buffer: list[np.ndarray] = field(default_factory=list)
     isolated_audio_buffer_uris: list[str] = field(default_factory=list)
+    traceparent: str | None = None
 
 
 @dataclass(frozen=True)

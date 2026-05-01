@@ -1,7 +1,7 @@
 google-genai
 google-cloud-storage
 google-cloud-speech
-transformers
+git+https://github.com/huggingface/transformers.git # Needed for Cohere ASR support (not in stable release yet)
 huggingface_hub
 pydub
 python-dotenv
@@ -9,3 +9,5 @@ loguru
 jiwer
 num2words
 nemo_text_processing
+mistral-common
+accelerate

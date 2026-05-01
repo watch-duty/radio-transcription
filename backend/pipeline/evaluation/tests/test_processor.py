@@ -1,6 +1,6 @@
 import base64
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.exceptions import AlreadyExistsError
@@ -196,6 +196,64 @@ class TestEvaluationEventProcessor(unittest.TestCase):
             self.evaluated_payload.SerializeToString(),
             ordering_key="1234",
             trace_id="",
+        )
+
+    @patch("backend.pipeline.evaluation.processor.with_tracer_context")
+    def test_process_event_uses_traceparent(
+        self, mock_with_tracer_context
+    ) -> None:
+        """Verifies that process_event extracts traceparent and uses with_tracer_context."""
+        # Setup
+        traceparent_val = (
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+        )
+        attrs = {"traceparent": traceparent_val}
+
+        # Encode proto to base64
+        serialized_audio = self.transcribed_audio.SerializeToString()
+        base64_audio = base64.b64encode(serialized_audio).decode("utf-8")
+
+        cloud_event = self._create_mock_event(
+            {"message": {"data": base64_audio, "attributes": attrs}}
+        )
+
+        # Mock context manager
+        mock_cm = MagicMock()
+        mock_with_tracer_context.return_value = mock_cm
+
+        # Execute
+        self.processor.process_event(cloud_event)
+
+        # Verify
+        mock_with_tracer_context.assert_called_once_with(
+            traceparent_val,
+            "evaluate_rules",
+            "backend.pipeline.evaluation.processor",
+        )
+
+    @patch("backend.pipeline.evaluation.processor.with_tracer_context")
+    def test_process_event_missing_traceparent_uses_empty_string(
+        self, mock_with_tracer_context
+    ) -> None:
+        """Verifies that process_event uses empty string when traceparent is missing."""
+        # Setup
+        serialized_audio = self.transcribed_audio.SerializeToString()
+        base64_audio = base64.b64encode(serialized_audio).decode("utf-8")
+
+        cloud_event = self._create_mock_event(
+            {"message": {"data": base64_audio}}
+        )
+
+        # Mock context manager
+        mock_cm = MagicMock()
+        mock_with_tracer_context.return_value = mock_cm
+
+        # Execute
+        self.processor.process_event(cloud_event)
+
+        # Verify
+        mock_with_tracer_context.assert_called_once_with(
+            "", "evaluate_rules", "backend.pipeline.evaluation.processor"
         )
 
 

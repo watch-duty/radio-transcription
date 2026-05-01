@@ -57,6 +57,9 @@ class TestSendNotification(TestCase):
             external_id="ext-id",
         )
         evaluated_payload.start_audio_offset.seconds = 10
+        evaluated_payload.end_audio_offset.seconds = 20
+        evaluated_payload.start_timestamp.seconds = 1000
+        evaluated_payload.end_timestamp.seconds = 2000
         raw_data = base64.b64encode(evaluated_payload.SerializeToString())
         event_data = {"message": {"data": raw_data, "messageId": "1234"}}
 
@@ -77,9 +80,12 @@ class TestSendNotification(TestCase):
             source_audio_uris=["gs://foo/bar.flac"],
             feed_name="asdf",
             external_id="ext-id",
-            app_url="https://app.example.com?feedId=&transmissionId=1234&duration=5",
+            app_url="https://app.example.com?feedId=&transmissionId=1234&timestamp=1000000&duration=5",
         )
         expected_notification.start_audio_offset.seconds = 10
+        expected_notification.end_audio_offset.seconds = 20
+        expected_notification.start_timestamp.seconds = 1000
+        expected_notification.end_timestamp.seconds = 2000
         mock_request_handler.send_notification.assert_called_once_with(
             expected_notification
         )
@@ -120,6 +126,9 @@ class TestSendNotification(TestCase):
         )
         evaluated_payload.start_timestamp.seconds = 1776280988
         evaluated_payload.start_timestamp.nanos = 990000000
+        evaluated_payload.end_timestamp.seconds = 1776281000
+        evaluated_payload.start_audio_offset.seconds = 5
+        evaluated_payload.end_audio_offset.seconds = 15
 
         notification = convert_to_notification(evaluated_payload)
 
@@ -128,6 +137,11 @@ class TestSendNotification(TestCase):
             "https://app.example.com?feedId=feed-1&transmissionId=tx-1"
             "&timestamp=1776280988990&duration=5",
         )
+        self.assertEqual(notification.start_timestamp.seconds, 1776280988)
+        self.assertEqual(notification.start_timestamp.nanos, 990000000)
+        self.assertEqual(notification.end_timestamp.seconds, 1776281000)
+        self.assertEqual(notification.start_audio_offset.seconds, 5)
+        self.assertEqual(notification.end_audio_offset.seconds, 15)
 
 
 if __name__ == "__main__":
