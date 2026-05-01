@@ -195,7 +195,6 @@ export function AudioDisplay({
                   // This provides enough buffer to move the icon on top of the clip view rather than on it.
                   top: -25,
                   zIndex: 1,
-                  // bgcolor: 'background.paper',
                   borderRadius: '50%',
                 }}
               />
