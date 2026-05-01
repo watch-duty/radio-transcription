@@ -606,7 +606,7 @@ class TestConnectWithFallback(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(mock_session_cls.call_count, 1)
 
-    async def test_empty_profile_list_raises_at_construction(self) -> None:
+    async def test_empty_profile_list_raises_value_error(self) -> None:
         with patch.dict(
             os.environ, {"OPENMHZ_IMPERSONATE_PROFILES": ""}
         ), self.assertRaises(ValueError):
