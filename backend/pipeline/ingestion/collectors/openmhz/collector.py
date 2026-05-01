@@ -142,6 +142,18 @@ async def openmhz_collector(
     # `os.getenv("X", default)` returns the empty string when the env is set
     # but blank — strip + truthy-fallback so an accidental empty/whitespace
     # value doesn't reach `AsyncSession(impersonate="")` and crash curl_cffi.
+    #
+    # NOTE: This path uses a single static profile, NOT the multi-profile
+    # rotation that `_ws_transport._connect_with_fallback` does. If Cloudflare
+    # ever targets `firefox147` on media2 specifically, every download will
+    # 403, `_download_m4a` returns None, the collector logs "Call download
+    # failed" and continues — feed stays "active" with healthy heartbeats but
+    # zero ingestion (silent failure mode). Probe on 2026-05-01 showed media2
+    # is laxer than api.openmhz.com (cacheable static media — even bare
+    # AsyncSession() works), so this risk is theoretical today. Mitigation
+    # path: flip `OPENMHZ_DOWNLOAD_IMPERSONATE_PROFILE` env var; longer-term
+    # port the fallback helper to the download path. See out-of-scope notes
+    # in the PR description.
     download_profile = (
         os.getenv("OPENMHZ_DOWNLOAD_IMPERSONATE_PROFILE", "").strip()
         or "firefox147"
