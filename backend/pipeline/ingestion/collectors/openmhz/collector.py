@@ -137,11 +137,15 @@ async def openmhz_collector(
     # of rule update could hit downloads next. Pre-impersonate defensively;
     # firefox147 is the same default as the WS transport's first profile and
     # was confirmed working against media2 on 2026-05-01.
-    download_session = AsyncSession(
-        impersonate=os.getenv(
-            "OPENMHZ_DOWNLOAD_IMPERSONATE_PROFILE", "firefox147"
-        ),
+    #
+    # `os.getenv("X", default)` returns the empty string when the env is set
+    # but blank — strip + truthy-fallback so an accidental empty/whitespace
+    # value doesn't reach `AsyncSession(impersonate="")` and crash curl_cffi.
+    download_profile = (
+        os.getenv("OPENMHZ_DOWNLOAD_IMPERSONATE_PROFILE", "").strip()
+        or "firefox147"
     )
+    download_session = AsyncSession(impersonate=download_profile)
 
     try:
         while not shutdown_event.is_set():

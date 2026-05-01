@@ -79,6 +79,12 @@ def _parse_sio_event(frame: str) -> CallEvent | None:
 #                       deprecated by a curl_cffi version prune
 _DEFAULT_IMPERSONATE_PROFILES = "firefox147,firefox133,safari17_2_ios"
 _PROFILE_CONNECT_TIMEOUT_SEC = 10.0
+# Discriminator string from curl_cffi 0.15.0's CurlError on a Cloudflare WS
+# upgrade reject. If a future curl_cffi version changes the wording, the
+# fallback branch silently stops firing and we degrade to single-profile
+# behavior on persistent 403s. Worst-case is "no fallback" (same as today's
+# baseline before this PR), not a regression. Pinning curl-cffi>=0.15.0 in
+# pyproject.toml protects against silent format drift on upgrades.
 _BLOCKED_SIGNATURE = "Refused WebSockets upgrade: 403"
 
 
@@ -206,11 +212,12 @@ async def websocket_transport(
             ws, shutdown, short_name, ping_interval_sec, ping_timeout_sec
         )
     finally:
-        if ws is not None:
-            with contextlib.suppress(Exception):
-                await ws.send_str("1")  # best-effort EIO close
-            with contextlib.suppress(Exception):
-                await ws.close()
+        # `_connect_with_fallback` raises rather than returning None, so by
+        # the time we reach here both `ws` and `session` are guaranteed bound.
+        with contextlib.suppress(Exception):
+            await ws.send_str("1")  # best-effort EIO close
+        with contextlib.suppress(Exception):
+            await ws.close()
         await session.close()
 
 
