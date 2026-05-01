@@ -215,10 +215,10 @@ known-first-party = ["backend", "local_dev"]
   "T201",   # `print()` found
 ]
 "scripts/**.py" = [
-  "T201",   # CLI scripts print to stdout — that's the interface
+  "INP001", # Implicit namespace package — scripts/ doesn't need __init__.py
   "S603",   # `subprocess` call without `shell=True` already disallows shell injection; CI scripts use trusted args
   "S607",   # Starting subprocess with partial path (relies on CI PATH being curated)
-  "INP001", # Implicit namespace package — scripts/ doesn't need __init__.py
+  "T201",   # CLI scripts print to stdout — that's the interface
 ]
 
 [tool.ruff.lint.pydocstyle]
