@@ -5,13 +5,12 @@ import urllib.parse
 
 import functions_framework
 from cloudevents.http.event import CloudEvent
-from opentelemetry import trace
 
 from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.common.storage.redis_service import RedisService
 from backend.pipeline.common.tracing_utils import (
-    create_trace_context,
     setup_tracing,
+    with_tracer_context,
 )
 from backend.pipeline.notification.notification_deduplication import (
     NotificationDeduplication,
@@ -102,13 +101,10 @@ def convert_to_notification(
 @functions_framework.cloud_event
 def send_notification(cloud_event: CloudEvent) -> None:
     pubsub_message = cloud_event.data.get("message", {})
-    attributes = pubsub_message.get("attributes", {})
-    trace_id = attributes.get("trace_id", "")
+    attributes = pubsub_message.get("attributes", {}) or {}
+    traceparent = attributes.get("traceparent", "")
 
-    context = create_trace_context(trace_id)
-    tracer = trace.get_tracer(__name__)
-
-    with tracer.start_as_current_span("send_notification", context=context):
+    with with_tracer_context(traceparent, "send_notification", __name__):
         # Process the incoming CloudEvent message
         evaluated_transcribed_audio = parse_cloud_event(cloud_event)
         if not evaluated_transcribed_audio:
