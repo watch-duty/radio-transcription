@@ -73,7 +73,7 @@ def convert_to_notification(
     evaluated_transcribed_audio: EvaluatedTranscribedAudio,
 ) -> AlertNotification:
     app_url = _build_app_url(evaluated_transcribed_audio)
-    notification = AlertNotification(
+    return AlertNotification(
         feed_id=evaluated_transcribed_audio.feed_id,
         transmission_id=evaluated_transcribed_audio.transmission_id,
         source_audio_uris=evaluated_transcribed_audio.source_audio_uris,
@@ -86,30 +86,11 @@ def convert_to_notification(
         feed_name=evaluated_transcribed_audio.feed_name,
         app_url=app_url,
         external_id=evaluated_transcribed_audio.external_id,
+        start_timestamp=evaluated_transcribed_audio.start_timestamp,
+        end_timestamp=evaluated_transcribed_audio.end_timestamp,
+        start_audio_offset=evaluated_transcribed_audio.start_audio_offset,
+        end_audio_offset=evaluated_transcribed_audio.end_audio_offset,
     )
-    if evaluated_transcribed_audio.start_timestamp.seconds:
-        notification.start_timestamp.CopyFrom(
-            evaluated_transcribed_audio.start_timestamp
-        )
-    if evaluated_transcribed_audio.end_timestamp.seconds:
-        notification.end_timestamp.CopyFrom(
-            evaluated_transcribed_audio.end_timestamp
-        )
-    if (
-        evaluated_transcribed_audio.start_audio_offset.seconds
-        or evaluated_transcribed_audio.start_audio_offset.nanos
-    ):
-        notification.start_audio_offset.CopyFrom(
-            evaluated_transcribed_audio.start_audio_offset
-        )
-    if (
-        evaluated_transcribed_audio.end_audio_offset.seconds
-        or evaluated_transcribed_audio.end_audio_offset.nanos
-    ):
-        notification.end_audio_offset.CopyFrom(
-            evaluated_transcribed_audio.end_audio_offset
-        )
-    return notification
 
 
 @functions_framework.cloud_event

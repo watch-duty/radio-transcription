@@ -250,6 +250,14 @@ components:
           $ref: "#/components/schemas/RuleConditions"
       type: object
       additionalProperties: false
+    FeedStatus:
+      type: string
+      enum:
+        - unclaimed
+        - active
+        - failing
+        - quarantined
+        - deactivated
     SourceType:
       type: string
       enum:
@@ -273,10 +281,15 @@ components:
           type: string
         archiveUrl:
           type: string
+        status:
+          $ref: "#/components/schemas/FeedStatus"
+        lastHeartbeat:
+          type: string
       required:
         - name
         - sourceType
         - id
+        - status
       type: object
       additionalProperties: false
     FeedCreate:
