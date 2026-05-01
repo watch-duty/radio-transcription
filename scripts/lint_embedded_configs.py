@@ -51,8 +51,7 @@ def render_template(content: str) -> str:
     """Best-effort HCL .tftpl render for static lint purposes."""
     for pattern, replacement in _PLACEHOLDER_SUBS.items():
         content = re.sub(pattern, replacement, content)
-    content = _HCL_CONDITIONAL_RE.sub("", content)
-    return content
+    return _HCL_CONDITIONAL_RE.sub("", content)
 
 
 # Matches a cloud-init `write_files` entry: `- path: <p>` ... `content: |`
@@ -110,6 +109,7 @@ def lint_nginx(content: str) -> tuple[bool, str]:
                 "nginx", "-t",
             ],
             capture_output=True, text=True, timeout=120,
+            check=False,  # We inspect returncode ourselves below
         )
         output = (result.stderr or "") + (result.stdout or "")
         return result.returncode == 0, output
