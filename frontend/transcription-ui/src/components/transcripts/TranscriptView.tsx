@@ -89,7 +89,6 @@ export function TranscriptView({
 
   const {
     data: feeds,
-    isError: isFeedsError,
     error: feedsError,
     isFetching: feedsFetching,
     isSuccess: isFeedsSuccess,
@@ -101,10 +100,10 @@ export function TranscriptView({
   });
 
   useEffect(() => {
-    if (isFeedsError) {
+    if (feedsError) {
       onError(feedsError, 'Loading Feeds');
     }
-  }, [isFeedsError, feedsError, onError]);
+  }, [feedsError, onError]);
 
   // Memoizing the feed ID to feed map so we don't have to recreate it on every render.
   const feedIdToFeedMap = useMemo(() => {
@@ -129,7 +128,6 @@ export function TranscriptView({
     hasPreviousPage: hasNewerTranscripts,
     isFetchingNextPage: isFetchingOlderTranscripts,
     isFetchingPreviousPage: isFetchingNewerTranscripts,
-    isError: isTranscriptsError,
     error: transcriptsError,
     isLoading: isTranscriptsInitialLoading, // isLoading is the first load, which we use to show the main loading spinner
     isFetching: isTranscriptsFetching, // isFetching is any load, which we use to show that we're loading additional data
@@ -207,10 +205,10 @@ export function TranscriptView({
   });
 
   useEffect(() => {
-    if (isTranscriptsError) {
+    if (transcriptsError) {
       onError(transcriptsError, 'Loading transcripts');
     }
-  }, [isTranscriptsError, transcriptsError, onError]);
+  }, [transcriptsError, onError]);
 
   const transcripts = useMemo(
     () =>
@@ -390,7 +388,6 @@ export function TranscriptView({
 
   const {
     data: rules,
-    isError: isRulesError,
     error: rulesError,
     isLoading: rulesLoading,
   } = useQuery({
@@ -401,10 +398,10 @@ export function TranscriptView({
   });
 
   useEffect(() => {
-    if (isRulesError) {
+    if (rulesError) {
       onError(rulesError, 'Loading rules');
     }
-  }, [isRulesError, rulesError, onError]);
+  }, [rulesError, onError]);
 
   // Memoizing the rule ID to name map so we don't have to recreate it on every render.
   const ruleIdToNameMap: Map<string, string> = useMemo(() => {
