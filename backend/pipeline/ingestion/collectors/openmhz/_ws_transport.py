@@ -8,7 +8,7 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from curl_cffi.curl import CurlError
 from curl_cffi.requests import AsyncSession
@@ -18,6 +18,8 @@ from backend.pipeline.ingestion.collectors.openmhz._types import CallEvent
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+
+    from curl_cffi.requests.impersonate import BrowserTypeLiteral
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +130,13 @@ async def _connect_with_fallback(
 
     last_error: BaseException | None = None
     for profile in profiles:
-        candidate = AsyncSession(impersonate=profile)
+        # `impersonate` is typed as a Literal[...] of known browser names, but
+        # we read `profile` from an env var so the type checker can't narrow
+        # statically. Cast satisfies ty; curl_cffi raises at runtime if the
+        # value isn't a recognized profile.
+        candidate: AsyncSession = AsyncSession(
+            impersonate=cast("BrowserTypeLiteral", profile),
+        )
         # try/finally with `success` flag rather than `except Exception:` —
         # asyncio.CancelledError extends BaseException, not Exception, so a
         # task cancellation during ws_connect would otherwise leak the

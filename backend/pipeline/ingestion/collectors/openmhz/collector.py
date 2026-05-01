@@ -7,7 +7,7 @@ import logging
 import os
 import random
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from curl_cffi.requests import AsyncSession
 
@@ -21,6 +21,8 @@ from backend.pipeline.ingestion.slo_contract import (
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+
+    from curl_cffi.requests.impersonate import BrowserTypeLiteral
 
     from backend.pipeline.ingestion.collectors.openmhz._types import (
         TransportFactory,
@@ -158,7 +160,11 @@ async def openmhz_collector(
         os.getenv("OPENMHZ_DOWNLOAD_IMPERSONATE_PROFILE", "").strip()
         or "firefox147"
     )
-    download_session = AsyncSession(impersonate=download_profile)
+    # `impersonate` is typed as a Literal[...]; cast to satisfy ty (env-var
+    # input). curl_cffi raises at runtime if the value isn't recognized.
+    download_session: AsyncSession = AsyncSession(
+        impersonate=cast("BrowserTypeLiteral", download_profile),
+    )
 
     try:
         while not shutdown_event.is_set():
