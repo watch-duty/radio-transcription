@@ -657,7 +657,7 @@ export function TranscriptView({
           >
             <CircularProgress />
           </Box>
-        ) : isTranscriptsError ? (
+        ) : transcriptsError ? (
           <Typography
             color="error"
             align="center"
