@@ -36,7 +36,7 @@ resource "google_compute_instance" "eval_instance" {
   resource_policies = []
 
   metadata = {
-    startup-script = <<-EOT
+    startup_script = <<-EOT
     #!/bin/bash
     sleep $(( ${var.auto_shutdown_hours} * 3600 ))
     while true; do
