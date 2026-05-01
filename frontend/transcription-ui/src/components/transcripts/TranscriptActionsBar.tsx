@@ -3,7 +3,7 @@ import React from 'react';
 import InventoryIcon from '@mui/icons-material/Inventory';
 import LinkIcon from '@mui/icons-material/Link';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import Alert from '@mui/material/Alert';
+import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -27,13 +27,10 @@ export interface TranscriptActionsBarProps {
 
 const FEED_STATUS_UI_CONFIG: Record<
   FeedStatus,
-  { displayText: string; severity: 'success' | 'warning' | 'error' | 'info' }
+  { displayText: string; color: 'success' | 'error' }
 > = {
-  active: { displayText: 'Active', severity: 'success' },
-  failing: { displayText: 'Failing', severity: 'warning' },
-  quarantined: { displayText: 'Inactive', severity: 'error' },
-  unclaimed: { displayText: 'Pending', severity: 'info' },
-  deactivated: { displayText: 'Inactive', severity: 'info' },
+  active: { displayText: 'Active', color: 'success' },
+  inactive: { displayText: 'Inactive', color: 'error' },
 };
 
 export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
@@ -93,9 +90,9 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
           )}
           {status && (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Alert
-                severity={statusConfig?.severity ?? 'info'}
-                variant="outlined"
+              <Badge
+                color={statusConfig?.color ?? 'error'}
+                variant="dot"
                 sx={{
                   py: 0,
                   px: 1,
@@ -104,7 +101,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
                 }}
               >
                 {statusConfig?.displayText ?? status}
-              </Alert>
+              </Badge>
               {lastHeartbeat && (
                 <Typography
                   variant="caption"
