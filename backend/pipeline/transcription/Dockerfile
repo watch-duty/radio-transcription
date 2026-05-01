@@ -39,6 +39,7 @@ RUN uv sync --frozen --no-dev --no-install-workspace --package transcription-pip
 ENV FLEX_TEMPLATE_PYTHON_PY_FILE="/app/backend/pipeline/transcription/main.py"
 ENV PYTHONPATH="/app"
 ENV PYTHONUNBUFFERED=1
+ENV IS_GCP=true
 
 # Copy full source
 COPY backend/ ./backend/
