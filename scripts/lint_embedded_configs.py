@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lint embedded configs (nginx, etc.) in cloud-init .tftpl templates.
+r"""Lint embedded configs (nginx, etc.) in cloud-init .tftpl templates.
 
 Walks terraform/ for .tftpl files, extracts embedded sub-configs from
 cloud-init `write_files` blocks, runs each through its native validator
@@ -44,6 +44,24 @@ Known limitations (intentional trade-offs):
     don't match the heuristic. If you ship such snippets, either add
     a wrapping comment that triggers detection, or extend the
     heuristic with a directive-only pattern.
+  * Unknown ${var} substitutes to the STRING `lint_placeholder`,
+    which is valid for many nginx contexts (paths, hostnames,
+    identifiers) but FALSE-POSITIVE-fails for numeric/size/time
+    contexts: `keepalive_timeout ${tf_var};` renders to
+    `keepalive_timeout lint_placeholder;` and nginx -t rejects with
+    `invalid value`. Workaround: add the var to
+    `_KNOWN_PLACEHOLDER_SUBS` with a typed default (e.g., `"65"` for
+    a timeout var). The catch-all is intentionally string-typed
+    because nginx context can't be inferred from regex alone.
+  * `_KNOWN_PLACEHOLDER_SUBS` regexes are STRICT: `\$\{service_name\}`
+    matches only the bare form, not scoped variants like
+    `${var.service_name}` or whitespace-padded `${ service_name }`.
+    The catch-all fallback substitutes scoped/spaced variants too,
+    so they don't break the lint — they just hit the string-typed
+    placeholder limitation above. If your team uses scoped variants
+    routinely and bumps into the typing issue, loosen the regex
+    (e.g., `\$\{(?:var\.)?service_name\}`) or add the scoped form
+    as its own entry.
 
 CI usage:
   python3 scripts/lint_embedded_configs.py --terraform-dir terraform/
@@ -115,18 +133,40 @@ def render_template(content: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def extract_write_files(rendered: str) -> list[tuple[str, str]]:
+def extract_write_files(
+    rendered: str,
+    source_path: Path | None = None,
+) -> list[tuple[str, str]]:
     """Parse rendered cloud-init YAML; return [(path, content), ...] for each
     write_files entry. Robust to key ordering — uses yaml.safe_load instead
     of a regex that assumed `path:` precedes `content:`.
 
     cloud-init files start with `#cloud-config` (a comment), so they're
-    valid YAML. If the rendered output isn't parseable (e.g., a template
-    that's only valid after templatefile() processes it), returns [].
+    valid YAML. If the rendered output isn't parseable, returns [] AND
+    emits a warning to stderr (with a GitHub Actions ::warning annotation
+    on the source file when known) — silent skips would mask broken
+    templates and give false confidence that the lint passed.
     """
     try:
         parsed = yaml.safe_load(rendered)
-    except yaml.YAMLError:
+    except yaml.YAMLError as e:
+        # Only warn for files that look like cloud-config (avoid noise on
+        # other .tftpl shapes — e.g., a raw nginx.conf.tftpl with no YAML
+        # wrapper, or a template that's only valid after templatefile()).
+        if "#cloud-config" in rendered:
+            location = f" in {source_path}" if source_path else ""
+            print(
+                f"warning: cloud-config YAML parse failed{location}; "
+                f"embedded-config lint skipped for this file: {e}",
+                file=sys.stderr,
+            )
+            if source_path is not None:
+                # Surface in PR diff annotation so reviewers see it
+                print(
+                    f"::warning file={source_path}::cloud-config YAML parse "
+                    f"failed; embedded-config lint skipped. Fix the YAML "
+                    f"structure (or HCL render artifacts) and re-push.",
+                )
         return []
     if not isinstance(parsed, dict):
         return []
@@ -227,7 +267,9 @@ def _process_tftpl(tftpl_path: Path) -> list[tuple[Path, str, str]]:
     success.
     """
     rendered = render_template(tftpl_path.read_text())
-    extracted: list[tuple[str, str]] = extract_write_files(rendered)
+    extracted: list[tuple[str, str]] = extract_write_files(
+        rendered, source_path=tftpl_path
+    )
     failures: list[tuple[Path, str, str]] = []
     for embedded_path, content in extracted:
         if not looks_like_nginx(content):
