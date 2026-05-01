@@ -49,6 +49,12 @@
       "label": "VAD Type",
       "helpText": "Type of Voice Activity Detection model to use. Defaults to ten_vad.",
       "isOptional": true
+    },
+    {
+      "name": "out_of_order_timeout_ms",
+      "label": "Out Of Order Timeout (MS)",
+      "helpText": "Milliseconds to wait for missing chunks before accepting a logical gap. Defaults: 10000ms for segmented pipelines, 60000ms for continuous.",
+      "isOptional": true
     }
   ]
 }
