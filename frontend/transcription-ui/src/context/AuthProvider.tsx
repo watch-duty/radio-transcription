@@ -57,8 +57,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             setTimeout(resolve, REFRESH_TOKEN_FAILURE_DELAY)
           );
         }
-        // TODO: Improve UI error handling for API requests
-        // https://linear.app/watchduty/issue/GOO-369/improve-ui-error-handling-for-api-requests
       }
     }, REFRESH_TOKEN_INTERVAL);
 

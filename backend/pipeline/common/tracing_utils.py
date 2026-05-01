@@ -2,6 +2,8 @@
 
 import os
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 from opentelemetry.context import Context
 from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
@@ -11,7 +13,9 @@ from opentelemetry.sdk.trace.export import (
     SimpleSpanProcessor,
 )
 from opentelemetry.trace import (
+    Span,
     get_current_span,
+    get_tracer,
     get_tracer_provider,
     set_tracer_provider,
 )
@@ -80,3 +84,22 @@ def extract_trace_context(attributes: dict[str, str] | None) -> Context:
         return TraceContextTextMapPropagator().extract(carrier=attributes)
 
     return Context()
+
+
+@contextmanager
+def with_tracer_context(
+    traceparent: str,
+    span_name: str,
+    tracer_name: str,
+) -> Iterator[Span]:
+    """Context manager to create a trace context and start a span.
+
+    Args:
+        traceparent: The trace parent string.
+        span_name: The name of the span to create.
+        tracer_name: The name of the tracer (usually __name__).
+    """
+    context = extract_trace_context({"traceparent": traceparent})
+    tracer = get_tracer(tracer_name)
+    with tracer.start_as_current_span(span_name, context=context) as span:
+        yield span

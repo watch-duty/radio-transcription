@@ -6,6 +6,6 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) to get started.
 
 ## Directory structure
 
-- `model/` - everything related to building the transcription model itself
+- `model/` - everything related to building and evaluating the transcription models. See [ASR_CONTRIBUTING.md](./ASR_CONTRIBUTING.md) for evaluation guidelines. (Note: Use the `asr-eval` container if you need NeMo/Canary, otherwise use the lightweight `notebooks` container for pure Hugging Face evaluations like Whisper or Cohere).
 - `backend/` - everything related to the processing pipeline and backend support for the UI
 - `frontend/` - everything related to the frontend app/UI

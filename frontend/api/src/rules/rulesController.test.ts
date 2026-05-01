@@ -88,9 +88,7 @@ describe('RulesController', () => {
       mockRequest.mockRejectedValueOnce(new Error('Network Error'));
       const controller = new RulesController();
 
-      await expect(controller.listRules({})).rejects.toThrow(
-        'Error fetching rules'
-      );
+      await expect(controller.listRules({})).rejects.toThrow(/Network Error/);
     });
   });
 
@@ -99,7 +97,7 @@ describe('RulesController', () => {
       mockRequest.mockResolvedValueOnce({ data: mockBackendRule });
 
       const controller = new RulesController();
-      const result = await controller.getRule('rule_123', vi.fn());
+      const result = await controller.getRule('rule_123');
 
       expect(result).toEqual(expectedFrontendRule);
       expect(mockRequest).toHaveBeenCalledWith({
@@ -108,8 +106,7 @@ describe('RulesController', () => {
       });
     });
 
-    it('should call notFound on 404', async () => {
-      const mockNotFound = vi.fn();
+    it('should throw on 404', async () => {
       const error = new Error('Not Found') as Error & {
         response?: { status: number };
       };
@@ -117,11 +114,7 @@ describe('RulesController', () => {
       mockRequest.mockRejectedValueOnce(error);
 
       const controller = new RulesController();
-      await controller.getRule('rule_123', mockNotFound);
-
-      expect(mockNotFound).toHaveBeenCalledWith(404, {
-        message: 'Rule rule_123 not found',
-      });
+      await expect(controller.getRule('rule_123')).rejects.toThrow(/Not Found/);
     });
   });
 
@@ -168,7 +161,7 @@ describe('RulesController', () => {
 
       const controller = new RulesController();
       const payload = { ruleName: 'Updated Name' };
-      const result = await controller.updateRule('rule_123', payload, vi.fn());
+      const result = await controller.updateRule('rule_123', payload);
 
       expect(result).toEqual(expectedFrontendRule);
       expect(mockRequest).toHaveBeenCalledWith({
@@ -178,8 +171,7 @@ describe('RulesController', () => {
       });
     });
 
-    it('should call notFound on 404', async () => {
-      const mockNotFound = vi.fn();
+    it('should throw on 404', async () => {
       const error = new Error('Not Found') as Error & {
         response?: { status: number };
       };
@@ -187,11 +179,9 @@ describe('RulesController', () => {
       mockRequest.mockRejectedValueOnce(error);
 
       const controller = new RulesController();
-      await controller.updateRule('rule_123', {}, mockNotFound);
-
-      expect(mockNotFound).toHaveBeenCalledWith(404, {
-        message: 'Rule rule_123 not found',
-      });
+      await expect(controller.updateRule('rule_123', {})).rejects.toThrow(
+        /Not Found/
+      );
     });
   });
 
@@ -200,7 +190,7 @@ describe('RulesController', () => {
       mockRequest.mockResolvedValueOnce({ status: 204 });
 
       const controller = new RulesController();
-      await controller.deleteRule('rule_123', vi.fn());
+      await controller.deleteRule('rule_123');
 
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://rules-api.example.com/rule_123',
@@ -208,8 +198,7 @@ describe('RulesController', () => {
       });
     });
 
-    it('should call notFound on 404', async () => {
-      const mockNotFound = vi.fn();
+    it('should throw on 404', async () => {
       const error = new Error('Not Found') as Error & {
         response?: { status: number };
       };
@@ -217,11 +206,9 @@ describe('RulesController', () => {
       mockRequest.mockRejectedValueOnce(error);
 
       const controller = new RulesController();
-      await controller.deleteRule('rule_123', mockNotFound);
-
-      expect(mockNotFound).toHaveBeenCalledWith(404, {
-        message: 'Rule rule_123 not found',
-      });
+      await expect(controller.deleteRule('rule_123')).rejects.toThrow(
+        /Not Found/
+      );
     });
   });
 });
