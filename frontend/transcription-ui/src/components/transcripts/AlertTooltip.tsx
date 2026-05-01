@@ -3,7 +3,7 @@ import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 
-import FireIcon from '../../assets/FireIcon';
+import { CustomAlertIcon } from '../common/AlertIcon';
 
 interface AlertTooltipProps {
   evaluationDecisions: string[];
@@ -43,7 +43,11 @@ export function AlertTooltip({
         sx={{ display: 'inline-flex' }}
         aria-label="view triggered rules"
       >
-        <FireIcon color="warning" fontSize="large" data-testid="warning-icon" />
+        <CustomAlertIcon
+          color="warning"
+          fontSize="medium"
+          data-testid="warning-icon"
+        />
       </Box>
     </Tooltip>
   );

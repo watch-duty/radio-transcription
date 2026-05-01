@@ -1,24 +1,10 @@
 import { defineConfig } from 'vite';
-import svgr from 'vite-plugin-svgr';
 
 import react from '@vitejs/plugin-react-swc';
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [
-    react(),
-    svgr({
-      // svgr options: https://react-svgr.com/docs/options/
-      svgrOptions: {
-        jsxRuntime: 'automatic',
-      },
-      // A minimatch pattern, or array of patterns, which specifies the files in the build the plugin should include.
-      include: '**/*.svg?react',
-    }),
-  ],
-  optimizeDeps: {
-    include: ['react/jsx-runtime'],
-  },
+  plugins: [react()],
   build: {
     outDir: 'dist',
   },

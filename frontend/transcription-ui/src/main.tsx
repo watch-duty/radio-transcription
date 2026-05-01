@@ -9,6 +9,7 @@ import App from './App.tsx';
 import { AuthProvider } from './context/AuthProvider';
 
 import './index.css';
+import 'material-symbols/outlined.css';
 
 const queryClient = new QueryClient();
 
