@@ -1,41 +1,52 @@
-export function isAxiosError(
-  error: unknown
-): error is { response?: { status: number; data?: unknown } } {
-  if (typeof error !== 'object' || error === null) {
-    return false;
+import { GaxiosError } from 'gaxios';
+
+export class HttpError extends Error {
+  constructor(
+    public status: number,
+    message: string
+  ) {
+    super(message);
   }
-  const err = error as Record<string, unknown>;
-  if (!('response' in err)) {
-    return false;
-  }
-  const response = err.response as Record<string, unknown>;
-  return (
-    typeof response === 'object' && response !== null && 'status' in response
-  );
 }
+
+export type BackendErrorResponse = {
+  status: number;
+  message: string;
+};
 
 export function handleBackendError(
   error: unknown,
-  actionMessage: string
-): never {
-  if (isAxiosError(error)) {
+  defaultMessage: string
+): BackendErrorResponse {
+  if (error instanceof GaxiosError) {
     const status = error.response?.status || 500;
-    const data = JSON.stringify(error.response?.data);
+    const message =
+      error.response?.data?.detail || error.message || defaultMessage;
     console.error(
       JSON.stringify({
         level: 'ERROR',
-        message: `Backend API error: ${status}`,
+        status,
+        message,
         data: error.response?.data,
       })
     );
-    throw new Error(`Backend API error ${status}: ${data}`, { cause: error });
+    return {
+      status,
+      message: message || defaultMessage,
+    };
   }
+
+  const status = 500;
+  const message = error instanceof Error ? error.message : String(error);
   console.error(
     JSON.stringify({
       level: 'ERROR',
-      message: `Unexpected error ${actionMessage}`,
-      error: error instanceof Error ? error.message : String(error),
+      status,
+      message: `Unexpected error ${message}`,
     })
   );
-  throw new Error(`Error ${actionMessage}`, { cause: error });
+  return {
+    status,
+    message: message || defaultMessage,
+  };
 }

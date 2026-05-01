@@ -9,15 +9,14 @@ import {
   Get,
   Path,
   Queries,
-  Res,
   Response,
   Route,
   Security,
   Tags,
-  TsoaResponse,
 } from 'tsoa';
 
 import { TRANSCRIPTS_API_URL } from '../config.js';
+import { HttpError, handleBackendError } from '../utils.js';
 
 export interface TranscriptResponse {
   feed_id: string;
@@ -66,14 +65,16 @@ export class ListTranscriptsQueryParams {
 
 @Route('api/v1/transcripts')
 @Tags('Transcripts')
-@Response(401, 'Unauthorized')
+@Response<{ message: string }>(401, 'Unauthorized')
+@Response<{ message: string }>(403, 'Forbidden')
+@Response<{ message: string }>(404, 'Not Found')
+@Response<{ message: string }>(500, 'Internal Server Error')
 export class TranscriptsController extends Controller {
   @Get('{feedId}')
   @Security('google_id_token')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async listTranscripts(
     @Path() feedId: string,
-    @Res() notFound: TsoaResponse<404, { message: string }>,
     @Queries() query: ListTranscriptsQueryParams
   ): Promise<ListTranscriptsResponse> {
     // Get the Authentication token to allow us to call the Cloud Run function.
@@ -102,14 +103,11 @@ export class TranscriptsController extends Controller {
         nextToken: data.next_token,
       };
     } catch (error: unknown) {
-      console.error('Error fetching transcript:', error);
-      if (error instanceof Error) {
-        throw new Error(`Error fetching transcript: ${error.message}`, {
-          cause: error,
-        });
-      } else {
-        throw new Error('Error fetching transcript', { cause: error });
-      }
+      const { status, message } = handleBackendError(
+        error,
+        `fetching transcripts for feed ${feedId}`
+      );
+      throw new HttpError(status, message);
     }
   }
 }

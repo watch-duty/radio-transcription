@@ -23,7 +23,11 @@ describe('listTranscripts', () => {
 
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => mockData,
+      text: async () => JSON.stringify(mockData),
+      headers: {
+        get: (key: string) =>
+          key === 'content-type' ? 'application/json' : null,
+      },
     });
 
     const transcripts = await listTranscripts('feed123', 'tokenXYZ');
@@ -46,7 +50,11 @@ describe('listTranscripts', () => {
   it('should return empty array if transcripts missing in response', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({}),
+      text: async () => JSON.stringify({}),
+      headers: {
+        get: (key: string) =>
+          key === 'content-type' ? 'application/json' : null,
+      },
     });
 
     const transcripts = await listTranscripts('feed123', 'tokenXYZ');
@@ -59,10 +67,14 @@ describe('listTranscripts', () => {
       ok: false,
       status: 403,
       statusText: 'Forbidden',
+      headers: {
+        get: () => null,
+      },
+      text: async () => 'Forbidden',
     });
 
     await expect(listTranscripts('feed123', 'tokenXYZ')).rejects.toThrow(
-      'Error: 403 Forbidden'
+      /403.*Forbidden/
     );
   });
 });

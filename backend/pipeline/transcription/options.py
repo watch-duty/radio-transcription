@@ -5,9 +5,7 @@ import argparse
 from apache_beam.options.pipeline_options import PipelineOptions
 
 from backend.pipeline.transcription.common.constants import (
-    DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_MAX_TRANSMISSION_DURATION_MS,
-    DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_SIGNIFICANT_GAP_MS,
     DEFAULT_STALE_TIMEOUT_MS,
     DEFAULT_VAD_POST_ROLL_MS,
@@ -99,16 +97,10 @@ class TranscriptionOptions(PipelineOptions):
             help="Milliseconds before an incomplete transmission is flushed.",
         )
         parser.add_argument(
-            "--continuous_out_of_order_timeout_ms",
+            "--out_of_order_timeout_ms",
             type=int,
-            default=DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS,
-            help="Milliseconds to wait for missing chunks before accepting a gap in continuous feeds.",
-        )
-        parser.add_argument(
-            "--segmented_out_of_order_timeout_ms",
-            type=int,
-            default=DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS,
-            help="Milliseconds to wait for missing chunks before accepting a gap in segmented feeds.",
+            default=None,
+            help="Milliseconds to wait for missing chunks before accepting a logical gap. Defaults: 10000ms for segmented pipelines, 60000ms for continuous.",
         )
         parser.add_argument(
             "--vad_pre_roll_ms",
@@ -165,6 +157,7 @@ class DataflowSystemOptions(PipelineOptions):
         parser.add_argument("--maxNumWorkers", type=str, required=False)
         parser.add_argument("--pipelineUrl", type=str, required=False)
         parser.add_argument("--gcpTempLocation", type=str, required=False)
+        parser.add_argument("--tempLocation", type=str, required=False)
         parser.add_argument(
             "--direct_runner_use_stacked_bundle",
             action="store_true",
