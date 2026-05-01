@@ -1,20 +1,22 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import datetime
 import json
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
+from curl_cffi.curl import CurlError
 from curl_cffi.requests import AsyncSession
 from curl_cffi.requests.websockets import WebSocketClosed, WebSocketTimeout
 
 from backend.pipeline.ingestion.collectors.openmhz._types import CallEvent
 
 if TYPE_CHECKING:
-    import asyncio
     from collections.abc import AsyncIterator
 
 logger = logging.getLogger(__name__)
@@ -62,6 +64,80 @@ def _parse_sio_event(frame: str) -> CallEvent | None:
     )
 
 
+# Default profile fallback list. Confirmed working against api.openmhz.com on
+# 2026-05-01 with curl_cffi 0.15.0; chrome / chrome116..133a / edge101 /
+# safari17_0 were all 403'd by Cloudflare on the WS upgrade in the 2026-04-29
+# rule update. firefox133 first because it is the most fingerprint-distinct
+# from the blocked chrome/edge family.
+_DEFAULT_IMPERSONATE_PROFILES = "firefox133,safari17_2_ios,safari15_5"
+_PROFILE_CONNECT_TIMEOUT_SEC = 10.0
+_BLOCKED_SIGNATURE = "Refused WebSockets upgrade: 403"
+
+
+async def _connect_with_fallback(
+    ws_url: str,
+    short_name: str,
+) -> tuple[AsyncSession, Any, str]:
+    """Try each impersonation profile until one upgrades successfully.
+
+    Returns ``(session, ws, profile_name)``. Closes any session whose
+    connect attempt failed. On the Cloudflare-403 signature or a
+    per-attempt timeout, advances to the next profile; on any other
+    error, re-raises immediately (transient/network failures aren't
+    fixed by switching fingerprint).
+    """
+    raw = os.getenv(
+        "OPENMHZ_IMPERSONATE_PROFILES", _DEFAULT_IMPERSONATE_PROFILES
+    )
+    profiles = [p.strip() for p in raw.split(",") if p.strip()]
+    if not profiles:
+        msg = "OPENMHZ_IMPERSONATE_PROFILES is empty"
+        raise ValueError(msg)
+
+    last_error: BaseException | None = None
+    for profile in profiles:
+        candidate = AsyncSession(impersonate=profile)
+        try:
+            ws = await asyncio.wait_for(
+                candidate.ws_connect(ws_url),
+                timeout=_PROFILE_CONNECT_TIMEOUT_SEC,
+            )
+        except asyncio.TimeoutError as e:
+            with contextlib.suppress(Exception):
+                await candidate.close()
+            last_error = e
+            logger.warning(
+                "WS connect timeout (>%.1fs): short_name=%s impersonate=%s",
+                _PROFILE_CONNECT_TIMEOUT_SEC,
+                short_name,
+                profile,
+            )
+            continue
+        except CurlError as e:
+            with contextlib.suppress(Exception):
+                await candidate.close()
+            if _BLOCKED_SIGNATURE in str(e):
+                last_error = e
+                logger.warning(
+                    "WS profile blocked: short_name=%s impersonate=%s",
+                    short_name,
+                    profile,
+                )
+                continue
+            raise
+        except Exception:
+            with contextlib.suppress(Exception):
+                await candidate.close()
+            raise
+        return candidate, ws, profile
+
+    msg = (
+        f"All {len(profiles)} impersonation profiles failed for "
+        f"short_name={short_name}"
+    )
+    raise RuntimeError(msg) from last_error
+
+
 @asynccontextmanager
 async def websocket_transport(
     short_name: str,
@@ -85,11 +161,8 @@ async def websocket_transport(
         "http://", "ws://", 1
     )
 
-    session = AsyncSession(impersonate="chrome")
-    ws = None
+    session, ws, profile = await _connect_with_fallback(ws_url, short_name)
     try:
-        ws = await session.ws_connect(ws_url)
-
         # --- EIO handshake ---
         open_frame = await ws.recv_str(timeout=10.0)
         open_data = _parse_eio_open(open_frame)
@@ -98,9 +171,10 @@ async def websocket_transport(
         ping_timeout_sec: float = open_data["pingTimeout"] / 1000
 
         logger.info(
-            "WebSocket connected: short_name=%s sid=%s",
+            "WebSocket connected: short_name=%s sid=%s impersonate=%s",
             short_name,
             sid,
+            profile,
         )
 
         # --- SIO connect ---

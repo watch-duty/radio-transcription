@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import json
+import os
 import unittest
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -10,9 +11,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+from curl_cffi.curl import CurlError
 from curl_cffi.requests.websockets import WebSocketClosed, WebSocketTimeout
 
 from backend.pipeline.ingestion.collectors.openmhz._ws_transport import (
+    _connect_with_fallback,
     _parse_eio_open,
     _parse_sio_event,
     websocket_transport,
@@ -374,3 +377,288 @@ class TestWebsocketTransport(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(mock_ws._closed)
         mock_session.close.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Multi-profile fallback tests
+# ---------------------------------------------------------------------------
+
+_BLOCKED_MSG = (
+    "Failed to perform, curl: (22) Refused WebSockets upgrade: 403. "
+    "See https://curl.se/libcurl/c/libcurl-errors.html first for more details."
+)
+
+
+def _make_blocked_session() -> AsyncMock:
+    """An AsyncSession whose ws_connect raises the Cloudflare-403 CurlError."""
+    s = AsyncMock()
+    s.ws_connect = AsyncMock(side_effect=CurlError(_BLOCKED_MSG))
+    s.close = AsyncMock()
+    return s
+
+
+def _make_timeout_session() -> AsyncMock:
+    """An AsyncSession whose ws_connect raises asyncio.TimeoutError."""
+    s = AsyncMock()
+    s.ws_connect = AsyncMock(side_effect=asyncio.TimeoutError())
+    s.close = AsyncMock()
+    return s
+
+
+def _make_working_session() -> tuple[AsyncMock, _MockWebSocket]:
+    ws = _MockWebSocket([])
+    s = AsyncMock()
+    s.ws_connect = AsyncMock(return_value=ws)
+    s.close = AsyncMock()
+    return s, ws
+
+
+class TestConnectWithFallback(unittest.IsolatedAsyncioTestCase):
+    @patch(f"{_WS_MOD}.AsyncSession")
+    async def test_uses_first_profile_on_success(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        working, ws = _make_working_session()
+        mock_session_cls.return_value = working
+
+        session, returned_ws, profile = await _connect_with_fallback(
+            "wss://api.openmhz.com/socket.io/", "wmata"
+        )
+
+        self.assertEqual(profile, "firefox133")
+        self.assertIs(session, working)
+        self.assertIs(returned_ws, ws)
+        self.assertEqual(mock_session_cls.call_count, 1)
+        self.assertEqual(
+            mock_session_cls.call_args.kwargs, {"impersonate": "firefox133"}
+        )
+
+    @patch(f"{_WS_MOD}.AsyncSession")
+    async def test_falls_back_on_403_signature(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        blocked = _make_blocked_session()
+        working, _ = _make_working_session()
+        mock_session_cls.side_effect = [blocked, working]
+
+        _, _, profile = await _connect_with_fallback(
+            "wss://api.openmhz.com/socket.io/", "wmata"
+        )
+
+        self.assertEqual(profile, "safari17_2_ios")
+        self.assertEqual(mock_session_cls.call_count, 2)
+        self.assertEqual(
+            mock_session_cls.call_args_list[0].kwargs,
+            {"impersonate": "firefox133"},
+        )
+        self.assertEqual(
+            mock_session_cls.call_args_list[1].kwargs,
+            {"impersonate": "safari17_2_ios"},
+        )
+        blocked.close.assert_awaited_once()
+
+    @patch(f"{_WS_MOD}.AsyncSession")
+    async def test_falls_back_on_timeout(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        timed_out = _make_timeout_session()
+        working, _ = _make_working_session()
+        mock_session_cls.side_effect = [timed_out, working]
+
+        _, _, profile = await _connect_with_fallback(
+            "wss://api.openmhz.com/socket.io/", "wmata"
+        )
+
+        self.assertEqual(profile, "safari17_2_ios")
+        self.assertEqual(mock_session_cls.call_count, 2)
+        timed_out.close.assert_awaited_once()
+
+    @patch(f"{_WS_MOD}.AsyncSession")
+    async def test_does_not_fall_back_on_non_403_curl_error(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        non_403 = AsyncMock()
+        non_403.ws_connect = AsyncMock(
+            side_effect=CurlError(
+                "Failed to perform, curl: (35) TLS handshake error"
+            )
+        )
+        non_403.close = AsyncMock()
+        mock_session_cls.return_value = non_403
+
+        with self.assertRaises(CurlError):
+            await _connect_with_fallback(
+                "wss://api.openmhz.com/socket.io/", "wmata"
+            )
+
+        self.assertEqual(mock_session_cls.call_count, 1)
+        non_403.close.assert_awaited_once()
+
+    @patch(f"{_WS_MOD}.AsyncSession")
+    async def test_does_not_fall_back_on_arbitrary_exception(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        blowup = AsyncMock()
+        blowup.ws_connect = AsyncMock(side_effect=OSError("network down"))
+        blowup.close = AsyncMock()
+        mock_session_cls.return_value = blowup
+
+        with self.assertRaises(OSError):
+            await _connect_with_fallback(
+                "wss://api.openmhz.com/socket.io/", "wmata"
+            )
+
+        self.assertEqual(mock_session_cls.call_count, 1)
+        blowup.close.assert_awaited_once()
+
+    @patch(f"{_WS_MOD}.AsyncSession")
+    async def test_falls_back_to_third_profile(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        b1 = _make_blocked_session()
+        b2 = _make_blocked_session()
+        working, _ = _make_working_session()
+        mock_session_cls.side_effect = [b1, b2, working]
+
+        _, _, profile = await _connect_with_fallback(
+            "wss://api.openmhz.com/socket.io/", "wmata"
+        )
+
+        self.assertEqual(profile, "safari15_5")
+        self.assertEqual(mock_session_cls.call_count, 3)
+
+    @patch(f"{_WS_MOD}.AsyncSession")
+    async def test_raises_runtime_error_when_all_profiles_blocked(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        b1 = _make_blocked_session()
+        b2 = _make_blocked_session()
+        b3 = _make_blocked_session()
+        mock_session_cls.side_effect = [b1, b2, b3]
+
+        with self.assertRaises(RuntimeError) as cm:
+            await _connect_with_fallback(
+                "wss://api.openmhz.com/socket.io/", "wmata"
+            )
+
+        self.assertIn("3 impersonation profiles failed", str(cm.exception))
+        self.assertIsInstance(cm.exception.__cause__, CurlError)
+
+    @patch(f"{_WS_MOD}.AsyncSession")
+    async def test_default_profile_list_when_env_unset(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        sessions = [
+            _make_blocked_session(),
+            _make_blocked_session(),
+            _make_blocked_session(),
+        ]
+        mock_session_cls.side_effect = sessions
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("OPENMHZ_IMPERSONATE_PROFILES", None)
+            with self.assertRaises(RuntimeError):
+                await _connect_with_fallback(
+                    "wss://api.openmhz.com/socket.io/", "wmata"
+                )
+
+        attempted = [
+            c.kwargs["impersonate"] for c in mock_session_cls.call_args_list
+        ]
+        self.assertEqual(
+            attempted, ["firefox133", "safari17_2_ios", "safari15_5"]
+        )
+
+    @patch(f"{_WS_MOD}.AsyncSession")
+    async def test_custom_profile_list_via_env(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        s1 = _make_blocked_session()
+        working, _ = _make_working_session()
+        mock_session_cls.side_effect = [s1, working]
+
+        with patch.dict(
+            os.environ, {"OPENMHZ_IMPERSONATE_PROFILES": "foo, bar"}
+        ):
+            _, _, profile = await _connect_with_fallback(
+                "wss://api.openmhz.com/socket.io/", "wmata"
+            )
+
+        self.assertEqual(profile, "bar")
+        attempted = [
+            c.kwargs["impersonate"] for c in mock_session_cls.call_args_list
+        ]
+        self.assertEqual(attempted, ["foo", "bar"])
+
+    @patch(f"{_WS_MOD}.AsyncSession")
+    async def test_single_profile_via_env_disables_fallback(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        blocked = _make_blocked_session()
+        mock_session_cls.return_value = blocked
+
+        with patch.dict(
+            os.environ, {"OPENMHZ_IMPERSONATE_PROFILES": "firefox133"}
+        ), self.assertRaises(RuntimeError):
+            await _connect_with_fallback(
+                "wss://api.openmhz.com/socket.io/", "wmata"
+            )
+
+        self.assertEqual(mock_session_cls.call_count, 1)
+
+    async def test_empty_profile_list_raises_at_construction(self) -> None:
+        with patch.dict(
+            os.environ, {"OPENMHZ_IMPERSONATE_PROFILES": ""}
+        ), self.assertRaises(ValueError):
+            await _connect_with_fallback(
+                "wss://api.openmhz.com/socket.io/", "wmata"
+            )
+
+    @patch(f"{_WS_MOD}.AsyncSession")
+    async def test_failed_profile_session_is_closed(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        b1 = _make_blocked_session()
+        b2 = _make_blocked_session()
+        working, _ = _make_working_session()
+        mock_session_cls.side_effect = [b1, b2, working]
+
+        await _connect_with_fallback(
+            "wss://api.openmhz.com/socket.io/", "wmata"
+        )
+
+        b1.close.assert_awaited_once()
+        b2.close.assert_awaited_once()
+        # The chosen working session should NOT be closed by the helper —
+        # caller (websocket_transport's finally block) is responsible for that.
+        working.close.assert_not_awaited()
+
+
+class TestWebsocketTransportLogging(unittest.IsolatedAsyncioTestCase):
+    @patch(f"{_WS_MOD}.AsyncSession")
+    async def test_logs_chosen_profile_on_success(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        frames = [*_make_handshake_frames()]
+        mock_ws = _MockWebSocket(frames)
+        mock_session = AsyncMock()
+        mock_session.ws_connect = AsyncMock(return_value=mock_ws)
+        mock_session_cls.return_value = mock_session
+
+        shutdown = asyncio.Event()
+        shutdown.set()
+        with self.assertLogs(_WS_MOD, level="INFO") as captured:
+            async with websocket_transport(
+                "wmata", "https://api.openmhz.com/", shutdown
+            ) as events:
+                async for _ in events:
+                    pass
+
+        connected_lines = [
+            r.getMessage()
+            for r in captured.records
+            if "WebSocket connected" in r.getMessage()
+        ]
+        self.assertEqual(len(connected_lines), 1)
+        self.assertIn("impersonate=firefox133", connected_lines[0])
+        self.assertIn("short_name=wmata", connected_lines[0])
