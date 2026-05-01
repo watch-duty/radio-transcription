@@ -10,21 +10,6 @@ export type LoginModalProps = {
   setOpen: (open: boolean) => void;
 };
 
-const style = {
-  position: 'absolute',
-  top: '50%',
-  left: '50%',
-  transform: 'translate(-50%, -50%)',
-  width: 400,
-  bgcolor: 'background.paper',
-  boxShadow: 24,
-  p: 4,
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 2,
-  alignItems: 'center',
-};
-
 function LoginModal({ open, setOpen }: LoginModalProps) {
   const navigate = useNavigate();
 
@@ -35,7 +20,22 @@ function LoginModal({ open, setOpen }: LoginModalProps) {
       aria-labelledby="modal-modal-title"
       aria-describedby="modal-modal-description"
     >
-      <Box sx={style}>
+      <Box
+        sx={{
+          position: 'absolute',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          width: 400,
+          bgcolor: 'background.paper',
+          boxShadow: 24,
+          p: 4,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 2,
+          alignItems: 'center',
+        }}
+      >
         <Typography variant="h6" component="h2">
           Login
         </Typography>
