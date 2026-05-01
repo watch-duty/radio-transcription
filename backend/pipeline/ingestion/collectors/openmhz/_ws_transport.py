@@ -148,9 +148,8 @@ async def _connect_with_fallback(
                 profile,
             )
         except CurlError as e:
-            if (
-                getattr(e, "code", 0) == _BLOCKED_LIBCURL_CODE
-                and "403" in str(e)
+            if getattr(e, "code", 0) == _BLOCKED_LIBCURL_CODE and "403" in str(
+                e
             ):
                 last_error = e
                 logger.warning(

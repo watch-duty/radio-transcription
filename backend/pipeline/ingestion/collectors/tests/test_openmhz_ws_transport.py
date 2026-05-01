@@ -632,9 +632,12 @@ class TestConnectWithFallback(unittest.IsolatedAsyncioTestCase):
         blocked = _make_blocked_session()
         mock_session_cls.return_value = blocked
 
-        with patch.dict(
-            os.environ, {"OPENMHZ_IMPERSONATE_PROFILES": "firefox133"}
-        ), self.assertRaises(RuntimeError):
+        with (
+            patch.dict(
+                os.environ, {"OPENMHZ_IMPERSONATE_PROFILES": "firefox133"}
+            ),
+            self.assertRaises(RuntimeError),
+        ):
             await _connect_with_fallback(
                 "wss://api.openmhz.com/socket.io/", "wmata"
             )
@@ -642,9 +645,10 @@ class TestConnectWithFallback(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mock_session_cls.call_count, 1)
 
     async def test_empty_profile_list_raises_value_error(self) -> None:
-        with patch.dict(
-            os.environ, {"OPENMHZ_IMPERSONATE_PROFILES": ""}
-        ), self.assertRaises(ValueError):
+        with (
+            patch.dict(os.environ, {"OPENMHZ_IMPERSONATE_PROFILES": ""}),
+            self.assertRaises(ValueError),
+        ):
             await _connect_with_fallback(
                 "wss://api.openmhz.com/socket.io/", "wmata"
             )
