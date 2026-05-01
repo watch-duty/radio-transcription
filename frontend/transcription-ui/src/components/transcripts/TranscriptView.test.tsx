@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 
+import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { listTranscripts } from '../../service/listTranscripts';
 import { renderWithQueryClient } from '../../test/testUtils';
@@ -29,6 +30,10 @@ vi.mock('../../service/listTranscripts', () => ({
 
 vi.mock('../../service/listFeeds', () => ({
   listFeeds: vi.fn(),
+}));
+
+vi.mock('../../service/getFeed', () => ({
+  getFeed: vi.fn(),
 }));
 
 // Mock AuthContext
@@ -73,6 +78,14 @@ describe('TranscriptView', () => {
         status: 'active' as const,
       },
     ]);
+    // Default mock for getFeed
+    vi.mocked(getFeed).mockResolvedValue({
+      id: 'feed123',
+      name: 'feed123',
+      sourceType: 'bcfy_feeds' as const,
+      status: 'active' as const,
+      lastHeartbeat: '2026-04-10T12:00:00Z',
+    });
   });
 
   afterEach(() => {
@@ -725,6 +738,66 @@ describe('TranscriptView', () => {
     await waitFor(() => {
       expect(listTranscripts).toHaveBeenCalledTimes(2);
       expect(screen.getByText('Newer Transcript')).toBeTruthy();
+    });
+
+    vi.useRealTimers();
+  });
+
+  it('polls for feed status in background', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+
+    vi.mocked(listTranscripts).mockResolvedValue({
+      transcripts: [],
+      nextToken: undefined,
+    });
+
+    renderTranscriptView(
+      <MemoryRouter initialEntries={['/?feedId=feed123']}>
+        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(getFeed).toHaveBeenCalledTimes(1);
+    });
+
+    // Advance time by 15 seconds
+    vi.advanceTimersByTime(15000);
+
+    await waitFor(() => {
+      expect(getFeed).toHaveBeenCalledTimes(2);
+    });
+
+    vi.useRealTimers();
+  });
+
+  it('displays the feed outlined status Chip and human-friendly relative time string', async () => {
+    const fixedNow = new Date('2026-04-10T12:05:00Z');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(fixedNow);
+
+    const mockFeed = {
+      id: 'feed123',
+      name: 'Feed 123',
+      sourceType: 'bcfy_feeds' as const,
+      status: 'active' as const,
+      lastHeartbeat: new Date(fixedNow.getTime() - 5 * 60 * 1000).toISOString(),
+    };
+    vi.mocked(getFeed).mockResolvedValue(mockFeed);
+    vi.mocked(listTranscripts).mockResolvedValue({
+      transcripts: mockTranscripts,
+      nextToken: undefined,
+    });
+
+    renderTranscriptView(
+      <MemoryRouter initialEntries={['/?feedId=feed123']}>
+        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Active')).toBeTruthy();
+      expect(screen.getByText('Last updated: 5 minutes ago')).toBeTruthy();
     });
 
     vi.useRealTimers();

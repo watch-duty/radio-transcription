@@ -95,13 +95,12 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
                 variant="dot"
                 sx={{
                   py: 0,
-                  px: 1,
+                  px: 0.5,
                   display: 'flex',
                   alignItems: 'center',
                 }}
-              >
-                {statusConfig?.displayText ?? status}
-              </Badge>
+              ></Badge>
+              {statusConfig?.displayText ?? status}
               {lastHeartbeat && (
                 <Typography
                   variant="caption"
