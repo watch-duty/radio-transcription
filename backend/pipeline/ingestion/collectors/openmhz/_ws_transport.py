@@ -139,9 +139,7 @@ async def _connect_with_fallback(
                 candidate.ws_connect(ws_url),
                 timeout=_PROFILE_CONNECT_TIMEOUT_SEC,
             )
-            success = True
-            return candidate, ws, profile
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             last_error = e
             logger.warning(
                 "WS connect timeout (>%.1fs): short_name=%s impersonate=%s",
@@ -165,6 +163,9 @@ async def _connect_with_fallback(
                 # the WS upgrade) — fingerprint switch won't help; let it
                 # propagate after cleanup.
                 raise
+        else:
+            success = True
+            return candidate, ws, profile
         finally:
             if not success:
                 with contextlib.suppress(Exception):

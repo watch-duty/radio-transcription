@@ -406,7 +406,7 @@ def _make_blocked_session() -> AsyncMock:
 def _make_timeout_session() -> AsyncMock:
     """An AsyncSession whose ws_connect raises asyncio.TimeoutError."""
     s = AsyncMock()
-    s.ws_connect = AsyncMock(side_effect=asyncio.TimeoutError())
+    s.ws_connect = AsyncMock(side_effect=TimeoutError())
     s.close = AsyncMock()
     return s
 
@@ -484,7 +484,8 @@ class TestConnectWithFallback(unittest.IsolatedAsyncioTestCase):
         self, mock_session_cls: MagicMock
     ) -> None:
         """A non-22 CurlError (TLS handshake, network, DNS) is not a
-        Cloudflare bot block — fingerprint switch can't help, re-raise."""
+        Cloudflare bot block — fingerprint switch can't help, re-raise.
+        """
         non_22 = AsyncMock()
         non_22.ws_connect = AsyncMock(
             side_effect=CurlError(
@@ -508,7 +509,8 @@ class TestConnectWithFallback(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """A code-22 CurlError that isn't 403 (e.g., 401 or 5xx during WS
         upgrade) is structurally an "HTTP returned error" but isn't a
-        Cloudflare bot block. Profile rotation won't fix it — re-raise."""
+        Cloudflare bot block. Profile rotation won't fix it — re-raise.
+        """
         non_403 = AsyncMock()
         non_403.ws_connect = AsyncMock(
             side_effect=CurlError(
