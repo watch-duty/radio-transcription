@@ -1,6 +1,7 @@
 """Utilities for distributed tracing in Apache Beam."""
 
 import os
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 
@@ -12,25 +13,43 @@ from opentelemetry.sdk.trace.export import (
     SimpleSpanProcessor,
 )
 from opentelemetry.trace import (
-    NonRecordingSpan,
     Span,
-    SpanContext,
-    TraceFlags,
     get_current_span,
     get_tracer,
-    set_span_in_context,
+    get_tracer_provider,
     set_tracer_provider,
+)
+from opentelemetry.trace.propagation.tracecontext import (
+    TraceContextTextMapPropagator,
 )
 
 from backend.pipeline.common.env import is_gcp_env
 
+_setup_lock = threading.Lock()
+
 
 def setup_tracing(*, use_batch: bool = True) -> None:
-    """Sets up tracing for the context.
+    """Sets up tracing for the context thread-safely.
 
     Messages are sent to CloudTrace through the span provider and processor.
+
+    NOTE: This configuration only protects against duplicate concurrent initialization
+    within a single Python worker process space. Distributed Dataflow worker instances
+    will spin up separate process environments.
     """
-    if is_gcp_env():
+    if not is_gcp_env():
+        return
+
+    current_provider = get_tracer_provider()
+    if isinstance(current_provider, TracerProvider):
+        return
+
+    with _setup_lock:
+        # Double check locking pattern after acquiring lock
+        current_provider = get_tracer_provider()
+        if isinstance(current_provider, TracerProvider):
+            return
+
         project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or ""
         provider = TracerProvider()
         exporter = CloudTraceSpanExporter(project_id=project_id)
@@ -52,40 +71,35 @@ def get_current_trace_id() -> str:
     return ""
 
 
-def create_trace_context(trace_id: str) -> Context:
-    """Creates a tracing context from a trace_id string.
+def extract_trace_context(attributes: dict[str, str] | None) -> Context:
+    """Restores OpenTelemetry trace context from Message Attributes using W3C TraceContext.
 
     Args:
-        trace_id: A 32-character hex string representing the trace ID.
+        attributes: Pub/Sub Message metadata attribute key-value pairs.
 
     Returns:
-        An OpenTelemetry Context object.
+        An OpenTelemetry Context.
     """
-    if not trace_id:
-        return Context()
+    if attributes and "traceparent" in attributes:
+        return TraceContextTextMapPropagator().extract(carrier=attributes)
 
-    parent_context = SpanContext(
-        trace_id=int(trace_id, 16),
-        span_id=1,
-        is_remote=True,
-        trace_flags=TraceFlags(1),
-    )
-    parent_span = NonRecordingSpan(parent_context)
-    return set_span_in_context(parent_span)
+    return Context()
 
 
 @contextmanager
 def with_tracer_context(
-    trace_id: str, span_name: str, tracer_name: str
+    traceparent: str,
+    span_name: str,
+    tracer_name: str,
 ) -> Iterator[Span]:
     """Context manager to create a trace context and start a span.
 
     Args:
-        trace_id: The trace ID string.
+        traceparent: The trace parent string.
         span_name: The name of the span to create.
         tracer_name: The name of the tracer (usually __name__).
     """
-    context = create_trace_context(trace_id)
+    context = extract_trace_context({"traceparent": traceparent})
     tracer = get_tracer(tracer_name)
     with tracer.start_as_current_span(span_name, context=context) as span:
         yield span
