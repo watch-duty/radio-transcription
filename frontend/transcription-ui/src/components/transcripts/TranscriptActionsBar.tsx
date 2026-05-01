@@ -100,7 +100,16 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
                   alignItems: 'center',
                 }}
               ></Badge>
-              {statusConfig?.displayText ?? status}
+              <Typography
+                variant="body2"
+                sx={{
+                  color: `${statusConfig?.color ?? 'error'}.main`,
+                  fontWeight: 600,
+                  textTransform: 'uppercase',
+                }}
+              >
+                {statusConfig?.displayText ?? status}
+              </Typography>
               {lastHeartbeat && (
                 <Typography
                   variant="caption"
