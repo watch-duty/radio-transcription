@@ -1,8 +1,8 @@
 import type {
+  BackendFeedStatus,
   Feed,
   FeedCreate,
   FeedStatus,
-  SimplifiedFeedStatus,
   SourceType,
 } from '@transcription/common';
 import { GoogleAuth } from 'google-auth-library';
@@ -35,7 +35,7 @@ interface FeedBackend extends BaseFeedBackend {
   id: string;
   source_feed_id: string;
   external_id: string;
-  status: FeedStatus;
+  status: BackendFeedStatus;
   last_heartbeat: string | null;
 }
 
@@ -83,7 +83,7 @@ function getArchiveUrl(
   }
 }
 
-function simplifyStatus(status: FeedStatus): SimplifiedFeedStatus {
+function convertFeedStatusBackend(status: BackendFeedStatus): FeedStatus {
   return status === 'active' ? 'active' : 'inactive';
 }
 
@@ -96,7 +96,7 @@ function convertFeedBackend(response: FeedBackend): Feed {
     externalId: response.external_id,
     sourceUrl: getSourceUrl(response.source_type, response.source_feed_id),
     archiveUrl: getArchiveUrl(response.source_type, response.source_feed_id),
-    status: simplifyStatus(response.status),
+    status: convertFeedStatusBackend(response.status),
     lastHeartbeat: response.last_heartbeat ?? undefined,
   };
 }

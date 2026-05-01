@@ -1,13 +1,13 @@
 export type SourceType = 'bcfy_feeds' | 'bcfy_calls' | 'echo' | 'openmhz';
 
-export type FeedStatus =
+export type BackendFeedStatus =
   | 'unclaimed'
   | 'active'
   | 'failing'
   | 'quarantined'
   | 'deactivated';
 
-export type SimplifiedFeedStatus = 'active' | 'inactive';
+export type FeedStatus = 'active' | 'inactive';
 
 
 export interface BaseFeed {
@@ -21,7 +21,7 @@ export interface Feed extends BaseFeed {
   externalId?: string;
   sourceUrl?: string;
   archiveUrl?: string;
-  status: SimplifiedFeedStatus;
+  status: FeedStatus;
   lastHeartbeat?: string;
 }
 

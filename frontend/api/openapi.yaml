@@ -250,7 +250,7 @@ components:
           $ref: "#/components/schemas/RuleConditions"
       type: object
       additionalProperties: false
-    SimplifiedFeedStatus:
+    FeedStatus:
       type: string
       enum:
         - active
@@ -279,7 +279,7 @@ components:
         archiveUrl:
           type: string
         status:
-          $ref: "#/components/schemas/SimplifiedFeedStatus"
+          $ref: "#/components/schemas/FeedStatus"
         lastHeartbeat:
           type: string
       required:
