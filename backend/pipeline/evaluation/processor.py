@@ -5,7 +5,10 @@ import logging
 from typing import TYPE_CHECKING
 
 from backend.pipeline.common.exceptions import AlreadyExistsError
-from backend.pipeline.common.tracing_utils import with_tracer_context
+from backend.pipeline.common.tracing_utils import (
+    get_current_trace_id,
+    with_tracer_context,
+)
 from backend.pipeline.schema_types import (
     transcribed_audio_pb2 as transcribed_pb2,
 )
@@ -116,6 +119,7 @@ class EvaluationEventProcessor:
                     self.output_topic_path,
                     encoded_data,
                     ordering_key=evaluated_payload.feed_id,
+                    traceparent=get_current_trace_id(),
                 )
                 message_id = future.result()
                 logger.info(
