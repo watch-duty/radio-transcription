@@ -31,6 +31,7 @@ CI usage:
 Local re-run against a single file:
   python3 scripts/lint_embedded_configs.py --terraform-dir terraform/modules/container_mig/
 """
+
 from __future__ import annotations
 
 import argparse
@@ -122,14 +123,20 @@ def extract_write_files(rendered: str) -> list[tuple[str, str]]:
 # ---------------------------------------------------------------------------
 
 # Snippet-level blocks (go inside http{}): server, upstream, location.
-_NGINX_SNIPPET_RE = re.compile(r"^\s*(?:server|upstream|location)\s*\{", re.MULTILINE)
+_NGINX_SNIPPET_RE = re.compile(
+    r"^\s*(?:server|upstream|location)\s*\{", re.MULTILINE
+)
 # Top-level blocks (must be at file root): events, http, stream, mail.
-_NGINX_TOPLEVEL_RE = re.compile(r"^\s*(?:events|http|stream|mail)\s*\{", re.MULTILINE)
+_NGINX_TOPLEVEL_RE = re.compile(
+    r"^\s*(?:events|http|stream|mail)\s*\{", re.MULTILINE
+)
 
 
 def looks_like_nginx(content: str) -> bool:
     """Heuristic: extracted file is nginx config if it has nginx-specific blocks."""
-    return bool(_NGINX_SNIPPET_RE.search(content) or _NGINX_TOPLEVEL_RE.search(content))
+    return bool(
+        _NGINX_SNIPPET_RE.search(content) or _NGINX_TOPLEVEL_RE.search(content)
+    )
 
 
 def is_full_nginx_conf(content: str) -> bool:
@@ -151,7 +158,11 @@ def lint_nginx(content: str) -> tuple[bool, str]:
         (gets included inside the image's existing http{} block)
     """
     full_conf = is_full_nginx_conf(content)
-    mount_path = "/etc/nginx/nginx.conf" if full_conf else "/etc/nginx/conf.d/default.conf"
+    mount_path = (
+        "/etc/nginx/nginx.conf"
+        if full_conf
+        else "/etc/nginx/conf.d/default.conf"
+    )
 
     with tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False) as f:
         f.write(content)
@@ -159,12 +170,18 @@ def lint_nginx(content: str) -> tuple[bool, str]:
     try:
         result = subprocess.run(
             [
-                "docker", "run", "--rm",
-                "-v", f"{tmp_path}:{mount_path}:ro",
+                "docker",
+                "run",
+                "--rm",
+                "-v",
+                f"{tmp_path}:{mount_path}:ro",
                 "mirror.gcr.io/library/nginx:1.27-alpine",
-                "nginx", "-t",
+                "nginx",
+                "-t",
             ],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True,
+            text=True,
+            timeout=120,
             check=False,  # We inspect returncode ourselves below
         )
         output = (result.stderr or "") + (result.stdout or "")
