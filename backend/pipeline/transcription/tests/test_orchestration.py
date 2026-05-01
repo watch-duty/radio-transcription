@@ -1,3 +1,7 @@
+import argparse
+import json
+from pathlib import Path
+
 import pytest
 
 from backend.pipeline.transcription.options import TranscriptionOptions
@@ -101,3 +105,39 @@ def test_pipeline_invalid_timeout_with_bypass() -> None:
         match=r"stale_timeout_ms .* must be strictly greater than out_of_order_timeout_ms",
     ):
         get_pipeline(options)
+
+
+def test_metadata_json_parameters_parity() -> None:
+    """Enforces registration of new programmatic options in metadata.json."""
+    parser = argparse.ArgumentParser()
+    TranscriptionOptions._add_argparse_args(parser)
+
+    # Read arguments from pipeline definition, excluding general plumbing args
+    declared_options = {
+        action.dest
+        for action in parser._actions
+        if action.dest
+        not in (
+            "help",
+            "id_label",
+            "transcriber_type",
+            "transcriber_config",
+            "vad_config",
+            "significant_gap_ms",
+            "stale_timeout_ms",
+            "vad_pre_roll_ms",
+            "vad_post_roll_ms",
+        )
+    }
+
+    # Parse template specification
+    meta_path = Path(__file__).parent.parent / "metadata.json"
+    with open(meta_path) as f:
+        metadata = json.load(f)
+
+    metadata_parameters = {param["name"] for param in metadata["parameters"]}
+
+    missing = declared_options - metadata_parameters
+    assert not missing, (
+        f"Config options defined in options.py missing from metadata.json spec: {missing}"
+    )
