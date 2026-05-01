@@ -20,7 +20,11 @@ describe('getFeed', () => {
 
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => mockData,
+      text: async () => JSON.stringify(mockData),
+      headers: {
+        get: (key: string) =>
+          key === 'content-type' ? 'application/json' : null,
+      },
     });
 
     const feed = await getFeed('1', 'tokenXYZ');
@@ -42,10 +46,12 @@ describe('getFeed', () => {
       ok: false,
       status: 404,
       statusText: 'Not Found',
+      headers: {
+        get: () => null,
+      },
+      text: async () => 'Not Found',
     });
 
-    await expect(getFeed('1', 'tokenXYZ')).rejects.toThrow(
-      'Error: 404 Not Found'
-    );
+    await expect(getFeed('1', 'tokenXYZ')).rejects.toThrow(/404.*Not Found/);
   });
 });

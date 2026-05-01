@@ -1,7 +1,9 @@
 import type { Feed } from '@transcription/common';
 
+import { apiFetch } from '../utils/apiUtils';
+
 export async function getFeed(feedId: string, token: string): Promise<Feed> {
-  const response = await fetch(
+  return apiFetch<Feed>(
     `${import.meta.env.VITE_API_BASE_URL}/api/v1/feeds/${feedId}`,
     {
       headers: {
@@ -9,11 +11,4 @@ export async function getFeed(feedId: string, token: string): Promise<Feed> {
       },
     }
   );
-
-  if (!response.ok) {
-    throw new Error(`Error: ${response.status} ${response.statusText}`);
-  }
-
-  const data = await response.json();
-  return data;
 }

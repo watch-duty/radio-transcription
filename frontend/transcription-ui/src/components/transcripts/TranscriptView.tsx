@@ -395,7 +395,6 @@ export function TranscriptView({
     initialData: feedIdToFeedMap.get(searchedFeedId) || undefined,
   });
 
-
   const {
     data: rules,
     error: rulesError,
