@@ -18,9 +18,14 @@ from apache_beam.transforms.userstate import (
     on_timer,
 )
 from apache_beam.utils.timestamp import Timestamp
+from opentelemetry import trace
 
 from backend.pipeline.common.constants import MS_PER_SECOND, SAMPLE_RATE_HZ
 from backend.pipeline.common.storage.gcs_uploader import GCSAudioUploader
+from backend.pipeline.common.tracing_utils import (
+    extract_trace_context,
+    setup_tracing,
+)
 from backend.pipeline.transcription.audio.audio_processor import AudioProcessor
 from backend.pipeline.transcription.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
@@ -170,6 +175,7 @@ def process_ordering(
         expected_next_ts=curr_context.expected_next_chunk_start_ms,
         buffer_elements=buffer_elements,
         chunk_duration_ms=metadata.duration_ms,
+        traceparent=metadata.traceparent,
     )
 
     if was_late:
@@ -256,6 +262,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         self.stitch_config = stitch_config
 
     def setup(self) -> None:
+        setup_tracing()
         self.audio_processor = AudioProcessor(
             self.stitch_config.vad_type,
             self.stitch_config.vad_config,
@@ -411,6 +418,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                     end_audio_offset_ms=action.end_audio_offset_ms,
                     transmission_id=transmission_id,
                     feed_metadata=curr_ctx.feed_metadata,
+                    traceparent=action.traceparent,
                 ),
             )
 
@@ -493,6 +501,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                             feed_metadata=cast(
                                 "FeedMetadata", curr_context.feed_metadata
                             ),
+                            traceparent=chunk.traceparent,
                         ),
                     )
                     continue
@@ -523,6 +532,9 @@ class OrderedStitchAudioFn(beam.DoFn):
                     start_audio_offset_ms=curr_context.start_audio_offset_ms,
                     end_audio_offset_ms=None,
                     buffer_duration_ms=curr_context.buffer_duration_ms,
+                    traceparent=curr_context.traceparent
+                    if curr_context.traceparent is not None
+                    else chunk.traceparent,
                 )
 
                 # 3. Process through state machine!
@@ -795,6 +807,7 @@ class OrderedBypassFn(beam.DoFn):
         self.audio_processor: AudioProcessor | None = None
 
     def setup(self) -> None:
+        setup_tracing()
         self.audio_processor = AudioProcessor(
             self.stitch_config.vad_type,
             self.stitch_config.vad_config,
@@ -986,6 +999,7 @@ class TranscribeAudioFn(beam.DoFn):
     @override
     def setup(self) -> None:
         """Initializes internal clients once per worker."""
+        setup_tracing()
         # Grab the global pool singleton
         self.shared_resources = SHARED_RESOURCE_HANDLE.acquire(SharedResources)
 
@@ -1123,11 +1137,22 @@ class TranscribeAudioFn(beam.DoFn):
     ]:
         """Submits the consolidated flushed buffer strictly sequentially to the external transcription API."""
         feed_id, request = element
+        context = extract_trace_context(
+            {"traceparent": request.traceparent}
+            if request.traceparent
+            else None
+        )
+        tracer = trace.get_tracer(__name__)
+
+        outputs = []
         try:
-            transcribed = self._export_and_transcribe(request)
-            if transcribed:
-                self.transcription_count.inc()
-                yield transcribed
+            with tracer.start_as_current_span(
+                "transcribe_audio", context=context
+            ):
+                transcribed = self._export_and_transcribe(request)
+                if transcribed:
+                    self.transcription_count.inc()
+                    outputs.append(transcribed)
         except (ValueError, Exception) as e:
             if not self.config.route_to_dlq:
                 raise
@@ -1147,11 +1172,15 @@ class TranscribeAudioFn(beam.DoFn):
                     "Unexpected error transcribing buffer for feed %s", feed_id
                 )
 
-            yield beam.pvalue.TaggedOutput(
-                DEAD_LETTER_QUEUE_TAG,
-                {
-                    "error": str(e),
-                    "feed_id": feed_id,
-                    "error_type": error_type,
-                },
+            outputs.append(
+                beam.pvalue.TaggedOutput(
+                    DEAD_LETTER_QUEUE_TAG,
+                    {
+                        "error": str(e),
+                        "feed_id": feed_id,
+                        "error_type": error_type,
+                    },
+                )
             )
+
+        yield from outputs

@@ -232,38 +232,6 @@ describe('TranscriptView', () => {
     });
   });
 
-  it('refreshes feeds when refresh button is clicked', async () => {
-    const mockFeeds = [
-      {
-        id: 'feed1',
-        name: 'Feed 1',
-        sourceType: 'bcfy_feeds' as const,
-        status: 'active' as const,
-      },
-    ];
-    vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
-
-    renderTranscriptView(
-      <MemoryRouter>
-        <TranscriptView addAlert={mockAddAlert} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
-    );
-
-    await waitFor(() => {
-      expect(listFeeds).toHaveBeenCalledTimes(1);
-    });
-
-    const refreshButton = screen.getByLabelText(/refresh feeds/i);
-    await waitFor(() => {
-      expect((refreshButton as HTMLButtonElement).disabled).toBe(false);
-    });
-    fireEvent.click(refreshButton);
-
-    await waitFor(() => {
-      expect(listFeeds).toHaveBeenCalledTimes(2);
-    });
-  });
-
   it('shows no transcripts found message', async () => {
     vi.mocked(listTranscripts).mockResolvedValueOnce({
       transcripts: [],

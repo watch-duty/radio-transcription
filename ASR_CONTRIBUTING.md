@@ -5,6 +5,9 @@ Each model is developed on its own colab, which is run on a Jupyter notebook. Yo
 
 When developing locally, we have a standard docker-compose.yml file which can be used to spin up a jupyter notebook with all the necessary dependencies. See `asr-eval-docker-compose.yml`.
 
+> [!NOTE]
+> Use the `asr-eval` container if you need NeMo/Canary support. Otherwise, use the lightweight `notebooks` container for pure Hugging Face evaluations like Whisper or Cohere to avoid heavy dependency overhead.
+
 If you want to run the Docker image with GPUs, you will need to create a GCE instance in your GCP project with a GPU attached. There is a Terraform definition under `/terraform/modules/asr_evaluation` which can create a dedicated instance for you. Running GPUs can be costly, so you will need to manually turn on your instance. When the instance starts, there is an auto shutoff script that runs after a specified number of hours, which you can configure through the `auto_shutdown_hours` Terraform variable.
 
 Since each contributor will have their own dedicated instance, make sure to use a unique name for your instance to avoid conflicts. When you run the terraform plan, the state will be saved locally. You'll want to keep it so that you can easily make changes to your instance if the definition gets updated.
@@ -79,3 +82,63 @@ gcloud compute ssh <your_instance_name> \
 ```
 
 Alternatively, if you want to use VSCode or your local IDE, you can also use Remote SSH. This way you won't have to keep syncing changes between your machine and your local code.
+
+## Adding a New Model Evaluation
+
+To add a new model to the evaluation framework, follow these guidelines:
+
+1.  **Create a Notebook**: Create a new notebook in `model/colabs/` named `evaluate_[model_name].ipynb`.
+2.  **Use the Common Runner**: Import `run_inference_pipeline` from `colabs.common.inference_pipeline_runner` to handle the evaluation loop. This handles downloading, preprocessing, and cleanup automatically.
+3.  **Define Required Callables**:
+    *   `prompt_formatter(entry, local_path)`: Returns the prompt structure for the model.
+    *   `inference_fn(model, prompts)`: Runs inference on a batch of prompts.
+    *   `decode_fn(output, model)`: Extracts the text transcription from the output.
+4.  **Dependencies**: If the model requires new packages, add them to `model/notebook_docker/requirements.txt`. If a cutting-edge version is needed (e.g. not in stable release yet), you can use a Git URL (e.g., `git+https://github.com/...`).
+
+## Docker Commands for Maintenance
+
+If you make changes to the `requirements.txt` or the Dockerfiles, use these commands to rebuild and test:
+
+*   **Rebuild Image**:
+    ```bash
+    docker compose -f asr-eval-docker-compose.yml build asr-eval
+    ```
+*   **Start Container**:
+    ```bash
+    docker compose -f asr-eval-docker-compose.yml up asr-eval
+    ```
+*   **Run CPU Version**:
+    ```bash
+    docker compose -f asr-eval-docker-compose.yml up asr-eval-cpu
+    ```
+
+## Running Baseline Evaluations
+
+If you want to evaluate a model on a public dataset (like LibriSpeech) to get a baseline Word Error Rate (WER) score, you can use the `run_test_baseline_inference_evaluation` function in `inference_pipeline_runner.py`.
+
+This function uses Hugging Face datasets in streaming mode, so it doesn't require downloading the full dataset.
+
+### Example Usage
+
+Add this to a cell in your model notebook:
+
+```python
+from common.inference_pipeline_runner import run_test_baseline_inference_evaluation
+
+# Run the baseline evaluation on Librispeech
+wer_score, predictions, references = run_test_baseline_inference_evaluation(
+    model=model, 
+    prompt_fn=prompt_formatter,
+    inference_fn=inference_fn,
+    decode_fn=decode_fn,
+    num_examples=20,  # Number of examples to test, 0 means test on the whole dataset
+    dataset_name="librispeech_asr",
+    dataset_config="clean",
+    split="test"
+)
+
+print(f"Final WER Score: {wer_score}")
+```
+
+> [!IMPORTANT]
+> Ensure that your `prompt_fn` can handle `None` being passed as the `entry` argument, as public datasets do not have the custom metadata structure of your specific manifests.

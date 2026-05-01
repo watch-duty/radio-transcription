@@ -73,10 +73,13 @@ def get_pipeline(
     options = pipeline_options.view_as(TranscriptionOptions)
 
     # Validate logical pipeline timeout configuration rules
-    ooo_timeout = (
-        options.continuous_out_of_order_timeout_ms
-        or DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS
-    )
+    ooo_timeout = options.out_of_order_timeout_ms
+    if ooo_timeout is None:
+        if options.bypass_stitching:
+            ooo_timeout = DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS
+        else:
+            ooo_timeout = DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS
+
     stale_timeout = options.stale_timeout_ms or DEFAULT_STALE_TIMEOUT_MS
 
     if ooo_timeout >= stale_timeout:
@@ -142,8 +145,7 @@ def get_pipeline(
         )
 
         order_config = OrderRestorerConfig(
-            out_of_order_timeout_ms=options.segmented_out_of_order_timeout_ms
-            or DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS,
+            out_of_order_timeout_ms=ooo_timeout,
         )
 
         stitching_results = parsed[
@@ -163,8 +165,7 @@ def get_pipeline(
         ] | "OrderedStitchAudio" >> beam.ParDo(
             OrderedStitchAudioFn(
                 order_config=OrderRestorerConfig(
-                    out_of_order_timeout_ms=options.continuous_out_of_order_timeout_ms
-                    or DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS,
+                    out_of_order_timeout_ms=ooo_timeout,
                 ),
                 stitch_config=download_config,
             )

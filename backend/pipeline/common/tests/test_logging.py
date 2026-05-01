@@ -8,8 +8,8 @@ class TestLogging(TestCase):
     def setUp(self) -> None:
         setup_logging.cache_clear()
 
-    @mock.patch("backend.pipeline.common.logging.trace.set_tracer_provider")
-    @mock.patch("backend.pipeline.common.logging.CloudTraceSpanExporter")
+    @mock.patch("backend.pipeline.common.tracing_utils.set_tracer_provider")
+    @mock.patch("backend.pipeline.common.tracing_utils.CloudTraceSpanExporter")
     @mock.patch("backend.pipeline.common.logging.cloud_logging")
     def test_setup_logging_gcp(
         self, mock_cloud_logging, mock_exporter, mock_set_provider
@@ -19,8 +19,14 @@ class TestLogging(TestCase):
         mock_cloud_logging.Client.return_value = mock_client_inst
 
         # Explicitly mock is_gcp_env to return True to trigger the GCP logging path
-        with mock.patch(
-            "backend.pipeline.common.logging.is_gcp_env", return_value=True
+        with (
+            mock.patch(
+                "backend.pipeline.common.logging.is_gcp_env", return_value=True
+            ),
+            mock.patch(
+                "backend.pipeline.common.tracing_utils.is_gcp_env",
+                return_value=True,
+            ),
         ):
             with mock.patch.dict(
                 "os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"}
