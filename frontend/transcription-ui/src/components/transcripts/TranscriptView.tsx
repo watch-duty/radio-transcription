@@ -34,7 +34,7 @@ import TranscriptDisplay from './TranscriptDisplay';
 
 interface TranscriptViewProps {
   triggerSnackbar: (message: string) => void;
-  handleError: (error: Error, titleMessage?: string) => void;
+  onError: (error: Error, titleMessage?: string) => void;
 }
 
 export type ListTranscriptsPage = {
@@ -52,7 +52,7 @@ const MAX_TRANSCRIPTS_POLLING_ITERATIONS = 10;
 
 export function TranscriptView({
   triggerSnackbar,
-  handleError,
+  onError,
 }: TranscriptViewProps) {
   const theme = useTheme();
   const { token } = useAuth();
@@ -102,9 +102,9 @@ export function TranscriptView({
 
   useEffect(() => {
     if (isFeedsError) {
-      handleError(feedsError, 'Loading Feeds');
+      onError(feedsError, 'Loading Feeds');
     }
-  }, [isFeedsError, feedsError, handleError]);
+  }, [isFeedsError, feedsError, onError]);
 
   // Memoizing the feed ID to feed map so we don't have to recreate it on every render.
   const feedIdToFeedMap = useMemo(() => {
@@ -208,9 +208,9 @@ export function TranscriptView({
 
   useEffect(() => {
     if (isTranscriptsError) {
-      handleError(transcriptsError, 'Loading transcripts');
+      onError(transcriptsError, 'Loading transcripts');
     }
-  }, [isTranscriptsError, transcriptsError, handleError]);
+  }, [isTranscriptsError, transcriptsError, onError]);
 
   const transcripts = useMemo(
     () =>
@@ -402,9 +402,9 @@ export function TranscriptView({
 
   useEffect(() => {
     if (isRulesError) {
-      handleError(rulesError, 'Loading rules');
+      onError(rulesError, 'Loading rules');
     }
-  }, [isRulesError, rulesError, handleError]);
+  }, [isRulesError, rulesError, onError]);
 
   // Memoizing the rule ID to name map so we don't have to recreate it on every render.
   const ruleIdToNameMap: Map<string, string> = useMemo(() => {

@@ -170,7 +170,7 @@ function App() {
               element={
                 <TranscriptView
                   triggerSnackbar={triggerSnackbar}
-                  handleError={handleError}
+                  onError={handleError}
                 />
               }
             />
