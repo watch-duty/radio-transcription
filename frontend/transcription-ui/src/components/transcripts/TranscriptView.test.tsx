@@ -83,10 +83,7 @@ describe('TranscriptView', () => {
   it('renders search field and fetch button', () => {
     renderTranscriptView(
       <MemoryRouter>
-        <TranscriptView
-          onError={mockHandleError}
-          triggerSnackbar={vi.fn()}
-        />
+        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
     );
     expect(screen.getByLabelText(/Select a registered feed/i)).toBeTruthy();
@@ -101,10 +98,7 @@ describe('TranscriptView', () => {
 
     renderTranscriptView(
       <MemoryRouter>
-        <TranscriptView
-          onError={mockHandleError}
-          triggerSnackbar={vi.fn()}
-        />
+        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
     );
 
@@ -151,10 +145,7 @@ describe('TranscriptView', () => {
 
     renderTranscriptView(
       <MemoryRouter>
-        <TranscriptView
-          onError={mockHandleError}
-          triggerSnackbar={vi.fn()}
-        />
+        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
     );
 
@@ -180,10 +171,7 @@ describe('TranscriptView', () => {
 
     renderTranscriptView(
       <MemoryRouter>
-        <TranscriptView
-          onError={mockHandleError}
-          triggerSnackbar={vi.fn()}
-        />
+        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
     );
 
@@ -216,10 +204,7 @@ describe('TranscriptView', () => {
 
     renderTranscriptView(
       <MemoryRouter>
-        <TranscriptView
-          onError={mockHandleError}
-          triggerSnackbar={vi.fn()}
-        />
+        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
     );
 
@@ -233,10 +218,7 @@ describe('TranscriptView', () => {
 
     renderTranscriptView(
       <MemoryRouter>
-        <TranscriptView
-          onError={mockHandleError}
-          triggerSnackbar={vi.fn()}
-        />
+        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
     );
 
@@ -256,10 +238,7 @@ describe('TranscriptView', () => {
 
     renderTranscriptView(
       <MemoryRouter>
-        <TranscriptView
-          onError={mockHandleError}
-          triggerSnackbar={vi.fn()}
-        />
+        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
     );
 
@@ -305,10 +284,7 @@ describe('TranscriptView', () => {
 
     renderTranscriptView(
       <MemoryRouter>
-        <TranscriptView
-          onError={mockHandleError}
-          triggerSnackbar={vi.fn()}
-        />
+        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
     );
 
@@ -359,10 +335,7 @@ describe('TranscriptView', () => {
 
     renderTranscriptView(
       <MemoryRouter>
-        <TranscriptView
-          onError={mockHandleError}
-          triggerSnackbar={vi.fn()}
-        />
+        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
     );
 
@@ -421,10 +394,7 @@ describe('TranscriptView', () => {
 
     renderTranscriptView(
       <MemoryRouter initialEntries={['/?feedId=feed123']}>
-        <TranscriptView
-          onError={mockHandleError}
-          triggerSnackbar={vi.fn()}
-        />
+        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
     );
 
@@ -462,10 +432,7 @@ describe('TranscriptView', () => {
       <MemoryRouter
         initialEntries={['/?feedId=feed123&transmissionId=target-id']}
       >
-        <TranscriptView
-          onError={mockHandleError}
-          triggerSnackbar={vi.fn()}
-        />
+        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
     );
 
@@ -506,10 +473,7 @@ describe('TranscriptView', () => {
 
     renderTranscriptView(
       <MemoryRouter initialEntries={['/?feedId=feed123']}>
-        <TranscriptView
-          onError={mockHandleError}
-          triggerSnackbar={vi.fn()}
-        />
+        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
     );
 
@@ -570,10 +534,7 @@ describe('TranscriptView', () => {
       <MemoryRouter
         initialEntries={[`/?feedId=feed123&timestamp=${testTimestamp}`]}
       >
-        <TranscriptView
-          onError={mockHandleError}
-          triggerSnackbar={vi.fn()}
-        />
+        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
     );
 
@@ -649,10 +610,7 @@ describe('TranscriptView', () => {
 
     renderTranscriptView(
       <MemoryRouter>
-        <TranscriptView
-          onError={mockHandleError}
-          triggerSnackbar={vi.fn()}
-        />
+        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
     );
 
@@ -742,10 +700,7 @@ describe('TranscriptView', () => {
 
     renderTranscriptView(
       <MemoryRouter>
-        <TranscriptView
-          onError={mockHandleError}
-          triggerSnackbar={vi.fn()}
-        />
+        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
       </MemoryRouter>
     );
 
