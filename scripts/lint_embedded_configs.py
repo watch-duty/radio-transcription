@@ -18,12 +18,32 @@ Robust by design:
   * write_files extraction uses yaml.safe_load (not regex) so key
     ordering, quoting style, and comment placement don't matter.
   * Unknown ${var} references substitute to a safe placeholder so new
-    terraform vars don't silently break the lint.
+    terraform vars don't silently break the lint. ESCAPED $${...} (an
+    nginx variable, not a terraform var) is left intact via negative
+    lookbehind.
   * HCL `if/else/endif` AND `for/endfor` directives, including the
     whitespace-stripping `~` variants, are removed before parsing.
   * Mount path for nginx -t auto-detected: full nginx.conf (top-level
     `events {` / `http {`) vs conf.d snippet (just `server {` /
     `upstream {`).
+  * GitHub Actions `::error` annotations URL-encode newlines (%0A) so
+    the full nginx -t output renders inline in the PR diff annotation,
+    not just the first line.
+
+Known limitations (intentional trade-offs):
+  * HCL `if/else` branches are NOT evaluated — both bodies are kept
+    and linted as one. If an `if/else` defines mutually-exclusive
+    nginx directives (e.g., different `ssl_certificate` per env),
+    nginx -t will see both and reject as duplicate. Workarounds:
+    define each variant in its own .tftpl, or accept the lint
+    requires the union of all branches to be valid.
+  * `looks_like_nginx()` requires a block declaration (`server {`,
+    `upstream {`, etc.) to identify nginx content. Pure-directive
+    snippets meant to be `include`'d elsewhere (e.g., a file with
+    only `client_max_body_size 50m;`) are silently SKIPPED — they
+    don't match the heuristic. If you ship such snippets, either add
+    a wrapping comment that triggers detection, or extend the
+    heuristic with a directive-only pattern.
 
 CI usage:
   python3 scripts/lint_embedded_configs.py --terraform-dir terraform/
@@ -61,7 +81,13 @@ _KNOWN_PLACEHOLDER_SUBS: dict[str, str] = {
 # terraform vars get free coverage; the lint never silently leaves raw
 # ${var} syntax for nginx (which would interpret it as an nginx variable
 # and emit "[emerg] unknown variable").
-_UNKNOWN_VAR_RE = re.compile(r"\$\{[^}]+\}")
+#
+# Negative lookbehind `(?<!\$)` skips ESCAPED terraform syntax like
+# `$${nginx_var}` — in HCL templates, `$$` is the escape for a literal
+# `$` and means "this is an nginx variable, not a terraform var". After
+# templatefile() renders, `$${nginx_var}` becomes `${nginx_var}` for
+# nginx to interpolate at request time. We must NOT touch those.
+_UNKNOWN_VAR_RE = re.compile(r"(?<!\$)\$\{[^}]+\}")
 _UNKNOWN_VAR_PLACEHOLDER = "lint_placeholder"
 
 # Strip HCL directives (if/else/endif AND for/endfor, with optional
@@ -212,9 +238,18 @@ def _process_tftpl(tftpl_path: Path) -> list[tuple[Path, str, str]]:
             print(f"  ok      {label}")
         else:
             print(f"  FAILED  {label}")
+            # Print human-readable output to logs first (with real newlines)
+            print(output)
+            # Then emit the GitHub Actions annotation. Workflow commands
+            # don't tolerate literal newlines — anything past the first \n
+            # falls out of the ::error and renders as plain log output, so
+            # the inline PR-diff annotation only shows the first line.
+            # URL-encoding \n as %0A keeps the multi-line nginx -t output
+            # inside the annotation block.
+            encoded_output = output.replace("\n", "%0A")
             print(
                 f"::error file={tftpl_path}::Embedded nginx config "
-                f"'{embedded_path}' failed nginx -t:\n{output}",
+                f"'{embedded_path}' failed nginx -t:%0A{encoded_output}",
             )
             failures.append((tftpl_path, embedded_path, output))
     return failures
