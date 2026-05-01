@@ -79,7 +79,7 @@ class TestEvaluationEventProcessor(unittest.TestCase):
             self.output_topic_path,
             self.evaluated_payload.SerializeToString(),
             ordering_key="1234",
-            trace_id="",
+            traceparent="",
         )
 
     def test_process_event_not_flagged_skips_publish(self) -> None:
@@ -195,7 +195,7 @@ class TestEvaluationEventProcessor(unittest.TestCase):
             self.output_topic_path,
             self.evaluated_payload.SerializeToString(),
             ordering_key="1234",
-            trace_id="",
+            traceparent="",
         )
 
     @patch("backend.pipeline.evaluation.processor.with_tracer_context")
