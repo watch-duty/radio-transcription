@@ -390,9 +390,15 @@ _BLOCKED_MSG = (
 
 
 def _make_blocked_session() -> AsyncMock:
-    """An AsyncSession whose ws_connect raises the Cloudflare-403 CurlError."""
+    """An AsyncSession whose ws_connect raises the Cloudflare-403 CurlError.
+
+    Real libcurl produces this with code=22 (CURLE_HTTP_RETURNED_ERROR) and
+    the "403" status in the formatted message. The discriminator in
+    `_connect_with_fallback` requires both the structured code AND "403"
+    in the message string.
+    """
     s = AsyncMock()
-    s.ws_connect = AsyncMock(side_effect=CurlError(_BLOCKED_MSG))
+    s.ws_connect = AsyncMock(side_effect=CurlError(_BLOCKED_MSG, code=22))
     s.close = AsyncMock()
     return s
 
@@ -474,13 +480,40 @@ class TestConnectWithFallback(unittest.IsolatedAsyncioTestCase):
         timed_out.close.assert_awaited_once()
 
     @patch(f"{_WS_MOD}.AsyncSession")
-    async def test_does_not_fall_back_on_non_403_curl_error(
+    async def test_does_not_fall_back_on_non_22_curl_error(
         self, mock_session_cls: MagicMock
     ) -> None:
+        """A non-22 CurlError (TLS handshake, network, DNS) is not a
+        Cloudflare bot block — fingerprint switch can't help, re-raise."""
+        non_22 = AsyncMock()
+        non_22.ws_connect = AsyncMock(
+            side_effect=CurlError(
+                "Failed to perform, curl: (35) TLS handshake error", code=35
+            )
+        )
+        non_22.close = AsyncMock()
+        mock_session_cls.return_value = non_22
+
+        with self.assertRaises(CurlError):
+            await _connect_with_fallback(
+                "wss://api.openmhz.com/socket.io/", "wmata"
+            )
+
+        self.assertEqual(mock_session_cls.call_count, 1)
+        non_22.close.assert_awaited_once()
+
+    @patch(f"{_WS_MOD}.AsyncSession")
+    async def test_does_not_fall_back_on_curl_22_non_403(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        """A code-22 CurlError that isn't 403 (e.g., 401 or 5xx during WS
+        upgrade) is structurally an "HTTP returned error" but isn't a
+        Cloudflare bot block. Profile rotation won't fix it — re-raise."""
         non_403 = AsyncMock()
         non_403.ws_connect = AsyncMock(
             side_effect=CurlError(
-                "Failed to perform, curl: (35) TLS handshake error"
+                "Failed to perform, curl: (22) Refused WebSockets upgrade: 401",
+                code=22,
             )
         )
         non_403.close = AsyncMock()

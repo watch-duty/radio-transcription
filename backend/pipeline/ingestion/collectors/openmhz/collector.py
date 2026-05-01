@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import datetime
 import logging
 import os
@@ -229,4 +230,11 @@ async def openmhz_collector(
             if await _sleep_or_shutdown(shutdown_event, backoff):
                 return
     finally:
-        await download_session.close()
+        # Protect against close() raising — if the worker is being cancelled
+        # mid-cleanup, an unprotected await could replace the original
+        # cancellation reason and leak the curl handle. `contextlib.suppress`
+        # only catches Exception (not BaseException/CancelledError), but for
+        # this single cleanup step that is the right scope: we want to swallow
+        # close() errors but still let cancellation propagate to the runtime.
+        with contextlib.suppress(Exception):
+            await download_session.close()
