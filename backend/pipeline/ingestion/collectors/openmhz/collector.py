@@ -132,7 +132,16 @@ async def openmhz_collector(
     transport_factory = _get_transport(transport_name)
 
     consecutive_ws_failures = 0
-    download_session = AsyncSession()
+    # media2.openmhz.com is Cloudflare-fronted (in front of Wasabi S3). Today's
+    # CF rule only blocks the WS upgrade on api.openmhz.com, but the same class
+    # of rule update could hit downloads next. Pre-impersonate defensively;
+    # firefox147 is the same default as the WS transport's first profile and
+    # was confirmed working against media2 on 2026-05-01.
+    download_session = AsyncSession(
+        impersonate=os.getenv(
+            "OPENMHZ_DOWNLOAD_IMPERSONATE_PROFILE", "firefox147"
+        ),
+    )
 
     try:
         while not shutdown_event.is_set():
