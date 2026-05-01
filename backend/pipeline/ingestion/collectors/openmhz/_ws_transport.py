@@ -105,14 +105,19 @@ async def _connect_with_fallback(
     last_error: BaseException | None = None
     for profile in profiles:
         candidate = AsyncSession(impersonate=profile)
+        # try/finally with `success` flag rather than `except Exception:` —
+        # asyncio.CancelledError extends BaseException, not Exception, so a
+        # task cancellation during ws_connect would otherwise leak the
+        # candidate session.
+        success = False
         try:
             ws = await asyncio.wait_for(
                 candidate.ws_connect(ws_url),
                 timeout=_PROFILE_CONNECT_TIMEOUT_SEC,
             )
+            success = True
+            return candidate, ws, profile
         except asyncio.TimeoutError as e:
-            with contextlib.suppress(Exception):
-                await candidate.close()
             last_error = e
             logger.warning(
                 "WS connect timeout (>%.1fs): short_name=%s impersonate=%s",
@@ -120,10 +125,7 @@ async def _connect_with_fallback(
                 short_name,
                 profile,
             )
-            continue
         except CurlError as e:
-            with contextlib.suppress(Exception):
-                await candidate.close()
             if _BLOCKED_SIGNATURE in str(e):
                 last_error = e
                 logger.warning(
@@ -131,13 +133,14 @@ async def _connect_with_fallback(
                     short_name,
                     profile,
                 )
-                continue
-            raise
-        except Exception:
-            with contextlib.suppress(Exception):
-                await candidate.close()
-            raise
-        return candidate, ws, profile
+            else:
+                # Non-403 CurlError (network, TLS, DNS) — fingerprint switch
+                # won't help; let it propagate after cleanup.
+                raise
+        finally:
+            if not success:
+                with contextlib.suppress(Exception):
+                    await candidate.close()
 
     msg = (
         f"All {len(profiles)} impersonation profiles failed for "

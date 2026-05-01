@@ -633,6 +633,26 @@ class TestConnectWithFallback(unittest.IsolatedAsyncioTestCase):
         # caller (websocket_transport's finally block) is responsible for that.
         working.close.assert_not_awaited()
 
+    @patch(f"{_WS_MOD}.AsyncSession")
+    async def test_session_closed_on_cancellation(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        """asyncio.CancelledError extends BaseException, so the cleanup path
+        must use try/finally rather than `except Exception:` — otherwise a
+        cancellation during ws_connect would leak the candidate session.
+        """
+        cancelling = AsyncMock()
+        cancelling.ws_connect = AsyncMock(side_effect=asyncio.CancelledError())
+        cancelling.close = AsyncMock()
+        mock_session_cls.return_value = cancelling
+
+        with self.assertRaises(asyncio.CancelledError):
+            await _connect_with_fallback(
+                "wss://api.openmhz.com/socket.io/", "wmata"
+            )
+
+        cancelling.close.assert_awaited_once()
+
 
 class TestWebsocketTransportLogging(unittest.IsolatedAsyncioTestCase):
     @patch(f"{_WS_MOD}.AsyncSession")
