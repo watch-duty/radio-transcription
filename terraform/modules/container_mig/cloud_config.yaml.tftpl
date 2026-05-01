@@ -62,7 +62,12 @@ ${env_file_content}
             # Fall through to backup on connect error, read timeout, or
             # any 5xx response from worker@1. This is the OR-semantic
             # primitive: a single worker death does NOT 5xx the aggregator.
-            proxy_next_upstream error timeout http_5xx;
+            # nginx requires individual 5xx codes — `http_5xx` is not valid
+            # syntax (the directive's grammar has no wildcard). Listing the
+            # four codes the worker actually emits covers all real cases:
+            # 500 (asyncpg/aiohttp uncaught), 502 (upstream gone), 503
+            # (heartbeat stale / shutdown), 504 (DB query timeout).
+            proxy_next_upstream error timeout http_500 http_502 http_503 http_504;
             proxy_next_upstream_tries 2;
         }
         # Default location for any unexpected path — return 404 cheaply,
