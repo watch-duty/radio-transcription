@@ -18,12 +18,10 @@ from apache_beam.transforms.userstate import (
     on_timer,
 )
 from apache_beam.utils.timestamp import Timestamp
-from opentelemetry import trace
 
 from backend.pipeline.common.constants import MS_PER_SECOND, SAMPLE_RATE_HZ
 from backend.pipeline.common.storage.gcs_uploader import GCSAudioUploader
 from backend.pipeline.common.tracing_utils import (
-    extract_trace_context,
     setup_tracing,
     with_tracer_context,
 )
@@ -790,6 +788,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                                 feed_metadata=cast(
                                     "FeedMetadata", curr_context.feed_metadata
                                 ),
+                                traceparent=curr_context.traceparent,
                             ),
                         )
                     )
@@ -992,6 +991,7 @@ class OrderedBypassFn(beam.DoFn):
                         feed_metadata=cast(
                             "FeedMetadata", curr_context.feed_metadata
                         ),
+                        traceparent=curr_context.traceparent,
                     ),
                 )
             except Exception as e:
@@ -1175,6 +1175,7 @@ class TranscribeAudioFn(beam.DoFn):
             canonical_audio_uri=canonical_audio_uri,
             playback_audio_uri=playback_audio_uri,
             feed_metadata=request.feed_metadata,
+            traceparent=request.traceparent,
         )
 
     @override
@@ -1192,50 +1193,47 @@ class TranscribeAudioFn(beam.DoFn):
     ]:
         """Submits the consolidated flushed buffer strictly sequentially to the external transcription API."""
         feed_id, request = element
-        context = extract_trace_context(
-            {"traceparent": request.traceparent}
-            if request.traceparent
-            else None
-        )
-        tracer = trace.get_tracer(__name__)
 
         outputs = []
-        try:
-            with tracer.start_as_current_span(
-                "transcribe_audio", context=context
-            ):
+        with with_tracer_context(
+            request.traceparent or "", "transcribe_audio", __name__
+        ):
+            try:
                 transcribed = self._export_and_transcribe(request)
                 if transcribed:
                     self.transcription_count.inc()
                     outputs.append(transcribed)
-        except (ValueError, Exception) as e:
-            if not self.config.route_to_dlq:
-                raise
-            self.dlq_count.inc()
+            except (ValueError, Exception) as e:
+                if not self.config.route_to_dlq:
+                    raise
+                self.dlq_count.inc()
 
-            is_validation = isinstance(e, ValueError)
-            error_type = (
-                "validation_failure" if is_validation else "unexpected_error"
-            )
-
-            if is_validation:
-                logger.warning(
-                    f"Validation failure during transcription for feed {feed_id}: {e}"
-                )
-            else:
-                logger.exception(
-                    "Unexpected error transcribing buffer for feed %s", feed_id
+                is_validation = isinstance(e, ValueError)
+                error_type = (
+                    "validation_failure"
+                    if is_validation
+                    else "unexpected_error"
                 )
 
-            outputs.append(
-                beam.pvalue.TaggedOutput(
-                    DEAD_LETTER_QUEUE_TAG,
-                    {
-                        "error": str(e),
-                        "feed_id": feed_id,
-                        "error_type": error_type,
-                    },
+                if is_validation:
+                    logger.warning(
+                        f"Validation failure during transcription for feed {feed_id}: {e}"
+                    )
+                else:
+                    logger.exception(
+                        "Unexpected error transcribing buffer for feed %s",
+                        feed_id,
+                    )
+
+                outputs.append(
+                    beam.pvalue.TaggedOutput(
+                        DEAD_LETTER_QUEUE_TAG,
+                        {
+                            "error": str(e),
+                            "feed_id": feed_id,
+                            "error_type": error_type,
+                        },
+                    )
                 )
-            )
 
         yield from outputs
