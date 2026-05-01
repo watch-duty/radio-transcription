@@ -358,8 +358,39 @@ paths:
                 $ref: "#/components/schemas/ListTranscriptsResponse"
         "401":
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
         "404":
-          description: ""
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
           content:
             application/json:
               schema:
@@ -424,6 +455,37 @@ paths:
                 type: array
         "401":
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
       tags:
         - Rules
       security:
@@ -449,6 +511,37 @@ paths:
                 $ref: "#/components/schemas/Rule"
         "401":
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
       tags:
         - Rules
       security:
@@ -473,8 +566,39 @@ paths:
                 $ref: "#/components/schemas/Rule"
         "401":
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
         "404":
-          description: ""
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
           content:
             application/json:
               schema:
@@ -506,8 +630,39 @@ paths:
                 $ref: "#/components/schemas/Rule"
         "401":
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
         "404":
-          description: ""
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
           content:
             application/json:
               schema:
@@ -541,8 +696,39 @@ paths:
           description: No Content
         "401":
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
         "404":
-          description: ""
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
           content:
             application/json:
               schema:
@@ -577,6 +763,37 @@ paths:
                 type: array
         "401":
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
       tags:
         - Feeds
       security:
@@ -594,6 +811,37 @@ paths:
                 $ref: "#/components/schemas/Feed"
         "401":
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
       tags:
         - Feeds
       security:
@@ -618,8 +866,39 @@ paths:
                 $ref: "#/components/schemas/Feed"
         "401":
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
         "404":
-          description: ""
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
           content:
             application/json:
               schema:
@@ -647,8 +926,39 @@ paths:
           description: No Content
         "401":
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
         "404":
-          description: ""
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
           content:
             application/json:
               schema:
@@ -681,8 +991,39 @@ paths:
                 $ref: "#/components/schemas/Feed"
         "401":
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
         "404":
-          description: ""
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
           content:
             application/json:
               schema:
@@ -731,6 +1072,39 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/LoginResponse"
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
       tags:
         - Auth
       security: []
@@ -752,6 +1126,39 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/LoginResponse"
+        "400":
+          description: Bad Request
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
       tags:
         - Auth
       security: []

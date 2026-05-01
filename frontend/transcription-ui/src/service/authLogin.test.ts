@@ -18,7 +18,11 @@ describe('authLogin', () => {
 
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => responsePayload,
+      text: async () => JSON.stringify(responsePayload),
+      headers: {
+        get: (key: string) =>
+          key === 'content-type' ? 'application/json' : null,
+      },
     });
 
     const token = await authLogin('google-oauth-code');
@@ -41,6 +45,10 @@ describe('authLogin', () => {
   it('should throw error if network response returns not ok status', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: false,
+      text: async () => 'Login failed',
+      headers: {
+        get: () => null,
+      },
     });
 
     await expect(authLogin('error-generating-code')).rejects.toThrow(

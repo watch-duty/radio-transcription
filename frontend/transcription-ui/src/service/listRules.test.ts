@@ -18,7 +18,11 @@ describe('listRules', () => {
 
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => mockData,
+      text: async () => JSON.stringify(mockData),
+      headers: {
+        get: (key: string) =>
+          key === 'content-type' ? 'application/json' : null,
+      },
     });
 
     const rules = await listRules('tokenXYZ');
@@ -40,10 +44,12 @@ describe('listRules', () => {
       ok: false,
       status: 401,
       statusText: 'Unauthorized',
+      headers: {
+        get: () => null,
+      },
+      text: async () => 'Unauthorized',
     });
 
-    await expect(listRules('tokenXYZ')).rejects.toThrow(
-      'Error: 401 Unauthorized'
-    );
+    await expect(listRules('tokenXYZ')).rejects.toThrow(/401.*Unauthorized/);
   });
 });

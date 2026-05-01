@@ -64,9 +64,7 @@ describe('FeedsController', () => {
       mockRequest.mockRejectedValueOnce(new Error('Network Error'));
       const controller = new FeedsController();
 
-      await expect(controller.listFeeds()).rejects.toThrow(
-        'Error fetching feeds'
-      );
+      await expect(controller.listFeeds()).rejects.toThrow(/Network Error/);
     });
   });
 
@@ -75,7 +73,7 @@ describe('FeedsController', () => {
       mockRequest.mockResolvedValueOnce({ data: mockBackendFeed });
 
       const controller = new FeedsController();
-      const result = await controller.getFeed('feed_123', vi.fn());
+      const result = await controller.getFeed('feed_123');
 
       expect(result).toEqual(expectedFrontendFeed);
       expect(mockRequest).toHaveBeenCalledWith({
@@ -84,8 +82,7 @@ describe('FeedsController', () => {
       });
     });
 
-    it('should call notFound on 404', async () => {
-      const mockNotFound = vi.fn();
+    it('should throw on 404', async () => {
       const error = new Error('Not Found') as Error & {
         response?: { status: number };
       };
@@ -93,11 +90,7 @@ describe('FeedsController', () => {
       mockRequest.mockRejectedValueOnce(error);
 
       const controller = new FeedsController();
-      await controller.getFeed('feed_123', mockNotFound);
-
-      expect(mockNotFound).toHaveBeenCalledWith(404, {
-        message: 'Feed feed_123 not found',
-      });
+      await expect(controller.getFeed('feed_123')).rejects.toThrow(/Not Found/);
     });
   });
 
@@ -133,7 +126,7 @@ describe('FeedsController', () => {
       mockRequest.mockResolvedValueOnce({ data: mockBackendFeed });
 
       const controller = new FeedsController();
-      const result = await controller.resetFeed('feed_123', vi.fn());
+      const result = await controller.resetFeed('feed_123');
 
       expect(result).toEqual(expectedFrontendFeed);
       expect(mockRequest).toHaveBeenCalledWith({
@@ -142,8 +135,7 @@ describe('FeedsController', () => {
       });
     });
 
-    it('should call notFound on 404', async () => {
-      const mockNotFound = vi.fn();
+    it('should throw on 404', async () => {
       const error = new Error('Not Found') as Error & {
         response?: { status: number };
       };
@@ -151,11 +143,9 @@ describe('FeedsController', () => {
       mockRequest.mockRejectedValueOnce(error);
 
       const controller = new FeedsController();
-      await controller.resetFeed('feed_123', mockNotFound);
-
-      expect(mockNotFound).toHaveBeenCalledWith(404, {
-        message: 'Feed feed_123 not found',
-      });
+      await expect(controller.resetFeed('feed_123')).rejects.toThrow(
+        /Not Found/
+      );
     });
 
     it('should throw on non-404 API error', async () => {
@@ -166,8 +156,8 @@ describe('FeedsController', () => {
       mockRequest.mockRejectedValueOnce(error);
 
       const controller = new FeedsController();
-      await expect(controller.resetFeed('feed_123', vi.fn())).rejects.toThrow(
-        'Backend API error 500'
+      await expect(controller.resetFeed('feed_123')).rejects.toThrow(
+        /Server Error/
       );
     });
 
@@ -175,8 +165,8 @@ describe('FeedsController', () => {
       mockRequest.mockRejectedValueOnce(new Error('Network Error'));
 
       const controller = new FeedsController();
-      await expect(controller.resetFeed('feed_123', vi.fn())).rejects.toThrow(
-        'Error resetting feed feed_123'
+      await expect(controller.resetFeed('feed_123')).rejects.toThrow(
+        /Network Error/
       );
     });
   });
@@ -186,7 +176,7 @@ describe('FeedsController', () => {
       mockRequest.mockResolvedValueOnce({ status: 204 });
 
       const controller = new FeedsController();
-      await controller.deleteFeed('feed_123', vi.fn());
+      await controller.deleteFeed('feed_123');
 
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://feeds-api.example.com/feed_123',
@@ -194,8 +184,7 @@ describe('FeedsController', () => {
       });
     });
 
-    it('should call notFound on 404', async () => {
-      const mockNotFound = vi.fn();
+    it('should throw on 404', async () => {
       const error = new Error('Not Found') as Error & {
         response?: { status: number };
       };
@@ -203,11 +192,9 @@ describe('FeedsController', () => {
       mockRequest.mockRejectedValueOnce(error);
 
       const controller = new FeedsController();
-      await controller.deleteFeed('feed_123', mockNotFound);
-
-      expect(mockNotFound).toHaveBeenCalledWith(404, {
-        message: 'Feed feed_123 not found',
-      });
+      await expect(controller.deleteFeed('feed_123')).rejects.toThrow(
+        /Not Found/
+      );
     });
   });
 

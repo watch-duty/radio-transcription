@@ -13,17 +13,15 @@ import {
   Get,
   Path,
   Post,
-  Res,
   Response,
   Route,
   Security,
   SuccessResponse,
   Tags,
-  TsoaResponse,
 } from 'tsoa';
 
 import { FEEDS_STORE_API_URL } from '../config.js';
-import { handleBackendError, isAxiosError } from '../utils.js';
+import { HttpError, handleBackendError } from '../utils.js';
 
 interface BaseFeedBackend {
   name: string;
@@ -116,52 +114,58 @@ export class FeedsController extends Controller {
 
   @Get('')
   @Security('google_id_token')
+  @Response<{ message: string }>(401, 'Unauthorized')
+  @Response<{ message: string }>(403, 'Forbidden')
+  @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async listFeeds(): Promise<Feed[]> {
-    const client = await this.getClient();
     try {
+      const client = await this.getClient();
       const response = await client.request<FeedBackend[]>({
         url: FEEDS_STORE_API_URL,
         method: 'GET',
       });
       return response.data.map(convertFeedBackend);
     } catch (error: unknown) {
-      handleBackendError(error, 'fetching feeds');
+      const { status, message } = handleBackendError(error, 'fetching feeds');
+      throw new HttpError(status, message);
     }
   }
 
   @Get('{feedId}')
   @Security('google_id_token')
+  @Response<{ message: string }>(401, 'Unauthorized')
+  @Response<{ message: string }>(403, 'Forbidden')
   @Response<{ message: string }>(404, 'Not Found')
+  @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
-  public async getFeed(
-    @Path() feedId: string,
-    @Res() notFound: TsoaResponse<404, { message: string }>
-  ): Promise<Feed> {
-    const client = await this.getClient();
+  public async getFeed(@Path() feedId: string): Promise<Feed> {
     try {
+      const client = await this.getClient();
       const response = await client.request<FeedBackend>({
         url: `${FEEDS_STORE_API_URL}/${feedId}`,
         method: 'GET',
       });
       return convertFeedBackend(response.data);
     } catch (error: unknown) {
-      if (isAxiosError(error)) {
-        if (error.response?.status === 404) {
-          return notFound(404, { message: `Feed ${feedId} not found` });
-        }
-      }
-      handleBackendError(error, `fetching feed ${feedId}`);
+      const { status, message } = handleBackendError(
+        error,
+        `fetching feed ${feedId}`
+      );
+      throw new HttpError(status, message);
     }
   }
 
   @Post('')
   @Security('google_id_token')
   @SuccessResponse('201', 'Created')
+  @Response<{ message: string }>(401, 'Unauthorized')
+  @Response<{ message: string }>(403, 'Forbidden')
+  @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async createFeed(@Body() requestBody: FeedCreate): Promise<Feed> {
-    const client = await this.getClient();
     try {
+      const client = await this.getClient();
       const response = await client.request<FeedBackend>({
         url: FEEDS_STORE_API_URL,
         method: 'POST',
@@ -169,18 +173,19 @@ export class FeedsController extends Controller {
       });
       return convertFeedBackend(response.data);
     } catch (error: unknown) {
-      handleBackendError(error, 'creating feed');
+      const { status, message } = handleBackendError(error, 'creating feed');
+      throw new HttpError(status, message);
     }
   }
 
   @Post('{feedId}/reset')
   @Security('google_id_token')
+  @Response<{ message: string }>(401, 'Unauthorized')
+  @Response<{ message: string }>(403, 'Forbidden')
   @Response<{ message: string }>(404, 'Not Found')
+  @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
-  public async resetFeed(
-    @Path() feedId: string,
-    @Res() notFound: TsoaResponse<404, { message: string }>
-  ): Promise<Feed> {
+  public async resetFeed(@Path() feedId: string): Promise<Feed> {
     const client = await this.getClient();
     try {
       const response = await client.request<FeedBackend>({
@@ -189,24 +194,23 @@ export class FeedsController extends Controller {
       });
       return convertFeedBackend(response.data);
     } catch (error: unknown) {
-      if (isAxiosError(error)) {
-        if (error.response?.status === 404) {
-          return notFound(404, { message: `Feed ${feedId} not found` });
-        }
-      }
-      handleBackendError(error, `resetting feed ${feedId}`);
+      const { status, message } = handleBackendError(
+        error,
+        `resetting feed ${feedId}`
+      );
+      throw new HttpError(status, message);
     }
   }
 
   @Delete('{feedId}')
   @Security('google_id_token')
   @SuccessResponse('204', 'No Content')
+  @Response<{ message: string }>(401, 'Unauthorized')
+  @Response<{ message: string }>(403, 'Forbidden')
   @Response<{ message: string }>(404, 'Not Found')
+  @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
-  public async deleteFeed(
-    @Path() feedId: string,
-    @Res() notFound: TsoaResponse<404, { message: string }>
-  ): Promise<void> {
+  public async deleteFeed(@Path() feedId: string): Promise<void> {
     const client = await this.getClient();
     try {
       await client.request({
@@ -214,12 +218,11 @@ export class FeedsController extends Controller {
         method: 'DELETE',
       });
     } catch (error: unknown) {
-      if (isAxiosError(error)) {
-        if (error.response?.status === 404) {
-          return notFound(404, { message: `Feed ${feedId} not found` });
-        }
-      }
-      handleBackendError(error, `deleting feed ${feedId}`);
+      const { status, message } = handleBackendError(
+        error,
+        `deleting feed ${feedId}`
+      );
+      throw new HttpError(status, message);
     }
   }
 }

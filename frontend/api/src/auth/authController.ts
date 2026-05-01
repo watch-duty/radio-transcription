@@ -8,6 +8,7 @@ import {
   Get,
   Post,
   Request,
+  Response,
   Route,
   Tags,
 } from 'tsoa';
@@ -17,6 +18,7 @@ import {
   GOOGLE_AUTH_CLIENT_ID,
   GOOGLE_AUTH_CLIENT_SECRET,
 } from '../config.js';
+import { HttpError, handleBackendError } from '../utils.js';
 
 interface LoginRequest {
   code: string;
@@ -58,6 +60,9 @@ function setRefreshTokenCookie(
 @Tags('Auth')
 export class AuthController extends Controller {
   @Post('google')
+  @Response<{ message: string }>(400, 'Bad Request')
+  @Response<{ message: string }>(401, 'Unauthorized')
+  @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async login(
     @Body() requestBody: LoginRequest,
@@ -71,18 +76,21 @@ export class AuthController extends Controller {
       }
 
       if (!tokens.id_token) {
-        this.setStatus(400);
-        throw new Error('No ID token returned from Google');
+        throw new HttpError(400, 'No ID token returned from Google');
       }
 
       return { idToken: tokens.id_token };
-    } catch (error) {
-      this.setStatus(401);
-      throw error;
+    } catch (error: unknown) {
+      if (error instanceof HttpError) throw error;
+      const { status, message } = handleBackendError(error, 'Login failed');
+      throw new HttpError(status, message);
     }
   }
 
   @Get('session')
+  @Response<{ message: string }>(400, 'Bad Request')
+  @Response<{ message: string }>(401, 'Unauthorized')
+  @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async refresh(
     @Request() request: express.Request
@@ -90,8 +98,7 @@ export class AuthController extends Controller {
     const refreshToken = request.cookies?.refresh_token;
 
     if (!refreshToken) {
-      this.setStatus(401);
-      throw new Error('No refresh token in session');
+      throw new HttpError(401, 'No refresh token in session');
     }
 
     try {
@@ -99,8 +106,7 @@ export class AuthController extends Controller {
       const res = await client.refreshAccessToken();
 
       if (!res.credentials.id_token) {
-        this.setStatus(400);
-        throw new Error('Failed to refresh ID token');
+        throw new HttpError(400, 'Failed to refresh ID token');
       }
 
       // Rotate token if your authentication system issues fresh token credentials
@@ -109,9 +115,13 @@ export class AuthController extends Controller {
       }
 
       return { idToken: res.credentials.id_token };
-    } catch (error) {
-      this.setStatus(401);
-      throw error;
+    } catch (error: unknown) {
+      if (error instanceof HttpError) throw error;
+      const { status, message } = handleBackendError(
+        error,
+        'Failed to refresh session'
+      );
+      throw new HttpError(status, message);
     }
   }
 

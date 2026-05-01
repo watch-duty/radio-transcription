@@ -184,7 +184,7 @@ describe('Login component', () => {
     expect(router.state.location.pathname).toBe('/');
   });
 
-  it('logs console.error on authentication failure', async () => {
+  it('shows error alert on authentication failure', async () => {
     const errorInstance = new Error('API error');
     vi.mocked(authLogin).mockRejectedValueOnce(errorInstance);
 
@@ -199,7 +199,9 @@ describe('Login component', () => {
       await capturedOptions!.onSuccess({ code: 'test-code' });
     });
 
-    expect(console.error).toHaveBeenCalledWith('Login failed:', errorInstance);
+    expect(
+      screen.getByText('Unable to sign in. Please try again.')
+    ).toBeTruthy();
     expect(mockSetToken).not.toHaveBeenCalled();
     expect(router.state.location.pathname).toBe('/login');
   });
