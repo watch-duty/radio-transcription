@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
 
-import WarningAmber from '@mui/icons-material/WarningAmber';
 import Box from '@mui/material/Box';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
@@ -10,6 +9,7 @@ import WavesurferPlayer from '@wavesurfer/react';
 
 import { getAudioUrl } from '../../utils/audioUtils';
 import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
+import { CustomAlertIcon } from '../common/AlertIcon';
 
 interface AudioDisplayProps {
   transcripts: Transcript[];
@@ -184,16 +184,17 @@ export function AudioDisplay({
             }}
           >
             {clip.hasAlert && (
-              <WarningAmber
+              <CustomAlertIcon
                 color="warning"
-                fontSize="small"
+                fontSize="medium"
                 data-testid="warning-icon"
                 sx={{
                   position: 'absolute',
-                  left: 0,
-                  top: -22,
+                  // This centers the icon over the audio start, rather than left-aligned at the audio start.
+                  left: -11,
+                  // This provides enough buffer to move the icon on top of the clip view rather than on it.
+                  top: -25,
                   zIndex: 1,
-                  bgcolor: 'background.paper',
                   borderRadius: '50%',
                 }}
               />
