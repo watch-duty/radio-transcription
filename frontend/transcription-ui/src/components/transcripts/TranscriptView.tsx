@@ -17,6 +17,7 @@ import {
 import { type Transcript } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
+import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { listTranscripts } from '../../service/listTranscripts';
@@ -46,6 +47,7 @@ export type ListTranscriptsData = {
 
 const DEFAULT_REFRESH_INTERVAL = 10000;
 const MAX_TRANSCRIPTS_POLLING_ITERATIONS = 10;
+const FEED_POLLING_INTERVAL_MS = 15000; // 15 seconds
 
 export function TranscriptView({
   triggerSnackbar,
@@ -96,6 +98,14 @@ export function TranscriptView({
     queryKey: ['listFeeds', token],
     queryFn: () => listFeeds(token!),
     enabled: !!token,
+    refetchOnWindowFocus: false,
+  });
+
+  const { data: activeFeedData } = useQuery({
+    queryKey: ['getFeed', token, searchedFeedId],
+    queryFn: () => getFeed(searchedFeedId, token!),
+    enabled: !!token && !!searchedFeedId,
+    refetchInterval: FEED_POLLING_INTERVAL_MS,
     refetchOnWindowFocus: false,
   });
 
@@ -588,6 +598,10 @@ export function TranscriptView({
               feedId={feedId || ''}
               sourceUrl={searchedFeed?.sourceUrl}
               archiveUrl={searchedFeed?.archiveUrl}
+              status={activeFeedData?.status ?? searchedFeed?.status}
+              lastHeartbeat={
+                activeFeedData?.lastHeartbeat ?? searchedFeed?.lastHeartbeat
+              }
               hasNewerTranscripts={hasNewerTranscripts}
               isTranscriptsFetching={isTranscriptsFetching}
               isTranscriptsPolling={isTranscriptsPolling}

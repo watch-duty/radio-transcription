@@ -214,6 +214,7 @@ _Building & Running Locally_
 cat <<EOF > frontend/transcription-ui/.env.local-dev
 VITE_GOOGLE_AUTH_CLIENT_ID=<your Google OAuth 2.0 Client ID for your project, found under Google Auth Platform>
 VITE_API_BASE_URL=<your URL for the API, leave empty to use the local proxy>
+VITE_ALERT_ICON_SYMBOL_NAME=local_fire_department
 EOF
 ```
 

@@ -6,6 +6,7 @@ import InventoryIcon from '@mui/icons-material/Inventory';
 import LinkIcon from '@mui/icons-material/Link';
 import SyncIcon from '@mui/icons-material/Sync';
 import { Tooltip, useTheme } from '@mui/material';
+import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import ButtonGroup from '@mui/material/ButtonGroup';
@@ -17,11 +18,17 @@ import MenuItem from '@mui/material/MenuItem';
 import MenuList from '@mui/material/MenuList';
 import Paper from '@mui/material/Paper';
 import Popper from '@mui/material/Popper';
+import Typography from '@mui/material/Typography';
+import { type FeedStatus } from '@transcription/common';
+
+import { getRelativeTimeString } from '../../utils/timeUtils';
 
 export interface TranscriptActionsBarProps {
   feedId: string;
   sourceUrl?: string;
   archiveUrl?: string;
+  status?: FeedStatus;
+  lastHeartbeat?: string;
   hasNewerTranscripts: boolean;
   isTranscriptsFetching: boolean;
   isTranscriptsPolling: boolean;
@@ -41,10 +48,20 @@ const refreshIntervalOptions = [
   { value: -1, label: 'Off' },
 ];
 
+const FEED_STATUS_UI_CONFIG: Record<
+  FeedStatus,
+  { displayText: string; color: 'success' | 'error' }
+> = {
+  active: { displayText: 'Active', color: 'success' },
+  inactive: { displayText: 'Inactive', color: 'error' },
+};
+
 export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   feedId,
   sourceUrl,
   archiveUrl,
+  status,
+  lastHeartbeat,
   hasNewerTranscripts,
   isTranscriptsFetching,
   isTranscriptsPolling,
@@ -53,6 +70,8 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   onRefresh,
   triggerSnackbar,
 }) => {
+  const statusConfig = status ? FEED_STATUS_UI_CONFIG[status] : undefined;
+
   const theme = useTheme();
 
   const [anchorEl, setAnchorEl] = React.useState<HTMLElement | null>(null);
@@ -88,7 +107,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
         mb: 1,
       }}
     >
-      {sourceUrl || archiveUrl ? (
+      {sourceUrl || archiveUrl || status ? (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           {sourceUrl && (
             <Link
@@ -121,6 +140,39 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
               <InventoryIcon fontSize="small" />
               Archives
             </Link>
+          )}
+          {status && (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Badge
+                color={statusConfig?.color ?? 'error'}
+                variant="dot"
+                sx={{
+                  py: 0,
+                  px: 0.5,
+                  display: 'flex',
+                  alignItems: 'center',
+                }}
+              ></Badge>
+              <Typography
+                variant="body2"
+                sx={{
+                  color: `${statusConfig?.color ?? 'error'}.main`,
+                  fontWeight: 600,
+                  textTransform: 'uppercase',
+                }}
+              >
+                {statusConfig?.displayText ?? status}
+              </Typography>
+              {lastHeartbeat && (
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ whiteSpace: 'nowrap' }}
+                >
+                  Last updated: {getRelativeTimeString(lastHeartbeat)}
+                </Typography>
+              )}
+            </Box>
           )}
         </Box>
       ) : (

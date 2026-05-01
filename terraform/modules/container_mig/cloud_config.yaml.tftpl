@@ -185,6 +185,21 @@ ${env_file_content}
 runcmd:
 - sysctl --system
 - systemctl daemon-reload
+%{ if enable_autohealing }
+# COS ships with `iptables INPUT policy DROP` plus a small allow-list (lo,
+# icmp, established, tcp/22 for SSH). The pre-Phase-2 single-worker setup
+# bypassed INPUT for port 8080 because Docker's `-p 8080:8080` mapping
+# routes inbound traffic via PREROUTING + FORWARD (DOCKER chain) — never
+# touching INPUT. The new k=2 setup runs the nginx aggregator with
+# `--network host`, which binds host port 8080 directly and traverses
+# INPUT. Without this rule, every Google autohealing probe to :8080 is
+# silently dropped by INPUT-DROP, the MIG marks the VM TIMEOUT after the
+# initial_delay grace, and autohealing infinite-replaces the instance.
+# Diagnosed in dev 2026-05-01 (4 instance recreations before the cause
+# surfaced — the local probe always returned 200, masking the network
+# block at the host iptables layer).
+- iptables -I INPUT -p tcp --dport 8080 -j ACCEPT
+%{ endif }
 - systemctl enable --now ${service_name}@1.service
 - systemctl enable --now ${service_name}@2.service
 %{ if enable_autohealing }
