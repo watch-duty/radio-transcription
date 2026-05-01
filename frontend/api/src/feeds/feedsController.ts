@@ -2,6 +2,7 @@ import type {
   Feed,
   FeedCreate,
   FeedStatus,
+  SimplifiedFeedStatus,
   SourceType,
 } from '@transcription/common';
 import { GoogleAuth } from 'google-auth-library';
@@ -82,6 +83,10 @@ function getArchiveUrl(
   }
 }
 
+function simplifyStatus(status: FeedStatus): SimplifiedFeedStatus {
+  return status === 'active' ? 'active' : 'inactive';
+}
+
 function convertFeedBackend(response: FeedBackend): Feed {
   return {
     id: response.id,
@@ -91,7 +96,7 @@ function convertFeedBackend(response: FeedBackend): Feed {
     externalId: response.external_id,
     sourceUrl: getSourceUrl(response.source_type, response.source_feed_id),
     archiveUrl: getArchiveUrl(response.source_type, response.source_feed_id),
-    status: response.status,
+    status: simplifyStatus(response.status),
     lastHeartbeat: response.last_heartbeat ?? undefined,
   };
 }

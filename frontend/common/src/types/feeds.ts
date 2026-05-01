@@ -7,6 +7,8 @@ export type FeedStatus =
   | 'quarantined'
   | 'deactivated';
 
+export type SimplifiedFeedStatus = 'active' | 'inactive';
+
 
 export interface BaseFeed {
   name: string;
@@ -19,7 +21,7 @@ export interface Feed extends BaseFeed {
   externalId?: string;
   sourceUrl?: string;
   archiveUrl?: string;
-  status: FeedStatus;
+  status: SimplifiedFeedStatus;
   lastHeartbeat?: string;
 }
 

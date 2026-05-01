@@ -307,4 +307,27 @@ describe('FeedsController', () => {
       expect(url).toBeUndefined();
     });
   });
+
+  describe('status conversion', () => {
+    const testCases = [
+      { backend: 'active', expected: 'active' },
+      { backend: 'failing', expected: 'inactive' },
+      { backend: 'unclaimed', expected: 'inactive' },
+      { backend: 'quarantined', expected: 'inactive' },
+      { backend: 'deactivated', expected: 'inactive' },
+    ];
+
+    testCases.forEach(({ backend, expected }) => {
+      it(`should convert ${backend} to ${expected}`, async () => {
+        mockRequest.mockResolvedValueOnce({
+          data: [{ ...mockBackendFeed, status: backend }],
+        });
+
+        const controller = new FeedsController();
+        const [feed] = await controller.listFeeds();
+
+        expect(feed.status).toBe(expected);
+      });
+    });
+  });
 });
