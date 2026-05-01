@@ -145,12 +145,16 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Install mise, install tools (provides uv)
+        uses: jdx/mise-action@v3
+      - name: Install dependencies (PyYAML for cloud-init parsing)
+        run: uv sync
       # Pre-pull the nginx image so the per-config validation step runs
       # in <1s instead of paying the pull on each invocation.
       - name: Warm nginx image cache
         run: docker pull mirror.gcr.io/library/nginx:1.27-alpine
       - name: Lint embedded configs in cloud-init .tftpl files
-        run: python3 scripts/lint_embedded_configs.py --terraform-dir terraform/
+        run: uv run python scripts/lint_embedded_configs.py --terraform-dir terraform/
 
   run-backend-tests:
     needs: [setup]
