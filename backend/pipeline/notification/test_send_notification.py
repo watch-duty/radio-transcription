@@ -119,6 +119,48 @@ class TestSendNotification(TestCase):
 
         mock_request_handler.send_notification.assert_not_called()
 
+    @mock.patch(
+        "backend.pipeline.notification.send_notification.with_tracer_context"
+    )
+    @mock.patch("backend.pipeline.notification.send_notification.deduplication")
+    @mock.patch(
+        "backend.pipeline.notification.send_notification.request_handler"
+    )
+    def test_send_notification_span(
+        self,
+        mock_request_handler: mock.Mock,
+        mock_dedupe: mock.Mock,
+        mock_with_tracer_context: mock.Mock,
+    ) -> None:
+        mock_dedupe.process_notification.return_value = True
+
+        evaluated_payload = EvaluatedTranscribedAudio(
+            transcript="This is a test!",
+            transmission_id="1234",
+        )
+        raw_data = base64.b64encode(evaluated_payload.SerializeToString())
+        event_data = {
+            "message": {
+                "data": raw_data,
+                "messageId": "1234",
+                "attributes": {"traceparent": "mock-traceparent"},
+            }
+        }
+
+        attributes = {
+            "type": "google.cloud.pubsub.topic.v1.messagePublished",
+            "source": "//pubsub.googleapis.com/projects/my-project/topics/my-topic",
+        }
+
+        cloud_event = CloudEvent(attributes, event_data)
+        send_notification(cloud_event)
+
+        mock_with_tracer_context.assert_called_once_with(
+            "mock-traceparent",
+            "send_notification",
+            "backend.pipeline.notification.send_notification",
+        )
+
     def test_convert_to_notification_encodes_epoch_timestamp(self) -> None:
         evaluated_payload = EvaluatedTranscribedAudio(
             feed_id="feed-1",

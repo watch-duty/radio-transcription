@@ -253,11 +253,8 @@ components:
     FeedStatus:
       type: string
       enum:
-        - unclaimed
         - active
-        - failing
-        - quarantined
-        - deactivated
+        - inactive
     SourceType:
       type: string
       enum:
