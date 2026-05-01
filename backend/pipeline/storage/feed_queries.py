@@ -371,6 +371,8 @@ WITH updated AS (
     SET status = 'unclaimed'::feed_status,
         failure_count = 0,
         worker_id = NULL,
+        unclaimed_since = NULL,
+        quarantine_reason = NULL,
         last_heartbeat = NOW()
     WHERE id = $1
     RETURNING id, name, source_type, status, failure_count, worker_id,
