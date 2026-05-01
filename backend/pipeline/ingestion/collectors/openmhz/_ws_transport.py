@@ -105,10 +105,18 @@ async def _connect_with_fallback(
     """Try each impersonation profile until one upgrades successfully.
 
     Returns ``(session, ws, profile_name)``. Closes any session whose
-    connect attempt failed. On the Cloudflare-403 signature or a
-    per-attempt timeout, advances to the next profile; on any other
-    error, re-raises immediately (transient/network failures aren't
-    fixed by switching fingerprint).
+    connect attempt failed.
+
+    Advances to the next profile on:
+      * a per-attempt timeout (``asyncio.wait_for`` exceeded
+        ``_PROFILE_CONNECT_TIMEOUT_SEC``), OR
+      * a ``CurlError`` with ``e.code == _BLOCKED_LIBCURL_CODE`` (libcurl
+        ``CURLE_HTTP_RETURNED_ERROR`` = 22) and the substring ``"403"`` in
+        the message — i.e., Cloudflare returned 403 to the WS upgrade.
+
+    Re-raises immediately on any other error — transient/network failures
+    (TLS, DNS, 5xx, 401/404 during the upgrade) aren't fixed by switching
+    fingerprint.
     """
     raw = os.getenv(
         "OPENMHZ_IMPERSONATE_PROFILES", _DEFAULT_IMPERSONATE_PROFILES
