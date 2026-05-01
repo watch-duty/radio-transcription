@@ -3,14 +3,21 @@ import React from 'react';
 import InventoryIcon from '@mui/icons-material/Inventory';
 import LinkIcon from '@mui/icons-material/Link';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
 import Link from '@mui/material/Link';
+import Typography from '@mui/material/Typography';
+import { type FeedStatus } from '@transcription/common';
+
+import { getRelativeTimeString } from '../../utils/timeUtils';
 
 export interface TranscriptActionsBarProps {
   sourceUrl?: string;
   archiveUrl?: string;
+  status?: FeedStatus;
+  lastHeartbeat?: string;
   hasNewerTranscripts: boolean;
   isTranscriptsFetching: boolean;
   isTranscriptsPolling: boolean;
@@ -18,15 +25,27 @@ export interface TranscriptActionsBarProps {
   onRefresh: () => Promise<void>;
 }
 
+const FEED_STATUS_UI_CONFIG: Record<
+  FeedStatus,
+  { displayText: string; color: 'success' | 'error' }
+> = {
+  active: { displayText: 'Active', color: 'success' },
+  inactive: { displayText: 'Inactive', color: 'error' },
+};
+
 export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   sourceUrl,
   archiveUrl,
+  status,
+  lastHeartbeat,
   hasNewerTranscripts,
   isTranscriptsFetching,
   isTranscriptsPolling,
   pollingIntervalDisplay,
   onRefresh,
 }) => {
+  const statusConfig = status ? FEED_STATUS_UI_CONFIG[status] : undefined;
+
   return (
     <Box
       sx={{
@@ -35,7 +54,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
         mb: 1,
       }}
     >
-      {sourceUrl || archiveUrl ? (
+      {sourceUrl || archiveUrl || status ? (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           {sourceUrl && (
             <Link
@@ -68,6 +87,39 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
               <InventoryIcon fontSize="small" />
               Archives
             </Link>
+          )}
+          {status && (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Badge
+                color={statusConfig?.color ?? 'error'}
+                variant="dot"
+                sx={{
+                  py: 0,
+                  px: 0.5,
+                  display: 'flex',
+                  alignItems: 'center',
+                }}
+              ></Badge>
+              <Typography
+                variant="body2"
+                sx={{
+                  color: `${statusConfig?.color ?? 'error'}.main`,
+                  fontWeight: 600,
+                  textTransform: 'uppercase',
+                }}
+              >
+                {statusConfig?.displayText ?? status}
+              </Typography>
+              {lastHeartbeat && (
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ whiteSpace: 'nowrap' }}
+                >
+                  Last updated: {getRelativeTimeString(lastHeartbeat)}
+                </Typography>
+              )}
+            </Box>
           )}
         </Box>
       ) : (
