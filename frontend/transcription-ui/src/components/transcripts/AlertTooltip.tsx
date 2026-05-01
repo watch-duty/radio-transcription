@@ -1,8 +1,8 @@
-import WarningAmber from '@mui/icons-material/WarningAmber';
 import Box from '@mui/material/Box';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
+import FireIcon from '../../assets/FireIcon';
 
 interface AlertTooltipProps {
   evaluationDecisions: string[];
@@ -42,9 +42,9 @@ export function AlertTooltip({
         sx={{ display: 'inline-flex' }}
         aria-label="view triggered rules"
       >
-        <WarningAmber
+        <FireIcon
           color="warning"
-          fontSize="small"
+          fontSize="large"
           data-testid="warning-icon"
         />
       </Box>

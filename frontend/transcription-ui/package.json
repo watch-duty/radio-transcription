@@ -19,6 +19,7 @@
   "dependencies": {
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
+    "@material-symbols/svg-400": "^0.44.4",
     "@mui/icons-material": "^9.0.0",
     "@mui/material": "^9.0.0",
     "@mui/x-date-pickers": "^9.0.2",
@@ -41,6 +42,7 @@
     "@eslint/css": "^1.1.0",
     "@eslint/js": "^10.0.1",
     "@react-router/dev": "^7.14.1",
+    "@svgr/plugin-jsx": "^8.1.0",
     "@tanstack/eslint-plugin-query": "^5.99.0",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.2",
@@ -63,6 +65,7 @@
     "typescript": "^6.0.2",
     "typescript-eslint": "^8.58.1",
     "vite": "^8.0.8",
+    "vite-plugin-svgr": "^5.2.0",
     "vitest": "^4.1.4"
   }
 }
