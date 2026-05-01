@@ -129,6 +129,7 @@ class AudioStitchingStateMachine:
             end_audio_offset_ms=end_ms - ctx.buffer_start_time_ms,
             clear_state=True,
             isolated_audio_buffer=[],
+            traceparent=ctx.traceparent,
         )
 
     def _process_late_chunk_independently(
@@ -207,6 +208,7 @@ class AudioStitchingStateMachine:
                             end_audio_offset_ms=action.end_audio_offset_ms,
                             clear_state=False,
                             isolated_audio_buffer=isolated_audio_buffer.copy(),
+                            traceparent=action.traceparent,
                         )
                     )
                 case DropAction():
