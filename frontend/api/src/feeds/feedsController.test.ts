@@ -30,6 +30,8 @@ describe('FeedsController', () => {
     source_type: 'openmhz',
     source_feed_id: 'src_123',
     external_id: 'ext_123',
+    status: 'active',
+    last_heartbeat: '2024-01-01T00:00:00Z',
   };
 
   const expectedFrontendFeed = {
@@ -40,6 +42,8 @@ describe('FeedsController', () => {
     externalId: 'ext_123',
     sourceUrl: 'https://openmhz.com/system/src_123',
     archiveUrl: undefined,
+    status: 'active',
+    lastHeartbeat: '2024-01-01T00:00:00Z',
   };
 
   describe('listFeeds', () => {
