@@ -425,12 +425,12 @@ class TestConnectWithFallback(unittest.IsolatedAsyncioTestCase):
             "wss://api.openmhz.com/socket.io/", "wmata"
         )
 
-        self.assertEqual(profile, "firefox133")
+        self.assertEqual(profile, "firefox147")
         self.assertIs(session, working)
         self.assertIs(returned_ws, ws)
         self.assertEqual(mock_session_cls.call_count, 1)
         self.assertEqual(
-            mock_session_cls.call_args.kwargs, {"impersonate": "firefox133"}
+            mock_session_cls.call_args.kwargs, {"impersonate": "firefox147"}
         )
 
     @patch(f"{_WS_MOD}.AsyncSession")
@@ -445,15 +445,15 @@ class TestConnectWithFallback(unittest.IsolatedAsyncioTestCase):
             "wss://api.openmhz.com/socket.io/", "wmata"
         )
 
-        self.assertEqual(profile, "safari17_2_ios")
+        self.assertEqual(profile, "firefox133")
         self.assertEqual(mock_session_cls.call_count, 2)
         self.assertEqual(
             mock_session_cls.call_args_list[0].kwargs,
-            {"impersonate": "firefox133"},
+            {"impersonate": "firefox147"},
         )
         self.assertEqual(
             mock_session_cls.call_args_list[1].kwargs,
-            {"impersonate": "safari17_2_ios"},
+            {"impersonate": "firefox133"},
         )
         blocked.close.assert_awaited_once()
 
@@ -469,7 +469,7 @@ class TestConnectWithFallback(unittest.IsolatedAsyncioTestCase):
             "wss://api.openmhz.com/socket.io/", "wmata"
         )
 
-        self.assertEqual(profile, "safari17_2_ios")
+        self.assertEqual(profile, "firefox133")
         self.assertEqual(mock_session_cls.call_count, 2)
         timed_out.close.assert_awaited_once()
 
@@ -524,7 +524,7 @@ class TestConnectWithFallback(unittest.IsolatedAsyncioTestCase):
             "wss://api.openmhz.com/socket.io/", "wmata"
         )
 
-        self.assertEqual(profile, "safari15_5")
+        self.assertEqual(profile, "safari17_2_ios")
         self.assertEqual(mock_session_cls.call_count, 3)
 
     @patch(f"{_WS_MOD}.AsyncSession")
@@ -566,7 +566,7 @@ class TestConnectWithFallback(unittest.IsolatedAsyncioTestCase):
             c.kwargs["impersonate"] for c in mock_session_cls.call_args_list
         ]
         self.assertEqual(
-            attempted, ["firefox133", "safari17_2_ios", "safari15_5"]
+            attempted, ["firefox147", "firefox133", "safari17_2_ios"]
         )
 
     @patch(f"{_WS_MOD}.AsyncSession")
@@ -660,5 +660,5 @@ class TestWebsocketTransportLogging(unittest.IsolatedAsyncioTestCase):
             if "WebSocket connected" in r.getMessage()
         ]
         self.assertEqual(len(connected_lines), 1)
-        self.assertIn("impersonate=firefox133", connected_lines[0])
+        self.assertIn("impersonate=firefox147", connected_lines[0])
         self.assertIn("short_name=wmata", connected_lines[0])

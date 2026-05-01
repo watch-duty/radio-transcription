@@ -65,11 +65,19 @@ def _parse_sio_event(frame: str) -> CallEvent | None:
 
 
 # Default profile fallback list. Confirmed working against api.openmhz.com on
-# 2026-05-01 with curl_cffi 0.15.0; chrome / chrome116..133a / edge101 /
-# safari17_0 were all 403'd by Cloudflare on the WS upgrade in the 2026-04-29
-# rule update. firefox133 first because it is the most fingerprint-distinct
-# from the blocked chrome/edge family.
-_DEFAULT_IMPERSONATE_PROFILES = "firefox133,safari17_2_ios,safari15_5"
+# 2026-05-01 with curl_cffi 0.15.0. The 2026-04-29 Cloudflare rule update
+# 403'd every chrome/edge desktop fingerprint plus safari17.0+/18+/26+ (macOS
+# and iOS); the firefox family (133, 135, 144, 147) and older safari variants
+# all still pass.
+#
+# Default order:
+#   firefox147        — latest firefox; auto-replaced if/when newer pins exist
+#   firefox133        — pinned older firefox, hedge against a future Cloudflare
+#                       rule targeting just the latest firefox version
+#   safari17_2_ios    — cross-vendor diversity (different fingerprint family),
+#                       newer than the safari15.x line so less likely to be
+#                       deprecated by a curl_cffi version prune
+_DEFAULT_IMPERSONATE_PROFILES = "firefox147,firefox133,safari17_2_ios"
 _PROFILE_CONNECT_TIMEOUT_SEC = 10.0
 _BLOCKED_SIGNATURE = "Refused WebSockets upgrade: 403"
 
