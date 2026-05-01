@@ -17,7 +17,9 @@ from apache_beam.transforms.window import TimestampedValue
 from apache_beam.utils.timestamp import Timestamp
 from opentelemetry.trace import get_current_span
 
-from backend.pipeline.common.tracing_utils import extract_trace_context
+from backend.pipeline.common.tracing_utils import (
+    extract_trace_context,
+)
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.transcription.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
@@ -464,7 +466,197 @@ class SerializeAndEnrichTest(unittest.TestCase):
         mock_state.write.assert_called_once()
 
 
+class OrderedBypassTest(unittest.TestCase):
+    @patch(
+        "backend.pipeline.transcription.transforms.stateful.with_tracer_context"
+    )
+    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
+    def test_ordered_bypass_process_span(
+        self,
+        mock_audio_processor: MagicMock,
+        mock_with_tracer_context: MagicMock,
+    ) -> None:
+        """Verifies that OrderedBypassFn.process calls with_tracer_context."""
+        stitch_config = get_test_stitch_config()
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        fn = OrderedBypassFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn.setup()
+
+        mock_state = MagicMock()
+        mock_state.read.return_value = None
+        mock_timer = MagicMock()
+
+        metadata = ChunkMetadata(
+            gcs_uri="gs://test-bucket/path/to/test.flac",
+            session_id="mock-session-id",
+            duration_ms=1000,
+            feed_metadata=FeedMetadata(
+                feed_name="mock-feed", external_id="mock-external-id"
+            ),
+            traceparent="mock-traceparent",
+        )
+
+        list(
+            fn.process(
+                ("test-feed", metadata),
+                timestamp=Timestamp(100),
+                transmission_context_state=mock_state,
+                out_of_order_timer=mock_timer,
+            )
+        )
+
+        mock_with_tracer_context.assert_called_once_with(
+            "mock-traceparent",
+            "stitching_bypass_process",
+            "backend.pipeline.transcription.transforms.stateful",
+        )
+
+    @patch(
+        "backend.pipeline.transcription.transforms.stateful.with_tracer_context"
+    )
+    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
+    def test_ordered_bypass_callback_flushes_span(
+        self,
+        mock_audio_processor: MagicMock,
+        mock_with_tracer_context: MagicMock,
+    ) -> None:
+        """Verifies that handle_buffer_timeout calls with_tracer_context."""
+        mock_processor_inst = mock_audio_processor.return_value
+        chunk_data = MagicMock()
+        chunk_data.duration_ms = 1000
+        chunk_data.audio = np.zeros(16000, dtype=np.int16)
+        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+
+        stitch_config = get_test_stitch_config()
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        fn = OrderedBypassFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn.setup()
+
+        mock_state = MagicMock()
+
+        curr_context = TransmissionContext(
+            out_of_order_buffer=[
+                BufferedChunk(timestamp_ms=100000, gcs_uri="gs://test.flac")
+            ],
+            feed_metadata=FeedMetadata(
+                feed_name="mock-feed", external_id="mock-id"
+            ),
+            traceparent="mock-traceparent-context",
+        )
+        mock_state.read.return_value = curr_context
+
+        list(
+            fn.handle_buffer_timeout(
+                feed_id="test-feed", transmission_context_state=mock_state
+            )
+        )
+
+        mock_with_tracer_context.assert_called_once_with(
+            "mock-traceparent-context",
+            "handle_buffer",
+            "backend.pipeline.transcription.transforms.stateful",
+        )
+
+
 class OrderedStitchAudioTest(unittest.TestCase):
+    @patch(
+        "backend.pipeline.transcription.transforms.stateful.with_tracer_context"
+    )
+    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
+    def test_ordered_stitch_audio_process_span(
+        self,
+        mock_audio_processor: MagicMock,
+        mock_with_tracer_context: MagicMock,
+    ) -> None:
+        """Verifies that OrderedStitchAudioFn.process calls with_tracer_context."""
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        stitch_config = get_test_stitch_config()
+        fn = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn.setup()
+
+        mock_state = MagicMock()
+        mock_state.read.return_value = None
+        mock_timer = MagicMock()
+
+        metadata = ChunkMetadata(
+            gcs_uri="gs://test-bucket/path/to/test.flac",
+            session_id="mock-session-id",
+            duration_ms=1000,
+            feed_metadata=FeedMetadata(
+                feed_name="mock-feed", external_id="mock-external-id"
+            ),
+            traceparent="mock-traceparent",
+        )
+
+        list(
+            fn.process(
+                element=("test-feed", metadata),
+                timestamp=Timestamp(100),
+                transmission_buffer_state=MagicMock(),
+                transmission_context_state=mock_state,
+                last_start_ms_state=MagicMock(),
+                out_of_order_timer=mock_timer,
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        mock_with_tracer_context.assert_called_once_with(
+            "mock-traceparent",
+            "stitching_process",
+            "backend.pipeline.transcription.transforms.stateful",
+        )
+
+    @patch(
+        "backend.pipeline.transcription.transforms.stateful.with_tracer_context"
+    )
+    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
+    def test_ordered_stitch_audio_handle_gap_timeout_span(
+        self,
+        mock_audio_processor: MagicMock,
+        mock_with_tracer_context: MagicMock,
+    ) -> None:
+        """Verifies that handle_gap_timeout calls with_tracer_context."""
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        stitch_config = get_test_stitch_config()
+        fn = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn.setup()
+
+        mock_state = MagicMock()
+        curr_context = TransmissionContext(
+            session_id="mock-session",
+            traceparent="mock-traceparent-context",
+            out_of_order_buffer=[
+                BufferedChunk(timestamp_ms=100000, gcs_uri="gs://test.flac")
+            ],
+        )
+        mock_state.read.return_value = curr_context
+
+        list(
+            fn.handle_gap_timeout(
+                feed_id="test-feed",
+                transmission_buffer_state=MagicMock(),
+                transmission_context_state=mock_state,
+                last_start_ms_state=MagicMock(),
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        mock_with_tracer_context.assert_called_once_with(
+            "mock-traceparent-context",
+            "handle_audio_gap",
+            "backend.pipeline.transcription.transforms.stateful",
+        )
+
     @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
     def test_late_chunk_empty_buffer_no_fallback(
         self, mock_audio_processor: MagicMock
