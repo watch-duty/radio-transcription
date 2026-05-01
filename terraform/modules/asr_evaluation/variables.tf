@@ -17,7 +17,7 @@ variable "machine_type" {
 variable "provisioning_model" {
   description = "The type of instance to create"
   type        = string
-  default     = "SPOT"
+  default     = "STANDARD"
 }
 
 variable "gpu_type" {
