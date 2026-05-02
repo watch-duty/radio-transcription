@@ -25,6 +25,14 @@ jobs:
       - name: Install mise, install tools
         uses: jdx/mise-action@v3
 
+      - name: Cache uv dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-uv-${{ hashFiles('**/uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
+
       - name: Generate protos
         run: mise run generate:protos
 
@@ -39,6 +47,14 @@ jobs:
 
       - name: Install mise, install tools
         uses: jdx/mise-action@v3
+
+      - name: Cache uv dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-uv-${{ hashFiles('**/uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
 
       - name: Run E2E tests
         run: mise run test:e2e
