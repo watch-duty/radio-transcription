@@ -74,6 +74,37 @@ if TYPE_CHECKING:
     from backend.pipeline.storage.feed_store import LeasedFeed
 
 
+from enum import StrEnum
+
+
+class AudioMimeType(StrEnum):
+    """Enumeration of supported audio MIME types."""
+
+    MPEG = "audio/mpeg"
+    AAC = "audio/aac"
+    WAV = "audio/x-wav"
+    FLAC = "audio/flac"
+    MP4 = "audio/mp4"
+    OGG = "audio/ogg"
+
+    @classmethod
+    def from_string(cls, content_type: str | None) -> AudioMimeType | None:
+        """Parses content_type defensively to resolve to AudioMimeType."""
+        if not content_type:
+            return None
+        clean_type = content_type.split(";")[0].strip().lower()
+        try:
+            return cls(clean_type)
+        except ValueError:
+            aliases = {
+                "audio/mp3": cls.MPEG,
+                "audio/wav": cls.WAV,
+                "audio/m4a": cls.MP4,
+                "audio/x-m4a": cls.MP4,
+            }
+            return aliases.get(clean_type)
+
+
 @dataclasses.dataclass(frozen=True)
 class CapturedChunk:
     """A single captured audio chunk yielded by a capture function.
@@ -93,6 +124,7 @@ class CapturedChunk:
             the downstream latency-emitting log OMITS ``processing_latency_sec``
             entirely from the payload when unset (the key is absent, not null).
             Required to be tz-aware UTC when set.
+        mime_type: Optional validated HTTP Content-Type as an AudioMimeType enum value.
     """
 
     audio_bytes: bytes
@@ -100,6 +132,7 @@ class CapturedChunk:
     chunk_end_time: datetime.datetime
     session_id: str | None = None
     receipt_time: datetime.datetime | None = None
+    mime_type: AudioMimeType | None = None
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
