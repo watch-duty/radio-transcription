@@ -14,7 +14,11 @@ from urllib.parse import urlparse
 import aiohttp
 from google.cloud import secretmanager
 
-from backend.pipeline.ingestion.models import CapturedChunk, CaptureResources
+from backend.pipeline.ingestion.models import (
+    AudioMimeType,
+    CapturedChunk,
+    CaptureResources,
+)
 from backend.pipeline.ingestion.slo_contract import (
     EVENT_TYPE_CALL_AUTH_FAILURE,
     EVENT_TYPE_CALL_DOWNLOAD_FAILED,
@@ -181,6 +185,7 @@ async def _download_audio(  # noqa: PLR0911
     session: aiohttp.ClientSession,
     audio_url: str,
     shutdown_event: asyncio.Event,
+    out_headers: dict[str, str] | None = None,
 ) -> bytes | None:
     """Download audio file."""
     timeout = aiohttp.ClientTimeout(total=_AUDIO_TIMEOUT_SEC)
@@ -223,6 +228,9 @@ async def _download_audio(  # noqa: PLR0911
                         audio_resp.status,
                     )
                     return None
+
+                if out_headers is not None:
+                    out_headers.update(audio_resp.headers)
 
                 return await audio_resp.read()
         except RuntimeError:
@@ -269,10 +277,14 @@ async def _create_chunk_from_call(
     shutdown_event: asyncio.Event,
     session_id: str,
     receipt_time: datetime.datetime,
+    out_headers: dict[str, str] | None = None,
 ) -> CapturedChunk | None:
     """Download audio for a single call and wrap it in a CapturedChunk."""
+    out_h = out_headers if out_headers is not None else {}
     try:
-        audio_bytes = await _download_audio(session, audio_url, shutdown_event)
+        audio_bytes = await _download_audio(
+            session, audio_url, shutdown_event, out_h
+        )
     except RuntimeError:
         raise
     except Exception as e:
@@ -297,12 +309,16 @@ async def _create_chunk_from_call(
         else now
     )
 
+    content_type = out_h.get("Content-Type")
+    mime_type = AudioMimeType.from_string(content_type)
+
     return CapturedChunk(
         audio_bytes=audio_bytes,
         chunk_start_time=chunk_start_time,
         chunk_end_time=chunk_end_time,
         session_id=session_id,
         receipt_time=receipt_time,
+        mime_type=mime_type,
     )
 
 

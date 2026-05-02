@@ -23,7 +23,11 @@ from backend.pipeline.ingestion import (
     quarantine_telemetry,
 )
 from backend.pipeline.ingestion.health_server import HealthState
-from backend.pipeline.ingestion.models import CapturedChunk, CaptureResources
+from backend.pipeline.ingestion.models import (
+    AudioMimeType,
+    CapturedChunk,
+    CaptureResources,
+)
 from backend.pipeline.ingestion.retry import (
     LeaseExpiredError,
     retry_with_lease_check,
@@ -777,19 +781,24 @@ class NormalizerRuntime:
                     raise TypeError(msg)  # noqa: TRY301
                 tracer = trace.get_tracer(__name__)
                 with tracer.start_as_current_span("process_captured_chunk"):
-                    # session_id is owned by the capture function. Fall back
-                    # to a runtime-generated UUID during the transition period
-                    # for collectors that haven't been updated yet.
+                    chunk_extension = extension
+                    chunk_content_type = content_type
+
+                    if captured_chunk.mime_type is not None:
+                        mime_map = {
+                            AudioMimeType.MPEG: ("mp3", "audio/mpeg"),
+                            AudioMimeType.AAC: ("aac", "audio/aac"),
+                            AudioMimeType.WAV: ("wav", "audio/x-wav"),
+                            AudioMimeType.FLAC: ("flac", "audio/flac"),
+                            AudioMimeType.MP4: ("m4a", "audio/mp4"),
+                            AudioMimeType.OGG: ("ogg", "audio/ogg"),
+                        }
+                        if captured_chunk.mime_type in mime_map:
+                            chunk_extension, chunk_content_type = mime_map[
+                                captured_chunk.mime_type
+                            ]
+
                     session_id = captured_chunk.session_id
-                    if session_id is None:
-                        if _fallback_session_id is None:
-                            _fallback_session_id = str(uuid.uuid4())
-                            logger.warning(
-                                "Collector for feed %s did not set session_id"
-                                " on CapturedChunk — using fallback",
-                                feed["name"],
-                            )
-                        session_id = _fallback_session_id
                     # Bump chunk_seq up-front for every captured chunk, success or
                     # failure. Reusing a seq across chunks is unsafe: combined with
                     # second-precision upload timestamps and the 412-treated-as-
@@ -810,8 +819,8 @@ class NormalizerRuntime:
                         settings.audio_staging_bucket,
                         seq_for_chunk,
                         fencing_token,
-                        extension,
-                        content_type,
+                        chunk_extension,
+                        chunk_content_type,
                         lease_lost=self._lease_lost,
                         shutdown=self._shutdown,
                         max_retries=settings.gcs_upload_max_retries,

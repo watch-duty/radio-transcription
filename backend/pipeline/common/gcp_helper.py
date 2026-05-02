@@ -217,7 +217,7 @@ def publish_audio_chunk_sync(
     feed_name: str,
     external_id: str,
     gcs_uri: str,
-    session_id: str,
+    session_id: str | None,
     start_timestamp: datetime.datetime,
     duration_ms: int,
     source_type: str | None = None,
@@ -233,17 +233,19 @@ def publish_audio_chunk_sync(
             feed_id=feed_id,
             feed_name=feed_name,
             duration_ms=duration_ms,
-            session_id=session_id,
             external_id=external_id,
         )
+        if session_id is not None:
+            audio_chunk_msg.session_id = session_id
         audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
 
         attrs: dict[str, str] = {
             "feed_id": feed_id,
-            "session_id": session_id,
             "gcs_uri": gcs_uri,
             "timestamp_ms": str(int(start_timestamp.timestamp() * 1000)),
         }
+        if session_id is not None:
+            attrs["session_id"] = session_id
         if source_type is not None:
             attrs["source_type"] = source_type
 
@@ -268,7 +270,7 @@ async def publish_audio_chunk(
     feed_name: str,
     external_id: str,
     gcs_uri: str,
-    session_id: str,
+    session_id: str | None,
     start_timestamp: datetime.datetime,
     duration_ms: int,
     source_type: str | None = None,
@@ -285,17 +287,19 @@ async def publish_audio_chunk(
             feed_id=feed_id,
             feed_name=feed_name,
             duration_ms=duration_ms,
-            session_id=session_id,
             external_id=external_id,
         )
+        if session_id is not None:
+            audio_chunk_msg.session_id = session_id
         audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
 
         attrs: dict[str, str] = {
             "feed_id": feed_id,
-            "session_id": session_id,
             "gcs_uri": gcs_uri,
             "timestamp_ms": str(int(start_timestamp.timestamp() * 1000)),
         }
+        if session_id is not None:
+            attrs["session_id"] = session_id
         if source_type is not None:
             attrs["source_type"] = source_type
 

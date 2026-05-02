@@ -16,6 +16,7 @@ from backend.pipeline.ingestion.collectors.bcfy_calls import (
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
 )
+from backend.pipeline.ingestion.models import AudioMimeType
 from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 
 
@@ -574,6 +575,39 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
         assert chunk is not None
         self.assertEqual(chunk.receipt_time, rt)
 
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._download_audio",
+        new_callable=AsyncMock,
+    )
+    async def test_create_chunk_captures_mime_type(
+        self, mock_dl: AsyncMock
+    ) -> None:
+        mock_dl.return_value = b"mpeg_bytes"
+
+        async def mock_dl_side_effect(
+            session, audio_url, shutdown_event, out_headers=None
+        ):
+            if out_headers is not None:
+                out_headers["Content-Type"] = "audio/mpeg"
+            return b"mpeg_bytes"
+
+        mock_dl.side_effect = mock_dl_side_effect
+        result = {"url": "http://1", "start_ts": 1000, "end_ts": 2000}
+        rt = datetime.datetime(2026, 4, 22, 12, 0, 0, tzinfo=datetime.UTC)
+
+        chunk = await bcfy_calls_collector._create_chunk_from_call(
+            self.session,
+            result,
+            "http://1",
+            self.shutdown,
+            "test-session",
+            rt,
+        )
+
+        assert chunk is not None
+        self.assertEqual(chunk.mime_type, AudioMimeType.MPEG)
+
 
 class TestHandleLoopFailure(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
@@ -989,7 +1023,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             "calls": [{"url": "http://1"}, {"url": "http://2"}]
         }
 
-        async def dl_side_effect(session, url, shutdown) -> bytes:
+        async def dl_side_effect(*args, **kwargs) -> bytes:
             self.shutdown.set()
             return b"flac"
 
