@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
@@ -311,3 +314,44 @@ class TestHandle:
             _handle(self._make_event())
 
         mock_store.record_failure.assert_called_once_with(feed_id)
+
+
+# ---------------------------------------------------------------------------
+# Module-import fail-fast (D-03)
+# ---------------------------------------------------------------------------
+class TestModuleImportFailFast:
+    """Verify echo.main raises at import when required env is missing.
+
+    Uses a fresh `subprocess` rather than re-importing the module in-process:
+    `setup_logging()` registers a global OpenTelemetry TracerProvider, which
+    cannot be cleanly torn down between in-process imports. A subprocess gives
+    a clean import-from-scratch and avoids "Overriding of current
+    TracerProvider" warnings polluting test output.
+    """
+
+    def test_module_import_raises_on_missing_env(self) -> None:
+        # Strip env to PATH only so the import does NOT inherit
+        # AUDIO_STAGING_BUCKET / RAW_AUDIO_TOPIC from the test runner's
+        # environment (conftest.py sets these for the in-process test
+        # suite, but the subprocess starts fresh).
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import backend.pipeline.ingestion.collectors.echo.main",
+            ],
+            env={"PATH": os.environ["PATH"]},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode != 0, (
+            f"expected non-zero exit, got {result.returncode}; "
+            f"stdout={result.stdout!r}; stderr={result.stderr!r}"
+        )
+        assert "AUDIO_STAGING_BUCKET" in result.stderr, (
+            f"expected AUDIO_STAGING_BUCKET in stderr; got {result.stderr!r}"
+        )
+        assert "Required environment variable" in result.stderr, (
+            f"expected canonical _require_env message; got {result.stderr!r}"
+        )
