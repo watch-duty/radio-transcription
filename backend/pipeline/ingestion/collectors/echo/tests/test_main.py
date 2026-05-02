@@ -355,6 +355,10 @@ class TestModuleImportFailFast:
             f"expected non-zero exit, got {result.returncode}; "
             f"stdout={result.stdout!r}; stderr={result.stderr!r}"
         )
+        # First _require_env call in main.py is AUDIO_STAGING_BUCKET
+        # (statement order is fixed by D-01 / plan 01-01 Task 1: the
+        # declaration sequence at module top is AUDIO_STAGING_BUCKET then
+        # RAW_AUDIO_TOPIC, so the first ValueError surfaces the former).
         assert "AUDIO_STAGING_BUCKET" in result.stderr, (
             f"expected AUDIO_STAGING_BUCKET in stderr; got {result.stderr!r}"
         )
