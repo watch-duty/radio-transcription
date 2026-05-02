@@ -9,7 +9,6 @@ for downstream transcription.
 from __future__ import annotations
 
 import logging
-import os
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,30 +23,29 @@ from backend.pipeline.common.audio import get_audio_duration
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.gcp_helper import publish_audio_chunk_sync
 from backend.pipeline.common.logging import setup_logging
+from backend.pipeline.ingestion.settings import _require_env
 from backend.pipeline.storage.sync_connection import connect_db
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
 
 if TYPE_CHECKING:
     from cloudevents.http import event as cloudevent
 
+# ---------------------------------------------------------------------------
+# Configuration
+#
+# Required env vars are validated at module import via `_require_env(...)`.
+# These calls run BEFORE `setup_logging()` so that contract-drift
+# (a missing or empty required env var) surfaces as the first error,
+# not masked behind a logging-init traceback (e.g., DefaultCredentialsError
+# in environments where K_SERVICE is set but ADC is unavailable).
+# See .planning/research/PITFALLS.md Pitfall #2.
+# ---------------------------------------------------------------------------
+STAGING_BUCKET = _require_env("AUDIO_STAGING_BUCKET")
+RAW_AUDIO_TOPIC = _require_env("RAW_AUDIO_TOPIC")
+
 setup_logging()
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
-
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-STAGING_BUCKET = os.environ.get("AUDIO_STAGING_BUCKET", "")
-
-try:
-    from backend.pipeline.ingestion.router import resolve_topic_path
-    from backend.pipeline.ingestion.settings import NormalizerSettings
-    from backend.pipeline.storage.feed_store import SourceType
-
-    settings = NormalizerSettings()
-    RAW_AUDIO_TOPIC = resolve_topic_path(SourceType.ECHO, settings)
-except (ValueError, KeyError):
-    RAW_AUDIO_TOPIC = os.environ.get("RAW_AUDIO_TOPIC", "")
 
 # ---------------------------------------------------------------------------
 # Global state (persisted across warm invocations)
@@ -69,12 +67,6 @@ def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
     global gcs_client, pubsub_client, feed_store  # noqa: PLW0603
 
     with tracer.start_as_current_span("echo_ingestion"):
-        if not STAGING_BUCKET:
-            msg = "AUDIO_STAGING_BUCKET environment variable is not set"
-            raise RuntimeError(msg)
-        if not RAW_AUDIO_TOPIC:
-            msg = "RAW_AUDIO_TOPIC environment variable is not set"
-            raise RuntimeError(msg)
         if gcs_client is None:
             gcs_client = storage.Client()
             logger.info(
