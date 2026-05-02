@@ -3,14 +3,12 @@ from __future__ import annotations
 import asyncio
 import collections
 import datetime
-import inspect
 import logging
 import os
 import random
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from unittest.mock import Mock
 from urllib.parse import urlparse
 
 import aiohttp
@@ -284,34 +282,9 @@ async def _create_chunk_from_call(
     """Download audio for a single call and wrap it in a CapturedChunk."""
     out_h = out_headers if out_headers is not None else {}
     try:
-        target = _download_audio
-        if (
-            isinstance(_download_audio, Mock)
-            and _download_audio.side_effect is not None
-        ):
-            target = _download_audio.side_effect
-
-        if callable(target):
-            sig = inspect.signature(target)
-            has_var_args = any(
-                p.kind == p.VAR_POSITIONAL for p in sig.parameters.values()
-            )
-            if (
-                "out_headers" in sig.parameters
-                or has_var_args
-                or len(sig.parameters) >= 4
-            ):
-                audio_bytes = await _download_audio(
-                    session, audio_url, shutdown_event, out_h
-                )
-            else:
-                audio_bytes = await _download_audio(
-                    session, audio_url, shutdown_event
-                )
-        else:
-            audio_bytes = await _download_audio(
-                session, audio_url, shutdown_event
-            )
+        audio_bytes = await _download_audio(
+            session, audio_url, shutdown_event, out_h
+        )
     except RuntimeError:
         raise
     except Exception as e:
