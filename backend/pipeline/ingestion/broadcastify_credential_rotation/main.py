@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 # Required env vars are validated at module import via `_require_env(...)`.
 # These calls run BEFORE `setup_logging()` so that contract-drift (a missing
 # or empty required env var) surfaces as the first error, not masked behind
-# a logging-init traceback. See .planning/research/PITFALLS.md Pitfall #2.
+# a logging-init traceback.
 # ---------------------------------------------------------------------------
 BROADCASTIFY_USERNAME = _require_env("BROADCASTIFY_USERNAME")
 BROADCASTIFY_PASSWORD = _require_env("BROADCASTIFY_PASSWORD")

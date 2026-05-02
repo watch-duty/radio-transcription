@@ -12,8 +12,6 @@ per-test setup hooks, no test-runtime env mutation. pytest loads
 the env lands in `os.environ` before the import-time `_require_env`
 calls fire. `setdefault` (not assignment) preserves any real value a
 developer has exported locally.
-
-See .planning/research/PITFALLS.md Pitfall #1 for the timing rationale.
 """
 
 from __future__ import annotations

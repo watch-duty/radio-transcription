@@ -14,8 +14,6 @@ the env lands in `os.environ` before the import-time `_require_env`
 calls fire. `setdefault` (not assignment) preserves any real value a
 developer has exported locally.
 
-See .planning/research/PITFALLS.md Pitfall #1 for the timing rationale.
-
 Note: tests that need different values (e.g., to verify JWT signing
 logic) override the module-level constants in `main` via
 `mock.patch.multiple(main, ...)` — see the `configured_module` helper

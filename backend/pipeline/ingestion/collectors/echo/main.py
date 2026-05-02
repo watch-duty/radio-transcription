@@ -38,7 +38,6 @@ if TYPE_CHECKING:
 # (a missing or empty required env var) surfaces as the first error,
 # not masked behind a logging-init traceback (e.g., DefaultCredentialsError
 # in environments where K_SERVICE is set but ADC is unavailable).
-# See .planning/research/PITFALLS.md Pitfall #2.
 # ---------------------------------------------------------------------------
 STAGING_BUCKET = _require_env("AUDIO_STAGING_BUCKET")
 RAW_AUDIO_TOPIC = _require_env("RAW_AUDIO_TOPIC")
