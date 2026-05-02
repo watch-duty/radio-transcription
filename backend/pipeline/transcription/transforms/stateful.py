@@ -414,6 +414,7 @@ class OrderedStitchAudioFn(beam.DoFn):
 
             last_start_ms_state.write(current_start_ms)
 
+            sample_rate = curr_ctx.sample_rate or 16000
             yield (
                 action.feed_id,
                 FlushRequest(
@@ -429,6 +430,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                     transmission_id=transmission_id,
                     feed_metadata=curr_ctx.feed_metadata,
                     traceparent=action.traceparent,
+                    sample_rate=sample_rate,
                 ),
             )
 
@@ -513,6 +515,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                                     "FeedMetadata", curr_context.feed_metadata
                                 ),
                                 traceparent=chunk.traceparent,
+                                sample_rate=chunk_data.sample_rate,
                             ),
                         )
                     )
@@ -575,6 +578,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                                 missing_prior_context=ctx.missing_prior_context,
                                 start_audio_offset_ms=ctx.start_audio_offset_ms,
                                 buffer_duration_ms=ctx.buffer_duration_ms,
+                                sample_rate=chunk_data.sample_rate,
                             )
                             transmission_context_state.write(curr_context)
                         case ScheduleStaleTimerAction():
@@ -1056,6 +1060,7 @@ class OrderedBypassFn(beam.DoFn):
                                 "FeedMetadata", curr_context.feed_metadata
                             ),
                             traceparent=curr_context.traceparent,
+                            sample_rate=chunk_data.sample_rate,
                         ),
                     )
                 )
@@ -1184,8 +1189,9 @@ class TranscribeAudioFn(beam.DoFn):
         if request.buffer is None or request.buffer.size == 0:
             return None
 
-        success, flac_bytes, processed_audio = (
-            self.audio_processor.process_buffer(request.buffer)
+        processor = self.audio_processor
+        success, flac_bytes, processed_audio = processor.process_buffer(
+            request.buffer, request.sample_rate
         )
         if not success or flac_bytes is None or processed_audio is None:
             self.vad_silence_count.inc()
@@ -1215,7 +1221,9 @@ class TranscribeAudioFn(beam.DoFn):
                     m4a_path=m4a_path,
                     flac_bytes=flac_bytes,
                     processed_audio=processed_audio,
-                    export_m4a_fn=self.audio_processor.export_m4a,
+                    export_m4a_fn=lambda buf: processor.export_m4a(
+                        buf, request.sample_rate
+                    ),
                 )
             )
         if not canonical_audio_uri and (
