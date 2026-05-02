@@ -417,13 +417,27 @@ class TestModuleImportFailFast:
         module_path = (
             "backend.pipeline.ingestion.broadcastify_credential_rotation.main"
         )
-        # Strip env to PATH only so the import does NOT inherit any of
-        # the seven required env vars from the test runner's environment
-        # (conftest.py sets these for the in-process test suite, but the
-        # subprocess starts fresh).
+        # Inherit the parent process's environment (so PYTHONPATH,
+        # VIRTUAL_ENV, HOME, locale settings, etc. are preserved and the
+        # subprocess can find the package), then drop ONLY the seven env
+        # vars this test wants to verify the module fail-fasts on.
+        # conftest.py sets these for the in-process test suite; popping
+        # them in the spawned subprocess ensures _require_env raises.
+        clean_env = os.environ.copy()
+        for var in (
+            "BROADCASTIFY_USERNAME",
+            "BROADCASTIFY_PASSWORD",
+            "BROADCASTIFY_API_KEY",
+            "BROADCASTIFY_API_APP_ID",
+            "BROADCASTIFY_API_KEY_ID",
+            "GOOGLE_CLOUD_PROJECT",
+            "BROADCASTIFY_JWT_SECRET_ID",
+        ):
+            clean_env.pop(var, None)
+
         result = subprocess.run(
             [sys.executable, "-c", f"import {module_path}"],
-            env={"PATH": os.environ["PATH"]},
+            env=clean_env,
             capture_output=True,
             text=True,
             check=False,

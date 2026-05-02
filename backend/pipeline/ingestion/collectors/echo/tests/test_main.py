@@ -330,17 +330,23 @@ class TestModuleImportFailFast:
     """
 
     def test_module_import_raises_on_missing_env(self) -> None:
-        # Strip env to PATH only so the import does NOT inherit
-        # AUDIO_STAGING_BUCKET / RAW_AUDIO_TOPIC from the test runner's
-        # environment (conftest.py sets these for the in-process test
-        # suite, but the subprocess starts fresh).
+        # Inherit the parent process's environment (so PYTHONPATH,
+        # VIRTUAL_ENV, HOME, locale settings, etc. are preserved and the
+        # subprocess can find the package), then drop ONLY the env vars
+        # this test wants to verify the module fail-fasts on. conftest.py
+        # sets these for the in-process test suite; popping them in the
+        # spawned subprocess ensures _require_env raises.
+        clean_env = os.environ.copy()
+        clean_env.pop("AUDIO_STAGING_BUCKET", None)
+        clean_env.pop("RAW_AUDIO_TOPIC", None)
+
         result = subprocess.run(
             [
                 sys.executable,
                 "-c",
                 "import backend.pipeline.ingestion.collectors.echo.main",
             ],
-            env={"PATH": os.environ["PATH"]},
+            env=clean_env,
             capture_output=True,
             text=True,
             check=False,
