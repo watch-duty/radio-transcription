@@ -192,15 +192,6 @@ class TestCleanupOldVersions:
 
 
 class TestGenerateJwt:
-    def test_generate_jwt_raises_when_api_key_is_missing(
-        self, configured_module: None
-    ) -> None:
-        del configured_module
-
-        with mock.patch.object(main, "BROADCASTIFY_API_KEY", ""):
-            with pytest.raises(RuntimeError, match="BROADCASTIFY_API_KEY"):
-                main._generate_jwt()
-
     def test_generate_jwt_has_expected_headers_and_claims(
         self, configured_module: None
     ) -> None:

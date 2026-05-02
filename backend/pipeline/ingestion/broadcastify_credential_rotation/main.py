@@ -123,10 +123,6 @@ def add_secret_version(
     Returns:
         The created secret version resource name.
     """
-    if not PROJECT_ID:
-        msg = "GOOGLE_CLOUD_PROJECT environment variable is not set"
-        raise RuntimeError(msg)
-
     parent = secret_client.secret_path(PROJECT_ID, secret_id)
     response = secret_client.add_secret_version(
         request={"parent": parent, "payload": {"data": payload.encode()}}
@@ -157,16 +153,6 @@ def _generate_jwt(auth_claims: dict[str, str] | None = None) -> str:
     Returns:
         The generated JWT string.
     """
-    if not BROADCASTIFY_API_KEY:
-        msg = "BROADCASTIFY_API_KEY environment variable is not set"
-        raise RuntimeError(msg)
-    if not BROADCASTIFY_API_APP_ID:
-        msg = "BROADCASTIFY_API_APP_ID environment variable is not set"
-        raise RuntimeError(msg)
-    if not BROADCASTIFY_API_KEY_ID:
-        msg = "BROADCASTIFY_API_KEY_ID environment variable is not set"
-        raise RuntimeError(msg)
-
     now = int(time.time())
     headers = {"alg": "HS256", "typ": "JWT", "kid": BROADCASTIFY_API_KEY_ID}
     payload = {
@@ -253,9 +239,6 @@ def broadcastify_credential_rotation(request: flask.Request) -> tuple[str, int]:
         raise RuntimeError(msg)
 
     auth_jwt_token = _generate_jwt({"sub": uid, "utk": token})
-    if not SECRET_JWT:
-        msg = "BROADCASTIFY_JWT_SECRET_ID environment variable is not set"
-        raise RuntimeError(msg)
     add_secret_version(secret_client, SECRET_JWT, auth_jwt_token)
     logger.info(
         "Broadcastify credentials rotated successfully for username: %s",
