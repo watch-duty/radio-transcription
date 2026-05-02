@@ -1023,7 +1023,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             "calls": [{"url": "http://1"}, {"url": "http://2"}]
         }
 
-        async def dl_side_effect(session, url, shutdown) -> bytes:
+        async def dl_side_effect(*args, **kwargs) -> bytes:
             self.shutdown.set()
             return b"flac"
 
