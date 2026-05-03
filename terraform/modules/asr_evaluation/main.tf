@@ -38,12 +38,14 @@ resource "google_compute_instance" "eval_instance" {
   metadata = {
     startup_script = <<-EOT
     #!/bin/bash
-    # Systematically install Google Cloud Ops Agent on boot to enable Cloud Console GPU metrics
-    curl -sSO https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
-    bash add-google-cloud-ops-agent-repo.sh --also-install
+    # Systematically install Google Cloud Ops Agent on boot to enable Cloud Console GPU metrics (idempotent check)
+    if ! systemctl is-active --quiet google-cloud-ops-agent; then
+      curl -sSO https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
+      bash add-google-cloud-ops-agent-repo.sh --also-install
+    fi
 
-    # Execute auto-shutdown monitoring in the background
-    (
+    # Execute auto-shutdown monitoring using nohup to survive startup script process exit
+    nohup bash -c '
       sleep $(( ${var.auto_shutdown_hours} * 3600 ))
       while true; do
         if nvidia-smi --query-compute-apps=pid --format=csv,noheader | grep -q . ; then
@@ -53,7 +55,7 @@ resource "google_compute_instance" "eval_instance" {
           break
         fi
       done
-    ) &
+    ' > /var/log/auto-shutdown.log 2>&1 &
   EOT
   }
 
