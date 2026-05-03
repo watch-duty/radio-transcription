@@ -11,4 +11,6 @@ USER ${NB_USER}
 # Copy requirements and install them
 COPY --chown=jovyan:users requirements.txt /tmp/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128 --force-reinstall && \
     pip install -r /tmp/requirements.txt
+
