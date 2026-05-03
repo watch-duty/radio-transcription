@@ -41,6 +41,15 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8888:8888"
+    environment:
+      - LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     command: ["jupyter", "notebook", "--ip=0.0.0.0", "--NotebookApp.token=''", "--NotebookApp.password=''"]
     volumes:
       - ./model:/home/jovyan/model
