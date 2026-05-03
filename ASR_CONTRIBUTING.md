@@ -28,7 +28,7 @@ terraform apply -var-file=local_variables.tfvars
 ```
 
 ### GCS Bucket Permissions (Important!)
-Ensure that you deploy your evaluation GPU VM instance inside the **same GCP project (environment)** where your targeted GCS manifest bucket (e.g., `gs://wd-transcription-data`) resides. For example, if your manifest bucket lives in the `production` environment, your Terraform `project_id` must also target that `production` project ID. This natively guarantees that your VM's service credentials will have native, seamless, and zero-configuration read/write access to your datasets without needing any manual cross-project IAM policy changes.
+Ensure that you deploy your evaluation GPU VM instance inside the **same GCP project (environment)** where your targeted GCS manifest bucket (e.g., `gs://wd-transcription-data`) resides. For example, if your manifest bucket lives in the `production` environment, your Terraform `project_id` must also target that `production` project ID. This natively guarantees that your VM's service credentials will have seamless, zero-configuration read/write access to your datasets without needing any manual cross-project IAM policy changes.
 
 
 

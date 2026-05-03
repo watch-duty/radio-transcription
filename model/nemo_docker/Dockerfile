@@ -27,9 +27,10 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 # Download requirements.txt first to cache pip install
 RUN --mount=type=cache,target=/root/.cache/uv \
     wget https://raw.githubusercontent.com/NVIDIA/NeMo/${NEMO_VERSION}/tools/speech_data_explorer/requirements.txt -O /tmp/requirements.txt && \
-    uv pip install --system --break-system-packages -r /tmp/requirements.txt && \
-    uv pip install --system --break-system-packages -r /tmp/notebook_requirements.txt && \
-    uv pip install --system --break-system-packages peft
+    uv pip install --python /opt/venv/bin/python -r /tmp/requirements.txt && \
+    uv pip install --python /opt/venv/bin/python --index-url https://download.pytorch.org/whl/test/cu128 -r /tmp/notebook_requirements.txt && \
+    uv pip install --python /opt/venv/bin/python peft
+
 
 # Download ONLY the directories needed from NeMO github repo and discard heavy git metadata
 WORKDIR /workspace/nemo

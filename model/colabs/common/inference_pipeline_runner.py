@@ -4,7 +4,7 @@ import torch
 import logging
 from typing import Callable, Any, Optional
 from google.cloud import storage
-from .gcs_utils import parse_gcs_uri, download_blob_to_file, upload_file_to_blob
+from common.gcs_utils import parse_gcs_uri, download_blob_to_file, upload_file_to_blob
 
 logger = logging.getLogger(__name__)
 

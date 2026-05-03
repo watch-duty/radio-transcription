@@ -9,6 +9,8 @@ services:
     volumes:
       - ./model:/app
     working_dir: /app
+    environment:
+      - LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
     deploy:
       resources:
         reservations:
