@@ -10,7 +10,7 @@ services:
       - ./model:/app
     working_dir: /app
     environment:
-      - LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
+      - LD_LIBRARY_PATH=/opt/venv/lib/python3.12/site-packages/torch/lib:/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
     deploy:
       resources:
         reservations:
