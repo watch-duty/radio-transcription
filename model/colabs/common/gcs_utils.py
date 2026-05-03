@@ -15,11 +15,14 @@ def parse_gcs_uri(gcs_uri: str) -> tuple[str, str]:
     blob_path = parts[1] if len(parts) > 1 else ''
     return bucket_name, blob_path
 
+from google.cloud.storage.retry import DEFAULT_RETRY
+
 def download_blob_to_file(storage_client: storage.Client, bucket_name: str, blob_path: str, destination_file_name: str) -> None:
-    """Downloads a blob from GCS to a local file."""
+    """Downloads a blob from GCS to a local file with default retry policy."""
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(blob_path)
-    blob.download_to_filename(destination_file_name)
+    blob.download_to_filename(destination_file_name, retry=DEFAULT_RETRY)
+
     logger.info(f"Downloaded {blob_path} to {destination_file_name}")
 
 def upload_file_to_blob(storage_client: storage.Client, bucket_name: str, blob_path: str, source_file_name: str) -> None:
