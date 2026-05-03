@@ -199,7 +199,10 @@ def run_huggingface_inference_pipeline(
                 results_list.append(result_row)
                 
         except Exception as e:
-            logger.error(f"Failed during batch parallel execution: {e}. Falling back sequentially...")
+            logger.warning(
+                f"Batch parallel GPU execution failed: {e}. "
+                f"Gracefully falling back to sequential GPU inference (batch size: {len(batch_entries)}) to prevent batch crash."
+            )
             # Sequential fallback to ensure the batch never crashes the run
             for j, row in enumerate(batch_entries):
                 try:
