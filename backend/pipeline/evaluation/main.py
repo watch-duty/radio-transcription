@@ -7,12 +7,14 @@ from cloudevents.http import event as cloudevent
 from backend.pipeline.common.clients import pubsub_client
 from backend.pipeline.common.clients.transcripts_client import TranscriptsClient
 from backend.pipeline.common.logging import setup_logging
+from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.evaluation import service
 from backend.pipeline.evaluation.processor import EvaluationEventProcessor
 from backend.pipeline.evaluation.rules_evaluation import evaluator
 
-# 1. Setup Logging
+# 1. Setup Logging and Tracing
 setup_logging()
+setup_tracing(use_batch=False)
 logger = logging.getLogger(__name__)
 
 # 2. Global Initialization (for performance on warm starts)

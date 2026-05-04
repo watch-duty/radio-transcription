@@ -107,7 +107,7 @@ export function TranscriptView({
     queryFn: () => getFeed(searchedFeedId, token!),
     enabled: !!token && !!searchedFeedId,
     refetchInterval: FEED_POLLING_INTERVAL_MS,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
   });
 
   useEffect(() => {

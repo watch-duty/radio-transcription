@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import datetime
+import os
+import subprocess
+import sys
 from typing import TYPE_CHECKING
 from unittest import mock
 
@@ -189,15 +192,6 @@ class TestCleanupOldVersions:
 
 
 class TestGenerateJwt:
-    def test_generate_jwt_raises_when_api_key_is_missing(
-        self, configured_module: None
-    ) -> None:
-        del configured_module
-
-        with mock.patch.object(main, "BROADCASTIFY_API_KEY", ""):
-            with pytest.raises(RuntimeError, match="BROADCASTIFY_API_KEY"):
-                main._generate_jwt()
-
     def test_generate_jwt_has_expected_headers_and_claims(
         self, configured_module: None
     ) -> None:
@@ -402,4 +396,61 @@ class TestBroadcastifyCredentialRotation:
         mock_adapter.assert_called_once_with(max_retries="mock_retry_instance")
         mock_http_client.mount.assert_called_once_with(
             "https://", "mock_adapter_instance"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Module-import fail-fast (D-03)
+# ---------------------------------------------------------------------------
+class TestModuleImportFailFast:
+    """Verify broadcastify_credential_rotation.main raises at import when
+    any required env is missing.
+
+    Uses a fresh `subprocess` rather than re-importing the module in-process:
+    `setup_logging()` registers a global OpenTelemetry TracerProvider, which
+    cannot be cleanly torn down between in-process imports. A subprocess
+    gives a clean import-from-scratch and avoids "Overriding of current
+    TracerProvider" warnings polluting test output.
+    """
+
+    def test_module_import_raises_on_missing_env(self) -> None:
+        module_path = (
+            "backend.pipeline.ingestion.broadcastify_credential_rotation.main"
+        )
+        # Inherit the parent process's environment (so PYTHONPATH,
+        # VIRTUAL_ENV, HOME, locale settings, etc. are preserved and the
+        # subprocess can find the package), then drop ONLY the seven env
+        # vars this test wants to verify the module fail-fasts on.
+        # conftest.py sets these for the in-process test suite; popping
+        # them in the spawned subprocess ensures _require_env raises.
+        clean_env = os.environ.copy()
+        for var in (
+            "BROADCASTIFY_USERNAME",
+            "BROADCASTIFY_PASSWORD",
+            "BROADCASTIFY_API_KEY",
+            "BROADCASTIFY_API_APP_ID",
+            "BROADCASTIFY_API_KEY_ID",
+            "GOOGLE_CLOUD_PROJECT",
+            "BROADCASTIFY_JWT_SECRET_ID",
+        ):
+            clean_env.pop(var, None)
+
+        result = subprocess.run(
+            [sys.executable, "-c", f"import {module_path}"],
+            env=clean_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode != 0, (
+            f"expected non-zero exit, got {result.returncode}; "
+            f"stdout={result.stdout!r}; stderr={result.stderr!r}"
+        )
+        assert "Required environment variable" in result.stderr, (
+            f"expected canonical _require_env message; got {result.stderr!r}"
+        )
+        # First _require_env call in main.py is BROADCASTIFY_USERNAME
+        # (statement order is fixed by D-01 / plan 01-02 Task 1).
+        assert "BROADCASTIFY_USERNAME" in result.stderr, (
+            f"expected BROADCASTIFY_USERNAME in stderr; got {result.stderr!r}"
         )
