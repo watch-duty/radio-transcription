@@ -34,6 +34,7 @@ export function AudioDisplay({
   userDuration,
 }: AudioDisplayProps) {
   const theme = useTheme();
+  const isDarkTheme = theme.palette.mode === 'dark';
 
   const [windowEndTime, setWindowEndTime] = useState<number | null>(null);
 
@@ -174,12 +175,14 @@ export function AudioDisplay({
               left: `${clip.left}%`,
               width: `${clip.width}%`,
               height: '100%',
-              bgcolor: clip.isPlaying ? 'rgba(0, 0, 0, 0.05)' : 'transparent',
+              bgcolor: clip.isPlaying ? isDarkTheme ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)' : 'transparent',
               cursor: 'pointer',
               '&:hover': {
                 bgcolor: clip.isPlaying
-                  ? 'rgba(0, 0, 0, 0.1)'
-                  : 'rgba(0, 0, 0, 0.03)',
+                  ? isDarkTheme ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.1)'
+                  : isDarkTheme
+                    ? 'rgba(255, 255, 255, 0.03)'
+                    : 'rgba(0, 0, 0, 0.03)',
               },
             }}
           >
@@ -204,8 +207,8 @@ export function AudioDisplay({
               waveColor={theme.palette.text.secondary}
               progressColor={theme.palette.text.primary}
               cursorColor="transparent"
-              barWidth={1}
-              barGap={1}
+              barWidth={0.5}
+              barGap={0.5}
               height={60}
             />
           </Box>
