@@ -14,7 +14,7 @@ import { CustomAlertIcon } from '../common/AlertIcon';
 interface AudioDisplayProps {
   transcripts: Transcript[];
   currentlyPlayingTransmissionId: string | null;
-  onClipClick?: (transmissionId: string) => void;
+  onClipClick: (transmissionId: string) => void;
   userDuration?: string | null;
 }
 
@@ -169,7 +169,7 @@ export function AudioDisplay({
         {clips.map((clip) => (
           <Box
             key={clip.id}
-            onClick={() => onClipClick?.(clip.id)}
+            onClick={() => onClipClick(clip.id)}
             sx={{
               position: 'absolute',
               left: `${clip.left}%`,
