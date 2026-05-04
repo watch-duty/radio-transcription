@@ -1,8 +1,7 @@
-# Use the official Jupyter Scipy notebook as base
-FROM quay.io/jupyter/pytorch-notebook:latest
+# Use Google Cloud's pre-built PyTorch GPU Deep Learning Container
+FROM us-docker.pkg.dev/deeplearning-platform-release/gcr.io/pytorch-gpu.2-5.py310:latest
 
 # Copy requirements and install them
-COPY --chown=jovyan:users requirements.txt /tmp/requirements.txt
+COPY requirements.txt /tmp/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
-    /opt/conda/bin/pip install torch torchvision torchaudio torchcodec --index-url https://download.pytorch.org/whl/cu128 --force-reinstall && \
-    /opt/conda/bin/pip install -r /tmp/requirements.txt
+    pip install --no-cache-dir -r /tmp/requirements.txt
