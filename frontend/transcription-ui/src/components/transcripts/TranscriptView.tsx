@@ -2,11 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import type { VirtuosoHandle } from 'react-virtuoso';
 
-import LinkIcon from '@mui/icons-material/Link';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
-import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import {
@@ -29,6 +27,7 @@ import {
 } from '../../utils/timeUtils';
 import AudioDisplay from '../audio/AudioDisplay';
 import DateTimePicker from '../common/DateTimePicker';
+import FeedHeader from './FeedHeader';
 import FeedSearch from './FeedSearch';
 import TranscriptActionsBar from './TranscriptActionsBar';
 import TranscriptDisplay from './TranscriptDisplay';
@@ -47,8 +46,7 @@ export type ListTranscriptsData = {
   transcripts: Transcript[];
 } & ListTranscriptsPage;
 
-const TRANSCRIPTS_POLLING_INTERVAL_MS = 15000; // 15 seconds
-const TRANSCRIPTS_POLLING_INTERVAL_DISPLAY_STRING = `${TRANSCRIPTS_POLLING_INTERVAL_MS / 1000}s`;
+const DEFAULT_REFRESH_INTERVAL = 10000;
 const MAX_TRANSCRIPTS_POLLING_ITERATIONS = 10;
 const FEED_POLLING_INTERVAL_MS = 15000; // 15 seconds
 
@@ -76,6 +74,9 @@ export function TranscriptView({
   const [searchedTimestamp, setSearchedTimestamp] = useState<Date | null>(() =>
     getInitialTimestamp(searchParams)
   );
+
+  const [transcriptsPollingIntervalMs, setTranscriptsPollingIntervalMs] =
+    useState(DEFAULT_REFRESH_INTERVAL);
 
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
@@ -367,7 +368,8 @@ export function TranscriptView({
       // Skip polling if there are older historical pages ahead of us to load.
       hasNewerTranscripts ||
       !newestTimestamp ||
-      !searchedFeedId
+      !searchedFeedId ||
+      transcriptsPollingIntervalMs <= 0
     ) {
       return;
     }
@@ -384,7 +386,7 @@ export function TranscriptView({
       } finally {
         setIsTranscriptsPolling(false);
       }
-    }, TRANSCRIPTS_POLLING_INTERVAL_MS);
+    }, transcriptsPollingIntervalMs);
 
     return () => clearInterval(interval);
   }, [
@@ -394,6 +396,7 @@ export function TranscriptView({
     searchedFeedId,
     pollNewerTranscripts,
     updateCacheWithNewTranscripts,
+    transcriptsPollingIntervalMs,
   ]);
 
   const {
@@ -501,7 +504,7 @@ export function TranscriptView({
         sx={{
           display: 'flex',
           gap: 2,
-          mb: 4,
+          mb: 1,
           alignItems: 'center',
           width: '100%',
         }}
@@ -530,9 +533,9 @@ export function TranscriptView({
             const newParams: Record<string, string> = { feedId: feedId.trim() };
             if (timestamp) {
               newParams.timestamp = timestamp.getTime().toString();
-            } else {
-              setSearchedTimestamp(timestamp);
             }
+            setSearchedFeedId(feedId);
+            setSearchedTimestamp(timestamp);
             setSearchParams(newParams);
 
             if (searchedFeedId === feedId) {
@@ -544,70 +547,29 @@ export function TranscriptView({
                   searchedTimestamp,
                 ],
               });
-            } else {
-              setSearchedFeedId(feedId);
-              setSearchedTimestamp(timestamp);
             }
           }}
           disabled={feedsFetching || isTranscriptsInitialLoading || !feedId}
-          sx={{ minWidth: '100px', height: '40px' }}
+          sx={{ minWidth: '100px', height: '40px', textTransform: 'none' }}
         >
           {isTranscriptsInitialLoading ? (
             <CircularProgress size={24} color="inherit" />
           ) : (
-            'Fetch'
+            'Load transcripts'
           )}
         </Button>
-
-        <Button
-          variant="outlined"
-          color="primary"
-          onClick={() => {
-            setTimestamp(null);
-            // Remove timestamp from search params to reset
-            const nextParams = new URLSearchParams(searchParams);
-            nextParams.delete('timestamp');
-            setSearchParams(nextParams);
-          }}
-          disabled={!timestamp}
-          sx={{ height: '40px', minWidth: '100px' }}
-        >
-          Clear
-        </Button>
-
-        <Box sx={{ flexGrow: 1 }} />
-
-        <Tooltip title="Copy link to feed">
-          <Box component="span">
-            <Button
-              variant="outlined"
-              size="small"
-              disabled={!feedId}
-              onClick={() => {
-                if (!feedId) {
-                  return;
-                }
-
-                const url = new URL(
-                  window.location.origin + window.location.pathname
-                );
-                url.searchParams.set('feedId', feedId);
-                if (timestamp)
-                  url.searchParams.set(
-                    'timestamp',
-                    timestamp.getTime().toString()
-                  );
-                navigator.clipboard.writeText(url.toString());
-                triggerSnackbar('Link copied');
-              }}
-              sx={{ minWidth: 0, px: theme.spacing(1.5) }}
-              aria-label="copy feed deeplink"
-            >
-              <LinkIcon fontSize="small" />
-            </Button>
-          </Box>
-        </Tooltip>
       </Box>
+
+      <FeedHeader
+        searchedFeed={searchedFeed}
+        sourceUrl={searchedFeed?.sourceUrl}
+        archiveUrl={searchedFeed?.archiveUrl}
+        status={activeFeedData?.status ?? searchedFeed?.status}
+        lastHeartbeat={
+          activeFeedData?.lastHeartbeat ?? searchedFeed?.lastHeartbeat
+        }
+        triggerSnackbar={triggerSnackbar}
+      />
 
       <AudioDisplay
         transcripts={transcripts}
@@ -626,18 +588,12 @@ export function TranscriptView({
         {transcripts.length > 0 ? (
           <>
             <TranscriptActionsBar
-              sourceUrl={searchedFeed?.sourceUrl}
-              archiveUrl={searchedFeed?.archiveUrl}
-              status={activeFeedData?.status ?? searchedFeed?.status}
-              lastHeartbeat={
-                activeFeedData?.lastHeartbeat ?? searchedFeed?.lastHeartbeat
-              }
+              searchedTimestamp={searchedTimestamp}
               hasNewerTranscripts={hasNewerTranscripts}
               isTranscriptsFetching={isTranscriptsFetching}
               isTranscriptsPolling={isTranscriptsPolling}
-              pollingIntervalDisplay={
-                TRANSCRIPTS_POLLING_INTERVAL_DISPLAY_STRING
-              }
+              refreshInterval={transcriptsPollingIntervalMs}
+              setRefreshInterval={setTranscriptsPollingIntervalMs}
               onRefresh={handleManualRefresh}
             />
             <TranscriptDisplay

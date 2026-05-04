@@ -100,7 +100,9 @@ describe('TranscriptView', () => {
       </MemoryRouter>
     );
     expect(screen.getByLabelText(/Select a registered feed/i)).toBeTruthy();
-    expect(screen.getByRole('button', { name: /Fetch/i })).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: /Load transcripts/i })
+    ).toBeTruthy();
   });
 
   it('shows loading state when fetching', async () => {
@@ -123,7 +125,7 @@ describe('TranscriptView', () => {
     fireEvent.keyDown(input, { key: 'ArrowDown' });
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    const button = screen.getByRole('button', { name: /Fetch/i });
+    const button = screen.getByRole('button', { name: /Load transcripts/i });
     fireEvent.click(button);
 
     expect((button as HTMLButtonElement).disabled).toBe(true);
@@ -171,7 +173,7 @@ describe('TranscriptView', () => {
     fireEvent.keyDown(input, { key: 'ArrowDown' });
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    const button = screen.getByRole('button', { name: /Fetch/i });
+    const button = screen.getByRole('button', { name: /Load transcripts/i });
     fireEvent.click(button);
 
     await waitFor(() => {
@@ -196,7 +198,7 @@ describe('TranscriptView', () => {
     fireEvent.keyDown(input, { key: 'ArrowDown' });
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    const button = screen.getByRole('button', { name: /Fetch/i });
+    const button = screen.getByRole('button', { name: /Load transcripts/i });
     fireEvent.click(button);
 
     await waitFor(() => {
@@ -263,7 +265,7 @@ describe('TranscriptView', () => {
     fireEvent.keyDown(input, { key: 'ArrowDown' });
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    const button = screen.getByRole('button', { name: /Fetch/i });
+    const button = screen.getByRole('button', { name: /Load transcripts/i });
     fireEvent.click(button);
 
     await waitFor(() => {
@@ -309,7 +311,7 @@ describe('TranscriptView', () => {
     fireEvent.keyDown(input, { key: 'ArrowDown' });
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    const button = screen.getByRole('button', { name: /Fetch/i });
+    const button = screen.getByRole('button', { name: /Load transcripts/i });
     fireEvent.click(button);
 
     await waitFor(() => {
@@ -360,7 +362,7 @@ describe('TranscriptView', () => {
     fireEvent.keyDown(input, { key: 'ArrowDown' });
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    const button = screen.getByRole('button', { name: /Fetch/i });
+    const button = screen.getByRole('button', { name: /Load transcripts/i });
     fireEvent.click(button);
 
     await waitFor(() => {
@@ -495,7 +497,7 @@ describe('TranscriptView', () => {
     });
 
     const loadMoreButton = screen.getByRole('button', {
-      name: /Load previous transcripts/i,
+      name: /Load older transcripts/i,
     });
     fireEvent.click(loadMoreButton);
 
@@ -635,7 +637,7 @@ describe('TranscriptView', () => {
     fireEvent.keyDown(input, { key: 'ArrowDown' });
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    const button = screen.getByRole('button', { name: /Fetch/i });
+    const button = screen.getByRole('button', { name: /Load transcripts/i });
     fireEvent.click(button);
 
     await waitFor(() => {
@@ -643,7 +645,7 @@ describe('TranscriptView', () => {
     });
 
     const refreshButton = screen.getByRole('button', {
-      name: /Refresh \(15s\)/i,
+      name: 'refresh',
     });
     fireEvent.click(refreshButton);
 
@@ -725,7 +727,7 @@ describe('TranscriptView', () => {
     fireEvent.keyDown(input, { key: 'ArrowDown' });
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    const button = screen.getByRole('button', { name: /Fetch/i });
+    const button = screen.getByRole('button', { name: /Load transcripts/i });
     fireEvent.click(button);
 
     await waitFor(() => {
