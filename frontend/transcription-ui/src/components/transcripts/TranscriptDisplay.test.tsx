@@ -140,7 +140,7 @@ describe('TranscriptDisplay', () => {
     );
 
     expect(
-      screen.getByRole('button', { name: /Load previous transcripts/i })
+      screen.getByRole('button', { name: /Load older transcripts/i })
     ).toBeTruthy();
   });
 
