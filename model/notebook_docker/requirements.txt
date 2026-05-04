@@ -11,3 +11,4 @@ nemo_text_processing
 mistral-common
 accelerate
 ipywidgets
+soundfile
