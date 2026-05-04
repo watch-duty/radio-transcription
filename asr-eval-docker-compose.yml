@@ -51,5 +51,6 @@ services:
               count: all
               capabilities: [gpu]
     command: ["jupyter", "notebook", "--ip=0.0.0.0", "--allow-root", "--NotebookApp.token=''", "--NotebookApp.password=''"]
+    working_dir: /workspace
     volumes:
-      - ./model:/home/jovyan/model
+      - .:/workspace
