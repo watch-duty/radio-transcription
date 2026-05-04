@@ -175,11 +175,17 @@ export function AudioDisplay({
               left: `${clip.left}%`,
               width: `${clip.width}%`,
               height: '100%',
-              bgcolor: clip.isPlaying ? isDarkTheme ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.05)' : 'transparent',
+              bgcolor: clip.isPlaying
+                ? isDarkTheme
+                  ? 'rgba(255, 255, 255, 0.1)'
+                  : 'rgba(0, 0, 0, 0.05)'
+                : 'transparent',
               cursor: 'pointer',
               '&:hover': {
                 bgcolor: clip.isPlaying
-                  ? isDarkTheme ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.1)'
+                  ? isDarkTheme
+                    ? 'rgba(255, 255, 255, 0.2)'
+                    : 'rgba(0, 0, 0, 0.1)'
                   : isDarkTheme
                     ? 'rgba(255, 255, 255, 0.03)'
                     : 'rgba(0, 0, 0, 0.03)',
