@@ -27,6 +27,7 @@ import {
 } from '../../utils/timeUtils';
 import AudioDisplay from '../audio/AudioDisplay';
 import DateTimePicker from '../common/DateTimePicker';
+import FeedHeader from './FeedHeader';
 import FeedSearch from './FeedSearch';
 import TranscriptActionsBar from './TranscriptActionsBar';
 import TranscriptDisplay from './TranscriptDisplay';
@@ -503,7 +504,7 @@ export function TranscriptView({
         sx={{
           display: 'flex',
           gap: 2,
-          mb: 4,
+          mb: 1,
           alignItems: 'center',
           width: '100%',
         }}
@@ -532,9 +533,9 @@ export function TranscriptView({
             const newParams: Record<string, string> = { feedId: feedId.trim() };
             if (timestamp) {
               newParams.timestamp = timestamp.getTime().toString();
-            } else {
-              setSearchedTimestamp(timestamp);
             }
+            setSearchedFeedId(feedId);
+            setSearchedTimestamp(timestamp);
             setSearchParams(newParams);
 
             if (searchedFeedId === feedId) {
@@ -546,37 +547,29 @@ export function TranscriptView({
                   searchedTimestamp,
                 ],
               });
-            } else {
-              setSearchedFeedId(feedId);
-              setSearchedTimestamp(timestamp);
             }
           }}
           disabled={feedsFetching || isTranscriptsInitialLoading || !feedId}
-          sx={{ minWidth: '100px', height: '40px' }}
+          sx={{ minWidth: '100px', height: '40px', textTransform: 'none' }}
         >
           {isTranscriptsInitialLoading ? (
             <CircularProgress size={24} color="inherit" />
           ) : (
-            'Fetch'
+            'Load transcripts'
           )}
         </Button>
-
-        <Button
-          variant="outlined"
-          color="primary"
-          onClick={() => {
-            setTimestamp(null);
-            // Remove timestamp from search params to reset
-            const nextParams = new URLSearchParams(searchParams);
-            nextParams.delete('timestamp');
-            setSearchParams(nextParams);
-          }}
-          disabled={!timestamp}
-          sx={{ height: '40px', minWidth: '100px' }}
-        >
-          Clear
-        </Button>
       </Box>
+
+      <FeedHeader
+        searchedFeed={searchedFeed}
+        sourceUrl={searchedFeed?.sourceUrl}
+        archiveUrl={searchedFeed?.archiveUrl}
+        status={activeFeedData?.status ?? searchedFeed?.status}
+        lastHeartbeat={
+          activeFeedData?.lastHeartbeat ?? searchedFeed?.lastHeartbeat
+        }
+        triggerSnackbar={triggerSnackbar}
+      />
 
       <AudioDisplay
         transcripts={transcripts}
@@ -595,20 +588,13 @@ export function TranscriptView({
         {transcripts.length > 0 ? (
           <>
             <TranscriptActionsBar
-              feedId={feedId || ''}
-              sourceUrl={searchedFeed?.sourceUrl}
-              archiveUrl={searchedFeed?.archiveUrl}
-              status={activeFeedData?.status ?? searchedFeed?.status}
-              lastHeartbeat={
-                activeFeedData?.lastHeartbeat ?? searchedFeed?.lastHeartbeat
-              }
+              searchedTimestamp={searchedTimestamp}
               hasNewerTranscripts={hasNewerTranscripts}
               isTranscriptsFetching={isTranscriptsFetching}
               isTranscriptsPolling={isTranscriptsPolling}
               refreshInterval={transcriptsPollingIntervalMs}
               setRefreshInterval={setTranscriptsPollingIntervalMs}
               onRefresh={handleManualRefresh}
-              triggerSnackbar={triggerSnackbar}
             />
             <TranscriptDisplay
               ref={virtuosoRef}

@@ -155,7 +155,7 @@ export function AudioDisplay({
   ]);
 
   return (
-    <Box sx={{ width: '100%', mb: 2 }}>
+    <Box sx={{ width: '100%' }}>
       <Paper
         variant="outlined"
         sx={{

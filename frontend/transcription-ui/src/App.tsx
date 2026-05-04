@@ -146,23 +146,25 @@ function App() {
             onClose={() => setSnackbarMessage(null)}
             message={snackbarMessage}
           />
-          <Stack sx={{ width: '100%', marginBottom: 2 }} spacing={1}>
-            {alerts.map((alert, index) => (
-              <Alert
-                key={index}
-                onClose={() =>
-                  setAlerts((alerts) => alerts.filter((_, i) => i !== index))
-                }
-                severity={alert.severity}
-                sx={{
-                  textAlign: 'left',
-                }}
-              >
-                {alert.title && <AlertTitle>{alert.title}</AlertTitle>}
-                {alert.children}
-              </Alert>
-            ))}
-          </Stack>
+          {alerts.length > 0 && (
+            <Stack sx={{ width: '100%', marginBottom: 1 }} spacing={1}>
+              {alerts.map((alert, index) => (
+                <Alert
+                  key={index}
+                  onClose={() =>
+                    setAlerts((alerts) => alerts.filter((_, i) => i !== index))
+                  }
+                  severity={alert.severity}
+                  sx={{
+                    textAlign: 'left',
+                  }}
+                >
+                  {alert.title && <AlertTitle>{alert.title}</AlertTitle>}
+                  {alert.children}
+                </Alert>
+              ))}
+            </Stack>
+          )}
           {/* Define the application routes below. */}
           <Routes>
             <Route
