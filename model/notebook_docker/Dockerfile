@@ -1,5 +1,5 @@
-# Use Google Cloud's pre-built PyTorch GPU Deep Learning Container
-FROM us-docker.pkg.dev/deeplearning-platform-release/gcr.io/pytorch-gpu.2-5.py310:latest
+# Use NVIDIA's official PyTorch GPU container with Python 3.12 pre-installed
+FROM nvcr.io/nvidia/pytorch:24.10-py3
 
 # Copy requirements and install them
 COPY requirements.txt /tmp/requirements.txt
