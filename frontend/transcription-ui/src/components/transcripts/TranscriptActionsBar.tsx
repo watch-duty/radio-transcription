@@ -14,7 +14,6 @@ import MenuItem from '@mui/material/MenuItem';
 import MenuList from '@mui/material/MenuList';
 import Paper from '@mui/material/Paper';
 import Popper from '@mui/material/Popper';
-import Typography from '@mui/material/Typography';
 
 export interface TranscriptActionsBarProps {
   hasNewerTranscripts: boolean;
@@ -37,7 +36,6 @@ const refreshIntervalOptions = [
 ];
 
 export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
-  searchedTimestamp,
   hasNewerTranscripts,
   isTranscriptsFetching,
   isTranscriptsPolling,
