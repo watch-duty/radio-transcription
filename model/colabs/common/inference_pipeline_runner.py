@@ -189,8 +189,12 @@ def run_huggingface_inference_pipeline(
             with torch.no_grad():
                 outputs = model.generate(**inputs, max_new_tokens=max_new_tokens)
                 
-            # 3. Decode the entire batch together
-            transcripts = processor.batch_decode(outputs, skip_special_tokens=True)
+            # 3. Decode the entire batch together (slicing prompt tokens if present)
+            if "input_ids" in inputs:
+                new_tokens = outputs[:, inputs["input_ids"].shape[-1]:]
+            else:
+                new_tokens = outputs
+            transcripts = processor.batch_decode(new_tokens, skip_special_tokens=True)
             
             # 4. Store results
             for j, row in enumerate(batch_entries):
@@ -215,7 +219,11 @@ def run_huggingface_inference_pipeline(
                     inputs.to(model.device, dtype=model.dtype)
                     with torch.no_grad():
                         out = model.generate(**inputs, max_new_tokens=max_new_tokens)
-                    pred = processor.decode(out[0], skip_special_tokens=True)
+                    if "input_ids" in inputs:
+                        new_tokens = out[0, inputs["input_ids"].shape[-1]:]
+                    else:
+                        new_tokens = out[0]
+                    pred = processor.decode(new_tokens, skip_special_tokens=True)
                     result_row = dict(row)
                     result_row[f"pred_text_{selected_model}"] = pred.strip()
                     results_list.append(result_row)
