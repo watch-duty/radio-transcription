@@ -11,5 +11,3 @@ nemo_text_processing
 mistral-common
 accelerate
 ipywidgets
-torchaudio==2.4.0
-torchcodec==0.1.0
