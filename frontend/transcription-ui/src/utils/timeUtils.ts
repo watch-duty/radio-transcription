@@ -1,7 +1,7 @@
 import RelativeTimeFormat from 'relative-time-format';
 import en from 'relative-time-format/locale/en';
 
-export const MAX_WINDOW_DURATION_MS = 30 * 60 * 1000; // 30 minutes
+export const MAX_WINDOW_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 
 RelativeTimeFormat.addLocale(en);
 const rtf = new RelativeTimeFormat('en');

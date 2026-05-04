@@ -21,7 +21,11 @@ describe('AudioDisplay', () => {
 
   it('should render empty state when no transcripts', () => {
     render(
-      <AudioDisplay transcripts={[]} currentlyPlayingTransmissionId={null} />
+      <AudioDisplay
+        transcripts={[]}
+        currentlyPlayingTransmissionId={null}
+        onClipClick={vi.fn()}
+      />
     );
     expect(screen.getByText('No transcripts loaded')).toBeTruthy();
   });
@@ -49,6 +53,7 @@ describe('AudioDisplay', () => {
       <AudioDisplay
         transcripts={mockTranscripts}
         currentlyPlayingTransmissionId={null}
+        onClipClick={vi.fn()}
       />
     );
 
@@ -82,6 +87,7 @@ describe('AudioDisplay', () => {
       <AudioDisplay
         transcripts={mockTranscripts}
         currentlyPlayingTransmissionId={null}
+        onClipClick={vi.fn()}
       />
     );
 
@@ -126,6 +132,7 @@ describe('AudioDisplay', () => {
       <AudioDisplay
         transcripts={mockTranscripts}
         currentlyPlayingTransmissionId={null}
+        onClipClick={vi.fn()}
       />
     );
 
@@ -137,6 +144,7 @@ describe('AudioDisplay', () => {
       <AudioDisplay
         transcripts={mockTranscripts}
         currentlyPlayingTransmissionId="2"
+        onClipClick={vi.fn()}
       />
     );
 
@@ -189,6 +197,7 @@ describe('AudioDisplay', () => {
       <AudioDisplay
         transcripts={mockTranscripts1}
         currentlyPlayingTransmissionId={null}
+        onClipClick={vi.fn()}
       />
     );
 
@@ -200,6 +209,7 @@ describe('AudioDisplay', () => {
       <AudioDisplay
         transcripts={mockTranscripts2}
         currentlyPlayingTransmissionId={null}
+        onClipClick={vi.fn()}
       />
     );
 
@@ -235,6 +245,7 @@ describe('AudioDisplay', () => {
         transcripts={mockTranscripts}
         currentlyPlayingTransmissionId={null}
         userDuration="5"
+        onClipClick={vi.fn()}
       />
     );
 
@@ -253,6 +264,7 @@ describe('AudioDisplay', () => {
         transcripts={mockTranscripts}
         currentlyPlayingTransmissionId={null}
         userDuration="30"
+        onClipClick={vi.fn()}
       />
     );
 
@@ -292,6 +304,7 @@ describe('AudioDisplay', () => {
       <AudioDisplay
         transcripts={mockTranscripts}
         currentlyPlayingTransmissionId={null}
+        onClipClick={vi.fn()}
       />
     );
 
