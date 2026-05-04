@@ -78,19 +78,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
         mb: 0.5,
       }}
     >
-      {searchedTimestamp ? (
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-          <Typography variant="caption">
-            Original load timestamp:{' '}
-            <b>
-              {searchedTimestamp.toLocaleDateString()}{' '}
-              {searchedTimestamp.toLocaleTimeString()}
-            </b>
-          </Typography>
-        </Box>
-      ) : (
-        <Box />
-      )}
+      <Box />
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         {!hasNewerTranscripts && (
           <>
