@@ -41,42 +41,46 @@ def run_inference_pipeline(
         manifest_data = manifest_data[:limit]
         
     results_list = []
-    segment_counters = {}
+    cached_downloads = {}
     
     logger.info(f"--- Starting batch processing of {len(manifest_data)} entries ---")
     
     for i in range(0, len(manifest_data), batch_size):
         batch = manifest_data[i:i+batch_size]
         prompts = []
-        local_files = []
         batch_entries = []
         
         # Prepare batch
         for entry in batch:
             audio_gcs_uri = entry["audio_filepath"]
-            audio_bucket, audio_blob_path = parse_gcs_uri(audio_gcs_uri)
-            # Use the file name directly for local storage
-            file_name = os.path.splitext(os.path.basename(audio_blob_path))[0]
-            local_path = f"/tmp/temp_{file_name}.flac"
-            try:
-                download_blob_to_file(storage_client, audio_bucket, audio_blob_path, local_path)
-                local_files.append(local_path)
-                
-                current_path = local_path
-                if preprocess_fn:
-                    preprocessed_path = f"/tmp/temp_prep_{file_name}.wav"
-                    if preprocess_fn(local_path, preprocessed_path):
-                        current_path = preprocessed_path
-                        local_files.append(preprocessed_path)
-                    else:
-                        logger.warning(f"Preprocessing failed for {local_path}, using original.")
-                
+            if audio_gcs_uri in cached_downloads:
+                current_path = cached_downloads[audio_gcs_uri]
                 batch_entries.append(entry)
-                # Generate prompt for this model
                 prompts.append(prompt_fn(entry, current_path))
-            except Exception as e:
-                logger.error(f"Failed to process {audio_blob_path}: {e}")
-                continue
+            else:
+                audio_bucket, audio_blob_path = parse_gcs_uri(audio_gcs_uri)
+                file_name = os.path.splitext(os.path.basename(audio_blob_path))[0]
+                local_path = f"/tmp/temp_{file_name}.flac"
+                try:
+                    download_blob_to_file(storage_client, audio_bucket, audio_blob_path, local_path)
+                    
+                    current_path = local_path
+                    if preprocess_fn:
+                        preprocessed_path = f"/tmp/temp_prep_{file_name}.wav"
+                        if preprocess_fn(local_path, preprocessed_path):
+                            current_path = preprocessed_path
+                        else:
+                            logger.warning(f"Preprocessing failed for {local_path}, using original.")
+                    
+                    cached_downloads[audio_gcs_uri] = current_path
+                    batch_entries.append(entry)
+                    prompts.append(prompt_fn(entry, current_path))
+                except Exception as e:
+                    logger.error(f"Failed to process {audio_blob_path}: {e}")
+                    # Cleanup raw flac if download succeeded but preprocessing failed
+                    if os.path.exists(local_path):
+                        os.remove(local_path)
+                    continue
             
         if not prompts:
             continue
@@ -94,10 +98,15 @@ def run_inference_pipeline(
             result_row[f"pred_text_{selected_model}"] = transcript.strip()
             results_list.append(result_row)
             
-        # Cleanup local files
-        for local_path in local_files:
-            if os.path.exists(local_path):
-                os.remove(local_path)
+    # Cleanup all cached local downloads at the very end of the entire run
+    for local_path in cached_downloads.values():
+        if os.path.exists(local_path):
+            os.remove(local_path)
+        # Also clean up the raw FLAC file if preprocessing created a WAV file
+        if "_prep_" in local_path:
+            raw_flac_path = local_path.replace("_prep_", "").replace(".wav", ".flac")
+            if os.path.exists(raw_flac_path):
+                os.remove(raw_flac_path)
                 
     logger.info(f"Processed {len(results_list)} results.")
     return results_list
