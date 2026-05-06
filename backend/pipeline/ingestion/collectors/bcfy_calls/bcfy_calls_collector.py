@@ -365,7 +365,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
     )
     if not source_feed_id:
         logger.error(
-            "Feed %s (%s) missing source_feed_id", feed_id, feed.get("name"),
+            "Feed %s (%s) missing source_feed_id", feed["id"], feed["name"],
         )
         msg = "missing_source_feed_id"
         raise ValueError(msg)
