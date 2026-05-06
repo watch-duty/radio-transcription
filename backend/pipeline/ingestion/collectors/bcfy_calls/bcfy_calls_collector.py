@@ -359,6 +359,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
     connection_session_id = str(uuid.uuid4())
     source_feed_id = feed.get("source_feed_id")
     feed_id = feed.get("id")
+    feed_name = feed.get("name")
     last_bookmark_time = feed.get("last_bookmark_time")
     last_bookmark_time_unix = (
         int(last_bookmark_time.timestamp()) if last_bookmark_time else None
@@ -366,8 +367,8 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
     if not source_feed_id:
         logger.error(
             "Feed %s (%s) missing source_feed_id",
-            feed["id"],
-            feed["name"],
+            feed_id,
+            feed_name,
         )
         msg = "missing_source_feed_id"
         raise ValueError(msg)
