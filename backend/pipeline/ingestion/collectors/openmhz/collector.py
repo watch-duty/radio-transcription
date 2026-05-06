@@ -126,7 +126,8 @@ async def openmhz_collector(
     if not source_feed_id:
         logger.error(
             "Feed %s (%s) missing source_feed_id",
-            feed["id"], feed["name"],
+            feed["id"],
+            feed["name"],
         )
         msg = "missing_source_feed_id"
         raise ValueError(msg)

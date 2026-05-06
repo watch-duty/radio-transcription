@@ -124,7 +124,8 @@ async def capture_icecast_stream(  # noqa: PLR0915
     if not source_feed_id:
         logger.error(
             "Feed %s (%s) missing source_feed_id in feed_properties",
-            feed_id, feed_name,
+            feed_id,
+            feed_name,
         )
         msg = "missing_source_feed_id"
         raise ValueError(msg)
@@ -234,7 +235,10 @@ async def capture_icecast_stream(  # noqa: PLR0915
                         )
                         logger.error(
                             "Feed %s (%s) ffmpeg exited with code %d; stderr tail:\n%s",
-                            feed_id, feed_name, exit_code, stderr_snippet,
+                            feed_id,
+                            feed_name,
+                            exit_code,
+                            stderr_snippet,
                         )
                         # Python's subprocess.returncode is -N for signal-N
                         # termination on POSIX. Split into ffmpeg_signal_<n>
@@ -261,7 +265,10 @@ async def capture_icecast_stream(  # noqa: PLR0915
                     )
                     logger.error(
                         "Feed %s (%s) no finalized segment within %ss; stderr tail:\n%s",
-                        feed_id, feed_name, READ_TIMEOUT_SEC, stderr_snippet,
+                        feed_id,
+                        feed_name,
+                        READ_TIMEOUT_SEC,
+                        stderr_snippet,
                     )
                     msg = "capture_timeout"
                     raise RuntimeError(msg)

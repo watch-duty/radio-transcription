@@ -327,7 +327,9 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             await gen.__anext__()
 
         self.assertEqual(str(context.exception), "missing_source_feed_id")
-        self.assertIn(str(TEST_FEED_ID), _formatted_error_calls(self.mock_logger))
+        self.assertIn(
+            str(TEST_FEED_ID), _formatted_error_calls(self.mock_logger)
+        )
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
