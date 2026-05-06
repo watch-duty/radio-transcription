@@ -364,8 +364,8 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
         int(last_bookmark_time.timestamp()) if last_bookmark_time else None
     )
     if not source_feed_id:
-        msg = f"Feed {feed_id} missing source_feed_id"
-        raise ValueError(msg)
+        logger.error("Feed %s missing source_feed_id", feed_id)
+        raise ValueError("missing_source_feed_id")
 
     # Fetch token in a thread to prevent blocking the event loop at startup
     jwt_token = await asyncio.to_thread(_get_jwt_token)
