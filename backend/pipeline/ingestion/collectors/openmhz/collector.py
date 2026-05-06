@@ -128,7 +128,8 @@ async def openmhz_collector(
             "Feed %s (%s) missing source_feed_id",
             feed["id"], feed["name"],
         )
-        raise ValueError("missing_source_feed_id")
+        msg = "missing_source_feed_id"
+        raise ValueError(msg)
 
     short_name = source_feed_id.strip()
     transport_name = os.getenv("OPENMHZ_TRANSPORT", "websocket")

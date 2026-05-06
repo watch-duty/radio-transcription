@@ -126,7 +126,8 @@ async def capture_icecast_stream(  # noqa: PLR0915
             "Feed %s (%s) missing source_feed_id in feed_properties",
             feed_id, feed_name,
         )
-        raise ValueError("missing_source_feed_id")
+        msg = "missing_source_feed_id"
+        raise ValueError(msg)
 
     auth_header = _build_auth_header()
     normalized_url_base = url_base if url_base.endswith("/") else f"{url_base}/"
@@ -235,7 +236,8 @@ async def capture_icecast_stream(  # noqa: PLR0915
                             "Feed %s (%s) ffmpeg exited with code %d; stderr tail:\n%s",
                             feed_id, feed_name, exit_code, stderr_snippet,
                         )
-                        raise RuntimeError(f"ffmpeg_exit_{exit_code}")
+                        msg = f"ffmpeg_exit_{exit_code}"
+                        raise RuntimeError(msg)
                     logger.info(
                         "Feed %s (%s): ffmpeg exited normally",
                         feed_id,
@@ -253,7 +255,8 @@ async def capture_icecast_stream(  # noqa: PLR0915
                         "Feed %s (%s) no finalized segment within %ss; stderr tail:\n%s",
                         feed_id, feed_name, READ_TIMEOUT_SEC, stderr_snippet,
                     )
-                    raise RuntimeError("capture_timeout")
+                    msg = "capture_timeout"
+                    raise RuntimeError(msg)
 
                 await asyncio.sleep(POLL_INTERVAL_SEC)
 
