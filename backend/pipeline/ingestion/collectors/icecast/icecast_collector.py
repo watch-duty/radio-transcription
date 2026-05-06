@@ -122,8 +122,11 @@ async def capture_icecast_stream(  # noqa: PLR0915
     feed_id = feed.get("id")
     feed_name = feed.get("name")
     if not source_feed_id:
-        msg = f"Feed {feed_id} ({feed_name}) missing source_feed_id in feed_properties"
-        raise ValueError(msg)
+        logger.error(
+            "Feed %s (%s) missing source_feed_id in feed_properties",
+            feed_id, feed_name,
+        )
+        raise ValueError("missing_source_feed_id")
 
     auth_header = _build_auth_header()
     normalized_url_base = url_base if url_base.endswith("/") else f"{url_base}/"
@@ -228,12 +231,11 @@ async def capture_icecast_stream(  # noqa: PLR0915
                             if stderr_tail
                             else "(no stderr captured)"
                         )
-                        msg = (
-                            f"Feed {feed_id} ({feed_name}): "
-                            f"ffmpeg exited with code {exit_code}\n"
-                            f"stderr tail:\n{stderr_snippet}"
+                        logger.error(
+                            "Feed %s (%s) ffmpeg exited with code %d; stderr tail:\n%s",
+                            feed_id, feed_name, exit_code, stderr_snippet,
                         )
-                        raise RuntimeError(msg)
+                        raise RuntimeError(f"ffmpeg_exit_{exit_code}")
                     logger.info(
                         "Feed %s (%s): ffmpeg exited normally",
                         feed_id,
@@ -247,12 +249,11 @@ async def capture_icecast_stream(  # noqa: PLR0915
                         if stderr_tail
                         else "(no stderr captured)"
                     )
-                    msg = (
-                        f"Feed {feed_id} ({feed_name}): no finalized segment within "
-                        f"{READ_TIMEOUT_SEC}s\n"
-                        f"stderr tail:\n{stderr_snippet}"
+                    logger.error(
+                        "Feed %s (%s) no finalized segment within %ds; stderr tail:\n%s",
+                        feed_id, feed_name, READ_TIMEOUT_SEC, stderr_snippet,
                     )
-                    raise RuntimeError(msg)
+                    raise RuntimeError("capture_timeout")
 
                 await asyncio.sleep(POLL_INTERVAL_SEC)
 
