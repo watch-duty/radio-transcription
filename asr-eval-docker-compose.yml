@@ -6,8 +6,7 @@ services:
     build:
       context: .
       dockerfile: model/nemo_docker/Dockerfile
-    ports:
-      - "8888:8888"
+    network_mode: "host"
     volumes:
       - ./model:/app
     working_dir: /app
@@ -26,8 +25,7 @@ services:
     build:
       context: .
       dockerfile: model/nemo_docker/Dockerfile
-    ports:
-      - "8888:8888"
+    network_mode: "host"
     volumes:
       - ./model:/app
     working_dir: /app
@@ -39,8 +37,7 @@ services:
     build:
       context: ./model/notebook_docker
       dockerfile: Dockerfile
-    ports:
-      - "8888:8888"
+    network_mode: "host"
     command: ["jupyter", "notebook", "--ip=0.0.0.0", "--NotebookApp.token=''", "--NotebookApp.password=''"]
     volumes:
       - ./model:/home/jovyan
