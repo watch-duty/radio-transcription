@@ -236,7 +236,15 @@ async def capture_icecast_stream(  # noqa: PLR0915
                             "Feed %s (%s) ffmpeg exited with code %d; stderr tail:\n%s",
                             feed_id, feed_name, exit_code, stderr_snippet,
                         )
-                        msg = f"ffmpeg_exit_{exit_code}"
+                        # Python's subprocess.returncode is -N for signal-N
+                        # termination on POSIX. Split into ffmpeg_signal_<n>
+                        # vs ffmpeg_exit_<n> to keep tags snake_case and
+                        # distinguish kills from non-zero exits.
+                        msg = (
+                            f"ffmpeg_signal_{-exit_code}"
+                            if exit_code < 0
+                            else f"ffmpeg_exit_{exit_code}"
+                        )
                         raise RuntimeError(msg)
                     logger.info(
                         "Feed %s (%s): ffmpeg exited normally",

@@ -428,6 +428,43 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
+    async def test_ffmpeg_signal_kill_normalizes_to_signal_tag(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Test: signal-killed ffmpeg (negative returncode) maps to ffmpeg_signal_N tag.
+
+        Python's subprocess.returncode is -N for signal-N termination on POSIX
+        (e.g. SIGKILL -> -9). The raised tag must stay snake_case (no literal
+        minus sign), so the collector splits sign and emits ``ffmpeg_signal_9``
+        rather than ``ffmpeg_exit_-9``.
+        """
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=7779,
+            wait_delay=0.0,
+            wait_result=-9,  # SIGKILL via Python subprocess convention
+            stderr_lines=[b"Killed\n"],
+        )
+
+        feed = _make_feed("signal-kill-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_default_resources(),
+        )
+        with self.assertRaises(RuntimeError) as context:
+            await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+
+        self.assertEqual(str(context.exception), "ffmpeg_signal_9")
+        formatted = _formatted_error_calls(self.mock_logger)
+        self.assertIn("ffmpeg exited with code -9", formatted)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
     async def test_cleanup_process_on_exception(
         self, mock_create_ffmpeg: AsyncMock
     ) -> None:
