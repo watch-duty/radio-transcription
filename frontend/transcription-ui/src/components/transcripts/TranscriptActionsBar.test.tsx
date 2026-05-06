@@ -1,66 +1,25 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 import { TranscriptActionsBar } from './TranscriptActionsBar';
 
 describe('TranscriptActionsBar', () => {
+  const mockSetRefreshInterval = vi.fn();
+  const mockOnRefresh = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal('navigator', {
+      clipboard: {
+        writeText: vi.fn().mockResolvedValue(undefined),
+      },
+    });
+  });
+
   afterEach(() => {
     cleanup();
-  });
-
-  it('shows source url link when sourceUrl is available', () => {
-    render(
-      <TranscriptActionsBar
-        sourceUrl="https://test.example/source"
-        hasNewerTranscripts={false}
-        isTranscriptsFetching={false}
-        isTranscriptsPolling={false}
-        pollingIntervalDisplay="15s"
-        onRefresh={vi.fn()}
-      />
-    );
-
-    const link = screen.getByText(/original source link/i);
-    expect(link).toBeTruthy();
-    expect(link.getAttribute('href')).toBe('https://test.example/source');
-    expect(link.getAttribute('target')).toBe('_blank');
-    expect(link.getAttribute('rel')).toBe('noopener noreferrer');
-  });
-
-  it('shows archive url link when archiveUrl is available', () => {
-    render(
-      <TranscriptActionsBar
-        archiveUrl="https://test.example/archives"
-        hasNewerTranscripts={false}
-        isTranscriptsFetching={false}
-        isTranscriptsPolling={false}
-        pollingIntervalDisplay="15s"
-        onRefresh={vi.fn()}
-      />
-    );
-
-    const link = screen.getByText(/archives/i);
-    expect(link).toBeTruthy();
-    expect(link.getAttribute('href')).toBe('https://test.example/archives');
-    expect(link.getAttribute('target')).toBe('_blank');
-    expect(link.getAttribute('rel')).toBe('noopener noreferrer');
-  });
-
-  it('does not render links when neither is supplied', () => {
-    render(
-      <TranscriptActionsBar
-        hasNewerTranscripts={false}
-        isTranscriptsFetching={false}
-        isTranscriptsPolling={false}
-        pollingIntervalDisplay="15s"
-        onRefresh={vi.fn()}
-      />
-    );
-
-    expect(screen.queryByText(/original source link/i)).toBeNull();
-    expect(screen.queryByText(/archives/i)).toBeNull();
   });
 
   it('displays the manual refresh option conditionally', () => {
@@ -68,16 +27,18 @@ describe('TranscriptActionsBar', () => {
 
     render(
       <TranscriptActionsBar
+        searchedTimestamp={null}
         hasNewerTranscripts={false}
         isTranscriptsFetching={false}
         isTranscriptsPolling={false}
-        pollingIntervalDisplay="15s"
+        refreshInterval={10000}
+        setRefreshInterval={mockSetRefreshInterval}
         onRefresh={mockRefresh}
       />
     );
 
     const refreshButton = screen.getByRole('button', {
-      name: /Refresh \(15s\)/i,
+      name: 'refresh',
     });
     expect(refreshButton).toBeTruthy();
 
@@ -88,16 +49,41 @@ describe('TranscriptActionsBar', () => {
   it('hides manual refresh button when newer transcripts exist', () => {
     render(
       <TranscriptActionsBar
+        searchedTimestamp={null}
         hasNewerTranscripts={true}
         isTranscriptsFetching={false}
         isTranscriptsPolling={false}
-        pollingIntervalDisplay="15s"
-        onRefresh={vi.fn()}
+        refreshInterval={10000}
+        setRefreshInterval={mockSetRefreshInterval}
+        onRefresh={mockOnRefresh}
       />
     );
 
-    expect(
-      screen.queryByRole('button', { name: /Refresh \(15s\)/i })
-    ).toBeNull();
+    expect(screen.queryByRole('button', { name: 'refresh' })).toBeNull();
+  });
+
+  it('displays refresh interval options and handles change', () => {
+    render(
+      <TranscriptActionsBar
+        searchedTimestamp={null}
+        hasNewerTranscripts={false}
+        isTranscriptsFetching={false}
+        isTranscriptsPolling={false}
+        refreshInterval={10000}
+        setRefreshInterval={mockSetRefreshInterval}
+        onRefresh={mockOnRefresh}
+      />
+    );
+
+    const intervalButton = screen.getByLabelText('select refresh interval');
+    expect(intervalButton.textContent).toBe('10s');
+
+    fireEvent.click(intervalButton);
+
+    const option5s = screen.getByText('5s');
+    expect(option5s).toBeTruthy();
+    fireEvent.click(option5s);
+
+    expect(mockSetRefreshInterval).toHaveBeenCalledWith(5000);
   });
 });

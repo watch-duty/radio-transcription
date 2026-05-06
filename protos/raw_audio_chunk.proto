@@ -13,7 +13,7 @@ message AudioChunk {
   // This indicates a contiguous sequence of chunks; a new session_id signals a break
   // or a newly initialized stream.
   // Required for continuous feeds ONLY. For segmented feeds, this can be empty or omitted.
-  string session_id = 3;
+  optional string session_id = 3;
 
   // The duration of the audio chunk in milliseconds.
   int32 duration_ms = 4;
@@ -27,6 +27,5 @@ message AudioChunk {
   // The unique identifier of the radio feed (formatted as an RFC 4122 UUID).
   string feed_id = 7;
 
-  // The trace ID for tracking the transmission's progress through the pipeline.
-  string trace_id = 8;
+  reserved 8;
 }

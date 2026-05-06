@@ -13,6 +13,10 @@ describe('authLogout', () => {
   it('should make post logout API request successfully', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
+      text: async () => '',
+      headers: {
+        get: () => null,
+      },
     });
 
     await authLogout();
@@ -30,6 +34,10 @@ describe('authLogout', () => {
   it('should trigger error response if logout endpoint crashes', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: false,
+      text: async () => 'Logout failed',
+      headers: {
+        get: () => null,
+      },
     });
 
     await expect(authLogout()).rejects.toThrow('Logout failed');

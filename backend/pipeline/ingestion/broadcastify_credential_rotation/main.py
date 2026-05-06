@@ -7,7 +7,6 @@ persist a new signed JWT in Secret Manager.
 from __future__ import annotations
 
 import logging
-import os
 import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -20,26 +19,31 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from backend.pipeline.common.logging import setup_logging
+from backend.pipeline.ingestion.settings import _require_env
 
 if TYPE_CHECKING:
     import flask
 
 # ---------------------------------------------------------------------------
 # Configuration
+#
+# Required env vars are validated at module import via `_require_env(...)`.
+# These calls run BEFORE `setup_logging()` so that contract-drift (a missing
+# or empty required env var) surfaces as the first error, not masked behind
+# a logging-init traceback.
 # ---------------------------------------------------------------------------
-BROADCASTIFY_USERNAME = os.environ.get("BROADCASTIFY_USERNAME", "")
-BROADCASTIFY_PASSWORD = os.environ.get("BROADCASTIFY_PASSWORD", "")
-BROADCASTIFY_API_KEY = os.environ.get("BROADCASTIFY_API_KEY", "")
-BROADCASTIFY_API_APP_ID = os.environ.get("BROADCASTIFY_API_APP_ID", "")
-BROADCASTIFY_API_KEY_ID = os.environ.get("BROADCASTIFY_API_KEY_ID", "")
-PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "")
-SECRET_JWT = os.environ.get("BROADCASTIFY_JWT_SECRET_ID", "")
+BROADCASTIFY_USERNAME = _require_env("BROADCASTIFY_USERNAME")
+BROADCASTIFY_PASSWORD = _require_env("BROADCASTIFY_PASSWORD")
+BROADCASTIFY_API_KEY = _require_env("BROADCASTIFY_API_KEY")
+BROADCASTIFY_API_APP_ID = _require_env("BROADCASTIFY_API_APP_ID")
+BROADCASTIFY_API_KEY_ID = _require_env("BROADCASTIFY_API_KEY_ID")
+PROJECT_ID = _require_env("GOOGLE_CLOUD_PROJECT")
+SECRET_JWT = _require_env("BROADCASTIFY_JWT_SECRET_ID")
 AUTH_URL = "https://api.bcfy.io/common/v1/auth"
 
 # ---------------------------------------------------------------------------
 # Global state (persisted across warm invocations)
 # ---------------------------------------------------------------------------
-
 setup_logging()
 logger = logging.getLogger(__name__)
 secret_client: secretmanager.SecretManagerServiceClient | None = None
@@ -119,10 +123,6 @@ def add_secret_version(
     Returns:
         The created secret version resource name.
     """
-    if not PROJECT_ID:
-        msg = "GOOGLE_CLOUD_PROJECT environment variable is not set"
-        raise RuntimeError(msg)
-
     parent = secret_client.secret_path(PROJECT_ID, secret_id)
     response = secret_client.add_secret_version(
         request={"parent": parent, "payload": {"data": payload.encode()}}
@@ -153,16 +153,6 @@ def _generate_jwt(auth_claims: dict[str, str] | None = None) -> str:
     Returns:
         The generated JWT string.
     """
-    if not BROADCASTIFY_API_KEY:
-        msg = "BROADCASTIFY_API_KEY environment variable is not set"
-        raise RuntimeError(msg)
-    if not BROADCASTIFY_API_APP_ID:
-        msg = "BROADCASTIFY_API_APP_ID environment variable is not set"
-        raise RuntimeError(msg)
-    if not BROADCASTIFY_API_KEY_ID:
-        msg = "BROADCASTIFY_API_KEY_ID environment variable is not set"
-        raise RuntimeError(msg)
-
     now = int(time.time())
     headers = {"alg": "HS256", "typ": "JWT", "kid": BROADCASTIFY_API_KEY_ID}
     payload = {
@@ -176,23 +166,6 @@ def _generate_jwt(auth_claims: dict[str, str] | None = None) -> str:
     return jwt.encode(
         payload, BROADCASTIFY_API_KEY, algorithm="HS256", headers=headers
     )
-
-
-def _require_environment() -> None:
-    """Validate required environment variables at invocation time."""
-    required = {
-        "BROADCASTIFY_USERNAME": BROADCASTIFY_USERNAME,
-        "BROADCASTIFY_PASSWORD": BROADCASTIFY_PASSWORD,
-        "BROADCASTIFY_API_KEY": BROADCASTIFY_API_KEY,
-        "BROADCASTIFY_API_APP_ID": BROADCASTIFY_API_APP_ID,
-        "BROADCASTIFY_API_KEY_ID": BROADCASTIFY_API_KEY_ID,
-        "BROADCASTIFY_JWT_SECRET_ID": SECRET_JWT,
-        "GOOGLE_CLOUD_PROJECT": PROJECT_ID,
-    }
-    missing = [name for name, value in required.items() if not value]
-    if missing:
-        msg = f"Missing required environment variables: {', '.join(missing)}"
-        raise RuntimeError(msg)
 
 
 def _authenticate() -> dict[str, Any]:
@@ -246,7 +219,6 @@ def broadcastify_credential_rotation(request: flask.Request) -> tuple[str, int]:
     del request  # unused for scheduler-triggered requests
     global secret_client  # noqa: PLW0603
 
-    _require_environment()
     if secret_client is None:
         secret_client = secretmanager.SecretManagerServiceClient()
 
@@ -267,9 +239,6 @@ def broadcastify_credential_rotation(request: flask.Request) -> tuple[str, int]:
         raise RuntimeError(msg)
 
     auth_jwt_token = _generate_jwt({"sub": uid, "utk": token})
-    if not SECRET_JWT:
-        msg = "BROADCASTIFY_JWT_SECRET_ID environment variable is not set"
-        raise RuntimeError(msg)
     add_secret_version(secret_client, SECRET_JWT, auth_jwt_token)
     logger.info(
         "Broadcastify credentials rotated successfully for username: %s",

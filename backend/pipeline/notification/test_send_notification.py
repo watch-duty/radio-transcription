@@ -57,6 +57,9 @@ class TestSendNotification(TestCase):
             external_id="ext-id",
         )
         evaluated_payload.start_audio_offset.seconds = 10
+        evaluated_payload.end_audio_offset.seconds = 20
+        evaluated_payload.start_timestamp.seconds = 1000
+        evaluated_payload.end_timestamp.seconds = 2000
         raw_data = base64.b64encode(evaluated_payload.SerializeToString())
         event_data = {"message": {"data": raw_data, "messageId": "1234"}}
 
@@ -77,9 +80,12 @@ class TestSendNotification(TestCase):
             source_audio_uris=["gs://foo/bar.flac"],
             feed_name="asdf",
             external_id="ext-id",
-            app_url="https://app.example.com?feedId=&transmissionId=1234&duration=5",
+            app_url="https://app.example.com?feedId=&transmissionId=1234&timestamp=1000000&duration=5",
         )
         expected_notification.start_audio_offset.seconds = 10
+        expected_notification.end_audio_offset.seconds = 20
+        expected_notification.start_timestamp.seconds = 1000
+        expected_notification.end_timestamp.seconds = 2000
         mock_request_handler.send_notification.assert_called_once_with(
             expected_notification
         )
@@ -113,6 +119,48 @@ class TestSendNotification(TestCase):
 
         mock_request_handler.send_notification.assert_not_called()
 
+    @mock.patch(
+        "backend.pipeline.notification.send_notification.with_tracer_context"
+    )
+    @mock.patch("backend.pipeline.notification.send_notification.deduplication")
+    @mock.patch(
+        "backend.pipeline.notification.send_notification.request_handler"
+    )
+    def test_send_notification_span(
+        self,
+        mock_request_handler: mock.Mock,
+        mock_dedupe: mock.Mock,
+        mock_with_tracer_context: mock.Mock,
+    ) -> None:
+        mock_dedupe.process_notification.return_value = True
+
+        evaluated_payload = EvaluatedTranscribedAudio(
+            transcript="This is a test!",
+            transmission_id="1234",
+        )
+        raw_data = base64.b64encode(evaluated_payload.SerializeToString())
+        event_data = {
+            "message": {
+                "data": raw_data,
+                "messageId": "1234",
+                "attributes": {"traceparent": "mock-traceparent"},
+            }
+        }
+
+        attributes = {
+            "type": "google.cloud.pubsub.topic.v1.messagePublished",
+            "source": "//pubsub.googleapis.com/projects/my-project/topics/my-topic",
+        }
+
+        cloud_event = CloudEvent(attributes, event_data)
+        send_notification(cloud_event)
+
+        mock_with_tracer_context.assert_called_once_with(
+            "mock-traceparent",
+            "send_notification",
+            "backend.pipeline.notification.send_notification",
+        )
+
     def test_convert_to_notification_encodes_epoch_timestamp(self) -> None:
         evaluated_payload = EvaluatedTranscribedAudio(
             feed_id="feed-1",
@@ -120,6 +168,9 @@ class TestSendNotification(TestCase):
         )
         evaluated_payload.start_timestamp.seconds = 1776280988
         evaluated_payload.start_timestamp.nanos = 990000000
+        evaluated_payload.end_timestamp.seconds = 1776281000
+        evaluated_payload.start_audio_offset.seconds = 5
+        evaluated_payload.end_audio_offset.seconds = 15
 
         notification = convert_to_notification(evaluated_payload)
 
@@ -128,6 +179,11 @@ class TestSendNotification(TestCase):
             "https://app.example.com?feedId=feed-1&transmissionId=tx-1"
             "&timestamp=1776280988990&duration=5",
         )
+        self.assertEqual(notification.start_timestamp.seconds, 1776280988)
+        self.assertEqual(notification.start_timestamp.nanos, 990000000)
+        self.assertEqual(notification.end_timestamp.seconds, 1776281000)
+        self.assertEqual(notification.start_audio_offset.seconds, 5)
+        self.assertEqual(notification.end_audio_offset.seconds, 15)
 
 
 if __name__ == "__main__":

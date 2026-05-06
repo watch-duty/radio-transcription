@@ -30,6 +30,8 @@ describe('FeedsController', () => {
     source_type: 'openmhz',
     source_feed_id: 'src_123',
     external_id: 'ext_123',
+    status: 'active',
+    last_heartbeat: '2024-01-01T00:00:00Z',
   };
 
   const expectedFrontendFeed = {
@@ -40,6 +42,8 @@ describe('FeedsController', () => {
     externalId: 'ext_123',
     sourceUrl: 'https://openmhz.com/system/src_123',
     archiveUrl: undefined,
+    status: 'active',
+    lastHeartbeat: '2024-01-01T00:00:00Z',
   };
 
   describe('listFeeds', () => {
@@ -60,9 +64,7 @@ describe('FeedsController', () => {
       mockRequest.mockRejectedValueOnce(new Error('Network Error'));
       const controller = new FeedsController();
 
-      await expect(controller.listFeeds()).rejects.toThrow(
-        'Error fetching feeds'
-      );
+      await expect(controller.listFeeds()).rejects.toThrow(/Network Error/);
     });
   });
 
@@ -71,7 +73,7 @@ describe('FeedsController', () => {
       mockRequest.mockResolvedValueOnce({ data: mockBackendFeed });
 
       const controller = new FeedsController();
-      const result = await controller.getFeed('feed_123', vi.fn());
+      const result = await controller.getFeed('feed_123');
 
       expect(result).toEqual(expectedFrontendFeed);
       expect(mockRequest).toHaveBeenCalledWith({
@@ -80,8 +82,7 @@ describe('FeedsController', () => {
       });
     });
 
-    it('should call notFound on 404', async () => {
-      const mockNotFound = vi.fn();
+    it('should throw on 404', async () => {
       const error = new Error('Not Found') as Error & {
         response?: { status: number };
       };
@@ -89,11 +90,7 @@ describe('FeedsController', () => {
       mockRequest.mockRejectedValueOnce(error);
 
       const controller = new FeedsController();
-      await controller.getFeed('feed_123', mockNotFound);
-
-      expect(mockNotFound).toHaveBeenCalledWith(404, {
-        message: 'Feed feed_123 not found',
-      });
+      await expect(controller.getFeed('feed_123')).rejects.toThrow(/Not Found/);
     });
   });
 
@@ -129,7 +126,7 @@ describe('FeedsController', () => {
       mockRequest.mockResolvedValueOnce({ data: mockBackendFeed });
 
       const controller = new FeedsController();
-      const result = await controller.resetFeed('feed_123', vi.fn());
+      const result = await controller.resetFeed('feed_123');
 
       expect(result).toEqual(expectedFrontendFeed);
       expect(mockRequest).toHaveBeenCalledWith({
@@ -138,8 +135,7 @@ describe('FeedsController', () => {
       });
     });
 
-    it('should call notFound on 404', async () => {
-      const mockNotFound = vi.fn();
+    it('should throw on 404', async () => {
       const error = new Error('Not Found') as Error & {
         response?: { status: number };
       };
@@ -147,11 +143,9 @@ describe('FeedsController', () => {
       mockRequest.mockRejectedValueOnce(error);
 
       const controller = new FeedsController();
-      await controller.resetFeed('feed_123', mockNotFound);
-
-      expect(mockNotFound).toHaveBeenCalledWith(404, {
-        message: 'Feed feed_123 not found',
-      });
+      await expect(controller.resetFeed('feed_123')).rejects.toThrow(
+        /Not Found/
+      );
     });
 
     it('should throw on non-404 API error', async () => {
@@ -162,8 +156,8 @@ describe('FeedsController', () => {
       mockRequest.mockRejectedValueOnce(error);
 
       const controller = new FeedsController();
-      await expect(controller.resetFeed('feed_123', vi.fn())).rejects.toThrow(
-        'Backend API error 500'
+      await expect(controller.resetFeed('feed_123')).rejects.toThrow(
+        /Server Error/
       );
     });
 
@@ -171,8 +165,8 @@ describe('FeedsController', () => {
       mockRequest.mockRejectedValueOnce(new Error('Network Error'));
 
       const controller = new FeedsController();
-      await expect(controller.resetFeed('feed_123', vi.fn())).rejects.toThrow(
-        'Error resetting feed feed_123'
+      await expect(controller.resetFeed('feed_123')).rejects.toThrow(
+        /Network Error/
       );
     });
   });
@@ -182,7 +176,7 @@ describe('FeedsController', () => {
       mockRequest.mockResolvedValueOnce({ status: 204 });
 
       const controller = new FeedsController();
-      await controller.deleteFeed('feed_123', vi.fn());
+      await controller.deleteFeed('feed_123');
 
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://feeds-api.example.com/feed_123',
@@ -190,8 +184,7 @@ describe('FeedsController', () => {
       });
     });
 
-    it('should call notFound on 404', async () => {
-      const mockNotFound = vi.fn();
+    it('should throw on 404', async () => {
       const error = new Error('Not Found') as Error & {
         response?: { status: number };
       };
@@ -199,11 +192,9 @@ describe('FeedsController', () => {
       mockRequest.mockRejectedValueOnce(error);
 
       const controller = new FeedsController();
-      await controller.deleteFeed('feed_123', mockNotFound);
-
-      expect(mockNotFound).toHaveBeenCalledWith(404, {
-        message: 'Feed feed_123 not found',
-      });
+      await expect(controller.deleteFeed('feed_123')).rejects.toThrow(
+        /Not Found/
+      );
     });
   });
 
@@ -301,6 +292,29 @@ describe('FeedsController', () => {
     it('produces undefined when sourceFeedId is absent', async () => {
       const url = await listFeedsArchiveUrl('bcfy_feeds', undefined);
       expect(url).toBeUndefined();
+    });
+  });
+
+  describe('status conversion', () => {
+    const testCases = [
+      { backend: 'active', expected: 'active' },
+      { backend: 'failing', expected: 'inactive' },
+      { backend: 'unclaimed', expected: 'inactive' },
+      { backend: 'quarantined', expected: 'inactive' },
+      { backend: 'deactivated', expected: 'inactive' },
+    ];
+
+    testCases.forEach(({ backend, expected }) => {
+      it(`should convert ${backend} to ${expected}`, async () => {
+        mockRequest.mockResolvedValueOnce({
+          data: [{ ...mockBackendFeed, status: backend }],
+        });
+
+        const controller = new FeedsController();
+        const [feed] = await controller.listFeeds();
+
+        expect(feed.status).toBe(expected);
+      });
     });
   });
 });

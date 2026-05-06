@@ -2,16 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import type { VirtuosoHandle } from 'react-virtuoso';
 
-import LinkIcon from '@mui/icons-material/Link';
-import RefreshIcon from '@mui/icons-material/Refresh';
-import type { AlertProps } from '@mui/material/Alert';
-import Autocomplete from '@mui/material/Autocomplete';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
-import IconButton from '@mui/material/IconButton';
-import TextField from '@mui/material/TextField';
-import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import {
@@ -21,9 +14,10 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
-import type { Transcript } from '@transcription/common';
+import { type Transcript } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
+import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { listTranscripts } from '../../service/listTranscripts';
@@ -33,12 +27,14 @@ import {
 } from '../../utils/timeUtils';
 import AudioDisplay from '../audio/AudioDisplay';
 import DateTimePicker from '../common/DateTimePicker';
+import FeedHeader from './FeedHeader';
+import FeedSearch from './FeedSearch';
 import TranscriptActionsBar from './TranscriptActionsBar';
 import TranscriptDisplay from './TranscriptDisplay';
 
 interface TranscriptViewProps {
-  addAlert: (alert: AlertProps) => void;
   triggerSnackbar: (message: string) => void;
+  onError: (error: Error, titleMessage?: string) => void;
 }
 
 export type ListTranscriptsPage = {
@@ -50,13 +46,13 @@ export type ListTranscriptsData = {
   transcripts: Transcript[];
 } & ListTranscriptsPage;
 
-const TRANSCRIPTS_POLLING_INTERVAL_MS = 15000; // 15 seconds
-const TRANSCRIPTS_POLLING_INTERVAL_DISPLAY_STRING = `${TRANSCRIPTS_POLLING_INTERVAL_MS / 1000}s`;
+const DEFAULT_REFRESH_INTERVAL = 10000;
 const MAX_TRANSCRIPTS_POLLING_ITERATIONS = 10;
+const FEED_POLLING_INTERVAL_MS = 15000; // 15 seconds
 
 export function TranscriptView({
-  addAlert,
   triggerSnackbar,
+  onError,
 }: TranscriptViewProps) {
   const theme = useTheme();
   const { token } = useAuth();
@@ -79,6 +75,9 @@ export function TranscriptView({
     getInitialTimestamp(searchParams)
   );
 
+  const [transcriptsPollingIntervalMs, setTranscriptsPollingIntervalMs] =
+    useState(DEFAULT_REFRESH_INTERVAL);
+
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
   const [highlightedTransmissionId, setHighlightedTransmissionId] = useState<
@@ -95,12 +94,27 @@ export function TranscriptView({
     data: feeds,
     error: feedsError,
     isFetching: feedsFetching,
+    isSuccess: isFeedsSuccess,
   } = useQuery({
     queryKey: ['listFeeds', token],
     queryFn: () => listFeeds(token!),
     enabled: !!token,
     refetchOnWindowFocus: false,
   });
+
+  const { data: activeFeedData } = useQuery({
+    queryKey: ['getFeed', token, searchedFeedId],
+    queryFn: () => getFeed(searchedFeedId, token!),
+    enabled: !!token && !!searchedFeedId,
+    refetchInterval: FEED_POLLING_INTERVAL_MS,
+    refetchOnWindowFocus: true,
+  });
+
+  useEffect(() => {
+    if (feedsError) {
+      onError(feedsError, 'Loading Feeds');
+    }
+  }, [feedsError, onError]);
 
   // Memoizing the feed ID to feed map so we don't have to recreate it on every render.
   const feedIdToFeedMap = useMemo(() => {
@@ -116,18 +130,6 @@ export function TranscriptView({
   }, [feedIdToFeedMap, feedId]);
 
   const searchedFeed = feedIdToFeedMap.get(searchedFeedId) || null;
-
-  /**
-   * Effect for handling feeds errors.
-   */
-  useEffect(() => {
-    if (feedsError) {
-      addAlert({
-        severity: 'error',
-        children: `An error occurred while trying to load feeds: ${feedsError}`,
-      });
-    }
-  }, [feedsError, addAlert]);
 
   const {
     data: listTranscriptsResponse,
@@ -209,9 +211,15 @@ export function TranscriptView({
         nextToken: undefined,
       };
     },
-    enabled: !!token && !!searchedFeedId,
+    enabled: !!token && !!searchedFeedId && isFeedsSuccess,
     refetchOnWindowFocus: false,
   });
+
+  useEffect(() => {
+    if (transcriptsError) {
+      onError(transcriptsError, 'Loading transcripts');
+    }
+  }, [transcriptsError, onError]);
 
   const transcripts = useMemo(
     () =>
@@ -360,7 +368,8 @@ export function TranscriptView({
       // Skip polling if there are older historical pages ahead of us to load.
       hasNewerTranscripts ||
       !newestTimestamp ||
-      !searchedFeedId
+      !searchedFeedId ||
+      transcriptsPollingIntervalMs <= 0
     ) {
       return;
     }
@@ -377,7 +386,7 @@ export function TranscriptView({
       } finally {
         setIsTranscriptsPolling(false);
       }
-    }, TRANSCRIPTS_POLLING_INTERVAL_MS);
+    }, transcriptsPollingIntervalMs);
 
     return () => clearInterval(interval);
   }, [
@@ -387,6 +396,7 @@ export function TranscriptView({
     searchedFeedId,
     pollNewerTranscripts,
     updateCacheWithNewTranscripts,
+    transcriptsPollingIntervalMs,
   ]);
 
   const {
@@ -396,9 +406,15 @@ export function TranscriptView({
   } = useQuery({
     queryKey: ['listRules', token],
     queryFn: () => listRules(token ?? ''),
-    enabled: !!token,
+    enabled: !!token && isFeedsSuccess,
     refetchOnWindowFocus: false,
   });
+
+  useEffect(() => {
+    if (rulesError) {
+      onError(rulesError, 'Loading rules');
+    }
+  }, [rulesError, onError]);
 
   // Memoizing the rule ID to name map so we don't have to recreate it on every render.
   const ruleIdToNameMap: Map<string, string> = useMemo(() => {
@@ -407,18 +423,6 @@ export function TranscriptView({
     }
     return new Map(rules.map((rule) => [rule.ruleId, rule.ruleName]));
   }, [rules]);
-
-  /**
-   * Effect for handling rules errors.
-   */
-  useEffect(() => {
-    if (rulesError) {
-      addAlert({
-        severity: 'error',
-        children: `An error occurred while trying to load rules: ${rulesError}`,
-      });
-    }
-  }, [rulesError, addAlert]);
 
   useEffect(() => {
     hasScrolledToTarget.current = false;
@@ -500,56 +504,17 @@ export function TranscriptView({
         sx={{
           display: 'flex',
           gap: 2,
-          mb: 4,
+          mb: 1,
           alignItems: 'center',
           width: '100%',
         }}
       >
-        <Autocomplete
-          disablePortal
-          options={(feeds ?? []).sort((a, b) => a.name.localeCompare(b.name))}
-          getOptionLabel={(option) => option.name}
-          size="small"
-          sx={{ width: '20%' }}
-          value={selectedFeed}
-          onChange={(_, option) => option && setFeedId(option.id)}
-          // Explicitly disallowing custom input - the user should always pick from registered feeds
-          freeSolo={false}
-          loading={feedsFetching}
-          disabled={feedsFetching}
-          filterOptions={(options, { inputValue }) =>
-            options.filter((option) =>
-              option.name.toLowerCase().includes(inputValue.toLowerCase())
-            )
-          }
-          renderInput={(params) => (
-            <TextField {...params} label="Select a registered feed" />
-          )}
-          renderOption={(props, option) => {
-            const { key, ...optionProps } = props;
-            return (
-              <Box key={key} component="li" {...optionProps}>
-                <Typography noWrap>{option.name}</Typography>
-              </Box>
-            );
-          }}
+        <FeedSearch
+          feeds={feeds ?? []}
+          selectedFeed={selectedFeed}
+          onFeedSelect={setFeedId}
+          isFetching={feedsFetching}
         />
-        <IconButton
-          onClick={() => {
-            // Invalidate and refresh feeds.
-            queryClient.invalidateQueries({ queryKey: ['listFeeds', token] });
-          }}
-          disabled={feedsFetching}
-          size="small"
-          sx={{ ml: -1 }}
-          aria-label="refresh feeds"
-        >
-          {feedsFetching ? (
-            <CircularProgress size={24} color="inherit" />
-          ) : (
-            <RefreshIcon />
-          )}
-        </IconButton>
 
         <DateTimePicker
           label="Timestamp (optional)"
@@ -568,9 +533,9 @@ export function TranscriptView({
             const newParams: Record<string, string> = { feedId: feedId.trim() };
             if (timestamp) {
               newParams.timestamp = timestamp.getTime().toString();
-            } else {
-              setSearchedTimestamp(timestamp);
             }
+            setSearchedFeedId(feedId);
+            setSearchedTimestamp(timestamp);
             setSearchParams(newParams);
 
             if (searchedFeedId === feedId) {
@@ -582,70 +547,29 @@ export function TranscriptView({
                   searchedTimestamp,
                 ],
               });
-            } else {
-              setSearchedFeedId(feedId);
-              setSearchedTimestamp(timestamp);
             }
           }}
           disabled={feedsFetching || isTranscriptsInitialLoading || !feedId}
-          sx={{ minWidth: '100px', height: '40px' }}
+          sx={{ minWidth: '100px', height: '40px', textTransform: 'none' }}
         >
           {isTranscriptsInitialLoading ? (
             <CircularProgress size={24} color="inherit" />
           ) : (
-            'Fetch'
+            'Load transcripts'
           )}
         </Button>
-
-        <Button
-          variant="outlined"
-          color="primary"
-          onClick={() => {
-            setTimestamp(null);
-            // Remove timestamp from search params to reset
-            const nextParams = new URLSearchParams(searchParams);
-            nextParams.delete('timestamp');
-            setSearchParams(nextParams);
-          }}
-          disabled={!timestamp}
-          sx={{ height: '40px', minWidth: '100px' }}
-        >
-          Clear
-        </Button>
-
-        <Box sx={{ flexGrow: 1 }} />
-
-        <Tooltip title="Copy link to feed">
-          <Box component="span">
-            <Button
-              variant="outlined"
-              size="small"
-              disabled={!feedId}
-              onClick={() => {
-                if (!feedId) {
-                  return;
-                }
-
-                const url = new URL(
-                  window.location.origin + window.location.pathname
-                );
-                url.searchParams.set('feedId', feedId);
-                if (timestamp)
-                  url.searchParams.set(
-                    'timestamp',
-                    timestamp.getTime().toString()
-                  );
-                navigator.clipboard.writeText(url.toString());
-                triggerSnackbar('Link copied');
-              }}
-              sx={{ minWidth: 0, px: theme.spacing(1.5) }}
-              aria-label="copy feed deeplink"
-            >
-              <LinkIcon fontSize="small" />
-            </Button>
-          </Box>
-        </Tooltip>
       </Box>
+
+      <FeedHeader
+        searchedFeed={searchedFeed}
+        sourceUrl={searchedFeed?.sourceUrl}
+        archiveUrl={searchedFeed?.archiveUrl}
+        status={activeFeedData?.status ?? searchedFeed?.status}
+        lastHeartbeat={
+          activeFeedData?.lastHeartbeat ?? searchedFeed?.lastHeartbeat
+        }
+        triggerSnackbar={triggerSnackbar}
+      />
 
       <AudioDisplay
         transcripts={transcripts}
@@ -664,14 +588,12 @@ export function TranscriptView({
         {transcripts.length > 0 ? (
           <>
             <TranscriptActionsBar
-              sourceUrl={searchedFeed?.sourceUrl}
-              archiveUrl={searchedFeed?.archiveUrl}
+              searchedTimestamp={searchedTimestamp}
               hasNewerTranscripts={hasNewerTranscripts}
               isTranscriptsFetching={isTranscriptsFetching}
               isTranscriptsPolling={isTranscriptsPolling}
-              pollingIntervalDisplay={
-                TRANSCRIPTS_POLLING_INTERVAL_DISPLAY_STRING
-              }
+              refreshInterval={transcriptsPollingIntervalMs}
+              setRefreshInterval={setTranscriptsPollingIntervalMs}
               onRefresh={handleManualRefresh}
             />
             <TranscriptDisplay
@@ -695,7 +617,7 @@ export function TranscriptView({
               highlightedTransmissionId={highlightedTransmissionId}
             />
           </>
-        ) : isTranscriptsInitialLoading ? (
+        ) : feedsFetching || isTranscriptsInitialLoading ? (
           <Box
             sx={{
               display: 'flex',
@@ -711,12 +633,12 @@ export function TranscriptView({
             align="center"
             sx={{ mt: theme.spacing(2) }}
           >
-            Error loading transcripts.
+            Error loading transcripts
           </Typography>
         ) : isTranscriptsSuccess ? (
           <Box sx={{ mt: theme.spacing(2), textAlign: 'center' }}>
             <Typography color="textSecondary" align="center">
-              No transcripts found.
+              No transcripts found
             </Typography>
           </Box>
         ) : null}

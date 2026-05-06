@@ -1,8 +1,9 @@
-import WarningAmber from '@mui/icons-material/WarningAmber';
 import Box from '@mui/material/Box';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
+
+import { CustomAlertIcon } from '../common/AlertIcon';
 
 interface AlertTooltipProps {
   evaluationDecisions: string[];
@@ -42,9 +43,9 @@ export function AlertTooltip({
         sx={{ display: 'inline-flex' }}
         aria-label="view triggered rules"
       >
-        <WarningAmber
+        <CustomAlertIcon
           color="warning"
-          fontSize="small"
+          fontSize="medium"
           data-testid="warning-icon"
         />
       </Box>

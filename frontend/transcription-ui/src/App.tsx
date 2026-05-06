@@ -1,13 +1,18 @@
 import { Suspense, lazy, useCallback, useState } from 'react';
 import { Route, Routes } from 'react-router';
 
+import { jwtDecode } from 'jwt-decode';
+
 import { ThemeProvider, createTheme, useMediaQuery } from '@mui/material';
 import Alert, { type AlertProps } from '@mui/material/Alert';
-import Box from '@mui/material/Box';
+import AlertTitle from '@mui/material/AlertTitle';
 import Snackbar from '@mui/material/Snackbar';
+import Stack from '@mui/material/Stack';
+import { ApiError } from '@transcription/common';
 
 import AppContainer from './components/AppContainer';
 import Login from './components/Login';
+import LoginModal from './components/common/LoginModal';
 import FeedsView from './components/feeds/FeedsView';
 import RulesView from './components/rules/RulesView';
 import TranscriptView from './components/transcripts/TranscriptView';
@@ -20,8 +25,9 @@ const DocsView = lazy(() => import('./components/docs/DocsView'));
 function App() {
   const { token } = useAuth();
 
-  const [alerts, setAlerts] = useState<AlertProps[]>([]);
+  const [alerts, setAlerts] = useState<({ title?: string } & AlertProps)[]>([]);
   const [snackbarMessage, setSnackbarMessage] = useState<string | null>(null);
+  const [loginModalOpen, setLoginModalOpen] = useState(false);
 
   /**
    * Triggers a snackbar to display a message.
@@ -46,16 +52,79 @@ function App() {
    *
    * @param alert The alert to add to the list.
    */
-  const addAlert = useCallback((alert: AlertProps) => {
+  const addAlert = useCallback((alert: { title?: string } & AlertProps) => {
     // Max of 3 alerts retained.
     setAlerts((alerts) => {
-      const newAlerts = [...alerts, alert];
+      const newAlerts = [...alerts, { ...alert }];
       if (newAlerts.length > 3) {
         newAlerts.shift();
       }
       return newAlerts;
     });
   }, []);
+
+  const handleError = useCallback(
+    (error: Error, titleMessage?: string) => {
+      const decodedToken = token && jwtDecode(token);
+      const isExpired =
+        decodedToken &&
+        decodedToken.exp &&
+        decodedToken.exp < Date.now() / 1000;
+      const appendMessage = titleMessage ? `: ${titleMessage}` : '';
+      if (error instanceof ApiError) {
+        switch (error.status) {
+          case 401:
+          case 403:
+            if (isExpired) {
+              addAlert({
+                severity: 'error',
+                title: 'Session expired',
+                children: 'Please log in again.',
+              });
+              setLoginModalOpen(true);
+              return;
+            } else {
+              addAlert({
+                severity: 'error',
+                title: 'Unauthorized' + appendMessage,
+                children:
+                  'You are not authorized to perform this action. Please verify your permissions.',
+              });
+            }
+            break;
+          case 404:
+            addAlert({
+              severity: 'error',
+              title: 'Not Found' + appendMessage,
+              children: 'The resource you are looking for could not be found.',
+            });
+            break;
+          case 500:
+            addAlert({
+              severity: 'error',
+              title: 'Server Error' + appendMessage,
+              children:
+                'The service is currently unavailable. Please try again later.',
+            });
+            break;
+          default:
+            addAlert({
+              severity: 'error',
+              title: `${error.status} Error` + appendMessage,
+              children: error.message,
+            });
+            break;
+        }
+      } else {
+        addAlert({
+          severity: 'error',
+          title: 'Unknown Error' + appendMessage,
+          children: error.message,
+        });
+      }
+    },
+    [addAlert, token]
+  );
 
   const prefersDarkMode = useMediaQuery('(prefers-color-scheme: dark)');
   const theme = createTheme({
@@ -70,33 +139,40 @@ function App() {
         <Login />
       ) : (
         <AppContainer>
+          <LoginModal open={loginModalOpen} setOpen={setLoginModalOpen} />
           <Snackbar
             open={!!snackbarMessage}
             autoHideDuration={3000}
             onClose={() => setSnackbarMessage(null)}
             message={snackbarMessage}
           />
-          <Box sx={{ width: '100%', mb: 2 }}>
-            {alerts.map((alert, index) => (
-              <Alert
-                key={index}
-                onClose={() =>
-                  setAlerts((alerts) => alerts.filter((_, i) => i !== index))
-                }
-                severity={alert.severity}
-              >
-                {alert.children}
-              </Alert>
-            ))}
-          </Box>
+          {alerts.length > 0 && (
+            <Stack sx={{ width: '100%', marginBottom: 1 }} spacing={1}>
+              {alerts.map((alert, index) => (
+                <Alert
+                  key={index}
+                  onClose={() =>
+                    setAlerts((alerts) => alerts.filter((_, i) => i !== index))
+                  }
+                  severity={alert.severity}
+                  sx={{
+                    textAlign: 'left',
+                  }}
+                >
+                  {alert.title && <AlertTitle>{alert.title}</AlertTitle>}
+                  {alert.children}
+                </Alert>
+              ))}
+            </Stack>
+          )}
           {/* Define the application routes below. */}
           <Routes>
             <Route
               path="/"
               element={
                 <TranscriptView
-                  addAlert={addAlert}
                   triggerSnackbar={triggerSnackbar}
+                  onError={handleError}
                 />
               }
             />

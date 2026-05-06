@@ -8,6 +8,10 @@ from cloudevents.http.event import CloudEvent
 
 from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.common.storage.redis_service import RedisService
+from backend.pipeline.common.tracing_utils import (
+    setup_tracing,
+    with_tracer_context,
+)
 from backend.pipeline.notification.notification_deduplication import (
     NotificationDeduplication,
 )
@@ -19,8 +23,9 @@ from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
 
-# Setup Logging
+# Setup Logging and Tracing
 setup_logging()
+setup_tracing(use_batch=False)
 logger = logging.getLogger(__name__)
 
 APP_URL = os.environ.get("APP_URL")
@@ -73,7 +78,7 @@ def convert_to_notification(
     evaluated_transcribed_audio: EvaluatedTranscribedAudio,
 ) -> AlertNotification:
     app_url = _build_app_url(evaluated_transcribed_audio)
-    notification = AlertNotification(
+    return AlertNotification(
         feed_id=evaluated_transcribed_audio.feed_id,
         transmission_id=evaluated_transcribed_audio.transmission_id,
         source_audio_uris=evaluated_transcribed_audio.source_audio_uris,
@@ -86,50 +91,38 @@ def convert_to_notification(
         feed_name=evaluated_transcribed_audio.feed_name,
         app_url=app_url,
         external_id=evaluated_transcribed_audio.external_id,
+        start_timestamp=evaluated_transcribed_audio.start_timestamp,
+        end_timestamp=evaluated_transcribed_audio.end_timestamp,
+        start_audio_offset=evaluated_transcribed_audio.start_audio_offset,
+        end_audio_offset=evaluated_transcribed_audio.end_audio_offset,
     )
-    if evaluated_transcribed_audio.start_timestamp.seconds:
-        notification.start_timestamp.CopyFrom(
-            evaluated_transcribed_audio.start_timestamp
-        )
-    if evaluated_transcribed_audio.end_timestamp.seconds:
-        notification.end_timestamp.CopyFrom(
-            evaluated_transcribed_audio.end_timestamp
-        )
-    if (
-        evaluated_transcribed_audio.start_audio_offset.seconds
-        or evaluated_transcribed_audio.start_audio_offset.nanos
-    ):
-        notification.start_audio_offset.CopyFrom(
-            evaluated_transcribed_audio.start_audio_offset
-        )
-    if (
-        evaluated_transcribed_audio.end_audio_offset.seconds
-        or evaluated_transcribed_audio.end_audio_offset.nanos
-    ):
-        notification.end_audio_offset.CopyFrom(
-            evaluated_transcribed_audio.end_audio_offset
-        )
-    return notification
 
 
 @functions_framework.cloud_event
 def send_notification(cloud_event: CloudEvent) -> None:
-    # Process the incoming CloudEvent message
-    evaluated_transcribed_audio = parse_cloud_event(cloud_event)
-    if not evaluated_transcribed_audio:
-        logger.warning("Unable to parse incoming message")
-        return
+    pubsub_message = cloud_event.data.get("message", {})
+    attributes = pubsub_message.get("attributes", {}) or {}
+    traceparent = attributes.get("traceparent", "")
 
-    # Convert the EvaluatedTranscribedAudio into an AlertNotifcation
-    alert_notification = convert_to_notification(evaluated_transcribed_audio)
-    notification_id = alert_notification.transmission_id
-    if not deduplication.process_notification(notification_id):
-        message = f"Duplicate transmission_id detected, skipping notification with ID: {notification_id}"
-        logger.warning(message)
-        return
+    with with_tracer_context(traceparent, "send_notification", __name__):
+        # Process the incoming CloudEvent message
+        evaluated_transcribed_audio = parse_cloud_event(cloud_event)
+        if not evaluated_transcribed_audio:
+            logger.warning("Unable to parse incoming message")
+            return
 
-    # Send a POST request to the endpoint
-    try:
-        request_handler.send_notification(alert_notification)
-    except Exception:
-        logger.exception("Failed to send notification")
+        # Convert the EvaluatedTranscribedAudio into an AlertNotifcation
+        alert_notification = convert_to_notification(
+            evaluated_transcribed_audio
+        )
+        notification_id = alert_notification.transmission_id
+        if not deduplication.process_notification(notification_id):
+            message = f"Duplicate transmission_id detected, skipping notification with ID: {notification_id}"
+            logger.warning(message)
+            return
+
+        # Send a POST request to the endpoint
+        try:
+            request_handler.send_notification(alert_notification)
+        except Exception:
+            logger.exception("Failed to send notification")

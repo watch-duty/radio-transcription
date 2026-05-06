@@ -10,6 +10,9 @@ from google.cloud.pubsub_v1.publisher.exceptions import (
     PublishToPausedOrderingKeyException,
 )
 from opentelemetry import trace
+from opentelemetry.trace.propagation.tracecontext import (
+    TraceContextTextMapPropagator,
+)
 
 from backend.pipeline.common import tracing_utils
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
@@ -214,7 +217,7 @@ def publish_audio_chunk_sync(
     feed_name: str,
     external_id: str,
     gcs_uri: str,
-    session_id: str,
+    session_id: str | None,
     start_timestamp: datetime.datetime,
     duration_ms: int,
     source_type: str | None = None,
@@ -230,20 +233,26 @@ def publish_audio_chunk_sync(
             feed_id=feed_id,
             feed_name=feed_name,
             duration_ms=duration_ms,
-            session_id=session_id,
             external_id=external_id,
-            trace_id=tracing_utils.get_current_trace_id(),
         )
+        if session_id is not None:
+            audio_chunk_msg.session_id = session_id
         audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
 
         attrs: dict[str, str] = {
             "feed_id": feed_id,
-            "session_id": session_id,
             "gcs_uri": gcs_uri,
             "timestamp_ms": str(int(start_timestamp.timestamp() * 1000)),
         }
+        if session_id is not None:
+            attrs["session_id"] = session_id
         if source_type is not None:
             attrs["source_type"] = source_type
+
+        carrier: dict[str, str] = {}
+        TraceContextTextMapPropagator().inject(carrier)
+        if "traceparent" in carrier:
+            attrs["traceparent"] = carrier["traceparent"]
 
         future = publisher.publish(
             topic_path,
@@ -261,7 +270,7 @@ async def publish_audio_chunk(
     feed_name: str,
     external_id: str,
     gcs_uri: str,
-    session_id: str,
+    session_id: str | None,
     start_timestamp: datetime.datetime,
     duration_ms: int,
     source_type: str | None = None,
@@ -278,20 +287,26 @@ async def publish_audio_chunk(
             feed_id=feed_id,
             feed_name=feed_name,
             duration_ms=duration_ms,
-            session_id=session_id,
             external_id=external_id,
-            trace_id=tracing_utils.get_current_trace_id(),
         )
+        if session_id is not None:
+            audio_chunk_msg.session_id = session_id
         audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
 
         attrs: dict[str, str] = {
             "feed_id": feed_id,
-            "session_id": session_id,
             "gcs_uri": gcs_uri,
             "timestamp_ms": str(int(start_timestamp.timestamp() * 1000)),
         }
+        if session_id is not None:
+            attrs["session_id"] = session_id
         if source_type is not None:
             attrs["source_type"] = source_type
+
+        carrier: dict[str, str] = {}
+        TraceContextTextMapPropagator().inject(carrier)
+        if "traceparent" in carrier:
+            attrs["traceparent"] = carrier["traceparent"]
 
         future = publisher.publish(
             topic_path,

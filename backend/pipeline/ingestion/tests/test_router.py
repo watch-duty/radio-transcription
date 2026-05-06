@@ -42,7 +42,7 @@ class TestRouteCapturerRegistered(unittest.TestCase):
 
     def test_each_registered_source_type_routes_correctly(self) -> None:
         for source_type, (capture_fn, url_base) in _COLLECTORS.items():
-            with self.subTest(source_type=source_type):
+            with self.subTest(source_type=source_type.value):
                 sentinel = object()
                 mock_fn = mock.MagicMock(return_value=sentinel)
 
@@ -102,7 +102,7 @@ class TestCollectorRegistryIntegrity(unittest.TestCase):
 
     def test_all_entries_are_callable(self) -> None:
         for source_type, (capture_fn, url_base) in _COLLECTORS.items():
-            with self.subTest(source_type=source_type):
+            with self.subTest(source_type=source_type.value):
                 self.assertTrue(callable(capture_fn))
                 self.assertIsInstance(url_base, str)
                 self.assertTrue(url_base)

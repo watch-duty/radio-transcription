@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
 
-import WarningAmber from '@mui/icons-material/WarningAmber';
 import Box from '@mui/material/Box';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
@@ -10,11 +9,12 @@ import WavesurferPlayer from '@wavesurfer/react';
 
 import { getAudioUrl } from '../../utils/audioUtils';
 import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
+import { CustomAlertIcon } from '../common/AlertIcon';
 
 interface AudioDisplayProps {
   transcripts: Transcript[];
   currentlyPlayingTransmissionId: string | null;
-  onClipClick?: (transmissionId: string) => void;
+  onClipClick: (transmissionId: string) => void;
   userDuration?: string | null;
 }
 
@@ -34,6 +34,7 @@ export function AudioDisplay({
   userDuration,
 }: AudioDisplayProps) {
   const theme = useTheme();
+  const isDarkTheme = theme.palette.mode === 'dark';
 
   const [windowEndTime, setWindowEndTime] = useState<number | null>(null);
 
@@ -155,7 +156,7 @@ export function AudioDisplay({
   ]);
 
   return (
-    <Box sx={{ width: '100%', mb: 2 }}>
+    <Box sx={{ width: '100%' }}>
       <Paper
         variant="outlined"
         sx={{
@@ -168,32 +169,41 @@ export function AudioDisplay({
         {clips.map((clip) => (
           <Box
             key={clip.id}
-            onClick={() => onClipClick?.(clip.id)}
+            onClick={() => onClipClick(clip.id)}
             sx={{
               position: 'absolute',
               left: `${clip.left}%`,
               width: `${clip.width}%`,
               height: '100%',
-              bgcolor: clip.isPlaying ? 'rgba(0, 0, 0, 0.05)' : 'transparent',
+              bgcolor: clip.isPlaying
+                ? isDarkTheme
+                  ? 'rgba(255, 255, 255, 0.1)'
+                  : 'rgba(0, 0, 0, 0.05)'
+                : 'transparent',
               cursor: 'pointer',
               '&:hover': {
                 bgcolor: clip.isPlaying
-                  ? 'rgba(0, 0, 0, 0.1)'
-                  : 'rgba(0, 0, 0, 0.03)',
+                  ? isDarkTheme
+                    ? 'rgba(255, 255, 255, 0.2)'
+                    : 'rgba(0, 0, 0, 0.1)'
+                  : isDarkTheme
+                    ? 'rgba(255, 255, 255, 0.03)'
+                    : 'rgba(0, 0, 0, 0.03)',
               },
             }}
           >
             {clip.hasAlert && (
-              <WarningAmber
+              <CustomAlertIcon
                 color="warning"
-                fontSize="small"
+                fontSize="medium"
                 data-testid="warning-icon"
                 sx={{
                   position: 'absolute',
-                  left: 0,
-                  top: -22,
+                  // This centers the icon over the audio start, rather than left-aligned at the audio start.
+                  left: -11,
+                  // This provides enough buffer to move the icon on top of the clip view rather than on it.
+                  top: -25,
                   zIndex: 1,
-                  bgcolor: 'background.paper',
                   borderRadius: '50%',
                 }}
               />
@@ -203,8 +213,8 @@ export function AudioDisplay({
               waveColor={theme.palette.text.secondary}
               progressColor={theme.palette.text.primary}
               cursorColor="transparent"
-              barWidth={1}
-              barGap={1}
+              barWidth={0.5}
+              barGap={0.5}
               height={60}
             />
           </Box>

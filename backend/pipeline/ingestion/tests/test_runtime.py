@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import datetime
 import unittest
 import uuid
@@ -467,8 +468,11 @@ class TestProcessFeedSessionId(unittest.IsolatedAsyncioTestCase):
         """The session_id field must be populated and identical for all chunks in a session."""
 
         async def _two_chunks(feed, shutdown, _resources):
-            yield _make_captured_chunk(b"audio1")
-            yield _make_captured_chunk(b"audio2")
+
+            chunk1 = _make_captured_chunk(b"audio1")
+            chunk2 = _make_captured_chunk(b"audio2")
+            yield dataclasses.replace(chunk1, session_id="test-session-id")
+            yield dataclasses.replace(chunk2, session_id="test-session-id")
 
         rt = NormalizerRuntime(
             capture_fn=_two_chunks, settings=_make_settings()
@@ -1506,8 +1510,8 @@ class TestProcessFeedPublishAttributes(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kw1["session_id"], sid_a)
         self.assertEqual(kw2["session_id"], sid_b)
 
-    async def test_fallback_session_id_when_none(self) -> None:
-        """Runtime generates a fallback UUID and warns when session_id is None."""
+    async def test_session_id_none_preserved(self) -> None:
+        """Runtime preserves None session_id for segmented feeds."""
 
         async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")  # session_id=None
@@ -1523,20 +1527,12 @@ class TestProcessFeedPublishAttributes(unittest.IsolatedAsyncioTestCase):
         with (
             _mock_upload_audio(),
             _mock_pubsub_publish() as mock_publish,
-            self.assertLogs(
-                "backend.pipeline.ingestion.normalizer_runtime",
-                level="WARNING",
-            ) as log_cm,
         ):
             await rt._process_feed(_FEED)
 
         mock_publish.assert_called_once()
         _, _, kwargs = mock_publish.mock_calls[0]
-        self.assertIsNotNone(kwargs["session_id"])
-        self.assertTrue(len(kwargs["session_id"]) > 0)
-        self.assertTrue(
-            any("fallback" in msg for msg in log_cm.output),
-        )
+        self.assertIsNone(kwargs["session_id"])
 
     async def test_source_type_passed(self) -> None:
         """publish_audio_chunk receives source_type matching the feed."""
