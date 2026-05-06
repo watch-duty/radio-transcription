@@ -1439,6 +1439,46 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
 
         mock_telemetry.emit_quarantine_event.assert_not_awaited()
 
+    async def test_reason_caps_at_200_chars(self) -> None:
+        """Catch-all truncates exception messages longer than 200 chars.
+
+        Guards the 100→200 cap bump in `_process_feed`. A 250-char message
+        must be truncated to exactly 200 chars before reaching
+        `report_feed_failure`; a 150-char message (over the old 100-char
+        cap, under the new 200-char cap) must pass through untruncated.
+        """
+        long_message = "x" * 250
+        mid_message = "y" * 150
+
+        for raised_message, expected_reason in (
+            (long_message, "x" * 200),
+            (mid_message, "y" * 150),
+        ):
+
+            async def _failing_capture(
+                feed, shutdown, _resources, _msg=raised_message
+            ):
+                yield _make_captured_chunk(b"audio")
+                raise RuntimeError(_msg)
+
+            rt = NormalizerRuntime(
+                capture_fn=_failing_capture, settings=_make_settings()
+            )
+            rt._shutdown = asyncio.Event()
+            rt._lease_lost = asyncio.Event()
+            rt._capture_resources = _default_resources()
+            rt._store = mock.AsyncMock()
+            rt._store.update_feed_progress.return_value = True
+            rt._store.report_feed_failure.return_value = "failing"
+            rt._releasing_feeds = set()
+
+            with _mock_upload_audio(), _mock_pubsub_publish():
+                await rt._process_feed(_FEED)
+
+            rt._store.report_feed_failure.assert_awaited_once()
+            kwargs = rt._store.report_feed_failure.await_args.kwargs
+            self.assertEqual(kwargs["reason"], expected_reason)
+
 
 class TestProcessFeedPublishAttributes(unittest.IsolatedAsyncioTestCase):
     """Contract tests: publish_audio_chunk must receive session_id and source_type."""

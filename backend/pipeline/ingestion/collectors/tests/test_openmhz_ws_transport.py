@@ -28,8 +28,10 @@ class TestParseEioOpen(unittest.TestCase):
         self.assertEqual(result["pingTimeout"], 20000)
 
     def test_rejects_non_zero_prefix(self) -> None:
-        with self.assertRaises(ValueError, msg="Expected EIO open"):
+        with self.assertRaises(ValueError) as ctx:
             _parse_eio_open('4{"sid":"x"}')
+
+        self.assertIn("Expected EIO open", str(ctx.exception))
 
 
 class TestParseSioEvent(unittest.TestCase):
