@@ -250,7 +250,7 @@ async def capture_icecast_stream(  # noqa: PLR0915
                         else "(no stderr captured)"
                     )
                     logger.error(
-                        "Feed %s (%s) no finalized segment within %ds; stderr tail:\n%s",
+                        "Feed %s (%s) no finalized segment within %ss; stderr tail:\n%s",
                         feed_id, feed_name, READ_TIMEOUT_SEC, stderr_snippet,
                     )
                     raise RuntimeError("capture_timeout")
