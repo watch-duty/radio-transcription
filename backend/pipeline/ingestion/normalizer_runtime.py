@@ -950,7 +950,7 @@ class NormalizerRuntime:
             # reason from `quarantine_reason` after threshold strikes and
             # decides what to investigate. Transient failures auto-recover
             # because failure_count resets to 0 on the next successful publish.
-            reason = str(e)[:100] if str(e) else type(e).__name__
+            reason = str(e)[:200] if str(e) else type(e).__name__
             logger.exception(
                 "Feed processing error: feed=%s reason=%s",
                 feed["name"],
