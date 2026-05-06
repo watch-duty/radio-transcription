@@ -8,7 +8,7 @@ resource "google_compute_instance" "eval_instance" {
   boot_disk {
     initialize_params {
       image = "projects/deeplearning-platform-release/global/images/pytorch-2-7-cu128-ubuntu-2204-nvidia-570-v20260320"
-      size  = 100 # Deep Learning images are large, 100GB recommended
+      size  = 200 # Deep Learning images are large, 100GB recommended
       type  = "pd-ssd"
     }
   }
