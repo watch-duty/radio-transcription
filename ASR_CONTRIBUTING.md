@@ -27,6 +27,26 @@ terraform plan -var-file=local_variables.tfvars
 terraform apply -var-file=local_variables.tfvars
 ```
 
+### Update GPU drivers on the VM
+The current CUDA drivers that come installed in the GCP image are
+old and don't work with the downstream NVidia containers we will be
+installing with docker. So we need to manually update the GPU drivers
+following these steps:
+
+```
+wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+sudo dpkg -i cuda-keyring_1.1-1_all.deb
+sudo apt-get update
+sudo apt-get install -y cuda-drivers
+```
+
+References:
+- Google cloud documentation on how to install GPU drivers:
+  https://docs.cloud.google.com/compute/docs/gpus/install-drivers-gpu
+- The cloud documentation above links to this NVidia page for installing
+  the toolkit: https://developer.nvidia.com/cuda-toolkit-archive
+
+
 ### Setup docker on the VM (for GPU runs)
 Once you have your instance provisioned and set up. You can setup docker on the instance:
 ```
