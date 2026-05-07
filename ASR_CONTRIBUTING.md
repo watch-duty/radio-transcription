@@ -40,11 +40,12 @@ sudo apt-get update
 sudo apt-get install -y cuda-drivers
 ```
 
-References:
+The commands above were obtained from these references:
 - Google cloud documentation on how to install GPU drivers:
   https://docs.cloud.google.com/compute/docs/gpus/install-drivers-gpu
 - The cloud documentation above links to this NVidia page for installing
-  the toolkit: https://developer.nvidia.com/cuda-toolkit-archive
+  the toolkit: https://developer.nvidia.com/cuda-toolkit-archive. We only
+  need to install the drivers, and not the toolkit.
 
 
 ### Setup docker on the VM (for GPU runs)
