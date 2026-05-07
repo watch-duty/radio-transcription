@@ -28,7 +28,7 @@ terraform apply -var-file=local_variables.tfvars
 ```
 
 ### Update GPU drivers on the VM
-The current CUDA drivers that come installed in the GCP image are
+The current CUDA drivers that come installed in the GCE image are
 old and don't work with the downstream NVidia containers we will be
 installing with docker. So we need to manually update the GPU drivers
 following these steps:
