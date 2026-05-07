@@ -164,7 +164,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             source_feed_id=None,
         )
         shutdown = asyncio.Event()
-        with self.assertRaises(ValueError, msg="missing source_feed_id"):
+        with self.assertRaises(ValueError) as ctx:
             async for _ in openmhz_collector(
                 feed,
                 shutdown,
@@ -172,6 +172,8 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
                 _default_resources(),
             ):
                 pass
+
+        self.assertEqual(str(ctx.exception), "missing_source_feed_id")
 
     @patch(f"{_COL_MOD}.websocket_transport")
     @patch(f"{_COL_MOD}._sleep_or_shutdown", new_callable=AsyncMock)

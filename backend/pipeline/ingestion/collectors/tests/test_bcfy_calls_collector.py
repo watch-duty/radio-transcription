@@ -684,7 +684,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
 
     async def test_missing_source_feed_id(self) -> None:
         self.feed["source_feed_id"] = None
-        with self.assertRaisesRegex(ValueError, "missing source_feed_id"):
+        with self.assertRaises(ValueError) as ctx:
             async for _ in bcfy_calls_collector.capture_bcfy_calls(
                 self.leased_feed,
                 self.shutdown,
@@ -692,6 +692,8 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
                 _default_resources(),
             ):
                 pass
+
+        self.assertEqual(str(ctx.exception), "missing_source_feed_id")
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"

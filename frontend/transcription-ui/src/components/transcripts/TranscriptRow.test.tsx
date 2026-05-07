@@ -156,7 +156,7 @@ describe('TranscriptRow', () => {
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
       expect.stringContaining(`timestamp=${startMs}`)
     );
-    expect(mockTriggerSnackbar).toHaveBeenCalledWith('Link copied');
+    expect(mockTriggerSnackbar).toHaveBeenCalledWith('Transcript link copied');
   });
 
   it('passes playbackAudioUri to AudioPlayer as audioUri prop', () => {

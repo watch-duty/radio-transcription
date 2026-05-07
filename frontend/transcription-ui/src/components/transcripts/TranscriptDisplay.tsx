@@ -1,6 +1,7 @@
 import React from 'react';
 import { GroupedVirtuoso, type VirtuosoHandle } from 'react-virtuoso';
 
+import SyncIcon from '@mui/icons-material/Sync';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -142,7 +143,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
                   <CircularProgress size={40} />
                 ) : (
                   <Button
-                    variant="text"
+                    variant="outlined"
                     onClick={async () => {
                       const result = await fetchNewerTranscripts();
                       if (
@@ -157,7 +158,8 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
                       }
                     }}
                     disabled={isTranscriptsFetching}
-                    sx={{ minWidth: '160px' }}
+                    sx={{ minWidth: '160px', textTransform: 'none' }}
+                    startIcon={<SyncIcon />}
                   >
                     Load newer transcripts
                   </Button>
@@ -178,12 +180,13 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
                     <CircularProgress size={40} />
                   ) : (
                     <Button
-                      variant="text"
+                      variant="outlined"
                       onClick={() => fetchOlderTranscripts()}
                       disabled={isTranscriptsFetching}
-                      sx={{ minWidth: '160px' }}
+                      sx={{ minWidth: '160px', textTransform: 'none' }}
+                      startIcon={<SyncIcon />}
                     >
-                      Load previous transcripts
+                      Load older transcripts
                     </Button>
                   )}
                 </Box>

@@ -439,6 +439,169 @@ class OrderedStitchAudioFn(beam.DoFn):
             transmission_buffer.clear()
             timer_manager.clear()
 
+    def _process_single_stitch_chunk(
+        self,
+        chunk: BufferedChunk,
+        feed_id: str,
+        curr_context: TransmissionContext,
+        transmission_context_state: ReadModifyWriteRuntimeState,
+        transmission_buffer_state: BagRuntimeState,
+        last_start_ms_state: ReadModifyWriteRuntimeState,
+        timer_manager: StaleTimerManager,
+        state_machine: AudioStitchingStateMachine,
+        previous_expected_ts: int | None,
+        task_logger: logging.Logger | logging.LoggerAdapter,
+        *,
+        is_backfill: bool,
+    ) -> tuple[
+        list[
+            tuple[str, FlushRequest]
+            | beam.pvalue.TaggedOutput[
+                Literal["transcription_dlq"],
+                dict[str, str | bool | dict[str, str]],
+            ]
+        ],
+        TransmissionContext,
+    ]:
+        chunk_outputs = []
+        traceparent = chunk.traceparent or ""
+
+        with with_tracer_context(
+            traceparent, "stitching_single_chunk", __name__
+        ):
+            if curr_context.session_id is None:
+                msg = (
+                    "Session ID cannot be None in _process_single_stitch_chunk"
+                )
+                raise ValueError(msg)
+            try:
+                # 1. Download audio!
+                task_logger.debug(
+                    f"[Download] Downloading audio for {chunk.gcs_uri}"
+                )
+                chunk_data = self.audio_processor.download_audio_and_detect(
+                    chunk.gcs_uri, chunk.timestamp_ms
+                )
+                task_logger.debug(
+                    f"[Download] Downloaded audio for {chunk.gcs_uri}"
+                )
+
+                time_range = TimeRange(
+                    start_ms=chunk.timestamp_ms,
+                    end_ms=chunk.timestamp_ms + chunk_data.duration_ms,
+                )
+
+                if self.stitch_config.bypass_stitching:
+                    chunk_outputs.append(
+                        (
+                            feed_id,
+                            FlushRequest(
+                                buffer=chunk_data.audio,
+                                feed_id=feed_id,
+                                session_id=curr_context.session_id or "unknown",
+                                contributing_audio_uris=[chunk.gcs_uri],
+                                time_range=time_range,
+                                missing_prior_context=False,
+                                missing_post_context=False,
+                                start_audio_offset_ms=0,
+                                end_audio_offset_ms=None,
+                                transmission_id=generate_transmission_id(
+                                    curr_context.session_id,
+                                    time_range,
+                                ),
+                                feed_metadata=cast(
+                                    "FeedMetadata", curr_context.feed_metadata
+                                ),
+                                traceparent=chunk.traceparent,
+                            ),
+                        )
+                    )
+                    return chunk_outputs, curr_context
+
+                payload = DownloadedChunkPayload(
+                    chunk.gcs_uri,
+                    chunk_data,
+                    curr_context.session_id or "unknown",
+                )
+
+                # 2. Reconstruct StitcherContext!
+                ctx = StitcherContext(
+                    feed_id=feed_id,
+                    current_gcs_uri=chunk.gcs_uri,
+                    session_id=curr_context.session_id,
+                    contributing_audio_uris=curr_context.contributing_audio_uris.copy(),
+                    file_start_ms=chunk.timestamp_ms,
+                    last_segment_end_time_ms=curr_context.last_end_time_ms,
+                    transmission_start_time_ms=curr_context.stale_start_time_ms,
+                    buffer_start_time_ms=curr_context.buffer_start_time_ms,
+                    missing_prior_context=curr_context.missing_prior_context,
+                    expected_next_chunk_start_ms=previous_expected_ts,
+                    start_audio_offset_ms=curr_context.start_audio_offset_ms,
+                    end_audio_offset_ms=None,
+                    buffer_duration_ms=curr_context.buffer_duration_ms,
+                    traceparent=curr_context.traceparent
+                    if curr_context.traceparent is not None
+                    else chunk.traceparent,
+                )
+
+                # 3. Process through state machine!
+                actions = state_machine.process_chunk(payload.chunk_data, ctx)
+
+                # 4. Apply actions!
+                for action in actions:
+                    match action:
+                        case FlushAction():
+                            chunk_outputs.extend(
+                                list(
+                                    self._apply_flush_action(
+                                        action,
+                                        transmission_context_state,
+                                        transmission_buffer_state,
+                                        last_start_ms_state,
+                                        timer_manager,
+                                        session_id=curr_context.session_id,
+                                    )
+                                )
+                            )
+                        case AppendBufferAction():
+                            transmission_buffer_state.add(action.audio_buffer)
+                        case UpdateStateAction():
+                            curr_context = replace(
+                                curr_context,
+                                contributing_audio_uris=ctx.contributing_audio_uris,
+                                last_end_time_ms=ctx.last_segment_end_time_ms,
+                                stale_start_time_ms=ctx.transmission_start_time_ms,
+                                buffer_start_time_ms=ctx.buffer_start_time_ms,
+                                missing_prior_context=ctx.missing_prior_context,
+                                start_audio_offset_ms=ctx.start_audio_offset_ms,
+                                buffer_duration_ms=ctx.buffer_duration_ms,
+                            )
+                            transmission_context_state.write(curr_context)
+                        case ScheduleStaleTimerAction():
+                            timer_manager.schedule(
+                                action.deadline_ms, is_backfill=is_backfill
+                            )
+                        case DropAction(reason=reason):
+                            logger.info(f"{reason}: {chunk.gcs_uri}")
+
+            except Exception as e:
+                if not self.stitch_config.route_to_dlq:
+                    raise
+                logger.exception(
+                    "Error processing chunk %s for feed %s",
+                    chunk.gcs_uri,
+                    feed_id,
+                )
+                msg = str(e)
+                chunk_outputs.append(
+                    beam.pvalue.TaggedOutput(
+                        DEAD_LETTER_QUEUE_TAG,
+                        {"error": msg, "feed_id": feed_id},
+                    )
+                )
+
+        return chunk_outputs, curr_context
+
     def _download_and_stitch(
         self,
         elements_to_emit: list[BufferedChunk],
@@ -474,127 +637,25 @@ class OrderedStitchAudioFn(beam.DoFn):
         state_machine = AudioStitchingStateMachine(self.stitch_config)
 
         for chunk in elements_to_emit:
-            try:
-                # 1. Download audio!
-                task_logger.debug(
-                    f"[Download] Downloading audio for {chunk.gcs_uri}"
-                )
-                chunk_data = self.audio_processor.download_audio_and_detect(
-                    chunk.gcs_uri, chunk.timestamp_ms
-                )
-                task_logger.debug(
-                    f"[Download] Downloaded audio for {chunk.gcs_uri}"
-                )
-
-                time_range = TimeRange(
-                    start_ms=chunk.timestamp_ms,
-                    end_ms=chunk.timestamp_ms + chunk_data.duration_ms,
-                )
-
-                if self.stitch_config.bypass_stitching:
-                    yield (
-                        feed_id,
-                        FlushRequest(
-                            buffer=chunk_data.audio,
-                            feed_id=feed_id,
-                            session_id=curr_context.session_id or "unknown",
-                            contributing_audio_uris=[chunk.gcs_uri],
-                            time_range=time_range,
-                            missing_prior_context=False,
-                            missing_post_context=False,
-                            start_audio_offset_ms=0,
-                            end_audio_offset_ms=None,
-                            transmission_id=generate_transmission_id(
-                                curr_context.session_id,
-                                time_range,
-                            ),
-                            feed_metadata=cast(
-                                "FeedMetadata", curr_context.feed_metadata
-                            ),
-                            traceparent=chunk.traceparent,
-                        ),
-                    )
-                    continue
-
-                payload = DownloadedChunkPayload(
-                    chunk.gcs_uri,
-                    chunk_data,
-                    curr_context.session_id or "unknown",
-                )
-
-                # 2. Reconstruct StitcherContext!
-                expected_ts = (
-                    previous_expected_ts
-                    if chunk == elements_to_emit[0]
-                    else curr_context.expected_next_chunk_start_ms
-                )
-                ctx = StitcherContext(
-                    feed_id=feed_id,
-                    current_gcs_uri=chunk.gcs_uri,
-                    session_id=curr_context.session_id,
-                    contributing_audio_uris=curr_context.contributing_audio_uris.copy(),
-                    file_start_ms=chunk.timestamp_ms,
-                    last_segment_end_time_ms=curr_context.last_end_time_ms,
-                    transmission_start_time_ms=curr_context.stale_start_time_ms,
-                    buffer_start_time_ms=curr_context.buffer_start_time_ms,
-                    missing_prior_context=curr_context.missing_prior_context,
-                    expected_next_chunk_start_ms=expected_ts,
-                    start_audio_offset_ms=curr_context.start_audio_offset_ms,
-                    end_audio_offset_ms=None,
-                    buffer_duration_ms=curr_context.buffer_duration_ms,
-                    traceparent=curr_context.traceparent
-                    if curr_context.traceparent is not None
-                    else chunk.traceparent,
-                )
-
-                # 3. Process through state machine!
-                actions = state_machine.process_chunk(payload.chunk_data, ctx)
-
-                # 4. Apply actions!
-                for action in actions:
-                    match action:
-                        case FlushAction():
-                            yield from self._apply_flush_action(
-                                action,
-                                transmission_context_state,
-                                transmission_buffer_state,
-                                last_start_ms_state,
-                                timer_manager,
-                                session_id=curr_context.session_id,
-                            )
-                        case AppendBufferAction():
-                            transmission_buffer_state.add(action.audio_buffer)
-                        case UpdateStateAction():
-                            curr_context = replace(
-                                curr_context,
-                                contributing_audio_uris=ctx.contributing_audio_uris,
-                                last_end_time_ms=ctx.last_segment_end_time_ms,
-                                stale_start_time_ms=ctx.transmission_start_time_ms,
-                                buffer_start_time_ms=ctx.buffer_start_time_ms,
-                                missing_prior_context=ctx.missing_prior_context,
-                                start_audio_offset_ms=ctx.start_audio_offset_ms,
-                                buffer_duration_ms=ctx.buffer_duration_ms,
-                            )
-                            transmission_context_state.write(curr_context)
-                        case ScheduleStaleTimerAction():
-                            timer_manager.schedule(
-                                action.deadline_ms, is_backfill=is_backfill
-                            )
-                        case DropAction(reason=reason):
-                            logger.info(f"{reason}: {chunk.gcs_uri}")
-
-            except Exception as e:
-                if not self.stitch_config.route_to_dlq:
-                    raise
-                logger.exception(
-                    "Error processing chunk %s for feed %s",
-                    chunk.gcs_uri,
-                    feed_id,
-                )
-                msg = str(e)
-                yield beam.pvalue.TaggedOutput(
-                    DEAD_LETTER_QUEUE_TAG, {"error": msg, "feed_id": feed_id}
-                )
+            expected_ts = (
+                previous_expected_ts
+                if chunk == elements_to_emit[0]
+                else curr_context.expected_next_chunk_start_ms
+            )
+            chunk_outputs, curr_context = self._process_single_stitch_chunk(
+                chunk=chunk,
+                feed_id=feed_id,
+                curr_context=curr_context,
+                transmission_context_state=transmission_context_state,
+                transmission_buffer_state=transmission_buffer_state,
+                last_start_ms_state=last_start_ms_state,
+                timer_manager=timer_manager,
+                state_machine=state_machine,
+                previous_expected_ts=expected_ts,
+                task_logger=task_logger,
+                is_backfill=is_backfill,
+            )
+            yield from chunk_outputs
 
     @on_timer(OUT_OF_ORDER_TIMER_SPEC)
     def handle_gap_timeout(
@@ -946,6 +1007,71 @@ class OrderedBypassFn(beam.DoFn):
 
         yield from results
 
+    def _process_single_bypass_chunk(
+        self,
+        chunk: BufferedChunk,
+        feed_id: str,
+        curr_context: TransmissionContext,
+    ) -> list[
+        tuple[str, FlushRequest]
+        | beam.pvalue.TaggedOutput[
+            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
+        ]
+    ]:
+        chunk_outputs = []
+        traceparent = chunk.traceparent or curr_context.traceparent or ""
+
+        with with_tracer_context(traceparent, "bypass_single_chunk", __name__):
+            if self.audio_processor is None:
+                msg = "AudioProcessor not initialized in _process_single_bypass_chunk"
+                raise RuntimeError(msg)
+            try:
+                chunk_data = self.audio_processor.download_audio_and_detect(
+                    chunk.gcs_uri, chunk.timestamp_ms
+                )
+
+                time_range = TimeRange(
+                    start_ms=chunk.timestamp_ms,
+                    end_ms=chunk.timestamp_ms + chunk_data.duration_ms,
+                )
+
+                chunk_outputs.append(
+                    (
+                        feed_id,
+                        FlushRequest(
+                            buffer=chunk_data.audio,
+                            feed_id=feed_id,
+                            session_id=curr_context.session_id or "unknown",
+                            contributing_audio_uris=[chunk.gcs_uri],
+                            time_range=time_range,
+                            missing_prior_context=False,
+                            missing_post_context=False,
+                            start_audio_offset_ms=0,
+                            end_audio_offset_ms=chunk_data.duration_ms,
+                            transmission_id=generate_transmission_id(
+                                curr_context.session_id or "unknown",
+                                time_range,
+                            ),
+                            feed_metadata=cast(
+                                "FeedMetadata", curr_context.feed_metadata
+                            ),
+                            traceparent=curr_context.traceparent,
+                        ),
+                    )
+                )
+            except Exception as e:
+                logging.getLogger(__name__).exception(
+                    f"Error processing chunk {chunk.gcs_uri} for feed {feed_id}"
+                )
+                chunk_outputs.append(
+                    beam.pvalue.TaggedOutput(
+                        DEAD_LETTER_QUEUE_TAG,
+                        {"error": str(e), "feed_id": feed_id},
+                    )
+                )
+
+        return chunk_outputs
+
     def _download_and_yield(
         self,
         elements_to_emit: list[BufferedChunk],
@@ -962,46 +1088,9 @@ class OrderedBypassFn(beam.DoFn):
             raise RuntimeError(msg)
 
         for chunk in elements_to_emit:
-            try:
-                chunk_data = self.audio_processor.download_audio_and_detect(
-                    chunk.gcs_uri, chunk.timestamp_ms
-                )
-
-                time_range = TimeRange(
-                    start_ms=chunk.timestamp_ms,
-                    end_ms=chunk.timestamp_ms + chunk_data.duration_ms,
-                )
-
-                yield (
-                    feed_id,
-                    FlushRequest(
-                        buffer=chunk_data.audio,
-                        feed_id=feed_id,
-                        session_id=curr_context.session_id or "unknown",
-                        contributing_audio_uris=[chunk.gcs_uri],
-                        time_range=time_range,
-                        missing_prior_context=False,
-                        missing_post_context=False,
-                        start_audio_offset_ms=0,
-                        end_audio_offset_ms=chunk_data.duration_ms,
-                        transmission_id=generate_transmission_id(
-                            curr_context.session_id or "unknown",
-                            time_range,
-                        ),
-                        feed_metadata=cast(
-                            "FeedMetadata", curr_context.feed_metadata
-                        ),
-                        traceparent=curr_context.traceparent,
-                    ),
-                )
-            except Exception as e:
-                logging.getLogger(__name__).exception(
-                    f"Error processing chunk {chunk.gcs_uri} for feed {feed_id}"
-                )
-                yield beam.pvalue.TaggedOutput(
-                    DEAD_LETTER_QUEUE_TAG,
-                    {"error": str(e), "feed_id": feed_id},
-                )
+            yield from self._process_single_bypass_chunk(
+                chunk, feed_id, curr_context
+            )
 
 
 SEQUENTIAL_BARRIER_SPEC = ReadModifyWriteStateSpec(

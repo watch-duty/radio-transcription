@@ -469,7 +469,7 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             ):
                 pass
 
-        self.assertIn("missing source_feed_id", str(ctx.exception))
+        self.assertEqual(str(ctx.exception), "missing_source_feed_id")
 
         row = await self._get_feed_row(feed_id)
         self.assertEqual(row["status"], "active")

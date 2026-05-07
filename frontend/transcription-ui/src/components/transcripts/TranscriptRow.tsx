@@ -154,11 +154,12 @@ export function TranscriptRow({
                 navigator.clipboard.writeText(transcript.transcript);
                 triggerSnackbar('Transcript copied');
               }}
+              sx={{ cursor: 'copy' }}
             >
               <ContentCopyIcon fontSize="small" />
             </IconButton>
           </Tooltip>
-          <Tooltip title="Copy link to transmission">
+          <Tooltip title="Copy transcript deep link">
             <IconButton
               size="small"
               aria-label="copy deeplink"
@@ -176,8 +177,9 @@ export function TranscriptRow({
                   new Date(transcript.startTimestamp).getTime().toString()
                 );
                 navigator.clipboard.writeText(url.toString());
-                triggerSnackbar('Link copied');
+                triggerSnackbar('Transcript link copied');
               }}
+              sx={{ cursor: 'copy' }}
             >
               <LinkIcon fontSize="small" />
             </IconButton>

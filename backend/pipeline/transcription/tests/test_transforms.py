@@ -555,9 +555,14 @@ class OrderedBypassTest(unittest.TestCase):
             )
         )
 
-        mock_with_tracer_context.assert_called_once_with(
+        mock_with_tracer_context.assert_any_call(
             "mock-traceparent-context",
             "handle_buffer",
+            "backend.pipeline.transcription.transforms.stateful",
+        )
+        mock_with_tracer_context.assert_any_call(
+            "mock-traceparent-context",
+            "bypass_single_chunk",
             "backend.pipeline.transcription.transforms.stateful",
         )
 
@@ -607,9 +612,14 @@ class OrderedStitchAudioTest(unittest.TestCase):
             )
         )
 
-        mock_with_tracer_context.assert_called_once_with(
+        mock_with_tracer_context.assert_any_call(
             "mock-traceparent",
             "stitching_process",
+            "backend.pipeline.transcription.transforms.stateful",
+        )
+        mock_with_tracer_context.assert_any_call(
+            "mock-traceparent",
+            "stitching_single_chunk",
             "backend.pipeline.transcription.transforms.stateful",
         )
 
@@ -651,9 +661,14 @@ class OrderedStitchAudioTest(unittest.TestCase):
             )
         )
 
-        mock_with_tracer_context.assert_called_once_with(
+        mock_with_tracer_context.assert_any_call(
             "mock-traceparent-context",
             "handle_audio_gap",
+            "backend.pipeline.transcription.transforms.stateful",
+        )
+        mock_with_tracer_context.assert_any_call(
+            "",
+            "stitching_single_chunk",
             "backend.pipeline.transcription.transforms.stateful",
         )
 

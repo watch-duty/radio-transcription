@@ -36,7 +36,7 @@ resource "google_compute_instance" "eval_instance" {
   resource_policies = []
 
   metadata = {
-    startup_script = <<-EOT
+    startup-script = <<-EOT
     #!/bin/bash
     # Systematically install Google Cloud Ops Agent on boot to enable Cloud Console GPU metrics (idempotent check)
     if ! systemctl is-active --quiet google-cloud-ops-agent; then
