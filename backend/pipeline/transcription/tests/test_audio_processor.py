@@ -50,7 +50,7 @@ class AudioProcessorTest(unittest.TestCase):
         """Ensures that attempting to evaluate VAD before setup() raises a clear runtime error."""
         audio = np.zeros(((1000) * 16), dtype=np.int16)
         with self.assertRaises(RuntimeError):
-            self.processor.check_vad(audio)
+            self.processor.check_vad(audio, 16000)
 
     def test_download_audio_raises_if_not_setup(self) -> None:
         """Ensures that downloading audio before calling setup() correctly raises a runtime error to prevent missing GCS client exceptions."""
@@ -80,7 +80,7 @@ class AudioProcessorTest(unittest.TestCase):
         t = np.linspace(0, 1, 16000, endpoint=False)
         audio = (np.sin(2 * np.pi * 440 * t) * 32767).astype(np.int16)
 
-        result = self.processor.check_vad(audio)
+        result = self.processor.check_vad(audio, 16000)
         self.assertTrue(result)
         mock_vad_instance.evaluate.assert_called_once()
 
@@ -111,7 +111,7 @@ class AudioProcessorTest(unittest.TestCase):
         # Audio data doesn't matter much now because we mock the DSP output
         audio = np.zeros(16000, dtype=np.int16)
 
-        result = self.processor.check_vad(audio)
+        result = self.processor.check_vad(audio, 16000)
         self.assertFalse(result)
         # VAD evaluate should NOT be called because it should be dropped by heuristic
         mock_vad_instance.evaluate.assert_not_called()
@@ -161,7 +161,7 @@ class AudioProcessorTest(unittest.TestCase):
 
         # We can't easily assert exactly what the pydub filters did without evaluating frequency domains,
         # so we just assert it returns an np.ndarray and doesn't crash.
-        processed = self.processor.preprocess_audio(audio)
+        processed = self.processor.preprocess_audio(audio, 16000)
         self.assertIsInstance(processed, np.ndarray)
         self.assertEqual(len(processed), len(audio))
 
@@ -171,7 +171,7 @@ class AudioProcessorTest(unittest.TestCase):
     def test_export_flac(self) -> None:
         """Tests that exporting to FLAC produces a valid byte array containing the expected `fLaC` header signature."""
         audio = np.zeros(((500) * 16), dtype=np.int16)
-        flac_bytes = self.processor.export_flac(audio)
+        flac_bytes = self.processor.export_flac(audio, 16000)
         self.assertIsInstance(flac_bytes, bytes)
         self.assertTrue(flac_bytes.startswith(b"fLaC"))
 
@@ -181,7 +181,7 @@ class AudioProcessorTest(unittest.TestCase):
     def test_export_m4a(self) -> None:
         """Tests that exporting to M4A produces a valid byte array with valid ftyp header."""
         audio = np.zeros(((500) * 16), dtype=np.int16)
-        m4a_bytes = self.processor.export_m4a(audio)
+        m4a_bytes = self.processor.export_m4a(audio, 16000)
         self.assertIsInstance(m4a_bytes, bytes)
         self.assertTrue(len(m4a_bytes) > 0)
         # M4A (MP4 container) should contain an ftyp box

@@ -1,6 +1,7 @@
 """Stateless acoustic manipulation and Voice Activity Detection (VAD) utilities."""
 
 import io
+import math
 import subprocess
 import tempfile
 import urllib.parse
@@ -8,13 +9,13 @@ from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
+import soundfile as sf
 from google.cloud import storage
 from scipy import signal
 
 from backend.pipeline.common.constants import (
     FLAC_COMPRESSION_LEVEL,
     M4A_BITRATE,
-    SAMPLE_RATE_HZ,
 )
 from backend.pipeline.transcription.audio.detectors import AcousticGateDetector
 from backend.pipeline.transcription.audio.dsp import (
@@ -47,6 +48,22 @@ logger = get_logger(
 def get_gcs_client() -> storage.Client:
     """Initialize and return a GCS Client. Used natively by the audio processor for isolation."""
     return storage.Client()
+
+
+def _resample_to_16k_mono(samples: np.ndarray, sr: int) -> np.ndarray:
+    """Downmixes to mono and resamples to 16 kHz for VAD/SED processing."""
+    # 1. Downmix if stereo/multi-channel
+    if samples.ndim > 1:
+        samples = np.mean(samples, axis=1)
+
+    # 2. Resample if not 16000 Hz
+    if sr != 16000:
+        gcd = math.gcd(sr, 16000)
+        up = 16000 // gcd
+        down = sr // gcd
+        samples = signal.resample_poly(samples, up, down)
+
+    return samples.astype(np.int16)
 
 
 class AudioProcessor:
@@ -111,38 +128,47 @@ class AudioProcessor:
         blob.download_to_file(in_mem_file)
         in_mem_file.seek(0)
 
-        # Use ffmpeg to decode audio to raw PCM in memory (handles MP3, FLAC, etc.)
-        process = subprocess.run(
-            [
-                "ffmpeg",
-                "-i",
-                "pipe:0",  # Read from stdin
-                "-f",
-                "s16le",  # Output raw 16-bit PCM
-                "-ac",
-                "1",  # Force mono
-                "-ar",
-                "16000",  # Force 16kHz
-                "pipe:1",  # Write to stdout
-            ],
-            input=in_mem_file.getvalue(),
-            capture_output=True,
-            check=False,
-        )
-        if process.returncode != 0:
-            logger.error(
-                f"ffmpeg error during audio decode: {process.stderr.decode()}"
+        with tempfile.NamedTemporaryFile(
+            suffix=".flac", delete=False
+        ) as temp_file:
+            temp_filename = temp_file.name
+
+        try:
+            # Use ffmpeg to extract standard FLAC to a seekable temporary file
+            process = subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    "pipe:0",  # Read from stdin
+                    "-f",
+                    "flac",  # Output FLAC format
+                    temp_filename,
+                ],
+                input=in_mem_file.getvalue(),
+                capture_output=True,
+                check=False,
             )
-            msg = "Failed to decode audio via ffmpeg"
-            raise RuntimeError(msg)
+            if process.returncode != 0:
+                logger.error(
+                    f"ffmpeg error during audio decode: {process.stderr.decode()}"
+                )
+                msg = "Failed to decode audio via ffmpeg"
+                raise RuntimeError(msg)
 
-        samples = np.frombuffer(process.stdout, dtype=np.int16)
-        sr = 16000
+            samples, sr = sf.read(temp_filename, dtype="int16")
+        finally:
+            try:
+                Path(temp_filename).unlink()
+            except OSError:
+                pass
 
-        speech_segments = self.sed_detector.detect(samples)
+        # Resample to 16 kHz mono for the acoustic gate/spectral flatness detector
+        samples_16k = _resample_to_16k_mono(samples, sr)
+        speech_segments = self.sed_detector.detect(samples_16k)
 
         if duration_ms is None:
-            duration_ms = len(samples) // (sr // 1000)
+            duration_ms = int(len(samples) / sr * 1000)
 
         return AudioChunkData(
             start_ms=start_ms,
@@ -153,7 +179,7 @@ class AudioProcessor:
             duration_ms=duration_ms,
         )
 
-    def check_vad(self, audio_buffer: np.ndarray) -> bool:
+    def check_vad(self, audio_buffer: np.ndarray, sample_rate: int) -> bool:
         """Evaluates audio buffer with TenVAD and returns True if speech is detected."""
         if self.vad is None:
             msg = "VAD plugin not initialized. Call setup() first."
@@ -162,11 +188,6 @@ class AudioProcessor:
         pcm_bytes = audio_buffer.tobytes()
 
         # DSP Pre-Filtering
-        # Fast DSP heuristics are applied before the Neural VAD to:
-        # 1. Improve performance by short-circuiting computationally heavy neural network evaluation on dead air.
-        # 2. Improve robustness by preventing the neural network from hallucinating false-positive speech on uniform white noise (radio squelch).
-        # 1. Mathematical Heuristics (Pre-Filters)
-        # Convert to float32 normalized array for DSP analysis
         audio_data = audio_buffer.astype(np.float32) / INT16_MAX_FLOAT
         rms_energy = compute_rms_energy(audio_data)
         mean_rms = np.mean(rms_energy)
@@ -174,12 +195,11 @@ class AudioProcessor:
             logger.info(
                 f"VAD Heuristic: Dropped near-silence (RMS Energy: {mean_rms:.5f})"
             )
-
             return False
 
         mean_flatness = compute_spectral_flatness(
             audio_data,
-            sample_rate=SAMPLE_RATE_HZ,
+            sample_rate=sample_rate,
             n_fft=DEFAULT_SED_FFT_SIZE,
             hop_length=DEFAULT_SED_HOP_SIZE,
         )
@@ -190,23 +210,28 @@ class AudioProcessor:
             logger.info(
                 f"VAD Heuristic: Dropped static (Flatness: {mean_flatness_val:.3f})"
             )
-
             return False
 
         # 2. Neural Evaluation (Final Authority)
-        return self.vad.evaluate(pcm_bytes, sample_rate=SAMPLE_RATE_HZ)
+        channels = 1 if audio_buffer.ndim == 1 else audio_buffer.shape[1]
+        return self.vad.evaluate(
+            pcm_bytes, sample_rate=sample_rate, channels=channels
+        )
 
-    def preprocess_audio(self, audio_buffer: np.ndarray) -> np.ndarray:
+    def preprocess_audio(
+        self, audio_buffer: np.ndarray, sample_rate: int
+    ) -> np.ndarray:
         """Applies native bandpass filtering to remove rumble and static."""
-        nyq = 0.5 * SAMPLE_RATE_HZ
+        nyq = 0.5 * sample_rate
         high = HIGHPASS_FILTER_FREQ / nyq
         low = LOWPASS_FILTER_FREQ / nyq
         b, a = signal.butter(4, [high, low], btype="band")
         filtered = signal.lfilter(b, a, audio_buffer)
         return filtered.astype(np.int16)
 
-    def export_flac(self, audio_buffer: np.ndarray) -> bytes:
+    def export_flac(self, audio_buffer: np.ndarray, sample_rate: int) -> bytes:
         """Exports a NumPy array to FLAC bytes using ffmpeg."""
+        channels = 1 if audio_buffer.ndim == 1 else audio_buffer.shape[1]
         with tempfile.NamedTemporaryFile(
             suffix=".flac", delete=False
         ) as temp_file:
@@ -220,9 +245,9 @@ class AudioProcessor:
                     "-f",
                     "s16le",
                     "-ar",
-                    str(SAMPLE_RATE_HZ),  # Force 16kHz
+                    str(sample_rate),
                     "-ac",
-                    "1",  # Mono
+                    str(channels),
                     "-i",
                     "pipe:0",  # Read from stdin
                     "-f",
@@ -250,8 +275,9 @@ class AudioProcessor:
             except OSError:
                 pass
 
-    def export_m4a(self, audio_buffer: np.ndarray) -> bytes:
+    def export_m4a(self, audio_buffer: np.ndarray, sample_rate: int) -> bytes:
         """Exports a NumPy array to M4A (AAC) bytes using ffmpeg via a temporary file."""
+        channels = 1 if audio_buffer.ndim == 1 else audio_buffer.shape[1]
         with tempfile.NamedTemporaryFile(
             suffix=".m4a", delete=False
         ) as temp_file:
@@ -265,9 +291,9 @@ class AudioProcessor:
                     "-f",
                     "s16le",  # Input format: 16-bit signed little-endian PCM
                     "-ar",
-                    str(SAMPLE_RATE_HZ),  # Force 16kHz
+                    str(sample_rate),
                     "-ac",
-                    "1",  # Input channels (mono)
+                    str(channels),
                     "-i",
                     "pipe:0",  # Read from stdin
                     "-f",
@@ -299,12 +325,12 @@ class AudioProcessor:
                 pass
 
     def process_buffer(
-        self, audio_buffer: np.ndarray
+        self, audio_buffer: np.ndarray, sample_rate: int
     ) -> tuple[bool, bytes | None, np.ndarray | None]:
         """Encapsulates sequence of pre-processing, VAD check, and FLAC export."""
-        processed_audio = self.preprocess_audio(audio_buffer)
-        if not self.check_vad(processed_audio):
+        processed_audio = self.preprocess_audio(audio_buffer, sample_rate)
+        if not self.check_vad(processed_audio, sample_rate):
             return False, None, None
 
-        flac_bytes = self.export_flac(processed_audio)
+        flac_bytes = self.export_flac(processed_audio, sample_rate)
         return True, flac_bytes, processed_audio

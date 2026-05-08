@@ -120,6 +120,7 @@ class TransmissionContext:
     feed_metadata: FeedMetadata | None = None
     last_transmission_start_ms: int | None = None
     traceparent: str | None = None
+    sample_rate: int | None = None
 
 
 @dataclass
@@ -212,6 +213,7 @@ class FlushRequest:
     missing_post_context: bool
     start_audio_offset_ms: int | None
     end_audio_offset_ms: int | None
+    sample_rate: int
     traceparent: str | None = None
 
 
