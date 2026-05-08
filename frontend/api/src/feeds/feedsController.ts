@@ -49,7 +49,7 @@ function getSourceUrl(
   if (!sourceFeedId) return undefined;
   switch (sourceType) {
     case 'bcfy_feeds':
-      return `https://partner.broadcastify.com/${sourceFeedId}`;
+      return `https://www.broadcastify.com/listen/feed/${sourceFeedId}`;
     case 'bcfy_calls':
       return `https://www.broadcastify.com/calls/tg/${sourceFeedId.replace(/-/g, '/')}`;
     case 'openmhz':
