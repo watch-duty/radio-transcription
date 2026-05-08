@@ -218,9 +218,9 @@ describe('FeedsController', () => {
       return feed.sourceUrl;
     }
 
-    it('bcfy_feeds produces the partner.broadcastify.com URL', async () => {
+    it('bcfy_feeds produces the listen/feed URL', async () => {
       const url = await listFeedsWithSourceType('bcfy_feeds', '12345');
-      expect(url).toBe('https://partner.broadcastify.com/12345');
+      expect(url).toBe('https://www.broadcastify.com/listen/feed/12345');
     });
 
     it('bcfy_calls replaces hyphens with slashes in the URL', async () => {
