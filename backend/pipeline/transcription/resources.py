@@ -5,11 +5,9 @@ from dataclasses import dataclass, field
 from apache_beam.utils.shared import Shared
 from google.cloud import storage
 
-from backend.pipeline.transcription.audio import vad as audio_vad
+from backend.pipeline.transcription.audio import vad
 from backend.pipeline.transcription.common import logging
-from backend.pipeline.transcription.services import (
-    transcribers as service_transcribers,
-)
+from backend.pipeline.transcription.services import transcribers
 
 logger = logging.get_logger(
     __name__, {"system": "transcription", "component": "resources"}
@@ -21,16 +19,16 @@ SHARED_RESOURCE_HANDLE = Shared()
 
 @dataclass
 class SharedResources:
-    """A strictly singleton dataclass mapping heavyweight machine learning and API clients.
+    """A strictly singleton dataclass mapping ML and API clients.
 
     Wrapped uniquely via `apache_beam.utils.shared.Shared`, this container ensures that models are loaded into memory exactly once per worker machine,
     and HTTP/GRPC API connections (GCS, Google Speech) are persistently pooled and reused. This
     eliminates the latency and CPU overhead of repeatedly initializing heavy resources across bundles.
     """
 
-    vad: audio_vad.VoiceActivityDetector | None = None
+    vad_engine: vad.VoiceActivityDetector | None = None
     gcs_client: storage.Client | None = None
-    transcriber: service_transcribers.Transcriber | None = None
+    transcriber_client: transcribers.Transcriber | None = None
 
     _vad_lock: threading.Lock = field(default_factory=threading.Lock)
     _gcs_lock: threading.Lock = field(default_factory=threading.Lock)
@@ -38,15 +36,15 @@ class SharedResources:
 
     def get_vad(
         self,
-        factory: Callable[[str], audio_vad.VoiceActivityDetector],
+        factory: Callable[[str], vad.VoiceActivityDetector],
         config_json: str,
-    ) -> audio_vad.VoiceActivityDetector:
+    ) -> vad.VoiceActivityDetector:
         """Lazily initialize and return the VoiceActivityDetector engine."""
-        if self.vad is None:
+        if self.vad_engine is None:
             with self._vad_lock:
-                if self.vad is None:
-                    self.vad = factory(config_json)
-        return self.vad
+                if self.vad_engine is None:
+                    self.vad_engine = factory(config_json)
+        return self.vad_engine
 
     def get_gcs(self, factory: Callable[[], storage.Client]) -> storage.Client:
         """Lazily initialize and return the Google Cloud Storage client."""
@@ -59,20 +57,20 @@ class SharedResources:
     def get_transcriber(
         self,
         factory: Callable[
-            [type[service_transcribers.Transcriber], str, str],
-            service_transcribers.Transcriber,
+            [type[transcribers.Transcriber], str, str],
+            transcribers.Transcriber,
         ],
-        transcriber_type: type[service_transcribers.Transcriber],
+        transcriber_type: type[transcribers.Transcriber],
         project_id: str,
         config_json: str,
-    ) -> service_transcribers.Transcriber:
+    ) -> transcribers.Transcriber:
         """Lazily initialize and return the Transcriber instance."""
-        if self.transcriber is None:
+        if self.transcriber_client is None:
             with self._transcriber_lock:
-                if self.transcriber is None:
-                    self.transcriber = factory(
+                if self.transcriber_client is None:
+                    self.transcriber_client = factory(
                         transcriber_type,
                         project_id,
                         config_json,
                     )
-        return self.transcriber
+        return self.transcriber_client
