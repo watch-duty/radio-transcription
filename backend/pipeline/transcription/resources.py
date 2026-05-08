@@ -1,7 +1,6 @@
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
 
 from apache_beam.utils.shared import Shared
 from google.cloud import storage
@@ -59,7 +58,10 @@ class SharedResources:
 
     def get_transcriber(
         self,
-        factory: Callable[[Any, str, str], service_transcribers.Transcriber],
+        factory: Callable[
+            [type[service_transcribers.Transcriber], str, str],
+            service_transcribers.Transcriber,
+        ],
         transcriber_type: type[service_transcribers.Transcriber],
         project_id: str,
         config_json: str,
