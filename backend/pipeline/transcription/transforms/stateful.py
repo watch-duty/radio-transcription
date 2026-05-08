@@ -414,6 +414,10 @@ class OrderedStitchAudioFn(beam.DoFn):
 
             last_start_ms_state.write(current_start_ms)
 
+            # Yield the FlushRequest downstream.
+            # Note: By propagating the pre-computed speech_segments from our state machine,
+            # the downstream TranscribeAudioFn can completely bypass the second, highly expensive
+            # neural VAD ONNX check. This preserves timing precision while cutting CPU overhead to zero!
             yield (
                 action.feed_id,
                 FlushRequest(
@@ -577,7 +581,9 @@ class OrderedStitchAudioFn(beam.DoFn):
                         case AppendBufferAction():
                             transmission_buffer_state.add(action.audio_buffer)
                         case UpdateStateAction():
-                            # Save the last 6 seconds of current audio chunk for the next contiguous chunk VAD priming
+                            # Waveform State Caching: Cache the last 6.0 seconds of raw audio samples from the current
+                            # GCS chunk. On the next contiguous tick, this cached tail will be extracted and prepended
+                            # to the download audio chunk, establishing seamless continuous VAD and filter priming.
                             priming_samples = int(6.0 * chunk_data.sample_rate)
                             prior_tail = (
                                 chunk_data.audio[-priming_samples:]

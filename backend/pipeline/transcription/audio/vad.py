@@ -201,14 +201,18 @@ class VoiceActivityDetector:
             resampler = TorchaudioHannResampler(sample_rate, 16000)
             audio_array = resampler.resample(audio_array)
 
-        # If no real-time contiguous prior tail is passed, fall back to prepending the first N seconds of the current audio chunk (like in the Colab)
+        # VAD Priming Strategy: Prepend historical contiguous audio waveform (if available)
+        # to prime the stateful filters, sinc resampler kernels, and ONNX hidden layers.
+        # If no contiguous prior tail is passed (e.g. startup chunk of a feed session),
+        # we fall back to prepending the first N seconds of the current audio chunk (like the Colab)
+        # to prevent startup cold-start clipping on early words.
         if prior_audio is None:
             priming_samples = int(self.priming_sec * 16000)
             priming_samples = min(priming_samples, len(audio_array))
             if priming_samples > 0:
                 prior_audio = audio_array[:priming_samples]
 
-        # Prepend prior audio if available to prime denoiser and VAD state
+        # Perform physical audio concatenation to create a continuous audio stream for the VAD
         if prior_audio is not None and len(prior_audio) > 0:
             if sample_rate != 16000:
                 resampler = TorchaudioHannResampler(sample_rate, 16000)
@@ -297,18 +301,28 @@ class VoiceActivityDetector:
                     )
                 )
 
-        # Filter and shift segments back relative to the current audio chunk
+        # Time Coordinate Trimming & Shifting Mathematics:
+        # We must isolate the detected speech segments relative strictly to the current audio chunk
+        # under evaluation. The priming tail is solely for warming up recurrent states, and its
+        # audio timeline must never leak out or color our returned segment boundaries.
         shifted_segments = []
         for start, end in raw_segments:
+            # 1. Discard: If a segment starts and ends entirely within the priming tail, throw it away
             if end <= prior_len_sec:
-                # Entirely within prior audio tail, ignore
                 continue
-            # Trim starts that fall inside prior audio
+            # 2. Trim: If a segment began in the previous chunk but continues into the current chunk,
+            # we clip the starting timestamp to exactly 0.0 (indicating speech is active from the very
+            # first sample of this chunk) and shift the ending coordinate back.
             start_sec = max(0.0, start - prior_len_sec)
+            # 3. Shift: Shift both timestamps back by prior_len_sec if it started within this chunk
+            # to align the segment coordinate strictly to this chunk's timeline.
             end_sec = end - prior_len_sec
             shifted_segments.append((start_sec, end_sec))
 
-        # Pad and merge overlapping segments
+        # Pad and merge overlapping segments.
+        # Note: VAD padding defaults to 0.0s in production to prevent syllable boundary merging,
+        # allowing our state machine to perform extremely precise significant gap splits.
+        # Pre-rolls and post-rolls are applied cleanly downstream at the state machine level.
         audio_len_sec = len(audio_array) / 16000.0
         padded_segments = []
         for start, end in shifted_segments:
