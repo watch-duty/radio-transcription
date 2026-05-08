@@ -129,6 +129,7 @@ class AudioStitchingStateMachine:
             end_audio_offset_ms=end_ms - ctx.buffer_start_time_ms,
             clear_state=True,
             isolated_audio_buffer=[],
+            speech_segments=ctx.speech_segments.copy(),
             traceparent=ctx.traceparent,
         )
 
@@ -223,6 +224,7 @@ class AudioStitchingStateMachine:
         ctx.contributing_audio_uris.clear()
         ctx.start_audio_offset_ms = None
         ctx.buffer_duration_ms = 0
+        ctx.speech_segments.clear()
 
     def _process_silent_chunk(
         self, chunk_data: AudioChunkData, ctx: StitcherContext
@@ -487,6 +489,12 @@ class AudioStitchingStateMachine:
             if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
                 ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
             ctx.last_segment_end_time_ms = file_start_ms + global_end_ms
+            ctx.speech_segments.append(
+                TimeRange(
+                    start_ms=file_start_ms + global_start_ms,
+                    end_ms=file_start_ms + global_end_ms,
+                )
+            )
 
         actions.append(UpdateStateAction())
         if ctx.last_segment_end_time_ms is not None:

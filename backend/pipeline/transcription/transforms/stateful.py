@@ -263,7 +263,6 @@ class OrderedStitchAudioFn(beam.DoFn):
     def setup(self) -> None:
         setup_tracing()
         self.audio_processor = AudioProcessor(
-            self.stitch_config.vad_type,
             self.stitch_config.vad_config,
             shared_resources=SHARED_RESOURCE_HANDLE.acquire(SharedResources),
         )
@@ -320,6 +319,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                 transmission_buffer_state.clear()
                 stale_timer_event.clear()
                 stale_timer_proc.clear()
+                curr_context = replace(curr_context, prior_audio_tail=None)
 
             # Always write updated context!
             transmission_context_state.write(curr_context)
@@ -426,6 +426,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                     missing_post_context=action.missing_post_context,
                     start_audio_offset_ms=action.start_audio_offset_ms,
                     end_audio_offset_ms=action.end_audio_offset_ms,
+                    speech_segments=action.speech_segments,
                     transmission_id=transmission_id,
                     feed_metadata=curr_ctx.feed_metadata,
                     traceparent=action.traceparent,
@@ -475,12 +476,21 @@ class OrderedStitchAudioFn(beam.DoFn):
                 )
                 raise ValueError(msg)
             try:
-                # 1. Download audio!
+                # Check if there is a contiguous gap (dropped chunk)
+                if (
+                    previous_expected_ts is not None
+                    and chunk.timestamp_ms > previous_expected_ts
+                ):
+                    curr_context = replace(curr_context, prior_audio_tail=None)
+
+                # 1. Download audio and detect segments (pass prior audio tail for VAD priming)
                 task_logger.debug(
                     f"[Download] Downloading audio for {chunk.gcs_uri}"
                 )
                 chunk_data = self.audio_processor.download_audio_and_detect(
-                    chunk.gcs_uri, chunk.timestamp_ms
+                    chunk.gcs_uri,
+                    chunk.timestamp_ms,
+                    prior_audio=curr_context.prior_audio_tail,
                 )
                 task_logger.debug(
                     f"[Download] Downloaded audio for {chunk.gcs_uri}"
@@ -506,7 +516,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                                 start_audio_offset_ms=0,
                                 end_audio_offset_ms=None,
                                 transmission_id=generate_transmission_id(
-                                    curr_context.session_id,
+                                    curr_context.session_id or "unknown",
                                     time_range,
                                 ),
                                 feed_metadata=cast(
@@ -559,13 +569,21 @@ class OrderedStitchAudioFn(beam.DoFn):
                                         transmission_buffer_state,
                                         last_start_ms_state,
                                         timer_manager,
-                                        session_id=curr_context.session_id,
+                                        session_id=curr_context.session_id
+                                        or "unknown",
                                     )
                                 )
                             )
                         case AppendBufferAction():
                             transmission_buffer_state.add(action.audio_buffer)
                         case UpdateStateAction():
+                            # Save the last 6 seconds of current audio chunk for the next contiguous chunk VAD priming
+                            priming_samples = int(6.0 * chunk_data.sample_rate)
+                            prior_tail = (
+                                chunk_data.audio[-priming_samples:]
+                                if len(chunk_data.audio) > 0
+                                else None
+                            )
                             curr_context = replace(
                                 curr_context,
                                 contributing_audio_uris=ctx.contributing_audio_uris,
@@ -575,6 +593,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                                 missing_prior_context=ctx.missing_prior_context,
                                 start_audio_offset_ms=ctx.start_audio_offset_ms,
                                 buffer_duration_ms=ctx.buffer_duration_ms,
+                                prior_audio_tail=prior_tail,
                             )
                             transmission_context_state.write(curr_context)
                         case ScheduleStaleTimerAction():
@@ -905,7 +924,6 @@ class OrderedBypassFn(beam.DoFn):
     def setup(self) -> None:
         setup_tracing()
         self.audio_processor = AudioProcessor(
-            self.stitch_config.vad_type,
             self.stitch_config.vad_config,
             shared_resources=SHARED_RESOURCE_HANDLE.acquire(SharedResources),
         )
@@ -1148,7 +1166,6 @@ class TranscribeAudioFn(beam.DoFn):
         self.shared_resources = SHARED_RESOURCE_HANDLE.acquire(SharedResources)
 
         self.audio_processor = AudioProcessor(
-            self.config.vad_type,
             self.config.vad_config,
             shared_resources=self.shared_resources,
         )
@@ -1185,7 +1202,9 @@ class TranscribeAudioFn(beam.DoFn):
             return None
 
         success, flac_bytes, processed_audio = (
-            self.audio_processor.process_buffer(request.buffer)
+            self.audio_processor.process_buffer(
+                request.buffer, speech_segments=request.speech_segments
+            )
         )
         if not success or flac_bytes is None or processed_audio is None:
             self.vad_silence_count.inc()

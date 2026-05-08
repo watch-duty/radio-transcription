@@ -11,7 +11,7 @@ from backend.pipeline.common.constants import (
 from backend.pipeline.transcription.common.constants import (
     DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS,
 )
-from backend.pipeline.transcription.common.enums import TranscriberType, VadType
+from backend.pipeline.transcription.common.enums import TranscriberType
 
 
 @dataclass(frozen=True)
@@ -119,6 +119,8 @@ class TransmissionContext:
     out_of_order_buffer: list[BufferedChunk] = field(default_factory=list)
     feed_metadata: FeedMetadata | None = None
     last_transmission_start_ms: int | None = None
+    speech_segments: list[TimeRange] = field(default_factory=list)
+    prior_audio_tail: np.ndarray | None = None
     traceparent: str | None = None
 
 
@@ -141,6 +143,7 @@ class StitcherContext:
     start_audio_offset_ms: int | None
     end_audio_offset_ms: int | None = None
     buffer_duration_ms: int = 0
+    speech_segments: list[TimeRange] = field(default_factory=list)
     traceparent: str | None = None
 
 
@@ -157,7 +160,6 @@ class StitchAudioConfig:
     """Groups pipeline-level configurations passed to the stateful DoFn."""
 
     project_id: str
-    vad_type: VadType
     vad_config: str
     significant_gap_ms: int
     stale_timeout_ms: int
@@ -191,7 +193,6 @@ class TranscribeAudioConfig:
     project_id: str
     transcriber_type: TranscriberType
     transcriber_config: str
-    vad_type: VadType
     vad_config: str
     route_to_dlq: bool = True
     canonical_audio_bucket: str | None = None
@@ -212,6 +213,7 @@ class FlushRequest:
     missing_post_context: bool
     start_audio_offset_ms: int | None
     end_audio_offset_ms: int | None
+    speech_segments: list[TimeRange] = field(default_factory=list)
     traceparent: str | None = None
 
 
@@ -250,6 +252,7 @@ class FlushAction(StateMachineAction):
     clear_state: bool = True
     isolated_audio_buffer: list[np.ndarray] = field(default_factory=list)
     isolated_audio_buffer_uris: list[str] = field(default_factory=list)
+    speech_segments: list[TimeRange] = field(default_factory=list)
     traceparent: str | None = None
 
 

@@ -1,6 +1,7 @@
 """Stateless acoustic manipulation and Voice Activity Detection (VAD) utilities."""
 
 import io
+import json
 import subprocess
 import tempfile
 import urllib.parse
@@ -16,26 +17,18 @@ from backend.pipeline.common.constants import (
     M4A_BITRATE,
     SAMPLE_RATE_HZ,
 )
-from backend.pipeline.transcription.audio.detectors import AcousticGateDetector
-from backend.pipeline.transcription.audio.dsp import (
-    compute_rms_energy,
-    compute_spectral_flatness,
-)
-from backend.pipeline.transcription.audio.vads import (
-    VoiceActivityDetector,
-    get_vad_plugin,
-)
+from backend.pipeline.transcription.audio.dsp import compute_rms_energy
+from backend.pipeline.transcription.audio.vad import VoiceActivityDetector
 from backend.pipeline.transcription.common.constants import (
-    DEFAULT_SED_FFT_SIZE,
-    DEFAULT_SED_HOP_SIZE,
     HIGHPASS_FILTER_FREQ,
     INT16_MAX_FLOAT,
     LOWPASS_FILTER_FREQ,
-    VAD_FLATNESS_NOISE_THRESHOLD,
     VAD_RMS_SILENCE_THRESHOLD,
 )
-from backend.pipeline.transcription.common.datatypes import AudioChunkData
-from backend.pipeline.transcription.common.enums import VadType
+from backend.pipeline.transcription.common.datatypes import (
+    AudioChunkData,
+    TimeRange,
+)
 from backend.pipeline.transcription.common.logging import get_logger
 from backend.pipeline.transcription.resources import SharedResources
 
@@ -49,6 +42,15 @@ def get_gcs_client() -> storage.Client:
     return storage.Client()
 
 
+def get_vad_engine(config_json: str) -> VoiceActivityDetector:
+    """Creates a VoiceActivityDetector engine using optional JSON config."""
+    try:
+        config = json.loads(config_json) if config_json else {}
+    except Exception:
+        config = {}
+    return VoiceActivityDetector(**config)
+
+
 class AudioProcessor:
     """An acoustic manipulation module.
 
@@ -58,41 +60,42 @@ class AudioProcessor:
 
     def __init__(
         self,
-        vad_type: VadType = VadType.TEN_VAD,
         vad_config: str = "{}",
         shared_resources: SharedResources | None = None,
-        vad_factory: Callable[[VadType, str], VoiceActivityDetector]
-        | None = None,
+        vad_factory: Callable[[str], VoiceActivityDetector] | None = None,
         gcs_factory: Callable[[], storage.Client] | None = None,
     ) -> None:
-        self.vad_type = vad_type
         self.vad_config = vad_config
         self.shared_resources = shared_resources
         self.vad_factory = vad_factory
         self.gcs_factory = gcs_factory
-        self.sed_detector = AcousticGateDetector()
 
         self.vad: VoiceActivityDetector | None = None
         self.gcs_client: storage.Client | None = None
 
     def setup(self) -> None:
         """Initializes the VAD plugin and GCS client once per worker."""
-        active_vad_factory = self.vad_factory or get_vad_plugin
+        active_vad_factory = self.vad_factory or get_vad_engine
         active_gcs_factory = self.gcs_factory or get_gcs_client
 
         if self.shared_resources is not None:
             self.vad = self.shared_resources.get_vad(
-                active_vad_factory, self.vad_type, self.vad_config
+                active_vad_factory, self.vad_config
             )
             self.gcs_client = self.shared_resources.get_gcs(active_gcs_factory)
         else:
-            self.vad = active_vad_factory(self.vad_type, self.vad_config)
+            self.vad = active_vad_factory(self.vad_config)
             self.gcs_client = active_gcs_factory()
+        self.vad.setup()
 
     def download_audio_and_detect(
-        self, gcs_path: str, start_ms: int, duration_ms: int | None = None
+        self,
+        gcs_path: str,
+        start_ms: int,
+        duration_ms: int | None = None,
+        prior_audio: np.ndarray | None = None,
     ) -> AudioChunkData:
-        """Downloads audio bytes from GCS and runs the spectral flatness detector natively."""
+        """Downloads audio bytes from GCS and runs the speech segment detection natively."""
         if not self.gcs_client:
             msg = "GCS client not initialized. Call setup() first."
             raise RuntimeError(msg)
@@ -139,7 +142,25 @@ class AudioProcessor:
         samples = np.frombuffer(process.stdout, dtype=np.int16)
         sr = 16000
 
-        speech_segments = self.sed_detector.detect(samples)
+        speech_segments = []
+        if self.vad is not None and len(samples) > 0:
+            samples_float = samples.astype(np.float32) / INT16_MAX_FLOAT
+            # If prior audio tail is passed from context, normalize it to float32 to match vad signature
+            prior_float = (
+                prior_audio.astype(np.float32) / INT16_MAX_FLOAT
+                if prior_audio is not None
+                else None
+            )
+            raw_segments = self.vad.detect_speech_segments(
+                samples_float, sample_rate=sr, prior_audio=prior_float
+            )
+            for start_sec, end_sec in raw_segments:
+                speech_segments.append(
+                    TimeRange(
+                        start_ms=int(start_sec * 1000.0),
+                        end_ms=int(end_sec * 1000.0),
+                    )
+                )
 
         if duration_ms is None:
             duration_ms = len(samples) // (sr // 1000)
@@ -154,18 +175,11 @@ class AudioProcessor:
         )
 
     def check_vad(self, audio_buffer: np.ndarray) -> bool:
-        """Evaluates audio buffer with TenVAD and returns True if speech is detected."""
+        """Evaluates audio buffer with the configured VAD and returns True if speech is detected."""
         if self.vad is None:
-            msg = "VAD plugin not initialized. Call setup() first."
+            msg = "VAD engine not initialized. Call setup() first."
             raise RuntimeError(msg)
 
-        pcm_bytes = audio_buffer.tobytes()
-
-        # DSP Pre-Filtering
-        # Fast DSP heuristics are applied before the Neural VAD to:
-        # 1. Improve performance by short-circuiting computationally heavy neural network evaluation on dead air.
-        # 2. Improve robustness by preventing the neural network from hallucinating false-positive speech on uniform white noise (radio squelch).
-        # 1. Mathematical Heuristics (Pre-Filters)
         # Convert to float32 normalized array for DSP analysis
         audio_data = audio_buffer.astype(np.float32) / INT16_MAX_FLOAT
         rms_energy = compute_rms_energy(audio_data)
@@ -174,27 +188,13 @@ class AudioProcessor:
             logger.info(
                 f"VAD Heuristic: Dropped near-silence (RMS Energy: {mean_rms:.5f})"
             )
-
             return False
 
-        mean_flatness = compute_spectral_flatness(
-            audio_data,
-            sample_rate=SAMPLE_RATE_HZ,
-            n_fft=DEFAULT_SED_FFT_SIZE,
-            hop_length=DEFAULT_SED_HOP_SIZE,
+        # Detect speech segments using Silero + UL-UNAS
+        segments = self.vad.detect_speech_segments(
+            audio_data, sample_rate=SAMPLE_RATE_HZ
         )
-        mean_flatness_val = np.mean(mean_flatness)
-        if (
-            mean_flatness_val > VAD_FLATNESS_NOISE_THRESHOLD
-        ):  # Featureless static
-            logger.info(
-                f"VAD Heuristic: Dropped static (Flatness: {mean_flatness_val:.3f})"
-            )
-
-            return False
-
-        # 2. Neural Evaluation (Final Authority)
-        return self.vad.evaluate(pcm_bytes, sample_rate=SAMPLE_RATE_HZ)
+        return len(segments) > 0
 
     def preprocess_audio(self, audio_buffer: np.ndarray) -> np.ndarray:
         """Applies native bandpass filtering to remove rumble and static."""
@@ -299,12 +299,18 @@ class AudioProcessor:
                 pass
 
     def process_buffer(
-        self, audio_buffer: np.ndarray
+        self,
+        audio_buffer: np.ndarray,
+        speech_segments: list[TimeRange] | None = None,
     ) -> tuple[bool, bytes | None, np.ndarray | None]:
         """Encapsulates sequence of pre-processing, VAD check, and FLAC export."""
-        processed_audio = self.preprocess_audio(audio_buffer)
-        if not self.check_vad(processed_audio):
+        # Bypass the expensive second VAD evaluation if speech segments are already pre-computed
+        if speech_segments is not None:
+            if not speech_segments:
+                return False, None, None
+        elif not self.check_vad(audio_buffer):
             return False, None, None
 
+        processed_audio = self.preprocess_audio(audio_buffer)
         flac_bytes = self.export_flac(processed_audio)
         return True, flac_bytes, processed_audio

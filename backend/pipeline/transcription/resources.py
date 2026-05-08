@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 from apache_beam.utils.shared import Shared
 from google.cloud import storage
 
-from backend.pipeline.transcription.audio.vads import VoiceActivityDetector
-from backend.pipeline.transcription.common.enums import TranscriberType, VadType
+from backend.pipeline.transcription.audio.vad import VoiceActivityDetector
+from backend.pipeline.transcription.common.enums import TranscriberType
 from backend.pipeline.transcription.common.logging import get_logger
 from backend.pipeline.transcription.services.transcribers import Transcriber
 
@@ -40,15 +40,14 @@ class SharedResources:
 
     def get_vad(
         self,
-        factory: Callable[[VadType, str], VoiceActivityDetector],
-        vad_type: VadType,
+        factory: Callable[[str], VoiceActivityDetector],
         config_json: str,
     ) -> VoiceActivityDetector:
-        """Lazily initialize and return the VAD plugin object."""
+        """Lazily initialize and return the VoiceActivityDetector engine."""
         if self.vad is None:
             with self._vad_lock:
                 if self.vad is None:
-                    self.vad = factory(vad_type, config_json)
+                    self.vad = factory(config_json)
         return self.vad
 
     def get_gcs(self, factory: Callable[[], storage.Client]) -> storage.Client:

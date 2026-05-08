@@ -13,7 +13,6 @@ from backend.pipeline.transcription.common.constants import (
 )
 from backend.pipeline.transcription.common.enums import (
     TranscriberType,
-    VadType,
 )
 
 
@@ -69,13 +68,6 @@ class TranscriptionOptions(PipelineOptions):
             type=str,
             default="{}",
             help="JSON string of transcriber-specific configuration.",
-        )
-        parser.add_argument(
-            "--vad_type",
-            type=str,
-            choices=[e.value for e in VadType],
-            default=VadType.TEN_VAD.value,
-            help="Type of VAD model to use.",
         )
         parser.add_argument(
             "--vad_config",

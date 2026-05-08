@@ -10,8 +10,6 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg \
         libomp5 \
-        libc++1 \
-        libc++abi1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy uv from the official image

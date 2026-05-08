@@ -37,7 +37,7 @@ from backend.pipeline.transcription.common.datatypes import (
     TranscriptionResult,
     TransmissionContext,
 )
-from backend.pipeline.transcription.common.enums import TranscriberType, VadType
+from backend.pipeline.transcription.common.enums import TranscriberType
 from backend.pipeline.transcription.services.transcribers import Transcriber
 from backend.pipeline.transcription.transforms.stateful import (
     OrderedBypassFn,
@@ -86,7 +86,6 @@ def get_test_stitch_config(**kwargs: Any) -> StitchAudioConfig:
 
     defaults = {
         "project_id": "fake-proj",
-        "vad_type": VadType.TEN_VAD,
         "vad_config": "{}",
         "significant_gap_ms": 500,
         "stale_timeout_ms": 60000,
@@ -104,7 +103,6 @@ def get_test_transcribe_config(**kwargs: Any) -> TranscribeAudioConfig:
         "project_id": "fake-proj",
         "transcriber_type": TranscriberType.GOOGLE_CHIRP_V3,
         "transcriber_config": "{}",
-        "vad_type": VadType.TEN_VAD,
         "vad_config": "{}",
     }
     defaults.update(kwargs)
@@ -250,10 +248,12 @@ class TranscribeAudioTest(unittest.TestCase):
         mock_processor_inst.check_vad.return_value = True
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
         mock_processor_inst.export_flac.return_value = b"flac_bytes"
-        mock_processor_inst.process_buffer.return_value = (
-            True,
-            b"flac_bytes",
-            np.zeros(((500) * 16), dtype=np.int16),
+        mock_processor_inst.process_buffer.side_effect = (
+            lambda *args, **kwargs: (
+                True,
+                b"flac_bytes",
+                np.zeros(((500) * 16), dtype=np.int16),
+            )
         )
 
         config = get_test_transcribe_config(route_to_dlq=True)
@@ -435,7 +435,9 @@ class SerializeAndEnrichTest(unittest.TestCase):
         chunk_data = MagicMock()
         chunk_data.duration_ms = 1000
         chunk_data.audio = np.zeros(16000, dtype=np.int16)
-        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+        mock_processor_inst.download_audio_and_detect.side_effect = (
+            lambda *args, **kwargs: chunk_data
+        )
 
         stitch_config = get_test_stitch_config()
         order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
@@ -527,7 +529,9 @@ class OrderedBypassTest(unittest.TestCase):
         chunk_data = MagicMock()
         chunk_data.duration_ms = 1000
         chunk_data.audio = np.zeros(16000, dtype=np.int16)
-        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+        mock_processor_inst.download_audio_and_detect.side_effect = (
+            lambda *args, **kwargs: chunk_data
+        )
 
         stitch_config = get_test_stitch_config()
         order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
@@ -586,7 +590,9 @@ class OrderedStitchAudioTest(unittest.TestCase):
         fn.setup()
 
         mock_state = MagicMock()
-        mock_state.read.return_value = None
+        mock_state.read.return_value = TransmissionContext(
+            session_id="mock-session-id"
+        )
         mock_timer = MagicMock()
 
         metadata = ChunkMetadata(
@@ -683,7 +689,9 @@ class OrderedStitchAudioTest(unittest.TestCase):
         chunk_data.audio = np.zeros(16000, dtype=np.int16)
         chunk_data.start_ms = 1000
         chunk_data.speech_segments = []  # Silent chunk
-        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+        mock_processor_inst.download_audio_and_detect.side_effect = (
+            lambda *args, **kwargs: chunk_data
+        )
 
         order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
         stitch_config = get_test_stitch_config(
@@ -798,7 +806,9 @@ class OrderedStitchAudioTest(unittest.TestCase):
             gcs_uri="gs://test-bucket/path/to/test.flac",
             duration_ms=1000,
         )
-        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+        mock_processor_inst.download_audio_and_detect.side_effect = (
+            lambda *args, **kwargs: chunk_data
+        )
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
         mock_processor_inst.check_vad.return_value = True
 
@@ -860,7 +870,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
         """Verifies that OrderedStitchAudioFn buffers out-of-order chunks and emits them in order."""
         mock_processor_inst = mock_audio_processor.return_value
 
-        def download_side_effect(gcs_uri, timestamp_ms):
+        def download_side_effect(gcs_uri, timestamp_ms, *args, **kwargs):
             if "chunk1" in gcs_uri:
                 return AudioChunkData(
                     start_ms=100000,
