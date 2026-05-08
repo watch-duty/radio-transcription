@@ -84,6 +84,9 @@ class AudioProcessor:
         if not self.gcs_client:
             msg = "GCS client not initialized. Call setup() first."
             raise RuntimeError(msg)
+        if self.vad is None:
+            msg = "VAD engine not initialized. Call setup() first."
+            raise RuntimeError(msg)
 
         parsed_uri = urllib.parse.urlparse(gcs_path)
         bucket_name = parsed_uri.netloc
@@ -128,7 +131,7 @@ class AudioProcessor:
         sr = 16000
 
         speech_segments = []
-        if self.vad is not None and len(samples) > 0:
+        if len(samples) > 0:
             samples_float = (
                 samples.astype(np.float32) / constants.INT16_MAX_FLOAT
             )
@@ -292,10 +295,9 @@ class AudioProcessor:
     ) -> tuple[bool, bytes | None, np.ndarray | None]:
         """Encapsulates sequence of pre-processing, VAD check, and FLAC export."""
         # Bypass the expensive second VAD evaluation if speech segments are already pre-computed
-        if speech_segments is not None:
-            if not speech_segments:
-                return False, None, None
-        elif not self.check_vad(audio_buffer):
+        if (speech_segments is not None and not speech_segments) or (
+            speech_segments is None and not self.check_vad(audio_buffer)
+        ):
             return False, None, None
 
         processed_audio = self.preprocess_audio(audio_buffer)
