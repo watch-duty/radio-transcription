@@ -1165,15 +1165,16 @@ async def test_list_feeds_returns_all_feeds(
 async def test_delete_feed_succeeds(
     db_pool: asyncpg.Pool, store: FeedStore
 ) -> None:
-    """delete_feed deletes the feed and returns True."""
+    """delete_feed deactivates the feed and returns True."""
     feed_id = await _insert_feed(db_pool, "Delete Test Feed")
 
     result = await store.delete_feed(feed_id)
 
     assert result is True
-    # Verify deleted
-    row = await db_pool.fetchrow("SELECT 1 FROM feeds WHERE id = $1", feed_id)
-    assert row is None
+    # Verify deactivated
+    row = await db_pool.fetchrow("SELECT status FROM feeds WHERE id = $1", feed_id)
+    assert row is not None
+    assert row["status"] == "deactivated"
 
 
 async def test_delete_feed_returns_false_if_not_found(store: FeedStore) -> None:
