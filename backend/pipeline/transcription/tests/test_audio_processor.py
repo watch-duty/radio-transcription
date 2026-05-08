@@ -48,7 +48,7 @@ class AudioProcessorTest(unittest.TestCase):
         """Ensures that attempting to evaluate VAD before setup() raises a clear runtime error."""
         audio = np.zeros(16000, dtype=np.int16)
         with self.assertRaises(RuntimeError):
-            self.processor.check_vad(audio)
+            self.processor.check_vad(audio, 16000)
 
     def test_download_audio_raises_if_not_setup(self) -> None:
         """Ensures that downloading audio before calling setup() correctly raises a runtime error."""
@@ -78,7 +78,7 @@ class AudioProcessorTest(unittest.TestCase):
         t = np.linspace(0, 1, 16000, endpoint=False)
         audio = (np.sin(2 * np.pi * 440 * t) * 32767).astype(np.int16)
 
-        result = self.processor.check_vad(audio)
+        result = self.processor.check_vad(audio, 16000)
         self.assertTrue(result)
         mock_vad_instance.detect_speech_segments.assert_called_once()
 

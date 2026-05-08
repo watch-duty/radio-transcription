@@ -21,7 +21,7 @@ from apache_beam.transforms.userstate import (
 )
 from apache_beam.utils.timestamp import Timestamp
 
-from backend.pipeline.common.constants import MS_PER_SECOND, SAMPLE_RATE_HZ
+from backend.pipeline.common.constants import MS_PER_SECOND
 from backend.pipeline.common.storage.gcs_uploader import GCSAudioUploader
 from backend.pipeline.common.tracing_utils import (
     setup_tracing,
@@ -812,6 +812,7 @@ class OrderedBypassFn(beam.DoFn):
                                 "FeedMetadata", curr_context.feed_metadata
                             ),
                             traceparent=curr_context.traceparent,
+                            sample_rate=chunk_data.sample_rate,
                         ),
                     )
                 )
@@ -941,10 +942,11 @@ class TranscribeAudioFn(beam.DoFn):
         if request.buffer is None or request.buffer.size == 0:
             return None
 
-        # Downstream process_buffer check
         success, flac_bytes, processed_audio = (
             self.audio_processor.process_buffer(
-                request.buffer, speech_segments=request.speech_segments
+                request.buffer,
+                sample_rate=request.sample_rate,
+                speech_segments=request.speech_segments,
             )
         )
         if not success or flac_bytes is None or processed_audio is None:
@@ -955,8 +957,7 @@ class TranscribeAudioFn(beam.DoFn):
             return None
 
         self.vad_speech_count.inc()
-
-        duration_sec = len(processed_audio) / float(SAMPLE_RATE_HZ)
+        duration_sec = len(processed_audio) / float(request.sample_rate)
         self.speech_duration_sec_dist.update(int(duration_sec))
 
         if not self.config.canonical_audio_bucket:
@@ -973,13 +974,17 @@ class TranscribeAudioFn(beam.DoFn):
                 msg = "AudioUploader not initialized. setup() must be called."
                 raise RuntimeError(msg)
 
-            self.audio_uploader.upload_audio_derivatives(
-                bucket_name=self.config.canonical_audio_bucket,
-                flac_path=flac_path,
-                m4a_path=m4a_path,
-                flac_bytes=flac_bytes,
-                processed_audio=processed_audio,
-                export_m4a_fn=self.audio_processor.export_m4a,
+            canonical_audio_uri, playback_audio_uri = (
+                self.audio_uploader.upload_audio_derivatives(
+                    bucket_name=self.config.canonical_audio_bucket,
+                    flac_path=flac_path,
+                    m4a_path=m4a_path,
+                    flac_bytes=flac_bytes,
+                    processed_audio=processed_audio,
+                    export_m4a_fn=lambda buf: cast(
+                        "Any", self.audio_processor
+                    ).export_m4a(buf, request.sample_rate),
+                )
             )
             canonical_audio_uri = (
                 f"gs://{self.config.canonical_audio_bucket}/{flac_path}"
