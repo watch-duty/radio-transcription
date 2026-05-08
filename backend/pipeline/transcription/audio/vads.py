@@ -10,8 +10,8 @@ import abc
 import math
 
 import numpy as np
-from scipy import signal
 import ten_vad
+from scipy import signal
 
 from backend.pipeline.common.constants import MS_PER_SECOND
 from backend.pipeline.transcription.common.constants import (

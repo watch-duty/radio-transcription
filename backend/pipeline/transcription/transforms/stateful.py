@@ -19,7 +19,7 @@ from apache_beam.transforms.userstate import (
 )
 from apache_beam.utils.timestamp import Timestamp
 
-from backend.pipeline.common.constants import MS_PER_SECOND, SAMPLE_RATE_HZ
+from backend.pipeline.common.constants import MS_PER_SECOND
 from backend.pipeline.common.storage.gcs_uploader import GCSAudioUploader
 from backend.pipeline.common.tracing_utils import (
     setup_tracing,
