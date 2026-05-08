@@ -19,55 +19,51 @@ from apache_beam.transforms.userstate import (
 )
 from apache_beam.utils.timestamp import Timestamp
 
-from backend.pipeline.common import constants as common_constants
-from backend.pipeline.common import tracing_utils
-from backend.pipeline.common.storage import gcs_uploader
-from backend.pipeline.transcription import resources
-from backend.pipeline.transcription.audio import audio_processor
-from backend.pipeline.transcription.common import constants, datatypes, utils
-from backend.pipeline.transcription.common import logging as common_logging
-from backend.pipeline.transcription.services import transcribers
+from backend.pipeline.common.constants import MS_PER_SECOND, SAMPLE_RATE_HZ
+from backend.pipeline.common.storage.gcs_uploader import GCSAudioUploader
+from backend.pipeline.common.tracing_utils import (
+    setup_tracing,
+    with_tracer_context,
+)
+from backend.pipeline.transcription.audio.audio_processor import AudioProcessor
+from backend.pipeline.transcription.common.constants import (
+    DEAD_LETTER_QUEUE_TAG,
+    DEFAULT_FLOAT_TOLERANCE_MS,
+    VAD_DEFAULT_PRIMING_SEC,
+)
+from backend.pipeline.transcription.common.datatypes import (
+    AppendBufferAction,
+    BufferedChunk,
+    ChunkMetadata,
+    DownloadedChunkPayload,
+    DropAction,
+    FeedMetadata,
+    FlushAction,
+    FlushRequest,
+    OrderRestorerConfig,
+    ScheduleStaleTimerAction,
+    StitchAudioConfig,
+    StitcherContext,
+    TimeRange,
+    TranscribeAudioConfig,
+    TranscriptionResult,
+    TransmissionContext,
+    UpdateStateAction,
+)
+from backend.pipeline.transcription.common.logging import get_logger
+from backend.pipeline.transcription.common.utils import generate_transmission_id
+from backend.pipeline.transcription.resources import (
+    SHARED_RESOURCE_HANDLE,
+    SharedResources,
+)
+from backend.pipeline.transcription.services.transcribers import (
+    Transcriber,
+    get_transcriber,
+)
 from backend.pipeline.transcription.state.sequence_buffer import SequenceBuffer
 from backend.pipeline.transcription.state.stitcher_state import (
     AudioStitchingStateMachine,
 )
-
-# Module-level aliases to align 100% with the Google Style Guide Imports Rule (Section 2.2)
-# without modifying any code inside the massive 1350-line file body (regressions safety).
-AudioChunkData = datatypes.AudioChunkData
-TimeRange = datatypes.TimeRange
-AppendBufferAction = datatypes.AppendBufferAction
-BufferedChunk = datatypes.BufferedChunk
-ChunkMetadata = datatypes.ChunkMetadata
-DownloadedChunkPayload = datatypes.DownloadedChunkPayload
-DropAction = datatypes.DropAction
-FeedMetadata = datatypes.FeedMetadata
-FlushAction = datatypes.FlushAction
-FlushRequest = datatypes.FlushRequest
-OrderRestorerConfig = datatypes.OrderRestorerConfig
-ScheduleStaleTimerAction = datatypes.ScheduleStaleTimerAction
-StitchAudioConfig = datatypes.StitchAudioConfig
-StitcherContext = datatypes.StitcherContext
-TranscribeAudioConfig = datatypes.TranscribeAudioConfig
-TranscriptionResult = datatypes.TranscriptionResult
-TransmissionContext = datatypes.TransmissionContext
-UpdateStateAction = datatypes.UpdateStateAction
-
-AudioProcessor = audio_processor.AudioProcessor
-SharedResources = resources.SharedResources
-SHARED_RESOURCE_HANDLE = resources.SHARED_RESOURCE_HANDLE
-Transcriber = transcribers.Transcriber
-get_transcriber = transcribers.get_transcriber
-GCSAudioUploader = gcs_uploader.GCSAudioUploader
-
-with_tracer_context = tracing_utils.with_tracer_context
-setup_tracing = tracing_utils.setup_tracing
-generate_transmission_id = utils.generate_transmission_id
-get_logger = common_logging.get_logger
-DEAD_LETTER_QUEUE_TAG = constants.DEAD_LETTER_QUEUE_TAG
-DEFAULT_FLOAT_TOLERANCE_MS = constants.DEFAULT_FLOAT_TOLERANCE_MS
-MS_PER_SECOND = common_constants.MS_PER_SECOND
-SAMPLE_RATE_HZ = common_constants.SAMPLE_RATE_HZ
 
 logger = get_logger(
     __name__, {"system": "transcription", "component": "ordered-stitcher"}
@@ -590,8 +586,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                             # GCS chunk. On the next contiguous tick, this cached tail will be extracted and prepended
                             # to the download audio chunk, establishing seamless continuous VAD and filter priming.
                             priming_samples = int(
-                                constants.VAD_DEFAULT_PRIMING_SEC
-                                * chunk_data.sample_rate
+                                VAD_DEFAULT_PRIMING_SEC * chunk_data.sample_rate
                             )
                             prior_tail = (
                                 chunk_data.audio[-priming_samples:]

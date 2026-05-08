@@ -10,12 +10,28 @@ import numpy as np
 import onnxruntime as ort
 from pedalboard import HighpassFilter, LowpassFilter, PeakFilter, Pedalboard
 
-from backend.pipeline.transcription.audio import dsp
-from backend.pipeline.transcription.common import constants, logging
-
-logger = logging.get_logger(
-    __name__, {"system": "transcription", "component": "vad"}
+from backend.pipeline.transcription.audio.dsp import (
+    TorchaudioHannResampler,
+    custom_numpy_istft,
+    custom_numpy_stft,
 )
+from backend.pipeline.transcription.common.constants import (
+    VAD_DEFAULT_BLEND_RATIO,
+    VAD_DEFAULT_BOOST_FREQ_HZ,
+    VAD_DEFAULT_BOOST_GAIN_DB,
+    VAD_DEFAULT_HIGHPASS_HZ,
+    VAD_DEFAULT_LOWPASS_HZ,
+    VAD_DEFAULT_MIN_SILENCE_DURATION_MS,
+    VAD_DEFAULT_MIN_SPEECH_DURATION_MS,
+    VAD_DEFAULT_PAD_SEC,
+    VAD_DEFAULT_PEAK_FILTER_Q,
+    VAD_DEFAULT_PRIMING_SEC,
+    VAD_DEFAULT_THRESHOLD_OFFSET,
+    VAD_DEFAULT_THRESHOLD_ONSET,
+)
+from backend.pipeline.transcription.common.logging import get_logger
+
+logger = get_logger(__name__, {"system": "transcription", "component": "vad"})
 
 MODELS_DIR = Path(__file__).parent / "models"
 
@@ -28,18 +44,18 @@ class VoiceActivityDetector:
     def __init__(
         self,
         *,
-        highpass_hz: float = constants.VAD_DEFAULT_HIGHPASS_HZ,
-        lowpass_hz: float = constants.VAD_DEFAULT_LOWPASS_HZ,
-        blend_ratio: float = constants.VAD_DEFAULT_BLEND_RATIO,
-        boost_freq_hz: float = constants.VAD_DEFAULT_BOOST_FREQ_HZ,
-        boost_gain_db: float = constants.VAD_DEFAULT_BOOST_GAIN_DB,
-        peak_filter_q: float = constants.VAD_DEFAULT_PEAK_FILTER_Q,
-        threshold_onset: float = constants.VAD_DEFAULT_THRESHOLD_ONSET,
-        threshold_offset: float = constants.VAD_DEFAULT_THRESHOLD_OFFSET,
-        min_speech_duration_ms: int = constants.VAD_DEFAULT_MIN_SPEECH_DURATION_MS,
-        min_silence_duration_ms: int = constants.VAD_DEFAULT_MIN_SILENCE_DURATION_MS,
-        pad_sec: float = constants.VAD_DEFAULT_PAD_SEC,
-        priming_sec: float = constants.VAD_DEFAULT_PRIMING_SEC,
+        highpass_hz: float = VAD_DEFAULT_HIGHPASS_HZ,
+        lowpass_hz: float = VAD_DEFAULT_LOWPASS_HZ,
+        blend_ratio: float = VAD_DEFAULT_BLEND_RATIO,
+        boost_freq_hz: float = VAD_DEFAULT_BOOST_FREQ_HZ,
+        boost_gain_db: float = VAD_DEFAULT_BOOST_GAIN_DB,
+        peak_filter_q: float = VAD_DEFAULT_PEAK_FILTER_Q,
+        threshold_onset: float = VAD_DEFAULT_THRESHOLD_ONSET,
+        threshold_offset: float = VAD_DEFAULT_THRESHOLD_OFFSET,
+        min_speech_duration_ms: int = VAD_DEFAULT_MIN_SPEECH_DURATION_MS,
+        min_silence_duration_ms: int = VAD_DEFAULT_MIN_SILENCE_DURATION_MS,
+        pad_sec: float = VAD_DEFAULT_PAD_SEC,
+        priming_sec: float = VAD_DEFAULT_PRIMING_SEC,
         models_dir: str | Path = MODELS_DIR,
     ) -> None:
         self.highpass_hz = highpass_hz
@@ -86,10 +102,10 @@ class VoiceActivityDetector:
         try:
             logger.info("Warming up Numba compiler...")
             dummy_wave = np.zeros((1, 512), dtype=np.float32)
-            dummy_stft = dsp.custom_numpy_stft(
+            dummy_stft = custom_numpy_stft(
                 dummy_wave, n_fft=512, hop_length=256
             )
-            _ = dsp.custom_numpy_istft(
+            _ = custom_numpy_istft(
                 dummy_stft, length=512, n_fft=512, hop_length=256
             )
             logger.info("Numba compiler successfully warmed up.")
@@ -115,7 +131,7 @@ class VoiceActivityDetector:
             states[inp.name] = np.zeros(shape, dtype=np.float32)
 
         bp_audio_batched = np.expand_dims(audio_array, axis=0)
-        stft_features = dsp.custom_numpy_stft(
+        stft_features = custom_numpy_stft(
             bp_audio_batched, n_fft=n_fft, hop_length=hop_length
         )
 
@@ -130,7 +146,7 @@ class VoiceActivityDetector:
             for j in range(1, len(outputs)):
                 states[inputs[j].name] = ort_outs[j]
 
-        return dsp.custom_numpy_istft(
+        return custom_numpy_istft(
             out_stft,
             length=audio_array.shape[0],
             n_fft=n_fft,
@@ -182,7 +198,7 @@ class VoiceActivityDetector:
             return []
 
         if sample_rate != 16000:
-            resampler = dsp.TorchaudioHannResampler(sample_rate, 16000)
+            resampler = TorchaudioHannResampler(sample_rate, 16000)
             audio_array = resampler.resample(audio_array)
 
         # VAD Priming Strategy: Prepend historical contiguous audio waveform (if available)
@@ -199,7 +215,7 @@ class VoiceActivityDetector:
         # Perform physical audio concatenation to create a continuous audio stream for the VAD
         if prior_audio is not None and len(prior_audio) > 0:
             if sample_rate != 16000:
-                resampler = dsp.TorchaudioHannResampler(sample_rate, 16000)
+                resampler = TorchaudioHannResampler(sample_rate, 16000)
                 prior_audio = resampler.resample(prior_audio)
             prior_len_sec = len(prior_audio) / 16000.0
             extended_audio = np.concatenate([prior_audio, audio_array])

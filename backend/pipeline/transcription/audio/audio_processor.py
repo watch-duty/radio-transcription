@@ -12,12 +12,27 @@ import numpy as np
 from google.cloud import storage
 from pedalboard import HighpassFilter, LowpassFilter, Pedalboard
 
-from backend.pipeline.common import constants as common_constants
-from backend.pipeline.transcription import resources
-from backend.pipeline.transcription.audio import dsp, vad
-from backend.pipeline.transcription.common import constants, datatypes, logging
+from backend.pipeline.common.constants import (
+    FLAC_COMPRESSION_LEVEL,
+    M4A_BITRATE,
+    SAMPLE_RATE_HZ,
+)
+from backend.pipeline.transcription.audio.dsp import compute_rms_energy
+from backend.pipeline.transcription.audio.vad import VoiceActivityDetector
+from backend.pipeline.transcription.common.constants import (
+    HIGHPASS_FILTER_FREQ,
+    INT16_MAX_FLOAT,
+    LOWPASS_FILTER_FREQ,
+    VAD_RMS_SILENCE_THRESHOLD,
+)
+from backend.pipeline.transcription.common.datatypes import (
+    AudioChunkData,
+    TimeRange,
+)
+from backend.pipeline.transcription.common.logging import get_logger
+from backend.pipeline.transcription.resources import SharedResources
 
-logger = logging.get_logger(
+logger = get_logger(
     __name__, {"system": "transcription", "component": "audio-processor"}
 )
 
@@ -27,13 +42,13 @@ def get_gcs_client() -> storage.Client:
     return storage.Client()
 
 
-def get_vad_engine(config_json: str) -> vad.VoiceActivityDetector:
+def get_vad_engine(config_json: str) -> VoiceActivityDetector:
     """Creates a VoiceActivityDetector engine using optional JSON config."""
     try:
         config = json.loads(config_json) if config_json else {}
     except Exception:
         config = {}
-    return vad.VoiceActivityDetector(**config)
+    return VoiceActivityDetector(**config)
 
 
 class AudioProcessor:
@@ -46,8 +61,8 @@ class AudioProcessor:
     def __init__(
         self,
         vad_config: str = "{}",
-        shared_resources: resources.SharedResources | None = None,
-        vad_factory: Callable[[str], vad.VoiceActivityDetector] | None = None,
+        shared_resources: SharedResources | None = None,
+        vad_factory: Callable[[str], VoiceActivityDetector] | None = None,
         gcs_factory: Callable[[], storage.Client] | None = None,
     ) -> None:
         self.vad_config = vad_config
@@ -55,7 +70,7 @@ class AudioProcessor:
         self.vad_factory = vad_factory
         self.gcs_factory = gcs_factory
 
-        self.vad: vad.VoiceActivityDetector | None = None
+        self.vad: VoiceActivityDetector | None = None
         self.gcs_client: storage.Client | None = None
 
     def setup(self) -> None:
@@ -79,7 +94,7 @@ class AudioProcessor:
         start_ms: int,
         duration_ms: int | None = None,
         prior_audio: np.ndarray | None = None,
-    ) -> datatypes.AudioChunkData:
+    ) -> AudioChunkData:
         """Downloads audio bytes from GCS and runs the speech segment detection natively."""
         if not self.gcs_client:
             msg = "GCS client not initialized. Call setup() first."
@@ -132,12 +147,10 @@ class AudioProcessor:
 
         speech_segments = []
         if len(samples) > 0:
-            samples_float = (
-                samples.astype(np.float32) / constants.INT16_MAX_FLOAT
-            )
+            samples_float = samples.astype(np.float32) / INT16_MAX_FLOAT
             # If prior audio tail is passed from context, normalize it to float32 to match vad signature
             prior_float = (
-                prior_audio.astype(np.float32) / constants.INT16_MAX_FLOAT
+                prior_audio.astype(np.float32) / INT16_MAX_FLOAT
                 if prior_audio is not None
                 else None
             )
@@ -146,7 +159,7 @@ class AudioProcessor:
             )
             for start_sec, end_sec in raw_segments:
                 speech_segments.append(
-                    datatypes.TimeRange(
+                    TimeRange(
                         start_ms=int(start_sec * 1000.0),
                         end_ms=int(end_sec * 1000.0),
                     )
@@ -155,7 +168,7 @@ class AudioProcessor:
         if duration_ms is None:
             duration_ms = len(samples) // (sr // 1000)
 
-        return datatypes.AudioChunkData(
+        return AudioChunkData(
             start_ms=start_ms,
             audio=samples,
             sample_rate=sr,
@@ -171,10 +184,10 @@ class AudioProcessor:
             raise RuntimeError(msg)
 
         # Convert to float32 normalized array for DSP analysis
-        audio_data = audio_buffer.astype(np.float32) / constants.INT16_MAX_FLOAT
-        rms_energy = dsp.compute_rms_energy(audio_data)
+        audio_data = audio_buffer.astype(np.float32) / INT16_MAX_FLOAT
+        rms_energy = compute_rms_energy(audio_data)
         mean_rms = np.mean(rms_energy)
-        if mean_rms < constants.VAD_RMS_SILENCE_THRESHOLD:  # Below noise floor
+        if mean_rms < VAD_RMS_SILENCE_THRESHOLD:  # Below noise floor
             logger.info(
                 f"VAD Heuristic: Dropped near-silence (RMS Energy: {mean_rms:.5f})"
             )
@@ -182,32 +195,26 @@ class AudioProcessor:
 
         # Detect speech segments using Silero + UL-UNAS
         segments = self.vad.detect_speech_segments(
-            audio_data, sample_rate=common_constants.SAMPLE_RATE_HZ
+            audio_data, sample_rate=SAMPLE_RATE_HZ
         )
         return len(segments) > 0
 
     def preprocess_audio(self, audio_buffer: np.ndarray) -> np.ndarray:
         """Applies native bandpass filtering to remove rumble and static."""
         # Convert to float32 normalized array for Pedalboard processing
-        audio_float = (
-            audio_buffer.astype(np.float32) / constants.INT16_MAX_FLOAT
-        )
+        audio_float = audio_buffer.astype(np.float32) / INT16_MAX_FLOAT
 
         # Use Pedalboard's highly optimized 12dB/octave Highpass + Lowpass filters
         board = Pedalboard(
             [
-                HighpassFilter(
-                    cutoff_frequency_hz=constants.HIGHPASS_FILTER_FREQ
-                ),
-                LowpassFilter(
-                    cutoff_frequency_hz=constants.LOWPASS_FILTER_FREQ
-                ),
+                HighpassFilter(cutoff_frequency_hz=HIGHPASS_FILTER_FREQ),
+                LowpassFilter(cutoff_frequency_hz=LOWPASS_FILTER_FREQ),
             ]
         )
-        filtered_float = board(audio_float, common_constants.SAMPLE_RATE_HZ)
+        filtered_float = board(audio_float, SAMPLE_RATE_HZ)
 
         # Scale back to 16-bit PCM
-        return (filtered_float * constants.INT16_MAX_FLOAT).astype(np.int16)
+        return (filtered_float * INT16_MAX_FLOAT).astype(np.int16)
 
     def export_flac(self, audio_buffer: np.ndarray) -> bytes:
         """Exports a NumPy array to FLAC bytes using ffmpeg."""
@@ -224,7 +231,7 @@ class AudioProcessor:
                     "-f",
                     "s16le",
                     "-ar",
-                    str(common_constants.SAMPLE_RATE_HZ),  # Force 16kHz
+                    str(SAMPLE_RATE_HZ),  # Force 16kHz
                     "-ac",
                     "1",  # Mono
                     "-i",
@@ -232,7 +239,7 @@ class AudioProcessor:
                     "-f",
                     "flac",  # Output format
                     "-compression_level",
-                    common_constants.FLAC_COMPRESSION_LEVEL,
+                    FLAC_COMPRESSION_LEVEL,
                     temp_filename,  # Write to temp file
                 ],
                 input=audio_buffer.tobytes(),
@@ -269,7 +276,7 @@ class AudioProcessor:
                     "-f",
                     "s16le",  # Input format: 16-bit signed little-endian PCM
                     "-ar",
-                    str(common_constants.SAMPLE_RATE_HZ),  # Force 16kHz
+                    str(SAMPLE_RATE_HZ),  # Force 16kHz
                     "-ac",
                     "1",  # Input channels (mono)
                     "-i",
@@ -279,7 +286,7 @@ class AudioProcessor:
                     "-c:a",
                     "aac",  # Output codec: AAC
                     "-b:a",
-                    common_constants.M4A_BITRATE,  # Output bitrate from constant
+                    M4A_BITRATE,  # Output bitrate from constant
                     temp_filename,  # Write to temp file
                 ],
                 input=audio_buffer.tobytes(),
@@ -305,7 +312,7 @@ class AudioProcessor:
     def process_buffer(
         self,
         audio_buffer: np.ndarray,
-        speech_segments: list[datatypes.TimeRange] | None = None,
+        speech_segments: list[TimeRange] | None = None,
     ) -> tuple[bool, bytes | None, np.ndarray | None]:
         """Encapsulates sequence of pre-processing, VAD check, and FLAC export."""
         # Bypass the expensive second VAD evaluation if speech segments are already pre-computed
