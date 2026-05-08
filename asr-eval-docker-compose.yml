@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Container for running NeMO and Jupyter Notebooks on GPU (using notebook from NeMO image)
   asr-eval:
@@ -38,6 +36,14 @@ services:
       context: ./model/notebook_docker
       dockerfile: Dockerfile
     network_mode: "host"
-    command: ["jupyter", "notebook", "--ip=0.0.0.0", "--NotebookApp.token=''", "--NotebookApp.password=''"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: ["jupyter", "notebook", "--ip=0.0.0.0", "--allow-root", "--NotebookApp.token=''", "--NotebookApp.password=''"]
+    working_dir: /workspace
     volumes:
-      - ./model:/home/jovyan
+      - .:/workspace

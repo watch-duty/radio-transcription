@@ -1,14 +1,9 @@
-# Use the official Jupyter Scipy notebook as base
-FROM quay.io/jupyter/pytorch-notebook:latest
+# Use official PyTorch GPU container (comes with PyTorch & Torchaudio pre-installed)
+FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
 
-USER root
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg && \
-    rm -rf /var/lib/apt/lists/*
-
-USER ${NB_USER}
-
-# Copy requirements and install them
-COPY --chown=jovyan:users requirements.txt /tmp/requirements.txt
+# Copy requirements and install them along with Jupyter
+COPY requirements.txt /tmp/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -r /tmp/requirements.txt
+    apt-get update && apt-get install -y git build-essential libsndfile1 && rm -rf /var/lib/apt/lists/* && \
+    /opt/conda/bin/pip install --no-cache-dir jupyter jupyterlab && \
+    /opt/conda/bin/pip install --no-cache-dir -r /tmp/requirements.txt
