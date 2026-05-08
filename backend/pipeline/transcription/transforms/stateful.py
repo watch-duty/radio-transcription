@@ -586,10 +586,13 @@ class OrderedStitchAudioFn(beam.DoFn):
                         case AppendBufferAction():
                             transmission_buffer_state.add(action.audio_buffer)
                         case UpdateStateAction():
-                            # Waveform State Caching: Cache the last 6.0 seconds of raw audio samples from the current
+                            # Waveform State Caching: Cache the last N seconds of raw audio samples from the current
                             # GCS chunk. On the next contiguous tick, this cached tail will be extracted and prepended
                             # to the download audio chunk, establishing seamless continuous VAD and filter priming.
-                            priming_samples = int(6.0 * chunk_data.sample_rate)
+                            priming_samples = int(
+                                constants.VAD_DEFAULT_PRIMING_SEC
+                                * chunk_data.sample_rate
+                            )
                             prior_tail = (
                                 chunk_data.audio[-priming_samples:]
                                 if len(chunk_data.audio) > 0

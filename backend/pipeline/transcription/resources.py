@@ -1,22 +1,17 @@
 """Centralized worker-node singleton resource registry for Apache Beam state management."""
 
+# ruff: noqa: TC002, TC003
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import Any
 
 from apache_beam.utils.shared import Shared
+from google.cloud import storage
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from google.cloud import storage
-
-    from backend.pipeline.transcription.audio import vad as vad_module
-    from backend.pipeline.transcription.services import transcribers
-
-from backend.pipeline.transcription.common import enums, logging
+from backend.pipeline.transcription.common import logging
 
 logger = logging.get_logger(
     __name__, {"system": "transcription", "component": "resources"}
@@ -31,14 +26,14 @@ class SharedResources:
     """A strictly singleton dataclass mapping heavyweight machine learning and API clients.
 
     Wrapped uniquely via `apache_beam.utils.shared.Shared`, this container ensures that expensive
-    machine learning models (like TenVAD) are loaded into memory exactly once per worker machine,
+    machine learning models are loaded into memory exactly once per worker machine,
     and HTTP/GRPC API connections (GCS, Google Speech) are persistently pooled and reused. This
     eliminates the latency and CPU overhead of repeatedly initializing heavy resources across bundles.
     """
 
-    vad: vad_module.VoiceActivityDetector | None = None
+    vad: Any = None
     gcs_client: storage.Client | None = None
-    transcriber: transcribers.Transcriber | None = None
+    transcriber: Any = None
 
     _vad_lock: threading.Lock = field(default_factory=threading.Lock)
     _gcs_lock: threading.Lock = field(default_factory=threading.Lock)
@@ -46,9 +41,9 @@ class SharedResources:
 
     def get_vad(
         self,
-        factory: Callable[[str], vad_module.VoiceActivityDetector],
+        factory: Callable[[str], Any],
         config_json: str,
-    ) -> vad_module.VoiceActivityDetector:
+    ) -> Any:
         """Lazily initialize and return the VoiceActivityDetector engine."""
         if self.vad is None:
             with self._vad_lock:
@@ -66,13 +61,11 @@ class SharedResources:
 
     def get_transcriber(
         self,
-        factory: Callable[
-            [enums.TranscriberType, str, str], transcribers.Transcriber
-        ],
-        transcriber_type: enums.TranscriberType,
+        factory: Callable[[Any, str, str], Any],
+        transcriber_type: Any,
         project_id: str,
         config_json: str,
-    ) -> transcribers.Transcriber:
+    ) -> Any:
         """Lazily initialize and return the Transcriber instance."""
         if self.transcriber is None:
             with self._transcriber_lock:
@@ -82,6 +75,4 @@ class SharedResources:
                         project_id,
                         config_json,
                     )
-                    # Invoke the underlying engine's setup logic precisely once organically
-                    self.transcriber.setup()
         return self.transcriber
