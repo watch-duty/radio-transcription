@@ -214,7 +214,9 @@ class AudioProcessor:
 
         # 2. Neural Evaluation (Final Authority)
         channels = 1 if audio_buffer.ndim == 1 else audio_buffer.shape[1]
-        return self.vad.evaluate(pcm_bytes, sample_rate=sample_rate, channels=channels)
+        return self.vad.evaluate(
+            pcm_bytes, sample_rate=sample_rate, channels=channels
+        )
 
     def preprocess_audio(
         self, audio_buffer: np.ndarray, sample_rate: int
