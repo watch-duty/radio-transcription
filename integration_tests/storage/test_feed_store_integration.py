@@ -1172,7 +1172,9 @@ async def test_delete_feed_succeeds(
 
     assert result is True
     # Verify deactivated
-    row = await db_pool.fetchrow("SELECT status FROM feeds WHERE id = $1", feed_id)
+    row = await db_pool.fetchrow(
+        "SELECT status FROM feeds WHERE id = $1", feed_id
+    )
     assert row is not None
     assert row["status"] == "deactivated"
 
