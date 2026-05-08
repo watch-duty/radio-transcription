@@ -109,7 +109,24 @@ class StitcherEngine:
         ],
         int,
     ]:
-        """Stitches a single element after session validation and OOO buffer restoral."""
+        """Stitches a single element after session validation and OOO buffer restoral.
+
+        Args:
+            chunk: The buffered chunk payload.
+            feed_id: Unique identifier of the active feed.
+            curr_context: The current transmission sequence context.
+            transmission_context_state: Runtime Beam state mapping for contexts.
+            transmission_buffer_state: Runtime Beam state mapping for audio buffer.
+            last_start_ms_state: Runtime Beam state mapping for last start time.
+            timer_manager: Contextual timer scheduler interface.
+            previous_expected_ts: The expected next sequence timestamp baseline.
+            is_backfill: True if the chunk falls behind the real-time watermark.
+
+        Returns:
+            A tuple of:
+                - A list of elements to emit (FlushRequest or TaggedOutput DLQ).
+                - The next expected sequence timestamp.
+        """
         task_logger = _get_task_logger(
             feed_id, curr_context.session_id, "transcription-stitcher"
         )
@@ -148,7 +165,18 @@ class StitcherEngine:
         tuple[str, FlushRequest]
         | tuple[Literal["transcription_dlq"], dict[str, Any]]
     ]:
-        """Orchestrates stale flushes when watermarks cross the timeout threshold. Replicates original direct flush."""
+        """Orchestrates stale flushes when watermarks cross the timeout threshold.
+
+        Args:
+            key: Unique key of the active feed partition.
+            transmission_buffer: Runtime Beam state mapping for audio buffer.
+            transmission_context: Runtime Beam state mapping for contexts.
+            last_start_ms_state: Runtime Beam state mapping for last start time.
+            timer_manager: Contextual timer scheduler interface.
+
+        Yields:
+            Emitted elements (FlushRequest or TaggedOutput DLQ).
+        """
         feed_id = key
         curr_ctx = transmission_context.read() or TransmissionContext()
         session_id = curr_ctx.session_id or "unknown"
@@ -328,7 +356,27 @@ class StitcherEngine:
         TransmissionContext,
         int,
     ]:
-        """Downloads and stitches a single chunk through the state machine, routing failures to DLQ."""
+        """Downloads and stitches a single chunk through the state machine.
+
+        Args:
+            chunk: The buffered chunk payload.
+            feed_id: Unique identifier of the active feed.
+            curr_context: The current transmission sequence context.
+            transmission_context_state: Runtime Beam state mapping for contexts.
+            transmission_buffer_state: Runtime Beam state mapping for audio buffer.
+            last_start_ms_state: Runtime Beam state mapping for last start time.
+            timer_manager: Contextual timer scheduler interface.
+            state_machine: Audio stitching FSM logic.
+            previous_expected_ts: The expected next sequence timestamp baseline.
+            task_logger: Contextual logger instance.
+            is_backfill: True if the chunk falls behind the real-time watermark.
+
+        Returns:
+            A tuple of:
+                - A list of elements to emit (FlushRequest or TaggedOutput DLQ).
+                - The updated transmission sequence context.
+                - The next expected sequence timestamp.
+        """
         from backend.pipeline.transcription.transforms.stateful import (  # noqa: PLC0415
             with_tracer_context,
         )
