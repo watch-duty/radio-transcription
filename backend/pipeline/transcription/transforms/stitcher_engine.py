@@ -1,4 +1,16 @@
-"""Core Stitcher Engine executing the non-Beam stitching, VAD analysis, and flush actions."""
+"""Core Stitcher Engine executing non-Beam stitching, VAD analysis, and flushes.
+
+This module defines the pure-Python domain logic for audio segment stitching
+completely decoupled from Apache Beam runtime boundaries. It exposes:
+- StitcherEngine: Coordinates GCS audio downloads, lazy resource initialization,
+  Voice Activity Detection (VAD) evaluation, and FSM transition tracking.
+- StaleTimerManager: A context helper encapsulating event-time and wall-clock
+  timer setups for high-level stateful flushes.
+
+By abstracting all non-Beam logic into this stateless execution engine, we
+enforce 100% pickling/serialization safety for Dataflow workers and achieve
+straightforward, light-speed unit testing capabilities.
+"""
 
 import logging as std_logging
 from collections.abc import Callable, Iterator

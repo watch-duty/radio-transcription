@@ -1,4 +1,15 @@
-"""Stateful Apache Beam transforms for the radio transcription pipeline."""
+"""Stateful Apache Beam transforms for the radio transcription pipeline.
+
+This module defines the core stateful and chronological restoration boundary
+DoFns in our Apache Beam DAG. It houses transforms responsible for:
+1. unmarshaling incoming Pub/Sub JSON elements.
+2. restoration of out-of-order segment arrivals using SequenceBuffer.
+3. stateful timer management for processing window timeout flushes.
+4. execution of speech-to-text transcription API requests.
+
+All high-level audio download/concatenation/VAD heuristics are cleanly
+decoupled from Beam timer variables and delegated to StitcherEngine.
+"""
 
 import json
 import logging as std_logging
