@@ -634,12 +634,12 @@ class FeedStore:
         return [self._row_to_feed(row) for row in rows]
 
     async def delete_feed(self, feed_id: uuid.UUID) -> bool:
-        """Delete a feed by ID.
+        """Delete a feed by ID (soft delete).
 
-        Returns True if a row was deleted, False otherwise.
+        Returns True if the feed status was set to deactivated, False otherwise.
         """
         result = await self._pool.execute(DELETE_FEED_SQL, feed_id)
-        return result == "DELETE 1"
+        return result == "UPDATE 1"
 
     async def reset_feed(self, feed_id: uuid.UUID) -> Feed | None:
         """Reset a feed to an unclaimed, unassigned state.

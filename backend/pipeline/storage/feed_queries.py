@@ -361,7 +361,8 @@ ORDER BY f.created_at DESC
 """
 
 DELETE_FEED_SQL = """\
-DELETE FROM feeds
+UPDATE feeds
+SET status = 'deactivated'::feed_status
 WHERE id = $1
 """
 
