@@ -1134,19 +1134,19 @@ class TestListFeeds(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result[1]["source_type"], SourceType.OPENMHZ)
 
 
-class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
-    """Tests for FeedStore.delete_feed."""
+class TestDeactivateFeed(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.deactivate_feed."""
 
     async def test_delete_succeeds(self) -> None:
         """True is returned when a feed is deactivated."""
         pool = _make_pool(execute_result="UPDATE 1")
         store = FeedStore(pool)
 
-        result = await store.delete_feed(_FEED_ID)
+        result = await store.deactivate_feed(_FEED_ID)
 
         self.assertTrue(result)
         pool.execute.assert_called_once_with(
-            feed_queries.DELETE_FEED_SQL, _FEED_ID
+            feed_queries.DEACTIVATE_FEED_SQL, _FEED_ID
         )
 
     async def test_delete_fails_when_not_found(self) -> None:
@@ -1154,7 +1154,7 @@ class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
         pool = _make_pool(execute_result="UPDATE 0")
         store = FeedStore(pool)
 
-        result = await store.delete_feed(_FEED_ID)
+        result = await store.deactivate_feed(_FEED_ID)
 
         self.assertFalse(result)
 

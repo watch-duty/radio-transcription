@@ -104,9 +104,9 @@ async def delete_feed(
     request: Request,
     feed_id: str,
 ) -> None:
-    """Delete a feed."""
+    """Delete a feed (soft delete, sets status to deactivated)."""
     service: FeedService = request.app.state.feed_service
-    success = await service.delete_feed(feed_id)
+    success = await service.deactivate_feed(feed_id)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

@@ -360,7 +360,7 @@ JOIN feed_properties fp ON f.id = fp.feed_id
 ORDER BY f.created_at DESC
 """
 
-DELETE_FEED_SQL = """\
+DEACTIVATE_FEED_SQL = """\
 UPDATE feeds
 SET status = 'deactivated'::feed_status
 WHERE id = $1

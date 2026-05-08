@@ -207,6 +207,10 @@ export class FeedsController extends Controller {
     }
   }
 
+  /**
+   * Deactivate a feed (soft delete).
+   * Marks the feed as deactivated to preserve historical transcripts.
+   */
   @Delete('{feedId}')
   @Security('google_id_token')
   @SuccessResponse('204', 'No Content')
