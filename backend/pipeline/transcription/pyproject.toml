@@ -32,3 +32,17 @@ dependencies = [
 
 [tool.setuptools]
 packages = []
+
+[tool.ruff]
+target-version = "py313"
+
+[tool.ruff.lint]
+# Enable flake8-tidy-imports rule (TID) to actively enforce imports conventions
+select = ["TID"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"backend.pipeline.transcription.audio.vad.VoiceActivityDetector".msg = "Import the 'vad' module instead ('from backend.pipeline.transcription.audio import vad') and reference 'vad.VoiceActivityDetector' to comply with Google Style Guide."
+"backend.pipeline.transcription.audio.audio_processor.AudioProcessor".msg = "Import the 'audio_processor' module instead ('from backend.pipeline.transcription.audio import audio_processor') and reference 'audio_processor.AudioProcessor' to comply with Google Style Guide."
+"backend.pipeline.transcription.resources.SharedResources".msg = "Import the 'resources' module instead ('from backend.pipeline.transcription import resources') and reference 'resources.SharedResources' to comply with Google Style Guide."
+"backend.pipeline.transcription.common.datatypes.AudioChunkData".msg = "Import the 'datatypes' module instead ('from backend.pipeline.transcription.common import datatypes') and reference 'datatypes.AudioChunkData' to comply with Google Style Guide."
+"backend.pipeline.transcription.common.datatypes.TimeRange".msg = "Import the 'datatypes' module instead ('from backend.pipeline.transcription.common import datatypes') and reference 'datatypes.TimeRange' to comply with Google Style Guide."
