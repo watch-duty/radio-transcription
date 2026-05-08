@@ -29,7 +29,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     wget https://raw.githubusercontent.com/NVIDIA/NeMo/${NEMO_VERSION}/tools/speech_data_explorer/requirements.txt -O /tmp/requirements.txt && \
     uv pip install --python /opt/venv/bin/python -r /tmp/requirements.txt && \
     uv pip install --python /opt/venv/bin/python -r /tmp/notebook_requirements.txt && \
-    uv pip install --python /opt/venv/bin/python --extra-index-url https://download.pytorch.org/whl/test/cu128 --no-deps torchaudio && \
+    uv pip install --python /opt/venv/bin/python --extra-index-url https://download.pytorch.org/whl/cu130 --no-deps torchaudio && \
     uv pip install --python /opt/venv/bin/python peft
 
 
