@@ -8,35 +8,16 @@ from typing import Any, Literal, cast
 import numpy as np
 from google.cloud import storage
 
-from backend.pipeline.common.constants import SAMPLE_RATE_HZ
-from backend.pipeline.transcription.audio import vad
-from backend.pipeline.transcription.audio.audio_processor import AudioProcessor
-from backend.pipeline.transcription.common.constants import (
-    VAD_DEFAULT_PRIMING_SEC,
-)
-from backend.pipeline.transcription.common.datatypes import (
-    AppendBufferAction,
-    BufferedChunk,
-    DownloadedChunkPayload,
-    FeedMetadata,
-    FlushAction,
-    FlushRequest,
-    OrderRestorerConfig,
-    ScheduleStaleTimerAction,
-    StitchAudioConfig,
-    StitcherContext,
-    TimeRange,
-    TransmissionContext,
-    UpdateStateAction,
-)
-from backend.pipeline.transcription.common.logging import get_logger
-from backend.pipeline.transcription.common.utils import generate_transmission_id
-from backend.pipeline.transcription.resources import SharedResources
-from backend.pipeline.transcription.state.stitcher_state import (
-    AudioStitchingStateMachine,
-)
+from backend.pipeline.common import constants as common_constants
+from backend.pipeline.transcription import resources
+from backend.pipeline.transcription.audio import audio_processor, vad
+from backend.pipeline.transcription.common import constants as trans_constants
+from backend.pipeline.transcription.common import datatypes
+from backend.pipeline.transcription.common import logging as trans_logging
+from backend.pipeline.transcription.common import utils as trans_utils
+from backend.pipeline.transcription.state import stitcher_state
 
-logger = get_logger(
+logger = trans_logging.get_logger(
     __name__, {"system": "transcription", "component": "stitcher-engine"}
 )
 
@@ -47,7 +28,7 @@ def _get_task_logger(
     """Contextual logger creation helper."""
     return cast(
         "std_logging.LoggerAdapter",
-        get_logger(
+        trans_logging.get_logger(
             __name__,
             {
                 "system": "transcription",
@@ -67,10 +48,10 @@ class StitcherEngine:
 
     def __init__(
         self,
-        stitch_config: StitchAudioConfig,
-        order_config: OrderRestorerConfig,
+        stitch_config: datatypes.StitchAudioConfig,
+        order_config: datatypes.OrderRestorerConfig,
         vad_config: str = "{}",
-        shared_resources: SharedResources | None = None,
+        shared_resources: resources.SharedResources | None = None,
         vad_factory: Callable[[str], vad.VoiceActivityDetector] | None = None,
         gcs_factory: Callable[[], storage.Client] | None = None,
     ) -> None:
@@ -79,7 +60,7 @@ class StitcherEngine:
         self.vad_config = vad_config
 
         # Instantiate the stateless AudioProcessor
-        self.processor = AudioProcessor(
+        self.processor = audio_processor.AudioProcessor(
             vad_config=vad_config,
             shared_resources=shared_resources,
             vad_factory=vad_factory,
@@ -92,9 +73,9 @@ class StitcherEngine:
 
     def process_ordering_chunk(
         self,
-        chunk: BufferedChunk,
+        chunk: datatypes.BufferedChunk,
         feed_id: str,
-        curr_context: TransmissionContext,
+        curr_context: datatypes.TransmissionContext,
         transmission_context_state: Any,
         transmission_buffer_state: Any,
         last_start_ms_state: Any,
@@ -104,7 +85,7 @@ class StitcherEngine:
         is_backfill: bool,
     ) -> tuple[
         list[
-            tuple[str, FlushRequest]
+            tuple[str, datatypes.FlushRequest]
             | tuple[Literal["transcription_dlq"], dict[str, Any]]
         ],
         int,
@@ -132,7 +113,9 @@ class StitcherEngine:
         )
 
         # Instantiate our state machine on top of our stitch settings
-        state_machine = AudioStitchingStateMachine(self.stitch_config)
+        state_machine = stitcher_state.AudioStitchingStateMachine(
+            self.stitch_config
+        )
 
         chunk_outputs, curr_context, next_expected_ts = (
             self._process_single_stitch_chunk(
@@ -162,7 +145,7 @@ class StitcherEngine:
         last_start_ms_state: Any,
         timer_manager: Any,
     ) -> Iterator[
-        tuple[str, FlushRequest]
+        tuple[str, datatypes.FlushRequest]
         | tuple[Literal["transcription_dlq"], dict[str, Any]]
     ]:
         """Orchestrates stale flushes when watermarks cross the timeout threshold.
@@ -178,7 +161,9 @@ class StitcherEngine:
             Emitted elements (FlushRequest or TaggedOutput DLQ).
         """
         feed_id = key
-        curr_ctx = transmission_context.read() or TransmissionContext()
+        curr_ctx = (
+            transmission_context.read() or datatypes.TransmissionContext()
+        )
         session_id = curr_ctx.session_id or "unknown"
 
         task_logger = _get_task_logger(
@@ -201,10 +186,10 @@ class StitcherEngine:
                 raise ValueError(msg)
 
             try:
-                time_range = TimeRange(
+                time_range = datatypes.TimeRange(
                     start_ms=start_time_ms, end_ms=end_time_ms
                 )
-                transmission_id = generate_transmission_id(
+                transmission_id = trans_utils.generate_transmission_id(
                     curr_ctx.session_id,
                     time_range,
                 )
@@ -215,7 +200,7 @@ class StitcherEngine:
 
                 yield (
                     feed_id,
-                    FlushRequest(
+                    datatypes.FlushRequest(
                         buffer=np.concatenate(audio_buffer),
                         feed_id=feed_id,
                         session_id=curr_ctx.session_id,
@@ -228,9 +213,10 @@ class StitcherEngine:
                         - curr_ctx.buffer_start_time_ms,
                         transmission_id=transmission_id,
                         feed_metadata=cast(
-                            "FeedMetadata", curr_ctx.feed_metadata
+                            "datatypes.FeedMetadata", curr_ctx.feed_metadata
                         ),
-                        sample_rate=curr_ctx.sample_rate or SAMPLE_RATE_HZ,
+                        sample_rate=curr_ctx.sample_rate
+                        or common_constants.SAMPLE_RATE_HZ,
                         traceparent=curr_ctx.traceparent,
                     ),
                 )
@@ -247,26 +233,28 @@ class StitcherEngine:
 
         # Clear state context cleanly
         transmission_context.write(
-            TransmissionContext(feed_metadata=curr_ctx.feed_metadata)
+            datatypes.TransmissionContext(feed_metadata=curr_ctx.feed_metadata)
         )
         transmission_buffer.clear()
         timer_manager.clear()
 
     def _apply_flush_action(
         self,
-        action: FlushAction,
+        action: datatypes.FlushAction,
         transmission_context: Any,
         transmission_buffer: Any,
         last_start_ms_state: Any,
         timer_manager: Any,
         session_id: str,
-    ) -> Iterator[tuple[str, FlushRequest]]:
+    ) -> Iterator[tuple[str, datatypes.FlushRequest]]:
         """Emits a structured FlushRequest payload downstream and resets internal state fields."""
         task_logger = _get_task_logger(
             action.feed_id, session_id, "transcription-stitcher"
         )
 
-        curr_ctx = transmission_context.read() or TransmissionContext()
+        curr_ctx = (
+            transmission_context.read() or datatypes.TransmissionContext()
+        )
         processed_uris = action.contributing_audio_uris or list(
             curr_ctx.contributing_audio_uris
         )
@@ -281,7 +269,7 @@ class StitcherEngine:
             )
 
         if audio_buffer:
-            transmission_id = generate_transmission_id(
+            transmission_id = trans_utils.generate_transmission_id(
                 session_id,
                 action.speech_time_range,
             )
@@ -309,7 +297,7 @@ class StitcherEngine:
 
             yield (
                 action.feed_id,
-                FlushRequest(
+                datatypes.FlushRequest(
                     buffer=np.concatenate(audio_buffer),
                     feed_id=action.feed_id,
                     session_id=session_id,
@@ -322,38 +310,41 @@ class StitcherEngine:
                     speech_segments=action.speech_segments,
                     transmission_id=transmission_id,
                     feed_metadata=curr_ctx.feed_metadata,
-                    sample_rate=curr_ctx.sample_rate or SAMPLE_RATE_HZ,
+                    sample_rate=curr_ctx.sample_rate
+                    or common_constants.SAMPLE_RATE_HZ,
                     traceparent=action.traceparent,
                 ),
             )
 
         if action.clear_state:
             transmission_context.write(
-                TransmissionContext(feed_metadata=curr_ctx.feed_metadata)
+                datatypes.TransmissionContext(
+                    feed_metadata=curr_ctx.feed_metadata
+                )
             )
             transmission_buffer.clear()
             timer_manager.clear()
 
     def _process_single_stitch_chunk(
         self,
-        chunk: BufferedChunk,
+        chunk: datatypes.BufferedChunk,
         feed_id: str,
-        curr_context: TransmissionContext,
+        curr_context: datatypes.TransmissionContext,
         transmission_context_state: Any,
         transmission_buffer_state: Any,
         last_start_ms_state: Any,
         timer_manager: Any,
-        state_machine: AudioStitchingStateMachine,
+        state_machine: stitcher_state.AudioStitchingStateMachine,
         previous_expected_ts: int | None,
         task_logger: Any,
         *,
         is_backfill: bool,
     ) -> tuple[
         list[
-            tuple[str, FlushRequest]
+            tuple[str, datatypes.FlushRequest]
             | tuple[Literal["transcription_dlq"], dict[str, Any]]
         ],
-        TransmissionContext,
+        datatypes.TransmissionContext,
         int,
     ]:
         """Downloads and stitches a single chunk through the state machine.
@@ -377,7 +368,7 @@ class StitcherEngine:
                 - The updated transmission sequence context.
                 - The next expected sequence timestamp.
         """
-        from backend.pipeline.transcription.transforms.stateful import (  # noqa: PLC0415
+        from backend.pipeline.common.tracing_utils import (  # noqa: PLC0415
             with_tracer_context,
         )
 
@@ -414,7 +405,7 @@ class StitcherEngine:
                     f"[Download] Downloaded audio for {chunk.gcs_uri}"
                 )
 
-                time_range = TimeRange(
+                time_range = datatypes.TimeRange(
                     start_ms=chunk.timestamp_ms,
                     end_ms=chunk.timestamp_ms + chunk_data.duration_ms,
                 )
@@ -424,7 +415,7 @@ class StitcherEngine:
                     chunk_outputs.append(
                         (
                             feed_id,
-                            FlushRequest(
+                            datatypes.FlushRequest(
                                 buffer=chunk_data.audio,
                                 feed_id=feed_id,
                                 session_id=curr_context.session_id or "unknown",
@@ -434,12 +425,13 @@ class StitcherEngine:
                                 missing_post_context=False,
                                 start_audio_offset_ms=0,
                                 end_audio_offset_ms=None,
-                                transmission_id=generate_transmission_id(
+                                transmission_id=trans_utils.generate_transmission_id(
                                     curr_context.session_id or "unknown",
                                     time_range,
                                 ),
                                 feed_metadata=cast(
-                                    "FeedMetadata", curr_context.feed_metadata
+                                    "datatypes.FeedMetadata",
+                                    curr_context.feed_metadata,
                                 ),
                                 sample_rate=chunk_data.sample_rate,
                                 traceparent=chunk.traceparent,
@@ -452,14 +444,14 @@ class StitcherEngine:
                         chunk.timestamp_ms + chunk_data.duration_ms,
                     )
 
-                payload = DownloadedChunkPayload(
+                payload = datatypes.DownloadedChunkPayload(
                     chunk.gcs_uri,
                     chunk_data,
                     curr_context.session_id or "unknown",
                 )
 
                 # 3. Initialize State Machine context
-                ctx = StitcherContext(
+                ctx = datatypes.StitcherContext(
                     feed_id=feed_id,
                     current_gcs_uri=chunk.gcs_uri,
                     session_id=curr_context.session_id,
@@ -481,7 +473,7 @@ class StitcherEngine:
                 # 4. Apply outputs
                 for action in actions:
                     match action:
-                        case FlushAction():
+                        case datatypes.FlushAction():
                             chunk_outputs.extend(
                                 list(
                                     self._apply_flush_action(
@@ -494,12 +486,13 @@ class StitcherEngine:
                                     )
                                 )
                             )
-                        case AppendBufferAction():
+                        case datatypes.AppendBufferAction():
                             transmission_buffer_state.add(action.audio_buffer)
-                        case UpdateStateAction():
+                        case datatypes.UpdateStateAction():
                             # Priming Strategy: cache tail of contiguous samples
                             priming_samples = int(
-                                VAD_DEFAULT_PRIMING_SEC * chunk_data.sample_rate
+                                trans_constants.VAD_DEFAULT_PRIMING_SEC
+                                * chunk_data.sample_rate
                             )
                             prior_tail = (
                                 chunk_data.audio[-priming_samples:]
@@ -517,7 +510,7 @@ class StitcherEngine:
                                 buffer_duration_ms=ctx.buffer_duration_ms,
                                 prior_audio_tail=prior_tail,
                             )
-                        case ScheduleStaleTimerAction():
+                        case datatypes.ScheduleStaleTimerAction():
                             timer_manager.schedule(
                                 deadline_ms=action.deadline_ms,
                                 is_backfill=is_backfill,
