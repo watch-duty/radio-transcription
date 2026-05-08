@@ -48,6 +48,8 @@ logger = get_logger(
 def get_gcs_client() -> storage.Client:
     """Initialize and return a GCS Client. Used natively by the audio processor for isolation."""
     return storage.Client()
+
+
 def _resample_to_16k_mono(samples: np.ndarray, sr: int) -> np.ndarray:
     """Downmixes to mono and resamples to 16 kHz for VAD/SED processing."""
     # 1. Downmix if stereo/multi-channel
