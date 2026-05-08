@@ -1,6 +1,7 @@
 """Stateless acoustic manipulation and Voice Activity Detection (VAD) utilities."""
 
 import io
+import math
 import subprocess
 import tempfile
 import urllib.parse
@@ -47,6 +48,20 @@ logger = get_logger(
 def get_gcs_client() -> storage.Client:
     """Initialize and return a GCS Client. Used natively by the audio processor for isolation."""
     return storage.Client()
+def _resample_to_16k_mono(samples: np.ndarray, sr: int) -> np.ndarray:
+    """Downmixes to mono and resamples to 16 kHz for VAD/SED processing."""
+    # 1. Downmix if stereo/multi-channel
+    if samples.ndim > 1:
+        samples = np.mean(samples, axis=1)
+
+    # 2. Resample if not 16000 Hz
+    if sr != 16000:
+        gcd = math.gcd(sr, 16000)
+        up = 16000 // gcd
+        down = sr // gcd
+        samples = signal.resample_poly(samples, up, down)
+
+    return samples.astype(np.int16)
 
 
 class AudioProcessor:
@@ -146,10 +161,12 @@ class AudioProcessor:
             except OSError:
                 pass
 
-        speech_segments = self.sed_detector.detect(samples)
+        # Resample to 16 kHz mono for the acoustic gate/spectral flatness detector
+        samples_16k = _resample_to_16k_mono(samples, sr)
+        speech_segments = self.sed_detector.detect(samples_16k)
 
         if duration_ms is None:
-            duration_ms = len(samples) // (sr // 1000)
+            duration_ms = int(len(samples) / sr * 1000)
 
         return AudioChunkData(
             start_ms=start_ms,
@@ -194,7 +211,8 @@ class AudioProcessor:
             return False
 
         # 2. Neural Evaluation (Final Authority)
-        return self.vad.evaluate(pcm_bytes, sample_rate=sample_rate)
+        channels = 1 if audio_buffer.ndim == 1 else audio_buffer.shape[1]
+        return self.vad.evaluate(pcm_bytes, sample_rate=sample_rate, channels=channels)
 
     def preprocess_audio(
         self, audio_buffer: np.ndarray, sample_rate: int

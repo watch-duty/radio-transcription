@@ -283,6 +283,7 @@ class TranscribeAudioTest(unittest.TestCase):
                                 feed_name="fake-feed",
                                 external_id="fake-external",
                             ),
+                            sample_rate=16000,
                         ),
                     )
                 ]

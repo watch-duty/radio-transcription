@@ -92,3 +92,43 @@ class TestVadPlugins(unittest.TestCase):
 
         # Silence should confidently be rejected.
         self.assertFalse(result)
+
+    @patch("ten_vad.TenVad")
+    def test_ten_vad_plugin_resampling_mocked(
+        self, mock_ten_vad_class: MagicMock
+    ) -> None:
+        """Verifies that non-16kHz audio is internally resampled to 16kHz before being processed by TenVAD."""
+        mock_instance = MagicMock()
+        mock_instance.process.return_value = (0.1, 0)
+        mock_ten_vad_class.return_value = mock_instance
+
+        plugin = TenVadPlugin()
+        plugin.setup('{"min_speech_ms": 250}')
+
+        # 1 second of 8kHz mono audio = 8000 samples. * 2 bytes = 16000 bytes.
+        # The plugin should resample this 8kHz stream to 16kHz mono (16000 samples),
+        # which with hop_size=256 results in 16000 / 256 = 62.5 -> 62 calls to process().
+        dummy_pcm_data = b"\x00" * 16000
+        result = plugin.evaluate(dummy_pcm_data, 8000)
+        self.assertFalse(result)
+        self.assertEqual(mock_instance.process.call_count, 63)
+
+    @patch("ten_vad.TenVad")
+    def test_ten_vad_plugin_stereo_downmixing_mocked(
+        self, mock_ten_vad_class: MagicMock
+    ) -> None:
+        """Verifies that stereo audio is internally downmixed to mono before being processed by TenVAD."""
+        mock_instance = MagicMock()
+        mock_instance.process.return_value = (0.1, 0)
+        mock_ten_vad_class.return_value = mock_instance
+
+        plugin = TenVadPlugin()
+        plugin.setup('{"min_speech_ms": 250}')
+
+        # 1 second of 16kHz stereo audio = 32000 samples. * 2 bytes = 64000 bytes.
+        # The plugin should downmix this to mono (16000 samples) at 16kHz,
+        # resulting in 16000 / 256 = 62.5 -> 62 calls to process().
+        dummy_pcm_data = b"\x00" * 64000
+        result = plugin.evaluate(dummy_pcm_data, 16000, channels=2)
+        self.assertFalse(result)
+        self.assertEqual(mock_instance.process.call_count, 63)

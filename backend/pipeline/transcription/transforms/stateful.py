@@ -854,6 +854,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                                     "FeedMetadata", curr_context.feed_metadata
                                 ),
                                 traceparent=curr_context.traceparent,
+                                sample_rate=curr_context.sample_rate or 16000,
                             ),
                         )
                     )
@@ -1201,7 +1202,7 @@ class TranscribeAudioFn(beam.DoFn):
             return None
 
         self.vad_speech_count.inc()
-        duration_sec = len(processed_audio) / float(SAMPLE_RATE_HZ)
+        duration_sec = len(processed_audio) / float(request.sample_rate)
         self.speech_duration_sec_dist.update(int(duration_sec))
 
         if not self.config.canonical_audio_bucket:
