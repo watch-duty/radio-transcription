@@ -80,11 +80,11 @@ export function TranscriptRow({
       <ListItem
         id={`transcript-${transcript.transmissionId}`}
         divider={index < totalTranscripts - 1}
+        className="compactTable"
         sx={{
           display: 'flex',
           alignItems: 'center',
           gap: 2,
-          py: 0.25,
           bgcolor: isHighlighted ? 'action.selected' : 'inherit',
           scrollMarginTop: theme.spacing(5),
         }}
