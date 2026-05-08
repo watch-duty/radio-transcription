@@ -9,7 +9,6 @@ USER root
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg \
-        libomp5 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy uv from the official image
