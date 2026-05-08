@@ -129,7 +129,7 @@ class AudioProcessorTest(unittest.TestCase):
     def test_preprocess_audio_applies_bandpass(self) -> None:
         """Verifies that the audio preprocessing filters do not corrupt or truncate the np.ndarray structure."""
         audio = np.zeros(16000, dtype=np.int16)
-        processed = self.processor.preprocess_audio(audio)
+        processed = self.processor.preprocess_audio(audio, 16000)
         self.assertIsInstance(processed, np.ndarray)
         self.assertEqual(len(processed), len(audio))
 
@@ -139,7 +139,7 @@ class AudioProcessorTest(unittest.TestCase):
     def test_export_flac(self) -> None:
         """Tests that exporting to FLAC produces a valid byte array containing the expected `fLaC` header signature."""
         audio = np.zeros(8000, dtype=np.int16)
-        flac_bytes = self.processor.export_flac(audio)
+        flac_bytes = self.processor.export_flac(audio, 16000)
         self.assertIsInstance(flac_bytes, bytes)
         self.assertTrue(flac_bytes.startswith(b"fLaC"))
 
@@ -149,7 +149,7 @@ class AudioProcessorTest(unittest.TestCase):
     def test_export_m4a(self) -> None:
         """Tests that exporting to M4A produces a valid byte array with valid ftyp header."""
         audio = np.zeros(8000, dtype=np.int16)
-        m4a_bytes = self.processor.export_m4a(audio)
+        m4a_bytes = self.processor.export_m4a(audio, 16000)
         self.assertIsInstance(m4a_bytes, bytes)
         self.assertTrue(len(m4a_bytes) > 0)
         self.assertIn(b"ftyp", m4a_bytes)

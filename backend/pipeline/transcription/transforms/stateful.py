@@ -1,4 +1,4 @@
-"""Stateless and Stateful Apache Beam transforms for the radio transcription pipeline."""
+"""Stateful Apache Beam transforms for the radio transcription pipeline."""
 
 import json
 import logging as std_logging

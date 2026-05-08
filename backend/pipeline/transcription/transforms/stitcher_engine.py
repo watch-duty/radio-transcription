@@ -8,6 +8,7 @@ from typing import Any, Literal, cast
 import numpy as np
 from google.cloud import storage
 
+from backend.pipeline.common.constants import SAMPLE_RATE_HZ
 from backend.pipeline.transcription.audio import vad
 from backend.pipeline.transcription.audio.audio_processor import AudioProcessor
 from backend.pipeline.transcription.common.constants import (
@@ -201,6 +202,7 @@ class StitcherEngine:
                         feed_metadata=cast(
                             "FeedMetadata", curr_ctx.feed_metadata
                         ),
+                        sample_rate=curr_ctx.sample_rate or SAMPLE_RATE_HZ,
                         traceparent=curr_ctx.traceparent,
                     ),
                 )
@@ -292,6 +294,7 @@ class StitcherEngine:
                     speech_segments=action.speech_segments,
                     transmission_id=transmission_id,
                     feed_metadata=curr_ctx.feed_metadata,
+                    sample_rate=curr_ctx.sample_rate or SAMPLE_RATE_HZ,
                     traceparent=action.traceparent,
                 ),
             )
@@ -390,6 +393,7 @@ class StitcherEngine:
                                 feed_metadata=cast(
                                     "FeedMetadata", curr_context.feed_metadata
                                 ),
+                                sample_rate=chunk_data.sample_rate,
                                 traceparent=chunk.traceparent,
                             ),
                         )

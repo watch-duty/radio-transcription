@@ -210,11 +210,11 @@ class FlushRequest:
     time_range: TimeRange
     transmission_id: str
     feed_metadata: FeedMetadata
+    sample_rate: int
     missing_prior_context: bool
     missing_post_context: bool
     start_audio_offset_ms: int | None
     end_audio_offset_ms: int | None
-    sample_rate: int = 16000
     speech_segments: list[TimeRange] = field(default_factory=list)
     traceparent: str | None = None
 

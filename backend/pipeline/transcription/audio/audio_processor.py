@@ -2,7 +2,6 @@
 
 import io
 import json
-import math
 import subprocess
 import tempfile
 import urllib.parse
@@ -13,14 +12,15 @@ import numpy as np
 import soundfile as sf
 from google.cloud import storage
 from pedalboard import HighpassFilter, LowpassFilter, Pedalboard
-from scipy import signal
 
 from backend.pipeline.common.constants import (
     FLAC_COMPRESSION_LEVEL,
     M4A_BITRATE,
-    SAMPLE_RATE_HZ,
 )
-from backend.pipeline.transcription.audio.dsp import compute_rms_energy
+from backend.pipeline.transcription.audio.dsp import (
+    TorchaudioHannResampler,
+    compute_rms_energy,
+)
 from backend.pipeline.transcription.audio.vad import VoiceActivityDetector
 from backend.pipeline.transcription.common.constants import (
     HIGHPASS_FILTER_FREQ,
@@ -60,12 +60,9 @@ def _resample_to_16k_mono(samples: np.ndarray, sr: int) -> np.ndarray:
     if samples.ndim > 1:
         samples = np.mean(samples, axis=1)
 
-    # 2. Resample if not 16000 Hz
     if sr != 16000:
-        gcd = math.gcd(sr, 16000)
-        up = 16000 // gcd
-        down = sr // gcd
-        samples = signal.resample_poly(samples, up, down)
+        resampler = TorchaudioHannResampler(sr, 16000)
+        samples = resampler.resample(samples)
 
     return samples.astype(np.int16)
 
@@ -203,9 +200,7 @@ class AudioProcessor:
             duration_ms=duration_ms,
         )
 
-    def check_vad(
-        self, audio_buffer: np.ndarray, sample_rate: int = SAMPLE_RATE_HZ
-    ) -> bool:
+    def check_vad(self, audio_buffer: np.ndarray, sample_rate: int) -> bool:
         """Evaluates audio buffer with the configured VAD and returns True if speech is detected."""
         if self.vad is None:
             msg = "VAD engine not initialized. Call setup() first."
@@ -228,7 +223,7 @@ class AudioProcessor:
         return len(segments) > 0
 
     def preprocess_audio(
-        self, audio_buffer: np.ndarray, sample_rate: int = SAMPLE_RATE_HZ
+        self, audio_buffer: np.ndarray, sample_rate: int
     ) -> np.ndarray:
         """Applies native bandpass filtering to remove rumble and static."""
         # Convert to float32 normalized array for Pedalboard processing
@@ -246,9 +241,7 @@ class AudioProcessor:
         # Scale back to 16-bit PCM
         return (filtered_float * INT16_MAX_FLOAT).astype(np.int16)
 
-    def export_flac(
-        self, audio_buffer: np.ndarray, sample_rate: int = SAMPLE_RATE_HZ
-    ) -> bytes:
+    def export_flac(self, audio_buffer: np.ndarray, sample_rate: int) -> bytes:
         """Exports a NumPy array to FLAC bytes using ffmpeg."""
         channels = 1 if audio_buffer.ndim == 1 else audio_buffer.shape[1]
         with tempfile.NamedTemporaryFile(
@@ -294,9 +287,7 @@ class AudioProcessor:
             except OSError:
                 pass
 
-    def export_m4a(
-        self, audio_buffer: np.ndarray, sample_rate: int = SAMPLE_RATE_HZ
-    ) -> bytes:
+    def export_m4a(self, audio_buffer: np.ndarray, sample_rate: int) -> bytes:
         """Exports a NumPy array to M4A (AAC) bytes using ffmpeg via a temporary file."""
         channels = 1 if audio_buffer.ndim == 1 else audio_buffer.shape[1]
         with tempfile.NamedTemporaryFile(
@@ -348,13 +339,14 @@ class AudioProcessor:
     def process_buffer(
         self,
         audio_buffer: np.ndarray,
-        sample_rate: int = SAMPLE_RATE_HZ,
+        sample_rate: int,
         speech_segments: list[TimeRange] | None = None,
     ) -> tuple[bool, bytes | None, np.ndarray | None]:
         """Encapsulates sequence of pre-processing, VAD check, and FLAC export."""
         # Bypass the expensive second VAD evaluation if speech segments are already pre-computed
         if (speech_segments is not None and not speech_segments) or (
-            speech_segments is None and not self.check_vad(audio_buffer)
+            speech_segments is None
+            and not self.check_vad(audio_buffer, sample_rate)
         ):
             return False, None, None
 
