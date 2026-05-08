@@ -37,8 +37,9 @@ packages = []
 target-version = "py313"
 
 [tool.ruff.lint]
-# Enable flake8-tidy-imports rule (TID) to actively enforce imports conventions
-select = ["TID"]
+# Explicitly extend rule selection to guarantee flake8-tidy-imports (TID) runs
+# without overwriting the root pyproject.toml's "ALL" lint rules selection.
+extend-select = ["TID"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "backend.pipeline.transcription.audio.vad.VoiceActivityDetector".msg = "Import the 'vad' module instead ('from backend.pipeline.transcription.audio import vad') and reference 'vad.VoiceActivityDetector' to comply with Google Style Guide."
