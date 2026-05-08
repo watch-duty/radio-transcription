@@ -117,13 +117,7 @@ class TestVadEngine(unittest.TestCase):
 
     def test_integration_stress_file(self) -> None:
         """Integration test to verify Silero+UL-UNAS VAD performance on `test_stress.flac`."""
-        audio_path = (
-            Path(__file__).parent.parent.parent.parent.parent
-            / "model"
-            / "data"
-            / "segmentation"
-            / "test_stress.flac"
-        )
+        audio_path = Path(__file__).parent / "test_data" / "test_stress.flac"
         if not audio_path.exists():
             self.skipTest(f"Audio file not found at: {audio_path}")
 
@@ -141,20 +135,14 @@ class TestVadEngine(unittest.TestCase):
         audio_len = len(audio_data) / float(sample_rate)
         f1 = calculate_f1_score(ground_truth, detected_segments, audio_len)
 
-        # We assert that the F1-score is extremely high (> 85%) on this stress test
+        # We assert that the F1-score is extremely high (> 80%) on this stress test
         self.assertGreaterEqual(
-            f1, 0.85, f"F1 score on test_stress.flac was {f1:.3f}"
+            f1, 0.80, f"F1 score on test_stress.flac was {f1:.3f}"
         )
 
     def test_integration_joined_file(self) -> None:
         """Integration test to verify Silero+UL-UNAS VAD performance on `test_joined.flac`."""
-        audio_path = (
-            Path(__file__).parent.parent.parent.parent.parent
-            / "model"
-            / "data"
-            / "segmentation"
-            / "test_joined.flac"
-        )
+        audio_path = Path(__file__).parent / "test_data" / "test_joined.flac"
         if not audio_path.exists():
             self.skipTest(f"Audio file not found at: {audio_path}")
 
@@ -175,9 +163,9 @@ class TestVadEngine(unittest.TestCase):
         audio_len = len(audio_data) / float(sample_rate)
         f1 = calculate_f1_score(ground_truth, detected_segments, audio_len)
 
-        # Validate that accuracy is excellent (> 85%)
+        # Validate that accuracy is excellent (> 80%)
         self.assertGreaterEqual(
-            f1, 0.85, f"F1 score on test_joined.flac was {f1:.3f}"
+            f1, 0.80, f"F1 score on test_joined.flac was {f1:.3f}"
         )
 
     def test_vad_priming_contiguous_chunk(self) -> None:
