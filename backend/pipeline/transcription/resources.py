@@ -21,9 +21,12 @@ SHARED_RESOURCE_HANDLE = Shared()
 class SharedResources:
     """A strictly singleton dataclass mapping ML and API clients.
 
-    Wrapped uniquely via `apache_beam.utils.shared.Shared`, this container ensures that models are loaded into memory exactly once per worker machine,
-    and HTTP/GRPC API connections (GCS, Google Speech) are persistently pooled and reused. This
-    eliminates the latency and CPU overhead of repeatedly initializing heavy resources across bundles.
+    Wrapped uniquely via `apache_beam.utils.shared.Shared`, this
+    container ensures that models are loaded into memory exactly once
+    per worker machine, and HTTP/GRPC API connections (GCS, Google
+    Speech) are persistently pooled and reused. This eliminates the
+    latency and CPU overhead of repeatedly initializing heavy
+    resources across bundles.
     """
 
     vad_engine: vad.VoiceActivityDetector | None = None
