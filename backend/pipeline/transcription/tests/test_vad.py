@@ -115,57 +115,95 @@ class TestVadEngine(unittest.TestCase):
         segments = self.vad.detect_speech_segments(tone, sample_rate=16000)
         self.assertEqual(segments, [])
 
-    def test_integration_stress_file(self) -> None:
-        """Integration test to verify Silero+UL-UNAS VAD performance on `test_stress.flac`."""
-        audio_path = Path(__file__).parent / "test_data" / "test_stress.flac"
+    def _run_integration_test(
+        self,
+        filename: str,
+        ground_truth: list[tuple[float, float]],
+        min_f1: float = 0.80,
+    ) -> None:
+        """Helper to run VAD segment detection and assert frame-based F1-score accuracy."""
+        audio_path = Path(__file__).parent / "test_data" / filename
         if not audio_path.exists():
             self.skipTest(f"Audio file not found at: {audio_path}")
 
         audio_data, sample_rate = load_audio(audio_path)
-
-        # Ground Truth from Colab
-        ground_truth = [(0.4, 2.85)]
-
-        # Run VAD segment detection
         detected_segments = self.vad.detect_speech_segments(
             audio_data, sample_rate=sample_rate
         )
 
-        # Compute F1-score
         audio_len = len(audio_data) / float(sample_rate)
         f1 = calculate_f1_score(ground_truth, detected_segments, audio_len)
 
-        # We assert that the F1-score is extremely high (> 80%) on this stress test
         self.assertGreaterEqual(
-            f1, 0.80, f"F1 score on test_stress.flac was {f1:.3f}"
+            f1, min_f1, f"F1 score on {filename} was {f1:.3f}"
+        )
+
+    def test_integration_stress_file(self) -> None:
+        """Integration test to verify VAD performance on test_stress.flac."""
+        self._run_integration_test(
+            "test_stress.flac", [(0.4, 2.85)], min_f1=0.85
         )
 
     def test_integration_joined_file(self) -> None:
-        """Integration test to verify Silero+UL-UNAS VAD performance on `test_joined.flac`."""
-        audio_path = Path(__file__).parent / "test_data" / "test_joined.flac"
-        if not audio_path.exists():
-            self.skipTest(f"Audio file not found at: {audio_path}")
-
-        audio_data, sample_rate = load_audio(audio_path)
-
-        # Ground Truth from Colab
-        ground_truth = [
-            (8.3, 10.7),
-            (12.3, 15.6),
-            (20.3, 23.0),
-            (26.2, 27.0),
-        ]
-
-        detected_segments = self.vad.detect_speech_segments(
-            audio_data, sample_rate=sample_rate
+        """Integration test to verify VAD performance on test_joined.flac."""
+        self._run_integration_test(
+            "test_joined.flac",
+            [(8.3, 10.7), (12.3, 15.6), (20.3, 23.0), (26.2, 27.0)],
+            min_f1=0.85,
         )
 
-        audio_len = len(audio_data) / float(sample_rate)
-        f1 = calculate_f1_score(ground_truth, detected_segments, audio_len)
+    def test_integration_bcfy_file(self) -> None:
+        """Integration test to verify VAD performance on test_bcfy.flac (whispers/dropout)."""
+        self._run_integration_test(
+            "test_bcfy.flac",
+            [(0.0, 1.1), (1.95, 5.3), (7.25, 10.9), (11.6, 12.2)],
+            min_f1=0.85,
+        )
 
-        # Validate that accuracy is excellent (> 80%)
-        self.assertGreaterEqual(
-            f1, 0.80, f"F1 score on test_joined.flac was {f1:.3f}"
+    def test_integration_dispatch_amador_file(self) -> None:
+        """Integration test to verify VAD performance on test_dispatch_amador.flac (continuous dispatch)."""
+        self._run_integration_test(
+            "test_dispatch_amador.flac",
+            [
+                (2.7, 12.5),
+                (14.4, 15.8),
+                (17.5, 24.6),
+                (27.3, 29.7),
+                (31.4, 33.7),
+                (38.1, 40.5),
+                (47.2, 49.4),
+                (56.2, 60.6),
+                (62.6, 65.3),
+            ],
+            min_f1=0.85,
+        )
+
+    def test_integration_dispatch_sku_file(self) -> None:
+        """Integration test to verify VAD performance on test_dispatch_sku.flac (heavy static/interference)."""
+        self._run_integration_test(
+            "test_dispatch_sku.flac",
+            [
+                (0.420, 2.593),
+                (3.3, 5.788),
+                (6.242, 8.838),
+                (8.861, 11.044),
+                (11.691, 14.717),
+                (14.811, 17.014),
+                (17.781, 19.707),
+                (20.253, 22.040),
+                (22.843, 24.669),
+                (25.547, 27.728),
+                (28.471, 29.830),
+                (30.845, 32.907),
+                (33.003, 34.615),
+                (35.704, 37.877),
+                (40.570, 41.772),
+                (42.467, 44.470),
+                (45.874, 49.212),
+                (49.373, 51.884),
+                (52.768, 54.178),
+            ],
+            min_f1=0.85,
         )
 
     def test_vad_priming_contiguous_chunk(self) -> None:
