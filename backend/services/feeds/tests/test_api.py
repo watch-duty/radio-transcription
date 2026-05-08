@@ -106,17 +106,17 @@ class TestFeedsAPI(unittest.TestCase):
     def test_delete_feed_success(self) -> None:
         """Test deleting a feed successfully."""
         feed_id = uuid.uuid4()
-        self.mock_service.delete_feed.return_value = True
+        self.mock_service.deactivate_feed.return_value = True
 
         response = self.client.delete(f"/v1/feeds/{feed_id}")
 
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
-        self.mock_service.delete_feed.assert_called_once_with(str(feed_id))
+        self.mock_service.deactivate_feed.assert_called_once_with(str(feed_id))
 
     def test_delete_feed_not_found(self) -> None:
         """Test deleting a non-existent feed returns 404."""
         feed_id = uuid.uuid4()
-        self.mock_service.delete_feed.return_value = False
+        self.mock_service.deactivate_feed.return_value = False
         response = self.client.delete(f"/v1/feeds/{feed_id}")
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 

@@ -965,6 +965,9 @@ paths:
                 required:
                   - message
                 type: object
+      description: |-
+        Deactivate a feed (soft delete).
+        Marks the feed as deactivated to preserve historical transcripts.
       tags:
         - Feeds
       security:
