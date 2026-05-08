@@ -26,3 +26,10 @@ To ensure absolute consistency with Watch Duty's development guidelines, always 
 4. **Git Commits**:
    - Use descriptive semantic commit prefixes (e.g., `feat(transcription):`, `fix(pipeline):`, `style(transcription):`, `docs:`).
    - **Resource Limits & Sandboxes**: If committing inside a resource-restricted sandbox environment where local git hooks fail due to memory or process limits (exit codes `137` / `-9`), stage changes with `git add -u` and commit utilizing the `--no-verify` flag. The remote GitHub Action CI will perform final validation.
+
+5. **Pull Request Title Standards**:
+   - When creating or submitting a Pull Request on GitHub, you MUST prefix the PR title in brackets to satisfy the remote Linear check.
+   - **Supported Prefix Formats**:
+     - If the work corresponds to a tracked Linear ticket, prefix the PR title with the exact issue ID (e.g. `[GOO-123] feat: implementation...`).
+     - For document updates, chores, metadata, or minor changes that do not warrant a ticket, you MUST prefix the PR title with `[ENG-ONLY]` or `[DEV-ONLY]` (e.g., `[ENG-ONLY] docs: update instructions`).
+     - Failure to provide one of these prefixes will cause the remote GitHub Actions title validation check to fail immediately.
