@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="Feeds Management Service",
-    description="API for creating, reading, and deleting feeds.",
+    description="API for creating, reading, and deactivating feeds.",
     version="1.0.0",
     lifespan=lifespan,
     dependencies=[Depends(verify_oidc_token)],
@@ -100,11 +100,11 @@ async def list_feeds(
     status_code=status.HTTP_204_NO_CONTENT,
     tags=["feeds"],
 )
-async def delete_feed(
+async def deactivate_feed(
     request: Request,
     feed_id: str,
 ) -> None:
-    """Delete a feed (soft delete, sets status to deactivated)."""
+    """Deactivate a feed (soft delete)."""
     service: FeedService = request.app.state.feed_service
     success = await service.deactivate_feed(feed_id)
     if not success:
