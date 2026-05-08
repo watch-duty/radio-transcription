@@ -10,7 +10,7 @@ from pathlib import Path
 
 import numpy as np
 from google.cloud import storage
-from scipy import signal
+from pedalboard import HighpassFilter, LowpassFilter, Pedalboard
 
 from backend.pipeline.common import constants as common_constants
 from backend.pipeline.transcription import resources
@@ -188,12 +188,26 @@ class AudioProcessor:
 
     def preprocess_audio(self, audio_buffer: np.ndarray) -> np.ndarray:
         """Applies native bandpass filtering to remove rumble and static."""
-        nyq = 0.5 * common_constants.SAMPLE_RATE_HZ
-        high = constants.HIGHPASS_FILTER_FREQ / nyq
-        low = constants.LOWPASS_FILTER_FREQ / nyq
-        b, a = signal.butter(4, [high, low], btype="band")
-        filtered = signal.lfilter(b, a, audio_buffer)
-        return filtered.astype(np.int16)
+        # Convert to float32 normalized array for Pedalboard processing
+        audio_float = (
+            audio_buffer.astype(np.float32) / constants.INT16_MAX_FLOAT
+        )
+
+        # Use Pedalboard's highly optimized 12dB/octave Highpass + Lowpass filters
+        board = Pedalboard(
+            [
+                HighpassFilter(
+                    cutoff_frequency_hz=constants.HIGHPASS_FILTER_FREQ
+                ),
+                LowpassFilter(
+                    cutoff_frequency_hz=constants.LOWPASS_FILTER_FREQ
+                ),
+            ]
+        )
+        filtered_float = board(audio_float, common_constants.SAMPLE_RATE_HZ)
+
+        # Scale back to 16-bit PCM
+        return (filtered_float * constants.INT16_MAX_FLOAT).astype(np.int16)
 
     def export_flac(self, audio_buffer: np.ndarray) -> bytes:
         """Exports a NumPy array to FLAC bytes using ffmpeg."""

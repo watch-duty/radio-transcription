@@ -19,7 +19,6 @@ dependencies = [
     "pedalboard>=0.9.18",
     "numba>=0.61.0",
     "numpy>=2.2.6",
-    "scipy>=1.17.1",
     "pydantic>=2.12.5",
     "google-cloud-storage>=2.18.2",
     "tenacity>=9.1.4",

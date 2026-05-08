@@ -9,8 +9,6 @@ import math
 
 import numpy as np
 from numba import njit
-from scipy.signal import stft
-from scipy.stats import gmean
 
 from backend.pipeline.transcription.common.constants import (
     DEFAULT_SED_FFT_SIZE,
@@ -56,67 +54,6 @@ def compute_rms_energy(
     # Compute RMS natively
     mean_sq = np.mean(frames**2, axis=-1)
     return np.sqrt(mean_sq)
-
-
-def compute_spectral_flatness(
-    samples: np.ndarray,
-    sample_rate: int,
-    n_fft: int = DEFAULT_SED_FFT_SIZE,
-    hop_length: int = DEFAULT_SED_HOP_SIZE,
-    power: float = 2.0,
-    amin: float = 1e-10,
-    freq_mask: np.ndarray | None = None,
-) -> np.ndarray:
-    """Computes spectral flatness (Wiener entropy) for each frame.
-
-    Standard natively optimized sliding-window flatness algorithm.
-
-    Args:
-        samples: A 1D float32 numpy array.
-        sample_rate: Audio sampling rate.
-        n_fft: Length of the FFT window.
-        hop_length: Number of samples between frames.
-        power: Exponent for the magnitude spectrogram (1=magnitude, 2=power). Default is 2.
-        amin: Minimum value floor to prevent math domain error (log(0)).
-        freq_mask: Optional boolean array to isolate specific FFT bins (e.g., 300Hz-3400Hz).
-
-    Returns:
-        1D numpy array of spectral flatness values per frame in range [0.0, 1.0].
-    """
-    if len(samples) == 0:
-        return np.array([], dtype=np.float32)
-
-    # STFT parameterization roughly aligns with standard hanning reflection boundaries
-    _, _, zxx = stft(
-        samples,
-        fs=sample_rate,
-        window="hann",
-        nperseg=n_fft,
-        noverlap=n_fft - hop_length,
-        boundary="zeros",
-        padded=True,
-    )
-
-    spec = np.abs(zxx)
-    if power != 1.0:
-        spec = spec**power
-
-    if freq_mask is not None:
-        spec = spec[freq_mask, :]
-
-    n_time = spec.shape[1]
-    if n_time == 0:
-        return np.array([], dtype=np.float32)
-
-    # Floor tiny values
-    spec = np.maximum(spec, amin)
-
-    # Flatness is Geometric mean / Arithmetic mean
-    geo = gmean(spec, axis=0)
-    arith = np.mean(spec, axis=0)
-
-    # Return pure 1.0 for entirely silent (arith==0) frames
-    return np.where(arith > 0, geo / arith, 1.0)
 
 
 def get_periodic_hann(window_length: int) -> np.ndarray:
