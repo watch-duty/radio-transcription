@@ -810,7 +810,8 @@ class NormalizerRuntime:
                     # (network, gax, paused-key, our-code-bug) propagates to the
                     # outer except Exception arm, which records the reason and
                     # quarantines after threshold strikes. The worker is dumb;
-                    # the operator triages from `quarantine_reason`.
+                    # the operator triages from the `feed_quarantined` log entry
+                    # (or `quarantine_reason` in AlloyDB for forensics).
                     gcs_uri = await retry_with_lease_check(
                         gcp_helper.upload_staged_audio,
                         self._gcs_client,
@@ -947,9 +948,10 @@ class NormalizerRuntime:
             # Single catch-all: every failure (source-side, pipeline-side, code
             # bug) goes through report_feed_failure with a reason string. The
             # worker doesn't try to attribute fault; the operator reads the
-            # reason from `quarantine_reason` after threshold strikes and
-            # decides what to investigate. Transient failures auto-recover
-            # because failure_count resets to 0 on the next successful publish.
+            # reason from the structured `feed_quarantined` log entry (and/or
+            # `feeds.quarantine_reason` for AlloyDB-side forensics) and decides
+            # what to investigate. Transient failures auto-recover because
+            # failure_count resets to 0 on the next successful publish.
             reason = str(e)[:200] if str(e) else type(e).__name__
             logger.exception(
                 "Feed processing error: feed=%s reason=%s",
@@ -972,6 +974,7 @@ class NormalizerRuntime:
                         feed_id=str(feed["id"]),
                         feed_name=feed["name"],
                         source_type=str(feed["source_type"]),
+                        reason=reason,
                     )
             except Exception:
                 # 60s abandonment window is the safety net if this fails.
