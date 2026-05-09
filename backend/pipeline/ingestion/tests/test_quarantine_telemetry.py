@@ -135,9 +135,13 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
                 reason="r",
             )
 
-        # The ERROR log was emitted before the metric call failed.
+        # The ERROR log was emitted before the metric call failed, and it
+        # carries the reason so on-callers reading the log entry know the
+        # structured payload is intact even when metric emission breaks.
         error_records = [r for r in cm.records if r.levelno == logging.ERROR]
         self.assertEqual(len(error_records), 1)
+        record = cast("Any", error_records[0])
+        self.assertEqual(record.json_fields["reason"], "r")
 
 
 class TestConfigure(unittest.TestCase):
