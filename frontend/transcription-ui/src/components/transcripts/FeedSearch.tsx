@@ -61,7 +61,7 @@ export function FeedSearch({
               width: '100%',
             }}
           >
-            <Typography>{option.name}</Typography>
+            <Typography noWrap>{option.name}</Typography>
             <Chip label={option.sourceType} size="small" sx={{ ml: 1 }} />
           </Box>
         );
