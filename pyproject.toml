@@ -72,7 +72,6 @@ dev = [
 [tool.ruff]
 target-version = "py313"
 extend-exclude = [
-  "model/colabs",
   "backend/pipeline/schema_types",
   "**/*_pb2.py",
   "**/*_pb2.pyi",
@@ -176,6 +175,13 @@ max-complexity = 10
 known-first-party = ["backend", "local_dev"]
 
 [tool.ruff.lint.per-file-ignores]
+"model/colabs/**/*.ipynb" = [
+  "ANN",   # Missing type annotations
+  "D",     # Missing docstrings
+  "FBT",   # Boolean positional values in function calls
+  "S101",  # Use of assert detected
+  "T201",  # `print` found
+]
 "**/**/test*.py" = [
   "ANN001", # Missing type annotation for function argument
   "ANN002", # Missing type annotation for *args

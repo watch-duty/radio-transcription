@@ -17,7 +17,7 @@ frontend_dir = "frontend"
 # ---------------------------------------------------------------------------- #
 
 [tasks.lint]
-depends = ["lint:ruff", "lint:ty", "lint:terraform", "lint:frontend"]
+depends = ["lint:ruff", "lint:ty", "lint:terraform", "lint:frontend", "lint:notebooks"]
 
 [tasks."lint:ruff"]
 description = "Run ruff Python linter with auto-fix"
@@ -50,12 +50,33 @@ run = "yarn --cwd frontend/api run typecheck && yarn --cwd frontend/transcriptio
 description = "Run all frontend lint checks"
 depends = ["lint:frontend:eslint", "lint:frontend:prettier", "lint:frontend:tsc"]
 
+[tasks."lint:notebooks"]
+description = "Lint notebooks for schema issues in model/colabs"
+run = """
+for f in $(find model/colabs -name "*.ipynb"); do
+  if ! jq -e '[.cells[] | select((.cell_type == "markdown" and has("execution_count")) or (.cell_type == "code" and (has("outputs") | not)))] | length == 0' "$f" > /dev/null; then
+    echo "Invalid notebook schema detected in: $f"
+    exit 1
+  fi
+done
+echo "All notebooks have valid schemas."
+"""
+
 [tasks.format]
 depends = ["format:ruff", "format:terraform", "format:frontend"]
 
 [tasks."format:ruff"]
 description = "Format Python code with ruff"
 run = "uv run ruff format"
+
+[tasks."format:notebooks"]
+description = "Fix schema issues and format notebooks in model/colabs"
+run = """
+for f in $(find model/colabs -name "*.ipynb"); do
+  jq '.cells[] |= (if .cell_type == "markdown" then del(.execution_count) else . end | if .cell_type == "code" and (has("outputs") | not) then .outputs = [] else . end)' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+done
+uv run ruff format model/colabs
+"""
 
 [tasks."format:terraform"]
 description = "Format Terraform code"
