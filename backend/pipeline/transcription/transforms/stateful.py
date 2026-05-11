@@ -19,6 +19,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any, Literal, cast, override
 
+from google.cloud import storage
 import apache_beam as beam
 from apache_beam.metrics import Metrics
 from apache_beam.transforms.userstate import (
@@ -30,13 +31,15 @@ from apache_beam.transforms.userstate import (
     TimerSpec,
     on_timer,
 )
+from apache_beam.utils.shared import Shared
 from apache_beam.utils.timestamp import Timestamp
+
+SHARED_RESOURCE_HANDLE = Shared()
 
 from backend.pipeline.common import constants as common_constants
 from backend.pipeline.common import tracing_utils
 from backend.pipeline.common.storage import gcs_uploader
-from backend.pipeline.transcription import resources
-from backend.pipeline.transcription.audio import audio_processor
+from backend.pipeline.transcription.audio import audio_processor, vad
 from backend.pipeline.transcription.common import constants as trans_constants
 from backend.pipeline.transcription.common import datatypes
 from backend.pipeline.transcription.common import logging as trans_logging
@@ -344,10 +347,17 @@ class OrderedStitchAudioFn(beam.DoFn):
     @override
     def setup(self) -> None:
         tracing_utils.setup_tracing()
-        # Dynamic resource acquisition bound directly to engine
-        self.engine.processor.shared_resources = (
-            resources.SHARED_RESOURCE_HANDLE.acquire(resources.SharedResources)
+        # Acquire process-level singletons natively via Beam's Shared handle
+        shared_vad = SHARED_RESOURCE_HANDLE.acquire(
+            lambda: vad.VoiceActivityDetector(models_dir=vad.MODELS_DIR),
+            tag="vad",
         )
+        shared_gcs = SHARED_RESOURCE_HANDLE.acquire(
+            lambda: storage.Client(project=self.stitch_config.project_id),
+            tag="gcs",
+        )
+        self.engine.processor.vad = shared_vad
+        self.engine.processor.gcs_client = shared_gcs
         self.engine.setup()
 
     @override
@@ -660,10 +670,17 @@ class OrderedBypassFn(beam.DoFn):
     @override
     def setup(self) -> None:
         tracing_utils.setup_tracing()
-        # Share the StitcherEngine to reuse its setup & AudioProcessor routines cleanly!
-        self.engine.processor.shared_resources = (
-            resources.SHARED_RESOURCE_HANDLE.acquire(resources.SharedResources)
+        # Acquire process-level singletons natively via Beam's Shared handle
+        shared_vad = SHARED_RESOURCE_HANDLE.acquire(
+            lambda: vad.VoiceActivityDetector(models_dir=vad.MODELS_DIR),
+            tag="vad",
         )
+        shared_gcs = SHARED_RESOURCE_HANDLE.acquire(
+            lambda: storage.Client(project=self.stitch_config.project_id),
+            tag="gcs",
+        )
+        self.engine.processor.vad = shared_vad
+        self.engine.processor.gcs_client = shared_gcs
         self.engine.setup()
 
     @override
@@ -911,22 +928,31 @@ class TranscribeAudioFn(beam.DoFn):
     @override
     def setup(self) -> None:
         tracing_utils.setup_tracing()
-        self.shared_resources = resources.SHARED_RESOURCE_HANDLE.acquire(
-            resources.SharedResources
+        shared_vad = SHARED_RESOURCE_HANDLE.acquire(
+            lambda: vad.VoiceActivityDetector(models_dir=vad.MODELS_DIR),
+            tag="vad",
+        )
+        shared_gcs = SHARED_RESOURCE_HANDLE.acquire(
+            lambda: storage.Client(project=self.config.project_id),
+            tag="gcs",
+        )
+        shared_transcriber = SHARED_RESOURCE_HANDLE.acquire(
+            lambda: self.transcriber_factory(
+                self.config.transcriber_type,
+                self.config.project_id,
+                self.config.transcriber_config,
+            ),
+            tag="transcriber",
         )
 
         self.audio_processor = audio_processor.AudioProcessor(
-            self.config.vad_config,
-            shared_resources=self.shared_resources,
+            vad_config=self.config.vad_config,
+            vad_instance=shared_vad,
+            gcs_client_instance=shared_gcs,
         )
         self.audio_processor.setup()
 
-        self.transcriber = self.shared_resources.get_transcriber(
-            factory=self.transcriber_factory,
-            transcriber_type=self.config.transcriber_type,
-            project_id=self.config.project_id,
-            config_json=self.config.transcriber_config,
-        )
+        self.transcriber = shared_transcriber
 
         if self.audio_processor.gcs_client is None:
             msg = "GCS client not found in AudioProcessor. must call setup() first."

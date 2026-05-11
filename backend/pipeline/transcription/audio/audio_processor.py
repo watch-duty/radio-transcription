@@ -33,7 +33,6 @@ from backend.pipeline.transcription.common.datatypes import (
     TimeRange,
 )
 from backend.pipeline.transcription.common.logging import get_logger
-from backend.pipeline.transcription.resources import SharedResources
 
 logger = get_logger(
     __name__, {"system": "transcription", "component": "audio-processor"}
@@ -77,30 +76,26 @@ class AudioProcessor:
     def __init__(
         self,
         vad_config: str = "{}",
-        shared_resources: SharedResources | None = None,
+        vad_instance: VoiceActivityDetector | None = None,
+        gcs_client_instance: storage.Client | None = None,
         vad_factory: Callable[[str], VoiceActivityDetector] | None = None,
         gcs_factory: Callable[[], storage.Client] | None = None,
     ) -> None:
         self.vad_config = vad_config
-        self.shared_resources = shared_resources
         self.vad_factory = vad_factory
         self.gcs_factory = gcs_factory
 
-        self.vad: VoiceActivityDetector | None = None
-        self.gcs_client: storage.Client | None = None
+        self.vad = vad_instance
+        self.gcs_client = gcs_client_instance
 
     def setup(self) -> None:
         """Initializes the VAD plugin and GCS client once per worker."""
         active_vad_factory = self.vad_factory or get_vad_engine
         active_gcs_factory = self.gcs_factory or get_gcs_client
 
-        if self.shared_resources is not None:
-            self.vad = self.shared_resources.get_vad(
-                active_vad_factory, self.vad_config
-            )
-            self.gcs_client = self.shared_resources.get_gcs(active_gcs_factory)
-        else:
+        if self.vad is None:
             self.vad = active_vad_factory(self.vad_config)
+        if self.gcs_client is None:
             self.gcs_client = active_gcs_factory()
         self.vad.setup()
 

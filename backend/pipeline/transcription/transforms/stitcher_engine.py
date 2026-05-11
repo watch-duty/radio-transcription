@@ -21,7 +21,6 @@ import numpy as np
 from google.cloud import storage
 
 from backend.pipeline.common import constants as common_constants
-from backend.pipeline.transcription import resources
 from backend.pipeline.transcription.audio import audio_processor, vad
 from backend.pipeline.transcription.common import constants as trans_constants
 from backend.pipeline.transcription.common import datatypes
@@ -63,7 +62,8 @@ class StitcherEngine:
         stitch_config: datatypes.StitchAudioConfig,
         order_config: datatypes.OrderRestorerConfig,
         vad_config: str = "{}",
-        shared_resources: resources.SharedResources | None = None,
+        vad_instance: vad.VoiceActivityDetector | None = None,
+        gcs_client_instance: storage.Client | None = None,
         vad_factory: Callable[[str], vad.VoiceActivityDetector] | None = None,
         gcs_factory: Callable[[], storage.Client] | None = None,
     ) -> None:
@@ -74,7 +74,8 @@ class StitcherEngine:
         # Instantiate the stateless AudioProcessor
         self.processor = audio_processor.AudioProcessor(
             vad_config=vad_config,
-            shared_resources=shared_resources,
+            vad_instance=vad_instance,
+            gcs_client_instance=gcs_client_instance,
             vad_factory=vad_factory,
             gcs_factory=gcs_factory,
         )
