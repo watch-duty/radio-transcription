@@ -18,6 +18,7 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
     async def test_emits_structured_log(self) -> None:
         """ERROR log is emitted with the correct extra fields."""
         quarantine_telemetry.configure(None)
+        reason = "ConnectionError: Cannot connect to host openmhz.com:443"
 
         with self.assertLogs(
             "backend.pipeline.ingestion.quarantine_telemetry",
@@ -27,6 +28,7 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
                 feed_id="abc-123",
                 feed_name="Test Feed",
                 source_type="bcfy_feeds",
+                reason=reason,
             )
 
         self.assertEqual(len(cm.records), 1)
@@ -38,7 +40,11 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record.json_fields["event_type"], "feed_quarantined")
         self.assertEqual(record.json_fields["feed_id"], "abc-123")
         self.assertEqual(record.json_fields["feed_name"], "Test Feed")
+        self.assertEqual(record.json_fields["reason"], reason)
         self.assertEqual(record.json_fields["source_type"], "bcfy_feeds")
+        # Reason is also interpolated into the message so the Logs Explorer
+        # summary row shows it without expanding the structured payload.
+        self.assertEqual(record.getMessage(), f"Feed quarantined: {reason}")
 
     async def test_calls_write_time_series_when_configured(self) -> None:
         """Metric is written when a project ID is configured."""
@@ -51,6 +57,7 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
             feed_id="abc-123",
             feed_name="Test Feed",
             source_type="bcfy_feeds",
+            reason="r",
         )
 
         mock_client.write_time_series.assert_awaited_once_with(
@@ -73,6 +80,7 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
             feed_id="abc",
             feed_name="F",
             source_type="s",
+            reason="r",
         )
 
         self.assertIsNone(quarantine_telemetry._client)
@@ -89,6 +97,7 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
             feed_id="abc",
             feed_name="F",
             source_type="s",
+            reason="r",
         )
 
     async def test_never_raises_even_if_logging_fails(self) -> None:
@@ -105,6 +114,7 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
                 feed_id="abc",
                 feed_name="F",
                 source_type="s",
+                reason="r",
             )
 
     async def test_log_emitted_even_when_metric_fails(self) -> None:
@@ -122,11 +132,16 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
                 feed_id="abc",
                 feed_name="F",
                 source_type="s",
+                reason="r",
             )
 
-        # The ERROR log was emitted before the metric call failed.
+        # The ERROR log was emitted before the metric call failed, and it
+        # carries the reason so on-callers reading the log entry know the
+        # structured payload is intact even when metric emission breaks.
         error_records = [r for r in cm.records if r.levelno == logging.ERROR]
         self.assertEqual(len(error_records), 1)
+        record = cast("Any", error_records[0])
+        self.assertEqual(record.json_fields["reason"], "r")
 
 
 class TestConfigure(unittest.TestCase):
@@ -185,6 +200,7 @@ class TestFeedQuarantinedGoldenFile(unittest.IsolatedAsyncioTestCase):
                 feed_id="abc-123",
                 feed_name="Test Feed",
                 source_type="bcfy_feeds",
+                reason="r",
             )
 
         self.assertEqual(len(cm.records), 1)
