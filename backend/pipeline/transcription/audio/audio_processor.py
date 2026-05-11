@@ -1,6 +1,7 @@
 """Stateless acoustic manipulation and Voice Activity Detection (VAD) utilities."""
 
 import io
+import os
 import subprocess
 import tempfile
 import urllib.parse
@@ -8,6 +9,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
+from google.auth.credentials import AnonymousCredentials
 from google.cloud import storage
 from scipy import signal
 
@@ -16,6 +18,7 @@ from backend.pipeline.common.constants import (
     M4A_BITRATE,
     SAMPLE_RATE_HZ,
 )
+from backend.pipeline.common.env import is_gcp_env
 from backend.pipeline.transcription.audio.detectors import AcousticGateDetector
 from backend.pipeline.transcription.audio.dsp import (
     compute_rms_energy,
@@ -46,6 +49,12 @@ logger = get_logger(
 
 def get_gcs_client() -> storage.Client:
     """Initialize and return a GCS Client. Used natively by the audio processor for isolation."""
+    # Point to the GCS emulator when running locally.
+    if not is_gcp_env():
+        return storage.Client(
+            credentials=AnonymousCredentials(),
+            project=os.environ.get("GOOGLE_CLOUD_PROJECT", "local-project"),
+        )
     return storage.Client()
 
 

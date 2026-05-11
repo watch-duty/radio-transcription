@@ -1,13 +1,13 @@
+import asyncio
 import logging
-import time
+import os
 
+import asyncpg
 import pytest
 from google.cloud import pubsub_v1
 
-from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
-    EvaluatedTranscribedAudio,
-)
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
+from integration_tests.utils import assert_eventually
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -28,84 +28,78 @@ def subscriber() -> pubsub_v1.SubscriberClient:
     return pubsub_v1.SubscriberClient()
 
 
+def _verify_transcript_in_db(feed_id: str) -> bool:
+    """Polls the database until a transcript for the given feed_id appears."""
+    _conn_kwargs = {
+        "host": os.environ.get("ALLOYDB_HOST", "postgres"),
+        "port": int(os.environ.get("ALLOYDB_PORT", "5432")),
+        "user": os.environ.get("ALLOYDB_USER", "postgres"),
+        "password": os.environ.get("ALLOYDB_PASSWORD", "postgres"),
+        "database": os.environ.get("ALLOYDB_DB", "postgres"),
+    }
+
+    async def _check_db():
+        conn = await asyncpg.connect(**_conn_kwargs)
+        row = await conn.fetchrow(
+            "SELECT * FROM transcripts WHERE feed_id = $1::uuid", feed_id
+        )
+        await conn.close()
+        return row is not None
+
+    def condition():
+        return asyncio.run(_check_db())
+
+    logger.info(f"Waiting for transcript in DB for feed {feed_id}...")
+
+    assert_eventually(
+        condition, timeout_sec=60, error_msg="Transcript not found in DB"
+    )
+    return True
+
+
 def _publish_and_verify(
     publisher: pubsub_v1.PublisherClient,
     subscriber: pubsub_v1.SubscriberClient,
     topic: str,
     feed_id: str,
+    feed_name: str,
 ) -> bool:
-    # Create a temporary subscription to the results topic to verify output
-    sub_id = f"test-sub-{feed_id}-{int(time.time())}"
-    sub_path = f"projects/{PROJECT_ID}/subscriptions/{sub_id}"
-
-    subscriber.create_subscription(
-        request={"name": sub_path, "topic": RESULTS_TOPIC}
+    # Construct AudioChunk message
+    staging_bucket = os.environ.get("AUDIO_STAGING_BUCKET", "test-bucket")
+    chunk = AudioChunk(
+        feed_id=feed_id,
+        session_id="session-123",
+        gcs_uri=f"gs://{staging_bucket}/test_fire_audio.flac",
+        feed_name=feed_name,
+        duration_ms=1000,
     )
 
-    try:
-        # Construct AudioChunk message
-        chunk = AudioChunk(
-            feed_id=feed_id,
-            session_id="session-123",
-            gcs_uri="gs://test-bucket/test-audio.flac",  # Note: Beam will try to download this
-            feed_name="Test Feed",
-            duration_ms=1000,
-            trace_id="test-trace-id",
-        )
+    logger.info(f"Publishing to {topic}...")
+    logger.info(f"Publishing chunk with URI: {chunk.gcs_uri}")
+    publisher.publish(topic, chunk.SerializeToString(), gcs_uri=chunk.gcs_uri)
 
-        logger.info(f"Publishing to {topic}...")
-        publisher.publish(topic, chunk.SerializeToString())
-
-        # Pull from results subscription
-        logger.info(f"Waiting for message on {sub_path}...")
-        # Wait up to 30 seconds for Beam to process and Evaluation to run
-        for _ in range(30):
-            response = subscriber.pull(
-                request={"subscription": sub_path, "max_messages": 1},
-                timeout=1,
-            )
-            if response.received_messages:
-                msg = response.received_messages[0]
-                logger.info(f"Received message: {msg.message.data}")
-
-                # Verify it's the expected message type
-                evaluated_audio = EvaluatedTranscribedAudio()
-                evaluated_audio.ParseFromString(msg.message.data)
-
-                assert evaluated_audio.feed_id == feed_id
-
-                # Acknowledge message
-                subscriber.acknowledge(
-                    request={"subscription": sub_path, "ack_ids": [msg.ack_id]}
-                )
-                return True
-            time.sleep(1)
-
-        pytest.fail("Timed out waiting for message on results topic")
-
-    finally:
-        # Clean up subscription
-        try:
-            subscriber.delete_subscription(request={"subscription": sub_path})
-        except Exception as e:
-            logger.warning(f"Failed to delete subscription {sub_path}: {e}")
+    return _verify_transcript_in_db(feed_id)
 
 
 def test_continuous_pipeline_flow(
     publisher: pubsub_v1.PublisherClient,
     subscriber: pubsub_v1.SubscriberClient,
+    test_feed: tuple[str, str],
 ) -> None:
     """Tests that a message published to continuous topic reaches evaluation."""
+    feed_id, feed_name = test_feed
     _publish_and_verify(
-        publisher, subscriber, CONTINUOUS_TOPIC, "test-continuous-feed"
+        publisher, subscriber, CONTINUOUS_TOPIC, feed_id, feed_name
     )
 
 
 def test_segmented_pipeline_flow(
     publisher: pubsub_v1.PublisherClient,
     subscriber: pubsub_v1.SubscriberClient,
+    test_feed: tuple[str, str],
 ) -> None:
     """Tests that a message published to segmented topic reaches evaluation."""
+    feed_id, feed_name = test_feed
     _publish_and_verify(
-        publisher, subscriber, SEGMENTED_TOPIC, "test-segmented-feed"
+        publisher, subscriber, SEGMENTED_TOPIC, feed_id, feed_name
     )

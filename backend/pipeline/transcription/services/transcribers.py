@@ -14,6 +14,7 @@ from google.cloud import speech_v2 as cloud_speech
 from google.cloud.speech_v2 import SpeechClient
 
 from backend.pipeline.common.constants import BYTES_PER_SECOND_16KHZ_MONO
+from backend.pipeline.common.env import is_gcp_env
 from backend.pipeline.transcription.common.constants import (
     CHIRP_UNINTELLIGIBLE_MARKER,
     DEFAULT_CHIRP_LANGUAGE_CODES,
@@ -28,6 +29,9 @@ from backend.pipeline.transcription.common.constants import (
 from backend.pipeline.transcription.common.enums import TranscriberType
 from backend.pipeline.transcription.common.logging import get_logger
 from backend.pipeline.transcription.common.utils import ConfigBase
+from backend.pipeline.transcription.services.mock_speech import (
+    get_mock_speech_client,
+)
 
 logger = get_logger(
     __name__, {"system": "transcription", "component": "transcribers"}
@@ -97,6 +101,10 @@ class GoogleChirpV3Transcriber(Transcriber):
         self.custom_prompt: str | None = None
 
     def _init_client(self) -> SpeechClient:
+        # TODO(https://linear.app/watchduty/issue/GOO-409/): Remove this when we swap this implementation out for a local model.
+        if not is_gcp_env():
+            return get_mock_speech_client()
+
         opts = client_options.ClientOptions(
             api_endpoint=f"{self.config.location}-speech.googleapis.com"
         )

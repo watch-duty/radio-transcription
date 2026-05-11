@@ -114,12 +114,16 @@ if __name__ == "__main__":
     # Pub/Sub for Continuous Audio
     CONTINUOUS_TOPIC = os.environ["CONTINUOUS_TOPIC"]
     create_topic(CONTINUOUS_TOPIC)
-    create_pull_subscription("continuous-audio-sub", CONTINUOUS_TOPIC)
+    create_pull_subscription(
+        os.environ["CONTINUOUS_AUDIO_SUBSCRIPTION"], CONTINUOUS_TOPIC
+    )
 
     # Pub/Sub for Segmented Audio
     SEGMENTED_TOPIC = os.environ["SEGMENTED_TOPIC"]
     create_topic(SEGMENTED_TOPIC)
-    create_pull_subscription("segmented-audio-sub", SEGMENTED_TOPIC)
+    create_pull_subscription(
+        os.environ["SEGMENTED_AUDIO_SUBSCRIPTION"], SEGMENTED_TOPIC
+    )
 
     # Pub/Sub between Transcription and Rules Evaluation Services
     TRANSCRIPTION_TOPIC = os.environ["TRANSCRIPTION_TOPIC"]
@@ -129,6 +133,9 @@ if __name__ == "__main__":
         TRANSCRIPTION_TOPIC,
         f"http://{os.environ['RULES_EVALUATION_SERVICE_HOST']}/",
     )
+
+    # DLQ for Transcription Pipeline failures
+    create_topic(os.environ["TRANSCRIPTION_DLQ_TOPIC"])
 
     # Pub/Sub between Rules Evaluation and Notification Services
     RULES_EVALUATION_RESULTS_TOPIC = os.environ[

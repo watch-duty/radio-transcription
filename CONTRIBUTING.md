@@ -40,7 +40,9 @@ docker-compose logs -f \
   rules-management\
   notification\
   mock-server\
-  frontend-api
+  frontend-api\
+  transcription-continuous\
+  transcription-segmented
 ```
 
 Send a test payload to the Transcription PubSub (ingested by the Rules Evaluation service) to test the path from the Rules Evaluation service to the Notification service.
