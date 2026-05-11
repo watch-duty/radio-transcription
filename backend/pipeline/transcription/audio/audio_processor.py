@@ -17,6 +17,7 @@ from pedalboard import HighpassFilter, LowpassFilter, Pedalboard
 from backend.pipeline.common.constants import (
     FLAC_COMPRESSION_LEVEL,
     M4A_BITRATE,
+    SAMPLE_RATE_HZ,
 )
 from backend.pipeline.transcription.audio.dsp import (
     TorchaudioHannResampler,
@@ -58,8 +59,8 @@ def _resample_to_16k_mono(samples: np.ndarray, sr: int) -> np.ndarray:
     if samples.ndim > 1:
         samples = np.mean(samples, axis=1)
 
-    if sr != 16000:
-        resampler = TorchaudioHannResampler(sr, 16000)
+    if sr != SAMPLE_RATE_HZ:
+        resampler = TorchaudioHannResampler(sr, SAMPLE_RATE_HZ)
         samples = resampler.resample(samples)
 
     return samples.astype(np.int16)
