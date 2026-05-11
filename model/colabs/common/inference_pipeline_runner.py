@@ -142,6 +142,7 @@ def run_huggingface_inference_pipeline(
     preprocess_fn: Optional[Callable[[str, str], bool]] = None,
     max_new_tokens: int = 256,
     text_prompt: str = "transcribe",
+    processor_kwargs: Optional[dict] = None,
 ) -> list[dict[str, Any]]:
     """
     Runs a highly-optimized parallel GPU batch inference specifically for Hugging Face Speech models.
@@ -219,6 +220,7 @@ def run_huggingface_inference_pipeline(
                 text=[text_prompt] * len(audios),
                 padding=True,
                 return_tensors="pt",
+                **(processor_kwargs or {})
             )
             inputs.to(model.device, dtype=model.dtype)
 
@@ -261,6 +263,7 @@ def run_huggingface_inference_pipeline(
                         sampling_rate=16000,
                         text=text_prompt,
                         return_tensors="pt",
+                        **(processor_kwargs or {})
                     )
                     inputs.to(model.device, dtype=model.dtype)
                     with torch.no_grad():
