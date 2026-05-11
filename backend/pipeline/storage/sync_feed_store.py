@@ -107,7 +107,8 @@ class SyncFeedStore:
     def record_heartbeat(self, feed_id: uuid.UUID) -> None:
         """Record a successful processing heartbeat.
 
-        Resets ``failure_count`` and marks the feed ``active``.
+        Marks status as ``active``, and resets ``failure_count`` if the
+        feed was previously in a failing state.
         """
         with self._connect_db() as conn:
             conn.execute(_HEARTBEAT_SQL, (feed_id,))
