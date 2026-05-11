@@ -7,9 +7,11 @@ from being sent to the expensive transcription APIs.
 """
 
 import abc
+import math
 
 import numpy as np
 import ten_vad
+from scipy import signal
 
 from backend.pipeline.common.constants import MS_PER_SECOND
 from backend.pipeline.transcription.common.constants import (
@@ -39,7 +41,9 @@ class VoiceActivityDetector(abc.ABC):
         """
 
     @abc.abstractmethod
-    def evaluate(self, audio_data: bytes, sample_rate: int) -> bool:
+    def evaluate(
+        self, audio_data: bytes, sample_rate: int, channels: int = 1
+    ) -> bool:
         """Evaluates raw PCM audio data and returns True if speech is detected."""
 
 
@@ -70,9 +74,29 @@ class TenVadPlugin(VoiceActivityDetector):
             self.config.hop_size,
         )
 
-    def evaluate(self, audio_data: bytes, sample_rate: int) -> bool:
+    def evaluate(
+        self, audio_data: bytes, sample_rate: int, channels: int = 1
+    ) -> bool:
         """Converts PCM audio into numpy chunks to quantify total speech duration against configured thresholds."""
         audio_array = np.frombuffer(audio_data, dtype=np.int16)
+        if channels > 1:
+            audio_array = audio_array.reshape(-1, channels)
+
+        # Localized 16 kHz mono resampling/downmixing
+        if sample_rate != 16000 or channels > 1:
+            # 1. Downmix to mono if multi-channel
+            if audio_array.ndim > 1:
+                audio_array = np.mean(audio_array, axis=1)
+
+            # 2. Polyphase resample to 16 kHz
+            if sample_rate != 16000:
+                gcd = math.gcd(sample_rate, 16000)
+                up = 16000 // gcd
+                down = sample_rate // gcd
+                audio_array = signal.resample_poly(audio_array, up, down)
+
+            audio_array = audio_array.astype(np.int16)
+            sample_rate = 16000
 
         speech_frames = 0
         hop_size = self.config.hop_size

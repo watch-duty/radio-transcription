@@ -171,16 +171,16 @@ describe('FeedsController', () => {
     });
   });
 
-  describe('deleteFeed', () => {
+  describe('deactivateFeed', () => {
     it('should return 204 on success', async () => {
       mockRequest.mockResolvedValueOnce({ status: 204 });
 
       const controller = new FeedsController();
-      await controller.deleteFeed('feed_123');
+      await controller.deactivateFeed('feed_123');
 
       expect(mockRequest).toHaveBeenCalledWith({
-        url: 'http://feeds-api.example.com/feed_123',
-        method: 'DELETE',
+        url: 'http://feeds-api.example.com/feed_123/deactivate',
+        method: 'POST',
       });
     });
 
@@ -192,7 +192,7 @@ describe('FeedsController', () => {
       mockRequest.mockRejectedValueOnce(error);
 
       const controller = new FeedsController();
-      await expect(controller.deleteFeed('feed_123')).rejects.toThrow(
+      await expect(controller.deactivateFeed('feed_123')).rejects.toThrow(
         /Not Found/
       );
     });
@@ -218,9 +218,9 @@ describe('FeedsController', () => {
       return feed.sourceUrl;
     }
 
-    it('bcfy_feeds produces the partner.broadcastify.com URL', async () => {
+    it('bcfy_feeds produces the listen/feed URL', async () => {
       const url = await listFeedsWithSourceType('bcfy_feeds', '12345');
-      expect(url).toBe('https://partner.broadcastify.com/12345');
+      expect(url).toBe('https://www.broadcastify.com/listen/feed/12345');
     });
 
     it('bcfy_calls replaces hyphens with slashes in the URL', async () => {

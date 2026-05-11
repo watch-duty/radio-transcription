@@ -447,7 +447,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             ):
                 pass  # Should not yield any chunks
 
-        self.assertIn("ffmpeg exited with code 1", str(ctx.exception))
+        self.assertEqual(str(ctx.exception), "ffmpeg_exit_1")
 
         # Simulate what NormalizerRuntime._process_feed does on exception
         await self.store.report_feed_failure(
@@ -529,7 +529,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             ):
                 pass
 
-        self.assertIn("missing source_feed_id", str(ctx.exception))
+        self.assertEqual(str(ctx.exception), "missing_source_feed_id")
 
         # Assert: DB state unchanged (still active, no bookmark)
         row = await self._get_feed_row(feed_id)

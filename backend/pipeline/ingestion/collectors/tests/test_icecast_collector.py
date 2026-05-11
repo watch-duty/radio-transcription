@@ -86,6 +86,19 @@ def _make_process_factory(
     return _factory
 
 
+def _formatted_error_calls(mock_logger: MagicMock) -> str:
+    """Render every captured logger.error call into a single newline-joined string.
+
+    The collector logs failure context via ``logger.error(fmt, *args)`` (printf-style
+    format string + args). The class-level patch in ``setUp`` swaps the module logger
+    with a ``MagicMock``, so we reconstruct the formatted message from ``call_args``.
+    """
+    return "\n".join(
+        (call.args[0] % call.args[1:]) if len(call.args) > 1 else call.args[0]
+        for call in mock_logger.error.call_args_list
+    )
+
+
 async def _collect_chunks(
     gen,
     *,
@@ -270,7 +283,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError) as context:
             await gen.__anext__()
 
-        self.assertIn("missing source_feed_id", str(context.exception))
+        self.assertEqual(str(context.exception), "missing_source_feed_id")
 
     async def test_invalid_input_none_source_feed_id_raises_value_error(
         self,
@@ -290,9 +303,10 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError) as context:
             await gen.__anext__()
 
-        self.assertIn("missing source_feed_id", str(context.exception))
-        self.assertIn(str(TEST_FEED_ID), str(context.exception))
-        self.assertIn("none-stream-feed", str(context.exception))
+        self.assertEqual(str(context.exception), "missing_source_feed_id")
+        formatted = _formatted_error_calls(self.mock_logger)
+        self.assertIn(str(TEST_FEED_ID), formatted)
+        self.assertIn("none-stream-feed", formatted)
 
     async def test_invalid_input_empty_string_source_feed_id_raises_value_error(
         self,
@@ -312,8 +326,10 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError) as context:
             await gen.__anext__()
 
-        self.assertIn(str(TEST_FEED_ID), str(context.exception))
-        self.assertIn("missing source_feed_id", str(context.exception))
+        self.assertEqual(str(context.exception), "missing_source_feed_id")
+        self.assertIn(
+            str(TEST_FEED_ID), _formatted_error_calls(self.mock_logger)
+        )
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
@@ -351,7 +367,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
     async def test_ffmpeg_error_exit_code_includes_stderr(
         self, mock_create_ffmpeg: AsyncMock
     ) -> None:
-        """Test: ffmpeg non-zero exit includes stderr tail in RuntimeError."""
+        """Test: ffmpeg non-zero exit raises a categorical tag and logs stderr context."""
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=7777,
             wait_delay=0.0,
@@ -371,11 +387,13 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RuntimeError) as context:
             await asyncio.wait_for(gen.__anext__(), timeout=1.0)
 
-        self.assertIn("ffmpeg exited with code 1", str(context.exception))
-        self.assertIn(str(TEST_FEED_ID), str(context.exception))
-        self.assertIn("error-exit-feed", str(context.exception))
-        self.assertIn("403 Forbidden", str(context.exception))
-        self.assertIn("stderr tail:", str(context.exception))
+        self.assertEqual(str(context.exception), "ffmpeg_exit_1")
+        formatted = _formatted_error_calls(self.mock_logger)
+        self.assertIn("ffmpeg exited with code 1", formatted)
+        self.assertIn(str(TEST_FEED_ID), formatted)
+        self.assertIn("error-exit-feed", formatted)
+        self.assertIn("403 Forbidden", formatted)
+        self.assertIn("stderr tail:", formatted)
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
@@ -384,7 +402,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
     async def test_ffmpeg_error_exit_code_no_stderr(
         self, mock_create_ffmpeg: AsyncMock
     ) -> None:
-        """Test: ffmpeg non-zero exit with empty stderr shows fallback text."""
+        """Test: ffmpeg non-zero exit with empty stderr shows fallback text in log."""
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=7778,
             wait_delay=0.0,
@@ -403,8 +421,47 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RuntimeError) as context:
             await asyncio.wait_for(gen.__anext__(), timeout=1.0)
 
-        self.assertIn("ffmpeg exited with code 8", str(context.exception))
-        self.assertIn("(no stderr captured)", str(context.exception))
+        self.assertEqual(str(context.exception), "ffmpeg_exit_8")
+        formatted = _formatted_error_calls(self.mock_logger)
+        self.assertIn("ffmpeg exited with code 8", formatted)
+        self.assertIn("(no stderr captured)", formatted)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_ffmpeg_signal_kill_normalizes_to_signal_tag(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Test: signal-killed ffmpeg (negative returncode) maps to ffmpeg_signal_N tag.
+
+        Python's subprocess.returncode is -N for signal-N termination on POSIX
+        (e.g. SIGKILL -> -9). The raised tag must stay snake_case (no literal
+        minus sign), so the collector splits sign and emits ``ffmpeg_signal_9``
+        rather than ``ffmpeg_exit_-9``.
+        """
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=7779,
+            wait_delay=0.0,
+            wait_result=-9,  # SIGKILL via Python subprocess convention
+            stderr_lines=[b"Killed\n"],
+        )
+
+        feed = _make_feed("signal-kill-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_default_resources(),
+        )
+        with self.assertRaises(RuntimeError) as context:
+            await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+
+        self.assertEqual(str(context.exception), "ffmpeg_signal_9")
+        formatted = _formatted_error_calls(self.mock_logger)
+        self.assertIn("ffmpeg exited with code -9", formatted)
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
@@ -445,7 +502,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
     async def test_read_timeout_includes_stderr(
         self, mock_create_ffmpeg: AsyncMock
     ) -> None:
-        """Test: read timeout error includes stderr tail."""
+        """Test: read timeout raises a categorical tag and logs stderr context."""
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=8888,
             wait_delay=1.0,  # longer than READ_TIMEOUT_SEC (0.1s) but short enough for cleanup
@@ -465,8 +522,10 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RuntimeError) as context:
             await asyncio.wait_for(gen.__anext__(), timeout=2.0)
 
-        self.assertIn("no finalized segment within", str(context.exception))
-        self.assertIn("Connection timed out", str(context.exception))
+        self.assertEqual(str(context.exception), "capture_timeout")
+        formatted = _formatted_error_calls(self.mock_logger)
+        self.assertIn("no finalized segment within", formatted)
+        self.assertIn("Connection timed out", formatted)
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",

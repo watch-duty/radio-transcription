@@ -8,7 +8,7 @@ resource "google_compute_instance" "eval_instance" {
   boot_disk {
     initialize_params {
       image = "projects/deeplearning-platform-release/global/images/pytorch-2-7-cu128-ubuntu-2204-nvidia-570-v20260320"
-      size  = 100 # Deep Learning images are large, 100GB recommended
+      size  = 200 # Deep Learning images are large, 200GB recommended
       type  = "pd-ssd"
     }
   }
@@ -38,15 +38,24 @@ resource "google_compute_instance" "eval_instance" {
   metadata = {
     startup-script = <<-EOT
     #!/bin/bash
-    sleep $(( ${var.auto_shutdown_hours} * 3600 ))
-    while true; do
-      if nvidia-smi --query-compute-apps=pid --format=csv,noheader | grep -q . ; then
-        sleep 1800
-      else
-        sudo poweroff
-        break
-      fi
-    done
+    # Systematically install Google Cloud Ops Agent on boot to enable Cloud Console GPU metrics (idempotent check)
+    if ! systemctl is-active --quiet google-cloud-ops-agent; then
+      curl -sSO https://dl.google.com/cloudagents/add-google-cloud-ops-agent-repo.sh
+      bash add-google-cloud-ops-agent-repo.sh --also-install
+    fi
+
+    # Execute auto-shutdown monitoring using nohup to survive startup script process exit
+    nohup bash -c '
+      sleep $(( ${var.auto_shutdown_hours} * 3600 ))
+      while true; do
+        if nvidia-smi --query-compute-apps=pid --format=csv,noheader | grep -q . ; then
+          sleep 1800
+        else
+          poweroff
+          break
+        fi
+      done
+    ' > /var/log/auto-shutdown.log 2>&1 &
   EOT
   }
 

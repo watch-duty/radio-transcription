@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, TypedDict
 from backend.pipeline.storage.feed_queries import (
     COUNT_HELD_BY_TYPE_SQL,
     CREATE_FEED_SQL,
-    DELETE_FEED_SQL,
+    DEACTIVATE_FEED_SQL,
     GET_FEED_SQL,
     LIST_FEEDS_SQL,
     RELEASE_FEED_SQL,
@@ -633,13 +633,13 @@ class FeedStore:
         rows = await self._pool.fetch(LIST_FEEDS_SQL)
         return [self._row_to_feed(row) for row in rows]
 
-    async def delete_feed(self, feed_id: uuid.UUID) -> bool:
-        """Delete a feed by ID.
+    async def deactivate_feed(self, feed_id: uuid.UUID) -> bool:
+        """Deactivate a feed by ID (soft delete).
 
-        Returns True if a row was deleted, False otherwise.
+        Returns True if the feed status was set to deactivated, False otherwise.
         """
-        result = await self._pool.execute(DELETE_FEED_SQL, feed_id)
-        return result == "DELETE 1"
+        result = await self._pool.execute(DEACTIVATE_FEED_SQL, feed_id)
+        return result == "UPDATE 1"
 
     async def reset_feed(self, feed_id: uuid.UUID) -> Feed | None:
         """Reset a feed to an unclaimed, unassigned state.

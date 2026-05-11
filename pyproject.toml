@@ -72,7 +72,6 @@ dev = [
 [tool.ruff]
 target-version = "py313"
 extend-exclude = [
-  "model/colabs",
   "backend/pipeline/schema_types",
   "**/*_pb2.py",
   "**/*_pb2.pyi",
@@ -176,6 +175,12 @@ max-complexity = 10
 known-first-party = ["backend", "local_dev"]
 
 [tool.ruff.lint.per-file-ignores]
+"model/colabs/**/*.ipynb" = [
+  "ALL",   # Ignore all linting rules for notebooks
+]
+"model/colabs/**/*.py" = [
+  "ALL",   # Ignore all linting rules for python files in colabs
+]
 "**/**/test*.py" = [
   "ANN001", # Missing type annotation for function argument
   "ANN002", # Missing type annotation for *args

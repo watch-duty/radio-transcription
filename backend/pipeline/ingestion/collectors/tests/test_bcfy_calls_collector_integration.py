@@ -444,7 +444,7 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         feed["source_feed_id"] = None
 
         shutdown = asyncio.Event()
-        with self.assertRaises(ValueError, msg="missing source_feed_id"):
+        with self.assertRaises(ValueError) as ctx:
             async for _ in capture_bcfy_calls(
                 feed,
                 shutdown,
@@ -452,6 +452,8 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 _default_resources(),
             ):
                 pass
+
+        self.assertEqual(str(ctx.exception), "missing_source_feed_id")
 
         row = await self._get_feed_row(feed_id)
         self.assertEqual(row["status"], "active")

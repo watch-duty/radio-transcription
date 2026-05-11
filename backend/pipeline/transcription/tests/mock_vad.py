@@ -16,6 +16,8 @@ class MockVadPlugin(VoiceActivityDetector):
         config = json.loads(config_json) if config_json else {}
         self._returns_speech = config.get("returns", True)
 
-    def evaluate(self, audio_data: bytes, sample_rate: int) -> bool:
+    def evaluate(
+        self, audio_data: bytes, sample_rate: int, channels: int = 1
+    ) -> bool:
 
         return self._returns_speech
