@@ -4,6 +4,7 @@ import OpenInNewOutlinedIcon from '@mui/icons-material/OpenInNewOutlined';
 import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
+import Chip from '@mui/material/Chip';
 import Link from '@mui/material/Link';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
@@ -111,7 +112,8 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
       >
         <Typography>
           <b>{searchedFeed.name}</b>
-        </Typography>{' '}
+        </Typography>
+        <Chip label={searchedFeed.sourceType} size="small" />
         <FeedStatusIndicator status={status} lastHeartbeat={lastHeartbeat} />
       </Box>
       <Box
