@@ -204,15 +204,19 @@ class AudioProcessor:
             duration_ms=duration_ms,
         )
 
-    def check_vad(self, audio_buffer: np.ndarray, sample_rate: int) -> bool:
+    def check_vad(self, audio_data: np.ndarray, sample_rate: int) -> bool:
         """Evaluates audio buffer with the configured VAD and returns True if speech is detected."""
         if self.vad is None:
             msg = "VAD engine not initialized. Call setup() first."
             raise RuntimeError(msg)
 
-        # Convert to float32 normalized array for DSP analysis
-        audio_data = audio_buffer.astype(np.float32) / INT16_MAX_FLOAT
-        rms_energy = compute_rms_energy(audio_data)
+        # Convert to float32 normalized array if it's not already float
+        if not np.issubdtype(audio_data.dtype, np.floating):
+            audio_float = audio_data.astype(np.float32) / INT16_MAX_FLOAT
+        else:
+            audio_float = audio_data
+
+        rms_energy = compute_rms_energy(audio_float)
         mean_rms = np.mean(rms_energy)
         if mean_rms < VAD_RMS_SILENCE_THRESHOLD:  # Below noise floor
             logger.info(
@@ -222,16 +226,21 @@ class AudioProcessor:
 
         # Detect speech segments using Silero + UL-UNAS
         segments = self.vad.detect_speech_segments(
-            audio_data, sample_rate=sample_rate
+            audio_float, sample_rate=sample_rate
         )
         return len(segments) > 0
 
     def preprocess_audio(
-        self, audio_buffer: np.ndarray, sample_rate: int
+        self, audio_data: np.ndarray, sample_rate: int
     ) -> np.ndarray:
         """Applies native bandpass filtering to remove rumble and static."""
-        # Convert to float32 normalized array for Pedalboard processing
-        audio_float = audio_buffer.astype(np.float32) / INT16_MAX_FLOAT
+        # Convert to float32 normalized array if it's not already float
+        if not np.issubdtype(audio_data.dtype, np.floating):
+            audio_float = audio_data.astype(np.float32) / INT16_MAX_FLOAT
+            scaled_return = True
+        else:
+            audio_float = audio_data
+            scaled_return = False
 
         # Use Pedalboard's highly optimized 12dB/octave Highpass + Lowpass filters
         board = Pedalboard(
@@ -242,8 +251,10 @@ class AudioProcessor:
         )
         filtered_float = board(audio_float, sample_rate)
 
-        # Scale back to 16-bit PCM
-        return (filtered_float * INT16_MAX_FLOAT).astype(np.int16)
+        # Scale back to 16-bit PCM if input was integer
+        if scaled_return:
+            return (filtered_float * INT16_MAX_FLOAT).astype(np.int16)
+        return filtered_float
 
     def export_flac(self, audio_buffer: np.ndarray, sample_rate: int) -> bytes:
         """Exports a NumPy array to FLAC bytes using ffmpeg."""
@@ -351,11 +362,15 @@ class AudioProcessor:
         if speech_segments is not None and not speech_segments:
             return ProcessorOutput(success=False)
 
-        # 2. If no pre-computed segments exist, execute our ONNX VAD engine check
-        if speech_segments is None and not self.check_vad(audio_buffer, sample_rate):
+        # Pre-normalize raw integer PCM array to float32 ONCE
+        audio_float = audio_buffer.astype(np.float32) / INT16_MAX_FLOAT
+
+        # 2. If no pre-computed segments exist, execute our ONNX VAD engine check (reusing float32 array)
+        if speech_segments is None and not self.check_vad(audio_float, sample_rate):
             return ProcessorOutput(success=False)
 
-        processed_audio = self.preprocess_audio(audio_buffer, sample_rate)
+        # Reuse the same float32 array for Pedalboard bandpass filtering
+        processed_audio = self.preprocess_audio(audio_float, sample_rate)
         flac_bytes = self.export_flac(processed_audio, sample_rate)
         return ProcessorOutput(
             success=True,
