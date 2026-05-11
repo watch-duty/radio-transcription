@@ -37,7 +37,7 @@ def _get_task_logger(
     feed_id: str, session_id: str | None, component: str
 ) -> std_logging.LoggerAdapter:
     """Contextual logger creation helper."""
-    return trans_logging.get_logger(
+    logger_obj = trans_logging.get_logger(
         __name__,
         {
             "system": "transcription",
@@ -46,6 +46,10 @@ def _get_task_logger(
             "session_id": session_id or "none",
         },
     )
+    if not isinstance(logger_obj, std_logging.LoggerAdapter):
+        msg = "Expected LoggerAdapter from get_logger with extra parameters"
+        raise TypeError(msg)
+    return logger_obj
 
 
 class StitcherEngine:
@@ -393,7 +397,8 @@ class StitcherEngine:
             msg = "Session ID cannot be None in _process_single_stitch_chunk"
             raise ValueError(msg)
 
-        if curr_context.feed_metadata is None:
+        feed_metadata = curr_context.feed_metadata
+        if feed_metadata is None:
             msg = "feed_metadata cannot be None in _process_single_stitch_chunk"
             raise ValueError(msg)
 
@@ -447,7 +452,7 @@ class StitcherEngine:
                                     curr_context.session_id or "unknown",
                                     time_range,
                                 ),
-                                feed_metadata=curr_context.feed_metadata,
+                                feed_metadata=feed_metadata,
                                 sample_rate=chunk_data.sample_rate,
                                 traceparent=chunk.traceparent,
                             ),
