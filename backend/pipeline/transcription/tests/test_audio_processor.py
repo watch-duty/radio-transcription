@@ -46,7 +46,7 @@ class AudioProcessorTest(unittest.TestCase):
 
     def test_check_vad_raises_if_not_setup(self) -> None:
         """Ensures that attempting to evaluate VAD before setup() raises a clear runtime error."""
-        audio = np.zeros(16000, dtype=np.int16)
+        audio = np.zeros(16000, dtype=np.float32)
         with self.assertRaises(RuntimeError):
             self.processor.check_vad(audio, 16000)
 
@@ -76,7 +76,7 @@ class AudioProcessorTest(unittest.TestCase):
 
         # Generate 1 second of 440Hz sine wave at 16kHz
         t = np.linspace(0, 1, 16000, endpoint=False)
-        audio = (np.sin(2 * np.pi * 440 * t) * 32767).astype(np.int16)
+        audio = np.sin(2 * np.pi * 440 * t).astype(np.float32)
 
         result = self.processor.check_vad(audio, 16000)
         self.assertTrue(result)
@@ -128,7 +128,7 @@ class AudioProcessorTest(unittest.TestCase):
 
     def test_preprocess_audio_applies_bandpass(self) -> None:
         """Verifies that the audio preprocessing filters do not corrupt or truncate the np.ndarray structure."""
-        audio = np.zeros(16000, dtype=np.int16)
+        audio = np.zeros(16000, dtype=np.float32)
         processed = self.processor.preprocess_audio(audio, 16000)
         self.assertIsInstance(processed, np.ndarray)
         self.assertEqual(len(processed), len(audio))

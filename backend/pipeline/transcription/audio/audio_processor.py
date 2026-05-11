@@ -204,44 +204,22 @@ class AudioProcessor:
             duration_ms=duration_ms,
         )
 
-    def check_vad(self, audio_data: np.ndarray, sample_rate: int) -> bool:
+    def check_vad(self, audio_float: np.ndarray, sample_rate: int) -> bool:
         """Evaluates audio buffer with the configured VAD and returns True if speech is detected."""
         if self.vad is None:
             msg = "VAD engine not initialized. Call setup() first."
             raise RuntimeError(msg)
 
-        # Convert to float32 normalized array if it's not already float
-        if not np.issubdtype(audio_data.dtype, np.floating):
-            audio_float = audio_data.astype(np.float32) / INT16_MAX_FLOAT
-        else:
-            audio_float = audio_data
-
-        rms_energy = compute_rms_energy(audio_float)
-        mean_rms = np.mean(rms_energy)
-        if mean_rms < VAD_RMS_SILENCE_THRESHOLD:  # Below noise floor
-            logger.info(
-                f"VAD Heuristic: Dropped near-silence (RMS Energy: {mean_rms:.5f})"
-            )
-            return False
-
-        # Detect speech segments using Silero + UL-UNAS
+        # Detect speech segments using Silero + UL-UNAS directly
         segments = self.vad.detect_speech_segments(
             audio_float, sample_rate=sample_rate
         )
         return len(segments) > 0
 
     def preprocess_audio(
-        self, audio_data: np.ndarray, sample_rate: int
+        self, audio_float: np.ndarray, sample_rate: int
     ) -> np.ndarray:
         """Applies native bandpass filtering to remove rumble and static."""
-        # Convert to float32 normalized array if it's not already float
-        if not np.issubdtype(audio_data.dtype, np.floating):
-            audio_float = audio_data.astype(np.float32) / INT16_MAX_FLOAT
-            scaled_return = True
-        else:
-            audio_float = audio_data
-            scaled_return = False
-
         # Use Pedalboard's highly optimized 12dB/octave Highpass + Lowpass filters
         board = Pedalboard(
             [
@@ -251,10 +229,8 @@ class AudioProcessor:
         )
         filtered_float = board(audio_float, sample_rate)
 
-        # Scale back to 16-bit PCM if input was integer
-        if scaled_return:
-            return (filtered_float * INT16_MAX_FLOAT).astype(np.int16)
-        return filtered_float
+        # Scale back to 16-bit PCM
+        return (filtered_float * INT16_MAX_FLOAT).astype(np.int16)
 
     def export_flac(self, audio_buffer: np.ndarray, sample_rate: int) -> bytes:
         """Exports a NumPy array to FLAC bytes using ffmpeg."""
