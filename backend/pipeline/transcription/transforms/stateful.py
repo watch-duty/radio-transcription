@@ -16,7 +16,7 @@ import time
 from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import Any, Literal, cast, override
+from typing import Any, Literal, override
 
 import apache_beam as beam
 from apache_beam.metrics import Metrics
@@ -97,7 +97,9 @@ class StaleTimerManager:
 
             # Set processing time timer based on wall-clock time
             deadline_proc_s = (
-                time.time() + self.config.stale_timeout_ms / 1000.0
+                time.time()
+                + self.config.stale_timeout_ms
+                / float(common_constants.MS_PER_SECOND)
             )
             self.proc_timer.set(Timestamp(seconds=deadline_proc_s))
         else:
@@ -641,7 +643,8 @@ class OrderedBypassFn(beam.DoFn):
             # Set timer if this is the first element
             if len(buffer_elements) == 1:
                 out_of_order_timeout_s = (
-                    self.order_config.out_of_order_timeout_ms / 1000.0
+                    self.order_config.out_of_order_timeout_ms
+                    / float(common_constants.MS_PER_SECOND)
                 )
                 out_of_order_timer.set(
                     Timestamp(time.time() + out_of_order_timeout_s)
@@ -713,6 +716,10 @@ class OrderedBypassFn(beam.DoFn):
         chunk_outputs = []
         traceparent = chunk.traceparent or curr_context.traceparent or ""
 
+        if curr_context.feed_metadata is None:
+            msg = "feed_metadata cannot be None in bypass chunk"
+            raise ValueError(msg)
+
         with tracing_utils.with_tracer_context(
             traceparent, "bypass_single_chunk", __name__
         ):
@@ -743,10 +750,7 @@ class OrderedBypassFn(beam.DoFn):
                                 curr_context.session_id or "unknown",
                                 time_range,
                             ),
-                            feed_metadata=cast(
-                                "datatypes.FeedMetadata",
-                                curr_context.feed_metadata,
-                            ),
+                            feed_metadata=curr_context.feed_metadata,
                             traceparent=curr_context.traceparent,
                             sample_rate=chunk_data.sample_rate,
                         ),
@@ -916,7 +920,9 @@ class TranscribeAudioFn(beam.DoFn):
             canonical_audio_uri, playback_audio_uri = None, None
         else:
             dt = datetime.fromtimestamp(
-                request.time_range.start_ms / 1000.0, tz=UTC
+                request.time_range.start_ms
+                / float(common_constants.MS_PER_SECOND),
+                tz=UTC,
             )
 
             flac_path = f"lossless/{request.feed_id}/{dt:%Y/%m/%d}/{request.transmission_id}.flac"
@@ -926,6 +932,11 @@ class TranscribeAudioFn(beam.DoFn):
                 msg = "AudioUploader not initialized. setup() must be called."
                 raise RuntimeError(msg)
 
+            processor = self.audio_processor
+            if processor is None:
+                msg = "AudioProcessor not initialized. setup() must be called."
+                raise RuntimeError(msg)
+
             canonical_audio_uri, playback_audio_uri = (
                 self.audio_uploader.upload_audio_derivatives(
                     bucket_name=self.config.canonical_audio_bucket,
@@ -933,9 +944,9 @@ class TranscribeAudioFn(beam.DoFn):
                     m4a_path=m4a_path,
                     flac_bytes=res.flac_bytes,
                     processed_audio=res.processed_audio,
-                    export_m4a_fn=lambda buf: cast(
-                        "Any", self.audio_processor
-                    ).export_m4a(buf, request.sample_rate),
+                    export_m4a_fn=lambda buf: processor.export_m4a(
+                        buf, request.sample_rate
+                    ),
                 )
             )
             canonical_audio_uri = (

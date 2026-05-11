@@ -15,7 +15,7 @@ straightforward, light-speed unit testing capabilities.
 import logging as std_logging
 from collections.abc import Callable, Iterator
 from dataclasses import replace
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import numpy as np
 from google.cloud import storage
@@ -37,17 +37,14 @@ def _get_task_logger(
     feed_id: str, session_id: str | None, component: str
 ) -> std_logging.LoggerAdapter:
     """Contextual logger creation helper."""
-    return cast(
-        "std_logging.LoggerAdapter",
-        trans_logging.get_logger(
-            __name__,
-            {
-                "system": "transcription",
-                "component": component,
-                "feed_id": feed_id,
-                "session_id": session_id or "none",
-            },
-        ),
+    return trans_logging.get_logger(
+        __name__,
+        {
+            "system": "transcription",
+            "component": component,
+            "feed_id": feed_id,
+            "session_id": session_id or "none",
+        },
     )
 
 
@@ -198,6 +195,10 @@ class StitcherEngine:
                 msg = "Session ID cannot be None in handle_stale_transmission"
                 raise ValueError(msg)
 
+            if curr_ctx.feed_metadata is None:
+                msg = "feed_metadata cannot be None in handle_stale_transmission"
+                raise ValueError(msg)
+
             try:
                 time_range = datatypes.TimeRange(
                     start_ms=start_time_ms, end_ms=end_time_ms
@@ -225,9 +226,7 @@ class StitcherEngine:
                         end_audio_offset_ms=end_time_ms
                         - curr_ctx.buffer_start_time_ms,
                         transmission_id=transmission_id,
-                        feed_metadata=cast(
-                            "datatypes.FeedMetadata", curr_ctx.feed_metadata
-                        ),
+                        feed_metadata=curr_ctx.feed_metadata,
                         sample_rate=curr_ctx.sample_rate
                         or common_constants.SAMPLE_RATE_HZ,
                         traceparent=curr_ctx.traceparent,
@@ -392,6 +391,10 @@ class StitcherEngine:
             msg = "Session ID cannot be None in _process_single_stitch_chunk"
             raise ValueError(msg)
 
+        if curr_context.feed_metadata is None:
+            msg = "feed_metadata cannot be None in _process_single_stitch_chunk"
+            raise ValueError(msg)
+
         try:
             with with_tracer_context(
                 traceparent,
@@ -442,10 +445,7 @@ class StitcherEngine:
                                     curr_context.session_id or "unknown",
                                     time_range,
                                 ),
-                                feed_metadata=cast(
-                                    "datatypes.FeedMetadata",
-                                    curr_context.feed_metadata,
-                                ),
+                                feed_metadata=curr_context.feed_metadata,
                                 sample_rate=chunk_data.sample_rate,
                                 traceparent=chunk.traceparent,
                             ),
@@ -551,7 +551,7 @@ class StitcherEngine:
                 "traceparent": traceparent,
             }
             fallback_expected = previous_expected_ts or (
-                chunk.timestamp_ms + 1000
+                chunk.timestamp_ms + common_constants.MS_PER_SECOND
             )
             return (
                 [("transcription_dlq", dlq_payload)],

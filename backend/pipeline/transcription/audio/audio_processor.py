@@ -17,6 +17,7 @@ from pedalboard import HighpassFilter, LowpassFilter, Pedalboard
 from backend.pipeline.common.constants import (
     FLAC_COMPRESSION_LEVEL,
     M4A_BITRATE,
+    MS_PER_SECOND,
     SAMPLE_RATE_HZ,
 )
 from backend.pipeline.transcription.audio.dsp import (
@@ -187,13 +188,13 @@ class AudioProcessor:
             for start_sec, end_sec in raw_segments:
                 speech_segments.append(
                     TimeRange(
-                        start_ms=int(start_sec * 1000.0),
-                        end_ms=int(end_sec * 1000.0),
+                        start_ms=int(start_sec * MS_PER_SECOND),
+                        end_ms=int(end_sec * MS_PER_SECOND),
                     )
                 )
 
         if duration_ms is None:
-            duration_ms = int(len(samples) / sr * 1000)
+            duration_ms = int(len(samples) / sr * MS_PER_SECOND)
 
         return AudioChunkData(
             start_ms=start_ms,

@@ -627,7 +627,10 @@ class OrderedStitchAudioTest(unittest.TestCase):
 
         mock_state = MagicMock()
         mock_state.read.return_value = TransmissionContext(
-            session_id="mock-session-id"
+            session_id="mock-session-id",
+            feed_metadata=FeedMetadata(
+                feed_name="mock-feed", external_id="mock-external-id"
+            ),
         )
         mock_timer = MagicMock()
 
@@ -689,6 +692,9 @@ class OrderedStitchAudioTest(unittest.TestCase):
             out_of_order_buffer=[
                 BufferedChunk(timestamp_ms=100000, gcs_uri="gs://test.flac")
             ],
+            feed_metadata=FeedMetadata(
+                feed_name="mock-feed", external_id="mock-id"
+            ),
         )
         mock_state.read.return_value = curr_context
 
@@ -776,6 +782,9 @@ class OrderedStitchAudioTest(unittest.TestCase):
             buffer_start_time_ms=0,
             last_end_time_ms=1000,
             contributing_audio_uris=["gs://main/chunk1.flac"],
+            feed_metadata=FeedMetadata(
+                feed_name="mock-feed", external_id="mock-id"
+            ),
         )
 
         transmission_context_state = MockValueState(curr_context)
