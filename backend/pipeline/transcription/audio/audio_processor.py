@@ -4,6 +4,7 @@ import io
 import json
 import subprocess
 import tempfile
+from dataclasses import dataclass
 import urllib.parse
 from collections.abc import Callable
 from pathlib import Path
@@ -64,6 +65,14 @@ def _resample_to_16k_mono(samples: np.ndarray, sr: int) -> np.ndarray:
         samples = resampler.resample(samples)
 
     return samples.astype(np.int16)
+
+
+@dataclass(frozen=True)
+class ProcessorOutput:
+    """A strongly-typed container holding the output of AudioProcessor.process_buffer."""
+    success: bool
+    flac_bytes: bytes | None = None
+    processed_audio: np.ndarray | None = None
 
 
 class AudioProcessor:
@@ -336,15 +345,20 @@ class AudioProcessor:
         audio_buffer: np.ndarray,
         sample_rate: int,
         speech_segments: list[TimeRange] | None = None,
-    ) -> tuple[bool, bytes | None, np.ndarray | None]:
+    ) -> ProcessorOutput:
         """Encapsulates sequence of pre-processing, VAD check, and FLAC export."""
-        # Bypass the expensive second VAD evaluation if speech segments are already pre-computed
-        if (speech_segments is not None and not speech_segments) or (
-            speech_segments is None
-            and not self.check_vad(audio_buffer, sample_rate)
-        ):
-            return False, None, None
+        # 1. If pre-computed speech segments exist but are empty, it's pure silence
+        if speech_segments is not None and not speech_segments:
+            return ProcessorOutput(success=False)
+
+        # 2. If no pre-computed segments exist, execute our ONNX VAD engine check
+        if speech_segments is None and not self.check_vad(audio_buffer, sample_rate):
+            return ProcessorOutput(success=False)
 
         processed_audio = self.preprocess_audio(audio_buffer, sample_rate)
         flac_bytes = self.export_flac(processed_audio, sample_rate)
-        return True, flac_bytes, processed_audio
+        return ProcessorOutput(
+            success=True,
+            flac_bytes=flac_bytes,
+            processed_audio=processed_audio,
+        )

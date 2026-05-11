@@ -37,6 +37,7 @@ from backend.pipeline.transcription.common.datatypes import (
     TranscriptionResult,
     TransmissionContext,
 )
+from backend.pipeline.transcription.audio.audio_processor import ProcessorOutput
 from backend.pipeline.transcription.common.enums import TranscriberType
 from backend.pipeline.transcription.services.transcribers import Transcriber
 from backend.pipeline.transcription.transforms.stateful import (
@@ -253,10 +254,10 @@ class TranscribeAudioTest(unittest.TestCase):
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
         mock_processor_inst.export_flac.return_value = b"flac_bytes"
         mock_processor_inst.process_buffer.side_effect = (
-            lambda *args, **kwargs: (
-                True,
-                b"flac_bytes",
-                np.zeros(((500) * 16), dtype=np.int16),
+            lambda *args, **kwargs: ProcessorOutput(
+                success=True,
+                flac_bytes=b"flac_bytes",
+                processed_audio=np.zeros(((500) * 16), dtype=np.int16),
             )
         )
 

@@ -5,7 +5,8 @@ avoiding the overhead of multi-VAD abstractions.
 """
 
 from pathlib import Path
-
+from collections.abc import Callable
+from typing import Any
 import numpy as np
 import onnxruntime as ort
 from pedalboard import HighpassFilter, LowpassFilter, PeakFilter, Pedalboard
@@ -34,6 +35,8 @@ from backend.pipeline.transcription.common.logging import get_logger
 logger = get_logger(__name__, {"system": "transcription", "component": "vad"})
 
 MODELS_DIR = Path(__file__).parent / "models"
+TARGET_SAMPLE_RATE = 16000
+DEFAULT_SILERO_WINDOW_SIZE = 512
 
 
 class VoiceActivityDetector:
@@ -101,19 +104,19 @@ class VoiceActivityDetector:
         # Warm up Numba compiler to eliminate first-run latency spikes on Dataflow workers
         try:
             logger.info("Warming up Numba compiler...")
-            dummy_wave = np.zeros((1, 512), dtype=np.float32)
+            dummy_wave = np.zeros((1, DEFAULT_SILERO_WINDOW_SIZE), dtype=np.float32)
             dummy_stft = custom_numpy_stft(
-                dummy_wave, n_fft=512, hop_length=256
+                dummy_wave, n_fft=DEFAULT_SILERO_WINDOW_SIZE, hop_length=256
             )
             _ = custom_numpy_istft(
-                dummy_stft, length=512, n_fft=512, hop_length=256
+                dummy_stft, length=DEFAULT_SILERO_WINDOW_SIZE, n_fft=DEFAULT_SILERO_WINDOW_SIZE, hop_length=256
             )
             logger.info("Numba compiler successfully warmed up.")
         except Exception as e:
             logger.warning("Failed to warm up Numba compiler: %s", e)
 
     def denoise(
-        self, audio_array: np.ndarray, n_fft: int = 512, hop_length: int = 256
+        self, audio_array: np.ndarray, n_fft: int = DEFAULT_SILERO_WINDOW_SIZE, hop_length: int = 256
     ) -> np.ndarray:
         """Applies the UL-UNAS neural denoiser ONNX model on the normalized float32 audio array."""
         self.setup()
@@ -161,7 +164,7 @@ class VoiceActivityDetector:
                 LowpassFilter(cutoff_frequency_hz=self.lowpass_hz),
             ]
         )
-        bp_audio = bp_board(audio_array, 16000)
+        bp_audio = bp_board(audio_array, TARGET_SAMPLE_RATE)
 
         ulunas_denoised = self.denoise(bp_audio)
 
@@ -178,13 +181,47 @@ class VoiceActivityDetector:
                 )
             ]
         )
-        return eq_board(mixed_audio, 16000)
+        return eq_board(mixed_audio, TARGET_SAMPLE_RATE)
+
+    def _trim_and_shift_segments(
+        self,
+        raw_segments: list[tuple[float, float]],
+        prior_len_sec: float,
+    ) -> list[tuple[float, float]]:
+        """Isolates detected speech segments relative strictly to the current audio chunk."""
+        shifted_segments = []
+        for start, end in raw_segments:
+            if end <= prior_len_sec:
+                continue
+            start_sec = max(0.0, start - prior_len_sec)
+            end_sec = end - prior_len_sec
+            shifted_segments.append((start_sec, end_sec))
+        return shifted_segments
+
+    def _pad_and_merge_segments(
+        self,
+        segments: list[tuple[float, float]],
+        audio_len_sec: float,
+    ) -> list[tuple[float, float]]:
+        """Pads and merges overlapping speech segments using the configured padding limits."""
+        padded_segments = []
+        for start, end in segments:
+            p_start = max(0.0, start - self.pad_sec)
+            p_end = min(audio_len_sec, end + self.pad_sec)
+            if padded_segments and padded_segments[-1][1] >= p_start:
+                padded_segments[-1] = (
+                    padded_segments[-1][0],
+                    max(padded_segments[-1][1], p_end),
+                )
+            else:
+                padded_segments.append((p_start, p_end))
+        return padded_segments
 
     def detect_speech_segments(  # noqa: PLR0912, PLR0915
         self,
         audio_array: np.ndarray,
-        sample_rate: int = 16000,
-        chunk_size: int = 512,
+        sample_rate: int = TARGET_SAMPLE_RATE,
+        chunk_size: int = DEFAULT_SILERO_WINDOW_SIZE,
         context_size: int = 64,
         prior_audio: np.ndarray | None = None,
     ) -> list[tuple[float, float]]:
@@ -197,8 +234,8 @@ class VoiceActivityDetector:
         if len(audio_array) == 0:
             return []
 
-        if sample_rate != 16000:
-            resampler = TorchaudioHannResampler(sample_rate, 16000)
+        if sample_rate != TARGET_SAMPLE_RATE:
+            resampler = TorchaudioHannResampler(sample_rate, TARGET_SAMPLE_RATE)
             audio_array = resampler.resample(audio_array)
 
         # VAD Priming Strategy: Prepend historical contiguous audio waveform (if available)
@@ -207,17 +244,17 @@ class VoiceActivityDetector:
         # we fall back to prepending the first N seconds of the current audio chunk (like the Colab)
         # to prevent startup cold-start clipping on early words.
         if prior_audio is None:
-            priming_samples = int(self.priming_sec * 16000)
+            priming_samples = int(self.priming_sec * TARGET_SAMPLE_RATE)
             priming_samples = min(priming_samples, len(audio_array))
             if priming_samples > 0:
                 prior_audio = audio_array[:priming_samples]
 
         # Perform physical audio concatenation to create a continuous audio stream for the VAD
         if prior_audio is not None and len(prior_audio) > 0:
-            if sample_rate != 16000:
-                resampler = TorchaudioHannResampler(sample_rate, 16000)
+            if sample_rate != TARGET_SAMPLE_RATE:
+                resampler = TorchaudioHannResampler(sample_rate, TARGET_SAMPLE_RATE)
                 prior_audio = resampler.resample(prior_audio)
-            prior_len_sec = len(prior_audio) / 16000.0
+            prior_len_sec = len(prior_audio) / float(TARGET_SAMPLE_RATE)
             extended_audio = np.concatenate([prior_audio, audio_array])
         else:
             prior_len_sec = 0.0
@@ -228,13 +265,12 @@ class VoiceActivityDetector:
         state = np.zeros((2, 1, 128), dtype=np.float32)
         context = np.zeros(context_size, dtype=np.float32)
 
-        target_sr = 16000
-        sr_tensor = np.array([16000], dtype=np.int64)
+        sr_tensor = np.array([TARGET_SAMPLE_RATE], dtype=np.int64)
         min_speech_frames = int(
-            (self.min_speech_duration_ms * target_sr / 1000) / chunk_size
+            (self.min_speech_duration_ms * TARGET_SAMPLE_RATE / 1000) / chunk_size
         )
         min_silence_frames = int(
-            (self.min_silence_duration_ms * target_sr / 1000) / chunk_size
+            (self.min_silence_duration_ms * TARGET_SAMPLE_RATE / 1000) / chunk_size
         )
 
         triggered = False
@@ -277,10 +313,8 @@ class VoiceActivityDetector:
                     ) >= min_speech_frames:
                         raw_segments.append(
                             (
-                                current_speech["start"]
-                                * chunk_size
-                                / target_sr,
-                                current_speech["end"] * chunk_size / target_sr,
+                                current_speech["start"] * chunk_size / TARGET_SAMPLE_RATE,
+                                current_speech["end"] * chunk_size / TARGET_SAMPLE_RATE,
                             )
                         )
                     triggered = False
@@ -296,44 +330,14 @@ class VoiceActivityDetector:
             ) >= min_speech_frames:
                 raw_segments.append(
                     (
-                        current_speech["start"] * chunk_size / target_sr,
-                        current_speech["end"] * chunk_size / target_sr,
+                        current_speech["start"] * chunk_size / TARGET_SAMPLE_RATE,
+                        current_speech["end"] * chunk_size / TARGET_SAMPLE_RATE,
                     )
                 )
 
         # Time Coordinate Trimming & Shifting Mathematics:
-        # We must isolate the detected speech segments relative strictly to the current audio chunk
-        # under evaluation. The priming tail is solely for warming up recurrent states, and its
-        # audio timeline must never leak out or color our returned segment boundaries.
-        shifted_segments = []
-        for start, end in raw_segments:
-            # 1. Discard: If a segment starts and ends entirely within the priming tail, throw it away
-            if end <= prior_len_sec:
-                continue
-            # 2. Trim: If a segment began in the previous chunk but continues into the current chunk,
-            # we clip the starting timestamp to exactly 0.0 (indicating speech is active from the very
-            # first sample of this chunk) and shift the ending coordinate back.
-            start_sec = max(0.0, start - prior_len_sec)
-            # 3. Shift: Shift both timestamps back by prior_len_sec if it started within this chunk
-            # to align the segment coordinate strictly to this chunk's timeline.
-            end_sec = end - prior_len_sec
-            shifted_segments.append((start_sec, end_sec))
+        shifted_segments = self._trim_and_shift_segments(raw_segments, prior_len_sec)
 
-        # Pad and merge overlapping segments.
-        # Note: VAD padding defaults to 0.0s in production to prevent syllable boundary merging,
-        # allowing our state machine to perform extremely precise significant gap splits.
-        # Pre-rolls and post-rolls are applied cleanly downstream at the state machine level.
-        audio_len_sec = len(audio_array) / 16000.0
-        padded_segments = []
-        for start, end in shifted_segments:
-            p_start = max(0.0, start - self.pad_sec)
-            p_end = min(audio_len_sec, end + self.pad_sec)
-            if padded_segments and padded_segments[-1][1] >= p_start:
-                padded_segments[-1] = (
-                    padded_segments[-1][0],
-                    max(padded_segments[-1][1], p_end),
-                )
-            else:
-                padded_segments.append((p_start, p_end))
-
-        return padded_segments
+        # Pad and merge overlapping segments
+        audio_len_sec = len(audio_array) / float(TARGET_SAMPLE_RATE)
+        return self._pad_and_merge_segments(shifted_segments, audio_len_sec)

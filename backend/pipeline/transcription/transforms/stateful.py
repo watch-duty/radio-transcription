@@ -977,14 +977,12 @@ class TranscribeAudioFn(beam.DoFn):
         if request.buffer is None or request.buffer.size == 0:
             return None
 
-        success, flac_bytes, processed_audio = (
-            self.audio_processor.process_buffer(
-                request.buffer,
-                sample_rate=request.sample_rate,
-                speech_segments=request.speech_segments,
-            )
+        res = self.audio_processor.process_buffer(
+            request.buffer,
+            sample_rate=request.sample_rate,
+            speech_segments=request.speech_segments,
         )
-        if not success or flac_bytes is None or processed_audio is None:
+        if not res.success or res.flac_bytes is None or res.processed_audio is None:
             self.vad_silence_count.inc()
             logger.info(
                 "VAD detected no speech in buffer. Dropping transmission."
@@ -992,7 +990,7 @@ class TranscribeAudioFn(beam.DoFn):
             return None
 
         self.vad_speech_count.inc()
-        duration_sec = len(processed_audio) / float(request.sample_rate)
+        duration_sec = len(res.processed_audio) / float(request.sample_rate)
         self.speech_duration_sec_dist.update(int(duration_sec))
 
         if not self.config.canonical_audio_bucket:
@@ -1014,8 +1012,8 @@ class TranscribeAudioFn(beam.DoFn):
                     bucket_name=self.config.canonical_audio_bucket,
                     flac_path=flac_path,
                     m4a_path=m4a_path,
-                    flac_bytes=flac_bytes,
-                    processed_audio=processed_audio,
+                    flac_bytes=res.flac_bytes,
+                    processed_audio=res.processed_audio,
                     export_m4a_fn=lambda buf: cast(
                         "Any", self.audio_processor
                     ).export_m4a(buf, request.sample_rate),
@@ -1037,7 +1035,7 @@ class TranscribeAudioFn(beam.DoFn):
         # Perform Speech Transcription API call
         transcribe_start = time.time()
         transcript = self.transcriber.transcribe(
-            audio_data=flac_bytes,
+            audio_data=res.flac_bytes,
         )
         if transcript is None:
             logger.info("Transcription yielded no text. Dropping transmission.")
