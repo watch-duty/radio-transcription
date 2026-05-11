@@ -100,6 +100,24 @@ To add a new model to the evaluation framework, follow these guidelines:
     *   `decode_fn(output, model)`: Extracts the text transcription from the output.
 4.  **Dependencies**: If the model requires new packages, add them to `model/notebook_docker/requirements.txt`. If a cutting-edge version is needed (e.g. not in stable release yet), you can use a Git URL (e.g., `git+https://github.com/...`).
 
+## Formatting and Linting Notebooks
+
+To ensure your notebooks don't fail validation in GitHub PRs, you should format and lint them before committing:
+
+*   **Format all notebooks**:
+    ```bash
+    mise run format:notebooks
+    ```
+    This will automatically repair schema issues (like `execution_count` in markdown cells) and format the code.
+
+*   **Lint all notebooks**:
+    ```bash
+    mise run lint:notebooks
+    ```
+    This only checks for schema issues without modifying files.
+
+These tasks are automatically included in the main `mise run format` and `mise run lint` pipelines.
+
 ## Docker Commands for Maintenance
 
 If you make changes to the `requirements.txt` or the Dockerfiles, use these commands to rebuild and test:

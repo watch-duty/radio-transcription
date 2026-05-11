@@ -88,9 +88,9 @@ def create_test_feed() -> Generator[str]:
 
         asyncio.run(_cleanup_db())
 
-        # Delete feed via API
-        del_url = f"http://{FEEDS_API_HOST}/v1/feeds/{feed_id}"
-        del_response = requests.delete(del_url, timeout=10)
+        # Deactivate feed via API
+        del_url = f"http://{FEEDS_API_HOST}/v1/feeds/{feed_id}/deactivate"
+        del_response = requests.post(del_url, timeout=10)
         del_response.raise_for_status()
 
 
