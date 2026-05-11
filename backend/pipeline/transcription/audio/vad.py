@@ -5,8 +5,7 @@ avoiding the overhead of multi-VAD abstractions.
 """
 
 from pathlib import Path
-from collections.abc import Callable
-from typing import Any
+
 import numpy as np
 import onnxruntime as ort
 from pedalboard import HighpassFilter, LowpassFilter, PeakFilter, Pedalboard

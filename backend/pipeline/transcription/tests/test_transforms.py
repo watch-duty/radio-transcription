@@ -21,6 +21,7 @@ from backend.pipeline.common.tracing_utils import (
     extract_trace_context,
 )
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
+from backend.pipeline.transcription.audio.audio_processor import ProcessorOutput
 from backend.pipeline.transcription.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
 )
@@ -37,7 +38,6 @@ from backend.pipeline.transcription.common.datatypes import (
     TranscriptionResult,
     TransmissionContext,
 )
-from backend.pipeline.transcription.audio.audio_processor import ProcessorOutput
 from backend.pipeline.transcription.common.enums import TranscriberType
 from backend.pipeline.transcription.services.transcribers import Transcriber
 from backend.pipeline.transcription.transforms.stateful import (

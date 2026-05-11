@@ -4,9 +4,9 @@ import io
 import json
 import subprocess
 import tempfile
-from dataclasses import dataclass
 import urllib.parse
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -20,14 +20,12 @@ from backend.pipeline.common.constants import (
 )
 from backend.pipeline.transcription.audio.dsp import (
     TorchaudioHannResampler,
-    compute_rms_energy,
 )
 from backend.pipeline.transcription.audio.vad import VoiceActivityDetector
 from backend.pipeline.transcription.common.constants import (
     HIGHPASS_FILTER_FREQ,
     INT16_MAX_FLOAT,
     LOWPASS_FILTER_FREQ,
-    VAD_RMS_SILENCE_THRESHOLD,
 )
 from backend.pipeline.transcription.common.datatypes import (
     AudioChunkData,

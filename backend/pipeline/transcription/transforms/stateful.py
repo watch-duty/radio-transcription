@@ -11,7 +11,6 @@ All high-level audio download/concatenation/VAD heuristics are cleanly
 decoupled from Beam timer variables and delegated to StitcherEngine.
 """
 
-import json
 import logging as std_logging
 import time
 from collections.abc import Iterator
@@ -19,7 +18,6 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any, Literal, cast, override
 
-from google.cloud import storage
 import apache_beam as beam
 from apache_beam.metrics import Metrics
 from apache_beam.transforms.userstate import (
@@ -33,8 +31,7 @@ from apache_beam.transforms.userstate import (
 )
 from apache_beam.utils.shared import Shared
 from apache_beam.utils.timestamp import Timestamp
-
-SHARED_RESOURCE_HANDLE = Shared()
+from google.cloud import storage
 
 from backend.pipeline.common import constants as common_constants
 from backend.pipeline.common import tracing_utils
@@ -47,6 +44,8 @@ from backend.pipeline.transcription.common import utils as trans_utils
 from backend.pipeline.transcription.services import transcribers
 from backend.pipeline.transcription.state import sequence_buffer
 from backend.pipeline.transcription.transforms import stitcher_engine
+
+SHARED_RESOURCE_HANDLE = Shared()
 
 logger = trans_logging.get_logger(
     __name__, {"system": "transcription", "component": "ordered-stitcher"}
