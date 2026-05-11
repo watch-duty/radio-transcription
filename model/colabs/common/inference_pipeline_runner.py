@@ -220,7 +220,7 @@ def run_huggingface_inference_pipeline(
                 text=[text_prompt] * len(audios),
                 padding=True,
                 return_tensors="pt",
-                **(processor_kwargs or {})
+                **(processor_kwargs or {}),
             )
             inputs.to(model.device, dtype=model.dtype)
 
@@ -263,7 +263,7 @@ def run_huggingface_inference_pipeline(
                         sampling_rate=16000,
                         text=text_prompt,
                         return_tensors="pt",
-                        **(processor_kwargs or {})
+                        **(processor_kwargs or {}),
                     )
                     inputs.to(model.device, dtype=model.dtype)
                     with torch.no_grad():

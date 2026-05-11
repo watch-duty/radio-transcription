@@ -6,15 +6,16 @@ import os
 from getpass import getpass
 from huggingface_hub import login
 
+
 def login_to_huggingface() -> bool:
     """
     Log in to Hugging Face using a token from environment variables, Colab Secrets, or interactive prompt.
-    
+
     This function attempts to find a Hugging Face token in the following order:
     1. `HF_TOKEN` environment variable.
     2. Google Colab Secrets (if running in Colab).
     3. Secure interactive prompt using `getpass`.
-    
+
     Returns:
         bool: True if login was successful, False otherwise.
     """
@@ -24,6 +25,7 @@ def login_to_huggingface() -> bool:
         # Attempt to fetch from Google Colab Secrets
         try:
             from google.colab import userdata
+
             HF_TOKEN = userdata.get("HF_TOKEN")
         except Exception:
             pass
@@ -40,6 +42,6 @@ def login_to_huggingface() -> bool:
         except Exception as e:
             print(f"Failed to log in to Hugging Face: {e}")
             return False
-            
+
     print("No Hugging Face token provided.")
     return False
