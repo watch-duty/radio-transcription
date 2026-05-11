@@ -25,6 +25,12 @@ repos:
         types_or: [python, pyi]
         require_serial: true
         pass_filenames: false
+      - id: lint-notebooks
+        name: lint notebooks
+        entry: mise run lint:notebooks
+        language: system
+        files: ^model/colabs/.*\.ipynb$
+        pass_filenames: false
       - id: proxy-eslint
         name: Run ESLint
         entry: yarn --cwd frontend/api lint:check

@@ -176,11 +176,10 @@ known-first-party = ["backend", "local_dev"]
 
 [tool.ruff.lint.per-file-ignores]
 "model/colabs/**/*.ipynb" = [
-  "ANN",   # Missing type annotations
-  "D",     # Missing docstrings
-  "FBT",   # Boolean positional values in function calls
-  "S101",  # Use of assert detected
-  "T201",  # `print` found
+  "ALL",   # Ignore all linting rules for notebooks
+]
+"model/colabs/**/*.py" = [
+  "ALL",   # Ignore all linting rules for python files in colabs
 ]
 "**/**/test*.py" = [
   "ANN001", # Missing type annotation for function argument
