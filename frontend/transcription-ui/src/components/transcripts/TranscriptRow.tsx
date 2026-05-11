@@ -19,8 +19,9 @@ interface TranscriptRowProps {
   totalTranscripts: number;
   ruleIdToNameMap: Map<string, string>;
   rulesLoading: boolean;
-  onPlay: (transmissionId: string | null) => void;
+  onToggleAudio: (transmissionId: string, audioUri: string) => void;
   currentlyPlayingTransmissionId: string | null;
+  isPlaying: boolean;
   triggerSnackbar: (message: string) => void;
   showHeader: boolean;
   isHighlighted?: boolean;
@@ -32,8 +33,9 @@ export function TranscriptRow({
   totalTranscripts,
   ruleIdToNameMap,
   rulesLoading,
-  onPlay,
+  onToggleAudio,
   currentlyPlayingTransmissionId,
+  isPlaying,
   triggerSnackbar,
   showHeader,
   isHighlighted = false,
@@ -136,8 +138,9 @@ export function TranscriptRow({
         <AudioPlayer
           audioUri={transcript.playbackAudioUri}
           transmissionId={transcript.transmissionId}
-          onPlay={onPlay}
+          onToggleAudio={onToggleAudio}
           currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
+          isPlaying={isPlaying}
         />
         <Typography
           variant="body1"

@@ -37,8 +37,9 @@ export interface TranscriptDisplayProps {
   triggerSnackbar: (message: string) => void;
   ruleIdToNameMap: Map<string, string>;
   rulesLoading: boolean;
-  onPlay: (transmissionId: string | null) => void;
+  onToggleAudio: (transmissionId: string, audioUri: string) => void;
   currentlyPlayingTransmissionId: string | null;
+  isPlaying: boolean;
   highlightedTransmissionId: string | null;
 }
 
@@ -58,8 +59,9 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
   triggerSnackbar,
   ruleIdToNameMap,
   rulesLoading,
-  onPlay,
+  onToggleAudio,
   currentlyPlayingTransmissionId,
+  isPlaying,
   highlightedTransmissionId,
 }) => {
   return (
@@ -119,8 +121,9 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
               totalTranscripts={transcripts.length}
               ruleIdToNameMap={ruleIdToNameMap}
               rulesLoading={rulesLoading}
-              onPlay={onPlay}
+              onToggleAudio={onToggleAudio}
               currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
+              isPlaying={isPlaying}
               triggerSnackbar={triggerSnackbar}
               showHeader={false}
               isHighlighted={

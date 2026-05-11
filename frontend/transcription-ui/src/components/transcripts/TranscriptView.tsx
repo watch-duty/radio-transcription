@@ -16,6 +16,8 @@ import {
 } from '@tanstack/react-query';
 import { type Transcript } from '@transcription/common';
 
+import { Howl } from 'howler';
+
 import { useAuth } from '../../context/AuthContext';
 import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
@@ -31,6 +33,7 @@ import FeedHeader from './FeedHeader';
 import FeedSearch from './FeedSearch';
 import TranscriptActionsBar from './TranscriptActionsBar';
 import TranscriptDisplay from './TranscriptDisplay';
+import { getAudioUrl } from '../../utils/audioUtils';
 
 interface TranscriptViewProps {
   triggerSnackbar: (message: string) => void;
@@ -89,6 +92,60 @@ export function TranscriptView({
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const hasScrolledToTarget = useRef(false);
+
+  const currentAudio = useRef<Howl>(null);
+  const [playbackEndedForId, setPlaybackEndedForId] = useState<string | null>(null);
+  const [autoplayEnabled, setAutoplayEnabled] = useState(true);
+  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
+
+  // Cleanup effect to ensure audio is unloaded when component unmounts
+  useEffect(() => {
+    return () => {
+      currentAudio.current?.unload();
+    };
+  }, []);
+
+  // Play and pause audio from a URL.
+  const toggleAudio = (transmissionId: string, audioUri: string) => {
+    const newAudio = currentlyPlayingTransmissionId !== transmissionId;
+    if (!currentlyPlayingTransmissionId || newAudio) {
+      setIsAudioPlaying(false);
+      setCurrentlyPlayingTransmissionId(null);
+      
+      if (currentAudio.current) {
+        currentAudio.current.off();
+        currentAudio.current.unload();
+        currentAudio.current = null;
+      }
+    }
+
+    if (!currentAudio.current) {
+      setCurrentlyPlayingTransmissionId(transmissionId);
+      const sound = new Howl({
+        src: [getAudioUrl(audioUri)],
+        html5: true,
+        preload: true,
+        onplay: () => setIsAudioPlaying(true),
+        onpause: () => setIsAudioPlaying(false),
+        onend: () => {
+          setIsAudioPlaying(false);
+          setPlaybackEndedForId(transmissionId);
+          sound.unload();
+          if (currentAudio.current === sound) {
+            currentAudio.current = null;
+          }
+        },
+      });
+      currentAudio.current = sound;
+    }
+
+    // Play is no current audio or changing audio
+    if (!isAudioPlaying || newAudio) {
+      currentAudio.current.play();
+    } else {
+      currentAudio.current.pause();
+    }
+  }
 
   const {
     data: feeds,
@@ -226,6 +283,23 @@ export function TranscriptView({
       listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? [],
     [listTranscriptsResponse]
   );
+
+  useEffect(() => {
+    if (!playbackEndedForId) return;
+
+    if (autoplayEnabled) {
+      const currentIndex = transcripts.findIndex(
+        (t) => t.transmissionId === playbackEndedForId
+      );
+
+      if (currentIndex > 0) {
+        const nextTranscript = transcripts[currentIndex - 1];
+        toggleAudio(nextTranscript.transmissionId, nextTranscript.playbackAudioUri);
+      }
+    }
+
+    setPlaybackEndedForId(null);
+  }, [playbackEndedForId, autoplayEnabled, transcripts, toggleAudio]);
 
   // This is used to group transcripts by date and display them in the UI.
   // groupCounts is an array of numbers representing the number of transcripts in each group.
@@ -452,9 +526,6 @@ export function TranscriptView({
     }
   }, [isTranscriptsSuccess, targetTransmissionId, transcripts]);
 
-  const onPlay = (transmissionId: string | null) => {
-    setCurrentlyPlayingTransmissionId(transmissionId);
-  };
 
   const handleClipClick = (transmissionId: string) => {
     const index = transcripts.findIndex(
@@ -595,6 +666,8 @@ export function TranscriptView({
               refreshInterval={transcriptsPollingIntervalMs}
               setRefreshInterval={setTranscriptsPollingIntervalMs}
               onRefresh={handleManualRefresh}
+              autoplayEnabled={autoplayEnabled}
+              setAutoplayEnabled={setAutoplayEnabled}
             />
             <TranscriptDisplay
               ref={virtuosoRef}
@@ -612,8 +685,9 @@ export function TranscriptView({
               triggerSnackbar={triggerSnackbar}
               ruleIdToNameMap={ruleIdToNameMap}
               rulesLoading={rulesLoading}
-              onPlay={onPlay}
+              onToggleAudio={toggleAudio}
               currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
+              isPlaying={isAudioPlaying}
               highlightedTransmissionId={highlightedTransmissionId}
             />
           </>
