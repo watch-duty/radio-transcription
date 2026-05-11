@@ -1404,6 +1404,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             feed_id=str(_FEED_ID),
             feed_name="Test Feed",
             source_type="bcfy_feeds",
+            reason="capture_failed",
         )
         # _releasing_feeds cleaned up
         self.assertEqual(rt._releasing_feeds, set())
