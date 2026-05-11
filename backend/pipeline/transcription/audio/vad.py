@@ -104,19 +104,27 @@ class VoiceActivityDetector:
         # Warm up Numba compiler to eliminate first-run latency spikes on Dataflow workers
         try:
             logger.info("Warming up Numba compiler...")
-            dummy_wave = np.zeros((1, DEFAULT_SILERO_WINDOW_SIZE), dtype=np.float32)
+            dummy_wave = np.zeros(
+                (1, DEFAULT_SILERO_WINDOW_SIZE), dtype=np.float32
+            )
             dummy_stft = custom_numpy_stft(
                 dummy_wave, n_fft=DEFAULT_SILERO_WINDOW_SIZE, hop_length=256
             )
             _ = custom_numpy_istft(
-                dummy_stft, length=DEFAULT_SILERO_WINDOW_SIZE, n_fft=DEFAULT_SILERO_WINDOW_SIZE, hop_length=256
+                dummy_stft,
+                length=DEFAULT_SILERO_WINDOW_SIZE,
+                n_fft=DEFAULT_SILERO_WINDOW_SIZE,
+                hop_length=256,
             )
             logger.info("Numba compiler successfully warmed up.")
         except Exception as e:
             logger.warning("Failed to warm up Numba compiler: %s", e)
 
     def denoise(
-        self, audio_array: np.ndarray, n_fft: int = DEFAULT_SILERO_WINDOW_SIZE, hop_length: int = 256
+        self,
+        audio_array: np.ndarray,
+        n_fft: int = DEFAULT_SILERO_WINDOW_SIZE,
+        hop_length: int = 256,
     ) -> np.ndarray:
         """Applies the UL-UNAS neural denoiser ONNX model on the normalized float32 audio array."""
         self.setup()
@@ -252,7 +260,9 @@ class VoiceActivityDetector:
         # Perform physical audio concatenation to create a continuous audio stream for the VAD
         if prior_audio is not None and len(prior_audio) > 0:
             if sample_rate != TARGET_SAMPLE_RATE:
-                resampler = TorchaudioHannResampler(sample_rate, TARGET_SAMPLE_RATE)
+                resampler = TorchaudioHannResampler(
+                    sample_rate, TARGET_SAMPLE_RATE
+                )
                 prior_audio = resampler.resample(prior_audio)
             prior_len_sec = len(prior_audio) / float(TARGET_SAMPLE_RATE)
             extended_audio = np.concatenate([prior_audio, audio_array])
@@ -267,10 +277,12 @@ class VoiceActivityDetector:
 
         sr_tensor = np.array([TARGET_SAMPLE_RATE], dtype=np.int64)
         min_speech_frames = int(
-            (self.min_speech_duration_ms * TARGET_SAMPLE_RATE / 1000) / chunk_size
+            (self.min_speech_duration_ms * TARGET_SAMPLE_RATE / 1000)
+            / chunk_size
         )
         min_silence_frames = int(
-            (self.min_silence_duration_ms * TARGET_SAMPLE_RATE / 1000) / chunk_size
+            (self.min_silence_duration_ms * TARGET_SAMPLE_RATE / 1000)
+            / chunk_size
         )
 
         triggered = False
@@ -313,8 +325,12 @@ class VoiceActivityDetector:
                     ) >= min_speech_frames:
                         raw_segments.append(
                             (
-                                current_speech["start"] * chunk_size / TARGET_SAMPLE_RATE,
-                                current_speech["end"] * chunk_size / TARGET_SAMPLE_RATE,
+                                current_speech["start"]
+                                * chunk_size
+                                / TARGET_SAMPLE_RATE,
+                                current_speech["end"]
+                                * chunk_size
+                                / TARGET_SAMPLE_RATE,
                             )
                         )
                     triggered = False
@@ -330,13 +346,17 @@ class VoiceActivityDetector:
             ) >= min_speech_frames:
                 raw_segments.append(
                     (
-                        current_speech["start"] * chunk_size / TARGET_SAMPLE_RATE,
+                        current_speech["start"]
+                        * chunk_size
+                        / TARGET_SAMPLE_RATE,
                         current_speech["end"] * chunk_size / TARGET_SAMPLE_RATE,
                     )
                 )
 
         # Time Coordinate Trimming & Shifting Mathematics:
-        shifted_segments = self._trim_and_shift_segments(raw_segments, prior_len_sec)
+        shifted_segments = self._trim_and_shift_segments(
+            raw_segments, prior_len_sec
+        )
 
         # Pad and merge overlapping segments
         audio_len_sec = len(audio_array) / float(TARGET_SAMPLE_RATE)

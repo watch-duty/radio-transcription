@@ -898,7 +898,11 @@ class TranscribeAudioFn(beam.DoFn):
             sample_rate=request.sample_rate,
             speech_segments=request.speech_segments,
         )
-        if not res.success or res.flac_bytes is None or res.processed_audio is None:
+        if (
+            not res.success
+            or res.flac_bytes is None
+            or res.processed_audio is None
+        ):
             self.vad_silence_count.inc()
             logger.info(
                 "VAD detected no speech in buffer. Dropping transmission."

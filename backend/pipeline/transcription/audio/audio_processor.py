@@ -70,6 +70,7 @@ def _resample_to_16k_mono(samples: np.ndarray, sr: int) -> np.ndarray:
 @dataclass(frozen=True)
 class ProcessorOutput:
     """A strongly-typed container holding the output of AudioProcessor.process_buffer."""
+
     success: bool
     flac_bytes: bytes | None = None
     processed_audio: np.ndarray | None = None
@@ -342,7 +343,9 @@ class AudioProcessor:
         audio_float = audio_buffer.astype(np.float32) / INT16_MAX_FLOAT
 
         # 2. If no pre-computed segments exist, execute our ONNX VAD engine check
-        if speech_segments is None and not self.check_vad(audio_float, sample_rate):
+        if speech_segments is None and not self.check_vad(
+            audio_float, sample_rate
+        ):
             return ProcessorOutput(success=False)
 
         # Reuse the same float32 array for Pedalboard bandpass filtering
