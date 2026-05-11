@@ -239,6 +239,13 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
 
 
 class TranscribeAudioTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.storage_patcher = patch(
+            "backend.pipeline.transcription.transforms.stateful.storage.Client"
+        )
+        self.mock_storage_client = self.storage_patcher.start()
+        self.addCleanup(self.storage_patcher.stop)
+
     @patch(
         "backend.pipeline.transcription.services.transcribers.get_transcriber"
     )
@@ -320,6 +327,13 @@ class TranscribeAudioTest(unittest.TestCase):
 
 
 class SerializeAndEnrichTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.storage_patcher = patch(
+            "backend.pipeline.transcription.transforms.stateful.storage.Client"
+        )
+        self.mock_storage_client = self.storage_patcher.start()
+        self.addCleanup(self.storage_patcher.stop)
+
     def test_serialize_and_enrich(self) -> None:
         """Verifies that SerializeAndEnrichFn correctly enriches and serializes the transcript."""
         options = PipelineOptions(
@@ -477,6 +491,13 @@ class SerializeAndEnrichTest(unittest.TestCase):
 
 
 class OrderedBypassTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.storage_patcher = patch(
+            "backend.pipeline.transcription.transforms.stateful.storage.Client"
+        )
+        self.mock_storage_client = self.storage_patcher.start()
+        self.addCleanup(self.storage_patcher.stop)
+
     @patch("backend.pipeline.common.tracing_utils.with_tracer_context")
     @patch(
         "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
@@ -580,6 +601,13 @@ class OrderedBypassTest(unittest.TestCase):
 
 
 class OrderedStitchAudioTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.storage_patcher = patch(
+            "backend.pipeline.transcription.transforms.stateful.storage.Client"
+        )
+        self.mock_storage_client = self.storage_patcher.start()
+        self.addCleanup(self.storage_patcher.stop)
+
     @patch("backend.pipeline.common.tracing_utils.with_tracer_context")
     @patch(
         "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"

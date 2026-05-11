@@ -338,10 +338,10 @@ class AudioProcessor:
         if speech_segments is not None and not speech_segments:
             return ProcessorOutput(success=False)
 
-        # Pre-normalize raw integer PCM array to float32 ONCE
+        # Pre-normalize raw integer PCM array to float32
         audio_float = audio_buffer.astype(np.float32) / INT16_MAX_FLOAT
 
-        # 2. If no pre-computed segments exist, execute our ONNX VAD engine check (reusing float32 array)
+        # 2. If no pre-computed segments exist, execute our ONNX VAD engine check
         if speech_segments is None and not self.check_vad(audio_float, sample_rate):
             return ProcessorOutput(success=False)
 
