@@ -916,69 +916,6 @@ paths:
           schema:
             type: string
       x-google-backend: radio-transcription-api
-    delete:
-      operationId: DeleteFeed
-      responses:
-        "204":
-          description: No Content
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                properties:
-                  message:
-                    type: string
-                required:
-                  - message
-                type: object
-        "403":
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                properties:
-                  message:
-                    type: string
-                required:
-                  - message
-                type: object
-        "404":
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                properties:
-                  message:
-                    type: string
-                required:
-                  - message
-                type: object
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                properties:
-                  message:
-                    type: string
-                required:
-                  - message
-                type: object
-      description: |-
-        Deactivate a feed (soft delete).
-        Marks the feed as deactivated to preserve historical transcripts.
-      tags:
-        - Feeds
-      security:
-        - google_id_token: []
-      parameters:
-        - in: path
-          name: feedId
-          required: true
-          schema:
-            type: string
-      x-google-backend: radio-transcription-api
   /api/v1/feeds/{feedId}/reset:
     post:
       operationId: ResetFeed
@@ -1033,6 +970,70 @@ paths:
                 required:
                   - message
                 type: object
+      tags:
+        - Feeds
+      security:
+        - google_id_token: []
+      parameters:
+        - in: path
+          name: feedId
+          required: true
+          schema:
+            type: string
+      x-google-backend: radio-transcription-api
+  /api/v1/feeds/{feedId}/deactivate:
+    post:
+      operationId: DeactivateFeed
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      description: |-
+        Deactivate a feed (soft delete).
+        Marks the feed as deactivated to preserve historical transcripts.
       tags:
         - Feeds
       security:
