@@ -95,8 +95,8 @@ async def list_feeds(
     return await service.list_feeds()
 
 
-@app.delete(
-    "/v1/feeds/{feed_id}",
+@app.post(
+    "/v1/feeds/{feed_id}/deactivate",
     status_code=status.HTTP_204_NO_CONTENT,
     tags=["feeds"],
 )

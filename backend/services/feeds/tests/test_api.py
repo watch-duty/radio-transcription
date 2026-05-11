@@ -108,7 +108,7 @@ class TestFeedsAPI(unittest.TestCase):
         feed_id = uuid.uuid4()
         self.mock_service.deactivate_feed.return_value = True
 
-        response = self.client.delete(f"/v1/feeds/{feed_id}")
+        response = self.client.post(f"/v1/feeds/{feed_id}/deactivate")
 
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         self.mock_service.deactivate_feed.assert_called_once_with(str(feed_id))
@@ -117,7 +117,7 @@ class TestFeedsAPI(unittest.TestCase):
         """Test deactivating a non-existent feed returns 404."""
         feed_id = uuid.uuid4()
         self.mock_service.deactivate_feed.return_value = False
-        response = self.client.delete(f"/v1/feeds/{feed_id}")
+        response = self.client.post(f"/v1/feeds/{feed_id}/deactivate")
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_reset_feed_success(self) -> None:

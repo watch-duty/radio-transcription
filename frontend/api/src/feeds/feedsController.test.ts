@@ -171,16 +171,16 @@ describe('FeedsController', () => {
     });
   });
 
-  describe('deleteFeed', () => {
+  describe('deactivateFeed', () => {
     it('should return 204 on success', async () => {
       mockRequest.mockResolvedValueOnce({ status: 204 });
 
       const controller = new FeedsController();
-      await controller.deleteFeed('feed_123');
+      await controller.deactivateFeed('feed_123');
 
       expect(mockRequest).toHaveBeenCalledWith({
-        url: 'http://feeds-api.example.com/feed_123',
-        method: 'DELETE',
+        url: 'http://feeds-api.example.com/feed_123/deactivate',
+        method: 'POST',
       });
     });
 
@@ -192,7 +192,7 @@ describe('FeedsController', () => {
       mockRequest.mockRejectedValueOnce(error);
 
       const controller = new FeedsController();
-      await expect(controller.deleteFeed('feed_123')).rejects.toThrow(
+      await expect(controller.deactivateFeed('feed_123')).rejects.toThrow(
         /Not Found/
       );
     });
