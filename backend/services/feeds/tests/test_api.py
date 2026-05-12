@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from backend.pipeline.common.auth import verify_oidc_token
 from backend.pipeline.storage.feed_store import FeedStatus, SourceType
 from backend.services.feeds.main import app
-from backend.services.feeds.models import Feed
+from backend.services.feeds.models import Feed, Tag
 
 
 async def skip_auth() -> dict[str, str]:
@@ -87,7 +87,7 @@ class TestFeedsAPI(unittest.TestCase):
             external_id="ext_123",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
-            tags=[{"key": "county", "value": "Fulton"}],
+            tags=[Tag(key="county", value="Fulton")],
         )
         self.mock_service.create_feed.return_value = mock_feed
 
@@ -130,7 +130,7 @@ class TestFeedsAPI(unittest.TestCase):
             external_id="ext_123",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
-            tags=[{"key": "county", "value": "Fulton"}],
+            tags=[Tag(key="county", value="Fulton")],
         )
         self.mock_service.get_feed.return_value = mock_feed
 
