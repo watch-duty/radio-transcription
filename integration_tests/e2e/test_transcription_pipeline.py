@@ -1,10 +1,12 @@
 import asyncio
+import base64
 import logging
 import os
 import uuid
 
 import asyncpg
 import pytest
+import requests
 from google.cloud import pubsub_v1
 
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
@@ -75,9 +77,23 @@ def _publish_and_verify(
         duration_ms=1000,
     )
 
-    logger.info(f"Publishing to {topic}...")
-    logger.info(f"Publishing chunk with URI: {chunk.gcs_uri}")
-    publisher.publish(topic, chunk.SerializeToString(), gcs_uri=chunk.gcs_uri)
+    payload = {
+        "messages": [
+            {
+                "data": base64.b64encode(chunk.SerializeToString()).decode(
+                    "utf-8"
+                ),
+                "attributes": {"gcs_uri": chunk.gcs_uri},
+            }
+        ]
+    }
+
+    pubsub_emulator_host = os.environ["PUBSUB_EMULATOR_HOST"]
+    url = f"http://{pubsub_emulator_host}/v1/{topic}:publish"
+
+    logger.info(f"Publishing to {url}...")
+    response = requests.post(url, json=payload, timeout=10)
+    response.raise_for_status()
 
     return _verify_transcript_in_db(feed_id)
 
