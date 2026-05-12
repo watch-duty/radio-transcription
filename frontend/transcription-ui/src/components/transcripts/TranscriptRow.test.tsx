@@ -185,7 +185,7 @@ describe('TranscriptRow', () => {
     );
   });
 
-  it('blurs the transcript and disables the copy transcript button when redactTranscripts is true', () => {
+  it('blurs the transcript but keeps physical text selection and copy transcript capabilities when redactTranscripts is true', () => {
     render(
       <MemoryRouter>
         <TranscriptRow
@@ -208,10 +208,16 @@ describe('TranscriptRow', () => {
     const styles = window.getComputedStyle(transcriptText);
     expect(styles.filter).toBe('blur(6px)');
     expect(styles.opacity).toBe('0.6');
-    expect(styles.userSelect).toBe('none');
+    expect(styles.userSelect).not.toBe('none');
 
     const copyButton = screen.getAllByLabelText('copy transcript')[0];
     expect(copyButton).toBeTruthy();
-    expect((copyButton as HTMLButtonElement).disabled).toBe(true);
+    expect((copyButton as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(copyButton);
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      'This is a test transcription'
+    );
+    expect(mockTriggerSnackbar).toHaveBeenCalledWith('Transcript copied');
   });
 });

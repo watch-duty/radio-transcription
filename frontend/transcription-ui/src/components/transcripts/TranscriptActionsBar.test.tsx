@@ -94,7 +94,7 @@ describe('TranscriptActionsBar', () => {
     expect(mockSetRefreshInterval).toHaveBeenCalledWith(5000);
   });
 
-  it('renders the redact checkbox and toggles state when changed', () => {
+  it('renders the redact switch and toggles state when changed', () => {
     render(
       <TranscriptActionsBar
         searchedTimestamp={null}
@@ -109,13 +109,13 @@ describe('TranscriptActionsBar', () => {
       />
     );
 
-    const checkbox = screen.getByRole('checkbox', {
+    const redactSwitch = screen.getByRole('checkbox', {
       name: /Redact transcripts/i,
     });
-    expect(checkbox).toBeTruthy();
-    expect((checkbox as HTMLInputElement).checked).toBe(false);
+    expect(redactSwitch).toBeTruthy();
+    expect((redactSwitch as HTMLInputElement).checked).toBe(false);
 
-    fireEvent.click(checkbox);
+    fireEvent.click(redactSwitch);
     expect(mockSetRedactTranscripts).toHaveBeenCalledWith(true);
   });
 });

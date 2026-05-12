@@ -7,7 +7,6 @@ import { Tooltip } from '@mui/material';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import ButtonGroup from '@mui/material/ButtonGroup';
-import Checkbox from '@mui/material/Checkbox';
 import CircularProgress from '@mui/material/CircularProgress';
 import ClickAwayListener from '@mui/material/ClickAwayListener';
 import FormControlLabel from '@mui/material/FormControlLabel';
@@ -16,6 +15,7 @@ import MenuItem from '@mui/material/MenuItem';
 import MenuList from '@mui/material/MenuList';
 import Paper from '@mui/material/Paper';
 import Popper from '@mui/material/Popper';
+import Switch from '@mui/material/Switch';
 
 export interface TranscriptActionsBarProps {
   hasNewerTranscripts: boolean;
@@ -86,7 +86,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <FormControlLabel
           control={
-            <Checkbox
+            <Switch
               checked={redactTranscripts}
               onChange={(e) => setRedactTranscripts(e.target.checked)}
               size="small"
