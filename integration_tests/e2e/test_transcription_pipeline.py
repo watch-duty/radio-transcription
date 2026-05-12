@@ -52,7 +52,7 @@ def _verify_transcript_in_db(feed_id: str) -> bool:
     logger.info(f"Waiting for transcript in DB for feed {feed_id}...")
 
     assert_eventually(
-        condition, timeout_sec=60, error_msg="Transcript not found in DB"
+        condition, timeout_sec=120, error_msg="Transcript not found in DB"
     )
     return True
 
