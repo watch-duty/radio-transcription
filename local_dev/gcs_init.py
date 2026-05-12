@@ -67,12 +67,14 @@ if __name__ == "__main__":
     create_bucket(client, staging_bucket)
     create_bucket(client, canonical_bucket)
 
-    files_to_upload = [
-        ("test_bcfy.flac", "/app/data/test_bcfy.flac"),
-        ("test_dispatch_amador.flac", "/app/data/test_dispatch_amador.flac"),
-    ]
-
-    for remote_name, local_path in files_to_upload:
-        upload_file(client, staging_bucket, local_path, remote_name)
+    upload_file(
+        client, staging_bucket, "/app/data/test_bcfy.flac", "test_bcfy.flac"
+    )
+    upload_file(
+        client,
+        staging_bucket,
+        "/app/data/test_dispatch_amador.flac",
+        "test_dispatch_amador.flac",
+    )
 
     logger.info("GCS initialization complete.")
