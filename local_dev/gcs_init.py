@@ -1,6 +1,9 @@
+"""Initializes the Fake GCS server with required buckets and test files."""
+
 import logging
 import os
 import sys
+import time
 
 from google.cloud import storage
 
@@ -8,28 +11,61 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def init_gcs():
-    # The storage.Client() automatically respects STORAGE_EMULATOR_HOST if set
+def wait_for_gcs() -> None:
+    """Waits for the Fake GCS server to become ready."""
+    logger.info("Waiting for Fake GCS server...")
     client = storage.Client()
 
-    staging_bucket_name = os.environ["AUDIO_STAGING_BUCKET"]
-    canonical_bucket_name = os.environ["AUDIO_CANONICAL_BUCKET"]
-
-    # Create buckets if they don't exist
-    for name in [staging_bucket_name, canonical_bucket_name]:
-        bucket = client.bucket(name)
+    for _ in range(30):
         try:
-            if not bucket.exists():
-                client.create_bucket(name)
-                logger.info(f"Bucket '{name}' created.")
-            else:
-                logger.info(f"Bucket '{name}' already exists.")
-        except Exception as e:
-            logger.error(f"Failed to check/create bucket '{name}': {e}")
-            sys.exit(1)
+            list(client.list_buckets())
 
-    # Upload test files
-    staging_bucket = client.bucket(staging_bucket_name)
+        except Exception as e:
+            # Failures expected if Fake GCS server isn't ready yet.
+            logger.info(f"Fake GCS server not ready yet: {e}")
+            time.sleep(1)
+        else:
+            logger.info("Fake GCS server is ready.")
+            return
+
+    logger.error("Timed out waiting for Fake GCS server.")
+    sys.exit(1)
+
+
+def create_bucket(client: storage.Client, bucket_name: str) -> None:
+    """Creates a bucket if it does not exist."""
+    try:
+        client.create_bucket(bucket_name)
+        logger.info(f"Bucket '{bucket_name}' created.")
+    except Exception:
+        logger.exception(f"Failed to check/create bucket '{bucket_name}'")
+
+
+def upload_file(
+    client: storage.Client, bucket_name: str, local_path: str, remote_name: str
+) -> None:
+    """Uploads a file to the specified bucket."""
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(remote_name)
+    try:
+        blob.upload_from_filename(local_path)
+        logger.info(
+            f"Uploaded '{local_path}' to '{remote_name}' in bucket '{bucket_name}'."
+        )
+    except Exception:
+        logger.exception(f"Failed to upload '{local_path}'")
+
+
+if __name__ == "__main__":
+    wait_for_gcs()
+
+    client = storage.Client()
+
+    staging_bucket = os.environ["AUDIO_STAGING_BUCKET"]
+    canonical_bucket = os.environ["AUDIO_CANONICAL_BUCKET"]
+
+    create_bucket(client, staging_bucket)
+    create_bucket(client, canonical_bucket)
 
     files_to_upload = [
         ("test_bcfy.flac", "/app/data/test_bcfy.flac"),
@@ -37,16 +73,6 @@ def init_gcs():
     ]
 
     for remote_name, local_path in files_to_upload:
-        blob = staging_bucket.blob(remote_name)
-        try:
-            blob.upload_from_filename(local_path)
-            logger.info(
-                f"Uploaded '{local_path}' to '{remote_name}' in bucket '{staging_bucket_name}'."
-            )
-        except Exception as e:
-            logger.error(f"Failed to upload '{local_path}': {e}")
-            sys.exit(1)
+        upload_file(client, staging_bucket, local_path, remote_name)
 
-
-if __name__ == "__main__":
-    init_gcs()
+    logger.info("GCS initialization complete.")
