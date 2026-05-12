@@ -13,7 +13,6 @@ from google.api_core.retry import Retry
 from google.cloud import speech_v2 as cloud_speech
 from google.cloud.speech_v2 import SpeechClient
 
-from backend.pipeline.common.constants import BYTES_PER_SECOND_16KHZ_MONO
 from backend.pipeline.transcription.common.constants import (
     CHIRP_UNINTELLIGIBLE_MARKER,
     DEFAULT_CHIRP_LANGUAGE_CODES,
@@ -53,6 +52,7 @@ class Transcriber(abc.ABC):
         self,
         *,
         audio_data: bytes,
+        duration_ms: int,
     ) -> str | None:
         """Transcribes the raw audio bytes and returns the text transcript."""
 
@@ -161,20 +161,20 @@ class GoogleChirpV3Transcriber(Transcriber):
         self,
         *,
         audio_data: bytes,
+        duration_ms: int,
     ) -> str | None:
         """Transcribes the given audio payload."""
         if not self.client:
             msg = "Transcriber client used before setup() was called."
             raise RuntimeError(msg)
 
-        duration_sec = len(audio_data) / BYTES_PER_SECOND_16KHZ_MONO
-        if duration_sec > 60.0:
-            msg = f"Audio payload too long for synchronous API: {duration_sec:.2f}s"
+        if duration_ms > 60000:
+            msg = f"Audio payload too long for synchronous API: {duration_ms / 1000:.2f}s"
             raise ValueError(msg)
 
         logger.info(
             "Transcribing %.3fs of audio",
-            duration_sec,
+            duration_ms / 1000,
         )
 
         request = cloud_speech.RecognizeRequest(
