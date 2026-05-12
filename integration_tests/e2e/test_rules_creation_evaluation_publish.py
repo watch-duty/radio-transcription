@@ -8,6 +8,7 @@ import uuid
 import requests
 
 from backend.pipeline.schema_types.transcribed_audio_pb2 import TranscribedAudio
+from integration_tests.feed_utils import create_test_feed  # noqa: F401
 from integration_tests.utils import assert_eventually
 
 # Constants from environment with sensible defaults for local development

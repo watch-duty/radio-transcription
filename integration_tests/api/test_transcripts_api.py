@@ -8,6 +8,8 @@ import asyncpg
 import httpx
 import pytest
 
+from integration_tests.feed_utils import create_test_feed  # noqa: F401
+
 TRANSCRIPTS_API_HOST = os.environ.get("TRANSCRIPTS_API_HOST", "localhost:8087")
 
 
