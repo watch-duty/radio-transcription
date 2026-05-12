@@ -1,0 +1,595 @@
+"""Core Stitcher Engine executing non-Beam stitching, VAD analysis, and flushes.
+
+This module defines the pure-Python domain logic for audio segment stitching
+completely decoupled from Apache Beam runtime boundaries. It exposes:
+- StitcherEngine: Coordinates GCS audio downloads, lazy resource initialization,
+  Voice Activity Detection (VAD) evaluation, and FSM transition tracking.
+- StaleTimerManager: A context helper encapsulating event-time and wall-clock
+  timer setups for high-level stateful flushes.
+
+By abstracting all non-Beam logic into this stateless execution engine, we
+enforce 100% pickling/serialization safety for Dataflow workers and achieve
+straightforward, light-speed unit testing capabilities.
+"""
+
+import logging as std_logging
+from collections.abc import Callable, Iterator
+from dataclasses import replace
+from typing import Any, Literal
+
+import numpy as np
+from google.cloud import storage
+
+from backend.pipeline.common import constants as common_constants
+from backend.pipeline.transcription.audio import audio_processor, vad
+from backend.pipeline.transcription.common import constants as trans_constants
+from backend.pipeline.transcription.common import datatypes
+from backend.pipeline.transcription.common import logging as trans_logging
+from backend.pipeline.transcription.common import utils as trans_utils
+from backend.pipeline.transcription.state import stitcher_state
+
+logger = trans_logging.get_logger(
+    __name__, {"system": "transcription", "component": "stitcher-engine"}
+)
+
+
+def _get_task_logger(
+    feed_id: str, session_id: str | None, component: str
+) -> std_logging.LoggerAdapter:
+    """Contextual logger creation helper."""
+    logger_obj = trans_logging.get_logger(
+        __name__,
+        {
+            "system": "transcription",
+            "component": component,
+            "feed_id": feed_id,
+            "session_id": session_id or "none",
+        },
+    )
+    if not isinstance(logger_obj, std_logging.LoggerAdapter):
+        msg = "Expected LoggerAdapter from get_logger with extra parameters"
+        raise TypeError(msg)
+    return logger_obj
+
+
+class StitcherEngine:
+    """Pure Python stitching engine completely decoupled from Apache Beam watermark timers.
+
+    Encapsulates GCS downloads, VAD execution, FSM state tracking, and chunk flushes.
+    """
+
+    def __init__(
+        self,
+        stitch_config: datatypes.StitchAudioConfig,
+        order_config: datatypes.OrderRestorerConfig,
+        vad_config: str = "{}",
+        vad_instance: vad.VoiceActivityDetector | None = None,
+        gcs_client_instance: storage.Client | None = None,
+        vad_factory: Callable[[str], vad.VoiceActivityDetector] | None = None,
+        gcs_factory: Callable[[], storage.Client] | None = None,
+    ) -> None:
+        self.stitch_config = stitch_config
+        self.order_config = order_config
+        self.vad_config = vad_config
+
+        # Instantiate the stateless AudioProcessor
+        self.processor = audio_processor.AudioProcessor(
+            vad_config=vad_config,
+            vad_instance=vad_instance,
+            gcs_client_instance=gcs_client_instance,
+            vad_factory=vad_factory,
+            gcs_factory=gcs_factory,
+        )
+
+    def setup(self) -> None:
+        """Initializes the processor ONNXRuntime inference sessions and Numba compilation."""
+        self.processor.setup()
+
+    def process_ordering_chunk(
+        self,
+        chunk: datatypes.BufferedChunk,
+        feed_id: str,
+        curr_context: datatypes.TransmissionContext,
+        transmission_context_state: Any,
+        transmission_buffer_state: Any,
+        last_start_ms_state: Any,
+        timer_manager: Any,
+        previous_expected_ts: int | None,
+        *,
+        is_backfill: bool,
+    ) -> tuple[
+        list[
+            tuple[str, datatypes.FlushRequest]
+            | tuple[Literal["transcription_dlq"], dict[str, Any]]
+        ],
+        int,
+    ]:
+        """Stitches a single element after session validation and OOO buffer restoral.
+
+        Args:
+            chunk: The buffered chunk payload.
+            feed_id: Unique identifier of the active feed.
+            curr_context: The current transmission sequence context.
+            transmission_context_state: Runtime Beam state mapping for contexts.
+            transmission_buffer_state: Runtime Beam state mapping for audio buffer.
+            last_start_ms_state: Runtime Beam state mapping for last start time.
+            timer_manager: Contextual timer scheduler interface.
+            previous_expected_ts: The expected next sequence timestamp baseline.
+            is_backfill: True if the chunk falls behind the real-time watermark.
+
+        Returns:
+            A tuple of:
+                - A list of elements to emit (FlushRequest or TaggedOutput DLQ).
+                - The next expected sequence timestamp.
+        """
+        task_logger = _get_task_logger(
+            feed_id, curr_context.session_id, "transcription-stitcher"
+        )
+
+        # Instantiate our state machine on top of our stitch settings
+        state_machine = stitcher_state.AudioStitchingStateMachine(
+            self.stitch_config
+        )
+
+        chunk_outputs, curr_context, next_expected_ts = (
+            self._process_single_stitch_chunk(
+                chunk=chunk,
+                feed_id=feed_id,
+                curr_context=curr_context,
+                transmission_context_state=transmission_context_state,
+                transmission_buffer_state=transmission_buffer_state,
+                last_start_ms_state=last_start_ms_state,
+                timer_manager=timer_manager,
+                state_machine=state_machine,
+                previous_expected_ts=previous_expected_ts,
+                task_logger=task_logger,
+                is_backfill=is_backfill,
+            )
+        )
+
+        # Write back the context state update
+        transmission_context_state.write(curr_context)
+        return chunk_outputs, next_expected_ts
+
+    def handle_stale_transmission(
+        self,
+        key: str,
+        transmission_buffer: Any,
+        transmission_context: Any,
+        last_start_ms_state: Any,
+        timer_manager: Any,
+    ) -> Iterator[
+        tuple[str, datatypes.FlushRequest]
+        | tuple[Literal["transcription_dlq"], dict[str, Any]]
+    ]:
+        """Orchestrates stale flushes when watermarks cross the timeout threshold.
+
+        Args:
+            key: Unique key of the active feed partition.
+            transmission_buffer: Runtime Beam state mapping for audio buffer.
+            transmission_context: Runtime Beam state mapping for contexts.
+            last_start_ms_state: Runtime Beam state mapping for last start time.
+            timer_manager: Contextual timer scheduler interface.
+
+        Yields:
+            Emitted elements (FlushRequest or TaggedOutput DLQ).
+        """
+        feed_id = key
+        curr_ctx = (
+            transmission_context.read() or datatypes.TransmissionContext()
+        )
+        session_id = curr_ctx.session_id or "unknown"
+
+        task_logger = _get_task_logger(
+            feed_id, session_id, "transcription-stitcher"
+        )
+
+        start_time_ms = curr_ctx.stale_start_time_ms
+        end_time_ms = curr_ctx.last_end_time_ms
+        processed_uris = curr_ctx.contributing_audio_uris
+        audio_buffer = list(transmission_buffer.read())
+
+        if (
+            audio_buffer
+            and start_time_ms is not None
+            and end_time_ms is not None
+            and curr_ctx.buffer_start_time_ms is not None
+        ):
+            if curr_ctx.session_id is None:
+                msg = "Session ID cannot be None in handle_stale_transmission"
+                raise ValueError(msg)
+
+            if curr_ctx.feed_metadata is None:
+                msg = (
+                    "feed_metadata cannot be None in handle_stale_transmission"
+                )
+                raise ValueError(msg)
+
+            try:
+                time_range = datatypes.TimeRange(
+                    start_ms=start_time_ms, end_ms=end_time_ms
+                )
+                transmission_id = trans_utils.generate_transmission_id(
+                    curr_ctx.session_id,
+                    time_range,
+                )
+
+                task_logger.info(
+                    f"[Stale Timer] Fired for session {session_id}. Emitting buffered contents {transmission_id}."
+                )
+
+                yield (
+                    feed_id,
+                    datatypes.FlushRequest(
+                        buffer=np.concatenate(audio_buffer),
+                        feed_id=feed_id,
+                        session_id=curr_ctx.session_id,
+                        contributing_audio_uris=processed_uris,
+                        time_range=time_range,
+                        missing_prior_context=curr_ctx.missing_prior_context,
+                        missing_post_context=True,
+                        start_audio_offset_ms=curr_ctx.start_audio_offset_ms,
+                        end_audio_offset_ms=end_time_ms
+                        - curr_ctx.buffer_start_time_ms,
+                        transmission_id=transmission_id,
+                        feed_metadata=curr_ctx.feed_metadata,
+                        sample_rate=curr_ctx.sample_rate
+                        or common_constants.SAMPLE_RATE_HZ,
+                        traceparent=curr_ctx.traceparent,
+                    ),
+                )
+            except Exception as e:
+                if not self.stitch_config.route_to_dlq:
+                    raise
+                task_logger.exception(
+                    "Error yielding stale buffer for feed %s", feed_id
+                )
+                yield (
+                    "transcription_dlq",
+                    {"error": str(e), "feed_id": feed_id, "stale_flush": True},
+                )
+
+        # Clear state context cleanly
+        transmission_context.write(
+            datatypes.TransmissionContext(feed_metadata=curr_ctx.feed_metadata)
+        )
+        transmission_buffer.clear()
+        timer_manager.clear()
+
+    def _apply_flush_action(
+        self,
+        action: datatypes.FlushAction,
+        transmission_context: Any,
+        transmission_buffer: Any,
+        last_start_ms_state: Any,
+        timer_manager: Any,
+        session_id: str,
+    ) -> Iterator[tuple[str, datatypes.FlushRequest]]:
+        """Emits a structured FlushRequest payload downstream and resets internal state fields."""
+        task_logger = _get_task_logger(
+            action.feed_id, session_id, "transcription-stitcher"
+        )
+
+        curr_ctx = (
+            transmission_context.read() or datatypes.TransmissionContext()
+        )
+        processed_uris = action.contributing_audio_uris or list(
+            curr_ctx.contributing_audio_uris
+        )
+
+        if not action.clear_state:
+            # Isolated/Late chunk: process buffer individually
+            audio_buffer = action.isolated_audio_buffer
+        else:
+            # Normal or stale flush: combine buffer array
+            audio_buffer = action.isolated_audio_buffer or list(
+                transmission_buffer.read()
+            )
+
+        if audio_buffer:
+            transmission_id = trans_utils.generate_transmission_id(
+                session_id,
+                action.speech_time_range,
+            )
+            task_logger.info(
+                f"[Flush] Emitting transmission {transmission_id} with {len(processed_uris)} chunks"
+            )
+
+            if curr_ctx.feed_metadata is None:
+                msg = "feed_metadata cannot be None in _apply_flush_action"
+                raise ValueError(msg)
+
+            current_start_ms = action.speech_time_range.start_ms
+            last_start_ms = last_start_ms_state.read()
+
+            if (
+                last_start_ms is not None
+                and abs(current_start_ms - last_start_ms) < 100
+            ):
+                task_logger.warning(
+                    f"Potential growing/overlapping transmission detected! "
+                    f"Starts at nearly the same time ({current_start_ms}ms) as previous ({last_start_ms}ms)."
+                )
+
+            last_start_ms_state.write(current_start_ms)
+
+            yield (
+                action.feed_id,
+                datatypes.FlushRequest(
+                    buffer=np.concatenate(audio_buffer),
+                    feed_id=action.feed_id,
+                    session_id=session_id,
+                    contributing_audio_uris=processed_uris,
+                    time_range=action.speech_time_range,
+                    missing_prior_context=action.missing_prior_context,
+                    missing_post_context=action.missing_post_context,
+                    start_audio_offset_ms=action.start_audio_offset_ms,
+                    end_audio_offset_ms=action.end_audio_offset_ms,
+                    speech_segments=action.speech_segments,
+                    transmission_id=transmission_id,
+                    feed_metadata=curr_ctx.feed_metadata,
+                    sample_rate=curr_ctx.sample_rate
+                    or common_constants.SAMPLE_RATE_HZ,
+                    traceparent=action.traceparent,
+                ),
+            )
+
+        if action.clear_state:
+            transmission_context.write(
+                datatypes.TransmissionContext(
+                    feed_metadata=curr_ctx.feed_metadata
+                )
+            )
+            transmission_buffer.clear()
+            timer_manager.clear()
+
+    def _process_single_stitch_chunk(
+        self,
+        chunk: datatypes.BufferedChunk,
+        feed_id: str,
+        curr_context: datatypes.TransmissionContext,
+        transmission_context_state: Any,
+        transmission_buffer_state: Any,
+        last_start_ms_state: Any,
+        timer_manager: Any,
+        state_machine: stitcher_state.AudioStitchingStateMachine,
+        previous_expected_ts: int | None,
+        task_logger: Any,
+        *,
+        is_backfill: bool,
+    ) -> tuple[
+        list[
+            tuple[str, datatypes.FlushRequest]
+            | tuple[Literal["transcription_dlq"], dict[str, Any]]
+        ],
+        datatypes.TransmissionContext,
+        int,
+    ]:
+        """Downloads and stitches a single chunk through the state machine.
+
+        Args:
+            chunk: The buffered chunk payload.
+            feed_id: Unique identifier of the active feed.
+            curr_context: The current transmission sequence context.
+            transmission_context_state: Runtime Beam state mapping for contexts.
+            transmission_buffer_state: Runtime Beam state mapping for audio buffer.
+            last_start_ms_state: Runtime Beam state mapping for last start time.
+            timer_manager: Contextual timer scheduler interface.
+            state_machine: Audio stitching FSM logic.
+            previous_expected_ts: The expected next sequence timestamp baseline.
+            task_logger: Contextual logger instance.
+            is_backfill: True if the chunk falls behind the real-time watermark.
+
+        Returns:
+            A tuple of:
+                - A list of elements to emit (FlushRequest or TaggedOutput DLQ).
+                - The updated transmission sequence context.
+                - The next expected sequence timestamp.
+        """
+        from backend.pipeline.common.tracing_utils import (  # noqa: PLC0415
+            with_tracer_context,
+        )
+
+        chunk_outputs = []
+        traceparent = chunk.traceparent or ""
+
+        if curr_context.session_id is None:
+            msg = "Session ID cannot be None in _process_single_stitch_chunk"
+            raise ValueError(msg)
+
+        feed_metadata = curr_context.feed_metadata
+        if feed_metadata is None:
+            msg = "feed_metadata cannot be None in _process_single_stitch_chunk"
+            raise ValueError(msg)
+
+        try:
+            with with_tracer_context(
+                traceparent,
+                "stitching_single_chunk",
+                "backend.pipeline.transcription.transforms.stateful",
+            ):
+                if (
+                    previous_expected_ts is not None
+                    and chunk.timestamp_ms > previous_expected_ts
+                ):
+                    # watermark contiguous gap, clear prior tail primordial state
+                    curr_context = replace(curr_context, prior_audio_tail=None)
+
+                # 1. Download audio and run speech detection
+                task_logger.debug(
+                    f"[Download] Downloading audio for {chunk.gcs_uri}"
+                )
+                chunk_data = self.processor.download_audio_and_detect(
+                    chunk.gcs_uri,
+                    chunk.timestamp_ms,
+                    prior_audio=curr_context.prior_audio_tail,
+                )
+                task_logger.debug(
+                    f"[Download] Downloaded audio for {chunk.gcs_uri}"
+                )
+
+                time_range = datatypes.TimeRange(
+                    start_ms=chunk.timestamp_ms,
+                    end_ms=chunk.timestamp_ms + chunk_data.duration_ms,
+                )
+
+                # 2. Quick bypass check
+                if self.stitch_config.bypass_stitching:
+                    chunk_outputs.append(
+                        (
+                            feed_id,
+                            datatypes.FlushRequest(
+                                buffer=chunk_data.audio,
+                                feed_id=feed_id,
+                                session_id=curr_context.session_id or "unknown",
+                                contributing_audio_uris=[chunk.gcs_uri],
+                                time_range=time_range,
+                                missing_prior_context=False,
+                                missing_post_context=False,
+                                start_audio_offset_ms=0,
+                                end_audio_offset_ms=None,
+                                transmission_id=trans_utils.generate_transmission_id(
+                                    curr_context.session_id or "unknown",
+                                    time_range,
+                                ),
+                                feed_metadata=feed_metadata,
+                                sample_rate=chunk_data.sample_rate,
+                                traceparent=chunk.traceparent,
+                            ),
+                        )
+                    )
+                    return (
+                        chunk_outputs,
+                        curr_context,
+                        chunk.timestamp_ms + chunk_data.duration_ms,
+                    )
+
+                payload = datatypes.DownloadedChunkPayload(
+                    chunk.gcs_uri,
+                    chunk_data,
+                    curr_context.session_id or "unknown",
+                )
+
+                # 3. Initialize State Machine context
+                ctx = datatypes.StitcherContext(
+                    feed_id=feed_id,
+                    current_gcs_uri=chunk.gcs_uri,
+                    session_id=curr_context.session_id,
+                    contributing_audio_uris=curr_context.contributing_audio_uris.copy(),
+                    file_start_ms=chunk.timestamp_ms,
+                    last_segment_end_time_ms=curr_context.last_end_time_ms,
+                    transmission_start_time_ms=curr_context.stale_start_time_ms,
+                    buffer_start_time_ms=curr_context.buffer_start_time_ms,
+                    missing_prior_context=curr_context.missing_prior_context,
+                    expected_next_chunk_start_ms=previous_expected_ts,
+                    start_audio_offset_ms=curr_context.start_audio_offset_ms,
+                    end_audio_offset_ms=None,
+                    buffer_duration_ms=curr_context.buffer_duration_ms,
+                    traceparent=curr_context.traceparent,
+                )
+
+                actions = state_machine.process_chunk(payload.chunk_data, ctx)
+
+                # 4. Apply outputs
+                outputs, curr_context = self._apply_stitcher_actions(
+                    actions=actions,
+                    curr_context=curr_context,
+                    transmission_context_state=transmission_context_state,
+                    transmission_buffer_state=transmission_buffer_state,
+                    last_start_ms_state=last_start_ms_state,
+                    timer_manager=timer_manager,
+                    chunk_data=chunk_data,
+                    ctx=ctx,
+                    is_backfill=is_backfill,
+                )
+
+                return (
+                    outputs,
+                    curr_context,
+                    chunk.timestamp_ms + chunk_data.duration_ms,
+                )
+
+        except Exception as e:
+            if not self.stitch_config.route_to_dlq:
+                raise
+            task_logger.exception(
+                "Error processing chunk %s for feed %s",
+                chunk.gcs_uri,
+                feed_id,
+            )
+            dlq_payload = {
+                "feed_id": feed_id,
+                "gcs_uri": chunk.gcs_uri,
+                "session_id": curr_context.session_id or "unknown",
+                "error_message": str(e),
+                "traceparent": traceparent,
+            }
+            fallback_expected = previous_expected_ts or (
+                chunk.timestamp_ms + common_constants.MS_PER_SECOND
+            )
+            return (
+                [("transcription_dlq", dlq_payload)],
+                curr_context,
+                fallback_expected,
+            )
+
+    def _apply_stitcher_actions(
+        self,
+        actions: list[datatypes.StateMachineAction],
+        curr_context: datatypes.TransmissionContext,
+        transmission_context_state: Any,
+        transmission_buffer_state: Any,
+        last_start_ms_state: Any,
+        timer_manager: Any,
+        chunk_data: datatypes.AudioChunkData,
+        ctx: datatypes.StitcherContext,
+        *,
+        is_backfill: bool,
+    ) -> tuple[list[tuple[str, Any]], datatypes.TransmissionContext]:
+        """Processes and executes state transitions generated by the stitching state machine."""
+        chunk_outputs = []
+        for action in actions:
+            match action:
+                case datatypes.FlushAction():
+                    chunk_outputs.extend(
+                        list(
+                            self._apply_flush_action(
+                                action,
+                                transmission_context_state,
+                                transmission_buffer_state,
+                                last_start_ms_state,
+                                timer_manager,
+                                curr_context.session_id or "unknown",
+                            )
+                        )
+                    )
+                case datatypes.AppendBufferAction():
+                    transmission_buffer_state.add(action.audio_buffer)
+                case datatypes.UpdateStateAction():
+                    # Priming Strategy: cache tail of contiguous samples
+                    priming_samples = int(
+                        trans_constants.VAD_DEFAULT_PRIMING_SEC
+                        * chunk_data.sample_rate
+                    )
+                    prior_tail = (
+                        chunk_data.audio[-priming_samples:]
+                        if len(chunk_data.audio) > 0
+                        else None
+                    )
+                    curr_context = replace(
+                        curr_context,
+                        contributing_audio_uris=ctx.contributing_audio_uris,
+                        last_end_time_ms=ctx.last_segment_end_time_ms,
+                        stale_start_time_ms=ctx.transmission_start_time_ms,
+                        buffer_start_time_ms=ctx.buffer_start_time_ms,
+                        missing_prior_context=ctx.missing_prior_context,
+                        start_audio_offset_ms=ctx.start_audio_offset_ms,
+                        buffer_duration_ms=ctx.buffer_duration_ms,
+                        prior_audio_tail=prior_tail,
+                    )
+                case datatypes.ScheduleStaleTimerAction():
+                    timer_manager.schedule(
+                        deadline_ms=action.deadline_ms,
+                        is_backfill=is_backfill,
+                    )
+        return chunk_outputs, curr_context
