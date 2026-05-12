@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import uuid
 
 import asyncpg
 import pytest
@@ -68,7 +69,7 @@ def _publish_and_verify(
     staging_bucket = os.environ["AUDIO_STAGING_BUCKET"]
     chunk = AudioChunk(
         feed_id=feed_id,
-        session_id="session-123",
+        session_id=str(uuid.uuid4()),
         gcs_uri=f"gs://{staging_bucket}/test_fire_audio.flac",
         feed_name=feed_name,
         duration_ms=1000,
