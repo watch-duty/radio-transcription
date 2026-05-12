@@ -1,4 +1,14 @@
-"""Apache Beam DoFns for mapping incoming stream messages and downloading audio chunks."""
+"""Stateless Apache Beam transforms for the radio transcription pipeline.
+
+This module defines the stateless mapper and serializer DoFns in our Apache
+Beam DAG. These transforms perform zero stateful buffering or timer scheduling
+and are highly optimized for parallel worker execution:
+1. ParseAndKeyFn: Unmarshals raw Pub/Sub messages, validates protobuf chunk
+   fields, extracts Telemetry tracing context, and sets a deterministic key.
+2. SerializeFn: Formats downstream TranscriptionResult payloads into standard
+   TranscribedAudio protobuf formats, serializes them, and prepares them for
+   egress Pub/Sub topic publication.
+"""
 
 from collections.abc import Iterator
 from typing import Any, Literal, override
