@@ -1,20 +1,19 @@
 import React, { useMemo, useState } from 'react';
 
-import Box from '@mui/material/Box';
-import Paper from '@mui/material/Paper';
-import Typography from '@mui/material/Typography';
-import { useTheme } from '@mui/material/styles';
-import type { Transcript } from '@transcription/common';
-import WavesurferPlayer from '@wavesurfer/react';
 import PauseIcon from '@mui/icons-material/PauseCircleFilledOutlined';
 import PlayArrowIcon from '@mui/icons-material/PlayCircleFilledOutlined';
 import StopIcon from '@mui/icons-material/StopCircle';
+import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
+import Paper from '@mui/material/Paper';
+import Typography from '@mui/material/Typography';
+import { Theme, useTheme } from '@mui/material/styles';
+import type { Transcript } from '@transcription/common';
+import WavesurferPlayer from '@wavesurfer/react';
 
 import { getAudioUrl } from '../../utils/audioUtils';
 import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { CustomAlertIcon } from '../common/AlertIcon';
-
 
 interface AudioDisplayProps {
   transcripts: Transcript[];
@@ -48,83 +47,83 @@ interface TimelineClipProps {
   };
   onClipClick: (transmissionId: string) => void;
   isDarkTheme: boolean;
-  theme: any;
+  theme: Theme;
 }
 
-const TimelineClip = React.memo(({
-  clip,
-  onClipClick,
-  isDarkTheme,
-  theme,
-}: TimelineClipProps) => {
-  return (
-    <Box
-      onClick={() => onClipClick(clip.id)}
-      sx={{
-        position: 'absolute',
-        left: `${clip.left}%`,
-        width: `${clip.width}%`,
-        height: '100%',
-        bgcolor: (clip.isPlaying || clip.isHighlighted)
-          ? isDarkTheme
-            ? 'rgba(255, 255, 255, 0.1)'
-            : 'rgba(0, 0, 0, 0.05)'
-          : 'transparent',
-        cursor: 'pointer',
-        '&:hover': {
-          bgcolor: (clip.isPlaying || clip.isHighlighted)
-            ? isDarkTheme
-              ? 'rgba(255, 255, 255, 0.2)'
-              : 'rgba(0, 0, 0, 0.1)'
-            : isDarkTheme
-              ? 'rgba(255, 255, 255, 0.03)'
-              : 'rgba(0, 0, 0, 0.03)',
-        },
-      }}
-    >
-      {clip.hasAlert && (
-        <CustomAlertIcon
-          color="warning"
-          fontSize="medium"
-          data-testid="warning-icon"
-          sx={{
-            position: 'absolute',
-            // This centers the icon over the audio start, rather than left-aligned at the audio start.
-            left: -11,
-            // This provides enough buffer to move the icon on top of the clip view rather than on it.
-            top: -25,
-            zIndex: 1,
-            borderRadius: '50%',
-          }}
+const TimelineClip = React.memo(
+  ({ clip, onClipClick, isDarkTheme, theme }: TimelineClipProps) => {
+    return (
+      <Box
+        onClick={() => onClipClick(clip.id)}
+        sx={{
+          position: 'absolute',
+          left: `${clip.left}%`,
+          width: `${clip.width}%`,
+          height: '100%',
+          bgcolor:
+            clip.isPlaying || clip.isHighlighted
+              ? isDarkTheme
+                ? 'rgba(255, 255, 255, 0.1)'
+                : 'rgba(0, 0, 0, 0.05)'
+              : 'transparent',
+          cursor: 'pointer',
+          '&:hover': {
+            bgcolor:
+              clip.isPlaying || clip.isHighlighted
+                ? isDarkTheme
+                  ? 'rgba(255, 255, 255, 0.2)'
+                  : 'rgba(0, 0, 0, 0.1)'
+                : isDarkTheme
+                  ? 'rgba(255, 255, 255, 0.03)'
+                  : 'rgba(0, 0, 0, 0.03)',
+          },
+        }}
+      >
+        {clip.hasAlert && (
+          <CustomAlertIcon
+            color="warning"
+            fontSize="medium"
+            data-testid="warning-icon"
+            sx={{
+              position: 'absolute',
+              // This centers the icon over the audio start, rather than left-aligned at the audio start.
+              left: -11,
+              // This provides enough buffer to move the icon on top of the clip view rather than on it.
+              top: -25,
+              zIndex: 1,
+              borderRadius: '50%',
+            }}
+          />
+        )}
+        <WavesurferPlayer
+          url={clip.url}
+          waveColor={theme.palette.text.secondary}
+          progressColor={theme.palette.text.primary}
+          cursorColor="transparent"
+          barWidth={0.5}
+          barGap={0.5}
+          height={60}
+          interact={false}
         />
-      )}
-      <WavesurferPlayer
-        url={clip.url}
-        waveColor={theme.palette.text.secondary}
-        progressColor={theme.palette.text.primary}
-        cursorColor="transparent"
-        barWidth={0.5}
-        barGap={0.5}
-        height={60}
-        interact={false}
-      />
-    </Box>
-  );
-}, (prevProps, nextProps) => {
-  // This prevents the clip from re-rendering when the parent component re-renders, 
-  // unless the props actually change.
-  return (
-    prevProps.clip.id === nextProps.clip.id &&
-    prevProps.clip.url === nextProps.clip.url &&
-    prevProps.clip.left === nextProps.clip.left &&
-    prevProps.clip.width === nextProps.clip.width &&
-    prevProps.clip.isPlaying === nextProps.clip.isPlaying &&
-    prevProps.clip.isHighlighted === nextProps.clip.isHighlighted &&
-    prevProps.clip.hasAlert === nextProps.clip.hasAlert &&
-    prevProps.isDarkTheme === nextProps.isDarkTheme &&
-    prevProps.theme === nextProps.theme
-  );
-});
+      </Box>
+    );
+  },
+  (prevProps, nextProps) => {
+    // This prevents the clip from re-rendering when the parent component re-renders,
+    // unless the props actually change.
+    return (
+      prevProps.clip.id === nextProps.clip.id &&
+      prevProps.clip.url === nextProps.clip.url &&
+      prevProps.clip.left === nextProps.clip.left &&
+      prevProps.clip.width === nextProps.clip.width &&
+      prevProps.clip.isPlaying === nextProps.clip.isPlaying &&
+      prevProps.clip.isHighlighted === nextProps.clip.isHighlighted &&
+      prevProps.clip.hasAlert === nextProps.clip.hasAlert &&
+      prevProps.isDarkTheme === nextProps.isDarkTheme &&
+      prevProps.theme === nextProps.theme
+    );
+  }
+);
 
 export function AudioDisplay({
   transcripts,
@@ -145,7 +144,9 @@ export function AudioDisplay({
     string | null
   >(null);
   const [prevPlayingId, setPrevPlayingId] = useState<string | null>(null);
-  const [prevHighlightedId, setPrevHighlightedId] = useState<string | null>(null);
+  const [prevHighlightedId, setPrevHighlightedId] = useState<string | null>(
+    null
+  );
   const [prevUserDuration, setPrevUserDuration] = useState<string | null>(
     userDuration ?? null
   );
@@ -184,7 +185,7 @@ export function AudioDisplay({
     setPrevPlayingId(playingId);
     setPrevHighlightedId(highlightedTransmissionId);
     setPrevUserDuration(userDuration ?? null);
-    
+
     const targetId = playingId || highlightedTransmissionId;
     if (targetId) {
       const targetTranscript = transcripts.find(
@@ -193,14 +194,14 @@ export function AudioDisplay({
       if (targetTranscript) {
         const tStart = new Date(targetTranscript.startTimestamp).getTime();
         const tEnd = new Date(targetTranscript.endTimestamp).getTime();
- 
+
         const currentEndTime =
           windowEndTime ||
           (firstTranscript
             ? new Date(firstTranscript.endTimestamp).getTime()
             : 0);
         const currentStartTime = currentEndTime - windowDurationMs;
- 
+
         if (tStart < currentStartTime || tEnd > currentEndTime) {
           const newEndTime = tStart + windowDurationMs / 2;
           setWindowEndTime(newEndTime);
@@ -267,11 +268,23 @@ export function AudioDisplay({
 
   return (
     <Box sx={{ display: 'flex', alignItems: 'flex-start', width: '100%' }}>
-      <Box sx={{ display: 'flex', mr: 1, alignItems: 'center', height: '60px' }}>
-        <IconButton onClick={onStop} size="small" color="primary" aria-label="stop">
+      <Box
+        sx={{ display: 'flex', mr: 1, alignItems: 'center', height: '60px' }}
+      >
+        <IconButton
+          onClick={onStop}
+          size="small"
+          color="primary"
+          aria-label="stop"
+        >
           <StopIcon />
         </IconButton>
-        <IconButton onClick={onTogglePlayPause} size="small" color="primary" aria-label={isPlaying ? 'pause' : 'play'}>
+        <IconButton
+          onClick={onTogglePlayPause}
+          size="small"
+          color="primary"
+          aria-label={isPlaying ? 'pause' : 'play'}
+        >
           {isPlaying ? <PauseIcon /> : <PlayArrowIcon />}
         </IconButton>
       </Box>
@@ -312,7 +325,9 @@ export function AudioDisplay({
           )}
         </Paper>
         {transcripts.length > 0 && (
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 0.5 }}>
+          <Box
+            sx={{ display: 'flex', justifyContent: 'space-between', mt: 0.5 }}
+          >
             {Array.from({ length: 4 }).map((_, i) => (
               <Typography key={i} variant="caption" color="text.secondary">
                 {formatTime(startTime + (i / 3) * windowDuration)}

@@ -1,12 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-} from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 import AudioPlayer from './AudioPlayer';
 
@@ -39,7 +34,10 @@ describe('AudioPlayer', () => {
     const button = screen.getByLabelText('play');
     fireEvent.click(button);
 
-    expect(mockOnToggleAudio).toHaveBeenCalledWith('123', 'gs://bucket/audio.mp3');
+    expect(mockOnToggleAudio).toHaveBeenCalledWith(
+      '123',
+      'gs://bucket/audio.mp3'
+    );
   });
 
   it('renders pause button when playing this transmission', () => {

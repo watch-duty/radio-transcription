@@ -10,8 +10,15 @@ export interface AudioPlayerProps {
   onToggleAudio: (transmissionId: string, audioUri: string) => void;
 }
 
-function AudioPlayer({ audioUri, transmissionId, currentlyPlayingTransmissionId, isPlaying, onToggleAudio }: AudioPlayerProps) {
-  const showPauseIcon = isPlaying && transmissionId === currentlyPlayingTransmissionId;
+function AudioPlayer({
+  audioUri,
+  transmissionId,
+  currentlyPlayingTransmissionId,
+  isPlaying,
+  onToggleAudio,
+}: AudioPlayerProps) {
+  const showPauseIcon =
+    isPlaying && transmissionId === currentlyPlayingTransmissionId;
 
   return (
     <IconButton

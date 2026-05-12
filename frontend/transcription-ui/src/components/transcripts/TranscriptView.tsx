@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import type { VirtuosoHandle } from 'react-virtuoso';
 
+import { Howl } from 'howler';
+
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -16,13 +18,12 @@ import {
 } from '@tanstack/react-query';
 import { type Transcript } from '@transcription/common';
 
-import { Howl } from 'howler';
-
 import { useAuth } from '../../context/AuthContext';
 import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { listTranscripts } from '../../service/listTranscripts';
+import { getAudioUrl } from '../../utils/audioUtils';
 import {
   getInitialTimestamp,
   roundUpToNearestMinute,
@@ -33,7 +34,6 @@ import FeedHeader from './FeedHeader';
 import FeedSearch from './FeedSearch';
 import TranscriptActionsBar from './TranscriptActionsBar';
 import TranscriptDisplay from './TranscriptDisplay';
-import { getAudioUrl } from '../../utils/audioUtils';
 
 interface TranscriptViewProps {
   triggerSnackbar: (message: string) => void;
@@ -94,7 +94,9 @@ export function TranscriptView({
   const hasScrolledToTarget = useRef(false);
 
   const currentAudio = useRef<Howl>(null);
-  const [playbackEndedForId, setPlaybackEndedForId] = useState<string | null>(null);
+  const [playbackEndedForId, setPlaybackEndedForId] = useState<string | null>(
+    null
+  );
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
 
   const transcriptsRef = useRef<Transcript[]>([]);
@@ -113,54 +115,57 @@ export function TranscriptView({
   }, []);
 
   // Play and pause audio from a URL.
-  const toggleAudio = (transmissionId: string, audioUri: string) => {
-    const newAudio = currentlyPlayingTransmissionId !== transmissionId;
-    
-    if (newAudio) {
-      if (currentAudio.current) {
-        currentAudio.current.off();
-        currentAudio.current.unload();
-        currentAudio.current = null;
+  const toggleAudio = useCallback(
+    (transmissionId: string, audioUri: string) => {
+      const newAudio = currentlyPlayingTransmissionId !== transmissionId;
+
+      if (newAudio) {
+        if (currentAudio.current) {
+          currentAudio.current.off();
+          currentAudio.current.unload();
+          currentAudio.current = null;
+        }
+        setCurrentlyPlayingTransmissionId(transmissionId);
+        setHighlightedTransmissionId(transmissionId);
       }
-      setCurrentlyPlayingTransmissionId(transmissionId);
-      setHighlightedTransmissionId(transmissionId);
-    }
 
-    if (!currentAudio.current) {
-      const sound = new Howl({
-        src: [getAudioUrl(audioUri)],
-        html5: true,
-        preload: true,
-        onplay: () => setIsAudioPlaying(true),
-        onpause: () => setIsAudioPlaying(false),
-        onend: () => {
-          const currentTranscripts = transcriptsRef.current;
-          const currentIndex = currentTranscripts.findIndex(
-            (t) => t.transmissionId === transmissionId
-          );
-          const hasNext = currentIndex > 0;
+      if (!currentAudio.current) {
+        const sound = new Howl({
+          src: [getAudioUrl(audioUri)],
+          html5: true,
+          preload: true,
+          onplay: () => setIsAudioPlaying(true),
+          onpause: () => setIsAudioPlaying(false),
+          onend: () => {
+            const currentTranscripts = transcriptsRef.current;
+            const currentIndex = currentTranscripts.findIndex(
+              (t) => t.transmissionId === transmissionId
+            );
+            const hasNext = currentIndex > 0;
 
-          if (!hasNext) {
-            setIsAudioPlaying(false);
-          }
-          
-          setPlaybackEndedForId(transmissionId);
-          sound.unload();
-          if (currentAudio.current === sound) {
-            currentAudio.current = null;
-          }
-        },
-      });
-      currentAudio.current = sound;
-    }
+            if (!hasNext) {
+              setIsAudioPlaying(false);
+            }
 
-    // Play is no current audio or changing audio
-    if (!isAudioPlaying || newAudio) {
-      currentAudio.current.play();
-    } else {
-      currentAudio.current.pause();
-    }
-  }
+            setPlaybackEndedForId(transmissionId);
+            sound.unload();
+            if (currentAudio.current === sound) {
+              currentAudio.current = null;
+            }
+          },
+        });
+        currentAudio.current = sound;
+      }
+
+      // Play is no current audio or changing audio
+      if (!isAudioPlaying || newAudio) {
+        currentAudio.current.play();
+      } else {
+        currentAudio.current.pause();
+      }
+    },
+    [currentlyPlayingTransmissionId, isAudioPlaying]
+  );
 
   const {
     data: feeds,
@@ -312,12 +317,14 @@ export function TranscriptView({
 
     if (currentIndex > 0) {
       const nextTranscript = transcripts[currentIndex - 1];
-      toggleAudio(nextTranscript.transmissionId, nextTranscript.playbackAudioUri);
+      toggleAudio(
+        nextTranscript.transmissionId,
+        nextTranscript.playbackAudioUri
+      );
     }
 
     setPlaybackEndedForId(null);
   }, [playbackEndedForId, transcripts, toggleAudio]);
-
 
   // Prefetch a prioritized window of 5 tracks around the currently playing track to warm up browser media cache
   useEffect(() => {
@@ -341,7 +348,10 @@ export function TranscriptView({
 
     // 2. Fill remaining prefetch capacity from the opposite direction (larger indices / older tracks)
     let nextIdx = currentIndex + 1;
-    while (targetIndices.length < prefetchCount && nextIdx < transcripts.length) {
+    while (
+      targetIndices.length < prefetchCount &&
+      nextIdx < transcripts.length
+    ) {
       targetIndices.push(nextIdx);
       nextIdx++;
     }
@@ -587,7 +597,6 @@ export function TranscriptView({
     }
   }, [isTranscriptsSuccess, targetTransmissionId, transcripts]);
 
-
   const handleClipClick = (transmissionId: string) => {
     const index = transcripts.findIndex(
       (t) => t.transmissionId === transmissionId
@@ -604,10 +613,12 @@ export function TranscriptView({
 
   const handleTogglePlayPause = () => {
     const targetId = isAudioPlaying
-      ? (currentlyPlayingTransmissionId || highlightedTransmissionId)
-      : (highlightedTransmissionId || currentlyPlayingTransmissionId || transcripts[0]?.transmissionId);
+      ? currentlyPlayingTransmissionId || highlightedTransmissionId
+      : highlightedTransmissionId ||
+        currentlyPlayingTransmissionId ||
+        transcripts[0]?.transmissionId;
     if (!targetId) return;
-    
+
     const transcript = transcripts.find((t) => t.transmissionId === targetId);
     if (transcript) {
       toggleAudio(transcript.transmissionId, transcript.playbackAudioUri);

@@ -91,16 +91,22 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
                 <Button
                   size="small"
                   color="primary"
-                  onClick={isTranscriptsFetching || isTranscriptsPolling ? undefined : onRefresh}
+                  onClick={
+                    isTranscriptsFetching || isTranscriptsPolling
+                      ? undefined
+                      : onRefresh
+                  }
                   sx={{
-                    ...((isTranscriptsFetching || isTranscriptsPolling) ? {
-                      color: 'action.disabled',
-                      bgcolor: 'action.disabledBackground',
-                      boxShadow: 'none',
-                      '&:hover': {
-                        bgcolor: 'action.disabledBackground',
-                      }
-                    } : {})
+                    ...(isTranscriptsFetching || isTranscriptsPolling
+                      ? {
+                          color: 'action.disabled',
+                          bgcolor: 'action.disabledBackground',
+                          boxShadow: 'none',
+                          '&:hover': {
+                            bgcolor: 'action.disabledBackground',
+                          },
+                        }
+                      : {}),
                   }}
                   aria-label={isTranscriptsPolling ? 'refreshing' : 'refresh'}
                 >
