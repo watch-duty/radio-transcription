@@ -294,5 +294,39 @@ class TestTranscribers(unittest.TestCase):
             )
 
 
+class TestMockTranscriber(unittest.TestCase):
+    def test_mock_transcriber_default(self) -> None:
+        """Verifies the MockTranscriber returns the default static transcript when no sequence is set."""
+        transcriber = get_transcriber(
+            TranscriberType.MOCK,
+            "test-project",
+            "{}",
+        )
+        transcriber.setup()
+
+        res = transcriber.transcribe(audio_data=b"\x00")
+        self.assertEqual(
+            res, "This is a mock transcription of the radio transmission."
+        )
+
+    def test_mock_transcriber_sequence(self) -> None:
+        """Verifies the MockTranscriber rotates through configured transcripts."""
+        config_json = '{"transcripts": ["First Call", "Second Call"]}'
+        transcriber = get_transcriber(
+            TranscriberType.MOCK,
+            "test-project",
+            config_json,
+        )
+        transcriber.setup()
+
+        res1 = transcriber.transcribe(audio_data=b"\x00")
+        res2 = transcriber.transcribe(audio_data=b"\x00")
+        res3 = transcriber.transcribe(audio_data=b"\x00")
+
+        self.assertEqual(res1, "First Call")
+        self.assertEqual(res2, "Second Call")
+        self.assertEqual(res3, "First Call")
+
+
 if __name__ == "__main__":
     unittest.main()
