@@ -38,10 +38,6 @@ SET last_heartbeat = NOW(),
     failure_count = CASE WHEN failure_count > 0 THEN 0 ELSE failure_count END,
     status = 'active'::feed_status
 WHERE id = %s
-AND status NOT IN (
-    'deactivated'::feed_status,
-    'quarantined'::feed_status
-)
 """
 
 # Backoff formula: base * 2^(failure_count), capped at max, plus 0-10s jitter.
