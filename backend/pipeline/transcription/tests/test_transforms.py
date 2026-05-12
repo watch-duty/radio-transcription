@@ -45,7 +45,8 @@ from backend.pipeline.transcription.services.transcribers import Transcriber
 from backend.pipeline.transcription.transforms.stateful import (
     SHARED_RESOURCE_HANDLE,
     OrderedBypassFn,
-    OrderedStitchAudioFn,
+    OrderedContinuousStitchAudioFn,
+    OrderedSegmentedStitchAudioFn,
     TranscribeAudioFn,
 )
 from backend.pipeline.transcription.transforms.stateless import (
@@ -710,10 +711,10 @@ class OrderedStitchAudioTest(unittest.TestCase):
         mock_audio_processor: MagicMock,
         mock_with_tracer_context: MagicMock,
     ) -> None:
-        """Verifies that OrderedStitchAudioFn.process calls with_tracer_context."""
+        """Verifies that OrderedContinuousStitchAudioFn.process calls with_tracer_context."""
         order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
         stitch_config = get_test_stitch_config()
-        fn = OrderedStitchAudioFn(
+        fn = OrderedContinuousStitchAudioFn(
             order_config=order_config, stitch_config=stitch_config
         )
         fn.setup()
@@ -773,7 +774,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
         """Verifies that handle_gap_timeout calls with_tracer_context."""
         order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
         stitch_config = get_test_stitch_config()
-        fn = OrderedStitchAudioFn(
+        fn = OrderedContinuousStitchAudioFn(
             order_config=order_config, stitch_config=stitch_config
         )
         fn.setup()
@@ -835,7 +836,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
             significant_gap_ms=500, stale_timeout_ms=60000
         )
 
-        fn = OrderedStitchAudioFn(
+        fn = OrderedContinuousStitchAudioFn(
             order_config=order_config, stitch_config=stitch_config
         )
         fn.audio_processor = mock_processor_inst  # Inject mock
@@ -937,7 +938,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
     def test_ordered_stitch_audio_flushes_on_stale_timer(
         self, mock_audio_processor: MagicMock
     ) -> None:
-        """Verifies that OrderedStitchAudioFn flushes buffered audio when the stale timer fires."""
+        """Verifies that OrderedContinuousStitchAudioFn flushes buffered audio when the stale timer fires."""
         mock_processor_inst = mock_audio_processor.return_value
 
         chunk_data = AudioChunkData(
@@ -990,7 +991,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 p
                 | test_stream
                 | beam.ParDo(
-                    OrderedStitchAudioFn(
+                    OrderedContinuousStitchAudioFn(
                         order_config=order_config, stitch_config=stitch_config
                     )
                 )
@@ -1011,7 +1012,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
     def test_ordered_stitch_audio_handles_out_of_order_chunks(
         self, mock_audio_processor: MagicMock
     ) -> None:
-        """Verifies that OrderedStitchAudioFn buffers out-of-order chunks and emits them in order."""
+        """Verifies that OrderedContinuousStitchAudioFn buffers out-of-order chunks and emits them in order."""
         mock_processor_inst = mock_audio_processor.return_value
 
         def download_side_effect(gcs_uri, timestamp_ms, *args, **kwargs):
@@ -1112,7 +1113,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 p
                 | test_stream
                 | beam.ParDo(
-                    OrderedStitchAudioFn(
+                    OrderedContinuousStitchAudioFn(
                         order_config=order_config, stitch_config=stitch_config
                     )
                 )
@@ -1148,7 +1149,6 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
     ) -> None:
         """Verifies that speech_segments are preserved in ActiveStitchingState and mapped during stale flushes."""
         mock_processor_inst = mock_audio_processor.return_value
-        # Mock chunk with an active speech segment
         chunk_data = AudioChunkData(
             start_ms=100000,
             audio=np.zeros(16000 * 5, dtype=np.int16),
@@ -1163,7 +1163,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         stitch_config = get_test_stitch_config(
             significant_gap_ms=800, stale_timeout_ms=75000
         )
-        fn = OrderedStitchAudioFn(
+        fn = OrderedContinuousStitchAudioFn(
             order_config=order_config, stitch_config=stitch_config
         )
         fn.setup()
@@ -1177,6 +1177,9 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
 
             def write(self, val):
                 self.val = val
+
+            def clear(self):
+                self.val = None
 
         class MockBagState:
             def __init__(self) -> None:
@@ -1248,3 +1251,114 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         self.assertTrue(len(flush_request.speech_segments) > 0)
         self.assertEqual(flush_request.speech_segments[0].duration_ms, 3000)
         self.assertIsInstance(mock_state_context.read(), IdleFeedState)
+
+
+class OrderedSegmentedStitchAudioTest(unittest.TestCase):
+    @patch("backend.pipeline.common.tracing_utils.with_tracer_context")
+    @patch(
+        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
+    )
+    def test_ordered_segmented_stitch_isolates_and_splits(
+        self,
+        mock_audio_processor: MagicMock,
+        mock_with_tracer_context: MagicMock,
+    ) -> None:
+        """Verifies that OrderedSegmentedStitchAudioFn isolates and splits chunks > 60 seconds."""
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        stitch_config = get_test_stitch_config(
+            max_transmission_duration_ms=10000,  # 10s limit for splitting
+        )
+        fn = OrderedSegmentedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        self.assertTrue(fn.stitch_config.isolate_segmented_chunks)
+
+        mock_processor_inst = mock_audio_processor.return_value
+
+        chunk_data = AudioChunkData(
+            start_ms=10000,
+            audio=np.zeros(15000 * 16, dtype=np.int16),
+            speech_segments=[TimeRange(0, 15000)],
+            gcs_uri="gs://bucket/segmented_15s.flac",
+            duration_ms=15000,
+            sample_rate=16000,
+        )
+        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+
+        fn.setup()
+
+        class MockValueState:
+            def __init__(self, initial=None) -> None:
+                self.val = initial
+
+            def read(self):
+                return self.val
+
+            def write(self, val):
+                self.val = val
+
+            def clear(self):
+                self.val = None
+
+        class MockBagState:
+            def __init__(self) -> None:
+                self.items = []
+
+            def read(self):
+                return self.items
+
+            def add(self, item):
+                self.items.append(item)
+
+            def clear(self):
+                self.items = []
+
+        mock_state_context = MockValueState(
+            ActiveStitchingState(
+                session_id="same-session-id",
+                feed_metadata=FeedMetadata(
+                    feed_name="segmented-feed", external_id="external-id"
+                ),
+            )
+        )
+        mock_state_buffer = MockBagState()
+        mock_last_start_ms = MockValueState(None)
+
+        metadata = ChunkMetadata(
+            gcs_uri="gs://bucket/segmented_15s.flac",
+            session_id="same-session-id",
+            duration_ms=15000,
+            feed_metadata=FeedMetadata(
+                feed_name="segmented-feed", external_id="external-id"
+            ),
+        )
+
+        outputs = list(
+            fn.process(
+                element=("segmented-feed", metadata),
+                timestamp=Timestamp(10),
+                transmission_buffer_state=mock_state_buffer,  # type: ignore
+                transmission_context_state=mock_state_context,  # type: ignore
+                last_start_ms_state=mock_last_start_ms,  # type: ignore
+                out_of_order_timer=MagicMock(),
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        # We expect exactly 2 flushed parts because the 15s chunk was split!
+        self.assertEqual(len(outputs), 2)
+
+        # First flushed part: 10 seconds
+        feed_id_1, flush_req_1 = outputs[0]
+        self.assertEqual(feed_id_1, "segmented-feed")
+        self.assertEqual(flush_req_1.time_range.duration_ms, 10000)
+        self.assertTrue(flush_req_1.missing_post_context)
+        self.assertFalse(flush_req_1.missing_prior_context)
+
+        # Second flushed part: 5 seconds
+        feed_id_2, flush_req_2 = outputs[1]
+        self.assertEqual(feed_id_2, "segmented-feed")
+        self.assertEqual(flush_req_2.time_range.duration_ms, 5000)
+        self.assertFalse(flush_req_2.missing_post_context)
+        self.assertTrue(flush_req_2.missing_prior_context)

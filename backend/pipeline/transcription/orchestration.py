@@ -38,8 +38,8 @@ from backend.pipeline.transcription.common.datatypes import (
 from backend.pipeline.transcription.common.logging import get_task_logger
 from backend.pipeline.transcription.options import TranscriptionOptions
 from backend.pipeline.transcription.transforms.stateful import (
-    OrderedBypassFn,
-    OrderedStitchAudioFn,
+    OrderedContinuousStitchAudioFn,
+    OrderedSegmentedStitchAudioFn,
     TranscribeAudioFn,
 )
 from backend.pipeline.transcription.transforms.stateless import (
@@ -139,7 +139,7 @@ def get_pipeline(
             route_to_dlq=options.route_to_dlq
             if options.route_to_dlq is not None
             else True,
-            bypass_stitching=True,
+            bypass_stitching=False,
         )
 
         order_config = OrderRestorerConfig(
@@ -148,8 +148,8 @@ def get_pipeline(
 
         stitching_results = parsed[
             MAIN_TAG
-        ] | "OrderedBypassStitch" >> beam.ParDo(
-            OrderedBypassFn(
+        ] | "OrderedSegmentedStitch" >> beam.ParDo(
+            OrderedSegmentedStitchAudioFn(
                 order_config=order_config,
                 stitch_config=stitching_config,
             )
@@ -160,8 +160,8 @@ def get_pipeline(
         # New merged path: Handles both ordering and stitching in a single DoFn
         stitching_results = parsed[
             MAIN_TAG
-        ] | "OrderedStitchAudio" >> beam.ParDo(
-            OrderedStitchAudioFn(
+        ] | "OrderedContinuousStitchAudio" >> beam.ParDo(
+            OrderedContinuousStitchAudioFn(
                 order_config=OrderRestorerConfig(
                     out_of_order_timeout_ms=ooo_timeout,
                 ),
