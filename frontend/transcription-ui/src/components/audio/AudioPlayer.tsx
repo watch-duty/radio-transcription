@@ -27,7 +27,7 @@ function AudioPlayer({
         onToggleAudio(transmissionId, audioUri);
       }}
       color="primary"
-       aria-label={showPauseIcon ? 'pause' : 'play'}
+      aria-label={showPauseIcon ? 'pause' : 'play'}
     >
       {showPauseIcon ? <PauseIcon /> : <PlayArrowIcon />}
     </IconButton>
