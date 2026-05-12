@@ -323,7 +323,7 @@ class AudioProcessor:
         speech_segments: list[TimeRange],
     ) -> ProcessorOutput:
         """Encapsulates sequence of pre-processing, VAD check, and FLAC export."""
-        # 1. If pre-computed speech segments are empty, it's pure silence
+        # If pre-computed speech segments are empty, it's just silence
         if not speech_segments:
             return ProcessorOutput(success=False)
 
