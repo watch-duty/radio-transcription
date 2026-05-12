@@ -109,7 +109,7 @@ describe('TranscriptActionsBar', () => {
       />
     );
 
-    const redactSwitch = screen.getByRole('checkbox', {
+    const redactSwitch = screen.getByRole('switch', {
       name: /Redact transcripts/i,
     });
     expect(redactSwitch).toBeTruthy();
