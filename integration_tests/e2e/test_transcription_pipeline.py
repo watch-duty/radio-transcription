@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 PROJECT_ID = os.environ["PROJECT_ID"]
 CONTINUOUS_TOPIC = os.environ["CONTINUOUS_TOPIC"]
 SEGMENTED_TOPIC = os.environ["SEGMENTED_TOPIC"]
-RESULTS_TOPIC = os.environ["RESULTS_TOPIC"]
+RESULTS_TOPIC = os.environ["RULES_EVALUATION_RESULTS_TOPIC"]
 
 
 @pytest.fixture(scope="module")
