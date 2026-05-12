@@ -97,5 +97,5 @@ def test_segmented_pipeline_flow(
         segmented_topic,
         feed_id,
         feed_name,
-        audio_filename="test_dispatch_amador.flac",
+        audio_filename="test_joined.flac",
     )

@@ -73,8 +73,8 @@ if __name__ == "__main__":
     upload_file(
         client,
         staging_bucket,
-        "/app/data/test_dispatch_amador.flac",
-        "test_dispatch_amador.flac",
+        "/app/data/test_joined.flac",
+        "test_joined.flac",
     )
 
     logger.info("GCS initialization complete.")
