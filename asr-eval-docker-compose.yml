@@ -8,6 +8,8 @@ services:
     volumes:
       - ./model:/app
     working_dir: /app
+    environment:
+      - JUPYTER_PATH=/opt/venv/share/jupyter
     deploy:
       resources:
         reservations:
