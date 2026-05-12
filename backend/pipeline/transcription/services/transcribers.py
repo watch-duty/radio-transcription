@@ -25,10 +25,10 @@ from backend.pipeline.transcription.common.constants import (
     DEFAULT_RETRY_MAX_SECONDS,
 )
 from backend.pipeline.transcription.common.enums import TranscriberType
-from backend.pipeline.transcription.common.logging import get_logger
+from backend.pipeline.transcription.common.logging import get_task_logger
 from backend.pipeline.transcription.common.utils import ConfigBase
 
-logger = get_logger(
+logger = get_task_logger(
     __name__, {"system": "transcription", "component": "transcribers"}
 )
 
