@@ -244,6 +244,38 @@ class GoogleChirpV3Transcriber(Transcriber):
         return transcript
 
 
+class MockConfig(ConfigBase):
+    """Configuration schema for the Mock Transcriber."""
+
+    default_transcript: str = (
+        "This is a mock transcription of the radio transmission."
+    )
+    transcripts: list[str] | None = None
+
+
+class MockTranscriber(Transcriber):
+    """A mock transcriber for offline/local testing that does not call external APIs."""
+
+    def __init__(self, config: MockConfig) -> None:
+        self.config = config
+        self.index = 0
+
+    def setup(self) -> None:
+        self.index = 0
+
+    def transcribe(self, *, audio_data: bytes) -> str | None:
+        # If a sequence of transcripts is provided, return them in rotation
+        if self.config.transcripts:
+            transcript = self.config.transcripts[
+                self.index % len(self.config.transcripts)
+            ]
+            self.index += 1
+            return transcript
+
+        # Otherwise return the default static transcript
+        return self.config.default_transcript
+
+
 def get_transcriber(
     transcriber_type: TranscriberType,
     project_id: str,
@@ -254,5 +286,7 @@ def get_transcriber(
         return GoogleChirpV3Transcriber(
             project_id, ChirpConfig.from_json(config_json)
         )
+    if transcriber_type == TranscriberType.MOCK:
+        return MockTranscriber(MockConfig.from_json(config_json))
     msg = f"Unknown transcriber type: {transcriber_type}"
     raise ValueError(msg)
