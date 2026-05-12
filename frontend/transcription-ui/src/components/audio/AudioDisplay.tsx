@@ -7,7 +7,7 @@ import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
-import { Theme, useTheme } from '@mui/material/styles';
+import { type Theme, useTheme } from '@mui/material/styles';
 import type { Transcript } from '@transcription/common';
 import WavesurferPlayer from '@wavesurfer/react';
 
