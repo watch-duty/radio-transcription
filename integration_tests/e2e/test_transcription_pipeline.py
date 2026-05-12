@@ -2,6 +2,7 @@ import asyncio
 import base64
 import logging
 import os
+import time
 import uuid
 
 import asyncpg
@@ -83,7 +84,10 @@ def _publish_and_verify(
                 "data": base64.b64encode(chunk.SerializeToString()).decode(
                     "utf-8"
                 ),
-                "attributes": {"gcs_uri": chunk.gcs_uri},
+                "attributes": {
+                    "gcs_uri": chunk.gcs_uri,
+                    "timestamp_ms": str(int(time.time() * 1000)),
+                },
             }
         ]
     }
