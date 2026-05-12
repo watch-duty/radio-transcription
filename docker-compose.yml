@@ -94,10 +94,14 @@ services:
     networks:
       - pipeline-network
     depends_on:
-      - pubsub-emulator
-      - pubsub-init
-      - gcs-emulator
-      - gcs-init
+      pubsub-emulator:
+        condition: service_started
+      pubsub-init:
+        condition: service_completed_successfully
+      gcs-emulator:
+        condition: service_started
+      gcs-init:
+        condition: service_completed_successfully
 
   transcription-segmented:
     build:
@@ -117,10 +121,14 @@ services:
     networks:
       - pipeline-network
     depends_on:
-      - pubsub-emulator
-      - pubsub-init
-      - gcs-emulator
-      - gcs-init
+      pubsub-emulator:
+        condition: service_started
+      pubsub-init:
+        condition: service_completed_successfully
+      gcs-emulator:
+        condition: service_started
+      gcs-init:
+        condition: service_completed_successfully
 
   rules-evaluation:
     build:

@@ -61,7 +61,7 @@ jobs:
 
       - name: Print container logs on failure
         if: failure()
-        run: docker compose logs
+        run: docker compose --env-file local_dev/LOCAL.env logs
 
       - name: Open SSH session if workflow fails
         uses: mxschmitt/action-tmate@v3
