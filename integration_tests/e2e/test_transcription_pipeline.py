@@ -16,11 +16,6 @@ from integration_tests.utils import assert_eventually
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ID = os.environ["PROJECT_ID"]
-CONTINUOUS_TOPIC = os.environ["CONTINUOUS_TOPIC"]
-SEGMENTED_TOPIC = os.environ["SEGMENTED_TOPIC"]
-RESULTS_TOPIC = os.environ["RULES_EVALUATION_RESULTS_TOPIC"]
-
 
 @pytest.fixture(scope="module")
 def publisher() -> pubsub_v1.PublisherClient:
@@ -109,11 +104,12 @@ def test_continuous_pipeline_flow(
     test_feed: tuple[str, str],
 ) -> None:
     """Tests that a message published to continuous topic reaches evaluation."""
+    continuous_topic = os.environ["CONTINUOUS_TOPIC"]
     feed_id, feed_name = test_feed
     _publish_and_verify(
         publisher,
         subscriber,
-        CONTINUOUS_TOPIC,
+        continuous_topic,
         feed_id,
         feed_name,
         audio_filename="test_continuous.flac",
@@ -126,11 +122,12 @@ def test_segmented_pipeline_flow(
     test_feed: tuple[str, str],
 ) -> None:
     """Tests that a message published to segmented topic reaches evaluation."""
+    segmented_topic = os.environ["SEGMENTED_TOPIC"]
     feed_id, feed_name = test_feed
     _publish_and_verify(
         publisher,
         subscriber,
-        SEGMENTED_TOPIC,
+        segmented_topic,
         feed_id,
         feed_name,
         audio_filename="test_segmented.flac",
