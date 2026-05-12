@@ -69,6 +69,36 @@ class TestFeedsAPI(unittest.TestCase):
             response.status_code, status.HTTP_422_UNPROCESSABLE_CONTENT
         )
 
+    def test_create_feed_with_tags(self) -> None:
+        """Test creating a feed with tags."""
+        payload = {
+            "name": "Test Feed",
+            "source_type": "bcfy_feeds",
+            "source_feed_id": "123",
+            "external_id": "ext_123",
+            "tags": [{"key": "county", "value": "Fulton"}],
+        }
+        feed_id = uuid.uuid4()
+        mock_feed = Feed(
+            id=feed_id,
+            name="Test Feed",
+            source_type=SourceType.BCFY_FEEDS,
+            source_feed_id="123",
+            external_id="ext_123",
+            status=FeedStatus.ACTIVE,
+            last_heartbeat=None,
+            tags=[{"key": "county", "value": "Fulton"}],
+        )
+        self.mock_service.create_feed.return_value = mock_feed
+
+        response = self.client.post("/v1/feeds", json=payload)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        data = response.json()
+        self.assertEqual(data["id"], str(feed_id))
+        self.assertEqual(data["tags"], [{"key": "county", "value": "Fulton"}])
+        self.mock_service.create_feed.assert_called_once()
+
     def test_get_feed_success(self) -> None:
         """Test fetching an existing feed."""
         feed_id = uuid.uuid4()
@@ -88,6 +118,28 @@ class TestFeedsAPI(unittest.TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.json()["id"], str(feed_id))
         self.mock_service.get_feed.assert_called_once_with(str(feed_id))
+
+    def test_get_feed_with_tags(self) -> None:
+        """Test fetching an existing feed with tags."""
+        feed_id = uuid.uuid4()
+        mock_feed = Feed(
+            id=feed_id,
+            name="Test Feed",
+            source_type=SourceType.BCFY_FEEDS,
+            source_feed_id="123",
+            external_id="ext_123",
+            status=FeedStatus.ACTIVE,
+            last_heartbeat=None,
+            tags=[{"key": "county", "value": "Fulton"}],
+        )
+        self.mock_service.get_feed.return_value = mock_feed
+
+        response = self.client.get(f"/v1/feeds/{feed_id}")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertEqual(data["id"], str(feed_id))
+        self.assertEqual(data["tags"], [{"key": "county", "value": "Fulton"}])
 
     def test_get_feed_not_found(self) -> None:
         """Test fetching a non-existent feed returns 404."""

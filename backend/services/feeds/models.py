@@ -24,6 +24,7 @@ class FeedCreate(FeedBase):
     # <CHANNEL_NAME>/20260406/Santa_Clara_Co_Fire_Disp_20260406_102306.mp3.
     source_feed_id: str
     external_id: str
+    tags: list[dict[str, str]] | None = None
 
 
 class Feed(FeedBase):
@@ -32,5 +33,6 @@ class Feed(FeedBase):
     external_id: str
     status: FeedStatus
     last_heartbeat: datetime.datetime | None
+    tags: list[dict[str, str]] | None = None
 
     model_config = ConfigDict(from_attributes=True)
