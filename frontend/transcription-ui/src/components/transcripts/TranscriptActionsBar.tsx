@@ -15,8 +15,6 @@ import MenuList from '@mui/material/MenuList';
 import Paper from '@mui/material/Paper';
 import Popper from '@mui/material/Popper';
 
-import AutoplaySwitch from '../common/AutoplaySwitch';
-
 export interface TranscriptActionsBarProps {
   hasNewerTranscripts: boolean;
   searchedTimestamp: Date | null;
@@ -25,8 +23,6 @@ export interface TranscriptActionsBarProps {
   refreshInterval: number;
   setRefreshInterval: (interval: number) => void;
   onRefresh: () => Promise<void>;
-  autoplayEnabled: boolean;
-  setAutoplayEnabled: (enabled: boolean) => void;
 }
 
 const refreshIntervalOptions = [
@@ -46,8 +42,6 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   refreshInterval,
   setRefreshInterval,
   onRefresh,
-  autoplayEnabled,
-  setAutoplayEnabled,
 }) => {
   const [anchorEl, setAnchorEl] = React.useState<HTMLElement | null>(null);
   const [refreshMenuOpen, setRefreshMenuOpen] = React.useState(false);
@@ -82,20 +76,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
         mb: 0.5,
       }}
     >
-      <Box>
-        <Tooltip
-            title={
-              !autoplayEnabled
-                ? 'Enable autoplay'
-                : 'Disable autoplay'
-            }
-          >
-          <AutoplaySwitch
-            checked={autoplayEnabled}
-            onChange={(event) => setAutoplayEnabled(event.target.checked)}
-          />
-        </Tooltip>
-      </Box>
+      <Box />
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         {!hasNewerTranscripts && (
           <>

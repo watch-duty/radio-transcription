@@ -95,7 +95,6 @@ export function TranscriptView({
 
   const currentAudio = useRef<Howl>(null);
   const [playbackEndedForId, setPlaybackEndedForId] = useState<string | null>(null);
-  const [autoplayEnabled, setAutoplayEnabled] = useState(true);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
 
   // Cleanup effect to ensure audio is unloaded when component unmounts
@@ -287,19 +286,17 @@ export function TranscriptView({
   useEffect(() => {
     if (!playbackEndedForId) return;
 
-    if (autoplayEnabled) {
-      const currentIndex = transcripts.findIndex(
-        (t) => t.transmissionId === playbackEndedForId
-      );
+    const currentIndex = transcripts.findIndex(
+      (t) => t.transmissionId === playbackEndedForId
+    );
 
-      if (currentIndex > 0) {
-        const nextTranscript = transcripts[currentIndex - 1];
-        toggleAudio(nextTranscript.transmissionId, nextTranscript.playbackAudioUri);
-      }
+    if (currentIndex > 0) {
+      const nextTranscript = transcripts[currentIndex - 1];
+      toggleAudio(nextTranscript.transmissionId, nextTranscript.playbackAudioUri);
     }
 
     setPlaybackEndedForId(null);
-  }, [playbackEndedForId, autoplayEnabled, transcripts, toggleAudio]);
+  }, [playbackEndedForId, transcripts, toggleAudio]);
 
   // This is used to group transcripts by date and display them in the UI.
   // groupCounts is an array of numbers representing the number of transcripts in each group.
@@ -666,8 +663,6 @@ export function TranscriptView({
               refreshInterval={transcriptsPollingIntervalMs}
               setRefreshInterval={setTranscriptsPollingIntervalMs}
               onRefresh={handleManualRefresh}
-              autoplayEnabled={autoplayEnabled}
-              setAutoplayEnabled={setAutoplayEnabled}
             />
             <TranscriptDisplay
               ref={virtuosoRef}
