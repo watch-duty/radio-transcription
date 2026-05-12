@@ -10,13 +10,12 @@ from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from integration_tests.feed_utils import create_test_feed  # noqa: F401
 from integration_tests.utils import assert_eventually
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-PROJECT_ID = "local-project"
-CONTINUOUS_TOPIC = "projects/local-project/topics/continuous-audio"
-SEGMENTED_TOPIC = "projects/local-project/topics/segmented-audio"
-RESULTS_TOPIC = "projects/local-project/topics/rules-evaluation-results-topic"
+PROJECT_ID = os.environ["PROJECT_ID"]
+CONTINUOUS_TOPIC = os.environ["CONTINUOUS_TOPIC"]
+SEGMENTED_TOPIC = os.environ["SEGMENTED_TOPIC"]
+RESULTS_TOPIC = os.environ["RESULTS_TOPIC"]
 
 
 @pytest.fixture(scope="module")
@@ -32,11 +31,11 @@ def subscriber() -> pubsub_v1.SubscriberClient:
 def _verify_transcript_in_db(feed_id: str) -> bool:
     """Polls the database until a transcript for the given feed_id appears."""
     _conn_kwargs = {
-        "host": os.environ.get("ALLOYDB_HOST", "postgres"),
-        "port": int(os.environ.get("ALLOYDB_PORT", "5432")),
-        "user": os.environ.get("ALLOYDB_USER", "postgres"),
-        "password": os.environ.get("ALLOYDB_PASSWORD", "postgres"),
-        "database": os.environ.get("ALLOYDB_DB", "postgres"),
+        "host": os.environ["ALLOYDB_HOST"],
+        "port": int(os.environ["ALLOYDB_PORT"]),
+        "user": os.environ["ALLOYDB_USER"],
+        "password": os.environ["ALLOYDB_PASSWORD"],
+        "database": os.environ["ALLOYDB_DB"],
     }
 
     async def _check_db():
@@ -66,7 +65,7 @@ def _publish_and_verify(
     feed_name: str,
 ) -> bool:
     # Construct AudioChunk message
-    staging_bucket = os.environ.get("AUDIO_STAGING_BUCKET", "test-bucket")
+    staging_bucket = os.environ["AUDIO_STAGING_BUCKET"]
     chunk = AudioChunk(
         feed_id=feed_id,
         session_id="session-123",
