@@ -27,6 +27,7 @@ from backend.pipeline.transcription.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
 )
 from backend.pipeline.transcription.common.datatypes import (
+    ActiveStitchingState,
     AudioChunkData,
     BufferedChunk,
     ChunkMetadata,
@@ -37,7 +38,6 @@ from backend.pipeline.transcription.common.datatypes import (
     TimeRange,
     TranscribeAudioConfig,
     TranscriptionResult,
-    TransmissionContext,
 )
 from backend.pipeline.transcription.common.enums import TranscriberType
 from backend.pipeline.transcription.services.transcribers import Transcriber
@@ -560,7 +560,8 @@ class SerializeAndEnrichTest(unittest.TestCase):
 
         mock_state = MagicMock()
 
-        curr_context = TransmissionContext(
+        curr_context = ActiveStitchingState(
+            session_id="mock-session",
             out_of_order_buffer=[
                 BufferedChunk(timestamp_ms=100000, gcs_uri="gs://test.flac")
             ],
@@ -654,7 +655,8 @@ class OrderedBypassTest(unittest.TestCase):
 
         mock_state = MagicMock()
 
-        curr_context = TransmissionContext(
+        curr_context = ActiveStitchingState(
+            session_id="mock-session",
             out_of_order_buffer=[
                 BufferedChunk(timestamp_ms=100000, gcs_uri="gs://test.flac")
             ],
@@ -702,7 +704,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
         fn.setup()
 
         mock_state = MagicMock()
-        mock_state.read.return_value = TransmissionContext(
+        mock_state.read.return_value = ActiveStitchingState(
             session_id="mock-session-id",
             feed_metadata=FeedMetadata(
                 feed_name="mock-feed", external_id="mock-external-id"
@@ -762,7 +764,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
         fn.setup()
 
         mock_state = MagicMock()
-        curr_context = TransmissionContext(
+        curr_context = ActiveStitchingState(
             session_id="mock-session",
             traceparent="mock-traceparent-context",
             out_of_order_buffer=[
@@ -851,7 +853,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 self.val = None
 
         # Seed state to simulate a late chunk condition
-        curr_context = TransmissionContext(
+        curr_context = ActiveStitchingState(
             session_id="mock-session",
             expected_next_chunk_start_ms=2000,
             stale_start_time_ms=0,
