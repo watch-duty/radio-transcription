@@ -6,6 +6,10 @@ import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import type { Transcript } from '@transcription/common';
 import WavesurferPlayer from '@wavesurfer/react';
+import PauseIcon from '@mui/icons-material/PauseCircleFilledOutlined';
+import PlayArrowIcon from '@mui/icons-material/PlayCircleFilledOutlined';
+import StopIcon from '@mui/icons-material/StopCircle';
+import IconButton from '@mui/material/IconButton';
 
 import { getAudioUrl } from '../../utils/audioUtils';
 import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
@@ -16,6 +20,10 @@ interface AudioDisplayProps {
   currentlyPlayingTransmissionId: string | null;
   onClipClick: (transmissionId: string) => void;
   userDuration?: string | null;
+  isPlaying: boolean;
+  onTogglePlayPause: () => void;
+  onStop: () => void;
+  highlightedTransmissionId: string | null;
 }
 
 const formatTime = (timestamp: number) => {
@@ -32,6 +40,10 @@ export function AudioDisplay({
   currentlyPlayingTransmissionId,
   onClipClick,
   userDuration,
+  isPlaying,
+  onTogglePlayPause,
+  onStop,
+  highlightedTransmissionId,
 }: AudioDisplayProps) {
   const theme = useTheme();
   const isDarkTheme = theme.palette.mode === 'dark';
@@ -42,6 +54,7 @@ export function AudioDisplay({
     string | null
   >(null);
   const [prevPlayingId, setPrevPlayingId] = useState<string | null>(null);
+  const [prevHighlightedId, setPrevHighlightedId] = useState<string | null>(null);
   const [prevUserDuration, setPrevUserDuration] = useState<string | null>(
     userDuration ?? null
   );
@@ -71,28 +84,32 @@ export function AudioDisplay({
 
   const playingId = currentlyPlayingTransmissionId || null;
 
-  // Shift windowEndTime when playing transcript goes out of bounds
+  // Shift windowEndTime when playing or highlighted transcript goes out of bounds
   if (
     playingId !== prevPlayingId ||
+    highlightedTransmissionId !== prevHighlightedId ||
     (userDuration ?? null) !== prevUserDuration
   ) {
     setPrevPlayingId(playingId);
+    setPrevHighlightedId(highlightedTransmissionId);
     setPrevUserDuration(userDuration ?? null);
-    if (playingId) {
-      const playingTranscript = transcripts.find(
-        (t) => t.transmissionId === playingId
+    
+    const targetId = playingId || highlightedTransmissionId;
+    if (targetId) {
+      const targetTranscript = transcripts.find(
+        (t) => t.transmissionId === targetId
       );
-      if (playingTranscript) {
-        const tStart = new Date(playingTranscript.startTimestamp).getTime();
-        const tEnd = new Date(playingTranscript.endTimestamp).getTime();
-
+      if (targetTranscript) {
+        const tStart = new Date(targetTranscript.startTimestamp).getTime();
+        const tEnd = new Date(targetTranscript.endTimestamp).getTime();
+ 
         const currentEndTime =
           windowEndTime ||
           (firstTranscript
             ? new Date(firstTranscript.endTimestamp).getTime()
             : 0);
         const currentStartTime = currentEndTime - windowDurationMs;
-
+ 
         if (tStart < currentStartTime || tEnd > currentEndTime) {
           const newEndTime = tStart + windowDurationMs / 2;
           setWindowEndTime(newEndTime);
@@ -143,6 +160,7 @@ export function AudioDisplay({
           left,
           width,
           isPlaying: t.transmissionId === currentlyPlayingTransmissionId,
+          isHighlighted: t.transmissionId === highlightedTransmissionId,
           hasAlert: t.evaluationDecisions && t.evaluationDecisions.length > 0,
         };
       });
@@ -151,100 +169,111 @@ export function AudioDisplay({
   }, [
     transcripts,
     currentlyPlayingTransmissionId,
+    highlightedTransmissionId,
     windowEndTime,
     windowDurationMs,
   ]);
 
   return (
-    <Box sx={{ width: '100%' }}>
-      <Paper
-        variant="outlined"
-        sx={{
-          width: '100%',
-          height: '60px',
-          bgcolor: 'action.hover',
-          position: 'relative',
-        }}
-      >
-        {clips.map((clip) => (
-          <Box
-            key={clip.id}
-            onClick={() => onClipClick(clip.id)}
-            sx={{
-              position: 'absolute',
-              left: `${clip.left}%`,
-              width: `${clip.width}%`,
-              height: '100%',
-              bgcolor: clip.isPlaying
-                ? isDarkTheme
-                  ? 'rgba(255, 255, 255, 0.1)'
-                  : 'rgba(0, 0, 0, 0.05)'
-                : 'transparent',
-              cursor: 'pointer',
-              '&:hover': {
-                bgcolor: clip.isPlaying
+    <Box sx={{ display: 'flex', alignItems: 'flex-start', width: '100%' }}>
+      <Box sx={{ display: 'flex', mr: 1, alignItems: 'center', height: '60px' }}>
+        <IconButton onClick={onStop} size="small" color="primary" aria-label="stop">
+          <StopIcon />
+        </IconButton>
+        <IconButton onClick={onTogglePlayPause} size="small" color="primary" aria-label={isPlaying ? 'pause' : 'play'}>
+          {isPlaying ? <PauseIcon /> : <PlayArrowIcon />}
+        </IconButton>
+      </Box>
+      <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
+        <Paper
+          variant="outlined"
+          sx={{
+            width: '100%',
+            height: '60px',
+            bgcolor: 'action.hover',
+            position: 'relative',
+          }}
+        >
+          {clips.map((clip) => (
+            <Box
+              key={clip.id}
+              onClick={() => onClipClick(clip.id)}
+              sx={{
+                position: 'absolute',
+                left: `${clip.left}%`,
+                width: `${clip.width}%`,
+                height: '100%',
+                bgcolor: (clip.isPlaying || clip.isHighlighted)
                   ? isDarkTheme
-                    ? 'rgba(255, 255, 255, 0.2)'
-                    : 'rgba(0, 0, 0, 0.1)'
-                  : isDarkTheme
-                    ? 'rgba(255, 255, 255, 0.03)'
-                    : 'rgba(0, 0, 0, 0.03)',
-              },
-            }}
-          >
-            {clip.hasAlert && (
-              <CustomAlertIcon
-                color="warning"
-                fontSize="medium"
-                data-testid="warning-icon"
-                sx={{
-                  position: 'absolute',
-                  // This centers the icon over the audio start, rather than left-aligned at the audio start.
-                  left: -11,
-                  // This provides enough buffer to move the icon on top of the clip view rather than on it.
-                  top: -25,
-                  zIndex: 1,
-                  borderRadius: '50%',
-                }}
+                    ? 'rgba(255, 255, 255, 0.1)'
+                    : 'rgba(0, 0, 0, 0.05)'
+                  : 'transparent',
+                cursor: 'pointer',
+                '&:hover': {
+                  bgcolor: (clip.isPlaying || clip.isHighlighted)
+                    ? isDarkTheme
+                      ? 'rgba(255, 255, 255, 0.2)'
+                      : 'rgba(0, 0, 0, 0.1)'
+                    : isDarkTheme
+                      ? 'rgba(255, 255, 255, 0.03)'
+                      : 'rgba(0, 0, 0, 0.03)',
+                },
+              }}
+            >
+              {clip.hasAlert && (
+                <CustomAlertIcon
+                  color="warning"
+                  fontSize="medium"
+                  data-testid="warning-icon"
+                  sx={{
+                    position: 'absolute',
+                    // This centers the icon over the audio start, rather than left-aligned at the audio start.
+                    left: -11,
+                    // This provides enough buffer to move the icon on top of the clip view rather than on it.
+                    top: -25,
+                    zIndex: 1,
+                    borderRadius: '50%',
+                  }}
+                />
+              )}
+              <WavesurferPlayer
+                url={clip.url}
+                waveColor={theme.palette.text.secondary}
+                progressColor={theme.palette.text.primary}
+                cursorColor="transparent"
+                barWidth={0.5}
+                barGap={0.5}
+                height={60}
               />
-            )}
-            <WavesurferPlayer
-              url={clip.url}
-              waveColor={theme.palette.text.secondary}
-              progressColor={theme.palette.text.primary}
-              cursorColor="transparent"
-              barWidth={0.5}
-              barGap={0.5}
-              height={60}
-            />
-          </Box>
-        ))}
-        {transcripts.length === 0 && (
-          <Box
-            sx={{
-              position: 'absolute',
-              top: '50%',
-              left: '50%',
-              transform: 'translate(-50%, -50%)',
-              width: '100%',
-              textAlign: 'center',
-            }}
-          >
-            <Typography variant="body2" color="text.secondary">
-              No transcripts loaded
-            </Typography>
+            </Box>
+          ))}
+          {transcripts.length === 0 && (
+            <Box
+              sx={{
+                position: 'absolute',
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                width: '100%',
+                textAlign: 'center',
+              }}
+            >
+              <Typography variant="body2" color="text.secondary">
+                No transcripts loaded
+              </Typography>
+            </Box>
+          )}
+        </Paper>
+        {transcripts.length > 0 && (
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 0.5 }}>
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Typography key={i} variant="caption" color="text.secondary">
+                {formatTime(startTime + (i / 3) * windowDuration)}
+              </Typography>
+            ))}
           </Box>
         )}
-      </Paper>
-      {transcripts.length > 0 && (
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 0.5 }}>
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Typography key={i} variant="caption" color="text.secondary">
-              {formatTime(startTime + (i / 3) * windowDuration)}
-            </Typography>
-          ))}
-        </Box>
-      )}
+      </Box>
     </Box>
   );
 }

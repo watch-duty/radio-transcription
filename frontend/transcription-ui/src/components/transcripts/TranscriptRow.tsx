@@ -25,6 +25,7 @@ interface TranscriptRowProps {
   triggerSnackbar: (message: string) => void;
   showHeader: boolean;
   isHighlighted?: boolean;
+  onRowClick: (transmissionId: string) => void;
 }
 
 export function TranscriptRow({
@@ -39,6 +40,7 @@ export function TranscriptRow({
   triggerSnackbar,
   showHeader,
   isHighlighted = false,
+  onRowClick,
 }: TranscriptRowProps) {
   const theme = useTheme();
   const currentDate = new Date(transcript.startTimestamp);
@@ -89,7 +91,12 @@ export function TranscriptRow({
           py: 1.5,
           bgcolor: isHighlighted ? 'action.selected' : 'inherit',
           scrollMarginTop: theme.spacing(5),
+          cursor: 'pointer',
+          '&:hover': {
+            bgcolor: isHighlighted ? 'action.selected' : 'action.hover',
+          },
         }}
+        onClick={() => onRowClick(transcript.transmissionId)}
       >
         <Box
           sx={{
@@ -153,7 +160,8 @@ export function TranscriptRow({
             <IconButton
               size="small"
               aria-label="copy transcript"
-              onClick={() => {
+              onClick={(e) => {
+                e.stopPropagation();
                 navigator.clipboard.writeText(transcript.transcript);
                 triggerSnackbar('Transcript copied');
               }}
@@ -166,7 +174,8 @@ export function TranscriptRow({
             <IconButton
               size="small"
               aria-label="copy deeplink"
-              onClick={() => {
+              onClick={(e) => {
+                e.stopPropagation();
                 const url = new URL(
                   window.location.origin + window.location.pathname
                 );

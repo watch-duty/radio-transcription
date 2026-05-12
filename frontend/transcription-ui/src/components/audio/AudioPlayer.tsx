@@ -15,7 +15,10 @@ function AudioPlayer({ audioUri, transmissionId, currentlyPlayingTransmissionId,
 
   return (
     <IconButton
-      onClick={() => onToggleAudio(transmissionId, audioUri)}
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggleAudio(transmissionId, audioUri);
+      }}
       color="primary"
       aria-label={showPauseIcon ? 'pause' : 'play'}
     >

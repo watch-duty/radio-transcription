@@ -97,6 +97,8 @@ export function TranscriptView({
   const [playbackEndedForId, setPlaybackEndedForId] = useState<string | null>(null);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
 
+  const transcriptsRef = useRef<Transcript[]>([]);
+
   // Cleanup effect to ensure audio is unloaded when component unmounts
   useEffect(() => {
     return () => {
@@ -107,19 +109,18 @@ export function TranscriptView({
   // Play and pause audio from a URL.
   const toggleAudio = (transmissionId: string, audioUri: string) => {
     const newAudio = currentlyPlayingTransmissionId !== transmissionId;
-    if (!currentlyPlayingTransmissionId || newAudio) {
-      setIsAudioPlaying(false);
-      setCurrentlyPlayingTransmissionId(null);
-      
+    
+    if (newAudio) {
       if (currentAudio.current) {
         currentAudio.current.off();
         currentAudio.current.unload();
         currentAudio.current = null;
       }
+      setCurrentlyPlayingTransmissionId(transmissionId);
+      setHighlightedTransmissionId(transmissionId);
     }
 
     if (!currentAudio.current) {
-      setCurrentlyPlayingTransmissionId(transmissionId);
       const sound = new Howl({
         src: [getAudioUrl(audioUri)],
         html5: true,
@@ -127,7 +128,16 @@ export function TranscriptView({
         onplay: () => setIsAudioPlaying(true),
         onpause: () => setIsAudioPlaying(false),
         onend: () => {
-          setIsAudioPlaying(false);
+          const currentTranscripts = transcriptsRef.current;
+          const currentIndex = currentTranscripts.findIndex(
+            (t) => t.transmissionId === transmissionId
+          );
+          const hasNext = currentIndex > 0;
+
+          if (!hasNext) {
+            setIsAudioPlaying(false);
+          }
+          
           setPlaybackEndedForId(transmissionId);
           sound.unload();
           if (currentAudio.current === sound) {
@@ -282,6 +292,10 @@ export function TranscriptView({
       listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? [],
     [listTranscriptsResponse]
   );
+
+  useEffect(() => {
+    transcriptsRef.current = transcripts;
+  }, [transcripts]);
 
   useEffect(() => {
     if (!playbackEndedForId) return;
@@ -538,6 +552,33 @@ export function TranscriptView({
     setHighlightedTransmissionId(transmissionId);
   };
 
+  const handleTogglePlayPause = () => {
+    const targetId = isAudioPlaying
+      ? (currentlyPlayingTransmissionId || highlightedTransmissionId)
+      : (highlightedTransmissionId || currentlyPlayingTransmissionId || transcripts[0]?.transmissionId);
+    if (!targetId) return;
+    
+    const transcript = transcripts.find((t) => t.transmissionId === targetId);
+    if (transcript) {
+      toggleAudio(transcript.transmissionId, transcript.playbackAudioUri);
+    }
+  };
+
+  const handleStopAudio = () => {
+    if (currentAudio.current) {
+      currentAudio.current.stop();
+      currentAudio.current.unload();
+      currentAudio.current = null;
+    }
+    setIsAudioPlaying(false);
+    setCurrentlyPlayingTransmissionId(null);
+    setPlaybackEndedForId(null);
+  };
+
+  const handleRowClick = (transmissionId: string) => {
+    setHighlightedTransmissionId(transmissionId);
+  };
+
   const handleManualRefresh = useCallback(async () => {
     setIsTranscriptsPolling(true);
     try {
@@ -643,6 +684,10 @@ export function TranscriptView({
         transcripts={transcripts}
         currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
         onClipClick={handleClipClick}
+        isPlaying={isAudioPlaying}
+        onTogglePlayPause={handleTogglePlayPause}
+        onStop={handleStopAudio}
+        highlightedTransmissionId={highlightedTransmissionId}
       />
 
       <Box
@@ -684,6 +729,7 @@ export function TranscriptView({
               currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
               isPlaying={isAudioPlaying}
               highlightedTransmissionId={highlightedTransmissionId}
+              onRowClick={handleRowClick}
             />
           </>
         ) : feedsFetching || isTranscriptsInitialLoading ? (

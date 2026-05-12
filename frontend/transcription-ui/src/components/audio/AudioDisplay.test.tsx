@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { Transcript } from '@transcription/common';
 
 import { getAudioUrl } from '../../utils/audioUtils';
@@ -314,5 +314,58 @@ describe('AudioDisplay', () => {
       getAudioUrl(mockTranscripts[0].playbackAudioUri)
     );
     expect(wavesurfer.getAttribute('data-url')).toContain('.m4a');
+  });
+
+  it('should render play button and call onTogglePlayPause when clicked', () => {
+    const mockOnTogglePlayPause = vi.fn();
+    render(
+      <AudioDisplay
+        transcripts={[]}
+        currentlyPlayingTransmissionId={null}
+        onClipClick={vi.fn()}
+        isPlaying={false}
+        onTogglePlayPause={mockOnTogglePlayPause}
+        onStop={vi.fn()}
+      />
+    );
+
+    const playButton = screen.getByLabelText('play');
+    expect(playButton).toBeTruthy();
+    fireEvent.click(playButton);
+    expect(mockOnTogglePlayPause).toHaveBeenCalled();
+  });
+
+  it('should render pause button when playing', () => {
+    render(
+      <AudioDisplay
+        transcripts={[]}
+        currentlyPlayingTransmissionId={null}
+        onClipClick={vi.fn()}
+        isPlaying={true}
+        onTogglePlayPause={vi.fn()}
+        onStop={vi.fn()}
+      />
+    );
+
+    expect(screen.getByLabelText('pause')).toBeTruthy();
+  });
+
+  it('should render stop button and call onStop when clicked', () => {
+    const mockOnStop = vi.fn();
+    render(
+      <AudioDisplay
+        transcripts={[]}
+        currentlyPlayingTransmissionId={null}
+        onClipClick={vi.fn()}
+        isPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        onStop={mockOnStop}
+      />
+    );
+
+    const stopButton = screen.getByLabelText('stop');
+    expect(stopButton).toBeTruthy();
+    fireEvent.click(stopButton);
+    expect(mockOnStop).toHaveBeenCalled();
   });
 });
