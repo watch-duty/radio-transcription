@@ -28,16 +28,16 @@ from backend.pipeline.transcription.common import logging as trans_logging
 from backend.pipeline.transcription.common import utils as trans_utils
 from backend.pipeline.transcription.state import stitcher_state
 
-logger = trans_logging.get_logger(
+logger = trans_logging.get_task_logger(
     __name__, {"system": "transcription", "component": "stitcher-engine"}
 )
 
 
 def _get_task_logger(
     feed_id: str, session_id: str | None, component: str
-) -> std_logging.LoggerAdapter:
+) -> std_logging.LoggerAdapter[std_logging.Logger]:
     """Contextual logger creation helper."""
-    logger_obj = trans_logging.get_logger(
+    return trans_logging.get_task_logger(
         __name__,
         {
             "system": "transcription",
@@ -46,10 +46,6 @@ def _get_task_logger(
             "session_id": session_id or "none",
         },
     )
-    if not isinstance(logger_obj, std_logging.LoggerAdapter):
-        msg = "Expected LoggerAdapter from get_logger with extra parameters"
-        raise TypeError(msg)
-    return logger_obj
 
 
 class StitcherEngine:

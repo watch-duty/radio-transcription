@@ -29,9 +29,11 @@ from backend.pipeline.transcription.common.constants import (
     VAD_DEFAULT_THRESHOLD_OFFSET,
     VAD_DEFAULT_THRESHOLD_ONSET,
 )
-from backend.pipeline.transcription.common.logging import get_logger
+from backend.pipeline.transcription.common.logging import get_task_logger
 
-logger = get_logger(__name__, {"system": "transcription", "component": "vad"})
+logger = get_task_logger(
+    __name__, {"system": "transcription", "component": "vad"}
+)
 
 MODELS_DIR = Path(__file__).parent / "models"
 TARGET_SAMPLE_RATE = 16000

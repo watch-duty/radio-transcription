@@ -47,7 +47,7 @@ from backend.pipeline.transcription.transforms import stitcher_engine
 
 SHARED_RESOURCE_HANDLE = Shared()
 
-logger = trans_logging.get_logger(
+logger = trans_logging.get_task_logger(
     __name__, {"system": "transcription", "component": "ordered-stitcher"}
 )
 

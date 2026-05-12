@@ -25,10 +25,10 @@ from backend.pipeline.transcription.common.constants import (
     DEFAULT_RETRY_MAX_SECONDS,
 )
 from backend.pipeline.transcription.common.enums import TranscriberType
-from backend.pipeline.transcription.common.logging import get_logger
+from backend.pipeline.transcription.common.logging import get_task_logger
 from backend.pipeline.transcription.common.utils import ConfigBase
 
-logger = get_logger(
+logger = get_task_logger(
     __name__, {"system": "transcription", "component": "transcribers"}
 )
 
@@ -263,7 +263,7 @@ class MockTranscriber(Transcriber):
     def setup(self) -> None:
         self.index = 0
 
-    def transcribe(self, *, audio_data: bytes) -> str | None:
+    def transcribe(self, *, audio_data: bytes, duration_ms: int) -> str | None:
         # If a sequence of transcripts is provided, return them in rotation
         if self.config.transcripts:
             transcript = self.config.transcripts[
