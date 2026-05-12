@@ -2,7 +2,6 @@
 
 import io
 import json
-import os
 import subprocess
 import tempfile
 import urllib.parse
@@ -12,7 +11,6 @@ from pathlib import Path
 
 import numpy as np
 import soundfile as sf
-from google.auth.credentials import AnonymousCredentials
 from google.cloud import storage
 from pedalboard import HighpassFilter, LowpassFilter, Pedalboard
 
@@ -22,7 +20,6 @@ from backend.pipeline.common.constants import (
     MS_PER_SECOND,
     SAMPLE_RATE_HZ,
 )
-from backend.pipeline.common.env import is_gcp_env
 from backend.pipeline.transcription.audio.dsp import (
     TorchaudioHannResampler,
 )
@@ -45,12 +42,6 @@ logger = get_logger(
 
 def get_gcs_client() -> storage.Client:
     """Initialize and return a GCS Client. Used natively by the audio processor for isolation."""
-    # Point to the GCS emulator when running locally.
-    if not is_gcp_env():
-        return storage.Client(
-            credentials=AnonymousCredentials(),
-            project=os.environ.get("GOOGLE_CLOUD_PROJECT", "local-project"),
-        )
     return storage.Client()
 
 

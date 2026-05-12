@@ -23,7 +23,7 @@ services:
     volumes:
       - ./local_dev/pubsub_init.py:/app/pubsub_init.py
     working_dir: /app
-    command: sh -c "pip install requests && python pubsub_init.py"
+    command: sh -c "pip install google-cloud-pubsub && python pubsub_init.py"
 
   gcs-init:
     image: python:3.13-slim
@@ -37,7 +37,7 @@ services:
       - ./local_dev/gcs_init.py:/app/gcs_init.py
       - ./backend/pipeline/transcription/tests/test_data:/app/data
     working_dir: /app
-    command: sh -c "pip install requests && python gcs_init.py"
+    command: sh -c "pip install google-cloud-storage && python gcs_init.py"
 
   gcs-emulator:
     image: fsouza/fake-gcs-server
