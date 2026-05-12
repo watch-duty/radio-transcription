@@ -1,6 +1,7 @@
 """Tests for the StitchAudioFn, TranscribeAudioFn, and related transformations."""
 
 import unittest
+from collections.abc import Callable
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -51,8 +52,28 @@ from backend.pipeline.transcription.transforms.stateless import (
     SerializeFn,
 )
 
-# Pre-populate the GCS client handle with a mock to prevent active GCS Client instantiation on worker setups
-SHARED_RESOURCE_HANDLE.acquire(MagicMock, tag="gcs")
+# Configure dynamic mock interception for process-level shared GCS clients
+# using standard unittest module lifecycle hooks to avoid any type ignore annotations.
+original_acquire = SHARED_RESOURCE_HANDLE.acquire
+
+
+def mock_acquire(constructor_fn: Callable[[], Any], tag: Any = None) -> Any:
+    if tag == "gcs":
+        return MagicMock()
+    return original_acquire(constructor_fn, tag)
+
+
+_SHARED_PATCHER = patch.object(
+    SHARED_RESOURCE_HANDLE, "acquire", side_effect=mock_acquire
+)
+
+
+def setUpModule() -> None:
+    _SHARED_PATCHER.start()
+
+
+def tearDownModule() -> None:
+    _SHARED_PATCHER.stop()
 
 
 class MockTranscriberFactory:
