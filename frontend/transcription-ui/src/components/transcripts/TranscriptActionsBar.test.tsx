@@ -8,6 +8,7 @@ import { TranscriptActionsBar } from './TranscriptActionsBar';
 describe('TranscriptActionsBar', () => {
   const mockSetRefreshInterval = vi.fn();
   const mockOnRefresh = vi.fn();
+  const mockSetRedactTranscripts = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -34,6 +35,8 @@ describe('TranscriptActionsBar', () => {
         refreshInterval={10000}
         setRefreshInterval={mockSetRefreshInterval}
         onRefresh={mockRefresh}
+        redactTranscripts={false}
+        setRedactTranscripts={mockSetRedactTranscripts}
       />
     );
 
@@ -56,6 +59,8 @@ describe('TranscriptActionsBar', () => {
         refreshInterval={10000}
         setRefreshInterval={mockSetRefreshInterval}
         onRefresh={mockOnRefresh}
+        redactTranscripts={false}
+        setRedactTranscripts={mockSetRedactTranscripts}
       />
     );
 
@@ -72,6 +77,8 @@ describe('TranscriptActionsBar', () => {
         refreshInterval={10000}
         setRefreshInterval={mockSetRefreshInterval}
         onRefresh={mockOnRefresh}
+        redactTranscripts={false}
+        setRedactTranscripts={mockSetRedactTranscripts}
       />
     );
 
@@ -85,5 +92,30 @@ describe('TranscriptActionsBar', () => {
     fireEvent.click(option5s);
 
     expect(mockSetRefreshInterval).toHaveBeenCalledWith(5000);
+  });
+
+  it('renders the redact checkbox and toggles state when changed', () => {
+    render(
+      <TranscriptActionsBar
+        searchedTimestamp={null}
+        hasNewerTranscripts={false}
+        isTranscriptsFetching={false}
+        isTranscriptsPolling={false}
+        refreshInterval={10000}
+        setRefreshInterval={mockSetRefreshInterval}
+        onRefresh={mockOnRefresh}
+        redactTranscripts={false}
+        setRedactTranscripts={mockSetRedactTranscripts}
+      />
+    );
+
+    const checkbox = screen.getByRole('checkbox', {
+      name: /Redact transcripts/i,
+    });
+    expect(checkbox).toBeTruthy();
+    expect((checkbox as HTMLInputElement).checked).toBe(false);
+
+    fireEvent.click(checkbox);
+    expect(mockSetRedactTranscripts).toHaveBeenCalledWith(true);
   });
 });

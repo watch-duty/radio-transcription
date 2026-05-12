@@ -77,6 +77,7 @@ export function TranscriptView({
 
   const [transcriptsPollingIntervalMs, setTranscriptsPollingIntervalMs] =
     useState(DEFAULT_REFRESH_INTERVAL);
+  const [redactTranscripts, setRedactTranscripts] = useState(false);
 
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
@@ -595,6 +596,8 @@ export function TranscriptView({
               refreshInterval={transcriptsPollingIntervalMs}
               setRefreshInterval={setTranscriptsPollingIntervalMs}
               onRefresh={handleManualRefresh}
+              redactTranscripts={redactTranscripts}
+              setRedactTranscripts={setRedactTranscripts}
             />
             <TranscriptDisplay
               ref={virtuosoRef}
@@ -615,6 +618,7 @@ export function TranscriptView({
               onPlay={onPlay}
               currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
               highlightedTransmissionId={highlightedTransmissionId}
+              redactTranscripts={redactTranscripts}
             />
           </>
         ) : feedsFetching || isTranscriptsInitialLoading ? (

@@ -66,6 +66,7 @@ describe('TranscriptDisplay', () => {
             onPlay={vi.fn()}
             currentlyPlayingTransmissionId={null}
             highlightedTransmissionId={null}
+            redactTranscripts={false}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>
@@ -100,6 +101,7 @@ describe('TranscriptDisplay', () => {
             onPlay={vi.fn()}
             currentlyPlayingTransmissionId={null}
             highlightedTransmissionId={null}
+            redactTranscripts={false}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>
@@ -134,6 +136,7 @@ describe('TranscriptDisplay', () => {
             onPlay={vi.fn()}
             currentlyPlayingTransmissionId={null}
             highlightedTransmissionId={null}
+            redactTranscripts={false}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>
@@ -168,6 +171,7 @@ describe('TranscriptDisplay', () => {
             onPlay={vi.fn()}
             currentlyPlayingTransmissionId={null}
             highlightedTransmissionId={null}
+            redactTranscripts={false}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>
