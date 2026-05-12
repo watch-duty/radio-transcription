@@ -40,13 +40,13 @@ from backend.pipeline.transcription.common.datatypes import (
     FeedMetadata,
     TranscriptionResult,
 )
-from backend.pipeline.transcription.common.logging import get_logger
+from backend.pipeline.transcription.common.logging import get_task_logger
 from backend.pipeline.transcription.options import (
     DataflowSystemOptions,  # noqa: F401
     TranscriptionOptions,  # noqa: F401
 )
 
-logger = get_logger(
+logger = get_task_logger(
     __name__, {"system": "transcription", "component": "transforms"}
 )
 

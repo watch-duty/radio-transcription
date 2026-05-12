@@ -33,9 +33,9 @@ from backend.pipeline.transcription.common.datatypes import (
     AudioChunkData,
     TimeRange,
 )
-from backend.pipeline.transcription.common.logging import get_logger
+from backend.pipeline.transcription.common.logging import get_task_logger
 
-logger = get_logger(
+logger = get_task_logger(
     __name__, {"system": "transcription", "component": "audio-processor"}
 )
 

@@ -24,9 +24,7 @@ class TaskJsonFormatter(logging.Formatter):
         return json.dumps(log_record)
 
 
-def get_logger(
-    name: str, extra: dict[str, Any] | None = None
-) -> logging.Logger | logging.LoggerAdapter:
+def get_logger(name: str) -> logging.Logger:
     """Returns a logger configured to output JSON lines to stdout, with propagation disabled to prevent duplicates in Dataflow."""
     logger = logging.getLogger(name)
     logger.propagate = False
@@ -36,6 +34,12 @@ def get_logger(
         handler.setFormatter(TaskJsonFormatter())
         logger.addHandler(handler)
 
-    if extra:
-        return logging.LoggerAdapter(logger, extra)
     return logger
+
+
+def get_task_logger(
+    name: str, extra: dict[str, Any]
+) -> logging.LoggerAdapter[logging.Logger]:
+    """Returns a LoggerAdapter wrapping the configured JSON logger with contextual attributes."""
+    logger = get_logger(name)
+    return logging.LoggerAdapter(logger, extra)
