@@ -25,6 +25,10 @@ describe('AudioDisplay', () => {
         transcripts={[]}
         currentlyPlayingTransmissionId={null}
         onClipClick={vi.fn()}
+        isPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        onStop={vi.fn()}
+        highlightedTransmissionId={null}
       />
     );
     expect(screen.getByText('No transcripts loaded')).toBeTruthy();
@@ -54,6 +58,10 @@ describe('AudioDisplay', () => {
         transcripts={mockTranscripts}
         currentlyPlayingTransmissionId={null}
         onClipClick={vi.fn()}
+        isPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        onStop={vi.fn()}
+        highlightedTransmissionId={null}
       />
     );
 
@@ -88,6 +96,10 @@ describe('AudioDisplay', () => {
         transcripts={mockTranscripts}
         currentlyPlayingTransmissionId={null}
         onClipClick={vi.fn()}
+        isPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        onStop={vi.fn()}
+        highlightedTransmissionId={null}
       />
     );
 
@@ -133,6 +145,10 @@ describe('AudioDisplay', () => {
         transcripts={mockTranscripts}
         currentlyPlayingTransmissionId={null}
         onClipClick={vi.fn()}
+        isPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        onStop={vi.fn()}
+        highlightedTransmissionId={null}
       />
     );
 
@@ -145,6 +161,10 @@ describe('AudioDisplay', () => {
         transcripts={mockTranscripts}
         currentlyPlayingTransmissionId="2"
         onClipClick={vi.fn()}
+        isPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        onStop={vi.fn()}
+        highlightedTransmissionId={null}
       />
     );
 
@@ -198,6 +218,10 @@ describe('AudioDisplay', () => {
         transcripts={mockTranscripts1}
         currentlyPlayingTransmissionId={null}
         onClipClick={vi.fn()}
+        isPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        onStop={vi.fn()}
+        highlightedTransmissionId={null}
       />
     );
 
@@ -210,6 +234,10 @@ describe('AudioDisplay', () => {
         transcripts={mockTranscripts2}
         currentlyPlayingTransmissionId={null}
         onClipClick={vi.fn()}
+        isPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        onStop={vi.fn()}
+        highlightedTransmissionId={null}
       />
     );
 
@@ -246,6 +274,10 @@ describe('AudioDisplay', () => {
         currentlyPlayingTransmissionId={null}
         userDuration="5"
         onClipClick={vi.fn()}
+        isPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        onStop={vi.fn()}
+        highlightedTransmissionId={null}
       />
     );
 
@@ -265,6 +297,10 @@ describe('AudioDisplay', () => {
         currentlyPlayingTransmissionId={null}
         userDuration="30"
         onClipClick={vi.fn()}
+        isPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        onStop={vi.fn()}
+        highlightedTransmissionId={null}
       />
     );
 
@@ -305,6 +341,10 @@ describe('AudioDisplay', () => {
         transcripts={mockTranscripts}
         currentlyPlayingTransmissionId={null}
         onClipClick={vi.fn()}
+        isPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        onStop={vi.fn()}
+        highlightedTransmissionId={null}
       />
     );
 
@@ -326,6 +366,7 @@ describe('AudioDisplay', () => {
         isPlaying={false}
         onTogglePlayPause={mockOnTogglePlayPause}
         onStop={vi.fn()}
+        highlightedTransmissionId={null}
       />
     );
 
@@ -344,6 +385,7 @@ describe('AudioDisplay', () => {
         isPlaying={true}
         onTogglePlayPause={vi.fn()}
         onStop={vi.fn()}
+        highlightedTransmissionId={null}
       />
     );
 
@@ -360,6 +402,7 @@ describe('AudioDisplay', () => {
         isPlaying={false}
         onTogglePlayPause={vi.fn()}
         onStop={mockOnStop}
+        highlightedTransmissionId={null}
       />
     );
 

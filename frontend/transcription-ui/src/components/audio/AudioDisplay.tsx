@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 
 import Box from '@mui/material/Box';
 import Paper from '@mui/material/Paper';
@@ -14,6 +14,7 @@ import IconButton from '@mui/material/IconButton';
 import { getAudioUrl } from '../../utils/audioUtils';
 import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { CustomAlertIcon } from '../common/AlertIcon';
+
 
 interface AudioDisplayProps {
   transcripts: Transcript[];
@@ -34,6 +35,96 @@ const formatTime = (timestamp: number) => {
     hour12: false,
   });
 };
+
+interface TimelineClipProps {
+  clip: {
+    id: string;
+    url: string;
+    left: number;
+    width: number;
+    isPlaying: boolean;
+    isHighlighted: boolean;
+    hasAlert: boolean;
+  };
+  onClipClick: (transmissionId: string) => void;
+  isDarkTheme: boolean;
+  theme: any;
+}
+
+const TimelineClip = React.memo(({
+  clip,
+  onClipClick,
+  isDarkTheme,
+  theme,
+}: TimelineClipProps) => {
+  return (
+    <Box
+      onClick={() => onClipClick(clip.id)}
+      sx={{
+        position: 'absolute',
+        left: `${clip.left}%`,
+        width: `${clip.width}%`,
+        height: '100%',
+        bgcolor: (clip.isPlaying || clip.isHighlighted)
+          ? isDarkTheme
+            ? 'rgba(255, 255, 255, 0.1)'
+            : 'rgba(0, 0, 0, 0.05)'
+          : 'transparent',
+        cursor: 'pointer',
+        '&:hover': {
+          bgcolor: (clip.isPlaying || clip.isHighlighted)
+            ? isDarkTheme
+              ? 'rgba(255, 255, 255, 0.2)'
+              : 'rgba(0, 0, 0, 0.1)'
+            : isDarkTheme
+              ? 'rgba(255, 255, 255, 0.03)'
+              : 'rgba(0, 0, 0, 0.03)',
+        },
+      }}
+    >
+      {clip.hasAlert && (
+        <CustomAlertIcon
+          color="warning"
+          fontSize="medium"
+          data-testid="warning-icon"
+          sx={{
+            position: 'absolute',
+            // This centers the icon over the audio start, rather than left-aligned at the audio start.
+            left: -11,
+            // This provides enough buffer to move the icon on top of the clip view rather than on it.
+            top: -25,
+            zIndex: 1,
+            borderRadius: '50%',
+          }}
+        />
+      )}
+      <WavesurferPlayer
+        url={clip.url}
+        waveColor={theme.palette.text.secondary}
+        progressColor={theme.palette.text.primary}
+        cursorColor="transparent"
+        barWidth={0.5}
+        barGap={0.5}
+        height={60}
+        interact={false}
+      />
+    </Box>
+  );
+}, (prevProps, nextProps) => {
+  // This prevents the clip from re-rendering when the parent component re-renders, 
+  // unless the props actually change.
+  return (
+    prevProps.clip.id === nextProps.clip.id &&
+    prevProps.clip.url === nextProps.clip.url &&
+    prevProps.clip.left === nextProps.clip.left &&
+    prevProps.clip.width === nextProps.clip.width &&
+    prevProps.clip.isPlaying === nextProps.clip.isPlaying &&
+    prevProps.clip.isHighlighted === nextProps.clip.isHighlighted &&
+    prevProps.clip.hasAlert === nextProps.clip.hasAlert &&
+    prevProps.isDarkTheme === nextProps.isDarkTheme &&
+    prevProps.theme === nextProps.theme
+  );
+});
 
 export function AudioDisplay({
   transcripts,
@@ -195,57 +286,13 @@ export function AudioDisplay({
           }}
         >
           {clips.map((clip) => (
-            <Box
+            <TimelineClip
               key={clip.id}
-              onClick={() => onClipClick(clip.id)}
-              sx={{
-                position: 'absolute',
-                left: `${clip.left}%`,
-                width: `${clip.width}%`,
-                height: '100%',
-                bgcolor: (clip.isPlaying || clip.isHighlighted)
-                  ? isDarkTheme
-                    ? 'rgba(255, 255, 255, 0.1)'
-                    : 'rgba(0, 0, 0, 0.05)'
-                  : 'transparent',
-                cursor: 'pointer',
-                '&:hover': {
-                  bgcolor: (clip.isPlaying || clip.isHighlighted)
-                    ? isDarkTheme
-                      ? 'rgba(255, 255, 255, 0.2)'
-                      : 'rgba(0, 0, 0, 0.1)'
-                    : isDarkTheme
-                      ? 'rgba(255, 255, 255, 0.03)'
-                      : 'rgba(0, 0, 0, 0.03)',
-                },
-              }}
-            >
-              {clip.hasAlert && (
-                <CustomAlertIcon
-                  color="warning"
-                  fontSize="medium"
-                  data-testid="warning-icon"
-                  sx={{
-                    position: 'absolute',
-                    // This centers the icon over the audio start, rather than left-aligned at the audio start.
-                    left: -11,
-                    // This provides enough buffer to move the icon on top of the clip view rather than on it.
-                    top: -25,
-                    zIndex: 1,
-                    borderRadius: '50%',
-                  }}
-                />
-              )}
-              <WavesurferPlayer
-                url={clip.url}
-                waveColor={theme.palette.text.secondary}
-                progressColor={theme.palette.text.primary}
-                cursorColor="transparent"
-                barWidth={0.5}
-                barGap={0.5}
-                height={60}
-              />
-            </Box>
+              clip={clip}
+              onClipClick={onClipClick}
+              isDarkTheme={isDarkTheme}
+              theme={theme}
+            />
           ))}
           {transcripts.length === 0 && (
             <Box
