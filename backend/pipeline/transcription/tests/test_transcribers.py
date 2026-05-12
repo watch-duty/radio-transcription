@@ -21,9 +21,15 @@ from backend.pipeline.transcription.services.transcribers import (
 class TestTranscribers(unittest.TestCase):
     def test_google_chirp_transcriber_success(self) -> None:
         """Verifies that the GoogleChirpTranscriber interacts via the SpeechClient accurately rendering raw byte audio variants into basic text transcripts."""
-        with patch(
-            "backend.pipeline.transcription.services.transcribers.SpeechClient"
-        ) as mock_speech_client_cls:
+        with (
+            patch(
+                "backend.pipeline.transcription.services.transcribers.is_gcp_env",
+                return_value=True,
+            ),
+            patch(
+                "backend.pipeline.transcription.services.transcribers.SpeechClient"
+            ) as mock_speech_client_cls,
+        ):
             mock_client_instance = MagicMock()
             mock_speech_client_cls.return_value = mock_client_instance
 
@@ -54,9 +60,15 @@ class TestTranscribers(unittest.TestCase):
 
     def test_google_chirp_transcriber_background(self) -> None:
         """Verifies that the system safely filters and intercepts implicit [UNINTELLIGIBLE] generic filler outputs, converting them cleanly into None."""
-        with patch(
-            "backend.pipeline.transcription.services.transcribers.SpeechClient"
-        ) as mock_speech_client_cls:
+        with (
+            patch(
+                "backend.pipeline.transcription.services.transcribers.is_gcp_env",
+                return_value=True,
+            ),
+            patch(
+                "backend.pipeline.transcription.services.transcribers.SpeechClient"
+            ) as mock_speech_client_cls,
+        ):
             mock_client_instance = MagicMock()
             mock_speech_client_cls.return_value = mock_client_instance
 
@@ -84,9 +96,15 @@ class TestTranscribers(unittest.TestCase):
 
     def test_google_chirp_transcriber_passes_retry_policy(self) -> None:
         """Verifies that the GoogleChirpV3Transcriber passes a native Retry policy to the SpeechClient."""
-        with patch(
-            "backend.pipeline.transcription.services.transcribers.SpeechClient"
-        ) as mock_speech_client_cls:
+        with (
+            patch(
+                "backend.pipeline.transcription.services.transcribers.is_gcp_env",
+                return_value=True,
+            ),
+            patch(
+                "backend.pipeline.transcription.services.transcribers.SpeechClient"
+            ) as mock_speech_client_cls,
+        ):
             mock_client_instance = MagicMock()
             mock_speech_client_cls.return_value = mock_client_instance
 

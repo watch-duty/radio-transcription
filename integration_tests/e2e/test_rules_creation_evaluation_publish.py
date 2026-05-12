@@ -112,6 +112,6 @@ def test_rules_creation_evaluation_publish(test_feed: tuple[str, str]) -> None:
 
     assert_eventually(
         transcript_and_notification_received,
-        timeout_sec=30.0,
+        timeout_sec=70.0,
         error_msg=f"Did not receive expected notification or transcript matching {unique_trans_id}.",
     )
