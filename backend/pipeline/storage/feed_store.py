@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import enum
+import json
 import logging
 from typing import TYPE_CHECKING, TypedDict
 
@@ -116,6 +117,7 @@ class Feed(TypedDict):
     created_at: datetime.datetime
     source_feed_id: str | None
     external_id: str | None
+    tags: list[dict[str, str]] | None
 
 
 class FeedStore:
@@ -176,6 +178,10 @@ class FeedStore:
             msg = f"Unknown status {row['status']!r} for feed {row['id']}"
             raise ValueError(msg) from e
 
+        tags = row.get("tags")
+        if tags is not None:
+            tags = json.loads(tags)
+
         return Feed(
             id=row["id"],
             name=row["name"],
@@ -189,6 +195,7 @@ class FeedStore:
             created_at=row["created_at"],
             source_feed_id=row["source_feed_id"],
             external_id=row["external_id"],
+            tags=tags,
         )
 
     def _row_to_leased_feed(self, row: asyncpg.Record) -> LeasedFeed:
@@ -577,6 +584,7 @@ class FeedStore:
         source_type: str | SourceType,
         source_feed_id: str,
         external_id: str,
+        tags: list[dict[str, str]] | None = None,
     ) -> Feed:
         """Create a new feed record.
 
@@ -607,6 +615,7 @@ class FeedStore:
             source_type_str,
             source_feed_id,
             external_id,
+            json.dumps(tags or []),
         )
         if row is None:
             msg = f"Failed to create feed {name}"
