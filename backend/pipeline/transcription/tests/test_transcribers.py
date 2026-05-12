@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, call, patch
 
 from google.api_core.retry import Retry
 
-from backend.pipeline.common.constants import BYTES_PER_SECOND_16KHZ_MONO
 from backend.pipeline.transcription.common.constants import (
     CHIRP_UNINTELLIGIBLE_MARKER,
 )
@@ -17,19 +16,15 @@ from backend.pipeline.transcription.services.transcribers import (
     get_transcriber,
 )
 
+BYTES_PER_SECOND_16KHZ_MONO = 16000 * 2
+
 
 class TestTranscribers(unittest.TestCase):
     def test_google_chirp_transcriber_success(self) -> None:
         """Verifies that the GoogleChirpTranscriber interacts via the SpeechClient accurately rendering raw byte audio variants into basic text transcripts."""
-        with (
-            patch(
-                "backend.pipeline.transcription.services.transcribers.is_gcp_env",
-                return_value=True,
-            ),
-            patch(
-                "backend.pipeline.transcription.services.transcribers.SpeechClient"
-            ) as mock_speech_client_cls,
-        ):
+        with patch(
+            "backend.pipeline.transcription.services.transcribers.SpeechClient"
+        ) as mock_speech_client_cls:
             mock_client_instance = MagicMock()
             mock_speech_client_cls.return_value = mock_client_instance
 
@@ -53,6 +48,7 @@ class TestTranscribers(unittest.TestCase):
 
             transcript = transcriber.transcribe(
                 audio_data=dummy_audio,
+                duration_ms=2500,
             )
 
             self.assertEqual(transcript, "Hello world from Chirp")
@@ -60,15 +56,9 @@ class TestTranscribers(unittest.TestCase):
 
     def test_google_chirp_transcriber_background(self) -> None:
         """Verifies that the system safely filters and intercepts implicit [UNINTELLIGIBLE] generic filler outputs, converting them cleanly into None."""
-        with (
-            patch(
-                "backend.pipeline.transcription.services.transcribers.is_gcp_env",
-                return_value=True,
-            ),
-            patch(
-                "backend.pipeline.transcription.services.transcribers.SpeechClient"
-            ) as mock_speech_client_cls,
-        ):
+        with patch(
+            "backend.pipeline.transcription.services.transcribers.SpeechClient"
+        ) as mock_speech_client_cls:
             mock_client_instance = MagicMock()
             mock_speech_client_cls.return_value = mock_client_instance
 
@@ -90,21 +80,17 @@ class TestTranscribers(unittest.TestCase):
 
             dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
 
-            transcript = transcriber.transcribe(audio_data=dummy_audio)
+            transcript = transcriber.transcribe(
+                audio_data=dummy_audio, duration_ms=2500
+            )
 
             self.assertIsNone(transcript)
 
     def test_google_chirp_transcriber_passes_retry_policy(self) -> None:
         """Verifies that the GoogleChirpV3Transcriber passes a native Retry policy to the SpeechClient."""
-        with (
-            patch(
-                "backend.pipeline.transcription.services.transcribers.is_gcp_env",
-                return_value=True,
-            ),
-            patch(
-                "backend.pipeline.transcription.services.transcribers.SpeechClient"
-            ) as mock_speech_client_cls,
-        ):
+        with patch(
+            "backend.pipeline.transcription.services.transcribers.SpeechClient"
+        ) as mock_speech_client_cls:
             mock_client_instance = MagicMock()
             mock_speech_client_cls.return_value = mock_client_instance
 
@@ -123,7 +109,7 @@ class TestTranscribers(unittest.TestCase):
             transcriber.setup()
 
             dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
-            transcriber.transcribe(audio_data=dummy_audio)
+            transcriber.transcribe(audio_data=dummy_audio, duration_ms=2500)
 
             mock_client_instance.recognize.assert_called_once()
             _, kwargs = mock_client_instance.recognize.call_args
@@ -162,7 +148,7 @@ class TestTranscribers(unittest.TestCase):
             transcriber.setup()
 
             dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
-            transcriber.transcribe(audio_data=dummy_audio)
+            transcriber.transcribe(audio_data=dummy_audio, duration_ms=2500)
 
             _, kwargs = mock_cs.RecognitionConfig.call_args
             self.assertIsNone(kwargs.get("adaptation"))
@@ -206,7 +192,7 @@ class TestTranscribers(unittest.TestCase):
             transcriber.setup()
 
             dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
-            transcriber.transcribe(audio_data=dummy_audio)
+            transcriber.transcribe(audio_data=dummy_audio, duration_ms=2500)
 
             # Comment and blank line are skipped; two phrases expected
             expected_phrase_calls = [
@@ -264,7 +250,7 @@ class TestTranscribers(unittest.TestCase):
             transcriber.setup()
 
             dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
-            transcriber.transcribe(audio_data=dummy_audio)
+            transcriber.transcribe(audio_data=dummy_audio, duration_ms=2500)
 
             _, kwargs = mock_cs.RecognitionConfig.call_args
             self.assertIn("denoiser_config", kwargs)
@@ -302,7 +288,7 @@ class TestTranscribers(unittest.TestCase):
             transcriber.setup()
 
             dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
-            transcriber.transcribe(audio_data=dummy_audio)
+            transcriber.transcribe(audio_data=dummy_audio, duration_ms=2500)
 
             mock_cs.RecognitionFeatures.assert_called_once()
             _, features_kwargs = mock_cs.RecognitionFeatures.call_args
@@ -310,6 +296,40 @@ class TestTranscribers(unittest.TestCase):
             mock_cs.CustomPromptConfig.assert_called_once_with(
                 custom_prompt="Test prompt"
             )
+
+
+class TestMockTranscriber(unittest.TestCase):
+    def test_mock_transcriber_default(self) -> None:
+        """Verifies the MockTranscriber returns the default static transcript when no sequence is set."""
+        transcriber = get_transcriber(
+            TranscriberType.MOCK,
+            "test-project",
+            "{}",
+        )
+        transcriber.setup()
+
+        res = transcriber.transcribe(audio_data=b"\x00")
+        self.assertEqual(
+            res, "This is a mock transcription of the radio transmission."
+        )
+
+    def test_mock_transcriber_sequence(self) -> None:
+        """Verifies the MockTranscriber rotates through configured transcripts."""
+        config_json = '{"transcripts": ["First Call", "Second Call"]}'
+        transcriber = get_transcriber(
+            TranscriberType.MOCK,
+            "test-project",
+            config_json,
+        )
+        transcriber.setup()
+
+        res1 = transcriber.transcribe(audio_data=b"\x00")
+        res2 = transcriber.transcribe(audio_data=b"\x00")
+        res3 = transcriber.transcribe(audio_data=b"\x00")
+
+        self.assertEqual(res1, "First Call")
+        self.assertEqual(res2, "Second Call")
+        self.assertEqual(res3, "First Call")
 
 
 if __name__ == "__main__":

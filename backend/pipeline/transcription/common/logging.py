@@ -6,8 +6,13 @@ from typing import Any
 
 class TaskJsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
+        message = record.getMessage()
+        if record.exc_info:
+            exc_text = self.formatException(record.exc_info)
+            message = f"{message}\n{exc_text}"
+
         log_record = {
-            "message": record.getMessage(),
+            "message": message,
             "severity": record.levelname,
             "logger": record.name,
         }

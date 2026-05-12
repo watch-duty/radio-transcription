@@ -89,6 +89,7 @@ services:
       --project $GOOGLE_CLOUD_PROJECT
       --id_label "" 
       --canonical_audio_bucket $AUDIO_CANONICAL_BUCKET
+      --transcriber_type mock
     env_file:
       - ./local_dev/LOCAL.env
     networks:
@@ -116,6 +117,7 @@ services:
       --bypass_stitching true
       --id_label ""
       --canonical_audio_bucket $AUDIO_CANONICAL_BUCKET
+      --transcriber_type mock
     env_file:
       - ./local_dev/LOCAL.env
     networks:

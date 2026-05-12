@@ -325,6 +325,85 @@ class TranscribeAudioTest(unittest.TestCase):
                 results[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ"
             )
 
+    @patch(
+        "backend.pipeline.transcription.services.transcribers.get_transcriber"
+    )
+    @patch(
+        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
+    )
+    def test_duration_limit_dlq_routing(
+        self, mock_audio_processor: MagicMock, mock_get_transcriber: MagicMock
+    ) -> None:
+        """Verifies that audio payloads exceeding the strict 60s uncompressed duration limit are cleanly routed to the DLQ."""
+        mock_processor_inst = mock_audio_processor.return_value
+        mock_processor_inst.check_vad.return_value = True
+        mock_processor_inst.preprocess_audio.side_effect = lambda x, sr: x
+        mock_processor_inst.export_flac.return_value = b"flac_bytes"
+
+        # Mock process_buffer to return 65 seconds of uncompressed audio
+        mock_processor_inst.process_buffer.return_value = ProcessorOutput(
+            success=True,
+            flac_bytes=b"flac_bytes",
+            processed_audio=np.zeros(16000 * 65, dtype=np.int16),
+        )
+
+        config = get_test_transcribe_config(route_to_dlq=True)
+
+        options = PipelineOptions(
+            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+        )
+        with BeamTestPipeline(options=options) as p:
+            elements = p | beam.Create(
+                [
+                    (
+                        "feed-123",
+                        FlushRequest(
+                            feed_id="feed-123",
+                            session_id="fake-session",
+                            buffer=np.zeros(16000 * 65, dtype=np.int16),
+                            contributing_audio_uris=["gs://bucket/chunk.flac"],
+                            time_range=TimeRange(start_ms=0, end_ms=65000),
+                            transmission_id="tx-123",
+                            missing_prior_context=False,
+                            missing_post_context=False,
+                            start_audio_offset_ms=0,
+                            end_audio_offset_ms=65000,
+                            feed_metadata=FeedMetadata(
+                                feed_name="fake-feed",
+                                external_id="fake-external",
+                            ),
+                            sample_rate=16000,
+                        ),
+                    )
+                ]
+            )
+
+            results = elements | beam.ParDo(
+                TranscribeAudioFn(
+                    config=config,
+                    transcriber_factory=get_mock_factory(raise_exception=False),
+                )
+            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
+
+            def assert_dlq(
+                elements: list[dict[str, str | bool | dict[str, str]]],
+            ) -> None:
+                assert len(elements) == 1
+                assert isinstance(elements[0]["error"], str)
+                assert (
+                    "Audio payload too long for synchronous API"
+                    in elements[0]["error"]
+                )
+                assert "65.00s" in elements[0]["error"]
+
+            def assert_empty(elements):
+                assert len(elements) == 0
+
+            assert_that(results.main, assert_empty, label="CheckEmptyMain")
+            assert_that(
+                results[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ"
+            )
+
 
 class SerializeAndEnrichTest(unittest.TestCase):
     def setUp(self) -> None:
