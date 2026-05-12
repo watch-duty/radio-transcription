@@ -172,7 +172,7 @@ class GoogleChirpV3Transcriber(Transcriber):
     ) -> str | None:
         """Transcribes the given audio payload."""
         if not self.client:
-            # In production Dataflow workers, setup() is called during the DoFn initialization, so we'll
+            # In production, Dataflow calls setup() during the DoFn initialization, so we'll
             # need to explicitly call it when running locally.
             if is_gcp_env():
                 msg = "Transcriber client used before setup() was called in Dataflow environment."
