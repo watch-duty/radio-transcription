@@ -25,6 +25,9 @@ class FeedService:
             source_type=feed_in.source_type,
             source_feed_id=feed_in.source_feed_id,
             external_id=feed_in.external_id,
+            tags=[t.model_dump() for t in feed_in.tags]
+            if feed_in.tags
+            else None,
         )
         return Feed.model_validate(store_feed)
 
