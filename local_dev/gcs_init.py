@@ -73,8 +73,10 @@ if __name__ == "__main__":
     create_bucket(os.environ["AUDIO_CANONICAL_BUCKET"])
 
     # Upload test files
-    local_file = "/app/data/test_continuous.flac"
-    upload_file(staging_bucket, local_file, "test_continuous.flac")
+    local_file = "/app/data/test_bcfy.flac"
+    upload_file(staging_bucket, local_file, "test_bcfy.flac")
 
-    local_segmented_file = "/app/data/test_segmented.flac"
-    upload_file(staging_bucket, local_segmented_file, "test_segmented.flac")
+    local_segmented_file = "/app/data/test_dispatch_amador.flac"
+    upload_file(
+        staging_bucket, local_segmented_file, "test_dispatch_amador.flac"
+    )

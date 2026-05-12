@@ -112,7 +112,7 @@ def test_continuous_pipeline_flow(
         continuous_topic,
         feed_id,
         feed_name,
-        audio_filename="test_continuous.flac",
+        audio_filename="test_bcfy.flac",
     )
 
 
@@ -130,5 +130,5 @@ def test_segmented_pipeline_flow(
         segmented_topic,
         feed_id,
         feed_name,
-        audio_filename="test_segmented.flac",
+        audio_filename="test_dispatch_amador.flac",
     )

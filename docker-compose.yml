@@ -35,7 +35,7 @@ services:
       - pipeline-network
     volumes:
       - ./local_dev/gcs_init.py:/app/gcs_init.py
-      - ./local_dev/data:/app/data
+      - ./backend/pipeline/transcription/tests/test_data:/app/data
     working_dir: /app
     command: sh -c "pip install requests && python gcs_init.py"
 
