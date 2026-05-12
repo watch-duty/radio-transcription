@@ -263,7 +263,7 @@ class MockTranscriber(Transcriber):
     def setup(self) -> None:
         self.index = 0
 
-    def transcribe(self, *, audio_data: bytes) -> str | None:
+    def transcribe(self, *, audio_data: bytes, duration_ms: int) -> str | None:
         # If a sequence of transcripts is provided, return them in rotation
         if self.config.transcripts:
             transcript = self.config.transcripts[

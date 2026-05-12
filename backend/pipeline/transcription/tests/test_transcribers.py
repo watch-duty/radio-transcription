@@ -308,7 +308,7 @@ class TestMockTranscriber(unittest.TestCase):
         )
         transcriber.setup()
 
-        res = transcriber.transcribe(audio_data=b"\x00")
+        res = transcriber.transcribe(audio_data=b"\x00", duration_ms=1000)
         self.assertEqual(
             res, "This is a mock transcription of the radio transmission."
         )
@@ -323,9 +323,9 @@ class TestMockTranscriber(unittest.TestCase):
         )
         transcriber.setup()
 
-        res1 = transcriber.transcribe(audio_data=b"\x00")
-        res2 = transcriber.transcribe(audio_data=b"\x00")
-        res3 = transcriber.transcribe(audio_data=b"\x00")
+        res1 = transcriber.transcribe(audio_data=b"\x00", duration_ms=1000)
+        res2 = transcriber.transcribe(audio_data=b"\x00", duration_ms=1000)
+        res3 = transcriber.transcribe(audio_data=b"\x00", duration_ms=1000)
 
         self.assertEqual(res1, "First Call")
         self.assertEqual(res2, "Second Call")
