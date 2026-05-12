@@ -17,11 +17,41 @@ frontend_dir = "frontend"
 # ---------------------------------------------------------------------------- #
 
 [tasks.lint]
-depends = ["lint:ruff", "lint:ty", "lint:terraform", "lint:frontend"]
+depends = ["lint:python", "lint:terraform", "lint:frontend"]
+
+[tasks."lint:ruff:check"]
+description = "Run ruff linter check"
+run = "uv run ruff check"
+
+[tasks."lint:ruff:format"]
+description = "Run ruff format check"
+run = "uv run ruff format --check"
+
+[tasks."lint:ruff:sorted"]
+description = "Verify ruff ignore lists are sorted"
+run = """
+uv run python -c "
+import tomllib, sys
+with open('pyproject.toml', 'rb') as f:
+    cfg = tomllib.load(f)
+errors = []
+codes = [c for c in cfg['tool']['ruff']['lint']['ignore'] if not c.startswith('#')]
+if codes != sorted(codes):
+    errors.append('tool.ruff.lint.ignore is not sorted')
+for pattern, codes in cfg['tool']['ruff']['lint'].get('per-file-ignores', {}).items():
+    filtered = [c for c in codes if not c.startswith('#')]
+    if filtered != sorted(filtered):
+        errors.append(f'per-file-ignores[{pattern!r}] is not sorted')
+if errors:
+    print('\\n'.join(errors), file=sys.stderr)
+    sys.exit(1)
+print('All ruff ignore lists are sorted')
+"
+"""
 
 [tasks."lint:ruff"]
-description = "Run ruff Python linter with auto-fix"
-run = "uv run ruff format --check"
+description = "Run all ruff checks"
+depends = ["lint:ruff:check", "lint:ruff:format", "lint:ruff:sorted"]
 
 [tasks."lint:ty"]
 description = "Run ty Python type-checker"
@@ -50,12 +80,42 @@ run = "yarn --cwd frontend/api run typecheck && yarn --cwd frontend/transcriptio
 description = "Run all frontend lint checks"
 depends = ["lint:frontend:eslint", "lint:frontend:prettier", "lint:frontend:tsc"]
 
+[tasks."lint:notebooks"]
+description = "Lint notebooks for schema issues and formatting in model/colabs"
+run = """
+for f in $(find model/colabs -name "*.ipynb"); do
+  jq '.cells[] |= (if .cell_type == "markdown" then del(.execution_count) else . end | if .cell_type == "code" and (has("outputs") | not) then .outputs = [] else . end)' "$f" > "$f.tmp"
+  if ! cmp -s "$f" "$f.tmp"; then
+    echo "Notebook needs formatting or schema fixes: $f"
+    rm "$f.tmp"
+    exit 1
+  fi
+  rm "$f.tmp"
+done
+echo "All notebooks have valid schemas and formatting."
+uv run ruff format --check model/colabs
+"""
+
+[tasks."lint:python"]
+description = "Run all Python code quality and type checks"
+depends = ["lint:ruff", "lint:ty", "lint:notebooks"]
+
 [tasks.format]
 depends = ["format:ruff", "format:terraform", "format:frontend"]
 
 [tasks."format:ruff"]
 description = "Format Python code with ruff"
+depends = ["format:notebooks"]
 run = "uv run ruff format"
+
+[tasks."format:notebooks"]
+description = "Fix schema issues and format notebooks in model/colabs"
+run = """
+for f in $(find model/colabs -name "*.ipynb"); do
+  jq '.cells[] |= (if .cell_type == "markdown" then del(.execution_count) else . end | if .cell_type == "code" and (has("outputs") | not) then .outputs = [] else . end)' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+done
+uv run ruff format model/colabs
+"""
 
 [tasks."format:terraform"]
 description = "Format Terraform code"

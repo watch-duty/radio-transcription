@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 
 import Autocomplete from '@mui/material/Autocomplete';
 import Box from '@mui/material/Box';
+import Chip from '@mui/material/Chip';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import type { Feed } from '@transcription/common';
@@ -49,8 +50,19 @@ export function FeedSearch({
       renderOption={(props, option) => {
         const { key, ...optionProps } = props;
         return (
-          <Box key={key} component="li" {...optionProps}>
+          <Box
+            key={key}
+            component="li"
+            {...optionProps}
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              width: '100%',
+            }}
+          >
             <Typography noWrap>{option.name}</Typography>
+            <Chip label={option.sourceType} size="small" sx={{ ml: 1 }} />
           </Box>
         );
       }}

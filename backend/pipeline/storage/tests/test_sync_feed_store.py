@@ -73,6 +73,7 @@ class TestRecordHeartbeat:
         conn.execute.assert_called_once()
         sql = conn.execute.call_args[0][0]
         assert "last_heartbeat" in sql
+        assert "status = 'active'::feed_status" in sql
         assert conn.execute.call_args[0][1] == (feed_id,)
 
 

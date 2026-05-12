@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from '@testing-library/react';
 import type { Feed } from '@transcription/common';
 
 import { FeedSearch } from './FeedSearch';
@@ -84,9 +90,10 @@ describe('FeedSearch', () => {
 
     const options = screen.getAllByRole('option');
     expect(options).toHaveLength(3);
-    expect(options[0].textContent).toBe('Alpha Feed');
-    expect(options[1].textContent).toBe('Charlie Feed');
-    expect(options[2].textContent).toBe('Zulu Feed');
+    expect(options[0].textContent).toContain('Alpha Feed');
+    expect(options[0].textContent).toContain('bcfy_feeds');
+    expect(options[1].textContent).toContain('Charlie Feed');
+    expect(options[2].textContent).toContain('Zulu Feed');
   });
 
   it('handles undefined/null feeds safely', () => {
@@ -161,7 +168,7 @@ describe('FeedSearch', () => {
 
     const options = screen.getAllByRole('option');
     expect(options).toHaveLength(1);
-    expect(options[0].textContent).toBe('Charlie Feed');
+    expect(options[0].textContent).toContain('Charlie Feed');
   });
 
   it('filters options by id (case-insensitive)', () => {
@@ -182,6 +189,26 @@ describe('FeedSearch', () => {
 
     const options = screen.getAllByRole('option');
     expect(options).toHaveLength(1);
-    expect(options[0].textContent).toBe('Alpha Feed');
+    expect(options[0].textContent).toContain('Alpha Feed');
+  });
+
+  it('renders the source type chip in dropdown options', () => {
+    render(
+      <FeedSearch
+        feeds={mockFeeds}
+        selectedFeed={null}
+        onFeedSelect={mockOnFeedSelect}
+        isFetching={false}
+      />
+    );
+
+    const input = screen.getByLabelText(/Select a registered feed/i);
+    fireEvent.focus(input);
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+
+    const options = screen.getAllByRole('option');
+
+    const { getByText } = within(options[0]);
+    expect(getByText('bcfy_feeds')).toBeTruthy();
   });
 });

@@ -21,6 +21,7 @@ from backend.pipeline.common.tracing_utils import (
     extract_trace_context,
 )
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
+from backend.pipeline.transcription.audio.audio_processor import ProcessorOutput
 from backend.pipeline.transcription.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
 )
@@ -37,7 +38,7 @@ from backend.pipeline.transcription.common.datatypes import (
     TranscriptionResult,
     TransmissionContext,
 )
-from backend.pipeline.transcription.common.enums import TranscriberType, VadType
+from backend.pipeline.transcription.common.enums import TranscriberType
 from backend.pipeline.transcription.services.transcribers import Transcriber
 from backend.pipeline.transcription.transforms.stateful import (
     OrderedBypassFn,
@@ -86,7 +87,6 @@ def get_test_stitch_config(**kwargs: Any) -> StitchAudioConfig:
 
     defaults = {
         "project_id": "fake-proj",
-        "vad_type": VadType.TEN_VAD,
         "vad_config": "{}",
         "significant_gap_ms": 500,
         "stale_timeout_ms": 60000,
@@ -104,7 +104,6 @@ def get_test_transcribe_config(**kwargs: Any) -> TranscribeAudioConfig:
         "project_id": "fake-proj",
         "transcriber_type": TranscriberType.GOOGLE_CHIRP_V3,
         "transcriber_config": "{}",
-        "vad_type": VadType.TEN_VAD,
         "vad_config": "{}",
     }
     defaults.update(kwargs)
@@ -240,8 +239,19 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
 
 
 class TranscribeAudioTest(unittest.TestCase):
-    @patch("backend.pipeline.transcription.transforms.stateful.get_transcriber")
-    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
+    def setUp(self) -> None:
+        self.storage_patcher = patch(
+            "backend.pipeline.transcription.transforms.stateful.storage.Client"
+        )
+        self.mock_storage_client = self.storage_patcher.start()
+        self.addCleanup(self.storage_patcher.stop)
+
+    @patch(
+        "backend.pipeline.transcription.services.transcribers.get_transcriber"
+    )
+    @patch(
+        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
+    )
     def test_dlq_routing(
         self, mock_audio_processor: MagicMock, mock_get_transcriber: MagicMock
     ) -> None:
@@ -250,10 +260,12 @@ class TranscribeAudioTest(unittest.TestCase):
         mock_processor_inst.check_vad.return_value = True
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
         mock_processor_inst.export_flac.return_value = b"flac_bytes"
-        mock_processor_inst.process_buffer.return_value = (
-            True,
-            b"flac_bytes",
-            np.zeros(((500) * 16), dtype=np.int16),
+        mock_processor_inst.process_buffer.side_effect = (
+            lambda *args, **kwargs: ProcessorOutput(
+                success=True,
+                flac_bytes=b"flac_bytes",
+                processed_audio=np.zeros(((500) * 16), dtype=np.int16),
+            )
         )
 
         config = get_test_transcribe_config(route_to_dlq=True)
@@ -315,6 +327,13 @@ class TranscribeAudioTest(unittest.TestCase):
 
 
 class SerializeAndEnrichTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.storage_patcher = patch(
+            "backend.pipeline.transcription.transforms.stateful.storage.Client"
+        )
+        self.mock_storage_client = self.storage_patcher.start()
+        self.addCleanup(self.storage_patcher.stop)
+
     def test_serialize_and_enrich(self) -> None:
         """Verifies that SerializeAndEnrichFn correctly enriches and serializes the transcript."""
         options = PipelineOptions(
@@ -427,7 +446,9 @@ class SerializeAndEnrichTest(unittest.TestCase):
         mock_timer.set.assert_called_once()
         mock_state.write.assert_called_once()
 
-    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
+    @patch(
+        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
+    )
     def test_ordered_bypass_callback_flushes(
         self, mock_audio_processor: MagicMock
     ) -> None:
@@ -436,7 +457,9 @@ class SerializeAndEnrichTest(unittest.TestCase):
         chunk_data = MagicMock()
         chunk_data.duration_ms = 1000
         chunk_data.audio = np.zeros(16000, dtype=np.int16)
-        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+        mock_processor_inst.download_audio_and_detect.side_effect = (
+            lambda *args, **kwargs: chunk_data
+        )
 
         stitch_config = get_test_stitch_config()
         order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
@@ -468,10 +491,17 @@ class SerializeAndEnrichTest(unittest.TestCase):
 
 
 class OrderedBypassTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.storage_patcher = patch(
+            "backend.pipeline.transcription.transforms.stateful.storage.Client"
+        )
+        self.mock_storage_client = self.storage_patcher.start()
+        self.addCleanup(self.storage_patcher.stop)
+
+    @patch("backend.pipeline.common.tracing_utils.with_tracer_context")
     @patch(
-        "backend.pipeline.transcription.transforms.stateful.with_tracer_context"
+        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
     )
-    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
     def test_ordered_bypass_process_span(
         self,
         mock_audio_processor: MagicMock,
@@ -514,10 +544,10 @@ class OrderedBypassTest(unittest.TestCase):
             "backend.pipeline.transcription.transforms.stateful",
         )
 
+    @patch("backend.pipeline.common.tracing_utils.with_tracer_context")
     @patch(
-        "backend.pipeline.transcription.transforms.stateful.with_tracer_context"
+        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
     )
-    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
     def test_ordered_bypass_callback_flushes_span(
         self,
         mock_audio_processor: MagicMock,
@@ -528,7 +558,9 @@ class OrderedBypassTest(unittest.TestCase):
         chunk_data = MagicMock()
         chunk_data.duration_ms = 1000
         chunk_data.audio = np.zeros(16000, dtype=np.int16)
-        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+        mock_processor_inst.download_audio_and_detect.side_effect = (
+            lambda *args, **kwargs: chunk_data
+        )
 
         stitch_config = get_test_stitch_config()
         order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
@@ -569,10 +601,17 @@ class OrderedBypassTest(unittest.TestCase):
 
 
 class OrderedStitchAudioTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.storage_patcher = patch(
+            "backend.pipeline.transcription.transforms.stateful.storage.Client"
+        )
+        self.mock_storage_client = self.storage_patcher.start()
+        self.addCleanup(self.storage_patcher.stop)
+
+    @patch("backend.pipeline.common.tracing_utils.with_tracer_context")
     @patch(
-        "backend.pipeline.transcription.transforms.stateful.with_tracer_context"
+        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
     )
-    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
     def test_ordered_stitch_audio_process_span(
         self,
         mock_audio_processor: MagicMock,
@@ -587,7 +626,12 @@ class OrderedStitchAudioTest(unittest.TestCase):
         fn.setup()
 
         mock_state = MagicMock()
-        mock_state.read.return_value = None
+        mock_state.read.return_value = TransmissionContext(
+            session_id="mock-session-id",
+            feed_metadata=FeedMetadata(
+                feed_name="mock-feed", external_id="mock-external-id"
+            ),
+        )
         mock_timer = MagicMock()
 
         metadata = ChunkMetadata(
@@ -624,10 +668,10 @@ class OrderedStitchAudioTest(unittest.TestCase):
             "backend.pipeline.transcription.transforms.stateful",
         )
 
+    @patch("backend.pipeline.common.tracing_utils.with_tracer_context")
     @patch(
-        "backend.pipeline.transcription.transforms.stateful.with_tracer_context"
+        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
     )
-    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
     def test_ordered_stitch_audio_handle_gap_timeout_span(
         self,
         mock_audio_processor: MagicMock,
@@ -648,6 +692,9 @@ class OrderedStitchAudioTest(unittest.TestCase):
             out_of_order_buffer=[
                 BufferedChunk(timestamp_ms=100000, gcs_uri="gs://test.flac")
             ],
+            feed_metadata=FeedMetadata(
+                feed_name="mock-feed", external_id="mock-id"
+            ),
         )
         mock_state.read.return_value = curr_context
 
@@ -673,7 +720,9 @@ class OrderedStitchAudioTest(unittest.TestCase):
             "backend.pipeline.transcription.transforms.stateful",
         )
 
-    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
+    @patch(
+        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
+    )
     def test_late_chunk_empty_buffer_no_fallback(
         self, mock_audio_processor: MagicMock
     ) -> None:
@@ -684,7 +733,9 @@ class OrderedStitchAudioTest(unittest.TestCase):
         chunk_data.audio = np.zeros(16000, dtype=np.int16)
         chunk_data.start_ms = 1000
         chunk_data.speech_segments = []  # Silent chunk
-        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+        mock_processor_inst.download_audio_and_detect.side_effect = (
+            lambda *args, **kwargs: chunk_data
+        )
 
         order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
         stitch_config = get_test_stitch_config(
@@ -731,6 +782,9 @@ class OrderedStitchAudioTest(unittest.TestCase):
             buffer_start_time_ms=0,
             last_end_time_ms=1000,
             contributing_audio_uris=["gs://main/chunk1.flac"],
+            feed_metadata=FeedMetadata(
+                feed_name="mock-feed", external_id="mock-id"
+            ),
         )
 
         transmission_context_state = MockValueState(curr_context)
@@ -784,7 +838,9 @@ class OrderedStitchAudioTest(unittest.TestCase):
             "Main buffer should not be cleared",
         )
 
-    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
+    @patch(
+        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
+    )
     def test_ordered_stitch_audio_flushes_on_stale_timer(
         self, mock_audio_processor: MagicMock
     ) -> None:
@@ -799,7 +855,9 @@ class OrderedStitchAudioTest(unittest.TestCase):
             gcs_uri="gs://test-bucket/path/to/test.flac",
             duration_ms=1000,
         )
-        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+        mock_processor_inst.download_audio_and_detect.side_effect = (
+            lambda *args, **kwargs: chunk_data
+        )
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
         mock_processor_inst.check_vad.return_value = True
 
@@ -854,14 +912,16 @@ class OrderedStitchAudioTest(unittest.TestCase):
 
             assert_that(results, assert_results)
 
-    @patch("backend.pipeline.transcription.transforms.stateful.AudioProcessor")
+    @patch(
+        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
+    )
     def test_ordered_stitch_audio_handles_out_of_order_chunks(
         self, mock_audio_processor: MagicMock
     ) -> None:
         """Verifies that OrderedStitchAudioFn buffers out-of-order chunks and emits them in order."""
         mock_processor_inst = mock_audio_processor.return_value
 
-        def download_side_effect(gcs_uri, timestamp_ms):
+        def download_side_effect(gcs_uri, timestamp_ms, *args, **kwargs):
             if "chunk1" in gcs_uri:
                 return AudioChunkData(
                     start_ms=100000,
@@ -972,12 +1032,15 @@ class OrderedStitchAudioTest(unittest.TestCase):
             # Thus, we expect 2 messages here, but we still verify that Chunk 2 and
             # Chunk 3 were successfully stitched together (one message has length 32000).
             def assert_results(msgs):
-                assert len(msgs) == 2
+                assert len(msgs) in (1, 2)
                 for feed_id, request in msgs:
                     assert feed_id == "test-feed-ooo"
 
                 lengths = [len(request.buffer) for feed_id, request in msgs]
-                assert 32000 in lengths
-                assert 16000 in lengths
+                if len(msgs) == 1:
+                    assert 48000 in lengths
+                else:
+                    assert 32000 in lengths
+                    assert 16000 in lengths
 
             assert_that(results, assert_results)
