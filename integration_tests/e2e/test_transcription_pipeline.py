@@ -7,6 +7,7 @@ import pytest
 from google.cloud import pubsub_v1
 
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
+from integration_tests.feed_utils import create_test_feed  # noqa: F401
 from integration_tests.utils import assert_eventually
 
 logging.basicConfig(level=logging.INFO)
