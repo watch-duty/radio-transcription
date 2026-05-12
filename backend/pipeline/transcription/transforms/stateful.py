@@ -872,6 +872,7 @@ class TranscribeAudioFn(beam.DoFn):
         self.audio_processor.setup()
 
         self.transcriber = shared_transcriber
+        self.transcriber.setup()
 
         if self.audio_processor.gcs_client is None:
             msg = "GCS client not found in AudioProcessor. must call setup() first."

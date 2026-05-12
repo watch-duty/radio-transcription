@@ -264,6 +264,20 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
 
 
 class TranscribeAudioTest(unittest.TestCase):
+    def test_setup_calls_transcriber_setup(self) -> None:
+        """Verifies that TranscribeAudioFn.setup() correctly invokes setup() on the transcriber."""
+        mock_transcriber = MagicMock()
+        config = get_test_transcribe_config()
+
+        fn = TranscribeAudioFn(
+            config=config,
+            transcriber_factory=lambda *args, **kwargs: mock_transcriber,
+        )
+        fn.setup()
+
+        # Assert that setup() was invoked on our transcriber
+        mock_transcriber.setup.assert_called_once()
+
     @patch(
         "backend.pipeline.transcription.services.transcribers.get_transcriber"
     )
