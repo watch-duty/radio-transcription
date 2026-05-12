@@ -56,7 +56,7 @@ def _verify_transcript_in_db(feed_id: str) -> bool:
     logger.info(f"Waiting for transcript in DB for feed {feed_id}...")
 
     assert_eventually(
-        condition, timeout_sec=120, error_msg="Transcript not found in DB"
+        condition, timeout_sec=60, error_msg="Transcript not found in DB"
     )
     return True
 
@@ -67,13 +67,14 @@ def _publish_and_verify(
     topic: str,
     feed_id: str,
     feed_name: str,
+    audio_filename: str,
 ) -> bool:
     # Construct AudioChunk message
     staging_bucket = os.environ["AUDIO_STAGING_BUCKET"]
     chunk = AudioChunk(
         feed_id=feed_id,
         session_id=str(uuid.uuid4()),
-        gcs_uri=f"gs://{staging_bucket}/test_fire_audio.flac",
+        gcs_uri=f"gs://{staging_bucket}/{audio_filename}",
         feed_name=feed_name,
         duration_ms=1000,
     )
@@ -110,7 +111,12 @@ def test_continuous_pipeline_flow(
     """Tests that a message published to continuous topic reaches evaluation."""
     feed_id, feed_name = test_feed
     _publish_and_verify(
-        publisher, subscriber, CONTINUOUS_TOPIC, feed_id, feed_name
+        publisher,
+        subscriber,
+        CONTINUOUS_TOPIC,
+        feed_id,
+        feed_name,
+        audio_filename="test_continuous.flac",
     )
 
 
@@ -122,5 +128,10 @@ def test_segmented_pipeline_flow(
     """Tests that a message published to segmented topic reaches evaluation."""
     feed_id, feed_name = test_feed
     _publish_and_verify(
-        publisher, subscriber, SEGMENTED_TOPIC, feed_id, feed_name
+        publisher,
+        subscriber,
+        SEGMENTED_TOPIC,
+        feed_id,
+        feed_name,
+        audio_filename="test_segmented.flac",
     )

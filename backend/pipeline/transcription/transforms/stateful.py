@@ -753,6 +753,7 @@ class OrderedBypassFn(beam.DoFn):
                             feed_metadata=curr_context.feed_metadata,
                             traceparent=curr_context.traceparent,
                             sample_rate=chunk_data.sample_rate,
+                            speech_segments=chunk_data.speech_segments,
                         ),
                     )
                 )

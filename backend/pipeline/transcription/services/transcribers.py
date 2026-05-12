@@ -172,8 +172,15 @@ class GoogleChirpV3Transcriber(Transcriber):
     ) -> str | None:
         """Transcribes the given audio payload."""
         if not self.client:
-            msg = "Transcriber client used before setup() was called."
-            raise RuntimeError(msg)
+            # In production Dataflow workers, setup() is called during the DoFn initialization, so we'll
+            # need to explicitly call it when running locally.
+            if is_gcp_env():
+                msg = "Transcriber client used before setup() was called in Dataflow environment."
+                raise RuntimeError(msg)
+            logger.info(
+                "Transcriber client not initialized. Initializing setup()."
+            )
+            self.setup()
 
         duration_sec = len(audio_data) / BYTES_PER_SECOND_16KHZ_MONO
         if duration_sec > 60.0:
@@ -216,7 +223,7 @@ class GoogleChirpV3Transcriber(Transcriber):
             multiplier=2.0,
             deadline=float(DEFAULT_RETRY_MAX_SECONDS * DEFAULT_MAX_RETRIES),
         )
-        response = self.client.recognize(request=request, retry=retry_policy)
+        response = self.client.recognize(request=request, retry=retry_policy)  # ty: ignore[unresolved-attribute]
         return self._parse_response(response)
 
     def _parse_response(
