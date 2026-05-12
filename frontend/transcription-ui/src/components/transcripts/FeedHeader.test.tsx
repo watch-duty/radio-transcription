@@ -44,6 +44,17 @@ describe('FeedHeader', () => {
     expect(screen.getByText('Active')).toBeTruthy();
   });
 
+  it('displays the source type chip in the header', () => {
+    render(
+      <FeedHeader
+        searchedFeed={mockFeed}
+        triggerSnackbar={mockTriggerSnackbar}
+      />
+    );
+
+    expect(screen.getByText('bcfy_calls')).toBeTruthy();
+  });
+
   it('shows source url link when sourceUrl is available', () => {
     render(
       <FeedHeader
