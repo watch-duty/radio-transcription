@@ -64,7 +64,7 @@ class ChunkMetadata:
     session_id: str  # Required for continuous feeds ONLY.
     duration_ms: int
     feed_metadata: FeedMetadata
-    source_type: str = "bcfy_feeds"
+    is_continuous: bool = True
     traceparent: str | None = None
 
 
