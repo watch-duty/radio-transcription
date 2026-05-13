@@ -59,7 +59,15 @@ class ParseAndKeyFn(beam.DoFn):
     Routes messages missing required attributes or with invalid payload to the DLQ.
     Yields a tuple of `(feed_id, ChunkMetadata)` to establish a deterministic routing key
     for all subsequent stateful operations on that feed.
+
+    Args:
+        is_continuous: Whether this instance is processing continuous feeds (e.g. BCFY_FEEDS).
+            Determines whether session_id is required and sets the flag on ChunkMetadata.
+            Set by orchestration based on which Pub/Sub subscription the message arrived from.
     """
+
+    def __init__(self, is_continuous: bool) -> None:
+        self.is_continuous = is_continuous
 
     @override
     def setup(self) -> None:
@@ -93,14 +101,7 @@ class ParseAndKeyFn(beam.DoFn):
                 if not chunk_proto.gcs_uri:
                     msg = "AudioChunk missing required gcs_uri"
                     _raise(msg)
-                source_type = (
-                    element.attributes.get("source_type")
-                    if element.attributes
-                    else None
-                )
-                is_continuous = source_type == "bcfy_feeds" or not source_type
-
-                if is_continuous and not chunk_proto.session_id:
+                if self.is_continuous and not chunk_proto.session_id:
                     msg = "AudioChunk missing required session_id for continuous feed"
                     _raise(msg)
                 if not chunk_proto.feed_name:
@@ -120,21 +121,10 @@ class ParseAndKeyFn(beam.DoFn):
                         feed_name=chunk_proto.feed_name,
                         external_id=chunk_proto.external_id,
                     ),
-                    is_continuous=is_continuous,
+                    is_continuous=self.is_continuous,
                     traceparent=traceparent,
                 )
-                if is_continuous:
-                    outputs.append(
-                        beam.pvalue.TaggedOutput(
-                            "continuous", (feed_id, metadata)
-                        )
-                    )
-                else:
-                    outputs.append(
-                        beam.pvalue.TaggedOutput(
-                            "segmented", (feed_id, metadata)
-                        )
-                    )
+                outputs.append((feed_id, metadata))
         except Exception as e:
             msg = f"Failed to parse or validate payload: {e}"
             logger.exception(msg)

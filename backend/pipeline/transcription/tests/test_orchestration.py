@@ -14,8 +14,10 @@ def test_pipeline_topology_typehints() -> None:
         flags=[
             "--project",
             "test-project",
-            "--input_subscription",
-            "projects/test-project/subscriptions/in",
+            "--continuous_input_subscription",
+            "projects/test-project/subscriptions/continuous-in",
+            "--segmented_input_subscription",
+            "projects/test-project/subscriptions/segmented-in",
             "--output_topic",
             "projects/test-project/topics/out",
             "--dlq_topic",
@@ -33,18 +35,20 @@ def test_pipeline_topology_typehints() -> None:
 
 
 def test_pipeline_invalid_timeout() -> None:
-    """Verifies failure when out_of_order_timeout_ms >= stale_timeout_ms (standard path)."""
+    """Verifies failure when ooo timeout >= stale_timeout_ms."""
     options = TranscriptionOptions(
         flags=[
             "--project",
             "test-project",
-            "--input_subscription",
-            "projects/test-project/subscriptions/in",
+            "--continuous_input_subscription",
+            "projects/test-project/subscriptions/continuous-in",
+            "--segmented_input_subscription",
+            "projects/test-project/subscriptions/segmented-in",
             "--output_topic",
             "projects/test-project/topics/out",
             "--dlq_topic",
             "projects/test-project/topics/dlq",
-            "--out_of_order_timeout_ms",
+            "--continuous_out_of_order_timeout_ms",
             "80000",
             "--stale_timeout_ms",
             "70000",

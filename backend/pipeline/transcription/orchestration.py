@@ -74,13 +74,13 @@ def get_pipeline(
 
     # Validate logical pipeline timeout configuration rules
     ooo_timeout_continuous = (
-        options.out_of_order_timeout_ms
-        if options.out_of_order_timeout_ms is not None
+        options.continuous_out_of_order_timeout_ms
+        if options.continuous_out_of_order_timeout_ms is not None
         else DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS
     )
     ooo_timeout_segmented = (
-        options.out_of_order_timeout_ms
-        if options.out_of_order_timeout_ms is not None
+        options.segmented_out_of_order_timeout_ms
+        if options.segmented_out_of_order_timeout_ms is not None
         else DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS
     )
 
@@ -109,16 +109,26 @@ def get_pipeline(
 
     # Note: DirectRunner's dummy PubSub emulator natively rejects id_label.
     # To run locally, explicitly pass --id_label "" to bypass exact-once deduplication.
-    messages = pipeline | "ReadFromPubSub" >> ReadFromPubSub(
-        subscription=options.input_subscription,
+    continuous_messages = pipeline | "ReadContinuousFromPubSub" >> ReadFromPubSub(
+        subscription=options.continuous_input_subscription,
         id_label=options.id_label or None,
         with_attributes=True,
         timestamp_attribute="timestamp_ms",
     )
-    # Group incoming messages into Key-Value pairs: (feed_id, gs://uri/to/audio)
-    parsed = messages | "ParseAndKey" >> beam.ParDo(
-        ParseAndKeyFn()
-    ).with_outputs("continuous", "segmented", DEAD_LETTER_QUEUE_TAG)
+    segmented_messages = pipeline | "ReadSegmentedFromPubSub" >> ReadFromPubSub(
+        subscription=options.segmented_input_subscription,
+        id_label=options.id_label or None,
+        with_attributes=True,
+        timestamp_attribute="timestamp_ms",
+    )
+
+    # Parse and key each stream independently — routing is implicit from the subscription.
+    continuous_parsed = continuous_messages | "ParseAndKeyContinuous" >> beam.ParDo(
+        ParseAndKeyFn(is_continuous=True)
+    ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+    segmented_parsed = segmented_messages | "ParseAndKeySegmented" >> beam.ParDo(
+        ParseAndKeyFn(is_continuous=False)
+    ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
     dlq_list = []
 
@@ -156,7 +166,7 @@ def get_pipeline(
     )
 
     continuous_stitching = (
-        parsed.continuous
+        continuous_parsed[MAIN_TAG]
         | "OrderedContinuousStitchAudio"
         >> beam.ParDo(
             OrderedContinuousStitchAudioFn(
@@ -168,9 +178,10 @@ def get_pipeline(
         ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
     )
     dlq_list.append(continuous_stitching[DEAD_LETTER_QUEUE_TAG])
+    dlq_list.append(continuous_parsed[DEAD_LETTER_QUEUE_TAG])
 
     segmented_stitching = (
-        parsed.segmented
+        segmented_parsed[MAIN_TAG]
         | "OrderedSegmentedStitchAudio"
         >> beam.ParDo(
             OrderedSegmentedStitchAudioFn(
@@ -182,6 +193,7 @@ def get_pipeline(
         ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
     )
     dlq_list.append(segmented_stitching[DEAD_LETTER_QUEUE_TAG])
+    dlq_list.append(segmented_parsed[DEAD_LETTER_QUEUE_TAG])
 
     stitching_main = (
         continuous_stitching.main,
