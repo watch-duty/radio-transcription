@@ -79,7 +79,7 @@ def upload_inference_results(
     """
     Uploads inference results directly from memory to GCS using the standard path structure.
     """
-    blob_path = f"inference_manifests/{project_name}/{model_name}/{experiment_name}/{project_name}_{model_name}_{experiment_name}.jsonl"
+    blob_path = f"inference_manifests/{project_name}/{model_name}/{experiment_name}/{experiment_name}_results.jsonl"
 
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(blob_path)
