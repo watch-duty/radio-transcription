@@ -16,15 +16,6 @@ from backend.pipeline.transcription.common.enums import (
 )
 
 
-def _str2bool(v: str) -> bool:
-    if v.lower() in ("yes", "true", "t", "y", "1"):
-        return True
-    if v.lower() in ("no", "false", "f", "n", "0"):
-        return False
-    msg = f"Boolean value expected, got {v!r}. Permitted values: true, false, yes, no, t, f, y, n, 1, 0."
-    raise argparse.ArgumentTypeError(msg)
-
-
 class TranscriptionOptions(PipelineOptions):
     """CLI pipeline configuration options mapping to Beam's PipelineOptions."""
 
@@ -75,7 +66,6 @@ class TranscriptionOptions(PipelineOptions):
             default="{}",
             help="JSON string of VAD-specific configuration.",
         )
-
         parser.add_argument(
             "--significant_gap_ms",
             type=int,
@@ -123,12 +113,6 @@ class TranscriptionOptions(PipelineOptions):
             type=str,
             required=False,
             help="GCS bucket name for storing clean, stitched or pre-segmented audio. If omitted, audio is not persisted to GCS.",
-        )
-        parser.add_argument(
-            "--bypass_stitching",
-            type=_str2bool,
-            default=False,
-            help="If true, bypasses stateful stitching and treats each audio chunk as a complete transmission.",
         )
 
 

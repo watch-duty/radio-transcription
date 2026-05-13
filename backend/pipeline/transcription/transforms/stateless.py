@@ -93,8 +93,16 @@ class ParseAndKeyFn(beam.DoFn):
                 if not chunk_proto.gcs_uri:
                     msg = "AudioChunk missing required gcs_uri"
                     _raise(msg)
-                if not chunk_proto.session_id:
-                    msg = "AudioChunk missing required session_id"
+                source_type = (
+                    element.attributes.get("source_type")
+                    if element.attributes
+                    else None
+                )
+                is_continuous = source_type == "bcfy_feeds" or not source_type
+                actual_source_type = source_type or "bcfy_feeds"
+
+                if is_continuous and not chunk_proto.session_id:
+                    msg = "AudioChunk missing required session_id for continuous feed"
                     _raise(msg)
                 if not chunk_proto.feed_name:
                     msg = "AudioChunk missing required feed_name"
@@ -105,21 +113,29 @@ class ParseAndKeyFn(beam.DoFn):
                     if element.attributes
                     else None
                 )
-                outputs.append(
-                    (
-                        feed_id,
-                        ChunkMetadata(
-                            gcs_uri=chunk_proto.gcs_uri,
-                            session_id=chunk_proto.session_id,
-                            duration_ms=chunk_proto.duration_ms,
-                            feed_metadata=FeedMetadata(
-                                feed_name=chunk_proto.feed_name,
-                                external_id=chunk_proto.external_id,
-                            ),
-                            traceparent=traceparent,
-                        ),
-                    )
+                metadata = ChunkMetadata(
+                    gcs_uri=chunk_proto.gcs_uri,
+                    session_id=chunk_proto.session_id or "segmented",
+                    duration_ms=chunk_proto.duration_ms,
+                    feed_metadata=FeedMetadata(
+                        feed_name=chunk_proto.feed_name,
+                        external_id=chunk_proto.external_id,
+                    ),
+                    source_type=actual_source_type,
+                    traceparent=traceparent,
                 )
+                if is_continuous:
+                    outputs.append(
+                        beam.pvalue.TaggedOutput(
+                            "continuous", (feed_id, metadata)
+                        )
+                    )
+                else:
+                    outputs.append(
+                        beam.pvalue.TaggedOutput(
+                            "segmented", (feed_id, metadata)
+                        )
+                    )
         except Exception as e:
             msg = f"Failed to parse or validate payload: {e}"
             logger.exception(msg)

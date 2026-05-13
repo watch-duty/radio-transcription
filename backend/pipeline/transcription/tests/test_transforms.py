@@ -158,11 +158,11 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
         with BeamTestPipeline(options=options) as p:
             messages = p | beam.Create([mock_msg])
             parsed = messages | beam.ParDo(ParseAndKeyFn()).with_outputs(
-                DEAD_LETTER_QUEUE_TAG, main="main"
+                "continuous", DEAD_LETTER_QUEUE_TAG
             )
 
             assert_that(
-                parsed.main,
+                parsed.continuous,
                 equal_to(
                     [
                         (
@@ -199,7 +199,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
         with BeamTestPipeline(options=options) as p:
             messages = p | beam.Create([mock_msg])
             parsed = messages | beam.ParDo(ParseAndKeyFn()).with_outputs(
-                DEAD_LETTER_QUEUE_TAG, main="main"
+                "continuous", DEAD_LETTER_QUEUE_TAG
             )
 
             def assert_dlq(
@@ -213,7 +213,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
                     in elements[0]["error"]
                 )
 
-            assert_that(parsed.main, equal_to([]), label="CheckEmptyMain")
+            assert_that(parsed.continuous, equal_to([]), label="CheckEmptyMain")
             assert_that(
                 parsed[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ"
             )

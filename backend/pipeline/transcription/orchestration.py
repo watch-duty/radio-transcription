@@ -73,19 +73,35 @@ def get_pipeline(
     options = pipeline_options.view_as(TranscriptionOptions)
 
     # Validate logical pipeline timeout configuration rules
-    ooo_timeout = options.out_of_order_timeout_ms
-    if ooo_timeout is None:
-        if options.bypass_stitching:
-            ooo_timeout = DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS
-        else:
-            ooo_timeout = DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS
+    ooo_timeout_continuous = (
+        options.out_of_order_timeout_ms
+        if options.out_of_order_timeout_ms is not None
+        else DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS
+    )
+    ooo_timeout_segmented = (
+        options.out_of_order_timeout_ms
+        if options.out_of_order_timeout_ms is not None
+        else DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS
+    )
 
-    stale_timeout = options.stale_timeout_ms or DEFAULT_STALE_TIMEOUT_MS
+    stale_timeout_continuous = (
+        options.stale_timeout_ms or DEFAULT_STALE_TIMEOUT_MS
+    )
+    stale_timeout_segmented = (
+        options.stale_timeout_ms or DEFAULT_BYPASS_STALE_TIMEOUT_MS
+    )
 
-    if ooo_timeout >= stale_timeout:
+    if ooo_timeout_continuous >= stale_timeout_continuous:
         err_msg = (
-            f"Invalid pipeline configuration: stale_timeout_ms ({stale_timeout}) must be strictly "
-            f"greater than out_of_order_timeout_ms ({ooo_timeout}) to prevent fragmented audio stitching."
+            f"Invalid pipeline configuration: stale_timeout_ms ({stale_timeout_continuous}) must be strictly "
+            f"greater than continuous out_of_order_timeout_ms ({ooo_timeout_continuous}) to prevent fragmented audio stitching."
+        )
+        raise ValueError(err_msg)
+
+    if ooo_timeout_segmented >= stale_timeout_segmented:
+        err_msg = (
+            f"Invalid pipeline configuration: stale_timeout_ms ({stale_timeout_segmented}) must be strictly "
+            f"greater than segmented out_of_order_timeout_ms ({ooo_timeout_segmented}) to prevent fragmented audio stitching."
         )
         raise ValueError(err_msg)
 
@@ -102,17 +118,17 @@ def get_pipeline(
     # Group incoming messages into Key-Value pairs: (feed_id, gs://uri/to/audio)
     parsed = messages | "ParseAndKey" >> beam.ParDo(
         ParseAndKeyFn()
-    ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+    ).with_outputs("continuous", "segmented", DEAD_LETTER_QUEUE_TAG)
 
     dlq_list = []
 
     # Claim-check: Download the raw bytes for ordered chunks currently just passing as URIs
-    download_config = StitchAudioConfig(
+    continuous_config = StitchAudioConfig(
         project_id=pipeline_options.view_as(GoogleCloudOptions).project,
         vad_config=options.vad_config,
         significant_gap_ms=options.significant_gap_ms
         or DEFAULT_SIGNIFICANT_GAP_MS,
-        stale_timeout_ms=options.stale_timeout_ms or DEFAULT_STALE_TIMEOUT_MS,
+        stale_timeout_ms=stale_timeout_continuous,
         max_transmission_duration_ms=options.max_transmission_duration_ms
         or DEFAULT_MAX_TRANSMISSION_DURATION_MS,
         vad_pre_roll_ms=options.vad_pre_roll_ms or DEFAULT_VAD_PRE_ROLL_MS,
@@ -120,56 +136,57 @@ def get_pipeline(
         route_to_dlq=options.route_to_dlq
         if options.route_to_dlq is not None
         else True,
+        isolate_segmented_chunks=False,
     )
 
-    # Core pipeline logic: State buffers audio across multiple chunks, flushing only on silence or timeout.
-    if options.bypass_stitching:
-        stitching_config = StitchAudioConfig(
-            project_id=pipeline_options.view_as(GoogleCloudOptions).project,
-            vad_config=options.vad_config,
-            significant_gap_ms=options.significant_gap_ms
-            or DEFAULT_SIGNIFICANT_GAP_MS,
-            stale_timeout_ms=options.stale_timeout_ms
-            or DEFAULT_BYPASS_STALE_TIMEOUT_MS,
-            max_transmission_duration_ms=options.max_transmission_duration_ms
-            or DEFAULT_MAX_TRANSMISSION_DURATION_MS,
-            vad_pre_roll_ms=options.vad_pre_roll_ms or DEFAULT_VAD_PRE_ROLL_MS,
-            vad_post_roll_ms=options.vad_post_roll_ms
-            or DEFAULT_VAD_POST_ROLL_MS,
-            route_to_dlq=options.route_to_dlq
-            if options.route_to_dlq is not None
-            else True,
-            bypass_stitching=False,
-        )
+    segmented_config = StitchAudioConfig(
+        project_id=pipeline_options.view_as(GoogleCloudOptions).project,
+        vad_config=options.vad_config,
+        significant_gap_ms=options.significant_gap_ms
+        or DEFAULT_SIGNIFICANT_GAP_MS,
+        stale_timeout_ms=stale_timeout_segmented,
+        max_transmission_duration_ms=options.max_transmission_duration_ms
+        or DEFAULT_MAX_TRANSMISSION_DURATION_MS,
+        vad_pre_roll_ms=options.vad_pre_roll_ms or DEFAULT_VAD_PRE_ROLL_MS,
+        vad_post_roll_ms=options.vad_post_roll_ms or DEFAULT_VAD_POST_ROLL_MS,
+        route_to_dlq=options.route_to_dlq
+        if options.route_to_dlq is not None
+        else True,
+        isolate_segmented_chunks=True,
+    )
 
-        order_config = OrderRestorerConfig(
-            out_of_order_timeout_ms=ooo_timeout,
-        )
-
-        stitching_results = parsed[
-            MAIN_TAG
-        ] | "OrderedSegmentedStitch" >> beam.ParDo(
-            OrderedSegmentedStitchAudioFn(
-                order_config=order_config,
-                stitch_config=stitching_config,
-            )
-        ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
-        stitching_main = stitching_results.main
-        dlq_list.append(stitching_results[DEAD_LETTER_QUEUE_TAG])
-    else:
-        # New merged path: Handles both ordering and stitching in a single DoFn
-        stitching_results = parsed[
-            MAIN_TAG
-        ] | "OrderedContinuousStitchAudio" >> beam.ParDo(
+    continuous_stitching = (
+        parsed.continuous
+        | "OrderedContinuousStitchAudio"
+        >> beam.ParDo(
             OrderedContinuousStitchAudioFn(
                 order_config=OrderRestorerConfig(
-                    out_of_order_timeout_ms=ooo_timeout,
+                    out_of_order_timeout_ms=ooo_timeout_continuous,
                 ),
-                stitch_config=download_config,
+                stitch_config=continuous_config,
             )
         ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
-        stitching_main = stitching_results.main
-        dlq_list.append(stitching_results[DEAD_LETTER_QUEUE_TAG])
+    )
+    dlq_list.append(continuous_stitching[DEAD_LETTER_QUEUE_TAG])
+
+    segmented_stitching = (
+        parsed.segmented
+        | "OrderedSegmentedStitchAudio"
+        >> beam.ParDo(
+            OrderedSegmentedStitchAudioFn(
+                order_config=OrderRestorerConfig(
+                    out_of_order_timeout_ms=ooo_timeout_segmented,
+                ),
+                stitch_config=segmented_config,
+            )
+        ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+    )
+    dlq_list.append(segmented_stitching[DEAD_LETTER_QUEUE_TAG])
+
+    stitching_main = (
+        continuous_stitching.main,
+        segmented_stitching.main,
+    ) | "FlattenStitching" >> beam.Flatten()
 
     transcripts = stitching_main | "TranscribeAudio" >> beam.ParDo(
         TranscribeAudioFn(
