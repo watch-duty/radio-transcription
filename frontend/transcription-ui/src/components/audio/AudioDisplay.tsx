@@ -2,7 +2,6 @@ import React, { useMemo, useState } from 'react';
 
 import PauseIcon from '@mui/icons-material/PauseCircleFilledOutlined';
 import PlayArrowIcon from '@mui/icons-material/PlayCircleFilledOutlined';
-import StopIcon from '@mui/icons-material/StopCircle';
 import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import Paper from '@mui/material/Paper';
@@ -22,7 +21,6 @@ interface AudioDisplayProps {
   userDuration?: string | null;
   isPlaying: boolean;
   onTogglePlayPause: () => void;
-  onStop: () => void;
   highlightedTransmissionId: string | null;
 }
 
@@ -132,7 +130,6 @@ export function AudioDisplay({
   userDuration,
   isPlaying,
   onTogglePlayPause,
-  onStop,
   highlightedTransmissionId,
 }: AudioDisplayProps) {
   const theme = useTheme();
@@ -271,14 +268,6 @@ export function AudioDisplay({
       <Box
         sx={{ display: 'flex', mr: 1, alignItems: 'center', height: '60px' }}
       >
-        <IconButton
-          onClick={onStop}
-          size="small"
-          color="primary"
-          aria-label="stop"
-        >
-          <StopIcon />
-        </IconButton>
         <IconButton
           onClick={onTogglePlayPause}
           size="small"

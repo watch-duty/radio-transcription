@@ -626,18 +626,6 @@ export function TranscriptView({
     }
   };
 
-  const handleStopAudio = () => {
-    if (currentAudio.current) {
-      currentAudio.current.stop();
-      currentAudio.current.unload();
-      currentAudio.current = null;
-    }
-    setIsAudioPlaying(false);
-    setCurrentlyPlayingTransmissionId(null);
-    setPlaybackEndedForId(null);
-    setHighlightedTransmissionId(null);
-  };
-
   const handleRowClick = (transmissionId: string) => {
     setHighlightedTransmissionId(transmissionId);
   };
@@ -749,7 +737,6 @@ export function TranscriptView({
         onClipClick={handleClipClick}
         isPlaying={isAudioPlaying}
         onTogglePlayPause={handleTogglePlayPause}
-        onStop={handleStopAudio}
         highlightedTransmissionId={highlightedTransmissionId}
       />
 
