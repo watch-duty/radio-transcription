@@ -19,7 +19,7 @@ interface AudioDisplayProps {
   currentlyPlayingTransmissionId: string | null;
   onClipClick: (transmissionId: string) => void;
   userDuration?: string | null;
-  isPlaying: boolean;
+  isAudioPlaying: boolean;
   onTogglePlayPause: () => void;
   highlightedTransmissionId: string | null;
 }
@@ -39,7 +39,7 @@ interface TimelineClipProps {
     url: string;
     left: number;
     width: number;
-    isPlaying: boolean;
+    isAudioPlaying: boolean;
     isHighlighted: boolean;
     hasAlert: boolean;
   };
@@ -59,7 +59,7 @@ const TimelineClip = React.memo(
           width: `${clip.width}%`,
           height: '100%',
           bgcolor:
-            clip.isPlaying || clip.isHighlighted
+            clip.isAudioPlaying || clip.isHighlighted
               ? isDarkTheme
                 ? 'rgba(255, 255, 255, 0.1)'
                 : 'rgba(0, 0, 0, 0.05)'
@@ -67,7 +67,7 @@ const TimelineClip = React.memo(
           cursor: 'pointer',
           '&:hover': {
             bgcolor:
-              clip.isPlaying || clip.isHighlighted
+              clip.isAudioPlaying || clip.isHighlighted
                 ? isDarkTheme
                   ? 'rgba(255, 255, 255, 0.2)'
                   : 'rgba(0, 0, 0, 0.1)'
@@ -114,7 +114,7 @@ const TimelineClip = React.memo(
       prevProps.clip.url === nextProps.clip.url &&
       prevProps.clip.left === nextProps.clip.left &&
       prevProps.clip.width === nextProps.clip.width &&
-      prevProps.clip.isPlaying === nextProps.clip.isPlaying &&
+      prevProps.clip.isAudioPlaying === nextProps.clip.isAudioPlaying &&
       prevProps.clip.isHighlighted === nextProps.clip.isHighlighted &&
       prevProps.clip.hasAlert === nextProps.clip.hasAlert &&
       prevProps.isDarkTheme === nextProps.isDarkTheme &&
@@ -128,7 +128,7 @@ export function AudioDisplay({
   currentlyPlayingTransmissionId,
   onClipClick,
   userDuration,
-  isPlaying,
+  isAudioPlaying,
   onTogglePlayPause,
   highlightedTransmissionId,
 }: AudioDisplayProps) {
@@ -248,7 +248,7 @@ export function AudioDisplay({
           url,
           left,
           width,
-          isPlaying: t.transmissionId === currentlyPlayingTransmissionId,
+          isAudioPlaying: t.transmissionId === currentlyPlayingTransmissionId,
           isHighlighted: t.transmissionId === highlightedTransmissionId,
           hasAlert: t.evaluationDecisions && t.evaluationDecisions.length > 0,
         };
@@ -272,9 +272,9 @@ export function AudioDisplay({
           onClick={onTogglePlayPause}
           size="small"
           color="primary"
-          aria-label={isPlaying ? 'pause' : 'play'}
+          aria-label={isAudioPlaying ? 'pause' : 'play'}
         >
-          {isPlaying ? <PauseIcon /> : <PlayArrowIcon />}
+          {isAudioPlaying ? <PauseIcon /> : <PlayArrowIcon />}
         </IconButton>
       </Box>
       <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>

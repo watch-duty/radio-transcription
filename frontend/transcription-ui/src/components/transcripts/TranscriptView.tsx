@@ -735,7 +735,7 @@ export function TranscriptView({
         transcripts={transcripts}
         currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
         onClipClick={handleClipClick}
-        isPlaying={isAudioPlaying}
+        isAudioPlaying={isAudioPlaying}
         onTogglePlayPause={handleTogglePlayPause}
         highlightedTransmissionId={highlightedTransmissionId}
       />
