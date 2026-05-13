@@ -10,6 +10,11 @@ export type BackendFeedStatus =
 export type FeedStatus = 'active' | 'inactive';
 
 
+export interface Tag {
+  key: string;
+  value: string;
+}
+
 export interface BaseFeed {
   name: string;
   sourceType: SourceType;
@@ -23,9 +28,11 @@ export interface Feed extends BaseFeed {
   archiveUrl?: string;
   status: FeedStatus;
   lastHeartbeat?: string;
+  tags?: Tag[];
 }
 
 export interface FeedCreate extends BaseFeed {
   sourceFeedId: string;
   externalId: string;
+  tags?: Tag[];
 }
