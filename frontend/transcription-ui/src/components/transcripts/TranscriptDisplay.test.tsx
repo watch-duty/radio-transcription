@@ -67,6 +67,7 @@ describe('TranscriptDisplay', () => {
             isAudioPlaying={false}
             currentlyPlayingTransmissionId={null}
             highlightedTransmissionId={null}
+            redactTranscripts={false}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>
@@ -102,6 +103,7 @@ describe('TranscriptDisplay', () => {
             isAudioPlaying={false}
             currentlyPlayingTransmissionId={null}
             highlightedTransmissionId={null}
+            redactTranscripts={false}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>
@@ -137,6 +139,7 @@ describe('TranscriptDisplay', () => {
             isAudioPlaying={false}
             currentlyPlayingTransmissionId={null}
             highlightedTransmissionId={null}
+            redactTranscripts={false}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>
@@ -172,6 +175,7 @@ describe('TranscriptDisplay', () => {
             isAudioPlaying={false}
             currentlyPlayingTransmissionId={null}
             highlightedTransmissionId={null}
+            redactTranscripts={false}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>

@@ -25,6 +25,7 @@ interface TranscriptRowProps {
   triggerSnackbar: (message: string) => void;
   showHeader: boolean;
   isHighlighted?: boolean;
+  redactTranscripts?: boolean;
 }
 
 export function TranscriptRow({
@@ -39,6 +40,7 @@ export function TranscriptRow({
   triggerSnackbar,
   showHeader,
   isHighlighted = false,
+  redactTranscripts = false,
 }: TranscriptRowProps) {
   const theme = useTheme();
   const currentDate = new Date(transcript.startTimestamp);
@@ -144,7 +146,13 @@ export function TranscriptRow({
         />
         <Typography
           variant="body1"
-          sx={{ flexGrow: 1, whiteSpace: 'pre-wrap' }}
+          sx={{
+            flexGrow: 1,
+            whiteSpace: 'pre-wrap',
+            transition: 'filter 0.3s ease, opacity 0.3s ease',
+            filter: redactTranscripts ? 'blur(6px)' : 'none',
+            opacity: redactTranscripts ? 0.6 : 1,
+          }}
         >
           {transcript.transcript}
         </Typography>

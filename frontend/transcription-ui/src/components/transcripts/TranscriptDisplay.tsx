@@ -41,6 +41,7 @@ export interface TranscriptDisplayProps {
   isAudioPlaying: boolean;
   currentlyPlayingTransmissionId: string | null;
   highlightedTransmissionId: string | null;
+  redactTranscripts: boolean;
 }
 
 export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
@@ -63,6 +64,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
   isAudioPlaying,
   currentlyPlayingTransmissionId,
   highlightedTransmissionId,
+  redactTranscripts,
 }) => {
   return (
     <Paper
@@ -129,6 +131,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
               isHighlighted={
                 transcript.transmissionId === highlightedTransmissionId
               }
+              redactTranscripts={redactTranscripts}
             />
           );
         }}
