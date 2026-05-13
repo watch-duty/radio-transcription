@@ -33,6 +33,7 @@ from backend.pipeline.transcription.common.datatypes import (
     ChunkMetadata,
     FeedMetadata,
     FlushRequest,
+    IdleFeedState,
     OrderRestorerConfig,
     StitchAudioConfig,
     TimeRange,
@@ -1136,3 +1137,114 @@ class OrderedStitchAudioTest(unittest.TestCase):
                     assert 16000 in lengths
 
             assert_that(results, assert_results)
+
+
+class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
+    @patch(
+        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
+    )
+    def test_speech_segments_persistence_and_stale_flush(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that speech_segments are preserved in ActiveStitchingState and mapped during stale flushes."""
+        mock_processor_inst = mock_audio_processor.return_value
+        # Mock chunk with an active speech segment
+        chunk_data = AudioChunkData(
+            start_ms=100000,
+            audio=np.zeros(16000 * 5, dtype=np.int16),
+            speech_segments=[TimeRange(1000, 4000)],
+            gcs_uri="gs://bucket/chunk1.flac",
+            duration_ms=5000,
+            sample_rate=16000,
+        )
+        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        stitch_config = get_test_stitch_config(
+            significant_gap_ms=800, stale_timeout_ms=75000
+        )
+        fn = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn.setup()
+
+        class MockValueState:
+            def __init__(self, initial=None) -> None:
+                self.val = initial
+
+            def read(self):
+                return self.val
+
+            def write(self, val):
+                self.val = val
+
+        class MockBagState:
+            def __init__(self) -> None:
+                self.items = []
+
+            def read(self):
+                return self.items
+
+            def add(self, item):
+                self.items.append(item)
+
+            def clear(self):
+                self.items = []
+
+        mock_state_context = MockValueState(
+            ActiveStitchingState(
+                session_id="session-1",
+                feed_metadata=FeedMetadata(
+                    feed_name="test-feed", external_id="ext-1"
+                ),
+            )
+        )
+        mock_state_buffer = MockBagState()
+        mock_last_start_ms = MockValueState(None)
+
+        metadata = ChunkMetadata(
+            gcs_uri="gs://bucket/chunk1.flac",
+            session_id="session-1",
+            duration_ms=5000,
+            feed_metadata=FeedMetadata(
+                feed_name="test-feed", external_id="ext-1"
+            ),
+        )
+
+        # 1. Process chunk and verify speech_segments are saved to persistent state
+        list(
+            fn.process(
+                element=("test-feed", metadata),
+                timestamp=Timestamp(100),
+                transmission_buffer_state=mock_state_buffer,  # type: ignore
+                transmission_context_state=mock_state_context,  # type: ignore
+                last_start_ms_state=mock_last_start_ms,  # type: ignore
+                out_of_order_timer=MagicMock(),
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        saved_context = mock_state_context.read()
+        self.assertIsInstance(saved_context, ActiveStitchingState)
+        self.assertTrue(len(saved_context.speech_segments) > 0)
+        self.assertEqual(saved_context.speech_segments[0].duration_ms, 3000)
+
+        # 2. Trigger stale flush and verify mapped speech_segments in FlushRequest payload
+        outputs = list(
+            fn.handle_stale_transmission_event(
+                key="test-feed",
+                transmission_buffer=mock_state_buffer,  # type: ignore
+                transmission_context=mock_state_context,  # type: ignore
+                last_start_ms_state=mock_last_start_ms,  # type: ignore
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        self.assertEqual(len(outputs), 1)
+        feed_id, flush_request = outputs[0]
+        self.assertEqual(feed_id, "test-feed")
+        self.assertTrue(len(flush_request.speech_segments) > 0)
+        self.assertEqual(flush_request.speech_segments[0].duration_ms, 3000)
+        self.assertIsInstance(mock_state_context.read(), IdleFeedState)
