@@ -63,7 +63,8 @@ describe('TranscriptDisplay', () => {
             triggerSnackbar={vi.fn()}
             ruleIdToNameMap={new Map()}
             rulesLoading={false}
-            onPlay={vi.fn()}
+            onToggleAudio={vi.fn()}
+            isAudioPlaying={false}
             currentlyPlayingTransmissionId={null}
             highlightedTransmissionId={null}
           />
@@ -97,7 +98,8 @@ describe('TranscriptDisplay', () => {
             triggerSnackbar={vi.fn()}
             ruleIdToNameMap={new Map()}
             rulesLoading={false}
-            onPlay={vi.fn()}
+            onToggleAudio={vi.fn()}
+            isAudioPlaying={false}
             currentlyPlayingTransmissionId={null}
             highlightedTransmissionId={null}
           />
@@ -131,7 +133,8 @@ describe('TranscriptDisplay', () => {
             triggerSnackbar={vi.fn()}
             ruleIdToNameMap={new Map()}
             rulesLoading={false}
-            onPlay={vi.fn()}
+            onToggleAudio={vi.fn()}
+            isAudioPlaying={false}
             currentlyPlayingTransmissionId={null}
             highlightedTransmissionId={null}
           />
@@ -165,7 +168,8 @@ describe('TranscriptDisplay', () => {
             triggerSnackbar={vi.fn()}
             ruleIdToNameMap={new Map()}
             rulesLoading={false}
-            onPlay={vi.fn()}
+            onToggleAudio={vi.fn()}
+            isAudioPlaying={false}
             currentlyPlayingTransmissionId={null}
             highlightedTransmissionId={null}
           />

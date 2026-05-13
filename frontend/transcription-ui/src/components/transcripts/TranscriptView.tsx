@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import type { VirtuosoHandle } from 'react-virtuoso';
 
+import { Howl } from 'howler';
+
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -21,6 +23,7 @@ import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { listTranscripts } from '../../service/listTranscripts';
+import { getAudioUrl } from '../../utils/audioUtils';
 import {
   getInitialTimestamp,
   roundUpToNearestMinute,
@@ -89,6 +92,59 @@ export function TranscriptView({
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const hasScrolledToTarget = useRef(false);
+
+  const currentAudio = useRef<Howl>(null);
+  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
+
+  // Cleanup effect to ensure audio is unloaded when component unmounts
+  useEffect(() => {
+    return () => {
+      currentAudio.current?.unload();
+    };
+  }, []);
+
+  // Play and pause audio from a URL.
+  const toggleAudio = useCallback(
+    (transmissionId: string, audioUri: string) => {
+      const newAudio = currentlyPlayingTransmissionId !== transmissionId;
+
+      if (newAudio) {
+        if (currentAudio.current) {
+          currentAudio.current.off();
+          currentAudio.current.unload();
+          currentAudio.current = null;
+        }
+        setCurrentlyPlayingTransmissionId(transmissionId);
+        setHighlightedTransmissionId(transmissionId);
+      }
+
+      if (!currentAudio.current) {
+        const sound = new Howl({
+          src: [getAudioUrl(audioUri)],
+          html5: true,
+          preload: true,
+          onplay: () => setIsAudioPlaying(true),
+          onpause: () => setIsAudioPlaying(false),
+          onend: () => {
+            setIsAudioPlaying(false);
+            sound.unload();
+            if (currentAudio.current === sound) {
+              currentAudio.current = null;
+            }
+          },
+        });
+        currentAudio.current = sound;
+      }
+
+      // Play is no current audio or changing audio
+      if (!isAudioPlaying || newAudio) {
+        currentAudio.current.play();
+      } else {
+        currentAudio.current.pause();
+      }
+    },
+    [currentlyPlayingTransmissionId, isAudioPlaying]
+  );
 
   const {
     data: feeds,
@@ -452,10 +508,6 @@ export function TranscriptView({
     }
   }, [isTranscriptsSuccess, targetTransmissionId, transcripts]);
 
-  const onPlay = (transmissionId: string | null) => {
-    setCurrentlyPlayingTransmissionId(transmissionId);
-  };
-
   const handleClipClick = (transmissionId: string) => {
     const index = transcripts.findIndex(
       (t) => t.transmissionId === transmissionId
@@ -612,7 +664,8 @@ export function TranscriptView({
               triggerSnackbar={triggerSnackbar}
               ruleIdToNameMap={ruleIdToNameMap}
               rulesLoading={rulesLoading}
-              onPlay={onPlay}
+              onToggleAudio={toggleAudio}
+              isAudioPlaying={isAudioPlaying}
               currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
               highlightedTransmissionId={highlightedTransmissionId}
             />
