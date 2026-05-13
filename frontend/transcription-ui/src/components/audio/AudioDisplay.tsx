@@ -183,7 +183,7 @@ export function AudioDisplay({
     setPrevHighlightedId(highlightedTransmissionId);
     setPrevUserDuration(userDuration ?? null);
 
-    const targetId = playingId || highlightedTransmissionId;
+    const targetId = highlightedTransmissionId || playingId;
     if (targetId) {
       const targetTranscript = transcripts.find(
         (t) => t.transmissionId === targetId

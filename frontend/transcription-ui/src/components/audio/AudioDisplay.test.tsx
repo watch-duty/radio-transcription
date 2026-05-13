@@ -385,4 +385,72 @@ describe('AudioDisplay', () => {
 
     expect(screen.getByLabelText('pause')).toBeTruthy();
   });
+
+  it('should shift window when highlighted transmission is outside window', async () => {
+    const mockTranscripts: Transcript[] = [
+      {
+        transmissionId: '1',
+        feedId: 'feed1',
+        startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
+        endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
+        transcript: 'Test 1',
+        canonicalAudioUri: 'audio1.flac',
+        playbackAudioUri: 'audio1.m4a',
+        evaluationDecisions: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+        startAudioOffset: '0',
+        endAudioOffset: '0',
+      },
+      {
+        transmissionId: '2',
+        feedId: 'feed1',
+        startTimestamp: new Date('2026-04-20T08:20:00Z').toISOString(),
+        endTimestamp: new Date('2026-04-20T08:20:05Z').toISOString(),
+        transcript: 'Test 2',
+        canonicalAudioUri: 'audio2.flac',
+        playbackAudioUri: 'audio2.m4a',
+        evaluationDecisions: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+        startAudioOffset: '0',
+        endAudioOffset: '0',
+      },
+    ];
+
+    const { rerender } = render(
+      <AudioDisplay
+        transcripts={mockTranscripts}
+        currentlyPlayingTransmissionId={null}
+        onClipClick={vi.fn()}
+        isPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        highlightedTransmissionId={null}
+      />
+    );
+
+    const labelsBefore = screen
+      .getAllByText(/\d{2}:\d{2}/)
+      .map((el) => el.textContent);
+
+    rerender(
+      <AudioDisplay
+        transcripts={mockTranscripts}
+        currentlyPlayingTransmissionId={null}
+        onClipClick={vi.fn()}
+        isPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        highlightedTransmissionId="2"
+      />
+    );
+
+    await waitFor(() => {
+      const labelsAfter = screen
+        .getAllByText(/\d{2}:\d{2}/)
+        .map((el) => el.textContent);
+      expect(labelsAfter).not.toEqual(labelsBefore);
+    });
+  });
 });
