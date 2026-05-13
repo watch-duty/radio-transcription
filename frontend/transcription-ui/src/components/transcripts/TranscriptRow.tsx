@@ -19,7 +19,8 @@ interface TranscriptRowProps {
   totalTranscripts: number;
   ruleIdToNameMap: Map<string, string>;
   rulesLoading: boolean;
-  onPlay: (transmissionId: string | null) => void;
+  onToggleAudio: (transmissionId: string, audioUri: string) => void;
+  isAudioPlaying: boolean;
   currentlyPlayingTransmissionId: string | null;
   triggerSnackbar: (message: string) => void;
   showHeader: boolean;
@@ -32,7 +33,8 @@ export function TranscriptRow({
   totalTranscripts,
   ruleIdToNameMap,
   rulesLoading,
-  onPlay,
+  onToggleAudio,
+  isAudioPlaying,
   currentlyPlayingTransmissionId,
   triggerSnackbar,
   showHeader,
@@ -136,7 +138,8 @@ export function TranscriptRow({
         <AudioPlayer
           audioUri={transcript.playbackAudioUri}
           transmissionId={transcript.transmissionId}
-          onPlay={onPlay}
+          onToggleAudio={onToggleAudio}
+          isAudioPlaying={isAudioPlaying}
           currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
         />
         <Typography
@@ -150,7 +153,8 @@ export function TranscriptRow({
             <IconButton
               size="small"
               aria-label="copy transcript"
-              onClick={() => {
+              onClick={(e) => {
+                e.stopPropagation();
                 navigator.clipboard.writeText(transcript.transcript);
                 triggerSnackbar('Transcript copied');
               }}
@@ -163,7 +167,8 @@ export function TranscriptRow({
             <IconButton
               size="small"
               aria-label="copy deeplink"
-              onClick={() => {
+              onClick={(e) => {
+                e.stopPropagation();
                 const url = new URL(
                   window.location.origin + window.location.pathname
                 );
