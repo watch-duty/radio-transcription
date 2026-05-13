@@ -186,7 +186,7 @@ class TranscriptStore:
         end_time: datetime.datetime | None = None,
         order: SortOrder | str = SortOrder.DESC,
         *,
-        only_alerts: bool = False,
+        is_alert: bool | None = None,
     ) -> PaginatedTranscripts:
         """Lists transcripts for a specific feed ID with pagination and time window."""
         try:
@@ -213,7 +213,7 @@ class TranscriptStore:
             cursor_uid,
             start_time,
             end_time,
-            only_alerts,
+            is_alert,
             limit + 1,
         )
 
@@ -239,7 +239,7 @@ class TranscriptStore:
         end_time: datetime.datetime | None = None,
         order: SortOrder | str = SortOrder.DESC,
         *,
-        only_alerts: bool = False,
+        is_alert: bool | None = None,
     ) -> PaginatedTranscripts:
         """Lists all transcripts with pagination and time window."""
         cursor_ts = None
@@ -260,7 +260,7 @@ class TranscriptStore:
             cursor_uid,
             start_time,
             end_time,
-            only_alerts,
+            is_alert,
             limit + 1,
         )
 

@@ -171,17 +171,17 @@ class TestTranscriptsAPI(unittest.TestCase):
             start_time=None,
             end_time=None,
             order=SortOrder.DESC,
-            only_alerts=False,
+            is_alert=None,
         )
 
-    def test_list_transcripts_only_alerts(self) -> None:
-        """Test listing transcripts filtered by only_alerts=true."""
+    def test_list_transcripts_is_alert_true(self) -> None:
+        """Test listing transcripts filtered by is_alert=true."""
         mock_msg = _make_transcript_msg()
         self.mock_store.list_transcripts.return_value = PaginatedTranscripts(
             [mock_msg], None
         )
 
-        response = self.client.get("/v1/transcripts?only_alerts=true")
+        response = self.client.get("/v1/transcripts?is_alert=true")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data = response.json()
@@ -193,18 +193,40 @@ class TestTranscriptsAPI(unittest.TestCase):
             start_time=None,
             end_time=None,
             order=SortOrder.DESC,
-            only_alerts=True,
+            is_alert=True,
         )
 
-    def test_list_transcripts_by_feed_id_only_alerts(self) -> None:
-        """Test listing transcripts by feed ID with only_alerts=true."""
+    def test_list_transcripts_is_alert_false(self) -> None:
+        """Test listing transcripts filtered by is_alert=false."""
+        mock_msg = _make_transcript_msg()
+        self.mock_store.list_transcripts.return_value = PaginatedTranscripts(
+            [mock_msg], None
+        )
+
+        response = self.client.get("/v1/transcripts?is_alert=false")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertIn("transcripts", data)
+        self.assertEqual(len(data["transcripts"]), 1)
+        self.mock_store.list_transcripts.assert_called_once_with(
+            limit=100,
+            next_token=None,
+            start_time=None,
+            end_time=None,
+            order=SortOrder.DESC,
+            is_alert=False,
+        )
+
+    def test_list_transcripts_by_feed_id_is_alert(self) -> None:
+        """Test listing transcripts by feed ID with is_alert=true."""
         mock_msg = _make_transcript_msg()
         self.mock_store.list_transcripts_by_feed_id.return_value = (
             PaginatedTranscripts([mock_msg], None)
         )
 
         response = self.client.get(
-            f"/v1/transcripts?feed_id={_FEED_ID}&only_alerts=true"
+            f"/v1/transcripts?feed_id={_FEED_ID}&is_alert=true"
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -218,7 +240,7 @@ class TestTranscriptsAPI(unittest.TestCase):
             start_time=None,
             end_time=None,
             order=SortOrder.DESC,
-            only_alerts=True,
+            is_alert=True,
         )
 
     def test_delete_transcript_success(self) -> None:
