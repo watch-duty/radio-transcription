@@ -13,7 +13,7 @@ decoupled from Beam timer variables and delegated to StitcherEngine.
 
 import logging as std_logging
 import time
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any, Literal, override
@@ -276,6 +276,22 @@ class OrderedStitchAudioFn(beam.DoFn):
         self.engine.processor.gcs_client = shared_gcs
         self.engine.setup()
 
+    def _yield_tagged_outputs(
+        self,
+        results: Iterable[
+            tuple[str, datatypes.FlushRequest]
+            | tuple[Literal["transcription_dlq"], dict[str, Any]]
+        ],
+    ) -> Iterator[
+        tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
+    ]:
+        """Yields results, tagging DLQ outputs appropriately."""
+        for res in results:
+            if isinstance(res, tuple) and res[0] == "transcription_dlq":
+                yield beam.pvalue.TaggedOutput("transcription_dlq", res[1])
+            else:
+                yield res
+
     @override
     def process(
         self,
@@ -374,7 +390,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                     results.extend(outputs)
                     previous_expected_ts = next_expected_ts
 
-        yield from results
+        yield from self._yield_tagged_outputs(results)
 
     @on_timer(OUT_OF_ORDER_TIMER_SPEC)
     def handle_gap_timeout(
@@ -470,7 +486,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                         results.extend(outputs)
                         previous_expected_ts = next_expected_ts
 
-        yield from results
+        yield from self._yield_tagged_outputs(results)
 
     @on_timer(STALE_TIMER_EVENT_SPEC)
     def handle_stale_transmission_event(
@@ -491,12 +507,14 @@ class OrderedStitchAudioFn(beam.DoFn):
         timer_manager = StaleTimerManager(
             stale_timer_event, stale_timer_proc, self.stitch_config
         )
-        yield from self.engine.handle_stale_transmission(
-            key,
-            transmission_buffer,
-            transmission_context,
-            last_start_ms_state,
-            timer_manager,
+        yield from self._yield_tagged_outputs(
+            self.engine.handle_stale_transmission(
+                key,
+                transmission_buffer,
+                transmission_context,
+                last_start_ms_state,
+                timer_manager,
+            )
         )
 
     @on_timer(STALE_TIMER_PROC_SPEC)
@@ -518,12 +536,14 @@ class OrderedStitchAudioFn(beam.DoFn):
         timer_manager = StaleTimerManager(
             stale_timer_event, stale_timer_proc, self.stitch_config
         )
-        yield from self.engine.handle_stale_transmission(
-            key,
-            transmission_buffer,
-            transmission_context,
-            last_start_ms_state,
-            timer_manager,
+        yield from self._yield_tagged_outputs(
+            self.engine.handle_stale_transmission(
+                key,
+                transmission_buffer,
+                transmission_context,
+                last_start_ms_state,
+                timer_manager,
+            )
         )
 
     @property
