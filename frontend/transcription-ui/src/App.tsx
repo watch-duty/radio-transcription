@@ -180,6 +180,18 @@ function App() {
               }
             />
             <Route
+              path="/transcripts"
+              element={
+                <>
+                  <title>Transcripts - Radio Transcription</title>
+                  <TranscriptView
+                    triggerSnackbar={triggerSnackbar}
+                    onError={handleError}
+                  />
+                </>
+              }
+            />
+            <Route
               path="/rules"
               element={
                 <>

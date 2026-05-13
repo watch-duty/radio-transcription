@@ -120,7 +120,7 @@ export default function AppContainer({
         <Divider />
         <List>
           <ListItem disablePadding>
-            <ListItemButton onClick={() => navigate('/')}>
+            <ListItemButton onClick={() => navigate('/transcripts')}>
               <ListItemIcon>
                 <VoiceChatIcon />
               </ListItemIcon>
