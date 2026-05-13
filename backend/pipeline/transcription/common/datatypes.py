@@ -1,3 +1,4 @@
+from typing import Optional, Union
 """Domain objects and strongly-typed dataclasses for the transcription pipeline."""
 
 from dataclasses import dataclass, field
@@ -33,7 +34,7 @@ class BufferedChunk:
 
     timestamp_ms: int
     gcs_uri: str
-    traceparent: str | None = None
+    traceparent: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -64,7 +65,7 @@ class ChunkMetadata:
     session_id: str  # Required for continuous feeds ONLY.
     duration_ms: int
     feed_metadata: FeedMetadata
-    traceparent: str | None = None
+    traceparent: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -93,7 +94,7 @@ class TranscriptionResult:
     feed_metadata: FeedMetadata
     missing_prior_context: bool = False
     missing_post_context: bool = False
-    traceparent: str | None = None
+    traceparent: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -110,26 +111,26 @@ class ActiveStitchingState:
 
     session_id: str
     feed_metadata: FeedMetadata
-    last_end_time_ms: int | None = None
-    stale_start_time_ms: int | None = None
-    buffer_start_time_ms: int | None = None
-    expected_next_chunk_start_ms: int | None = None
-    start_audio_offset_ms: int | None = None
-    end_audio_offset_ms: int | None = None
+    last_end_time_ms: Optional[int] = None
+    stale_start_time_ms: Optional[int] = None
+    buffer_start_time_ms: Optional[int] = None
+    expected_next_chunk_start_ms: Optional[int] = None
+    start_audio_offset_ms: Optional[int] = None
+    end_audio_offset_ms: Optional[int] = None
     contributing_audio_uris: list[str] = field(default_factory=list)
     missing_prior_context: bool = False
     missing_post_context: bool = False
     buffer_duration_ms: int = 0
     order_timer_active: bool = False
     out_of_order_buffer: list[BufferedChunk] = field(default_factory=list)
-    last_transmission_start_ms: int | None = None
+    last_transmission_start_ms: Optional[int] = None
     speech_segments: list[TimeRange] = field(default_factory=list)
-    prior_audio_tail: np.ndarray | None = None
-    traceparent: str | None = None
-    sample_rate: int | None = None
+    prior_audio_tail: np.Optional[ndarray] = None
+    traceparent: Optional[str] = None
+    sample_rate: Optional[int] = None
 
 
-TransmissionContext = IdleFeedState | ActiveStitchingState
+TransmissionContext = Union[IdleFeedState, ActiveStitchingState]
 
 
 @dataclass
@@ -139,20 +140,20 @@ class StitcherContext:
     feed_id: str
     # The fully qualified GCS URI of the raw audio file currently being parsed.
     current_gcs_uri: str
-    session_id: str | None
+    session_id: Optional[str]
     # Ordered list of URIs that have been accumulated into the current transmission buffer thus far.
     contributing_audio_uris: list[str]
     file_start_ms: int
-    last_segment_end_time_ms: int | None
-    transmission_start_time_ms: int | None
-    buffer_start_time_ms: int | None
+    last_segment_end_time_ms: Optional[int]
+    transmission_start_time_ms: Optional[int]
+    buffer_start_time_ms: Optional[int]
     missing_prior_context: bool
-    expected_next_chunk_start_ms: int | None
-    start_audio_offset_ms: int | None
-    end_audio_offset_ms: int | None = None
+    expected_next_chunk_start_ms: Optional[int]
+    start_audio_offset_ms: Optional[int]
+    end_audio_offset_ms: Optional[int] = None
     buffer_duration_ms: int = 0
     speech_segments: list[TimeRange] = field(default_factory=list)
-    traceparent: str | None = None
+    traceparent: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -203,7 +204,7 @@ class TranscribeAudioConfig:
     transcriber_config: str
     vad_config: str
     route_to_dlq: bool = True
-    canonical_audio_bucket: str | None = None
+    canonical_audio_bucket: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -220,10 +221,10 @@ class FlushRequest:
     sample_rate: int
     missing_prior_context: bool
     missing_post_context: bool
-    start_audio_offset_ms: int | None
-    end_audio_offset_ms: int | None
+    start_audio_offset_ms: Optional[int]
+    end_audio_offset_ms: Optional[int]
     speech_segments: list[TimeRange] = field(default_factory=list)
-    traceparent: str | None = None
+    traceparent: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -262,7 +263,7 @@ class FlushAction(StateMachineAction):
     isolated_audio_buffer: list[np.ndarray] = field(default_factory=list)
     isolated_audio_buffer_uris: list[str] = field(default_factory=list)
     speech_segments: list[TimeRange] = field(default_factory=list)
-    traceparent: str | None = None
+    traceparent: Optional[str] = None
 
 
 @dataclass(frozen=True)
