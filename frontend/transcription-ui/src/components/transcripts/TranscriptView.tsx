@@ -101,12 +101,6 @@ export function TranscriptView({
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
 
   const transcriptsRef = useRef<Transcript[]>([]);
-  const prefetchedTransmissionIds = useRef<Set<string>>(new Set());
-
-  // Clear prefetched IDs when the searched feed changes
-  useEffect(() => {
-    prefetchedTransmissionIds.current.clear();
-  }, [searchedFeedId]);
 
   // Cleanup effect to ensure audio is unloaded when component unmounts
   useEffect(() => {
