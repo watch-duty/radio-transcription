@@ -327,52 +327,6 @@ export function TranscriptView({
     setPlaybackEndedForId(null);
   }, [playbackEndedForId, transcripts, toggleAudio]);
 
-  // Prefetch a prioritized window of 5 tracks around the currently playing track to warm up browser media cache
-  useEffect(() => {
-    if (!currentlyPlayingTransmissionId || transcripts.length === 0) return;
-
-    const currentIndex = transcripts.findIndex(
-      (t) => t.transmissionId === currentlyPlayingTransmissionId
-    );
-    if (currentIndex === -1) return;
-
-    const prefetchCount = 5;
-    const targetIndices: number[] = [];
-
-    // 1. Prioritize autoplay direction (smaller indices / newer tracks)
-    for (let i = 1; i <= prefetchCount; i++) {
-      const idx = currentIndex - i;
-      if (idx >= 0) {
-        targetIndices.push(idx);
-      }
-    }
-
-    // 2. Fill remaining prefetch capacity from the opposite direction (larger indices / older tracks)
-    let nextIdx = currentIndex + 1;
-    while (
-      targetIndices.length < prefetchCount &&
-      nextIdx < transcripts.length
-    ) {
-      targetIndices.push(nextIdx);
-      nextIdx++;
-    }
-
-    targetIndices.forEach((idx) => {
-      const t = transcripts[idx];
-      if (prefetchedTransmissionIds.current.has(t.transmissionId)) return;
-
-      prefetchedTransmissionIds.current.add(t.transmissionId);
-      const url = getAudioUrl(t.playbackAudioUri);
-      // Use native HTML5 Audio preloading to trigger range-requests (206 Partial Content)
-      // so the browser's media subsystem stores the cache in the correct namespace for playback.
-      if (typeof window !== 'undefined' && 'Audio' in window) {
-        const audio = new Audio();
-        audio.src = url;
-        audio.preload = 'auto';
-      }
-    });
-  }, [currentlyPlayingTransmissionId, transcripts]);
-
   // This is used to group transcripts by date and display them in the UI.
   // groupCounts is an array of numbers representing the number of transcripts in each group.
   // groupTitles is an array of strings representing the title of each group.
