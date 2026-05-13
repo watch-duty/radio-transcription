@@ -8,11 +8,13 @@ import sys
 
 from apache_beam.options.pipeline_options import PipelineOptions
 
-from backend.pipeline.transcription.common.logging import get_logger
+from backend.pipeline.transcription.common.logging import get_task_logger
 from backend.pipeline.transcription.options import TranscriptionOptions
 from backend.pipeline.transcription.orchestration import get_pipeline
 
-logger = get_logger(__name__, {"system": "transcription", "component": "main"})
+logger = get_task_logger(
+    __name__, {"system": "transcription", "component": "main"}
+)
 
 
 def main() -> None:

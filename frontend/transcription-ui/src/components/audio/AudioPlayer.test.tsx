@@ -10,9 +10,9 @@ describe('AudioPlayer', () => {
   const defaultProps = {
     audioUri: 'gs://bucket/audio.mp3',
     transmissionId: '123',
-    currentlyPlayingTransmissionId: null,
-    isPlaying: false,
     onToggleAudio: mockOnToggleAudio,
+    isAudioPlaying: false,
+    currentlyPlayingTransmissionId: null,
   };
 
   beforeEach(() => {
@@ -45,7 +45,7 @@ describe('AudioPlayer', () => {
       <AudioPlayer
         {...defaultProps}
         currentlyPlayingTransmissionId="123"
-        isPlaying={true}
+        isAudioPlaying={true}
       />
     );
     expect(screen.getByLabelText('pause')).toBeTruthy();
@@ -56,7 +56,7 @@ describe('AudioPlayer', () => {
       <AudioPlayer
         {...defaultProps}
         currentlyPlayingTransmissionId="456"
-        isPlaying={true}
+        isAudioPlaying={true}
       />
     );
     expect(screen.getByLabelText('play')).toBeTruthy();
@@ -67,7 +67,7 @@ describe('AudioPlayer', () => {
       <AudioPlayer
         {...defaultProps}
         currentlyPlayingTransmissionId="123"
-        isPlaying={false}
+        isAudioPlaying={false}
       />
     );
     expect(screen.getByLabelText('play')).toBeTruthy();

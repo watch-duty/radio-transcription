@@ -8,6 +8,8 @@ services:
     volumes:
       - ./model:/app
     working_dir: /app
+    environment:
+      - JUPYTER_PATH=/opt/venv/share/jupyter
     deploy:
       resources:
         reservations:
@@ -27,6 +29,8 @@ services:
     volumes:
       - ./model:/app
     working_dir: /app
+    environment:
+      - JUPYTER_PATH=/opt/venv/share/jupyter
     # Override entrypoint to start Jupyter Notebook instead of ZSH
     entrypoint: ["jupyter", "notebook", "--ip=0.0.0.0", "--allow-root", "--no-browser", "--NotebookApp.token=''", "--NotebookApp.password=''"]
 

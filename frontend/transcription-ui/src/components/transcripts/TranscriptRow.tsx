@@ -20,11 +20,12 @@ interface TranscriptRowProps {
   ruleIdToNameMap: Map<string, string>;
   rulesLoading: boolean;
   onToggleAudio: (transmissionId: string, audioUri: string) => void;
+  isAudioPlaying: boolean;
   currentlyPlayingTransmissionId: string | null;
-  isPlaying: boolean;
   triggerSnackbar: (message: string) => void;
   showHeader: boolean;
   isHighlighted?: boolean;
+  redactTranscripts?: boolean;
   onRowClick: (transmissionId: string) => void;
 }
 
@@ -35,11 +36,12 @@ export function TranscriptRow({
   ruleIdToNameMap,
   rulesLoading,
   onToggleAudio,
+  isAudioPlaying,
   currentlyPlayingTransmissionId,
-  isPlaying,
   triggerSnackbar,
   showHeader,
   isHighlighted = false,
+  redactTranscripts = false,
   onRowClick,
 }: TranscriptRowProps) {
   const theme = useTheme();
@@ -146,12 +148,18 @@ export function TranscriptRow({
           audioUri={transcript.playbackAudioUri}
           transmissionId={transcript.transmissionId}
           onToggleAudio={onToggleAudio}
+          isAudioPlaying={isAudioPlaying}
           currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
-          isPlaying={isPlaying}
         />
         <Typography
           variant="body1"
-          sx={{ flexGrow: 1, whiteSpace: 'pre-wrap' }}
+          sx={{
+            flexGrow: 1,
+            whiteSpace: 'pre-wrap',
+            transition: 'filter 0.3s ease, opacity 0.3s ease',
+            filter: redactTranscripts ? 'blur(6px)' : 'none',
+            opacity: redactTranscripts ? 0.6 : 1,
+          }}
         >
           {transcript.transcript}
         </Typography>

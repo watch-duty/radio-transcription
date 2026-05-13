@@ -64,9 +64,10 @@ describe('TranscriptDisplay', () => {
             ruleIdToNameMap={new Map()}
             rulesLoading={false}
             onToggleAudio={vi.fn()}
+            isAudioPlaying={false}
             currentlyPlayingTransmissionId={null}
-            isPlaying={false}
             highlightedTransmissionId={null}
+            redactTranscripts={false}
             onRowClick={vi.fn()}
           />
         </MemoryRouter>
@@ -100,9 +101,10 @@ describe('TranscriptDisplay', () => {
             ruleIdToNameMap={new Map()}
             rulesLoading={false}
             onToggleAudio={vi.fn()}
+            isAudioPlaying={false}
             currentlyPlayingTransmissionId={null}
-            isPlaying={false}
             highlightedTransmissionId={null}
+            redactTranscripts={false}
             onRowClick={vi.fn()}
           />
         </MemoryRouter>
@@ -136,9 +138,10 @@ describe('TranscriptDisplay', () => {
             ruleIdToNameMap={new Map()}
             rulesLoading={false}
             onToggleAudio={vi.fn()}
+            isAudioPlaying={false}
             currentlyPlayingTransmissionId={null}
-            isPlaying={false}
             highlightedTransmissionId={null}
+            redactTranscripts={false}
             onRowClick={vi.fn()}
           />
         </MemoryRouter>
@@ -172,9 +175,10 @@ describe('TranscriptDisplay', () => {
             ruleIdToNameMap={new Map()}
             rulesLoading={false}
             onToggleAudio={vi.fn()}
+            isAudioPlaying={false}
             currentlyPlayingTransmissionId={null}
-            isPlaying={false}
             highlightedTransmissionId={null}
+            redactTranscripts={false}
             onRowClick={vi.fn()}
           />
         </MemoryRouter>

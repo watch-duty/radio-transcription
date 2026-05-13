@@ -47,7 +47,7 @@ from backend.pipeline.transcription.transforms import stitcher_engine
 
 SHARED_RESOURCE_HANDLE = Shared()
 
-logger = trans_logging.get_logger(
+logger = trans_logging.get_task_logger(
     __name__, {"system": "transcription", "component": "ordered-stitcher"}
 )
 
@@ -872,6 +872,7 @@ class TranscribeAudioFn(beam.DoFn):
         self.audio_processor.setup()
 
         self.transcriber = shared_transcriber
+        self.transcriber.setup()
 
         if self.audio_processor.gcs_client is None:
             msg = "GCS client not found in AudioProcessor. must call setup() first."
@@ -881,7 +882,7 @@ class TranscribeAudioFn(beam.DoFn):
             gcs_client=self.audio_processor.gcs_client,
         )
 
-    def _export_and_transcribe(
+    def _export_and_transcribe(  # noqa: PLR0912
         self,
         request: datatypes.FlushRequest,
     ) -> datatypes.TranscriptionResult | None:
@@ -962,10 +963,21 @@ class TranscribeAudioFn(beam.DoFn):
         ):
             canonical_audio_uri = request.contributing_audio_uris[0]
 
+        # Validate that the uncompressed audio payload length does not exceed the 60s synchronous API limit
+        duration_ms = int(
+            len(res.processed_audio)
+            / float(request.sample_rate)
+            * common_constants.MS_PER_SECOND
+        )
+        if duration_ms > 60000:
+            msg = f"Audio payload too long for synchronous API: {duration_ms / 1000:.2f}s"
+            raise ValueError(msg)
+
         # Perform Speech Transcription API call
         transcribe_start = time.time()
         transcript = self.transcriber.transcribe(
             audio_data=res.flac_bytes,
+            duration_ms=duration_ms,
         )
         if transcript is None:
             logger.info("Transcription yielded no text. Dropping transmission.")

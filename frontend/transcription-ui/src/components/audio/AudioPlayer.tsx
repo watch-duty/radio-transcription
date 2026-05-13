@@ -5,20 +5,20 @@ import IconButton from '@mui/material/IconButton';
 export interface AudioPlayerProps {
   audioUri: string;
   transmissionId: string;
-  currentlyPlayingTransmissionId: string | null;
-  isPlaying: boolean;
   onToggleAudio: (transmissionId: string, audioUri: string) => void;
+  isAudioPlaying: boolean;
+  currentlyPlayingTransmissionId: string | null;
 }
 
 function AudioPlayer({
   audioUri,
   transmissionId,
-  currentlyPlayingTransmissionId,
-  isPlaying,
   onToggleAudio,
+  isAudioPlaying,
+  currentlyPlayingTransmissionId,
 }: AudioPlayerProps) {
   const showPauseIcon =
-    isPlaying && transmissionId === currentlyPlayingTransmissionId;
+    isAudioPlaying && transmissionId === currentlyPlayingTransmissionId;
 
   return (
     <IconButton

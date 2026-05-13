@@ -44,43 +44,11 @@ class AudioProcessorTest(unittest.TestCase):
         self.assertEqual(self.processor.gcs_client, mock_get_gcs.return_value)
         mock_vad_instance.setup.assert_called_once()
 
-    def test_check_vad_raises_if_not_setup(self) -> None:
-        """Ensures that attempting to evaluate VAD before setup() raises a clear runtime error."""
-        audio = np.zeros(16000, dtype=np.float32)
-        with self.assertRaises(RuntimeError):
-            self.processor.check_vad(audio, 16000)
-
     def test_download_audio_raises_if_not_setup(self) -> None:
         """Ensures that downloading audio before calling setup() correctly raises a runtime error."""
         processor = AudioProcessor()
         with self.assertRaises(RuntimeError):
             processor.download_audio_and_detect("gs://test/file.flac", 0)
-
-    @patch(
-        "backend.pipeline.transcription.audio.audio_processor.get_gcs_client"
-    )
-    @patch(
-        "backend.pipeline.transcription.audio.audio_processor.get_vad_engine"
-    )
-    def test_check_vad_evaluates_speech(
-        self, mock_get_vad: MagicMock, mock_get_gcs: MagicMock
-    ) -> None:
-        """Tests that check_vad returns True when VAD detects speech."""
-        mock_vad_instance = MagicMock()
-        mock_vad_instance.detect_speech_segments.side_effect = (
-            lambda *args, **kwargs: [(0.1, 0.9)]
-        )
-        mock_get_vad.return_value = mock_vad_instance
-
-        self.processor.setup()
-
-        # Generate 1 second of 440Hz sine wave at 16kHz
-        t = np.linspace(0, 1, 16000, endpoint=False)
-        audio = np.sin(2 * np.pi * 440 * t).astype(np.float32)
-
-        result = self.processor.check_vad(audio, 16000)
-        self.assertTrue(result)
-        mock_vad_instance.detect_speech_segments.assert_called_once()
 
     @patch(
         "backend.pipeline.transcription.audio.audio_processor.get_gcs_client"

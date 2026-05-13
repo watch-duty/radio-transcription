@@ -1,6 +1,7 @@
 """Tests for the StitchAudioFn, TranscribeAudioFn, and related transformations."""
 
 import unittest
+from collections.abc import Callable
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -41,6 +42,7 @@ from backend.pipeline.transcription.common.datatypes import (
 from backend.pipeline.transcription.common.enums import TranscriberType
 from backend.pipeline.transcription.services.transcribers import Transcriber
 from backend.pipeline.transcription.transforms.stateful import (
+    SHARED_RESOURCE_HANDLE,
     OrderedBypassFn,
     OrderedStitchAudioFn,
     TranscribeAudioFn,
@@ -49,6 +51,29 @@ from backend.pipeline.transcription.transforms.stateless import (
     ParseAndKeyFn,
     SerializeFn,
 )
+
+# Configure dynamic mock interception for process-level shared GCS clients
+# using standard unittest module lifecycle hooks to avoid any type ignore annotations.
+original_acquire = SHARED_RESOURCE_HANDLE.acquire
+
+
+def mock_acquire(constructor_fn: Callable[[], Any], tag: Any = None) -> Any:
+    if tag == "gcs":
+        return MagicMock()
+    return original_acquire(constructor_fn, tag)
+
+
+_SHARED_PATCHER = patch.object(
+    SHARED_RESOURCE_HANDLE, "acquire", side_effect=mock_acquire
+)
+
+
+def setUpModule() -> None:
+    _SHARED_PATCHER.start()
+
+
+def tearDownModule() -> None:
+    _SHARED_PATCHER.stop()
 
 
 class MockTranscriberFactory:
@@ -239,12 +264,19 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
 
 
 class TranscribeAudioTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self.storage_patcher = patch(
-            "backend.pipeline.transcription.transforms.stateful.storage.Client"
+    def test_setup_calls_transcriber_setup(self) -> None:
+        """Verifies that TranscribeAudioFn.setup() correctly invokes setup() on the transcriber."""
+        mock_transcriber = MagicMock()
+        config = get_test_transcribe_config()
+
+        fn = TranscribeAudioFn(
+            config=config,
+            transcriber_factory=lambda *args, **kwargs: mock_transcriber,
         )
-        self.mock_storage_client = self.storage_patcher.start()
-        self.addCleanup(self.storage_patcher.stop)
+        fn.setup()
+
+        # Assert that setup() was invoked on our transcriber
+        mock_transcriber.setup.assert_called_once()
 
     @patch(
         "backend.pipeline.transcription.services.transcribers.get_transcriber"
@@ -325,15 +357,87 @@ class TranscribeAudioTest(unittest.TestCase):
                 results[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ"
             )
 
+    @patch(
+        "backend.pipeline.transcription.services.transcribers.get_transcriber"
+    )
+    @patch(
+        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
+    )
+    def test_duration_limit_dlq_routing(
+        self, mock_audio_processor: MagicMock, mock_get_transcriber: MagicMock
+    ) -> None:
+        """Verifies that audio payloads exceeding the strict 60s uncompressed duration limit are cleanly routed to the DLQ."""
+        mock_processor_inst = mock_audio_processor.return_value
+        mock_processor_inst.check_vad.return_value = True
+        mock_processor_inst.preprocess_audio.side_effect = lambda x, sr: x
+        mock_processor_inst.export_flac.return_value = b"flac_bytes"
+
+        # Mock process_buffer to return 65 seconds of uncompressed audio
+        mock_processor_inst.process_buffer.return_value = ProcessorOutput(
+            success=True,
+            flac_bytes=b"flac_bytes",
+            processed_audio=np.zeros(16000 * 65, dtype=np.int16),
+        )
+
+        config = get_test_transcribe_config(route_to_dlq=True)
+
+        options = PipelineOptions(
+            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+        )
+        with BeamTestPipeline(options=options) as p:
+            elements = p | beam.Create(
+                [
+                    (
+                        "feed-123",
+                        FlushRequest(
+                            feed_id="feed-123",
+                            session_id="fake-session",
+                            buffer=np.zeros(16000 * 65, dtype=np.int16),
+                            contributing_audio_uris=["gs://bucket/chunk.flac"],
+                            time_range=TimeRange(start_ms=0, end_ms=65000),
+                            transmission_id="tx-123",
+                            missing_prior_context=False,
+                            missing_post_context=False,
+                            start_audio_offset_ms=0,
+                            end_audio_offset_ms=65000,
+                            feed_metadata=FeedMetadata(
+                                feed_name="fake-feed",
+                                external_id="fake-external",
+                            ),
+                            sample_rate=16000,
+                        ),
+                    )
+                ]
+            )
+
+            results = elements | beam.ParDo(
+                TranscribeAudioFn(
+                    config=config,
+                    transcriber_factory=get_mock_factory(raise_exception=False),
+                )
+            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
+
+            def assert_dlq(
+                elements: list[dict[str, str | bool | dict[str, str]]],
+            ) -> None:
+                assert len(elements) == 1
+                assert isinstance(elements[0]["error"], str)
+                assert (
+                    "Audio payload too long for synchronous API"
+                    in elements[0]["error"]
+                )
+                assert "65.00s" in elements[0]["error"]
+
+            def assert_empty(elements):
+                assert len(elements) == 0
+
+            assert_that(results.main, assert_empty, label="CheckEmptyMain")
+            assert_that(
+                results[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ"
+            )
+
 
 class SerializeAndEnrichTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self.storage_patcher = patch(
-            "backend.pipeline.transcription.transforms.stateful.storage.Client"
-        )
-        self.mock_storage_client = self.storage_patcher.start()
-        self.addCleanup(self.storage_patcher.stop)
-
     def test_serialize_and_enrich(self) -> None:
         """Verifies that SerializeAndEnrichFn correctly enriches and serializes the transcript."""
         options = PipelineOptions(
@@ -491,13 +595,6 @@ class SerializeAndEnrichTest(unittest.TestCase):
 
 
 class OrderedBypassTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self.storage_patcher = patch(
-            "backend.pipeline.transcription.transforms.stateful.storage.Client"
-        )
-        self.mock_storage_client = self.storage_patcher.start()
-        self.addCleanup(self.storage_patcher.stop)
-
     @patch("backend.pipeline.common.tracing_utils.with_tracer_context")
     @patch(
         "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
@@ -601,13 +698,6 @@ class OrderedBypassTest(unittest.TestCase):
 
 
 class OrderedStitchAudioTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self.storage_patcher = patch(
-            "backend.pipeline.transcription.transforms.stateful.storage.Client"
-        )
-        self.mock_storage_client = self.storage_patcher.start()
-        self.addCleanup(self.storage_patcher.stop)
-
     @patch("backend.pipeline.common.tracing_utils.with_tracer_context")
     @patch(
         "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"

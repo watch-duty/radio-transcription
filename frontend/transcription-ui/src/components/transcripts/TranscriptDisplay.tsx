@@ -38,9 +38,10 @@ export interface TranscriptDisplayProps {
   ruleIdToNameMap: Map<string, string>;
   rulesLoading: boolean;
   onToggleAudio: (transmissionId: string, audioUri: string) => void;
+  isAudioPlaying: boolean;
   currentlyPlayingTransmissionId: string | null;
-  isPlaying: boolean;
   highlightedTransmissionId: string | null;
+  redactTranscripts: boolean;
   onRowClick: (transmissionId: string) => void;
 }
 
@@ -61,9 +62,10 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
   ruleIdToNameMap,
   rulesLoading,
   onToggleAudio,
+  isAudioPlaying,
   currentlyPlayingTransmissionId,
-  isPlaying,
   highlightedTransmissionId,
+  redactTranscripts,
   onRowClick,
 }) => {
   return (
@@ -124,13 +126,14 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
               ruleIdToNameMap={ruleIdToNameMap}
               rulesLoading={rulesLoading}
               onToggleAudio={onToggleAudio}
+              isAudioPlaying={isAudioPlaying}
               currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
-              isPlaying={isPlaying}
               triggerSnackbar={triggerSnackbar}
               showHeader={false}
               isHighlighted={
                 transcript.transmissionId === highlightedTransmissionId
               }
+              redactTranscripts={redactTranscripts}
               onRowClick={onRowClick}
             />
           );

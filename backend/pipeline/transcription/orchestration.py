@@ -35,7 +35,7 @@ from backend.pipeline.transcription.common.datatypes import (
     StitchAudioConfig,
     TranscribeAudioConfig,
 )
-from backend.pipeline.transcription.common.logging import get_logger
+from backend.pipeline.transcription.common.logging import get_task_logger
 from backend.pipeline.transcription.options import TranscriptionOptions
 from backend.pipeline.transcription.transforms.stateful import (
     OrderedBypassFn,
@@ -47,7 +47,7 @@ from backend.pipeline.transcription.transforms.stateless import (
     SerializeFn,
 )
 
-logger = get_logger(
+logger = get_task_logger(
     __name__, {"system": "transcription", "component": "orchestration"}
 )
 
