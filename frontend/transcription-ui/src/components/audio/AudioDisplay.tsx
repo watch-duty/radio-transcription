@@ -17,11 +17,11 @@ import { CustomAlertIcon } from '../common/AlertIcon';
 interface AudioDisplayProps {
   transcripts: Transcript[];
   currentlyPlayingTransmissionId: string | null;
+  highlightedTransmissionId: string | null;
   onClipClick: (transmissionId: string) => void;
   userDuration?: string | null;
   isAudioPlaying: boolean;
   onTogglePlayPause: () => void;
-  highlightedTransmissionId: string | null;
 }
 
 const formatTime = (timestamp: number) => {
@@ -126,11 +126,11 @@ const TimelineClip = React.memo(
 export function AudioDisplay({
   transcripts,
   currentlyPlayingTransmissionId,
+  highlightedTransmissionId,
   onClipClick,
   userDuration,
   isAudioPlaying,
   onTogglePlayPause,
-  highlightedTransmissionId,
 }: AudioDisplayProps) {
   const theme = useTheme();
   const isDarkTheme = theme.palette.mode === 'dark';

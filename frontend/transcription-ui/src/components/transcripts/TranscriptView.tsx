@@ -734,10 +734,10 @@ export function TranscriptView({
       <AudioDisplay
         transcripts={transcripts}
         currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
+        highlightedTransmissionId={highlightedTransmissionId}
         onClipClick={handleClipClick}
         isAudioPlaying={isAudioPlaying}
         onTogglePlayPause={handleTogglePlayPause}
-        highlightedTransmissionId={highlightedTransmissionId}
       />
 
       <Box
