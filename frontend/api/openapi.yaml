@@ -255,6 +255,17 @@ components:
       enum:
         - active
         - inactive
+    Tag:
+      properties:
+        key:
+          type: string
+        value:
+          type: string
+      required:
+        - key
+        - value
+      type: object
+      additionalProperties: false
     SourceType:
       type: string
       enum:
@@ -282,6 +293,10 @@ components:
           $ref: "#/components/schemas/FeedStatus"
         lastHeartbeat:
           type: string
+        tags:
+          items:
+            $ref: "#/components/schemas/Tag"
+          type: array
       required:
         - name
         - sourceType
@@ -299,6 +314,10 @@ components:
           type: string
         externalId:
           type: string
+        tags:
+          items:
+            $ref: "#/components/schemas/Tag"
+          type: array
       required:
         - name
         - sourceType
