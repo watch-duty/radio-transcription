@@ -1,6 +1,7 @@
 """Tests for the StitchAudioFn, TranscribeAudioFn, and related transformations."""
 
 import unittest
+from collections.abc import Callable
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -41,6 +42,7 @@ from backend.pipeline.transcription.common.datatypes import (
 from backend.pipeline.transcription.common.enums import TranscriberType
 from backend.pipeline.transcription.services.transcribers import Transcriber
 from backend.pipeline.transcription.transforms.stateful import (
+    SHARED_RESOURCE_HANDLE,
     OrderedBypassFn,
     OrderedStitchAudioFn,
     TranscribeAudioFn,
@@ -49,6 +51,29 @@ from backend.pipeline.transcription.transforms.stateless import (
     ParseAndKeyFn,
     SerializeFn,
 )
+
+# Configure dynamic mock interception for process-level shared GCS clients
+# using standard unittest module lifecycle hooks to avoid any type ignore annotations.
+original_acquire = SHARED_RESOURCE_HANDLE.acquire
+
+
+def mock_acquire(constructor_fn: Callable[[], Any], tag: Any = None) -> Any:
+    if tag == "gcs":
+        return MagicMock()
+    return original_acquire(constructor_fn, tag)
+
+
+_SHARED_PATCHER = patch.object(
+    SHARED_RESOURCE_HANDLE, "acquire", side_effect=mock_acquire
+)
+
+
+def setUpModule() -> None:
+    _SHARED_PATCHER.start()
+
+
+def tearDownModule() -> None:
+    _SHARED_PATCHER.stop()
 
 
 class MockTranscriberFactory:
@@ -239,12 +264,19 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
 
 
 class TranscribeAudioTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self.storage_patcher = patch(
-            "backend.pipeline.transcription.transforms.stateful.storage.Client"
+    def test_setup_calls_transcriber_setup(self) -> None:
+        """Verifies that TranscribeAudioFn.setup() correctly invokes setup() on the transcriber."""
+        mock_transcriber = MagicMock()
+        config = get_test_transcribe_config()
+
+        fn = TranscribeAudioFn(
+            config=config,
+            transcriber_factory=lambda *args, **kwargs: mock_transcriber,
         )
-        self.mock_storage_client = self.storage_patcher.start()
-        self.addCleanup(self.storage_patcher.stop)
+        fn.setup()
+
+        # Assert that setup() was invoked on our transcriber
+        mock_transcriber.setup.assert_called_once()
 
     @patch(
         "backend.pipeline.transcription.services.transcribers.get_transcriber"
@@ -406,13 +438,6 @@ class TranscribeAudioTest(unittest.TestCase):
 
 
 class SerializeAndEnrichTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self.storage_patcher = patch(
-            "backend.pipeline.transcription.transforms.stateful.storage.Client"
-        )
-        self.mock_storage_client = self.storage_patcher.start()
-        self.addCleanup(self.storage_patcher.stop)
-
     def test_serialize_and_enrich(self) -> None:
         """Verifies that SerializeAndEnrichFn correctly enriches and serializes the transcript."""
         options = PipelineOptions(
@@ -570,13 +595,6 @@ class SerializeAndEnrichTest(unittest.TestCase):
 
 
 class OrderedBypassTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self.storage_patcher = patch(
-            "backend.pipeline.transcription.transforms.stateful.storage.Client"
-        )
-        self.mock_storage_client = self.storage_patcher.start()
-        self.addCleanup(self.storage_patcher.stop)
-
     @patch("backend.pipeline.common.tracing_utils.with_tracer_context")
     @patch(
         "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
@@ -680,13 +698,6 @@ class OrderedBypassTest(unittest.TestCase):
 
 
 class OrderedStitchAudioTest(unittest.TestCase):
-    def setUp(self) -> None:
-        self.storage_patcher = patch(
-            "backend.pipeline.transcription.transforms.stateful.storage.Client"
-        )
-        self.mock_storage_client = self.storage_patcher.start()
-        self.addCleanup(self.storage_patcher.stop)
-
     @patch("backend.pipeline.common.tracing_utils.with_tracer_context")
     @patch(
         "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"

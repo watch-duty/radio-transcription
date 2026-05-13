@@ -4,6 +4,7 @@ import type {
   FeedCreate,
   FeedStatus,
   SourceType,
+  Tag,
 } from '@transcription/common';
 import { GoogleAuth } from 'google-auth-library';
 import {
@@ -34,11 +35,13 @@ interface FeedBackend extends BaseFeedBackend {
   external_id: string;
   status: BackendFeedStatus;
   last_heartbeat: string | null;
+  tags?: Tag[];
 }
 
 interface FeedCreateBackend extends BaseFeedBackend {
   source_feed_id: string;
   external_id: string;
+  tags?: Tag[];
 }
 
 function getSourceUrl(
@@ -95,6 +98,7 @@ function convertFeedBackend(response: FeedBackend): Feed {
     archiveUrl: getArchiveUrl(response.source_type, response.source_feed_id),
     status: convertFeedStatusBackend(response.status),
     lastHeartbeat: response.last_heartbeat ?? undefined,
+    tags: response.tags,
   };
 }
 
@@ -104,6 +108,7 @@ function convertFeedCreate(create: FeedCreate): FeedCreateBackend {
     source_type: create.sourceType,
     source_feed_id: create.sourceFeedId,
     external_id: create.externalId,
+    tags: create.tags,
   };
 }
 

@@ -65,7 +65,8 @@ describe('TranscriptRow', () => {
           totalTranscripts={1}
           ruleIdToNameMap={ruleIdToNameMap}
           rulesLoading={false}
-          onPlay={mockOnPlay}
+          onToggleAudio={mockOnPlay}
+          isAudioPlaying={false}
           currentlyPlayingTransmissionId={null}
           triggerSnackbar={mockTriggerSnackbar}
           showHeader={false}
@@ -88,7 +89,8 @@ describe('TranscriptRow', () => {
           totalTranscripts={1}
           ruleIdToNameMap={ruleIdToNameMap}
           rulesLoading={false}
-          onPlay={mockOnPlay}
+          onToggleAudio={mockOnPlay}
+          isAudioPlaying={false}
           currentlyPlayingTransmissionId={null}
           triggerSnackbar={mockTriggerSnackbar}
           showHeader={true}
@@ -108,7 +110,8 @@ describe('TranscriptRow', () => {
           totalTranscripts={1}
           ruleIdToNameMap={ruleIdToNameMap}
           rulesLoading={false}
-          onPlay={mockOnPlay}
+          onToggleAudio={mockOnPlay}
+          isAudioPlaying={false}
           currentlyPlayingTransmissionId={null}
           triggerSnackbar={mockTriggerSnackbar}
           showHeader={false}
@@ -134,7 +137,8 @@ describe('TranscriptRow', () => {
           totalTranscripts={1}
           ruleIdToNameMap={ruleIdToNameMap}
           rulesLoading={false}
-          onPlay={mockOnPlay}
+          onToggleAudio={mockOnPlay}
+          isAudioPlaying={false}
           currentlyPlayingTransmissionId={null}
           triggerSnackbar={mockTriggerSnackbar}
           showHeader={false}
@@ -168,7 +172,8 @@ describe('TranscriptRow', () => {
           totalTranscripts={1}
           ruleIdToNameMap={ruleIdToNameMap}
           rulesLoading={false}
-          onPlay={mockOnPlay}
+          onToggleAudio={mockOnPlay}
+          isAudioPlaying={false}
           currentlyPlayingTransmissionId={null}
           triggerSnackbar={mockTriggerSnackbar}
           showHeader={false}
@@ -183,5 +188,42 @@ describe('TranscriptRow', () => {
     expect(audioPlayer.getAttribute('data-audio-uri')).toBe(
       mockTranscript.playbackAudioUri
     );
+  });
+
+  it('blurs the transcript but keeps physical text selection and copy transcript capabilities when redactTranscripts is true', () => {
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          transcript={mockTranscript}
+          index={0}
+          totalTranscripts={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onToggleAudio={mockOnPlay}
+          isAudioPlaying={false}
+          currentlyPlayingTransmissionId={null}
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+          redactTranscripts={true}
+        />
+      </MemoryRouter>
+    );
+
+    const transcriptText = screen.getByText('This is a test transcription');
+    expect(transcriptText).toBeTruthy();
+    const styles = window.getComputedStyle(transcriptText);
+    expect(styles.filter).toBe('blur(6px)');
+    expect(styles.opacity).toBe('0.6');
+    expect(styles.userSelect).not.toBe('none');
+
+    const copyButton = screen.getAllByLabelText('copy transcript')[0];
+    expect(copyButton).toBeTruthy();
+    expect((copyButton as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(copyButton);
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      'This is a test transcription'
+    );
+    expect(mockTriggerSnackbar).toHaveBeenCalledWith('Transcript copied');
   });
 });

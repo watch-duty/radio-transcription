@@ -12,3 +12,4 @@ mistral-common
 accelerate
 ipywidgets
 soundfile
+jupyterlab-vim
