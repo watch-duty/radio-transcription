@@ -11,7 +11,7 @@ and are highly optimized for parallel worker execution:
 """
 
 from collections.abc import Iterator
-from typing import Any, Literal, override
+from typing import Any, override
 
 import apache_beam as beam
 from apache_beam.io.gcp.pubsub import PubsubMessage
@@ -77,12 +77,7 @@ class ParseAndKeyFn(beam.DoFn):
     @override
     def process(
         self, element: PubsubMessage, *args: Any, **kwargs: Any
-    ) -> Iterator[
-        tuple[str, ChunkMetadata]
-        | beam.pvalue.TaggedOutput[
-            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
-        ]
-    ]:
+    ) -> Iterator[tuple[str, ChunkMetadata] | beam.pvalue.TaggedOutput]:
         """Extracts the feed_id and parses the protobuf payload."""
 
         def _raise(msg: str) -> None:
@@ -115,7 +110,10 @@ class ParseAndKeyFn(beam.DoFn):
                 )
                 metadata = ChunkMetadata(
                     gcs_uri=chunk_proto.gcs_uri,
-                    session_id=chunk_proto.session_id or "segmented",
+                    # For segmented feeds, session_id is typically the call ID set by ingestion.
+                    # Fall back to feed_id (not a static string) so per-feed session change
+                    # detection in the ordering buffer remains meaningful.
+                    session_id=chunk_proto.session_id or feed_id,
                     duration_ms=chunk_proto.duration_ms,
                     feed_metadata=FeedMetadata(
                         feed_name=chunk_proto.feed_name,
