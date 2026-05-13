@@ -95,7 +95,15 @@ export function TranscriptView({
   const hasScrolledToTarget = useRef(false);
 
   const currentAudio = useRef<Howl>(null);
+  const [playbackEndedForId, setPlaybackEndedForId] = useState<string | null>(
+    null
+  );
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
+
+  // A mutable reference to the latest list of transcripts. This prevents stale closures
+  // inside the Howl audio lifecycle callbacks (like onend), ensuring continuous playback logic
+  // always evaluates against the most up-to-date transcript list even if it updates mid-playback.
+  const transcriptsRef = useRef<Transcript[]>([]);
 
   // Cleanup effect to ensure audio is unloaded when component unmounts
   useEffect(() => {
@@ -127,7 +135,17 @@ export function TranscriptView({
           onplay: () => setIsAudioPlaying(true),
           onpause: () => setIsAudioPlaying(false),
           onend: () => {
-            setIsAudioPlaying(false);
+            const currentTranscripts = transcriptsRef.current;
+            const currentIndex = currentTranscripts.findIndex(
+              (t) => t.transmissionId === transmissionId
+            );
+            const hasNext = currentIndex > 0;
+
+            if (!hasNext) {
+              setIsAudioPlaying(false);
+            }
+
+            setPlaybackEndedForId(transmissionId);
             sound.unload();
             if (currentAudio.current === sound) {
               currentAudio.current = null;
@@ -283,6 +301,31 @@ export function TranscriptView({
       listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? [],
     [listTranscriptsResponse]
   );
+
+  // Keep the ref in sync with the transcripts so that audio lifecycle callbacks can access the latest list.
+  useEffect(() => {
+    transcriptsRef.current = transcripts;
+  }, [transcripts]);
+
+  // Handles continuous auto-play by advancing to the next newer transcript when the current audio finishes.
+  // Since the transcript list is sorted newest-first, the next transmission in time is at `currentIndex - 1`.
+  useEffect(() => {
+    if (!playbackEndedForId) return;
+
+    const currentIndex = transcripts.findIndex(
+      (t) => t.transmissionId === playbackEndedForId
+    );
+
+    if (currentIndex > 0) {
+      const nextTranscript = transcripts[currentIndex - 1];
+      toggleAudio(
+        nextTranscript.transmissionId,
+        nextTranscript.playbackAudioUri
+      );
+    }
+
+    setPlaybackEndedForId(null);
+  }, [playbackEndedForId, transcripts, toggleAudio]);
 
   // This is used to group transcripts by date and display them in the UI.
   // groupCounts is an array of numbers representing the number of transcripts in each group.
@@ -523,6 +566,24 @@ export function TranscriptView({
     setHighlightedTransmissionId(transmissionId);
   };
 
+  const handleTogglePlayPause = () => {
+    const targetId = isAudioPlaying
+      ? currentlyPlayingTransmissionId || highlightedTransmissionId
+      : highlightedTransmissionId ||
+        currentlyPlayingTransmissionId ||
+        transcripts[0]?.transmissionId;
+    if (!targetId) return;
+
+    const transcript = transcripts.find((t) => t.transmissionId === targetId);
+    if (transcript) {
+      toggleAudio(transcript.transmissionId, transcript.playbackAudioUri);
+    }
+  };
+
+  const handleRowClick = (transmissionId: string) => {
+    setHighlightedTransmissionId(transmissionId);
+  };
+
   const handleManualRefresh = useCallback(async () => {
     setIsTranscriptsPolling(true);
     try {
@@ -627,7 +688,10 @@ export function TranscriptView({
       <AudioDisplay
         transcripts={transcripts}
         currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
+        highlightedTransmissionId={highlightedTransmissionId}
         onClipClick={handleClipClick}
+        isAudioPlaying={isAudioPlaying}
+        onTogglePlayPause={handleTogglePlayPause}
       />
 
       <Box
@@ -672,6 +736,7 @@ export function TranscriptView({
               currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
               highlightedTransmissionId={highlightedTransmissionId}
               redactTranscripts={redactTranscripts}
+              onRowClick={handleRowClick}
             />
           </>
         ) : feedsFetching || isTranscriptsInitialLoading ? (

@@ -42,6 +42,7 @@ export interface TranscriptDisplayProps {
   currentlyPlayingTransmissionId: string | null;
   highlightedTransmissionId: string | null;
   redactTranscripts: boolean;
+  onRowClick: (transmissionId: string) => void;
 }
 
 export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
@@ -65,6 +66,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
   currentlyPlayingTransmissionId,
   highlightedTransmissionId,
   redactTranscripts,
+  onRowClick,
 }) => {
   return (
     <Paper
@@ -132,6 +134,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
                 transcript.transmissionId === highlightedTransmissionId
               }
               redactTranscripts={redactTranscripts}
+              onRowClick={onRowClick}
             />
           );
         }}
