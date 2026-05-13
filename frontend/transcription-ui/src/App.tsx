@@ -170,10 +170,13 @@ function App() {
             <Route
               path="/"
               element={
-                <TranscriptView
-                  triggerSnackbar={triggerSnackbar}
-                  onError={handleError}
-                />
+                <>
+                  <title>Transcripts - Radio Transcription</title>
+                  <TranscriptView
+                    triggerSnackbar={triggerSnackbar}
+                    onError={handleError}
+                  />
+                </>
               }
             />
             <Route
@@ -185,14 +188,33 @@ function App() {
                 />
               }
             />
-            <Route path="/rules" element={<RulesView />} />
-            <Route path="/feeds" element={<FeedsView />} />
+            <Route
+              path="/rules"
+              element={
+                <>
+                  <title>Rules - Radio Transcription</title>
+                  <RulesView />
+                </>
+              }
+            />
+            <Route
+              path="/feeds"
+              element={
+                <>
+                  <title>Feeds - Radio Transcription</title>
+                  <FeedsView />
+                </>
+              }
+            />
             <Route
               path="/docs"
               element={
-                <Suspense fallback={<div>Loading documentation...</div>}>
-                  <DocsView />
-                </Suspense>
+                <>
+                  <title>API Docs - Radio Transcription</title>
+                  <Suspense fallback={<div>Loading documentation...</div>}>
+                    <DocsView />
+                  </Suspense>
+                </>
               }
             />
             <Route path="/login" element={<Login />} />
