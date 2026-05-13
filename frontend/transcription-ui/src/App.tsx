@@ -182,10 +182,13 @@ function App() {
             <Route
               path="/transcripts"
               element={
-                <TranscriptView
-                  triggerSnackbar={triggerSnackbar}
-                  onError={handleError}
-                />
+                <>
+                  <title>Transcripts - Radio Transcription</title>
+                  <TranscriptView
+                    triggerSnackbar={triggerSnackbar}
+                    onError={handleError}
+                  />
+                </>
               }
             />
             <Route
