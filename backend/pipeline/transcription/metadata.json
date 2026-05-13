@@ -38,13 +38,6 @@
       "helpText": "Pub/Sub topic to route Dead-Letter Queue (DLQ) processing failures.",
       "isOptional": true
     },
-
-    {
-      "name": "vad_type",
-      "label": "VAD Type",
-      "helpText": "Type of Voice Activity Detection model to use. Defaults to ten_vad.",
-      "isOptional": true
-    },
     {
       "name": "out_of_order_timeout_ms",
       "label": "Out Of Order Timeout (MS)",
