@@ -188,6 +188,15 @@ export function TranscriptView({
 
   const searchedFeed = feedIdToFeedMap.get(searchedFeedId) || null;
 
+  useEffect(() => {
+    if (!searchedFeed) return;
+
+    const pageTitle = `${searchedFeed.name} - Radio Transcription`;
+    if (document.title !== pageTitle) {
+      document.title = pageTitle;
+    }
+  }, [searchedFeed]);
+
   const {
     data: listTranscriptsResponse,
     fetchNextPage: fetchOlderTranscripts,
