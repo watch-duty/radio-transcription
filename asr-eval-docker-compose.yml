@@ -51,3 +51,7 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    command: ["jupyter", "lab", "--ip=0.0.0.0", "--allow-root", "--no-browser", "--NotebookApp.token=''", "--NotebookApp.password=''"]
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
