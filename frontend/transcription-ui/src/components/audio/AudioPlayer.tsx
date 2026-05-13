@@ -1,5 +1,5 @@
-import PauseIcon from '@mui/icons-material/Pause';
-import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import PauseIcon from '@mui/icons-material/PauseCircleFilledOutlined';
+import PlayArrowIcon from '@mui/icons-material/PlayCircleFilledOutlined';
 import IconButton from '@mui/material/IconButton';
 
 export interface AudioPlayerProps {
