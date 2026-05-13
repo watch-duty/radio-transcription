@@ -243,9 +243,23 @@ class TestListTranscriptsByFeedId(BaseTranscriptStoreTest):
         # Verify fetch was called with time window
         self.pool.fetch.assert_called_once()
         args = self.pool.fetch.call_args[0]
-        # Params are [query, uid, cursor_ts, cursor_uid, start_time, end_time, limit+1]
+        # Params are [query, uid, cursor_ts, cursor_uid, start_time, end_time, only_alerts, limit+1]
         self.assertEqual(args[4], start)
         self.assertEqual(args[5], end)
+
+    async def test_list_with_only_alerts(self) -> None:
+        """Verify listing with only_alerts=True passes parameter to query."""
+        self.pool.fetch.return_value = [_TRANSCRIPT_ROW]
+
+        result = await self.store.list_transcripts_by_feed_id(
+            str(_FEED_ID), only_alerts=True
+        )
+
+        self.assertEqual(len(result.transcripts), 1)
+
+        self.pool.fetch.assert_called_once()
+        args = self.pool.fetch.call_args[0]
+        self.assertTrue(args[6])
 
 
 class TestListTranscripts(BaseTranscriptStoreTest):
@@ -260,6 +274,19 @@ class TestListTranscripts(BaseTranscriptStoreTest):
             result.transcripts[0].transmission_id, str(_TRANSMISSION_ID)
         )
         self.assertIsNone(result.next_token)
+
+    async def test_list_with_only_alerts(self) -> None:
+        """Verify listing with only_alerts=True passes parameter to query."""
+        self.pool.fetch.return_value = [_TRANSCRIPT_ROW]
+
+        result = await self.store.list_transcripts(only_alerts=True)
+
+        self.assertEqual(len(result.transcripts), 1)
+
+        self.pool.fetch.assert_called_once()
+        args = self.pool.fetch.call_args[0]
+        # Params are [query, cursor_ts, cursor_uid, start_time, end_time, only_alerts, limit+1]
+        self.assertTrue(args[5])
 
 
 class TestDeleteTranscript(BaseTranscriptStoreTest):

@@ -171,6 +171,29 @@ class TestTranscriptsAPI(unittest.TestCase):
             start_time=None,
             end_time=None,
             order=SortOrder.DESC,
+            only_alerts=False,
+        )
+
+    def test_list_transcripts_only_alerts(self) -> None:
+        """Test listing transcripts filtered by only_alerts=true."""
+        mock_msg = _make_transcript_msg()
+        self.mock_store.list_transcripts.return_value = PaginatedTranscripts(
+            [mock_msg], None
+        )
+
+        response = self.client.get("/v1/transcripts?only_alerts=true")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertIn("transcripts", data)
+        self.assertEqual(len(data["transcripts"]), 1)
+        self.mock_store.list_transcripts.assert_called_once_with(
+            limit=100,
+            next_token=None,
+            start_time=None,
+            end_time=None,
+            order=SortOrder.DESC,
+            only_alerts=True,
         )
 
     def test_delete_transcript_success(self) -> None:
