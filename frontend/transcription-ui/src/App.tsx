@@ -176,6 +176,15 @@ function App() {
                 />
               }
             />
+            <Route
+              path="/transcripts"
+              element={
+                <TranscriptView
+                  triggerSnackbar={triggerSnackbar}
+                  onError={handleError}
+                />
+              }
+            />
             <Route path="/rules" element={<RulesView />} />
             <Route path="/feeds" element={<FeedsView />} />
             <Route
