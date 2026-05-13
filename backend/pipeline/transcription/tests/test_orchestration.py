@@ -96,3 +96,8 @@ def test_metadata_json_parameters_parity() -> None:
     assert not missing, (
         f"Config options defined in options.py missing from metadata.json spec: {missing}"
     )
+
+    stale = metadata_parameters - declared_options
+    assert not stale, (
+        f"Entries in metadata.json have no corresponding option in options.py (stale?): {stale}"
+    )
