@@ -205,18 +205,6 @@ class AudioProcessor:
             duration_ms=duration_ms,
         )
 
-    def check_vad(self, audio_float: np.ndarray, sample_rate: int) -> bool:
-        """Evaluates audio buffer with the configured VAD and returns True if speech is detected."""
-        if self.vad is None:
-            msg = "VAD engine not initialized. Call setup() first."
-            raise RuntimeError(msg)
-
-        # Detect speech segments using Silero + UL-UNAS directly
-        segments = self.vad.detect_speech_segments(
-            audio_float, sample_rate=sample_rate
-        )
-        return len(segments) > 0
-
     def preprocess_audio(
         self, audio_float: np.ndarray, sample_rate: int
     ) -> np.ndarray:
@@ -332,21 +320,15 @@ class AudioProcessor:
         self,
         audio_buffer: np.ndarray,
         sample_rate: int,
-        speech_segments: list[TimeRange] | None = None,
+        speech_segments: list[TimeRange],
     ) -> ProcessorOutput:
         """Encapsulates sequence of pre-processing, VAD check, and FLAC export."""
-        # 1. If pre-computed speech segments exist but are empty, it's pure silence
-        if speech_segments is not None and not speech_segments:
+        # If pre-computed speech segments are empty, it's just silence
+        if not speech_segments:
             return ProcessorOutput(success=False)
 
         # Pre-normalize raw integer PCM array to float32
         audio_float = audio_buffer.astype(np.float32) / INT16_MAX_FLOAT
-
-        # 2. If no pre-computed segments exist, execute our ONNX VAD engine check
-        if speech_segments is None and not self.check_vad(
-            audio_float, sample_rate
-        ):
-            return ProcessorOutput(success=False)
 
         # Reuse the same float32 array for Pedalboard bandpass filtering
         processed_audio = self.preprocess_audio(audio_float, sample_rate)
