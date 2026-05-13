@@ -9,6 +9,10 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 
+# Fully activate the NeMo virtual environment by default so packages and extensions are found natively
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
 # Install ZSH, Git, and set up ZSH
 RUN apt-get update && \
     apt-get install -y --no-install-recommends zsh git wget && \
@@ -28,6 +32,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 RUN --mount=type=cache,target=/root/.cache/uv \
     wget https://raw.githubusercontent.com/NVIDIA/NeMo/${NEMO_VERSION}/tools/speech_data_explorer/requirements.txt -O /tmp/requirements.txt && \
     uv pip install --python /opt/venv/bin/python -r /tmp/requirements.txt && \
+    uv pip install --python /opt/venv/bin/python jupyter jupyterlab && \
     uv pip install --python /opt/venv/bin/python -r /tmp/notebook_requirements.txt && \
     uv pip install --python /opt/venv/bin/python --extra-index-url https://download.pytorch.org/whl/cu130 --no-deps torchaudio && \
     uv pip install --python /opt/venv/bin/python peft
