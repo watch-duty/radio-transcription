@@ -219,6 +219,7 @@ class StitcherEngine:
                         start_audio_offset_ms=curr_ctx.start_audio_offset_ms,
                         end_audio_offset_ms=end_time_ms
                         - curr_ctx.buffer_start_time_ms,
+                        speech_segments=curr_ctx.speech_segments,
                         transmission_id=transmission_id,
                         feed_metadata=curr_ctx.feed_metadata,
                         sample_rate=curr_ctx.sample_rate
@@ -467,6 +468,7 @@ class StitcherEngine:
                     start_audio_offset_ms=curr_context.start_audio_offset_ms,
                     end_audio_offset_ms=None,
                     buffer_duration_ms=curr_context.buffer_duration_ms,
+                    speech_segments=curr_context.speech_segments.copy(),
                     traceparent=curr_context.traceparent,
                 )
 
@@ -568,6 +570,7 @@ class StitcherEngine:
                         missing_prior_context=ctx.missing_prior_context,
                         start_audio_offset_ms=ctx.start_audio_offset_ms,
                         buffer_duration_ms=ctx.buffer_duration_ms,
+                        speech_segments=ctx.speech_segments,
                         prior_audio_tail=prior_tail,
                     )
                 case datatypes.ScheduleStaleTimerAction():
