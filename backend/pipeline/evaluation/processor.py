@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 
 from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.common.tracing_utils import (
-    get_current_trace_id,
     with_tracer_context,
 )
 from backend.pipeline.schema_types import (
@@ -119,7 +118,7 @@ class EvaluationEventProcessor:
                     self.output_topic_path,
                     encoded_data,
                     ordering_key=evaluated_payload.feed_id,
-                    traceparent=get_current_trace_id(),
+                    traceparent=traceparent,
                 )
                 message_id = future.result()
                 logger.info(
