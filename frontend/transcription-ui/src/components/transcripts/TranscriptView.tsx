@@ -100,6 +100,9 @@ export function TranscriptView({
   );
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
 
+  // A mutable reference to the latest list of transcripts. This prevents stale closures
+  // inside the Howl audio lifecycle callbacks (like onend), ensuring continuous playback logic
+  // always evaluates against the most up-to-date transcript list even if it updates mid-playback.
   const transcriptsRef = useRef<Transcript[]>([]);
 
   // Cleanup effect to ensure audio is unloaded when component unmounts
@@ -299,10 +302,13 @@ export function TranscriptView({
     [listTranscriptsResponse]
   );
 
+  // Keep the ref in sync with the transcripts so that audio lifecycle callbacks can access the latest list.
   useEffect(() => {
     transcriptsRef.current = transcripts;
   }, [transcripts]);
 
+  // Handles continuous auto-play by advancing to the next newer transcript when the current audio finishes.
+  // Since the transcript list is sorted newest-first, the next transmission in time is at `currentIndex - 1`.
   useEffect(() => {
     if (!playbackEndedForId) return;
 
