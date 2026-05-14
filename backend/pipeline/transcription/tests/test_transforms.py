@@ -45,7 +45,6 @@ from backend.pipeline.transcription.common.enums import TranscriberType
 from backend.pipeline.transcription.services.transcribers import Transcriber
 from backend.pipeline.transcription.transforms.stateful import (
     SHARED_RESOURCE_HANDLE,
-    OrderedBypassFn,
     OrderedContinuousStitchAudioFn,
     OrderedSegmentedStitchAudioFn,
     TranscribeAudioFn,
@@ -301,7 +300,6 @@ class TranscribeAudioTest(unittest.TestCase):
     ) -> None:
         """Verifies that explicit Python exceptions raised randomly within transformations dynamically populate a standardized and resilient Dataflow Dead Letter Queue error."""
         mock_processor_inst = mock_audio_processor.return_value
-        mock_processor_inst.check_vad.return_value = True
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
         mock_processor_inst.export_flac.return_value = b"flac_bytes"
         mock_processor_inst.process_buffer.side_effect = (
@@ -385,7 +383,6 @@ class TranscribeAudioTest(unittest.TestCase):
     ) -> None:
         """Verifies that audio payloads exceeding the strict 60s uncompressed duration limit are cleanly routed to the DLQ."""
         mock_processor_inst = mock_audio_processor.return_value
-        mock_processor_inst.check_vad.return_value = True
         mock_processor_inst.preprocess_audio.side_effect = lambda x, sr: x
         mock_processor_inst.export_flac.return_value = b"flac_bytes"
 
@@ -543,187 +540,6 @@ class SerializeAndEnrichTest(unittest.TestCase):
                 assert protos[1].external_id == "test-external-id"
 
             assert_that(results, assert_results)
-
-    def test_ordered_bypass_buffers_and_sets_timer(self) -> None:
-        """Verifies that OrderedBypassFn buffers chunks and sets the timer."""
-        stitch_config = get_test_stitch_config()
-        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
-        fn = OrderedBypassFn(
-            order_config=order_config, stitch_config=stitch_config
-        )
-
-        mock_state = MagicMock()
-        mock_state.read.return_value = None
-        mock_timer = MagicMock()
-
-        metadata = ChunkMetadata(
-            gcs_uri="gs://test-bucket/path/to/test.flac",
-            session_id="mock-session-id",
-            duration_ms=1000,
-            feed_metadata=FeedMetadata(
-                feed_name="mock-feed", external_id="mock-external-id"
-            ),
-        )
-
-        list(
-            fn.process(
-                ("test-feed", metadata),
-                timestamp=Timestamp(100),
-                transmission_context_state=mock_state,
-                out_of_order_timer=mock_timer,
-            )
-        )
-
-        mock_timer.set.assert_called_once()
-        mock_state.write.assert_called_once()
-
-    @patch(
-        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
-    )
-    def test_ordered_bypass_callback_flushes(
-        self, mock_audio_processor: MagicMock
-    ) -> None:
-        """Verifies that handle_buffer_timeout flushes and yields."""
-        mock_processor_inst = mock_audio_processor.return_value
-        chunk_data = MagicMock()
-        chunk_data.duration_ms = 1000
-        chunk_data.audio = np.zeros(16000, dtype=np.int16)
-        mock_processor_inst.download_audio_and_detect.side_effect = (
-            lambda *args, **kwargs: chunk_data
-        )
-
-        stitch_config = get_test_stitch_config()
-        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
-        fn = OrderedBypassFn(
-            order_config=order_config, stitch_config=stitch_config
-        )
-        fn.setup()
-
-        mock_state = MagicMock()
-
-        curr_context = ActiveStitchingState(
-            session_id="mock-session",
-            out_of_order_buffer=[
-                BufferedChunk(timestamp_ms=100000, gcs_uri="gs://test.flac")
-            ],
-            feed_metadata=FeedMetadata(
-                feed_name="mock-feed", external_id="mock-id"
-            ),
-        )
-        mock_state.read.return_value = curr_context
-
-        results = list(
-            fn.handle_buffer_timeout(
-                feed_id="test-feed", transmission_context_state=mock_state
-            )
-        )
-
-        assert len(results) == 1
-        mock_state.write.assert_called_once()
-
-
-class OrderedBypassTest(unittest.TestCase):
-    @patch("backend.pipeline.common.tracing_utils.with_tracer_context")
-    @patch(
-        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
-    )
-    def test_ordered_bypass_process_span(
-        self,
-        mock_audio_processor: MagicMock,
-        mock_with_tracer_context: MagicMock,
-    ) -> None:
-        """Verifies that OrderedBypassFn.process calls with_tracer_context."""
-        stitch_config = get_test_stitch_config()
-        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
-        fn = OrderedBypassFn(
-            order_config=order_config, stitch_config=stitch_config
-        )
-        fn.setup()
-
-        mock_state = MagicMock()
-        mock_state.read.return_value = None
-        mock_timer = MagicMock()
-
-        metadata = ChunkMetadata(
-            gcs_uri="gs://test-bucket/path/to/test.flac",
-            session_id="mock-session-id",
-            duration_ms=1000,
-            feed_metadata=FeedMetadata(
-                feed_name="mock-feed", external_id="mock-external-id"
-            ),
-            traceparent="mock-traceparent",
-        )
-
-        list(
-            fn.process(
-                ("test-feed", metadata),
-                timestamp=Timestamp(100),
-                transmission_context_state=mock_state,
-                out_of_order_timer=mock_timer,
-            )
-        )
-
-        mock_with_tracer_context.assert_called_once_with(
-            "mock-traceparent",
-            "stitching_bypass_process",
-            "backend.pipeline.transcription.transforms.stateful",
-        )
-
-    @patch("backend.pipeline.common.tracing_utils.with_tracer_context")
-    @patch(
-        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
-    )
-    def test_ordered_bypass_callback_flushes_span(
-        self,
-        mock_audio_processor: MagicMock,
-        mock_with_tracer_context: MagicMock,
-    ) -> None:
-        """Verifies that handle_buffer_timeout calls with_tracer_context."""
-        mock_processor_inst = mock_audio_processor.return_value
-        chunk_data = MagicMock()
-        chunk_data.duration_ms = 1000
-        chunk_data.audio = np.zeros(16000, dtype=np.int16)
-        mock_processor_inst.download_audio_and_detect.side_effect = (
-            lambda *args, **kwargs: chunk_data
-        )
-
-        stitch_config = get_test_stitch_config()
-        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
-        fn = OrderedBypassFn(
-            order_config=order_config, stitch_config=stitch_config
-        )
-        fn.setup()
-
-        mock_state = MagicMock()
-
-        curr_context = ActiveStitchingState(
-            session_id="mock-session",
-            out_of_order_buffer=[
-                BufferedChunk(timestamp_ms=100000, gcs_uri="gs://test.flac")
-            ],
-            feed_metadata=FeedMetadata(
-                feed_name="mock-feed", external_id="mock-id"
-            ),
-            traceparent="mock-traceparent-context",
-        )
-        mock_state.read.return_value = curr_context
-
-        list(
-            fn.handle_buffer_timeout(
-                feed_id="test-feed", transmission_context_state=mock_state
-            )
-        )
-
-        mock_with_tracer_context.assert_any_call(
-            "mock-traceparent-context",
-            "handle_buffer",
-            "backend.pipeline.transcription.transforms.stateful",
-        )
-        mock_with_tracer_context.assert_any_call(
-            "mock-traceparent-context",
-            "bypass_single_chunk",
-            "backend.pipeline.transcription.transforms.stateful",
-        )
 
 
 class OrderedStitchAudioTest(unittest.TestCase):
@@ -978,7 +794,6 @@ class OrderedStitchAudioTest(unittest.TestCase):
             lambda *args, **kwargs: chunk_data
         )
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
-        mock_processor_inst.check_vad.return_value = True
 
         order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
         stitch_config = get_test_stitch_config(stale_timeout_ms=5000)
@@ -1077,7 +892,6 @@ class OrderedStitchAudioTest(unittest.TestCase):
             download_side_effect
         )
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
-        mock_processor_inst.check_vad.return_value = True
 
         order_config = OrderRestorerConfig(out_of_order_timeout_ms=5000)
         stitch_config = get_test_stitch_config(

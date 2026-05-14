@@ -20,10 +20,10 @@ from apache_beam.options.pipeline_options import (
 
 from backend.pipeline.transcription.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
-    DEFAULT_BYPASS_STALE_TIMEOUT_MS,
     DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_MAX_TRANSMISSION_DURATION_MS,
     DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS,
+    DEFAULT_SEGMENTED_STALE_TIMEOUT_MS,
     DEFAULT_SIGNIFICANT_GAP_MS,
     DEFAULT_STALE_TIMEOUT_MS,
     DEFAULT_VAD_POST_ROLL_MS,
@@ -88,7 +88,7 @@ def get_pipeline(
         options.stale_timeout_ms or DEFAULT_STALE_TIMEOUT_MS
     )
     stale_timeout_segmented = (
-        options.stale_timeout_ms or DEFAULT_BYPASS_STALE_TIMEOUT_MS
+        options.stale_timeout_ms or DEFAULT_SEGMENTED_STALE_TIMEOUT_MS
     )
 
     if ooo_timeout_continuous >= stale_timeout_continuous:
