@@ -235,7 +235,6 @@ def get_pipeline(
     # Route all DLQ (Dead Letter Queue) outputs from intermediate steps to a dedicated topic
     dlq_list.extend(
         [
-            parsed[DEAD_LETTER_QUEUE_TAG],
             transcripts[DEAD_LETTER_QUEUE_TAG],
             serialized[DEAD_LETTER_QUEUE_TAG],
         ]

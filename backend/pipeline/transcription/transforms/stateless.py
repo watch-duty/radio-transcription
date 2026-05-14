@@ -66,7 +66,7 @@ class ParseAndKeyFn(beam.DoFn):
             Set by orchestration based on which Pub/Sub subscription the message arrived from.
     """
 
-    def __init__(self, is_continuous: bool) -> None:
+    def __init__(self, *, is_continuous: bool) -> None:
         self.is_continuous = is_continuous
 
     @override
