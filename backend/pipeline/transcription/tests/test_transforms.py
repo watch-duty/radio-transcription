@@ -1101,6 +1101,215 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         self.assertEqual(flush_request.speech_segments[0].duration_ms, 3000)
         self.assertIsInstance(mock_state_context.read(), IdleFeedState)
 
+    @patch(
+        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
+    )
+    def test_speech_segments_exceeding_max_duration_forced_split(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that an audio file exceeding max_transmission_duration_ms without
+        silence is force-split mid-stream, properly marking context severance.
+        """
+        mock_processor_inst = mock_audio_processor.return_value
+        # 65 seconds of continuous audio/speech
+        chunk_data = AudioChunkData(
+            start_ms=0,
+            audio=np.zeros(16000 * 65, dtype=np.int16),
+            speech_segments=[TimeRange(0, 65000)],
+            gcs_uri="gs://bucket/long_continuous.flac",
+            duration_ms=65000,
+            sample_rate=16000,
+        )
+        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        stitch_config = get_test_stitch_config(
+            max_transmission_duration_ms=60000,
+        )
+        fn = OrderedContinuousStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn.setup()
+
+        class MockValueState:
+            def __init__(self, initial=None) -> None:
+                self.val = initial
+
+            def read(self):
+                return self.val
+
+            def write(self, val):
+                self.val = val
+
+            def clear(self):
+                self.val = None
+
+        class MockBagState:
+            def __init__(self) -> None:
+                self.items = []
+
+            def read(self):
+                return self.items
+
+            def add(self, item):
+                self.items.append(item)
+
+            def clear(self):
+                self.items = []
+
+        mock_state_context = MockValueState(
+            ActiveStitchingState(
+                session_id="session-long",
+                feed_metadata=FeedMetadata(
+                    feed_name="test-feed", external_id="ext-long"
+                ),
+            )
+        )
+        mock_state_buffer = MockBagState()
+        mock_last_start_ms = MockValueState(None)
+
+        metadata = ChunkMetadata(
+            gcs_uri="gs://bucket/long_continuous.flac",
+            session_id="session-long",
+            duration_ms=65000,
+            feed_metadata=FeedMetadata(
+                feed_name="test-feed", external_id="ext-long"
+            ),
+        )
+
+        outputs = list(
+            fn.process(
+                element=("test-feed", metadata),
+                timestamp=Timestamp(100),
+                transmission_buffer_state=mock_state_buffer,  # type: ignore
+                transmission_context_state=mock_state_context,  # type: ignore
+                last_start_ms_state=mock_last_start_ms,  # type: ignore
+                out_of_order_timer=MagicMock(),
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        # Should immediately yield one flush request severed at 60s
+        self.assertEqual(len(outputs), 1)
+        feed_id, flush_req = outputs[0]
+        self.assertEqual(feed_id, "test-feed")
+        # Assert missing_post_context is set to True due to forced split
+        self.assertTrue(flush_req.missing_post_context)
+        self.assertEqual(flush_req.speech_segments[-1].end_ms, 60000)
+
+        # Saved context should have the remaining 5s marked with missing_prior_context
+        saved_context = mock_state_context.read()
+        self.assertIsInstance(saved_context, ActiveStitchingState)
+        self.assertTrue(saved_context.missing_prior_context)
+        self.assertEqual(saved_context.speech_segments[0].start_ms, 60000)
+        self.assertEqual(saved_context.speech_segments[0].end_ms, 65000)
+
+    @patch(
+        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
+    )
+    def test_speech_segments_exceeding_max_duration_natural_split(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that an audio file exceeding max_transmission_duration_ms with
+        natural silences triggers a clean mid-stream flush without context severance.
+        """
+        mock_processor_inst = mock_audio_processor.return_value
+        # 65 seconds of audio with two speech segments separated by a 5s silence gap
+        chunk_data = AudioChunkData(
+            start_ms=0,
+            audio=np.zeros(16000 * 65, dtype=np.int16),
+            speech_segments=[TimeRange(0, 30000), TimeRange(35000, 65000)],
+            gcs_uri="gs://bucket/long_silence.flac",
+            duration_ms=65000,
+            sample_rate=16000,
+        )
+        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        stitch_config = get_test_stitch_config(
+            significant_gap_ms=3000,
+            max_transmission_duration_ms=60000,
+        )
+        fn = OrderedContinuousStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn.setup()
+
+        class MockValueState:
+            def __init__(self, initial=None) -> None:
+                self.val = initial
+
+            def read(self):
+                return self.val
+
+            def write(self, val):
+                self.val = val
+
+            def clear(self):
+                self.val = None
+
+        class MockBagState:
+            def __init__(self) -> None:
+                self.items = []
+
+            def read(self):
+                return self.items
+
+            def add(self, item):
+                self.items.append(item)
+
+            def clear(self):
+                self.items = []
+
+        mock_state_context = MockValueState(
+            ActiveStitchingState(
+                session_id="session-silence",
+                feed_metadata=FeedMetadata(
+                    feed_name="test-feed", external_id="ext-silence"
+                ),
+            )
+        )
+        mock_state_buffer = MockBagState()
+        mock_last_start_ms = MockValueState(None)
+
+        metadata = ChunkMetadata(
+            gcs_uri="gs://bucket/long_silence.flac",
+            session_id="session-silence",
+            duration_ms=65000,
+            feed_metadata=FeedMetadata(
+                feed_name="test-feed", external_id="ext-silence"
+            ),
+        )
+
+        outputs = list(
+            fn.process(
+                element=("test-feed", metadata),
+                timestamp=Timestamp(100),
+                transmission_buffer_state=mock_state_buffer,  # type: ignore
+                transmission_context_state=mock_state_context,  # type: ignore
+                last_start_ms_state=mock_last_start_ms,  # type: ignore
+                out_of_order_timer=MagicMock(),
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        # Should immediately yield one flush request for the first speech segment
+        self.assertEqual(len(outputs), 1)
+        feed_id, flush_req = outputs[0]
+        self.assertEqual(feed_id, "test-feed")
+        # Since it split at a natural silence gap, missing_post_context should be False
+        self.assertFalse(flush_req.missing_post_context)
+        self.assertEqual(flush_req.speech_segments[-1].end_ms, 30000)
+
+        # Saved context should hold the second speech segment natively started
+        saved_context = mock_state_context.read()
+        self.assertIsInstance(saved_context, ActiveStitchingState)
+        self.assertFalse(saved_context.missing_prior_context)
+        self.assertEqual(saved_context.speech_segments[0].start_ms, 35000)
+        self.assertEqual(saved_context.speech_segments[0].end_ms, 65000)
+
 
 class OrderedSegmentedStitchAudioTest(unittest.TestCase):
     @patch("backend.pipeline.common.tracing_utils.with_tracer_context")
