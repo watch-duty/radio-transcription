@@ -1280,7 +1280,7 @@ class DlqTaggingTest(unittest.TestCase):
 
         dlq_payload = {"error": "mock error", "attributes": {}}
         results = list(
-            fn._yield_tagged_outputs([("transcription_dlq", dlq_payload)])
+            fn._yield_tagged_outputs([("transcription_dlq", dlq_payload)])  # type: ignore[arg-type]
         )
 
         self.assertEqual(len(results), 1)
@@ -1297,7 +1297,7 @@ class DlqTaggingTest(unittest.TestCase):
         )
 
         flush_req = MagicMock(spec=FlushRequest)
-        results = list(fn._yield_tagged_outputs([("feed-id", flush_req)]))
+        results = list(fn._yield_tagged_outputs([("feed-id", flush_req)]))  # type: ignore[arg-type]
 
         self.assertEqual(len(results), 1)
         self.assertNotIsInstance(results[0], beam.pvalue.TaggedOutput)
@@ -1314,7 +1314,7 @@ class DlqTaggingTest(unittest.TestCase):
         flush_req = MagicMock(spec=FlushRequest)
         dlq_payload = {"error": "oops"}
         results = list(
-            fn._yield_tagged_outputs(
+            fn._yield_tagged_outputs(  # type: ignore[arg-type]
                 [
                     ("feed-id", flush_req),
                     ("transcription_dlq", dlq_payload),
@@ -1339,7 +1339,7 @@ class DlqTaggingTest(unittest.TestCase):
 
         dlq_payload = {"error": "segmented dlq error"}
         results = list(
-            fn._yield_tagged_outputs([("transcription_dlq", dlq_payload)])
+            fn._yield_tagged_outputs([("transcription_dlq", dlq_payload)])  # type: ignore[arg-type]
         )
 
         self.assertEqual(len(results), 1)
@@ -1377,11 +1377,29 @@ class DlqTaggingTest(unittest.TestCase):
         )
         fn.setup()
 
-        # Seed the buffer with audio so the flush has content to emit
-        mock_state_buffer.add(np.zeros(16000 * 3, dtype=np.int16))
-
         expected_feed_metadata = FeedMetadata(
             feed_name="test-feed", external_id="ext-id"
+        )
+
+        # Call process() first so the engine properly seeds contributing_audio_uris,
+        # buffer_start_time_ms, and other fields required by _apply_flush_action.
+        metadata = ChunkMetadata(
+            gcs_uri="gs://bucket/chunk.flac",
+            session_id="test-session",
+            duration_ms=3000,
+            feed_metadata=expected_feed_metadata,
+        )
+        list(
+            fn.process(
+                element=("test-feed", metadata),
+                timestamp=Timestamp(100),
+                transmission_buffer_state=mock_state_buffer,  # type: ignore
+                transmission_context_state=mock_state_context,  # type: ignore
+                last_start_ms_state=mock_last_start_ms,  # type: ignore
+                out_of_order_timer=MagicMock(),
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
         )
 
         outputs = list(
