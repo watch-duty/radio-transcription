@@ -4,6 +4,7 @@ import type { VirtuosoHandle } from 'react-virtuoso';
 
 import { Howl } from 'howler';
 
+import { Checkbox, FormControlLabel } from '@mui/material';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -34,7 +35,6 @@ import FeedHeader from './FeedHeader';
 import FeedSearch from './FeedSearch';
 import TranscriptActionsBar from './TranscriptActionsBar';
 import TranscriptDisplay from './TranscriptDisplay';
-import { Checkbox, FormControlLabel } from '@mui/material';
 
 interface TranscriptViewProps {
   triggerSnackbar: (message: string) => void;
@@ -511,18 +511,23 @@ export function TranscriptView({
         const newTranscripts = await pollNewerTranscripts();
         if (newTranscripts.length > 0) {
           // Add the transcript to cache
-          const filteredNewTranscripts = updateCacheWithNewTranscripts(newTranscripts);
+          const filteredNewTranscripts =
+            updateCacheWithNewTranscripts(newTranscripts);
           if (filteredNewTranscripts.length > 0) {
             // Display indicators that new transcripts were fetched
             if (filteredNewTranscripts.length === 1) {
               triggerSnackbar(`New transcript received`);
             } else {
-              triggerSnackbar(`${filteredNewTranscripts.length} new transcripts received`);
+              triggerSnackbar(
+                `${filteredNewTranscripts.length} new transcripts received`
+              );
             }
 
             // Don't increment new messages if the user is currently looking at the screen
             if (!document.hasFocus()) {
-              setNewMessageCount((prevCount) => prevCount + filteredNewTranscripts.length);
+              setNewMessageCount(
+                (prevCount) => prevCount + filteredNewTranscripts.length
+              );
             }
             // Trigger the new audio to play if no audio is currently playing
             if (!isAudioPlaying && alwaysPlayLatestAudio) {
