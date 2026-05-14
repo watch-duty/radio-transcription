@@ -55,3 +55,5 @@ services:
     working_dir: /workspace
     volumes:
       - .:/workspace
+      # This maps the cloud credentials on your local machine onto the docker container.
+      - ${HOME}/.config/gcloud:/root/.config/gcloud
