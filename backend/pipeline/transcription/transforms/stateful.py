@@ -40,9 +40,6 @@ from backend.pipeline.transcription.audio import audio_processor, vad
 from backend.pipeline.transcription.common import constants as trans_constants
 from backend.pipeline.transcription.common import datatypes
 from backend.pipeline.transcription.common import logging as trans_logging
-from backend.pipeline.transcription.common.constants import (
-    DEAD_LETTER_QUEUE_TAG,
-)
 from backend.pipeline.transcription.services import transcribers
 from backend.pipeline.transcription.state import sequence_buffer
 from backend.pipeline.transcription.transforms import stitcher_engine
@@ -289,10 +286,7 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
 
     def _yield_tagged_outputs(
         self,
-        results: Iterable[
-            tuple[str, datatypes.FlushRequest]
-            | tuple[Literal[DEAD_LETTER_QUEUE_TAG], dict[str, Any]]
-        ],
+        results: Iterable[Any],
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
     ]:
@@ -317,7 +311,7 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest]
         | beam.pvalue.TaggedOutput[
-            Literal[DEAD_LETTER_QUEUE_TAG],
+            Literal["transcription_dlq"],
             dict[str, str | bool | dict[str, str]],
         ]
     ]:
@@ -415,7 +409,7 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest]
         | beam.pvalue.TaggedOutput[
-            Literal[DEAD_LETTER_QUEUE_TAG],
+            Literal["transcription_dlq"],
             dict[str, str | bool | dict[str, str]],
         ]
     ]:
@@ -514,7 +508,7 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest]
         | beam.pvalue.TaggedOutput[
-            Literal[DEAD_LETTER_QUEUE_TAG],
+            Literal["transcription_dlq"],
             dict[str, str | bool | dict[str, str]],
         ]
     ]:
@@ -544,7 +538,7 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest]
         | beam.pvalue.TaggedOutput[
-            Literal[DEAD_LETTER_QUEUE_TAG],
+            Literal["transcription_dlq"],
             dict[str, str | bool | dict[str, str]],
         ]
     ]:
@@ -665,10 +659,7 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
 
     def _yield_tagged_outputs(
         self,
-        results: Iterable[
-            tuple[str, datatypes.FlushRequest]
-            | tuple[Literal[DEAD_LETTER_QUEUE_TAG], dict[str, Any]]
-        ],
+        results: Iterable[Any],
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
     ]:
@@ -693,7 +684,7 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest]
         | beam.pvalue.TaggedOutput[
-            Literal[DEAD_LETTER_QUEUE_TAG],
+            Literal["transcription_dlq"],
             dict[str, str | bool | dict[str, str]],
         ]
     ]:
@@ -709,10 +700,13 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
                 float(timestamp) * common_constants.MS_PER_SECOND
             )
             curr_context = (
-                transmission_context_state.read()
-                or datatypes.TransmissionContext()
+                transmission_context_state.read() or datatypes.IdleFeedState()
             )
-            previous_expected_ts = curr_context.expected_next_chunk_start_ms
+            previous_expected_ts = (
+                curr_context.expected_next_chunk_start_ms
+                if isinstance(curr_context, datatypes.ActiveStitchingState)
+                else None
+            )
 
             # Handle chronological sequence buffering
             elements_to_emit, curr_context, session_changed = process_ordering(
@@ -760,7 +754,7 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
                     # Fetch current state context
                     curr_context = (
                         transmission_context_state.read()
-                        or datatypes.TransmissionContext()
+                        or datatypes.IdleFeedState()
                     )
                     outputs, next_expected_ts = (
                         self.engine.process_ordering_chunk(
@@ -792,14 +786,16 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest]
         | beam.pvalue.TaggedOutput[
-            Literal[DEAD_LETTER_QUEUE_TAG],
+            Literal["transcription_dlq"],
             dict[str, str | bool | dict[str, str]],
         ]
     ]:
         """Handles the gap timeout by advancing the expected sequence."""
         curr_context = (
-            transmission_context_state.read() or datatypes.TransmissionContext()
+            transmission_context_state.read() or datatypes.IdleFeedState()
         )
+        if isinstance(curr_context, datatypes.IdleFeedState):
+            return
         traceparent = curr_context.traceparent or ""
 
         results = []
@@ -857,7 +853,7 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
                     for chunk in elements_to_emit:
                         curr_context = (
                             transmission_context_state.read()
-                            or datatypes.TransmissionContext()
+                            or datatypes.IdleFeedState()
                         )
                         outputs, next_expected_ts = (
                             self.engine.process_ordering_chunk(
@@ -889,7 +885,7 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest]
         | beam.pvalue.TaggedOutput[
-            Literal[DEAD_LETTER_QUEUE_TAG],
+            Literal["transcription_dlq"],
             dict[str, str | bool | dict[str, str]],
         ]
     ]:
@@ -919,7 +915,7 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest]
         | beam.pvalue.TaggedOutput[
-            Literal[DEAD_LETTER_QUEUE_TAG],
+            Literal["transcription_dlq"],
             dict[str, str | bool | dict[str, str]],
         ]
     ]:
@@ -1179,7 +1175,7 @@ class TranscribeAudioFn(beam.DoFn):
     ) -> Iterator[
         datatypes.TranscriptionResult
         | beam.pvalue.TaggedOutput[
-            Literal[DEAD_LETTER_QUEUE_TAG],
+            Literal["transcription_dlq"],
             dict[str, str | bool | dict[str, str]],
         ]
     ]:

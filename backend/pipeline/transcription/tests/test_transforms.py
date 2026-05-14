@@ -1285,6 +1285,7 @@ class DlqTaggingTest(unittest.TestCase):
 
         self.assertEqual(len(results), 1)
         self.assertIsInstance(results[0], beam.pvalue.TaggedOutput)
+        assert isinstance(results[0], beam.pvalue.TaggedOutput)
         self.assertEqual(results[0].tag, "transcription_dlq")
         self.assertEqual(results[0].value, dlq_payload)
 
@@ -1327,6 +1328,7 @@ class DlqTaggingTest(unittest.TestCase):
         self.assertNotIsInstance(results[0], beam.pvalue.TaggedOutput)
         # Second is wrapped
         self.assertIsInstance(results[1], beam.pvalue.TaggedOutput)
+        assert isinstance(results[1], beam.pvalue.TaggedOutput)
         self.assertEqual(results[1].tag, "transcription_dlq")
 
     def test_segmented_fn_also_wraps_dlq_outputs(self) -> None:
@@ -1344,6 +1346,7 @@ class DlqTaggingTest(unittest.TestCase):
 
         self.assertEqual(len(results), 1)
         self.assertIsInstance(results[0], beam.pvalue.TaggedOutput)
+        assert isinstance(results[0], beam.pvalue.TaggedOutput)
         self.assertEqual(results[0].tag, "transcription_dlq")
 
     # --- Bug 2: feed_metadata preserved through stale flush ---
@@ -1393,9 +1396,9 @@ class DlqTaggingTest(unittest.TestCase):
             fn.process(
                 element=("test-feed", metadata),
                 timestamp=Timestamp(100),
-                transmission_buffer_state=mock_state_buffer,  # type: ignore
-                transmission_context_state=mock_state_context,  # type: ignore
-                last_start_ms_state=mock_last_start_ms,  # type: ignore
+                transmission_buffer_state=mock_state_buffer,
+                transmission_context_state=mock_state_context,
+                last_start_ms_state=mock_last_start_ms,
                 out_of_order_timer=MagicMock(),
                 stale_timer_event=MagicMock(),
                 stale_timer_proc=MagicMock(),
@@ -1405,9 +1408,9 @@ class DlqTaggingTest(unittest.TestCase):
         outputs = list(
             fn.handle_stale_transmission_event(
                 key="test-feed",
-                transmission_buffer=mock_state_buffer,  # type: ignore
-                transmission_context=mock_state_context,  # type: ignore
-                last_start_ms_state=mock_last_start_ms,  # type: ignore
+                transmission_buffer=mock_state_buffer,
+                transmission_context=mock_state_context,
+                last_start_ms_state=mock_last_start_ms,
                 stale_timer_event=MagicMock(),
                 stale_timer_proc=MagicMock(),
             )
