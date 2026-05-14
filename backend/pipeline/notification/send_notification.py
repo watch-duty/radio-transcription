@@ -68,8 +68,6 @@ def _build_app_url(
         query_params["timestamp"] = str(
             timestamp.seconds * 1000 + timestamp.nanos // 1_000_000
         )
-    # TODO(anthonyxiang): https://linear.app/watchduty/issue/GOO-320/duration-as-env-variable
-    query_params["duration"] = "5"
 
     return f"{APP_URL}?{urllib.parse.urlencode(query_params)}"
 

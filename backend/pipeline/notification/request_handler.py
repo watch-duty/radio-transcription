@@ -33,7 +33,11 @@ class RequestHandler:
         """
         Makes a POST request to an endpoint with the provided `notification`.
         """
-        request_data = MessageToJson(notification, indent=None)
+        request_data = MessageToJson(
+            notification,
+            always_print_fields_with_no_presence=True,
+            indent=None,
+        )
         self.logger.info(f"Sending payload: {request_data}")
 
         http = PoolManager(retries=self.retry_strategy)
