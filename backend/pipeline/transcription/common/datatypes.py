@@ -276,19 +276,3 @@ class ScheduleStaleTimerAction(StateMachineAction):
     """Action emitted to adjust Beam Watermark timers for dead-transmission recovery."""
 
     deadline_ms: int
-
-
-try:
-    import apache_beam as beam
-
-    # Register PickleCoder for core dataclasses to prevent Beam's FastPrimitivesCoder
-    # from downgrading them into plain dictionaries across shuffles and flattens.
-    beam.coders.registry.register_coder(TimeRange, beam.coders.PickleCoder)
-    beam.coders.registry.register_coder(FeedMetadata, beam.coders.PickleCoder)
-    beam.coders.registry.register_coder(ChunkMetadata, beam.coders.PickleCoder)
-    beam.coders.registry.register_coder(FlushRequest, beam.coders.PickleCoder)
-    beam.coders.registry.register_coder(
-        TranscriptionResult, beam.coders.PickleCoder
-    )
-except ImportError:
-    pass
