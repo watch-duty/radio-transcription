@@ -28,7 +28,7 @@ describe('AudioPlayer', () => {
     expect(screen.getByLabelText('play')).toBeTruthy();
   });
 
-  it('calls onPlay and plays audio when clicked', () => {
+  it('calls onToggleAudio when clicked', () => {
     render(<AudioPlayer {...defaultProps} />);
 
     const button = screen.getByLabelText('play');

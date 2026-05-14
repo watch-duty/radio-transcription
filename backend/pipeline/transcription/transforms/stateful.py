@@ -13,7 +13,7 @@ decoupled from Beam timer variables and delegated to StitcherEngine.
 
 import logging as std_logging
 import time
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any, Literal, override
@@ -118,7 +118,7 @@ def process_ordering(
     curr_context: datatypes.TransmissionContext,
     out_of_order_timer: RuntimeTimer,
     order_config: datatypes.OrderRestorerConfig,
-) -> tuple[list[datatypes.BufferedChunk], datatypes.TransmissionContext, bool]:
+) -> tuple[list[datatypes.BufferedChunk], datatypes.ActiveStitchingState, bool]:
     """Handles session change detection and chronological ordering via SequenceBuffer."""
     feed_id, metadata = element
     session_changed = False
@@ -127,14 +127,23 @@ def process_ordering(
         feed_id, metadata.session_id, "sequence-buffer"
     )
 
-    # Session change detection
-    if curr_context.session_id != metadata.session_id:
+    # Explicitly transition IdleFeedState to ActiveStitchingState on startup
+    if isinstance(curr_context, datatypes.IdleFeedState):
+        curr_context = datatypes.ActiveStitchingState(
+            session_id=metadata.session_id,
+            feed_metadata=metadata.feed_metadata,
+            out_of_order_buffer=curr_context.out_of_order_buffer,
+            order_timer_active=curr_context.order_timer_active,
+        )
+        session_changed = True
+        out_of_order_timer.clear()
+    elif curr_context.session_id != metadata.session_id:
         task_logger.info(
             f"Session ID changed from {curr_context.session_id} to {metadata.session_id}. Resetting state."
         )
         session_changed = True
         out_of_order_timer.clear()
-        curr_context = datatypes.TransmissionContext(
+        curr_context = datatypes.ActiveStitchingState(
             session_id=metadata.session_id,
             feed_metadata=metadata.feed_metadata,
         )
@@ -276,6 +285,22 @@ class OrderedStitchAudioFn(beam.DoFn):
         self.engine.processor.gcs_client = shared_gcs
         self.engine.setup()
 
+    def _yield_tagged_outputs(
+        self,
+        results: Iterable[
+            tuple[str, datatypes.FlushRequest]
+            | tuple[Literal["transcription_dlq"], dict[str, Any]]
+        ],
+    ) -> Iterator[
+        tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
+    ]:
+        """Yields results, tagging DLQ outputs appropriately."""
+        for res in results:
+            if isinstance(res, tuple) and res[0] == "transcription_dlq":
+                yield beam.pvalue.TaggedOutput("transcription_dlq", res[1])
+            else:
+                yield res
+
     @override
     def process(
         self,
@@ -305,10 +330,13 @@ class OrderedStitchAudioFn(beam.DoFn):
                 float(timestamp) * common_constants.MS_PER_SECOND
             )
             curr_context = (
-                transmission_context_state.read()
-                or datatypes.TransmissionContext()
+                transmission_context_state.read() or datatypes.IdleFeedState()
             )
-            previous_expected_ts = curr_context.expected_next_chunk_start_ms
+            previous_expected_ts = (
+                curr_context.expected_next_chunk_start_ms
+                if isinstance(curr_context, datatypes.ActiveStitchingState)
+                else None
+            )
 
             # Handle chronological sequence buffering
             elements_to_emit, curr_context, session_changed = process_ordering(
@@ -324,10 +352,6 @@ class OrderedStitchAudioFn(beam.DoFn):
             )
             task_logger.debug(f"[Process] Processing chunk {metadata.gcs_uri}")
 
-            if curr_context.feed_metadata is None:
-                curr_context = replace(
-                    curr_context, feed_metadata=metadata.feed_metadata
-                )
             if session_changed:
                 transmission_buffer_state.clear()
                 stale_timer_event.clear()
@@ -356,7 +380,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                     # Fetch current state context
                     curr_context = (
                         transmission_context_state.read()
-                        or datatypes.TransmissionContext()
+                        or datatypes.IdleFeedState()
                     )
                     outputs, next_expected_ts = (
                         self.engine.process_ordering_chunk(
@@ -374,7 +398,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                     results.extend(outputs)
                     previous_expected_ts = next_expected_ts
 
-        yield from results
+        yield from self._yield_tagged_outputs(results)
 
     @on_timer(OUT_OF_ORDER_TIMER_SPEC)
     def handle_gap_timeout(
@@ -393,8 +417,10 @@ class OrderedStitchAudioFn(beam.DoFn):
     ]:
         """Handles the gap timeout by advancing the expected sequence."""
         curr_context = (
-            transmission_context_state.read() or datatypes.TransmissionContext()
+            transmission_context_state.read() or datatypes.IdleFeedState()
         )
+        if isinstance(curr_context, datatypes.IdleFeedState):
+            return
         traceparent = curr_context.traceparent or ""
 
         results = []
@@ -452,7 +478,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                     for chunk in elements_to_emit:
                         curr_context = (
                             transmission_context_state.read()
-                            or datatypes.TransmissionContext()
+                            or datatypes.IdleFeedState()
                         )
                         outputs, next_expected_ts = (
                             self.engine.process_ordering_chunk(
@@ -470,7 +496,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                         results.extend(outputs)
                         previous_expected_ts = next_expected_ts
 
-        yield from results
+        yield from self._yield_tagged_outputs(results)
 
     @on_timer(STALE_TIMER_EVENT_SPEC)
     def handle_stale_transmission_event(
@@ -491,12 +517,14 @@ class OrderedStitchAudioFn(beam.DoFn):
         timer_manager = StaleTimerManager(
             stale_timer_event, stale_timer_proc, self.stitch_config
         )
-        yield from self.engine.handle_stale_transmission(
-            key,
-            transmission_buffer,
-            transmission_context,
-            last_start_ms_state,
-            timer_manager,
+        yield from self._yield_tagged_outputs(
+            self.engine.handle_stale_transmission(
+                key,
+                transmission_buffer,
+                transmission_context,
+                last_start_ms_state,
+                timer_manager,
+            )
         )
 
     @on_timer(STALE_TIMER_PROC_SPEC)
@@ -518,12 +546,14 @@ class OrderedStitchAudioFn(beam.DoFn):
         timer_manager = StaleTimerManager(
             stale_timer_event, stale_timer_proc, self.stitch_config
         )
-        yield from self.engine.handle_stale_transmission(
-            key,
-            transmission_buffer,
-            transmission_context,
-            last_start_ms_state,
-            timer_manager,
+        yield from self._yield_tagged_outputs(
+            self.engine.handle_stale_transmission(
+                key,
+                transmission_buffer,
+                transmission_context,
+                last_start_ms_state,
+                timer_manager,
+            )
         )
 
     @property
@@ -620,12 +650,19 @@ class OrderedBypassFn(beam.DoFn):
             traceparent, "stitching_bypass_process", __name__
         ):
             curr_context = (
-                transmission_context_state.read()
-                or datatypes.TransmissionContext()
+                transmission_context_state.read() or datatypes.IdleFeedState()
             )
-            if curr_context.feed_metadata is None:
-                curr_context = replace(
-                    curr_context, feed_metadata=metadata.feed_metadata
+            if isinstance(curr_context, datatypes.IdleFeedState):
+                curr_context = datatypes.ActiveStitchingState(
+                    session_id=metadata.session_id,
+                    feed_metadata=metadata.feed_metadata,
+                    out_of_order_buffer=curr_context.out_of_order_buffer,
+                    order_timer_active=curr_context.order_timer_active,
+                )
+            elif curr_context.session_id != metadata.session_id:
+                curr_context = datatypes.ActiveStitchingState(
+                    session_id=metadata.session_id,
+                    feed_metadata=metadata.feed_metadata,
                 )
 
             current_ts_ms = int(
@@ -673,8 +710,10 @@ class OrderedBypassFn(beam.DoFn):
     ]:
         """Handles the buffer timeout by sorting and releasing all chunks."""
         curr_context = (
-            transmission_context_state.read() or datatypes.TransmissionContext()
+            transmission_context_state.read() or datatypes.IdleFeedState()
         )
+        if isinstance(curr_context, datatypes.IdleFeedState):
+            return
         traceparent = curr_context.traceparent or ""
 
         results = []
@@ -706,7 +745,7 @@ class OrderedBypassFn(beam.DoFn):
         self,
         chunk: datatypes.BufferedChunk,
         feed_id: str,
-        curr_context: datatypes.TransmissionContext,
+        curr_context: datatypes.ActiveStitchingState,
     ) -> list[
         tuple[str, datatypes.FlushRequest]
         | beam.pvalue.TaggedOutput[
@@ -715,10 +754,6 @@ class OrderedBypassFn(beam.DoFn):
     ]:
         chunk_outputs = []
         traceparent = chunk.traceparent or curr_context.traceparent or ""
-
-        if curr_context.feed_metadata is None:
-            msg = "feed_metadata cannot be None in bypass chunk"
-            raise ValueError(msg)
 
         with tracing_utils.with_tracer_context(
             traceparent, "bypass_single_chunk", __name__
@@ -753,6 +788,7 @@ class OrderedBypassFn(beam.DoFn):
                             feed_metadata=curr_context.feed_metadata,
                             traceparent=curr_context.traceparent,
                             sample_rate=chunk_data.sample_rate,
+                            speech_segments=chunk_data.speech_segments,
                         ),
                     )
                 )
@@ -773,7 +809,7 @@ class OrderedBypassFn(beam.DoFn):
         self,
         elements_to_emit: list[datatypes.BufferedChunk],
         feed_id: str,
-        curr_context: datatypes.TransmissionContext,
+        curr_context: datatypes.ActiveStitchingState,
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest]
         | beam.pvalue.TaggedOutput[

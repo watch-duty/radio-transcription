@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import type { Transcript } from '@transcription/common';
 
 import { getAudioUrl } from '../../utils/audioUtils';
@@ -25,6 +31,9 @@ describe('AudioDisplay', () => {
         transcripts={[]}
         currentlyPlayingTransmissionId={null}
         onClipClick={vi.fn()}
+        isAudioPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        highlightedTransmissionId={null}
       />
     );
     expect(screen.getByText('No transcripts loaded')).toBeTruthy();
@@ -54,6 +63,9 @@ describe('AudioDisplay', () => {
         transcripts={mockTranscripts}
         currentlyPlayingTransmissionId={null}
         onClipClick={vi.fn()}
+        isAudioPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        highlightedTransmissionId={null}
       />
     );
 
@@ -88,6 +100,9 @@ describe('AudioDisplay', () => {
         transcripts={mockTranscripts}
         currentlyPlayingTransmissionId={null}
         onClipClick={vi.fn()}
+        isAudioPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        highlightedTransmissionId={null}
       />
     );
 
@@ -133,6 +148,9 @@ describe('AudioDisplay', () => {
         transcripts={mockTranscripts}
         currentlyPlayingTransmissionId={null}
         onClipClick={vi.fn()}
+        isAudioPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        highlightedTransmissionId={null}
       />
     );
 
@@ -145,6 +163,9 @@ describe('AudioDisplay', () => {
         transcripts={mockTranscripts}
         currentlyPlayingTransmissionId="2"
         onClipClick={vi.fn()}
+        isAudioPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        highlightedTransmissionId={null}
       />
     );
 
@@ -198,6 +219,9 @@ describe('AudioDisplay', () => {
         transcripts={mockTranscripts1}
         currentlyPlayingTransmissionId={null}
         onClipClick={vi.fn()}
+        isAudioPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        highlightedTransmissionId={null}
       />
     );
 
@@ -210,6 +234,9 @@ describe('AudioDisplay', () => {
         transcripts={mockTranscripts2}
         currentlyPlayingTransmissionId={null}
         onClipClick={vi.fn()}
+        isAudioPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        highlightedTransmissionId={null}
       />
     );
 
@@ -246,6 +273,9 @@ describe('AudioDisplay', () => {
         currentlyPlayingTransmissionId={null}
         userDuration="5"
         onClipClick={vi.fn()}
+        isAudioPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        highlightedTransmissionId={null}
       />
     );
 
@@ -265,6 +295,9 @@ describe('AudioDisplay', () => {
         currentlyPlayingTransmissionId={null}
         userDuration="30"
         onClipClick={vi.fn()}
+        isAudioPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        highlightedTransmissionId={null}
       />
     );
 
@@ -305,6 +338,9 @@ describe('AudioDisplay', () => {
         transcripts={mockTranscripts}
         currentlyPlayingTransmissionId={null}
         onClipClick={vi.fn()}
+        isAudioPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        highlightedTransmissionId={null}
       />
     );
 
@@ -314,5 +350,107 @@ describe('AudioDisplay', () => {
       getAudioUrl(mockTranscripts[0].playbackAudioUri)
     );
     expect(wavesurfer.getAttribute('data-url')).toContain('.m4a');
+  });
+
+  it('should render play button and call onTogglePlayPause when clicked', () => {
+    const mockOnTogglePlayPause = vi.fn();
+    render(
+      <AudioDisplay
+        transcripts={[]}
+        currentlyPlayingTransmissionId={null}
+        onClipClick={vi.fn()}
+        isAudioPlaying={false}
+        onTogglePlayPause={mockOnTogglePlayPause}
+        highlightedTransmissionId={null}
+      />
+    );
+
+    const playButton = screen.getByLabelText('play');
+    expect(playButton).toBeTruthy();
+    fireEvent.click(playButton);
+    expect(mockOnTogglePlayPause).toHaveBeenCalled();
+  });
+
+  it('should render pause button when playing', () => {
+    render(
+      <AudioDisplay
+        transcripts={[]}
+        currentlyPlayingTransmissionId={null}
+        onClipClick={vi.fn()}
+        isAudioPlaying={true}
+        onTogglePlayPause={vi.fn()}
+        highlightedTransmissionId={null}
+      />
+    );
+
+    expect(screen.getByLabelText('pause')).toBeTruthy();
+  });
+
+  it('should shift window when highlighted transmission is outside window', async () => {
+    const mockTranscripts: Transcript[] = [
+      {
+        transmissionId: '1',
+        feedId: 'feed1',
+        startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
+        endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
+        transcript: 'Test 1',
+        canonicalAudioUri: 'audio1.flac',
+        playbackAudioUri: 'audio1.m4a',
+        evaluationDecisions: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+        startAudioOffset: '0',
+        endAudioOffset: '0',
+      },
+      {
+        transmissionId: '2',
+        feedId: 'feed1',
+        startTimestamp: new Date('2026-04-20T08:20:00Z').toISOString(),
+        endTimestamp: new Date('2026-04-20T08:20:05Z').toISOString(),
+        transcript: 'Test 2',
+        canonicalAudioUri: 'audio2.flac',
+        playbackAudioUri: 'audio2.m4a',
+        evaluationDecisions: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+        startAudioOffset: '0',
+        endAudioOffset: '0',
+      },
+    ];
+
+    const { rerender } = render(
+      <AudioDisplay
+        transcripts={mockTranscripts}
+        currentlyPlayingTransmissionId={null}
+        onClipClick={vi.fn()}
+        isAudioPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        highlightedTransmissionId={null}
+      />
+    );
+
+    const labelsBefore = screen
+      .getAllByText(/\d{2}:\d{2}/)
+      .map((el) => el.textContent);
+
+    rerender(
+      <AudioDisplay
+        transcripts={mockTranscripts}
+        currentlyPlayingTransmissionId={null}
+        onClipClick={vi.fn()}
+        isAudioPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        highlightedTransmissionId="2"
+      />
+    );
+
+    await waitFor(() => {
+      const labelsAfter = screen
+        .getAllByText(/\d{2}:\d{2}/)
+        .map((el) => el.textContent);
+      expect(labelsAfter).not.toEqual(labelsBefore);
+    });
   });
 });

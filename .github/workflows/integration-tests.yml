@@ -59,6 +59,10 @@ jobs:
       - name: Run E2E tests
         run: mise run test:e2e
 
+      - name: Print container logs on failure
+        if: failure()
+        run: docker compose --env-file local_dev/LOCAL.env logs
+
       - name: Open SSH session if workflow fails
         uses: mxschmitt/action-tmate@v3
-        if: github.event_name == 'workflow_dispatch' && inputs.debug_enabled
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.debug_enabled

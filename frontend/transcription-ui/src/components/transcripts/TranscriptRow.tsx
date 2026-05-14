@@ -26,6 +26,7 @@ interface TranscriptRowProps {
   showHeader: boolean;
   isHighlighted?: boolean;
   redactTranscripts?: boolean;
+  onRowClick: (transmissionId: string) => void;
 }
 
 export function TranscriptRow({
@@ -41,6 +42,7 @@ export function TranscriptRow({
   showHeader,
   isHighlighted = false,
   redactTranscripts = false,
+  onRowClick,
 }: TranscriptRowProps) {
   const theme = useTheme();
   const currentDate = new Date(transcript.startTimestamp);
@@ -91,7 +93,12 @@ export function TranscriptRow({
           py: 1.5,
           bgcolor: isHighlighted ? 'action.selected' : 'inherit',
           scrollMarginTop: theme.spacing(5),
+          cursor: 'pointer',
+          '&:hover': {
+            bgcolor: isHighlighted ? 'action.selected' : 'action.hover',
+          },
         }}
+        onClick={() => onRowClick(transcript.transmissionId)}
       >
         <Box
           sx={{
