@@ -19,6 +19,7 @@ import TranscriptView from './components/transcripts/TranscriptView';
 import { useAuth } from './context/AuthContext';
 
 import './App.css';
+import FeedSearchView from './components/feeds/FeedSearchView';
 
 const DocsView = lazy(() => import('./components/docs/DocsView'));
 
@@ -171,8 +172,8 @@ function App() {
               path="/"
               element={
                 <>
-                  <title>Transcripts - Radio Transcription</title>
-                  <TranscriptView
+                  <title>Radio Transcription</title>
+                  <FeedSearchView
                     triggerSnackbar={triggerSnackbar}
                     onError={handleError}
                   />

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router';
+import { Link as RouterLink, useNavigate } from 'react-router';
 
 import AppRegistrationIcon from '@mui/icons-material/AppRegistration';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
@@ -21,6 +21,7 @@ import ListItemButton from '@mui/material/ListItemButton';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
 import Toolbar from '@mui/material/Toolbar';
+import Link from '@mui/material/Link';
 import Typography from '@mui/material/Typography';
 import { styled, useTheme } from '@mui/material/styles';
 
@@ -75,7 +76,16 @@ export default function AppContainer({
             component="div"
             sx={{ flexGrow: 1, textAlign: 'left' }}
           >
-            Radio Transcription
+            <Link
+              component={RouterLink}
+              to="/"
+              color="inherit"
+              sx={{
+                textDecoration: 'none',
+              }}
+            >
+              Radio Transcription
+            </Link>
           </Typography>
           {token && (
             <Button
