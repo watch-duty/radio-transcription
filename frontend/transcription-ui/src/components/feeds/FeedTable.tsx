@@ -6,7 +6,6 @@ import InventoryIcon from '@mui/icons-material/Inventory';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import OpenInNewOutlinedIcon from '@mui/icons-material/OpenInNewOutlined';
 import SearchIcon from '@mui/icons-material/Search';
-import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
 import IconButton from '@mui/material/IconButton';
@@ -26,68 +25,13 @@ import TableSortLabel from '@mui/material/TableSortLabel';
 import TextField from '@mui/material/TextField';
 import Link from '@mui/material/Link';
 import Typography from '@mui/material/Typography';
-import type { Feed, FeedStatus } from '@transcription/common';
+import type { Feed } from '@transcription/common';
 
-import { getRelativeTimeString } from '../../utils/timeUtils';
+import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 
 interface FeedTableProps {
   feeds: Feed[];
   isLoading: boolean;
-}
-
-const FEED_STATUS_UI_CONFIG: Record<
-  FeedStatus,
-  { displayText: string; color: 'success' | 'error' }
-> = {
-  active: { displayText: 'Active', color: 'success' },
-  inactive: { displayText: 'Inactive', color: 'error' },
-};
-
-function FeedStatusIndicator({
-  status,
-  lastHeartbeat,
-}: {
-  status: FeedStatus | undefined;
-  lastHeartbeat?: string;
-}) {
-  if (!status) {
-    return null;
-  }
-
-  const statusConfig = status ? FEED_STATUS_UI_CONFIG[status] : undefined;
-  return (
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-      <Badge
-        color={statusConfig?.color ?? 'error'}
-        variant="dot"
-        sx={{
-          py: 0,
-          px: 0.5,
-          display: 'flex',
-          alignItems: 'center',
-        }}
-      ></Badge>
-      <Typography
-        variant="body2"
-        sx={{
-          color: `${statusConfig?.color ?? 'error'}.main`,
-          fontWeight: 600,
-          textTransform: 'uppercase',
-        }}
-      >
-        {statusConfig?.displayText ?? status}
-      </Typography>
-      {lastHeartbeat && (
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{ whiteSpace: 'nowrap' }}
-        >
-          Last updated: {getRelativeTimeString(lastHeartbeat)}
-        </Typography>
-      )}
-    </Box>
-  );
 }
 
 export function FeedTable({ feeds, isLoading }: FeedTableProps) {
@@ -207,6 +151,7 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
       ) : (
         <TableVirtuoso
           data={filteredAndSortedFeeds}
+          computeItemKey={(_index, feed) => feed.id}
           components={{
             Scroller: React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
               <TableContainer {...props} ref={ref} />

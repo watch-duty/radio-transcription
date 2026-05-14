@@ -12,6 +12,8 @@ interface FeedSearchViewProps {
   onError: (error: Error, titleMessage?: string) => void;
 }
 
+const FEED_REFETCH_INTERVAL_MS = 15000; // 15 seconds
+
 export function FeedSearchView({
   onError,
 }: FeedSearchViewProps) {
@@ -20,12 +22,13 @@ export function FeedSearchView({
   const {
     data: feeds,
     error: feedsError,
-    isFetching: feedsFetching,
+    isLoading: feedsLoading,
   } = useQuery({
     queryKey: ['listFeeds', token],
     queryFn: () => listFeeds(token!),
     enabled: !!token,
     refetchOnWindowFocus: false,
+    refetchInterval: FEED_REFETCH_INTERVAL_MS,
   });
 
   useEffect(() => {
@@ -48,7 +51,7 @@ export function FeedSearchView({
       <Typography variant="h5" sx={{ fontWeight: 'bold' }}>
         Radio Feeds
       </Typography>
-      <FeedTable feeds={feeds ?? []} isLoading={feedsFetching} />
+      <FeedTable feeds={feeds ?? []} isLoading={feedsLoading} />
     </Box>
   );
 }
