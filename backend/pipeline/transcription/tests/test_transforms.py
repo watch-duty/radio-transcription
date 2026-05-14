@@ -25,6 +25,7 @@ from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.transcription.audio.audio_processor import ProcessorOutput
 from backend.pipeline.transcription.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
+    MAIN_TAG,
 )
 from backend.pipeline.transcription.common.datatypes import (
     ActiveStitchingState,
@@ -153,16 +154,20 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             {"feed_id": "test-feed"},
         )
         options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+            flags=[
+                "--continuous_input_subscription=projects/p/subscriptions/a",
+                "--segmented_input_subscription=projects/p/subscriptions/b",
+                "--output_topic=b",
+                "--project=c",
+            ]
         )
         with BeamTestPipeline(options=options) as p:
             messages = p | beam.Create([mock_msg])
-            parsed = messages | beam.ParDo(ParseAndKeyFn()).with_outputs(
-                "continuous", DEAD_LETTER_QUEUE_TAG
-            )
-
+            parsed = messages | beam.ParDo(
+                ParseAndKeyFn(is_continuous=True)
+            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
             assert_that(
-                parsed.continuous,
+                parsed[MAIN_TAG],
                 equal_to(
                     [
                         (
@@ -194,13 +199,18 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             {},  # Missing feed_id
         )
         options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+            flags=[
+                "--continuous_input_subscription=projects/p/subscriptions/a",
+                "--segmented_input_subscription=projects/p/subscriptions/b",
+                "--output_topic=b",
+                "--project=c",
+            ]
         )
         with BeamTestPipeline(options=options) as p:
             messages = p | beam.Create([mock_msg])
-            parsed = messages | beam.ParDo(ParseAndKeyFn()).with_outputs(
-                "continuous", DEAD_LETTER_QUEUE_TAG
-            )
+            parsed = messages | beam.ParDo(
+                ParseAndKeyFn(is_continuous=False)
+            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
             def assert_dlq(
                 elements: list[dict[str, str | bool | dict[str, str]]],
@@ -213,7 +223,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
                     in elements[0]["error"]
                 )
 
-            assert_that(parsed.continuous, equal_to([]), label="CheckEmptyMain")
+            assert_that(parsed[MAIN_TAG], equal_to([]), label="CheckEmptyMain")
             assert_that(
                 parsed[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ"
             )
@@ -233,7 +243,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             {"feed_id": "test-feed"},
         )
 
-        fn = ParseAndKeyFn()
+        fn = ParseAndKeyFn(is_continuous=True)
         fn.setup()
 
         span_before = get_current_span()
@@ -305,7 +315,12 @@ class TranscribeAudioTest(unittest.TestCase):
         config = get_test_transcribe_config(route_to_dlq=True)
 
         options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+            flags=[
+                "--continuous_input_subscription=projects/p/subscriptions/a",
+                "--segmented_input_subscription=projects/p/subscriptions/b",
+                "--output_topic=b",
+                "--project=c",
+            ]
         )
         with BeamTestPipeline(options=options) as p:
             elements = p | beam.Create(
@@ -384,7 +399,12 @@ class TranscribeAudioTest(unittest.TestCase):
         config = get_test_transcribe_config(route_to_dlq=True)
 
         options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+            flags=[
+                "--continuous_input_subscription=projects/p/subscriptions/a",
+                "--segmented_input_subscription=projects/p/subscriptions/b",
+                "--output_topic=b",
+                "--project=c",
+            ]
         )
         with BeamTestPipeline(options=options) as p:
             elements = p | beam.Create(
@@ -443,7 +463,12 @@ class SerializeAndEnrichTest(unittest.TestCase):
     def test_serialize_and_enrich(self) -> None:
         """Verifies that SerializeAndEnrichFn correctly enriches and serializes the transcript."""
         options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+            flags=[
+                "--continuous_input_subscription=projects/p/subscriptions/a",
+                "--segmented_input_subscription=projects/p/subscriptions/b",
+                "--output_topic=b",
+                "--project=c",
+            ]
         )
 
         with BeamTestPipeline(options=options) as p:
@@ -959,7 +984,12 @@ class OrderedStitchAudioTest(unittest.TestCase):
         stitch_config = get_test_stitch_config(stale_timeout_ms=5000)
 
         options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+            flags=[
+                "--continuous_input_subscription=projects/p/subscriptions/a",
+                "--segmented_input_subscription=projects/p/subscriptions/b",
+                "--output_topic=b",
+                "--project=c",
+            ]
         )
 
         metadata = ChunkMetadata(
@@ -1055,7 +1085,12 @@ class OrderedStitchAudioTest(unittest.TestCase):
         )
 
         options = PipelineOptions(
-            flags=["--input_subscription=a", "--output_topic=b", "--project=c"]
+            flags=[
+                "--continuous_input_subscription=projects/p/subscriptions/a",
+                "--segmented_input_subscription=projects/p/subscriptions/b",
+                "--output_topic=b",
+                "--project=c",
+            ]
         )
 
         metadata_chunk1 = ChunkMetadata(
