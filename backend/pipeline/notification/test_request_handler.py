@@ -40,7 +40,13 @@ class TestRequestHandler(TestCase):
         mock_http.request.assert_called_once_with(
             "POST",
             "https://api.example.com/mock",
-            body='{"transmissionId": "123", "feedId": "", "transcript": "", "missingPriorContext": false, "missingPostContext": false, "sourceAudioUris": [], "canonicalAudioUri": "", "evaluationDecisions": [], "playbackAudioUri": "", "appUrl": "", "feedName": "", "externalId": ""}',
+            body=(
+                '{"transmissionId": "123", "feedId": "", "transcript": "", '
+                '"missingPriorContext": false, "missingPostContext": false, '
+                '"sourceAudioUris": [], "canonicalAudioUri": "", '
+                '"evaluationDecisions": [], "playbackAudioUri": "", '
+                '"appUrl": "", "feedName": "", "externalId": "", "tags": []}'
+            ),
             headers={
                 "Content-Type": "application/json",
                 "X-Api-Key": "test-key-123",
