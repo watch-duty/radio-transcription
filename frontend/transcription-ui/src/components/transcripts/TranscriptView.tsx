@@ -34,6 +34,7 @@ import FeedHeader from './FeedHeader';
 import FeedSearch from './FeedSearch';
 import TranscriptActionsBar from './TranscriptActionsBar';
 import TranscriptDisplay from './TranscriptDisplay';
+import { Checkbox, FormControlLabel } from '@mui/material';
 
 interface TranscriptViewProps {
   triggerSnackbar: (message: string) => void;
@@ -64,6 +65,9 @@ export function TranscriptView({
 
   const [searchParams, setSearchParams] = useSearchParams();
   const targetTransmissionId = searchParams.get('transmissionId');
+
+  const [newMessageCount, setNewMessageCount] = useState(0);
+  const [alwaysPlayLatestAudio, setAlwaysPlayLatestAudio] = useState(true);
 
   const [feedId, setFeedId] = useState<string>(
     () => searchParams.get('feedId') || ''
@@ -209,11 +213,26 @@ export function TranscriptView({
   useEffect(() => {
     if (!searchedFeed) return;
 
-    const pageTitle = `${searchedFeed.name} - Radio Transcription`;
+    let pageTitle = `${searchedFeed.name} - Radio Transcription`;
+    if (newMessageCount > 0) {
+      pageTitle = `(${newMessageCount}) ${pageTitle}`;
+    }
     if (document.title !== pageTitle) {
       document.title = pageTitle;
     }
-  }, [searchedFeed]);
+  }, [searchedFeed, newMessageCount]);
+
+  // Clear the unread message indicator when the user focuses back on the page
+  useEffect(() => {
+    const handleFocus = () => {
+      setNewMessageCount(0);
+    };
+
+    window.addEventListener('focus', handleFocus);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, []);
 
   const {
     data: listTranscriptsResponse,
@@ -430,8 +449,9 @@ export function TranscriptView({
    * This updates the active view without triggering a full refetch of all loaded pages.
    */
   const updateCacheWithNewTranscripts = useCallback(
-    (newTranscripts: Transcript[]) => {
-      if (!token) return;
+    (newTranscripts: Transcript[]): Transcript[] => {
+      if (!token) return [];
+      let updatedTranscripts: Transcript[] = [];
       queryClient.setQueryData<InfiniteData<ListTranscriptsData>>(
         ['listTranscripts', token, searchedFeedId, searchedTimestamp],
         (oldData) => {
@@ -449,6 +469,7 @@ export function TranscriptView({
           );
 
           if (filteredNew.length === 0) return oldData;
+          updatedTranscripts = filteredNew;
 
           // Prepend the new transcripts to the first (newest) page of the query cache.
           const newPages = [...oldData.pages];
@@ -459,6 +480,7 @@ export function TranscriptView({
           return { ...oldData, pages: newPages };
         }
       );
+      return updatedTranscripts;
     },
     [token, searchedFeedId, searchedTimestamp, queryClient]
   );
@@ -488,7 +510,28 @@ export function TranscriptView({
         setIsTranscriptsPolling(true);
         const newTranscripts = await pollNewerTranscripts();
         if (newTranscripts.length > 0) {
-          updateCacheWithNewTranscripts(newTranscripts);
+          // Add the transcript to cache
+          const filteredNewTranscripts = updateCacheWithNewTranscripts(newTranscripts);
+          if (filteredNewTranscripts.length > 0) {
+            // Display indicators that new transcripts were fetched
+            if (filteredNewTranscripts.length === 1) {
+              triggerSnackbar(`New transcript received`);
+            } else {
+              triggerSnackbar(`${filteredNewTranscripts.length} new transcripts received`);
+            }
+
+            // Don't increment new messages if the user is currently looking at the screen
+            if (!document.hasFocus()) {
+              setNewMessageCount((prevCount) => prevCount + filteredNewTranscripts.length);
+            }
+            // Trigger the new audio to play if no audio is currently playing
+            if (!isAudioPlaying && alwaysPlayLatestAudio) {
+              toggleAudio(
+                filteredNewTranscripts[0].transmissionId,
+                filteredNewTranscripts[0].playbackAudioUri
+              );
+            }
+          }
         }
       } catch (error) {
         console.error('Polling error:', error);
@@ -693,6 +736,25 @@ export function TranscriptView({
         }
         triggerSnackbar={triggerSnackbar}
       />
+
+      <Box
+        sx={{
+          display: 'flex',
+          justifyContent: 'flex-end',
+        }}
+      >
+        <FormControlLabel
+          control={
+            <Checkbox
+              checked={alwaysPlayLatestAudio}
+              onChange={(e) => setAlwaysPlayLatestAudio(e.target.checked)}
+              disabled={!searchedFeed}
+            />
+          }
+          label="Always play latest audio"
+          slotProps={{ typography: { variant: 'body2' } }}
+        />
+      </Box>
 
       <AudioDisplay
         transcripts={transcripts}
