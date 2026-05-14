@@ -1397,3 +1397,196 @@ class OrderedSegmentedStitchAudioTest(unittest.TestCase):
         self.assertEqual(flush_req_2.time_range.duration_ms, 5000)
         self.assertFalse(flush_req_2.missing_post_context)
         self.assertTrue(flush_req_2.missing_prior_context)
+
+
+class DlqTaggingTest(unittest.TestCase):
+    """Regression tests for the two bugs fixed in PR #458:
+
+    Bug 1: StitcherEngine DLQ results were plain tuples, not beam.pvalue.TaggedOutput.
+           Without _yield_tagged_outputs, DLQ payloads silently route to the main output
+           and get lost, rather than landing on the transcription_dlq tag.
+
+    Bug 2: _apply_flush_action re-read transmission_context state instead of using the
+           already-loaded curr_context. A stale or None re-read would lose feed_metadata
+           and sample_rate, causing downstream serialization failures.
+    """
+
+    def _make_fn_and_states(
+        self,
+        fn_class: type,
+    ) -> tuple[Any, Any, Any, Any]:
+        """Returns (fn, mock_state_context, mock_state_buffer, mock_last_start_ms)."""
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        stitch_config = get_test_stitch_config(stale_timeout_ms=5000)
+        fn = fn_class(order_config=order_config, stitch_config=stitch_config)
+
+        class MockValueState:
+            def __init__(self, initial: Any = None) -> None:
+                self.val = initial
+
+            def read(self) -> Any:
+                return self.val
+
+            def write(self, val: Any) -> None:
+                self.val = val
+
+            def clear(self) -> None:
+                self.val = None
+
+        class MockBagState:
+            def __init__(self) -> None:
+                self.items: list[Any] = []
+
+            def read(self) -> list[Any]:
+                return self.items
+
+            def add(self, item: Any) -> None:
+                self.items.append(item)
+
+            def clear(self) -> None:
+                self.items = []
+
+        ctx = ActiveStitchingState(
+            session_id="test-session",
+            feed_metadata=FeedMetadata(
+                feed_name="test-feed", external_id="ext-id"
+            ),
+        )
+        return fn, MockValueState(ctx), MockBagState(), MockValueState(None)
+
+    # --- Bug 1: _yield_tagged_outputs wrapping ---
+
+    def test_yield_tagged_outputs_wraps_dlq_tuple(self) -> None:
+        """Verifies that _yield_tagged_outputs converts a raw DLQ tuple into a TaggedOutput."""
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        stitch_config = get_test_stitch_config()
+        fn = OrderedContinuousStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+
+        dlq_payload = {"error": "mock error", "attributes": {}}
+        results = list(
+            fn._yield_tagged_outputs([("transcription_dlq", dlq_payload)])
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertIsInstance(results[0], beam.pvalue.TaggedOutput)
+        self.assertEqual(results[0].tag, "transcription_dlq")
+        self.assertEqual(results[0].value, dlq_payload)
+
+    def test_yield_tagged_outputs_passes_through_normal_results(self) -> None:
+        """Verifies that _yield_tagged_outputs leaves main FlushRequest tuples unchanged."""
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        stitch_config = get_test_stitch_config()
+        fn = OrderedContinuousStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+
+        flush_req = MagicMock(spec=FlushRequest)
+        results = list(fn._yield_tagged_outputs([("feed-id", flush_req)]))
+
+        self.assertEqual(len(results), 1)
+        self.assertNotIsInstance(results[0], beam.pvalue.TaggedOutput)
+        self.assertEqual(results[0], ("feed-id", flush_req))
+
+    def test_yield_tagged_outputs_mixed_results(self) -> None:
+        """Verifies that _yield_tagged_outputs handles a mix of DLQ and main outputs."""
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        stitch_config = get_test_stitch_config()
+        fn = OrderedContinuousStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+
+        flush_req = MagicMock(spec=FlushRequest)
+        dlq_payload = {"error": "oops"}
+        results = list(
+            fn._yield_tagged_outputs(
+                [
+                    ("feed-id", flush_req),
+                    ("transcription_dlq", dlq_payload),
+                ]
+            )
+        )
+
+        self.assertEqual(len(results), 2)
+        # First is a normal output
+        self.assertNotIsInstance(results[0], beam.pvalue.TaggedOutput)
+        # Second is wrapped
+        self.assertIsInstance(results[1], beam.pvalue.TaggedOutput)
+        self.assertEqual(results[1].tag, "transcription_dlq")
+
+    def test_segmented_fn_also_wraps_dlq_outputs(self) -> None:
+        """Verifies that OrderedSegmentedStitchAudioFn._yield_tagged_outputs wraps DLQ tuples."""
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        stitch_config = get_test_stitch_config()
+        fn = OrderedSegmentedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+
+        dlq_payload = {"error": "segmented dlq error"}
+        results = list(
+            fn._yield_tagged_outputs([("transcription_dlq", dlq_payload)])
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertIsInstance(results[0], beam.pvalue.TaggedOutput)
+        self.assertEqual(results[0].tag, "transcription_dlq")
+
+    # --- Bug 2: feed_metadata preserved through stale flush ---
+
+    @patch(
+        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
+    )
+    def test_stale_flush_preserves_feed_metadata_in_flush_request(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Regression test for PR #458 Bug 2: verifies that feed_metadata from the
+        active stitching context is correctly included in the FlushRequest, even if
+        Beam state were re-read (which would have returned IdleFeedState after the write).
+
+        Previously, _apply_flush_action re-read transmission_context from the state store
+        after writing IdleFeedState, which lost feed_metadata and sample_rate.
+        """
+        mock_processor_inst = mock_audio_processor.return_value
+        chunk_data = AudioChunkData(
+            start_ms=100000,
+            audio=np.zeros(16000 * 3, dtype=np.int16),
+            speech_segments=[TimeRange(0, 3000)],
+            gcs_uri="gs://bucket/chunk.flac",
+            duration_ms=3000,
+            sample_rate=16000,
+        )
+        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+
+        fn, mock_state_context, mock_state_buffer, mock_last_start_ms = (
+            self._make_fn_and_states(OrderedContinuousStitchAudioFn)
+        )
+        fn.setup()
+
+        # Seed the buffer with audio so the flush has content to emit
+        mock_state_buffer.add(np.zeros(16000 * 3, dtype=np.int16))
+
+        expected_feed_metadata = FeedMetadata(
+            feed_name="test-feed", external_id="ext-id"
+        )
+
+        outputs = list(
+            fn.handle_stale_transmission_event(
+                key="test-feed",
+                transmission_buffer=mock_state_buffer,  # type: ignore
+                transmission_context=mock_state_context,  # type: ignore
+                last_start_ms_state=mock_last_start_ms,  # type: ignore
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        # The flush should have produced exactly one result
+        self.assertEqual(len(outputs), 1)
+        feed_id, flush_request = outputs[0]
+        self.assertEqual(feed_id, "test-feed")
+        # feed_metadata must be preserved from the active context, not lost on state re-read
+        self.assertIsNotNone(flush_request.feed_metadata)
+        self.assertEqual(flush_request.feed_metadata, expected_feed_metadata)
+        # State should now be IdleFeedState (context reset after flush)
+        self.assertIsInstance(mock_state_context.read(), IdleFeedState)
