@@ -13,13 +13,13 @@ import { ApiError } from '@transcription/common';
 import AppContainer from './components/AppContainer';
 import Login from './components/Login';
 import LoginModal from './components/common/LoginModal';
+import FeedSearchView from './components/feeds/FeedSearchView';
 import FeedsView from './components/feeds/FeedsView';
 import RulesView from './components/rules/RulesView';
 import TranscriptView from './components/transcripts/TranscriptView';
 import { useAuth } from './context/AuthContext';
 
 import './App.css';
-import FeedSearchView from './components/feeds/FeedSearchView';
 
 const DocsView = lazy(() => import('./components/docs/DocsView'));
 

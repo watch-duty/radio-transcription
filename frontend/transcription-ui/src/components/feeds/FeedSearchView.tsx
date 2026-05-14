@@ -1,10 +1,10 @@
 import { useEffect } from 'react';
 
+import { Box, Typography } from '@mui/material';
 import { useQuery } from '@tanstack/react-query';
 
 import { useAuth } from '../../context/AuthContext';
 import { listFeeds } from '../../service/listFeeds';
-import { Box, Typography } from '@mui/material';
 import { FeedTable } from './FeedTable';
 
 interface FeedSearchViewProps {
@@ -14,9 +14,7 @@ interface FeedSearchViewProps {
 
 const FEED_REFETCH_INTERVAL_MS = 15000; // 15 seconds
 
-export function FeedSearchView({
-  onError,
-}: FeedSearchViewProps) {
+export function FeedSearchView({ onError }: FeedSearchViewProps) {
   const { token } = useAuth();
 
   const {

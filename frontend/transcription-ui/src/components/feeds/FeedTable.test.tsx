@@ -1,18 +1,30 @@
 // @vitest-environment jsdom
 import React from 'react';
+import { MemoryRouter } from 'react-router';
 import { VirtuosoMockContext } from 'react-virtuoso';
+
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from '@testing-library/react';
 import type { Feed } from '@transcription/common';
 
 import { FeedTable } from './FeedTable';
 
 const renderFeedTable = (props: React.ComponentProps<typeof FeedTable>) => {
   return render(
-    <VirtuosoMockContext.Provider value={{ viewportHeight: 1000, itemHeight: 100 }}>
-      <FeedTable {...props} />
-    </VirtuosoMockContext.Provider>
+    <MemoryRouter>
+      <VirtuosoMockContext.Provider
+        value={{ viewportHeight: 1000, itemHeight: 100 }}
+      >
+        <FeedTable {...props} />
+      </VirtuosoMockContext.Provider>
+    </MemoryRouter>
   );
 };
 
@@ -68,7 +80,7 @@ describe('FeedTable', () => {
   it('filters feeds by search bar input (name match)', () => {
     renderFeedTable({ feeds: mockFeeds, isLoading: false });
 
-    const searchInput = screen.getByPlaceholderText(/Search feeds by name or tag/i);
+    const searchInput = screen.getByPlaceholderText(/Search feeds\.\.\./i);
     fireEvent.change(searchInput, { target: { value: 'bravo' } });
 
     expect(screen.getByText('Bravo Scanner')).toBeTruthy();
@@ -78,7 +90,7 @@ describe('FeedTable', () => {
   it('filters feeds by search bar input (tag match)', () => {
     renderFeedTable({ feeds: mockFeeds, isLoading: false });
 
-    const searchInput = screen.getByPlaceholderText(/Search feeds by name or tag/i);
+    const searchInput = screen.getByPlaceholderText(/Search feeds\.\.\./i);
     fireEvent.change(searchInput, { target: { value: 'marin' } });
 
     expect(screen.getByText('Alpha Radio')).toBeTruthy();
@@ -89,7 +101,7 @@ describe('FeedTable', () => {
     renderFeedTable({ feeds: mockFeeds, isLoading: false });
 
     const nameSortLabel = screen.getByText('Name');
-    
+
     // Initially asc, click to sort desc
     fireEvent.click(nameSortLabel);
 
@@ -102,7 +114,7 @@ describe('FeedTable', () => {
     renderFeedTable({ feeds: mockFeeds, isLoading: false });
 
     const statusSortLabel = screen.getByText('Status');
-    
+
     // Click to sort by status
     fireEvent.click(statusSortLabel);
 
@@ -113,8 +125,10 @@ describe('FeedTable', () => {
   it('opens the three dot menu and disables links if not present', () => {
     renderFeedTable({ feeds: mockFeeds, isLoading: false });
 
-    const actionButtons = screen.getAllByRole('button', { name: /feed actions/i });
-    
+    const actionButtons = screen.getAllByRole('button', {
+      name: /feed actions/i,
+    });
+
     // Click actions for Bravo Scanner (index 1) which has no links
     fireEvent.click(actionButtons[1]);
 
@@ -131,8 +145,10 @@ describe('FeedTable', () => {
   it('enables links in menu if URLs are present', () => {
     renderFeedTable({ feeds: mockFeeds, isLoading: false });
 
-    const actionButtons = screen.getAllByRole('button', { name: /feed actions/i });
-    
+    const actionButtons = screen.getAllByRole('button', {
+      name: /feed actions/i,
+    });
+
     // Click actions for Alpha Radio (index 0) which has links
     fireEvent.click(actionButtons[0]);
 
@@ -140,8 +156,12 @@ describe('FeedTable', () => {
     const sourceUrlItem = within(menu).getByText('Source URL').closest('a');
     const archiveUrlItem = within(menu).getByText('Archive URL').closest('a');
 
-    expect(sourceUrlItem?.getAttribute('href')).toBe('https://example.com/source');
-    expect(archiveUrlItem?.getAttribute('href')).toBe('https://example.com/archive');
+    expect(sourceUrlItem?.getAttribute('href')).toBe(
+      'https://example.com/source'
+    );
+    expect(archiveUrlItem?.getAttribute('href')).toBe(
+      'https://example.com/archive'
+    );
     expect(sourceUrlItem?.getAttribute('target')).toBe('_blank');
   });
 });

@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { TableVirtuoso } from 'react-virtuoso';
 import { Link as RouterLink } from 'react-router';
+import { TableVirtuoso } from 'react-virtuoso';
 
 import InventoryIcon from '@mui/icons-material/Inventory';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
@@ -10,6 +10,7 @@ import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
 import IconButton from '@mui/material/IconButton';
 import InputAdornment from '@mui/material/InputAdornment';
+import Link from '@mui/material/Link';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
 import Menu from '@mui/material/Menu';
@@ -23,7 +24,6 @@ import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import TableSortLabel from '@mui/material/TableSortLabel';
 import TextField from '@mui/material/TextField';
-import Link from '@mui/material/Link';
 import Typography from '@mui/material/Typography';
 import type { Feed } from '@transcription/common';
 
@@ -139,13 +139,26 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
             maxWidth: 600,
           }}
         />
-        {filteredAndSortedFeeds.length !== feeds.length && <Typography variant="body2" color="text.secondary" sx={{ ml: 'auto' }}>
-          Showing {filteredAndSortedFeeds.length} of {feeds.length} feeds
-        </Typography>}
+        {filteredAndSortedFeeds.length !== feeds.length && (
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ ml: 'auto' }}
+          >
+            Showing {filteredAndSortedFeeds.length} of {feeds.length} feeds
+          </Typography>
+        )}
       </Box>
 
       {isLoading ? (
-        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flexGrow: 1 }}>
+        <Box
+          sx={{
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            flexGrow: 1,
+          }}
+        >
           <CircularProgress />
         </Box>
       ) : (
@@ -153,25 +166,35 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
           data={filteredAndSortedFeeds}
           computeItemKey={(_index, feed) => feed.id}
           components={{
-            Scroller: React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>((props, ref) => (
-              <TableContainer {...props} ref={ref} />
-            )),
+            Scroller: React.forwardRef<
+              HTMLDivElement,
+              React.HTMLAttributes<HTMLDivElement>
+            >((props, ref) => <TableContainer {...props} ref={ref} />),
             Table: (props) => (
-              <Table {...props} sx={{ borderCollapse: 'separate', tableLayout: 'fixed' }} />
+              <Table
+                {...props}
+                sx={{ borderCollapse: 'separate', tableLayout: 'fixed' }}
+              />
             ),
-            TableHead: React.forwardRef<HTMLTableSectionElement, React.HTMLAttributes<HTMLTableSectionElement>>((props, ref) => (
-              <TableHead {...props} ref={ref} />
-            )),
-            TableRow: (props) => (
-              <TableRow {...props} hover />
-            ),
-            TableBody: React.forwardRef<HTMLTableSectionElement, React.HTMLAttributes<HTMLTableSectionElement>>((props, ref) => (
-              <TableBody {...props} ref={ref} />
-            )),
+            TableHead: React.forwardRef<
+              HTMLTableSectionElement,
+              React.HTMLAttributes<HTMLTableSectionElement>
+            >((props, ref) => <TableHead {...props} ref={ref} />),
+            TableRow: (props) => <TableRow {...props} hover />,
+            TableBody: React.forwardRef<
+              HTMLTableSectionElement,
+              React.HTMLAttributes<HTMLTableSectionElement>
+            >((props, ref) => <TableBody {...props} ref={ref} />),
           }}
           fixedHeaderContent={() => (
             <TableRow>
-              <TableCell sx={{ width: '35%', bgcolor: 'background.paper', fontWeight: 'bold' }}>
+              <TableCell
+                sx={{
+                  width: '35%',
+                  bgcolor: 'background.paper',
+                  fontWeight: 'bold',
+                }}
+              >
                 <TableSortLabel
                   active={orderBy === 'name'}
                   direction={orderBy === 'name' ? orderDirection : 'asc'}
@@ -180,7 +203,13 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
                   Name
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ width: '25%', bgcolor: 'background.paper', fontWeight: 'bold' }}>
+              <TableCell
+                sx={{
+                  width: '25%',
+                  bgcolor: 'background.paper',
+                  fontWeight: 'bold',
+                }}
+              >
                 <TableSortLabel
                   active={orderBy === 'status'}
                   direction={orderBy === 'status' ? orderDirection : 'asc'}
@@ -189,7 +218,13 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
                   Status
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ width: '30%', bgcolor: 'background.paper', fontWeight: 'bold' }}>
+              <TableCell
+                sx={{
+                  width: '30%',
+                  bgcolor: 'background.paper',
+                  fontWeight: 'bold',
+                }}
+              >
                 Tags
               </TableCell>
               <TableCell>{/* Empty header cell */}</TableCell>
@@ -197,8 +232,19 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
           )}
           itemContent={(_index, feed) => (
             <>
-              <TableCell sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
-                <Link component={RouterLink} to={`/transcripts?feedId=${feed.id}`} variant="body1" sx={{ fontWeight: 500 }}>
+              <TableCell
+                sx={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'flex-start',
+                }}
+              >
+                <Link
+                  component={RouterLink}
+                  to={`/transcripts?feedId=${feed.id}`}
+                  variant="body1"
+                  sx={{ fontWeight: 500 }}
+                >
                   {feed.name}
                 </Link>
                 <Typography variant="caption" color="text.secondary">
@@ -206,13 +252,22 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
                 </Typography>
               </TableCell>
               <TableCell sx={{ verticalAlign: 'top' }}>
-                <FeedStatusIndicator status={feed.status} lastHeartbeat={feed.lastHeartbeat} />
+                <FeedStatusIndicator
+                  status={feed.status}
+                  lastHeartbeat={feed.lastHeartbeat}
+                />
               </TableCell>
               <TableCell sx={{ verticalAlign: 'top' }}>
                 {feed.tags && feed.tags.length > 0 ? (
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                  <Box
+                    sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}
+                  >
                     {feed.tags.map((tag, i) => (
-                      <Typography key={i} variant="body2" sx={{ fontFamily: 'monospace' }}>
+                      <Typography
+                        key={i}
+                        variant="body2"
+                        sx={{ fontFamily: 'monospace' }}
+                      >
                         <b>{tag.key}</b>: {tag.value}
                       </Typography>
                     ))}
