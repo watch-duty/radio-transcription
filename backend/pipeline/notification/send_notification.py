@@ -4,8 +4,10 @@ import os
 import urllib.parse
 
 import functions_framework
+import requests
 from cloudevents.http.event import CloudEvent
 
+from backend.pipeline.common import auth, env
 from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.common.storage.redis_service import RedisService
 from backend.pipeline.common.tracing_utils import (
@@ -22,6 +24,7 @@ from backend.pipeline.schema_types.alert_notification_pb2 import (
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
+from backend.services.feeds.models import Tag
 
 # Setup Logging and Tracing
 setup_logging()
@@ -33,6 +36,38 @@ if APP_URL is None or not APP_URL.strip():
     msg = "APP_URL environment variable is not set or is empty."
     raise ValueError(msg)
 APP_URL = APP_URL.strip()
+
+FEEDS_API_URL = os.environ.get("FEEDS_API_URL", "")
+if not FEEDS_API_URL.strip():
+    msg = "FEEDS_API_URL environment variable is not set or is empty."
+    raise ValueError(msg)
+FEEDS_API_URL = FEEDS_API_URL.strip()
+
+
+def _get_feed_tags(feed_id: str) -> list[Tag] | None:
+    """Fetches tags for a given feed_id from the feeds API."""
+    url = f"{FEEDS_API_URL}/v1/feeds/{feed_id}"
+    headers = {}
+
+    if env.is_gcp_env():
+        token = auth.get_id_token(FEEDS_API_URL)
+        headers["Authorization"] = f"Bearer {token}"
+
+    try:
+        response = requests.get(url, headers=headers, timeout=5)
+    except Exception:
+        logger.exception(f"Error fetching feed {feed_id} from feeds API")
+    else:
+        if response.status_code == 200:
+            data = response.json()
+            tags_data = data.get("tags") or []
+            return [Tag(**t) for t in tags_data]
+
+        logger.warning(
+            f"Failed to fetch feed {feed_id}: {response.status_code}"
+        )
+    return None
+
 
 # Keeping the notification deduplicate connection outside the main function. This is so the connection is
 # maintained while the function is warm instead of reconnecting each invocation.
@@ -74,9 +109,10 @@ def _build_app_url(
 
 def convert_to_notification(
     evaluated_transcribed_audio: EvaluatedTranscribedAudio,
+    tags: list[Tag] | None,
 ) -> AlertNotification:
     app_url = _build_app_url(evaluated_transcribed_audio)
-    return AlertNotification(
+    notification = AlertNotification(
         feed_id=evaluated_transcribed_audio.feed_id,
         transmission_id=evaluated_transcribed_audio.transmission_id,
         source_audio_uris=evaluated_transcribed_audio.source_audio_uris,
@@ -95,6 +131,14 @@ def convert_to_notification(
         end_audio_offset=evaluated_transcribed_audio.end_audio_offset,
     )
 
+    if tags:
+        for tag in tags:
+            t = notification.tags.add()
+            t.key = tag.key
+            t.value = tag.value
+
+    return notification
+
 
 @functions_framework.cloud_event
 def send_notification(cloud_event: CloudEvent) -> None:
@@ -109,15 +153,20 @@ def send_notification(cloud_event: CloudEvent) -> None:
             logger.warning("Unable to parse incoming message")
             return
 
-        # Convert the EvaluatedTranscribedAudio into an AlertNotifcation
-        alert_notification = convert_to_notification(
-            evaluated_transcribed_audio
-        )
-        notification_id = alert_notification.transmission_id
+        notification_id = evaluated_transcribed_audio.transmission_id
         if not deduplication.process_notification(notification_id):
             message = f"Duplicate transmission_id detected, skipping notification with ID: {notification_id}"
             logger.warning(message)
             return
+
+        # Fetch tags from feeds API
+        tags = _get_feed_tags(evaluated_transcribed_audio.feed_id)
+
+        # Convert the EvaluatedTranscribedAudio into an AlertNotifcation
+        alert_notification = convert_to_notification(
+            evaluated_transcribed_audio,
+            tags,
+        )
 
         # Send a POST request to the endpoint
         try:
