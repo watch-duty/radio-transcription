@@ -752,6 +752,8 @@ export function TranscriptView({
         sx={{
           display: 'flex',
           justifyContent: 'flex-end',
+          // This space allows room for the alert icon which hovers above the AudioDisplay.
+          mb: 2.5,
         }}
       >
         <FormControlLabel
