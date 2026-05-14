@@ -219,6 +219,7 @@ class StitcherEngine:
                         start_audio_offset_ms=curr_ctx.start_audio_offset_ms,
                         end_audio_offset_ms=end_time_ms
                         - curr_ctx.buffer_start_time_ms,
+                        speech_segments=curr_ctx.speech_segments,
                         transmission_id=transmission_id,
                         feed_metadata=curr_ctx.feed_metadata,
                         sample_rate=curr_ctx.sample_rate
@@ -250,17 +251,15 @@ class StitcherEngine:
         last_start_ms_state: Any,
         timer_manager: Any,
         session_id: str,
+        curr_context: datatypes.ActiveStitchingState,
     ) -> Iterator[tuple[str, datatypes.FlushRequest]]:
         """Emits a structured FlushRequest payload downstream and resets internal state fields."""
         task_logger = _get_task_logger(
             action.feed_id, session_id, "transcription-stitcher"
         )
 
-        curr_ctx = transmission_context.read() or datatypes.IdleFeedState()
-        processed_uris = action.contributing_audio_uris or (
-            list(curr_ctx.contributing_audio_uris)
-            if isinstance(curr_ctx, datatypes.ActiveStitchingState)
-            else []
+        processed_uris = action.contributing_audio_uris or list(
+            curr_context.contributing_audio_uris
         )
 
         if not action.clear_state:
@@ -280,10 +279,6 @@ class StitcherEngine:
             task_logger.info(
                 f"[Flush] Emitting transmission {transmission_id} with {len(processed_uris)} chunks"
             )
-
-            if isinstance(curr_ctx, datatypes.IdleFeedState):
-                msg = "feed_metadata cannot be None in _apply_flush_action"
-                raise ValueError(msg)
 
             current_start_ms = action.speech_time_range.start_ms
             last_start_ms = last_start_ms_state.read()
@@ -313,8 +308,8 @@ class StitcherEngine:
                     end_audio_offset_ms=action.end_audio_offset_ms,
                     speech_segments=action.speech_segments,
                     transmission_id=transmission_id,
-                    feed_metadata=curr_ctx.feed_metadata,
-                    sample_rate=curr_ctx.sample_rate
+                    feed_metadata=curr_context.feed_metadata,
+                    sample_rate=curr_context.sample_rate
                     or common_constants.SAMPLE_RATE_HZ,
                     traceparent=action.traceparent,
                 ),
@@ -467,6 +462,7 @@ class StitcherEngine:
                     start_audio_offset_ms=curr_context.start_audio_offset_ms,
                     end_audio_offset_ms=None,
                     buffer_duration_ms=curr_context.buffer_duration_ms,
+                    speech_segments=curr_context.speech_segments.copy(),
                     traceparent=curr_context.traceparent,
                 )
 
@@ -543,6 +539,7 @@ class StitcherEngine:
                                 last_start_ms_state,
                                 timer_manager,
                                 curr_context.session_id or "unknown",
+                                curr_context,
                             )
                         )
                     )
@@ -568,6 +565,7 @@ class StitcherEngine:
                         missing_prior_context=ctx.missing_prior_context,
                         start_audio_offset_ms=ctx.start_audio_offset_ms,
                         buffer_duration_ms=ctx.buffer_duration_ms,
+                        speech_segments=ctx.speech_segments,
                         prior_audio_tail=prior_tail,
                     )
                 case datatypes.ScheduleStaleTimerAction():
