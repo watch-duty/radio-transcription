@@ -1,6 +1,8 @@
 """Constants shared across the pipeline and tests."""
 
-DEAD_LETTER_QUEUE_TAG = "transcription_dlq"
+from typing import Final
+
+DEAD_LETTER_QUEUE_TAG: Final = "transcription_dlq"
 
 # Default path to the packaged Chirp phrase hints file in the container image.
 DEFAULT_PHRASE_HINTS_FILE_PATH = (
@@ -29,7 +31,7 @@ DEFAULT_MAX_TRANSMISSION_DURATION_MS = 60000
 DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS = 60000
 DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS = 10000
 DEFAULT_FLOAT_TOLERANCE_MS = 500
-MAIN_TAG = "main"
+MAIN_TAG: Final = "main"
 
 # API Retry Configuration
 DEFAULT_MAX_RETRIES = 5

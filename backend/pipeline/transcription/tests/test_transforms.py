@@ -1280,7 +1280,7 @@ class DlqTaggingTest(unittest.TestCase):
 
         dlq_payload = {"error": "mock error", "attributes": {}}
         results = list(
-            fn._yield_tagged_outputs([("transcription_dlq", dlq_payload)])  # type: ignore[arg-type]
+            fn._yield_tagged_outputs([(DEAD_LETTER_QUEUE_TAG, dlq_payload)])
         )
 
         self.assertEqual(len(results), 1)
@@ -1297,7 +1297,7 @@ class DlqTaggingTest(unittest.TestCase):
         )
 
         flush_req = MagicMock(spec=FlushRequest)
-        results = list(fn._yield_tagged_outputs([("feed-id", flush_req)]))  # type: ignore[arg-type]
+        results = list(fn._yield_tagged_outputs([("feed-id", flush_req)]))
 
         self.assertEqual(len(results), 1)
         self.assertNotIsInstance(results[0], beam.pvalue.TaggedOutput)
@@ -1314,10 +1314,10 @@ class DlqTaggingTest(unittest.TestCase):
         flush_req = MagicMock(spec=FlushRequest)
         dlq_payload = {"error": "oops"}
         results = list(
-            fn._yield_tagged_outputs(  # type: ignore[arg-type]
+            fn._yield_tagged_outputs(
                 [
                     ("feed-id", flush_req),
-                    ("transcription_dlq", dlq_payload),
+                    (DEAD_LETTER_QUEUE_TAG, dlq_payload),
                 ]
             )
         )
@@ -1339,7 +1339,7 @@ class DlqTaggingTest(unittest.TestCase):
 
         dlq_payload = {"error": "segmented dlq error"}
         results = list(
-            fn._yield_tagged_outputs([("transcription_dlq", dlq_payload)])  # type: ignore[arg-type]
+            fn._yield_tagged_outputs([(DEAD_LETTER_QUEUE_TAG, dlq_payload)])
         )
 
         self.assertEqual(len(results), 1)
