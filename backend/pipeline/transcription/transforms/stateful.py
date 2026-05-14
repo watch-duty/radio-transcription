@@ -40,6 +40,9 @@ from backend.pipeline.transcription.audio import audio_processor, vad
 from backend.pipeline.transcription.common import constants as trans_constants
 from backend.pipeline.transcription.common import datatypes
 from backend.pipeline.transcription.common import logging as trans_logging
+from backend.pipeline.transcription.common.constants import (
+    DEAD_LETTER_QUEUE_TAG,
+)
 from backend.pipeline.transcription.services import transcribers
 from backend.pipeline.transcription.state import sequence_buffer
 from backend.pipeline.transcription.transforms import stitcher_engine
@@ -288,7 +291,7 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
         self,
         results: Iterable[
             tuple[str, datatypes.FlushRequest]
-            | tuple[Literal["transcription_dlq"], dict[str, Any]]
+            | tuple[Literal[DEAD_LETTER_QUEUE_TAG], dict[str, Any]]
         ],
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
@@ -314,7 +317,8 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest]
         | beam.pvalue.TaggedOutput[
-            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
+            Literal[DEAD_LETTER_QUEUE_TAG],
+            dict[str, str | bool | dict[str, str]],
         ]
     ]:
         """Intercepts chunk arrival, resolves chronological ordering, and delegates to StitcherEngine."""
@@ -411,7 +415,8 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest]
         | beam.pvalue.TaggedOutput[
-            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
+            Literal[DEAD_LETTER_QUEUE_TAG],
+            dict[str, str | bool | dict[str, str]],
         ]
     ]:
         """Handles the gap timeout by advancing the expected sequence."""
@@ -509,7 +514,8 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest]
         | beam.pvalue.TaggedOutput[
-            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
+            Literal[DEAD_LETTER_QUEUE_TAG],
+            dict[str, str | bool | dict[str, str]],
         ]
     ]:
         """Watermark crossed stale duration, delegate flush to StitcherEngine."""
@@ -538,7 +544,8 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest]
         | beam.pvalue.TaggedOutput[
-            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
+            Literal[DEAD_LETTER_QUEUE_TAG],
+            dict[str, str | bool | dict[str, str]],
         ]
     ]:
         """Wall-clock crossed stale duration, delegate flush to StitcherEngine."""
@@ -660,7 +667,7 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
         self,
         results: Iterable[
             tuple[str, datatypes.FlushRequest]
-            | tuple[Literal["transcription_dlq"], dict[str, Any]]
+            | tuple[Literal[DEAD_LETTER_QUEUE_TAG], dict[str, Any]]
         ],
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
@@ -686,7 +693,8 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest]
         | beam.pvalue.TaggedOutput[
-            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
+            Literal[DEAD_LETTER_QUEUE_TAG],
+            dict[str, str | bool | dict[str, str]],
         ]
     ]:
         """Intercepts chunk arrival, resolves chronological ordering, and delegates to StitcherEngine."""
@@ -784,7 +792,8 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest]
         | beam.pvalue.TaggedOutput[
-            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
+            Literal[DEAD_LETTER_QUEUE_TAG],
+            dict[str, str | bool | dict[str, str]],
         ]
     ]:
         """Handles the gap timeout by advancing the expected sequence."""
@@ -880,7 +889,8 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest]
         | beam.pvalue.TaggedOutput[
-            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
+            Literal[DEAD_LETTER_QUEUE_TAG],
+            dict[str, str | bool | dict[str, str]],
         ]
     ]:
         """Watermark crossed stale duration, delegate flush to StitcherEngine."""
@@ -909,7 +919,8 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest]
         | beam.pvalue.TaggedOutput[
-            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
+            Literal[DEAD_LETTER_QUEUE_TAG],
+            dict[str, str | bool | dict[str, str]],
         ]
     ]:
         """Wall-clock crossed stale duration, delegate flush to StitcherEngine."""
@@ -1168,7 +1179,8 @@ class TranscribeAudioFn(beam.DoFn):
     ) -> Iterator[
         datatypes.TranscriptionResult
         | beam.pvalue.TaggedOutput[
-            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
+            Literal[DEAD_LETTER_QUEUE_TAG],
+            dict[str, str | bool | dict[str, str]],
         ]
     ]:
         """Submits the consolidated flushed buffer strictly sequentially to the external transcription API."""

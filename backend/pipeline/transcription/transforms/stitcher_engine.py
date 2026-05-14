@@ -26,6 +26,9 @@ from backend.pipeline.transcription.common import constants as trans_constants
 from backend.pipeline.transcription.common import datatypes
 from backend.pipeline.transcription.common import logging as trans_logging
 from backend.pipeline.transcription.common import utils as trans_utils
+from backend.pipeline.transcription.common.constants import (
+    DEAD_LETTER_QUEUE_TAG,
+)
 from backend.pipeline.transcription.state import stitcher_state
 
 logger = trans_logging.get_task_logger(
@@ -96,7 +99,7 @@ class StitcherEngine:
     ) -> tuple[
         list[
             tuple[str, datatypes.FlushRequest]
-            | tuple[Literal["transcription_dlq"], dict[str, Any]]
+            | tuple[Literal[DEAD_LETTER_QUEUE_TAG], dict[str, Any]]
         ],
         int,
     ]:
@@ -157,7 +160,7 @@ class StitcherEngine:
         timer_manager: Any,
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest]
-        | tuple[Literal["transcription_dlq"], dict[str, Any]]
+        | tuple[Literal[DEAD_LETTER_QUEUE_TAG], dict[str, Any]]
     ]:
         """Orchestrates stale flushes when watermarks cross the timeout threshold.
 
@@ -337,7 +340,7 @@ class StitcherEngine:
     ) -> tuple[
         list[
             tuple[str, datatypes.FlushRequest]
-            | tuple[Literal["transcription_dlq"], dict[str, Any]]
+            | tuple[Literal[DEAD_LETTER_QUEUE_TAG], dict[str, Any]]
         ],
         datatypes.TransmissionContext,
         int,
