@@ -531,9 +531,11 @@ export function TranscriptView({
             }
             // Trigger the new audio to play if no audio is currently playing
             if (!isAudioPlaying && alwaysPlayLatestAudio) {
+              const audioToPlay =
+                filteredNewTranscripts[filteredNewTranscripts.length - 1];
               toggleAudio(
-                filteredNewTranscripts[0].transmissionId,
-                filteredNewTranscripts[0].playbackAudioUri
+                audioToPlay.transmissionId,
+                audioToPlay.playbackAudioUri
               );
             }
           }
@@ -554,6 +556,10 @@ export function TranscriptView({
     pollNewerTranscripts,
     updateCacheWithNewTranscripts,
     transcriptsPollingIntervalMs,
+    triggerSnackbar,
+    toggleAudio,
+    isAudioPlaying,
+    alwaysPlayLatestAudio,
   ]);
 
   const {
