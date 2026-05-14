@@ -162,7 +162,7 @@ description = "Run all E2E tests in Docker Compose"
 run = """
 docker compose --env-file local_dev/LOCAL.env build
 docker compose --env-file local_dev/LOCAL.env run --rm integration-tests
-docker compose --env-file local_dev/LOCAL.env down
+docker compose --env-file local_dev/LOCAL.env down --remove-orphans
 """
 
 [tasks."test:api"]
