@@ -4,9 +4,21 @@ import logging
 from google.cloud import logging as cloud_logging
 
 from backend.pipeline.common.env import is_gcp_env
-from backend.pipeline.common.tracing_utils import setup_tracing
+from backend.pipeline.common.tracing_utils import (
+    get_trace_attributes,
+    setup_tracing,
+)
 
 logger = logging.getLogger(__name__)
+
+
+class TraceFilter(logging.Filter):
+    """Logging filter that adds trace ID and span ID to log records."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        for k, v in get_trace_attributes().items():
+            setattr(record, k, v)
+        return True
 
 
 @functools.cache
@@ -33,3 +45,6 @@ def setup_logging() -> None:
         logger.info(
             "Running without Cloud Logging. Logs will print to console."
         )
+
+    # Add trace filter to root logger
+    logging.getLogger().addFilter(TraceFilter())

@@ -73,6 +73,24 @@ def get_current_traceparent() -> str:
     return ""
 
 
+def get_trace_attributes() -> dict[str, str]:
+    """Returns a dictionary of trace attributes for the current context."""
+    traceparent = get_current_traceparent()
+    if traceparent:
+        parts = traceparent.split("-")
+        trace_id = parts[1]
+        span_id = parts[2]
+        project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or ""
+        return {
+            "trace": f"projects/{project_id}/traces/{trace_id}",
+            "spanId": span_id,
+        }
+    return {
+        "trace": "",
+        "spanId": "",
+    }
+
+
 def extract_trace_context(attributes: dict[str, str] | None) -> Context:
     """Restores OpenTelemetry trace context from Message Attributes using W3C TraceContext.
 

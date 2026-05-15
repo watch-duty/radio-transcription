@@ -1,7 +1,7 @@
 import logging
 from unittest import TestCase, mock
 
-from backend.pipeline.common.logging import setup_logging
+from backend.pipeline.common.logging import TraceFilter, setup_logging
 
 
 class TestLogging(TestCase):
@@ -38,6 +38,12 @@ class TestLogging(TestCase):
                 mock_exporter.assert_called_once_with(project_id="test-project")
                 mock_set_provider.assert_called_once()
 
+                # Verify TraceFilter was added
+                root_logger = logging.getLogger()
+                self.assertTrue(
+                    any(isinstance(f, TraceFilter) for f in root_logger.filters)
+                )
+
                 # Second call should do nothing (idempotency due to cache)
                 setup_logging()
                 mock_cloud_logging.Client.assert_called_once()
@@ -61,3 +67,48 @@ class TestLogging(TestCase):
             # Second call should do nothing (idempotency)
             setup_logging()
             mock_basic_config.assert_called_once()
+
+
+class TestTraceFilter(TestCase):
+    def test_filter_adds_trace_info_when_span_valid(self) -> None:
+        with (
+            mock.patch(
+                "backend.pipeline.common.logging.get_trace_attributes",
+                return_value={
+                    "trace": "projects/test-project/traces/4bf92f3577b34da6a3ce929d0e0e4736",
+                    "spanId": "00f067aa0ba902b7",
+                },
+            ),
+            mock.patch.dict(
+                "os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"}
+            ),
+        ):
+            record = logging.LogRecord(
+                "name", logging.INFO, "pathname", 1, "msg", (), None
+            )
+            filter_inst = TraceFilter()
+
+            self.assertTrue(filter_inst.filter(record))
+            self.assertEqual(
+                record.trace,  # ty: ignore[unresolved-attribute]
+                "projects/test-project/traces/4bf92f3577b34da6a3ce929d0e0e4736",
+            )
+            self.assertEqual(record.spanId, "00f067aa0ba902b7")  # ty: ignore[unresolved-attribute]
+
+    def test_filter_sets_empty_strings_when_span_invalid(self) -> None:
+
+        with mock.patch(
+            "backend.pipeline.common.logging.get_trace_attributes",
+            return_value={
+                "trace": "",
+                "spanId": "",
+            },
+        ):
+            record = logging.LogRecord(
+                "name", logging.INFO, "pathname", 1, "msg", (), None
+            )
+            filter_inst = TraceFilter()
+
+            self.assertTrue(filter_inst.filter(record))
+            self.assertEqual(record.trace, "")  # ty: ignore[unresolved-attribute]
+            self.assertEqual(record.spanId, "")  # ty: ignore[unresolved-attribute]
