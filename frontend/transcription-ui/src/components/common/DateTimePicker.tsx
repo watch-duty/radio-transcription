@@ -19,7 +19,7 @@ export function DateTimePicker({
   helperText,
   width,
 }: DateTimePickerProps) {
-  return (
+  return (  
     <LocalizationProvider dateAdapter={AdapterDateFns}>
       <MuiDateTimePicker
         label={label}
@@ -31,7 +31,10 @@ export function DateTimePicker({
             size: 'small',
             error: error,
             helperText: helperText,
-            sx: width ? { width } : undefined,
+            sx: {
+              width,
+              minWidth: width ? undefined : 280,
+            },
           },
           actionBar: {
             actions: ['clear', 'cancel', 'accept'],

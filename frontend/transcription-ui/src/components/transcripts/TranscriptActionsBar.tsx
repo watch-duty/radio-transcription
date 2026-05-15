@@ -3,7 +3,7 @@ import React from 'react';
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import ArrowDropUpIcon from '@mui/icons-material/ArrowDropUp';
 import SyncIcon from '@mui/icons-material/Sync';
-import { Tooltip } from '@mui/material';
+import { Badge, Tooltip } from '@mui/material';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import ButtonGroup from '@mui/material/ButtonGroup';
@@ -14,8 +14,12 @@ import Grow from '@mui/material/Grow';
 import MenuItem from '@mui/material/MenuItem';
 import MenuList from '@mui/material/MenuList';
 import Paper from '@mui/material/Paper';
+import Popover from '@mui/material/Popover';
 import Popper from '@mui/material/Popper';
 import Switch from '@mui/material/Switch';
+import FilterIcon from '@mui/icons-material/FilterList';
+
+import { DateTimePicker } from '../common/DateTimePicker';
 
 export interface TranscriptActionsBarProps {
   hasNewerTranscripts: boolean;
@@ -27,6 +31,8 @@ export interface TranscriptActionsBarProps {
   onRefresh: () => Promise<void>;
   redactTranscripts: boolean;
   setRedactTranscripts: (redact: boolean) => void;
+  dateTime: Date | null;
+  setDateTime: (dateTime: Date | null) => void;
 }
 
 const refreshIntervalOptions = [
@@ -48,9 +54,37 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   onRefresh,
   redactTranscripts,
   setRedactTranscripts,
+  dateTime,
+  setDateTime,
 }) => {
   const [anchorEl, setAnchorEl] = React.useState<HTMLElement | null>(null);
   const [refreshMenuOpen, setRefreshMenuOpen] = React.useState(false);
+
+  const [filterAnchorEl, setFilterAnchorEl] = React.useState<HTMLElement | null>(null);
+  const [localDateTime, setLocalDateTime] = React.useState<Date | null>(dateTime);
+
+  React.useEffect(() => {
+    setLocalDateTime(dateTime);
+  }, [dateTime]);
+
+  const handleFilterOpen = (event: React.MouseEvent<HTMLElement>) => {
+    setFilterAnchorEl(event.currentTarget);
+    setLocalDateTime(dateTime);
+  };
+
+  const handleFilterClose = () => {
+    setFilterAnchorEl(null);
+    setLocalDateTime(dateTime);
+  };
+
+  const handleFilterApply = () => {
+    setDateTime(localDateTime);
+    setFilterAnchorEl(null);
+  };
+
+  const handleFilterClear = () => {
+    setLocalDateTime(null);
+  };
 
   const buttonGroupRef = React.useCallback((node: HTMLElement | null) => {
     if (node !== null) {
@@ -82,7 +116,66 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
         mb: 0.5,
       }}
     >
-      <Box />
+      <Box>
+        <Tooltip title="Filter transcripts">
+          <Badge
+            color='primary'
+            badgeContent={dateTime ? '1' : '0'}
+            invisible={!dateTime}
+          >
+            <Button
+              color="primary"
+              variant="outlined"
+              sx={{ minWidth: 0, p: 0.75 }}
+              aria-label="filter"
+              onClick={handleFilterOpen}
+            >
+              <FilterIcon />
+          </Button>
+
+            </Badge>
+        </Tooltip>
+        <Popover
+          open={Boolean(filterAnchorEl)}
+          anchorEl={filterAnchorEl}
+          onClose={handleFilterClose}
+          anchorOrigin={{
+            vertical: 'bottom',
+            horizontal: 'left',
+          }}
+          transformOrigin={{
+            vertical: 'top',
+            horizontal: 'left',
+          }}
+          sx={{ zIndex: 1300 }}
+        >
+          <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <DateTimePicker
+              label="Date/time"
+              dateTime={localDateTime}
+              setDateTime={setLocalDateTime}
+            />
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Button size="small" onClick={handleFilterClear}>
+                Clear
+              </Button>
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                <Button size="small" onClick={handleFilterClose}>
+                  Cancel
+                </Button>
+                <Button
+                  size="small"
+                  variant="contained"
+                  color="primary"
+                  onClick={handleFilterApply}
+                >
+                  Apply
+                </Button>
+              </Box>
+            </Box>
+          </Box>
+        </Popover>
+      </Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <FormControlLabel
           control={
@@ -100,6 +193,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
             },
           }}
         />
+
         {!hasNewerTranscripts && (
           <>
             <ButtonGroup variant="contained" ref={buttonGroupRef}>

@@ -37,6 +37,8 @@ describe('TranscriptActionsBar', () => {
         onRefresh={mockRefresh}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
+        dateTime={null}
+        setDateTime={vi.fn()}
       />
     );
 
@@ -61,6 +63,8 @@ describe('TranscriptActionsBar', () => {
         onRefresh={mockOnRefresh}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
+        dateTime={null}
+        setDateTime={vi.fn()}
       />
     );
 
@@ -79,6 +83,8 @@ describe('TranscriptActionsBar', () => {
         onRefresh={mockOnRefresh}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
+        dateTime={null}
+        setDateTime={vi.fn()}
       />
     );
 
@@ -106,6 +112,8 @@ describe('TranscriptActionsBar', () => {
         onRefresh={mockOnRefresh}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
+        dateTime={null}
+        setDateTime={vi.fn()}
       />
     );
 
@@ -117,5 +125,75 @@ describe('TranscriptActionsBar', () => {
 
     fireEvent.click(redactSwitch);
     expect(mockSetRedactTranscripts).toHaveBeenCalledWith(true);
+  });
+
+  it('opens the filter menu, clears local value, and applies new value on Apply', () => {
+    const mockSetDateTime = vi.fn();
+    render(
+      <TranscriptActionsBar
+        searchedTimestamp={null}
+        hasNewerTranscripts={false}
+        isTranscriptsFetching={false}
+        isTranscriptsPolling={false}
+        refreshInterval={10000}
+        setRefreshInterval={mockSetRefreshInterval}
+        onRefresh={mockOnRefresh}
+        redactTranscripts={false}
+        setRedactTranscripts={mockSetRedactTranscripts}
+        dateTime={new Date('2026-05-14T12:00:00Z')}
+        setDateTime={mockSetDateTime}
+      />
+    );
+
+    const filterButton = screen.getByRole('button', { name: 'filter' });
+    fireEvent.click(filterButton);
+
+    const clearButton = screen.getByRole('button', { name: 'Clear' });
+    fireEvent.click(clearButton);
+
+    // Should not have applied yet
+    expect(mockSetDateTime).not.toHaveBeenCalled();
+
+    const applyButton = screen.getByRole('button', { name: 'Apply' });
+    fireEvent.click(applyButton);
+
+    expect(mockSetDateTime).toHaveBeenCalledWith(null);
+  });
+
+  it('keeps the original value if cleared and then cancelled', () => {
+    const mockSetDateTime = vi.fn();
+    render(
+      <TranscriptActionsBar
+        searchedTimestamp={null}
+        hasNewerTranscripts={false}
+        isTranscriptsFetching={false}
+        isTranscriptsPolling={false}
+        refreshInterval={10000}
+        setRefreshInterval={mockSetRefreshInterval}
+        onRefresh={mockOnRefresh}
+        redactTranscripts={false}
+        setRedactTranscripts={mockSetRedactTranscripts}
+        dateTime={new Date('2026-05-14T12:00:00Z')}
+        setDateTime={mockSetDateTime}
+      />
+    );
+
+    const filterButton = screen.getByRole('button', { name: 'filter' });
+    fireEvent.click(filterButton);
+
+    const clearButton = screen.getByRole('button', { name: 'Clear' });
+    fireEvent.click(clearButton);
+
+    const cancelButton = screen.getByRole('button', { name: 'Cancel' });
+    fireEvent.click(cancelButton);
+
+    expect(mockSetDateTime).not.toHaveBeenCalled();
+
+    // Reopen filter menu and apply to verify local state reverted to prop value
+    fireEvent.click(filterButton);
+    const applyButton = screen.getByRole('button', { name: 'Apply' });
+    fireEvent.click(applyButton);
+
+    expect(mockSetDateTime).toHaveBeenCalledWith(new Date('2026-05-14T12:00:00Z'));
   });
 });

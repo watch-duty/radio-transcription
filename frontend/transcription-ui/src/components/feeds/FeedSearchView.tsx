@@ -8,13 +8,14 @@ import { listFeeds } from '../../service/listFeeds';
 import { FeedTable } from './FeedTable';
 
 interface FeedSearchViewProps {
+  title: string;
   triggerSnackbar: (message: string) => void;
   onError: (error: Error, titleMessage?: string) => void;
 }
 
 const FEED_REFETCH_INTERVAL_MS = 15000; // 15 seconds
 
-export function FeedSearchView({ onError }: FeedSearchViewProps) {
+export function FeedSearchView({ title, onError }: FeedSearchViewProps) {
   const { token } = useAuth();
 
   const {
@@ -46,9 +47,7 @@ export function FeedSearchView({ onError }: FeedSearchViewProps) {
         gap: 2,
       }}
     >
-      <Typography variant="h5" sx={{ fontWeight: 'bold' }}>
-        Radio Feeds
-      </Typography>
+      <Typography variant="h5">{title}</Typography>
       <FeedTable feeds={feeds ?? []} isLoading={feedsLoading} />
     </Box>
   );

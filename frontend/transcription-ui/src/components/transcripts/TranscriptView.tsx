@@ -5,7 +5,6 @@ import type { VirtuosoHandle } from 'react-virtuoso';
 import { Howl } from 'howler';
 
 import Box from '@mui/material/Box';
-import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
@@ -24,14 +23,10 @@ import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { listTranscripts } from '../../service/listTranscripts';
 import { getAudioUrl } from '../../utils/audioUtils';
-import {
-  getInitialTimestamp,
-  roundUpToNearestMinute,
-} from '../../utils/timeUtils';
+import { roundUpToNearestMinute } from '../../utils/timeUtils';
 import AudioDisplay from '../audio/AudioDisplay';
-import DateTimePicker from '../common/DateTimePicker';
+import FeedSearchView from '../feeds/FeedSearchView';
 import FeedHeader from './FeedHeader';
-import FeedSearch from './FeedSearch';
 import TranscriptActionsBar from './TranscriptActionsBar';
 import TranscriptDisplay from './TranscriptDisplay';
 
@@ -62,21 +57,42 @@ export function TranscriptView({
 
   const queryClient = useQueryClient();
 
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
+  const targetFeedId = searchParams.get('feedId');
   const targetTransmissionId = searchParams.get('transmissionId');
+  const targetTimestampParam = searchParams.get('timestamp');
 
-  const [feedId, setFeedId] = useState<string>(
-    () => searchParams.get('feedId') || ''
+  // Need to memoize the timestamp since Dates are compared by object reference.
+  const targetTimestamp = useMemo(
+    () =>
+      targetTimestampParam ? new Date(Number(targetTimestampParam)) : null,
+    [targetTimestampParam]
   );
+
   const [searchedFeedId, setSearchedFeedId] = useState<string>(
-    () => searchParams.get('feedId') || ''
+    targetFeedId || ''
   );
-  const [timestamp, setTimestamp] = useState<Date | null>(() =>
-    getInitialTimestamp(searchParams)
+  const [searchedTimestamp, setSearchedTimestamp] = useState<Date | null>(
+    targetTimestamp
   );
-  const [searchedTimestamp, setSearchedTimestamp] = useState<Date | null>(() =>
-    getInitialTimestamp(searchParams)
-  );
+
+  // Effect which sets the searched feed ID based on the search params changing.
+  useEffect(() => {
+    if (targetFeedId) {
+      setSearchedFeedId(targetFeedId);
+    } else {
+      setSearchedFeedId('');
+    }
+  }, [targetFeedId]);
+
+  // Effect which sets the searched timestamp based on the search params changing.
+  useEffect(() => {
+    if (targetTimestamp) {
+      setSearchedTimestamp(targetTimestamp);
+    } else {
+      setSearchedTimestamp(null);
+    }
+  }, [targetTimestamp]);
 
   const [transcriptsPollingIntervalMs, setTranscriptsPollingIntervalMs] =
     useState(DEFAULT_REFRESH_INTERVAL);
@@ -198,11 +214,6 @@ export function TranscriptView({
     }
     return new Map(feeds.map((f) => [f.id, f]));
   }, [feeds]);
-
-  // Memoizing the selected feed object derived from the feedId state.
-  const selectedFeed = useMemo(() => {
-    return feedIdToFeedMap.get(feedId) || null;
-  }, [feedIdToFeedMap, feedId]);
 
   const searchedFeed = feedIdToFeedMap.get(searchedFeedId) || null;
 
@@ -613,6 +624,16 @@ export function TranscriptView({
     return null;
   }
 
+  if (!searchedFeedId) {
+    return (
+      <FeedSearchView
+        title="Select a feed to view transcripts"
+        triggerSnackbar={triggerSnackbar}
+        onError={onError}
+      />
+    );
+  }
+
   return (
     <Box
       sx={{
@@ -623,66 +644,6 @@ export function TranscriptView({
         height: 'calc(100vh)',
       }}
     >
-      <Box
-        sx={{
-          display: 'flex',
-          gap: 2,
-          mb: 1,
-          alignItems: 'center',
-          width: '100%',
-        }}
-      >
-        <FeedSearch
-          feeds={feeds ?? []}
-          selectedFeed={selectedFeed}
-          onFeedSelect={setFeedId}
-          isFetching={feedsFetching}
-        />
-
-        <DateTimePicker
-          label="Timestamp (optional)"
-          dateTime={timestamp}
-          setDateTime={setTimestamp}
-          width="15%"
-        />
-
-        <Button
-          variant="contained"
-          onClick={() => {
-            if (!feedId) {
-              return;
-            }
-
-            const newParams: Record<string, string> = { feedId: feedId.trim() };
-            if (timestamp) {
-              newParams.timestamp = timestamp.getTime().toString();
-            }
-            setSearchedFeedId(feedId);
-            setSearchedTimestamp(timestamp);
-            setSearchParams(newParams);
-
-            if (searchedFeedId === feedId) {
-              queryClient.resetQueries({
-                queryKey: [
-                  'listTranscripts',
-                  token,
-                  searchedFeedId,
-                  searchedTimestamp,
-                ],
-              });
-            }
-          }}
-          disabled={feedsFetching || isTranscriptsInitialLoading || !feedId}
-          sx={{ minWidth: '100px', height: '40px', textTransform: 'none' }}
-        >
-          {isTranscriptsInitialLoading ? (
-            <CircularProgress size={24} color="inherit" />
-          ) : (
-            'Load transcripts'
-          )}
-        </Button>
-      </Box>
-
       <FeedHeader
         searchedFeed={searchedFeed}
         sourceUrl={searchedFeed?.sourceUrl}
@@ -723,6 +684,8 @@ export function TranscriptView({
               onRefresh={handleManualRefresh}
               redactTranscripts={redactTranscripts}
               setRedactTranscripts={setRedactTranscripts}
+              dateTime={searchedTimestamp}
+              setDateTime={setSearchedTimestamp}
             />
             <TranscriptDisplay
               ref={virtuosoRef}
