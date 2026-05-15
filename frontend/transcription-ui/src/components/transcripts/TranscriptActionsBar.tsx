@@ -93,12 +93,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
             />
           }
           label="Redact transcripts"
-          sx={{
-            '& .MuiFormControlLabel-label': {
-              fontSize: '0.875rem',
-              userSelect: 'none',
-            },
-          }}
+          slotProps={{ typography: { variant: 'body2' } }}
         />
         {!hasNewerTranscripts && (
           <>

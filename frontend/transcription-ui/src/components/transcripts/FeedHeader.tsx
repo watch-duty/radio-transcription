@@ -35,8 +35,6 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
   return (
     <Box
       sx={{
-        // This space allows room for the alert icon which hovers above the AudioDisplay.
-        mb: 2.5,
         display: 'flex',
         flexDirection: 'row',
         justifyContent: 'space-between',

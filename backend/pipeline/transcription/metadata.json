@@ -3,9 +3,15 @@
   "description": "Flex Template for the Audio Transcription Pipeline (Dataflow).",
   "parameters": [
     {
-      "name": "input_subscription",
-      "label": "Input Subscription",
-      "helpText": "Full path of the ordered Pub/Sub subscription to read from (e.g. projects/your-project/subscriptions/raw-audio-sub).",
+      "name": "continuous_input_subscription",
+      "label": "Continuous Input Subscription",
+      "helpText": "Full path of the Pub/Sub ordered subscription for continuous feeds (e.g. projects/your-project/subscriptions/continuous-sub).",
+      "isOptional": false
+    },
+    {
+      "name": "segmented_input_subscription",
+      "label": "Segmented Input Subscription",
+      "helpText": "Full path of the Pub/Sub ordered subscription for segmented feeds (e.g. projects/your-project/subscriptions/segmented-sub).",
       "isOptional": false
     },
     {
@@ -39,21 +45,15 @@
       "isOptional": true
     },
     {
-      "name": "bypass_stitching",
-      "label": "Bypass Stitching",
-      "helpText": "If true, bypasses stateful stitching and treats each audio chunk as a complete transmission.",
+      "name": "continuous_out_of_order_timeout_ms",
+      "label": "Continuous Out Of Order Timeout (MS)",
+      "helpText": "Milliseconds to wait for missing chunks before accepting a logical gap for continuous feeds. Default: 60000ms.",
       "isOptional": true
     },
     {
-      "name": "vad_type",
-      "label": "VAD Type",
-      "helpText": "Type of Voice Activity Detection model to use. Defaults to ten_vad.",
-      "isOptional": true
-    },
-    {
-      "name": "out_of_order_timeout_ms",
-      "label": "Out Of Order Timeout (MS)",
-      "helpText": "Milliseconds to wait for missing chunks before accepting a logical gap. Defaults: 10000ms for segmented pipelines, 60000ms for continuous.",
+      "name": "segmented_out_of_order_timeout_ms",
+      "label": "Segmented Out Of Order Timeout (MS)",
+      "helpText": "Milliseconds to wait for missing chunks before accepting a logical gap for segmented feeds. Default: 10000ms.",
       "isOptional": true
     }
   ]
