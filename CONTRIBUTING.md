@@ -37,18 +37,11 @@ Integration tests run an automated E2E test on startup.
 Note that currently the following are missing from the E2E setup:
 * Audio ingestion pipeline and storage
 
-Locally run the full pipeline from E2E
+Locally run the full pipeline from E2E:
 ```bash
-docker-compose down -v && docker-compose up --build -d &&
-docker-compose logs -f \
-  transcripts-api\
-  rules-evaluation\
-  rules-management\
-  notification\
-  mock-server\
-  frontend-api\
-  transcription-continuous\
-  transcription-segmented
+mise dev:start
+mise dev:log # to see logs for one or all containers
+mise dev:stop # to stop containers & rm volumes
 ```
 
 Send a test payload to the Transcription PubSub (ingested by the Rules Evaluation service) to test the path from the Rules Evaluation service to the Notification service.
