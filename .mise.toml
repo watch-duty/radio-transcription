@@ -141,18 +141,11 @@ depends = ["format:frontend:eslint", "format:frontend:prettier"]
 description = "Generate Python code from Protobuf definitions"
 run = "uv run python -m grpc_tools.protoc --proto_path=protos --python_out=backend/pipeline/schema_types --grpc_python_out=backend/pipeline/schema_types --pyi_out=backend/pipeline/schema_types protos/*.proto"
 
-[tasks."dev:build-containers"]
-description = "(Re)build all dev containers"
-depends = ["dev:stop"]
-run = """
-docker-compose build
-"""
-
 [tasks."dev:start"]
 description = "Start the dev pipeline and UI in local Docker containers"
 depends = ["dev:stop"]
 run = """
-docker-compose up -d
+docker-compose up --build -d
 """
 
 [tasks."dev:stop"]
