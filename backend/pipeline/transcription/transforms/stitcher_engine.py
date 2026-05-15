@@ -367,7 +367,6 @@ class StitcherEngine:
             with_tracer_context,
         )
 
-        chunk_outputs = []
         traceparent = chunk.traceparent or ""
 
         if curr_context.session_id is None:
@@ -404,42 +403,6 @@ class StitcherEngine:
                 task_logger.debug(
                     f"[Download] Downloaded audio for {chunk.gcs_uri}"
                 )
-
-                time_range = datatypes.TimeRange(
-                    start_ms=chunk.timestamp_ms,
-                    end_ms=chunk.timestamp_ms + chunk_data.duration_ms,
-                )
-
-                # 2. Quick bypass check
-                if self.stitch_config.bypass_stitching:
-                    chunk_outputs.append(
-                        (
-                            feed_id,
-                            datatypes.FlushRequest(
-                                buffer=chunk_data.audio,
-                                feed_id=feed_id,
-                                session_id=curr_context.session_id or "unknown",
-                                contributing_audio_uris=[chunk.gcs_uri],
-                                time_range=time_range,
-                                missing_prior_context=False,
-                                missing_post_context=False,
-                                start_audio_offset_ms=0,
-                                end_audio_offset_ms=None,
-                                transmission_id=trans_utils.generate_transmission_id(
-                                    curr_context.session_id or "unknown",
-                                    time_range,
-                                ),
-                                feed_metadata=feed_metadata,
-                                sample_rate=chunk_data.sample_rate,
-                                traceparent=chunk.traceparent,
-                            ),
-                        )
-                    )
-                    return (
-                        chunk_outputs,
-                        curr_context,
-                        chunk.timestamp_ms + chunk_data.duration_ms,
-                    )
 
                 payload = datatypes.DownloadedChunkPayload(
                     chunk.gcs_uri,

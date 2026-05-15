@@ -16,15 +16,6 @@ from backend.pipeline.transcription.common.enums import (
 )
 
 
-def _str2bool(v: str) -> bool:
-    if v.lower() in ("yes", "true", "t", "y", "1"):
-        return True
-    if v.lower() in ("no", "false", "f", "n", "0"):
-        return False
-    msg = f"Boolean value expected, got {v!r}. Permitted values: true, false, yes, no, t, f, y, n, 1, 0."
-    raise argparse.ArgumentTypeError(msg)
-
-
 class TranscriptionOptions(PipelineOptions):
     """CLI pipeline configuration options mapping to Beam's PipelineOptions."""
 
@@ -32,10 +23,16 @@ class TranscriptionOptions(PipelineOptions):
     def _add_argparse_args(cls, parser: argparse.ArgumentParser) -> None:
         """Registers pipeline CLI parameters to enable interactive flag passing via Dataflow."""
         parser.add_argument(
-            "--input_subscription",
+            "--continuous_input_subscription",
             type=str,
             required=True,
-            help="Pub/Sub ordered subscription to read from",
+            help="Pub/Sub ordered subscription for continuous feeds (e.g. BCFY_FEEDS).",
+        )
+        parser.add_argument(
+            "--segmented_input_subscription",
+            type=str,
+            required=True,
+            help="Pub/Sub ordered subscription for segmented feeds (e.g. BCFY_CALLS, OpenMHz).",
         )
         parser.add_argument(
             "--output_topic",
@@ -75,7 +72,6 @@ class TranscriptionOptions(PipelineOptions):
             default="{}",
             help="JSON string of VAD-specific configuration.",
         )
-
         parser.add_argument(
             "--significant_gap_ms",
             type=int,
@@ -89,10 +85,16 @@ class TranscriptionOptions(PipelineOptions):
             help="Milliseconds before an incomplete transmission is flushed.",
         )
         parser.add_argument(
-            "--out_of_order_timeout_ms",
+            "--continuous_out_of_order_timeout_ms",
             type=int,
             default=None,
-            help="Milliseconds to wait for missing chunks before accepting a logical gap. Defaults: 10000ms for segmented pipelines, 60000ms for continuous.",
+            help="Milliseconds to wait for missing chunks before accepting a logical gap for continuous feeds. Default: 60000ms.",
+        )
+        parser.add_argument(
+            "--segmented_out_of_order_timeout_ms",
+            type=int,
+            default=None,
+            help="Milliseconds to wait for missing chunks before accepting a logical gap for segmented feeds. Default: 10000ms.",
         )
         parser.add_argument(
             "--vad_pre_roll_ms",
@@ -123,12 +125,6 @@ class TranscriptionOptions(PipelineOptions):
             type=str,
             required=False,
             help="GCS bucket name for storing clean, stitched or pre-segmented audio. If omitted, audio is not persisted to GCS.",
-        )
-        parser.add_argument(
-            "--bypass_stitching",
-            type=_str2bool,
-            default=False,
-            help="If true, bypasses stateful stitching and treats each audio chunk as a complete transmission.",
         )
 
 
