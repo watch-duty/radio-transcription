@@ -39,6 +39,68 @@ interface SortConfig {
   direction: 'asc' | 'desc';
 }
 
+function ActionsMenu({ feed }: { feed: Feed }) {
+  const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
+
+  const handleOpen = (event: React.MouseEvent<HTMLButtonElement>) => {
+    setAnchorEl(event.currentTarget);
+  };
+
+  const handleClose = () => {
+    setAnchorEl(null);
+  };
+
+  const menuOpen = Boolean(anchorEl);
+  const hasSourceUrl = !!feed.sourceUrl;
+  const hasArchiveUrl = !!feed.archiveUrl;
+
+  return (
+    <>
+      <IconButton size="small" onClick={handleOpen} aria-label="feed actions">
+        <MoreVertIcon fontSize="small" />
+      </IconButton>
+
+      <Menu
+        anchorEl={anchorEl}
+        open={menuOpen}
+        onClose={handleClose}
+        slotProps={{
+          paper: {
+            sx: { minWidth: 180 },
+          },
+        }}
+      >
+        <MenuItem
+          component={hasSourceUrl ? 'a' : 'li'}
+          href={hasSourceUrl ? feed?.sourceUrl : undefined}
+          target={hasSourceUrl ? '_blank' : undefined}
+          rel="noopener noreferrer"
+          disabled={!hasSourceUrl}
+          onClick={handleClose}
+        >
+          <ListItemIcon>
+            <OpenInNewOutlinedIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText>Source URL</ListItemText>
+        </MenuItem>
+        <MenuItem
+          component={hasArchiveUrl ? 'a' : 'li'}
+          href={hasArchiveUrl ? feed?.archiveUrl : undefined}
+          target={hasArchiveUrl ? '_blank' : undefined}
+          rel="noopener noreferrer"
+          disabled={!hasArchiveUrl}
+          onClick={handleClose}
+        >
+          <ListItemIcon>
+            <InventoryIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText>Archive URL</ListItemText>
+        </MenuItem>
+      </Menu>
+    </>
+  );
+}
+
 export function FeedTable({ feeds, isLoading }: FeedTableProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortConfig, setSortConfig] = useState<SortConfig>({
@@ -46,35 +108,12 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
     direction: 'asc',
   });
 
-  // State for the high-performance shared menu using absolute screen pixel coordinates.
-  // This entirely bypasses DOM measurement bugs caused by virtualized scrollers.
-  const [menuAnchorPosition, setMenuAnchorPosition] = useState<{
-    top: number;
-    left: number;
-  } | null>(null);
-  const [activeFeed, setActiveFeed] = useState<Feed | null>(null);
-
   const handleRequestSort = (property: 'name' | 'status') => {
     setSortConfig((prev) => ({
       column: property,
       direction:
         prev.column === property && prev.direction === 'asc' ? 'desc' : 'asc',
     }));
-  };
-
-  const handleMenuOpen = (event: React.MouseEvent<HTMLElement>, feed: Feed) => {
-    event.stopPropagation();
-    const rect = event.currentTarget.getBoundingClientRect();
-    setMenuAnchorPosition({
-      top: rect.bottom,
-      left: rect.right,
-    });
-    setActiveFeed(feed);
-  };
-
-  const handleMenuClose = () => {
-    setMenuAnchorPosition(null);
-    setActiveFeed(null);
   };
 
   const filteredAndSortedFeeds = useMemo(() => {
@@ -101,9 +140,6 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
       return sortConfig.direction === 'asc' ? comparison : -comparison;
     });
   }, [feeds, searchQuery, sortConfig]);
-
-  const hasSourceUrl = !!activeFeed?.sourceUrl;
-  const hasArchiveUrl = !!activeFeed?.archiveUrl;
 
   return (
     <Paper
@@ -294,65 +330,12 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
                 )}
               </TableCell>
               <TableCell align="right" sx={{ verticalAlign: 'top' }}>
-                <IconButton
-                  size="small"
-                  onClick={(e) => handleMenuOpen(e, feed)}
-                  aria-label="feed actions"
-                >
-                  <MoreVertIcon fontSize="small" />
-                </IconButton>
+                <ActionsMenu feed={feed} />
               </TableCell>
             </>
           )}
         />
       )}
-
-      <Menu
-        anchorReference="anchorPosition"
-        anchorPosition={
-          menuAnchorPosition
-            ? { top: menuAnchorPosition.top, left: menuAnchorPosition.left }
-            : undefined
-        }
-        open={Boolean(menuAnchorPosition)}
-        onClose={handleMenuClose}
-        transformOrigin={{
-          vertical: 'top',
-          horizontal: 'right',
-        }}
-        slotProps={{
-          paper: {
-            sx: { minWidth: 180 },
-          },
-        }}
-      >
-        <MenuItem
-          component={hasSourceUrl ? 'a' : 'li'}
-          href={hasSourceUrl ? activeFeed?.sourceUrl : undefined}
-          target={hasSourceUrl ? '_blank' : undefined}
-          rel="noopener noreferrer"
-          disabled={!hasSourceUrl}
-          onClick={handleMenuClose}
-        >
-          <ListItemIcon>
-            <OpenInNewOutlinedIcon fontSize="small" />
-          </ListItemIcon>
-          <ListItemText>Source URL</ListItemText>
-        </MenuItem>
-        <MenuItem
-          component={hasArchiveUrl ? 'a' : 'li'}
-          href={hasArchiveUrl ? activeFeed?.archiveUrl : undefined}
-          target={hasArchiveUrl ? '_blank' : undefined}
-          rel="noopener noreferrer"
-          disabled={!hasArchiveUrl}
-          onClick={handleMenuClose}
-        >
-          <ListItemIcon>
-            <InventoryIcon fontSize="small" />
-          </ListItemIcon>
-          <ListItemText>Archive URL</ListItemText>
-        </MenuItem>
-      </Menu>
     </Paper>
   );
 }
