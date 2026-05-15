@@ -61,9 +61,6 @@ export function TranscriptView({
   const [searchParams] = useSearchParams();
   const targetFeedId = searchParams.get('feedId');
   const targetTransmissionId = searchParams.get('transmissionId');
-
-  const [newMessageCount, setNewMessageCount] = useState(0);
-  const [playLatestAudio, setPlayLatestAudio] = useState(true);
   const targetTimestampParam = searchParams.get('timestamp');
 
   // Need to memoize the timestamp since Dates are compared by object reference.
@@ -79,6 +76,9 @@ export function TranscriptView({
   const [searchedTimestamp, setSearchedTimestamp] = useState<Date | null>(
     targetTimestamp
   );
+
+  const [newMessageCount, setNewMessageCount] = useState(0);
+  const [playLatestAudio, setPlayLatestAudio] = useState(true);
 
   // Effect which sets the searched feed ID based on the search params changing.
   useEffect(() => {
