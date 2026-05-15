@@ -67,7 +67,7 @@ export function TranscriptView({
   const targetTransmissionId = searchParams.get('transmissionId');
 
   const [newMessageCount, setNewMessageCount] = useState(0);
-  const [alwaysPlayLatestAudio, setAlwaysPlayLatestAudio] = useState(true);
+  const [playLatestAudio, setPlayLatestAudio] = useState(true);
 
   const [feedId, setFeedId] = useState<string>(
     () => searchParams.get('feedId') || ''
@@ -509,36 +509,34 @@ export function TranscriptView({
       try {
         setIsTranscriptsPolling(true);
         const newTranscripts = await pollNewerTranscripts();
-        if (newTranscripts.length > 0) {
-          // Add the transcript to cache
-          const filteredNewTranscripts =
-            updateCacheWithNewTranscripts(newTranscripts);
-          if (filteredNewTranscripts.length > 0) {
-            // Display indicators that new transcripts were fetched
-            if (filteredNewTranscripts.length === 1) {
-              triggerSnackbar(`New transcript received`);
-            } else {
-              triggerSnackbar(
-                `${filteredNewTranscripts.length} new transcripts received`
-              );
-            }
+        if (newTranscripts.length === 0) {
+          return;
+        }
 
-            // Don't increment new messages if the user is currently looking at the screen
-            if (!document.hasFocus()) {
-              setNewMessageCount(
-                (prevCount) => prevCount + filteredNewTranscripts.length
-              );
-            }
-            // Trigger the new audio to play if no audio is currently playing
-            if (!isAudioPlaying && alwaysPlayLatestAudio) {
-              const audioToPlay =
-                filteredNewTranscripts[filteredNewTranscripts.length - 1];
-              toggleAudio(
-                audioToPlay.transmissionId,
-                audioToPlay.playbackAudioUri
-              );
-            }
-          }
+        // Add the transcript to cache
+        const cachedTranscripts = updateCacheWithNewTranscripts(newTranscripts);
+        if (cachedTranscripts.length === 0) {
+          return;
+        }
+
+        // Display snackbar indicator that new transcripts were received
+        const message =
+          cachedTranscripts.length === 1
+            ? 'New transcript received'
+            : `${cachedTranscripts.length} new transcripts received`;
+        triggerSnackbar(message);
+
+        // Update the new message count if the user is not viewing the screen
+        if (!document.hasFocus()) {
+          setNewMessageCount(
+            (prevCount) => prevCount + cachedTranscripts.length
+          );
+        }
+
+        // Trigger the new audio to play if no audio is currently playing
+        if (!isAudioPlaying && playLatestAudio) {
+          const audioToPlay = cachedTranscripts[cachedTranscripts.length - 1];
+          toggleAudio(audioToPlay.transmissionId, audioToPlay.playbackAudioUri);
         }
       } catch (error) {
         console.error('Polling error:', error);
@@ -559,7 +557,7 @@ export function TranscriptView({
     triggerSnackbar,
     toggleAudio,
     isAudioPlaying,
-    alwaysPlayLatestAudio,
+    playLatestAudio,
   ]);
 
   const {
@@ -759,8 +757,8 @@ export function TranscriptView({
         <FormControlLabel
           control={
             <Checkbox
-              checked={alwaysPlayLatestAudio}
-              onChange={(e) => setAlwaysPlayLatestAudio(e.target.checked)}
+              checked={playLatestAudio}
+              onChange={(e) => setPlayLatestAudio(e.target.checked)}
               disabled={!searchedFeed}
             />
           }
