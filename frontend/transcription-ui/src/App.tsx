@@ -13,6 +13,7 @@ import { ApiError } from '@transcription/common';
 import AppContainer from './components/AppContainer';
 import Login from './components/Login';
 import LoginModal from './components/common/LoginModal';
+import FeedSearchView from './components/feeds/FeedSearchView';
 import FeedsView from './components/feeds/FeedsView';
 import RulesView from './components/rules/RulesView';
 import TranscriptView from './components/transcripts/TranscriptView';
@@ -171,8 +172,8 @@ function App() {
               path="/"
               element={
                 <>
-                  <title>Transcripts - Radio Transcription</title>
-                  <TranscriptView
+                  <title>Radio Transcription</title>
+                  <FeedSearchView
                     triggerSnackbar={triggerSnackbar}
                     onError={handleError}
                   />
