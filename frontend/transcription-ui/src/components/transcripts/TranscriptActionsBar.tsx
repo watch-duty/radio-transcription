@@ -2,6 +2,7 @@ import React from 'react';
 
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import ArrowDropUpIcon from '@mui/icons-material/ArrowDropUp';
+import FilterIcon from '@mui/icons-material/FilterList';
 import SyncIcon from '@mui/icons-material/Sync';
 import { Badge, Tooltip } from '@mui/material';
 import Box from '@mui/material/Box';
@@ -17,7 +18,6 @@ import Paper from '@mui/material/Paper';
 import Popover from '@mui/material/Popover';
 import Popper from '@mui/material/Popper';
 import Switch from '@mui/material/Switch';
-import FilterIcon from '@mui/icons-material/FilterList';
 
 import { DateTimePicker } from '../common/DateTimePicker';
 
@@ -60,8 +60,11 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   const [anchorEl, setAnchorEl] = React.useState<HTMLElement | null>(null);
   const [refreshMenuOpen, setRefreshMenuOpen] = React.useState(false);
 
-  const [filterAnchorEl, setFilterAnchorEl] = React.useState<HTMLElement | null>(null);
-  const [localDateTime, setLocalDateTime] = React.useState<Date | null>(dateTime);
+  const [filterAnchorEl, setFilterAnchorEl] =
+    React.useState<HTMLElement | null>(null);
+  const [localDateTime, setLocalDateTime] = React.useState<Date | null>(
+    dateTime
+  );
 
   React.useEffect(() => {
     setLocalDateTime(dateTime);
@@ -119,7 +122,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
       <Box>
         <Tooltip title="Filter transcripts">
           <Badge
-            color='primary'
+            color="primary"
             badgeContent={dateTime ? '1' : '0'}
             invisible={!dateTime}
           >
@@ -131,9 +134,8 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
               onClick={handleFilterOpen}
             >
               <FilterIcon />
-          </Button>
-
-            </Badge>
+            </Button>
+          </Badge>
         </Tooltip>
         <Popover
           open={Boolean(filterAnchorEl)}
@@ -155,7 +157,13 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
               dateTime={localDateTime}
               setDateTime={setLocalDateTime}
             />
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Box
+              sx={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
+            >
               <Button size="small" onClick={handleFilterClear}>
                 Clear
               </Button>

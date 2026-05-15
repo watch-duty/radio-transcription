@@ -264,7 +264,9 @@ export function AudioDisplay({
   ]);
 
   return (
-    <Box sx={{ display: 'flex', alignItems: 'flex-start', width: '100%', mb: 1 }}>
+    <Box
+      sx={{ display: 'flex', alignItems: 'flex-start', width: '100%', mb: 1 }}
+    >
       <Box
         sx={{ display: 'flex', mr: 1, alignItems: 'center', height: '60px' }}
       >

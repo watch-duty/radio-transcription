@@ -194,6 +194,8 @@ describe('TranscriptActionsBar', () => {
     const applyButton = screen.getByRole('button', { name: 'Apply' });
     fireEvent.click(applyButton);
 
-    expect(mockSetDateTime).toHaveBeenCalledWith(new Date('2026-05-14T12:00:00Z'));
+    expect(mockSetDateTime).toHaveBeenCalledWith(
+      new Date('2026-05-14T12:00:00Z')
+    );
   });
 });
