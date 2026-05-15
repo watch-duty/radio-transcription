@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+package streaming.pipeline.state.v1;
+
+// Nested domain dependencies
+message TimeRangeProto {
+  int64 start_ms = 1;
+  int64 end_ms = 2;
+}
+
+message FeedMetadataProto {
+  string feed_name = 1;
+  string external_id = 2;
+}
+
+message BufferedChunkProto {
+  int64 timestamp_ms = 1;
+  string gcs_uri = 2;
+  optional string traceparent = 3;
+}
+
+// PCollection Elements (Cross-Worker Boundaries)
+message ChunkMetadataProto {
+  string gcs_uri = 1;
+  string session_id = 2;
+  int64 duration_ms = 3;
+  FeedMetadataProto feed_metadata = 4;
+  optional string traceparent = 5;
+}
+
+message FlushRequestProto {
+  bytes buffer = 1; // Raw 16-bit PCM audio bytes
+  string feed_id = 2;
+  string session_id = 3;
+  repeated string contributing_audio_uris = 4;
+  TimeRangeProto time_range = 5;
+  string transmission_id = 6;
+  FeedMetadataProto feed_metadata = 7;
+  int32 sample_rate = 8;
+  bool missing_prior_context = 9;
+  bool missing_post_context = 10;
+  optional int64 start_audio_offset_ms = 11;
+  optional int64 end_audio_offset_ms = 12;
+  repeated TimeRangeProto speech_segments = 13;
+  optional string traceparent = 14;
+}
+
+// Persistent State Checkpoints
+message IdleFeedStateProto {
+  repeated BufferedChunkProto out_of_order_buffer = 1;
+  bool order_timer_active = 2;
+}
+
+message ActiveStitchingStateProto {
+  string session_id = 1;
+  FeedMetadataProto feed_metadata = 2;
+  optional int64 last_end_time_ms = 3;
+  optional int64 stale_start_time_ms = 4;
+  optional int64 buffer_start_time_ms = 5;
+  optional int64 expected_next_chunk_start_ms = 6;
+  optional int64 start_audio_offset_ms = 7;
+  optional int64 end_audio_offset_ms = 8;
+  repeated string contributing_audio_uris = 9;
+  bool missing_prior_context = 10;
+  bool missing_post_context = 11;
+  int64 buffer_duration_ms = 12;
+  bool order_timer_active = 13;
+  repeated BufferedChunkProto out_of_order_buffer = 14;
+  optional int64 last_transmission_start_ms = 15;
+  repeated TimeRangeProto speech_segments = 16;
+  optional bytes prior_audio_tail = 17; // Caches contiguous tail samples
+  optional string traceparent = 18;
+  optional int32 sample_rate = 19;
+}
+
+message TransmissionContextProto {
+  oneof context {
+    IdleFeedStateProto idle_state = 1;
+    ActiveStitchingStateProto active_state = 2;
+  }
+}
