@@ -970,12 +970,6 @@ class TranscribeAudioFn(beam.DoFn):
         )
 
         # Initialize metrics counters
-        self.vad_speech_count = Metrics.counter(
-            self.__class__, "vad_speech_count"
-        )
-        self.vad_silence_count = Metrics.counter(
-            self.__class__, "vad_silence_count"
-        )
         self.transcription_count = Metrics.counter(
             self.__class__, "transcription_count"
         )
@@ -1055,13 +1049,11 @@ class TranscribeAudioFn(beam.DoFn):
             or res.flac_bytes is None
             or res.processed_audio is None
         ):
-            self.vad_silence_count.inc()
             logger.info(
                 "VAD detected no speech in buffer. Dropping transmission."
             )
             return None
 
-        self.vad_speech_count.inc()
         duration_sec = len(res.processed_audio) / float(request.sample_rate)
         self.speech_duration_sec_dist.update(int(duration_sec))
 

@@ -2,6 +2,8 @@
 
 import logging
 
+from apache_beam.metrics import Metrics
+
 from backend.pipeline.transcription.common.datatypes import (
     AppendBufferAction,
     AudioChunkData,
@@ -24,6 +26,12 @@ class AudioStitchingStateMachine:
     def __init__(self, config: StitchAudioConfig) -> None:
         """Binds the pipeline configuration limits for gap detection and max durations."""
         self.config = config
+        self.late_arriving_chunks = Metrics.counter(
+            self.__class__, "late_arriving_chunks"
+        )
+        self.dropped_audio_gaps = Metrics.counter(
+            self.__class__, "dropped_audio_gaps"
+        )
 
     def process_chunk(
         self, chunk_data: AudioChunkData, ctx: StitcherContext
@@ -65,6 +73,7 @@ class AudioStitchingStateMachine:
         )
 
         if is_late_chunk:
+            self.late_arriving_chunks.inc()
             return self._process_late_chunk_independently(chunk_data, ctx)
 
         actions: list[StateMachineAction] = []
@@ -76,6 +85,7 @@ class AudioStitchingStateMachine:
         )
 
         if is_dropped_chunk:
+            self.dropped_audio_gaps.inc()
             # If we had an active transmission, we must flush it because the auditory context was abruptly disconnected.
             if ctx.transmission_start_time_ms is not None:
                 actions.append(
