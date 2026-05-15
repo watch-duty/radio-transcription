@@ -34,10 +34,17 @@ interface FeedTableProps {
   isLoading: boolean;
 }
 
+interface SortConfig {
+  column: 'name' | 'status';
+  direction: 'asc' | 'desc';
+}
+
 export function FeedTable({ feeds, isLoading }: FeedTableProps) {
   const [searchQuery, setSearchQuery] = useState('');
-  const [orderBy, setOrderBy] = useState<'name' | 'status'>('name');
-  const [orderDirection, setOrderDirection] = useState<'asc' | 'desc'>('asc');
+  const [sortConfig, setSortConfig] = useState<SortConfig>({
+    column: 'name',
+    direction: 'asc',
+  });
 
   // State for the high-performance shared menu using absolute screen pixel coordinates.
   // This entirely bypasses DOM measurement bugs caused by virtualized scrollers.
@@ -48,9 +55,10 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
   const [activeFeed, setActiveFeed] = useState<Feed | null>(null);
 
   const handleRequestSort = (property: 'name' | 'status') => {
-    const isAsc = orderBy === property && orderDirection === 'asc';
-    setOrderDirection(isAsc ? 'desc' : 'asc');
-    setOrderBy(property);
+    setSortConfig((prev) => ({
+      column: property,
+      direction: prev.column === property && prev.direction === 'asc' ? 'desc' : 'asc',
+    }));
   };
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>, feed: Feed) => {
@@ -84,14 +92,14 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
 
     return filtered.sort((a, b) => {
       let comparison = 0;
-      if (orderBy === 'name') {
+      if (sortConfig.column === 'name') {
         comparison = a.name.localeCompare(b.name);
-      } else if (orderBy === 'status') {
+      } else if (sortConfig.column === 'status') {
         comparison = a.status.localeCompare(b.status);
       }
-      return orderDirection === 'asc' ? comparison : -comparison;
+      return sortConfig.direction === 'asc' ? comparison : -comparison;
     });
-  }, [feeds, searchQuery, orderBy, orderDirection]);
+  }, [feeds, searchQuery, sortConfig]);
 
   const hasSourceUrl = !!activeFeed?.sourceUrl;
   const hasArchiveUrl = !!activeFeed?.archiveUrl;
@@ -196,8 +204,8 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
                 }}
               >
                 <TableSortLabel
-                  active={orderBy === 'name'}
-                  direction={orderBy === 'name' ? orderDirection : 'asc'}
+                  active={sortConfig.column === 'name'}
+                  direction={sortConfig.column === 'name' ? sortConfig.direction : 'asc'}
                   onClick={() => handleRequestSort('name')}
                 >
                   Name
@@ -211,8 +219,8 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
                 }}
               >
                 <TableSortLabel
-                  active={orderBy === 'status'}
-                  direction={orderBy === 'status' ? orderDirection : 'asc'}
+                  active={sortConfig.column === 'status'}
+                  direction={sortConfig.column === 'status' ? sortConfig.direction : 'asc'}
                   onClick={() => handleRequestSort('status')}
                 >
                   Status
