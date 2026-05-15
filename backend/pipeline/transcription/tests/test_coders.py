@@ -24,6 +24,7 @@ class CoderVerificationTest(unittest.TestCase):
         self.assertTrue(coder.is_deterministic())
 
         decoded = coder.decode(encoded)
+        assert isinstance(decoded, datatypes.IdleFeedState)
         self.assertIsInstance(decoded, datatypes.IdleFeedState)
         self.assertEqual(decoded.order_timer_active, True)
         self.assertEqual(len(decoded.out_of_order_buffer), 1)
@@ -63,6 +64,7 @@ class CoderVerificationTest(unittest.TestCase):
         self.assertIsInstance(encoded, bytes)
 
         decoded = coder.decode(encoded)
+        assert isinstance(decoded, datatypes.ActiveStitchingState)
         self.assertIsInstance(decoded, datatypes.ActiveStitchingState)
         self.assertEqual(decoded.session_id, "mock-session-id")
         self.assertEqual(decoded.feed_metadata.feed_name, "Mock Feed")
