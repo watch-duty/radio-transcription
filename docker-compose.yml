@@ -61,7 +61,7 @@ services:
       # postgres:15-alpine image doesn't ship it). See the script for details.
       - ./terraform/modules/alloydb/sql/ingestion:/sql:ro
       - ./local_dev/docker_postgres_init.sh:/docker-entrypoint-initdb.d/00_apply_schema.sh:ro
-      - ./local_dev/seed_data.sql:/docker-entrypoint-initdb.d/01_seed_data.sql:ro
+      - ./local_dev/test_feed_data.sql:/docker-entrypoint-initdb.d/01_test_data.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
