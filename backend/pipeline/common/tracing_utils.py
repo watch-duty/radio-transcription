@@ -62,12 +62,14 @@ def setup_tracing(*, use_batch: bool = True) -> None:
         set_tracer_provider(provider)
 
 
-def get_current_trace_id() -> str:
-    """Returns the trace ID for the current context from OpenTelemetry."""
+def get_current_traceparent() -> str:
+    """Returns the W3C traceparent for the current context."""
     span = get_current_span()
     span_context = span.get_span_context()
     if span_context.is_valid:
-        return format(span_context.trace_id, "032x")
+        carrier = {}
+        TraceContextTextMapPropagator().inject(carrier)
+        return carrier.get("traceparent", "")
     return ""
 
 
