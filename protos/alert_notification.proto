@@ -63,4 +63,12 @@ message AlertNotification {
 
   // The ID used to map the feed ID within the application.
   string external_id = 16;
+
+  message Tag {
+    string key = 1;
+    string value = 2;
+  }
+
+  // Tags associated with the feed.
+  repeated Tag tags = 17;
 }

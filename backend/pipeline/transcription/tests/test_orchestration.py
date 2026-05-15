@@ -14,8 +14,10 @@ def test_pipeline_topology_typehints() -> None:
         flags=[
             "--project",
             "test-project",
-            "--input_subscription",
-            "projects/test-project/subscriptions/in",
+            "--continuous_input_subscription",
+            "projects/test-project/subscriptions/continuous-in",
+            "--segmented_input_subscription",
+            "projects/test-project/subscriptions/segmented-in",
             "--output_topic",
             "projects/test-project/topics/out",
             "--dlq_topic",
@@ -32,40 +34,21 @@ def test_pipeline_topology_typehints() -> None:
     assert pipeline is not None
 
 
-def test_pipeline_topology_typehints_with_bypass_stitching() -> None:
-    """Builds the DAG with bypass_stitching to trigger Apache Beam's static type checker."""
+def test_pipeline_invalid_timeout() -> None:
+    """Verifies failure when ooo timeout >= stale_timeout_ms."""
     options = TranscriptionOptions(
         flags=[
             "--project",
             "test-project",
-            "--input_subscription",
-            "projects/test-project/subscriptions/in",
+            "--continuous_input_subscription",
+            "projects/test-project/subscriptions/continuous-in",
+            "--segmented_input_subscription",
+            "projects/test-project/subscriptions/segmented-in",
             "--output_topic",
             "projects/test-project/topics/out",
             "--dlq_topic",
             "projects/test-project/topics/dlq",
-            "--bypass_stitching",
-            "true",
-        ]
-    )
-
-    pipeline = get_pipeline(options)
-    assert pipeline is not None
-
-
-def test_pipeline_invalid_timeout_without_bypass() -> None:
-    """Verifies failure when out_of_order_timeout_ms >= stale_timeout_ms (standard path)."""
-    options = TranscriptionOptions(
-        flags=[
-            "--project",
-            "test-project",
-            "--input_subscription",
-            "projects/test-project/subscriptions/in",
-            "--output_topic",
-            "projects/test-project/topics/out",
-            "--dlq_topic",
-            "projects/test-project/topics/dlq",
-            "--out_of_order_timeout_ms",
+            "--continuous_out_of_order_timeout_ms",
             "80000",
             "--stale_timeout_ms",
             "70000",
@@ -74,35 +57,7 @@ def test_pipeline_invalid_timeout_without_bypass() -> None:
 
     with pytest.raises(
         ValueError,
-        match=r"stale_timeout_ms .* must be strictly greater than out_of_order_timeout_ms",
-    ):
-        get_pipeline(options)
-
-
-def test_pipeline_invalid_timeout_with_bypass() -> None:
-    """Verifies failure when out_of_order_timeout_ms >= stale_timeout_ms with bypass enabled."""
-    options = TranscriptionOptions(
-        flags=[
-            "--project",
-            "test-project",
-            "--input_subscription",
-            "projects/test-project/subscriptions/in",
-            "--output_topic",
-            "projects/test-project/topics/out",
-            "--dlq_topic",
-            "projects/test-project/topics/dlq",
-            "--bypass_stitching",
-            "true",
-            "--out_of_order_timeout_ms",
-            "80000",
-            "--stale_timeout_ms",
-            "70000",
-        ]
-    )
-
-    with pytest.raises(
-        ValueError,
-        match=r"stale_timeout_ms .* must be strictly greater than out_of_order_timeout_ms",
+        match=r"stale_timeout_ms .* must be strictly greater than .* out_of_order_timeout_ms",
     ):
         get_pipeline(options)
 
@@ -140,4 +95,9 @@ def test_metadata_json_parameters_parity() -> None:
     missing = declared_options - metadata_parameters
     assert not missing, (
         f"Config options defined in options.py missing from metadata.json spec: {missing}"
+    )
+
+    stale = metadata_parameters - declared_options
+    assert not stale, (
+        f"Entries in metadata.json have no corresponding option in options.py (stale?): {stale}"
     )

@@ -29,6 +29,35 @@ class AudioStitchingStateMachine:
         self, chunk_data: AudioChunkData, ctx: StitcherContext
     ) -> list[StateMachineAction]:
         """Evaluates an incoming chunk against the state machine to produce imperative actions."""
+        if self.config.isolate_segmented_chunks:
+            # Force isolation: clear context of any previous chunk's state
+            self._reset_transmission_context(ctx)
+            ctx.missing_prior_context = False
+
+            actions: list[StateMachineAction] = []
+
+            # Segmented chunks are evaluated entirely in isolation
+            if chunk_data.speech_segments:
+                new_actions = self._process_speech_segments(chunk_data, ctx)
+                actions.extend(new_actions)
+
+                # If there's accumulated speech in the buffer, force-flush the tail
+                if ctx.transmission_start_time_ms is not None:
+                    actions.append(
+                        self._flush_current_transmission(
+                            reason="Flushing isolated segmented chunk tail",
+                            ctx=ctx,
+                        )
+                    )
+                    self._reset_transmission_context(ctx)
+            else:
+                actions.append(
+                    DropAction(reason="Discarding silent segmented chunk")
+                )
+
+            actions.append(UpdateStateAction())
+            return actions
+
         # 0. Detect if this is an out-of-order LATE chunk
         is_late_chunk = (
             ctx.expected_next_chunk_start_ms is not None
@@ -395,6 +424,27 @@ class AudioStitchingStateMachine:
         self._reset_transmission_context(ctx)
         return None
 
+    def _pre_split_excessive_speech_segments(
+        self, speech_segments: list[TimeRange]
+    ) -> list[TimeRange]:
+        """Divides speech segments exceeding max_transmission_duration_ms into smaller ranges."""
+        processed_segments = []
+        max_dur = self.config.max_transmission_duration_ms
+        for segment in speech_segments:
+            seg_start = segment.start_ms
+            seg_end = segment.end_ms
+
+            while seg_end - seg_start > max_dur:
+                processed_segments.append(
+                    TimeRange(start_ms=seg_start, end_ms=seg_start + max_dur)
+                )
+                seg_start += max_dur
+            if seg_end > seg_start:
+                processed_segments.append(
+                    TimeRange(start_ms=seg_start, end_ms=seg_end)
+                )
+        return processed_segments
+
     def _process_speech_segments(
         self, chunk_data: AudioChunkData, ctx: StitcherContext
     ) -> list[StateMachineAction]:
@@ -403,7 +453,11 @@ class AudioStitchingStateMachine:
         file_start_ms = chunk_data.start_ms
         audio_append_cursor_ms: int | None = None
 
-        for segment in chunk_data.speech_segments:
+        processed_segments = self._pre_split_excessive_speech_segments(
+            chunk_data.speech_segments
+        )
+
+        for segment in processed_segments:
             # Calculate where to start to avoid overlap
             actual_start_ms = segment.start_ms
             if ctx.last_segment_end_time_ms is not None:
@@ -452,7 +506,12 @@ class AudioStitchingStateMachine:
             )
 
             if ctx.transmission_start_time_ms is None:
-                if ctx.missing_prior_context and global_start_ms > 0:
+                is_natural_gap = (
+                    ctx.last_segment_end_time_ms is not None
+                    and (file_start_ms + global_start_ms)
+                    > ctx.last_segment_end_time_ms
+                )
+                if ctx.missing_prior_context and is_natural_gap:
                     ctx.missing_prior_context = False
 
                 ctx.transmission_start_time_ms = file_start_ms + global_start_ms
