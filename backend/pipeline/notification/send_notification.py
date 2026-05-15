@@ -104,7 +104,7 @@ def _build_app_url(
             timestamp.seconds * 1000 + timestamp.nanos // 1_000_000
         )
 
-    return f"{APP_URL}?{urllib.parse.urlencode(query_params)}"
+    return f"{APP_URL}/transcripts?{urllib.parse.urlencode(query_params)}"
 
 
 def convert_to_notification(

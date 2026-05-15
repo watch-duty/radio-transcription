@@ -97,7 +97,7 @@ class TestSendNotification(TestCase):
             source_audio_uris=["gs://foo/bar.flac"],
             feed_name="asdf",
             external_id="ext-id",
-            app_url="https://app.example.com?feedId=&transmissionId=1234&timestamp=1000000",
+            app_url="https://app.example.com/transcripts?feedId=&transmissionId=1234&timestamp=1000000",
         )
         expected_notification.start_audio_offset.seconds = 10
         expected_notification.end_audio_offset.seconds = 20
@@ -204,7 +204,7 @@ class TestSendNotification(TestCase):
 
         self.assertEqual(
             notification.app_url,
-            "https://app.example.com?feedId=feed-1&transmissionId=tx-1"
+            "https://app.example.com/transcripts?feedId=feed-1&transmissionId=tx-1"
             "&timestamp=1776280988990",
         )
         self.assertEqual(notification.start_timestamp.seconds, 1776280988)

@@ -255,3 +255,39 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         # Contributing URIs should have both!
         self.assertIn("gs://fake/1.flac", self.ctx.contributing_audio_uris)
         self.assertIn("gs://fake/2.flac", self.ctx.contributing_audio_uris)
+
+    def test_late_chunk_excessive_speech_duration_split(self) -> None:
+        """Verifies that an isolated late-arriving chunk containing speech exceeding
+        max_transmission_duration_ms is force-split internally without corrupting main timeline.
+        """
+        config = get_test_stitch_config(
+            max_transmission_duration_ms=10000
+        )  # 10s limit
+        self.state_machine = AudioStitchingStateMachine(config)
+
+        # Main timeline moved forward to 50.0s
+        self.ctx.expected_next_chunk_start_ms = 50000
+
+        # Received a late chunk starting at 10.0s with 15.0s of continuous speech (> 10s limit)
+        chunk_late = mock_audio_chunk(10000, 15000, [(0.0, 15.0)])
+        actions = self._process(chunk_late)
+
+        # Since it's processed independently via _process_late_chunk_independently, it filters
+        # actions to preserve isolation. We expect two FlushActions: one for severed max limit,
+        # and one for the trailing tail.
+        flush_actions = [a for a in actions if isinstance(a, FlushAction)]
+        self.assertEqual(len(flush_actions), 2)
+
+        # First flush: hits max duration limit mid-stream
+        self.assertEqual(
+            flush_actions[0].reason, "Maximum transmission duration exceeded"
+        )
+        self.assertTrue(flush_actions[0].missing_post_context)
+        self.assertTrue(flush_actions[0].missing_prior_context)
+
+        # Second flush: flushes remaining tail
+        self.assertEqual(
+            flush_actions[1].reason,
+            "Flushing isolated late-arriving audio chunk",
+        )
+        self.assertTrue(flush_actions[1].missing_post_context)

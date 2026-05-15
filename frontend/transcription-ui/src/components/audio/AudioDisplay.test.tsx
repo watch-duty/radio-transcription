@@ -356,7 +356,23 @@ describe('AudioDisplay', () => {
     const mockOnTogglePlayPause = vi.fn();
     render(
       <AudioDisplay
-        transcripts={[]}
+        transcripts={[
+          {
+            transmissionId: '1',
+            feedId: 'feed1',
+            startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
+            endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
+            transcript: 'Test 1',
+            canonicalAudioUri: 'audio1.flac',
+            playbackAudioUri: 'audio1.m4a',
+            evaluationDecisions: [],
+            missingPriorContext: false,
+            missingPostContext: false,
+            sourceAudioUris: [],
+            startAudioOffset: '0',
+            endAudioOffset: '0',
+          },
+        ]}
         currentlyPlayingTransmissionId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
@@ -369,6 +385,26 @@ describe('AudioDisplay', () => {
     expect(playButton).toBeTruthy();
     fireEvent.click(playButton);
     expect(mockOnTogglePlayPause).toHaveBeenCalled();
+  });
+
+  it('should render disabled play button when transcripts list is empty and not call onTogglePlayPause when clicked', () => {
+    const mockOnTogglePlayPause = vi.fn();
+    render(
+      <AudioDisplay
+        transcripts={[]}
+        currentlyPlayingTransmissionId={null}
+        onClipClick={vi.fn()}
+        isAudioPlaying={false}
+        onTogglePlayPause={mockOnTogglePlayPause}
+        highlightedTransmissionId={null}
+      />
+    );
+
+    const playButton = screen.getByLabelText('play');
+    expect(playButton).toBeTruthy();
+    expect(playButton).toBeDisabled();
+    fireEvent.click(playButton);
+    expect(mockOnTogglePlayPause).not.toHaveBeenCalled();
   });
 
   it('should render pause button when playing', () => {
