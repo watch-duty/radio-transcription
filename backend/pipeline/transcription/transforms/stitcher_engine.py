@@ -18,6 +18,7 @@ from dataclasses import replace
 from typing import Any, Literal
 
 import numpy as np
+from apache_beam.metrics import Metrics
 from google.cloud import storage
 
 from backend.pipeline.common import constants as common_constants
@@ -67,6 +68,46 @@ class StitcherEngine:
         self.stitch_config = stitch_config
         self.order_config = order_config
         self.vad_config = vad_config
+
+        self.vad_speech_count = Metrics.counter(
+            self.__class__, "vad_speech_count"
+        )
+        self.vad_silence_count = Metrics.counter(
+            self.__class__, "vad_silence_count"
+        )
+
+        # Incoming chunk counters by feed type
+        self.segmented_chunks_received = Metrics.counter(
+            self.__class__, "segmented_chunks_received"
+        )
+        self.continuous_chunks_received = Metrics.counter(
+            self.__class__, "continuous_chunks_received"
+        )
+
+        # VAD evaluated chunk counters by feed type
+        self.segmented_vad_speech_chunks = Metrics.counter(
+            self.__class__, "segmented_vad_speech_chunks"
+        )
+        self.segmented_vad_silence_chunks = Metrics.counter(
+            self.__class__, "segmented_vad_silence_chunks"
+        )
+        self.continuous_vad_speech_chunks = Metrics.counter(
+            self.__class__, "continuous_vad_speech_chunks"
+        )
+        self.continuous_vad_silence_chunks = Metrics.counter(
+            self.__class__, "continuous_vad_silence_chunks"
+        )
+
+        # Total speech utterances/segments count by feed type
+        self.segmented_speech_segments_count = Metrics.counter(
+            self.__class__, "segmented_speech_segments_count"
+        )
+        self.continuous_speech_segments_count = Metrics.counter(
+            self.__class__, "continuous_speech_segments_count"
+        )
+
+        # Pipeline health & flushes
+        self.stale_flushes = Metrics.counter(self.__class__, "stale_flushes")
 
         # Instantiate the stateless AudioProcessor
         self.processor = audio_processor.AudioProcessor(
@@ -205,6 +246,7 @@ class StitcherEngine:
                 task_logger.info(
                     f"[Stale Timer] Fired for session {session_id}. Emitting buffered contents {transmission_id}."
                 )
+                self.stale_flushes.inc()
 
                 yield (
                     feed_id,
@@ -320,6 +362,35 @@ class StitcherEngine:
             transmission_buffer.clear()
             timer_manager.clear()
 
+    def _record_chunk_evaluation_metrics(
+        self, chunk_data: datatypes.AudioChunkData
+    ) -> None:
+        """Records VAD evaluation outcomes and chunk volume by pipeline type."""
+        if chunk_data.speech_segments:
+            self.vad_speech_count.inc()
+        else:
+            self.vad_silence_count.inc()
+
+        is_segmented = self.stitch_config.isolate_segmented_chunks
+        if is_segmented:
+            self.segmented_chunks_received.inc()
+            if chunk_data.speech_segments:
+                self.segmented_vad_speech_chunks.inc()
+                self.segmented_speech_segments_count.inc(
+                    len(chunk_data.speech_segments)
+                )
+            else:
+                self.segmented_vad_silence_chunks.inc()
+        else:
+            self.continuous_chunks_received.inc()
+            if chunk_data.speech_segments:
+                self.continuous_vad_speech_chunks.inc()
+                self.continuous_speech_segments_count.inc(
+                    len(chunk_data.speech_segments)
+                )
+            else:
+                self.continuous_vad_silence_chunks.inc()
+
     def _process_single_stitch_chunk(
         self,
         chunk: datatypes.BufferedChunk,
@@ -400,6 +471,7 @@ class StitcherEngine:
                     chunk.timestamp_ms,
                     prior_audio=curr_context.prior_audio_tail,
                 )
+                self._record_chunk_evaluation_metrics(chunk_data)
                 task_logger.debug(
                     f"[Download] Downloaded audio for {chunk.gcs_uri}"
                 )
