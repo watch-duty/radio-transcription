@@ -34,38 +34,86 @@ interface FeedTableProps {
   isLoading: boolean;
 }
 
+interface SortConfig {
+  column: 'name' | 'status';
+  direction: 'asc' | 'desc';
+}
+
+function ActionsMenu({ feed }: { feed: Feed }) {
+  const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
+
+  const handleOpen = (event: React.MouseEvent<HTMLButtonElement>) => {
+    setAnchorEl(event.currentTarget);
+  };
+
+  const handleClose = () => {
+    setAnchorEl(null);
+  };
+
+  const menuOpen = Boolean(anchorEl);
+  const hasSourceUrl = !!feed.sourceUrl;
+  const hasArchiveUrl = !!feed.archiveUrl;
+
+  return (
+    <>
+      <IconButton size="small" onClick={handleOpen} aria-label="feed actions">
+        <MoreVertIcon fontSize="small" />
+      </IconButton>
+
+      <Menu
+        anchorEl={anchorEl}
+        open={menuOpen}
+        onClose={handleClose}
+        slotProps={{
+          paper: {
+            sx: { minWidth: 180 },
+          },
+        }}
+      >
+        <MenuItem
+          component={hasSourceUrl ? 'a' : 'li'}
+          href={hasSourceUrl ? feed?.sourceUrl : undefined}
+          target={hasSourceUrl ? '_blank' : undefined}
+          rel="noopener noreferrer"
+          disabled={!hasSourceUrl}
+          onClick={handleClose}
+        >
+          <ListItemIcon>
+            <OpenInNewOutlinedIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText>Source URL</ListItemText>
+        </MenuItem>
+        <MenuItem
+          component={hasArchiveUrl ? 'a' : 'li'}
+          href={hasArchiveUrl ? feed?.archiveUrl : undefined}
+          target={hasArchiveUrl ? '_blank' : undefined}
+          rel="noopener noreferrer"
+          disabled={!hasArchiveUrl}
+          onClick={handleClose}
+        >
+          <ListItemIcon>
+            <InventoryIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText>Archive URL</ListItemText>
+        </MenuItem>
+      </Menu>
+    </>
+  );
+}
+
 export function FeedTable({ feeds, isLoading }: FeedTableProps) {
   const [searchQuery, setSearchQuery] = useState('');
-  const [orderBy, setOrderBy] = useState<'name' | 'status'>('name');
-  const [orderDirection, setOrderDirection] = useState<'asc' | 'desc'>('asc');
-
-  // State for the high-performance shared menu using absolute screen pixel coordinates.
-  // This entirely bypasses DOM measurement bugs caused by virtualized scrollers.
-  const [menuAnchorPosition, setMenuAnchorPosition] = useState<{
-    top: number;
-    left: number;
-  } | null>(null);
-  const [activeFeed, setActiveFeed] = useState<Feed | null>(null);
+  const [sortConfig, setSortConfig] = useState<SortConfig>({
+    column: 'name',
+    direction: 'asc',
+  });
 
   const handleRequestSort = (property: 'name' | 'status') => {
-    const isAsc = orderBy === property && orderDirection === 'asc';
-    setOrderDirection(isAsc ? 'desc' : 'asc');
-    setOrderBy(property);
-  };
-
-  const handleMenuOpen = (event: React.MouseEvent<HTMLElement>, feed: Feed) => {
-    event.stopPropagation();
-    const rect = event.currentTarget.getBoundingClientRect();
-    setMenuAnchorPosition({
-      top: rect.bottom,
-      left: rect.right,
-    });
-    setActiveFeed(feed);
-  };
-
-  const handleMenuClose = () => {
-    setMenuAnchorPosition(null);
-    setActiveFeed(null);
+    setSortConfig((prev) => ({
+      column: property,
+      direction:
+        prev.column === property && prev.direction === 'asc' ? 'desc' : 'asc',
+    }));
   };
 
   const filteredAndSortedFeeds = useMemo(() => {
@@ -84,17 +132,14 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
 
     return filtered.sort((a, b) => {
       let comparison = 0;
-      if (orderBy === 'name') {
+      if (sortConfig.column === 'name') {
         comparison = a.name.localeCompare(b.name);
-      } else if (orderBy === 'status') {
+      } else if (sortConfig.column === 'status') {
         comparison = a.status.localeCompare(b.status);
       }
-      return orderDirection === 'asc' ? comparison : -comparison;
+      return sortConfig.direction === 'asc' ? comparison : -comparison;
     });
-  }, [feeds, searchQuery, orderBy, orderDirection]);
-
-  const hasSourceUrl = !!activeFeed?.sourceUrl;
-  const hasArchiveUrl = !!activeFeed?.archiveUrl;
+  }, [feeds, searchQuery, sortConfig]);
 
   return (
     <Paper
@@ -190,14 +235,15 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
             <TableRow>
               <TableCell
                 sx={{
-                  width: '35%',
                   bgcolor: 'background.paper',
                   fontWeight: 'bold',
                 }}
               >
                 <TableSortLabel
-                  active={orderBy === 'name'}
-                  direction={orderBy === 'name' ? orderDirection : 'asc'}
+                  active={sortConfig.column === 'name'}
+                  direction={
+                    sortConfig.column === 'name' ? sortConfig.direction : 'asc'
+                  }
                   onClick={() => handleRequestSort('name')}
                 >
                   Name
@@ -205,14 +251,17 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
               </TableCell>
               <TableCell
                 sx={{
-                  width: '25%',
                   bgcolor: 'background.paper',
                   fontWeight: 'bold',
                 }}
               >
                 <TableSortLabel
-                  active={orderBy === 'status'}
-                  direction={orderBy === 'status' ? orderDirection : 'asc'}
+                  active={sortConfig.column === 'status'}
+                  direction={
+                    sortConfig.column === 'status'
+                      ? sortConfig.direction
+                      : 'asc'
+                  }
                   onClick={() => handleRequestSort('status')}
                 >
                   Status
@@ -220,7 +269,6 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
               </TableCell>
               <TableCell
                 sx={{
-                  width: '30%',
                   bgcolor: 'background.paper',
                   fontWeight: 'bold',
                 }}
@@ -243,7 +291,12 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
                   component={RouterLink}
                   to={`/transcripts?feedId=${feed.id}`}
                   variant="body1"
-                  sx={{ fontWeight: 500 }}
+                  sx={{
+                    fontWeight: 500,
+                    textOverflow: 'ellipsis',
+                    width: '100%',
+                  }}
+                  noWrap
                 >
                   {feed.name}
                 </Link>
@@ -251,13 +304,13 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
                   {feed.sourceType}
                 </Typography>
               </TableCell>
-              <TableCell sx={{ verticalAlign: 'top' }}>
+              <TableCell sx={{ verticalAlign: 'top', width: '100%' }}>
                 <FeedStatusIndicator
                   status={feed.status}
                   lastHeartbeat={feed.lastHeartbeat}
                 />
               </TableCell>
-              <TableCell sx={{ verticalAlign: 'top' }}>
+              <TableCell sx={{ verticalAlign: 'top', width: '100%' }}>
                 {feed.tags && feed.tags.length > 0 ? (
                   <Box
                     sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}
@@ -279,65 +332,12 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
                 )}
               </TableCell>
               <TableCell align="right" sx={{ verticalAlign: 'top' }}>
-                <IconButton
-                  size="small"
-                  onClick={(e) => handleMenuOpen(e, feed)}
-                  aria-label="feed actions"
-                >
-                  <MoreVertIcon fontSize="small" />
-                </IconButton>
+                <ActionsMenu feed={feed} />
               </TableCell>
             </>
           )}
         />
       )}
-
-      <Menu
-        anchorReference="anchorPosition"
-        anchorPosition={
-          menuAnchorPosition
-            ? { top: menuAnchorPosition.top, left: menuAnchorPosition.left }
-            : undefined
-        }
-        open={Boolean(menuAnchorPosition)}
-        onClose={handleMenuClose}
-        transformOrigin={{
-          vertical: 'top',
-          horizontal: 'right',
-        }}
-        slotProps={{
-          paper: {
-            sx: { minWidth: 180 },
-          },
-        }}
-      >
-        <MenuItem
-          component={hasSourceUrl ? 'a' : 'li'}
-          href={hasSourceUrl ? activeFeed?.sourceUrl : undefined}
-          target={hasSourceUrl ? '_blank' : undefined}
-          rel="noopener noreferrer"
-          disabled={!hasSourceUrl}
-          onClick={handleMenuClose}
-        >
-          <ListItemIcon>
-            <OpenInNewOutlinedIcon fontSize="small" />
-          </ListItemIcon>
-          <ListItemText>Source URL</ListItemText>
-        </MenuItem>
-        <MenuItem
-          component={hasArchiveUrl ? 'a' : 'li'}
-          href={hasArchiveUrl ? activeFeed?.archiveUrl : undefined}
-          target={hasArchiveUrl ? '_blank' : undefined}
-          rel="noopener noreferrer"
-          disabled={!hasArchiveUrl}
-          onClick={handleMenuClose}
-        >
-          <ListItemIcon>
-            <InventoryIcon fontSize="small" />
-          </ListItemIcon>
-          <ListItemText>Archive URL</ListItemText>
-        </MenuItem>
-      </Menu>
     </Paper>
   );
 }

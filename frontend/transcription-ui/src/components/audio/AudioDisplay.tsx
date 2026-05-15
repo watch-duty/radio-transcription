@@ -273,6 +273,7 @@ export function AudioDisplay({
           size="small"
           color="primary"
           aria-label={isAudioPlaying ? 'pause' : 'play'}
+          disabled={transcripts.length === 0}
         >
           {isAudioPlaying ? <PauseIcon /> : <PlayArrowIcon />}
         </IconButton>

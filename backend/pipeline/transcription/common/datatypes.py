@@ -64,6 +64,7 @@ class ChunkMetadata:
     session_id: str  # Required for continuous feeds ONLY.
     duration_ms: int
     feed_metadata: FeedMetadata
+    is_continuous: bool = True
     traceparent: str | None = None
 
 
@@ -176,7 +177,7 @@ class StitchAudioConfig:
     vad_post_roll_ms: int
     route_to_dlq: bool = True
     backfill_lateness_threshold_ms: int = 300000
-    bypass_stitching: bool = False
+    isolate_segmented_chunks: bool = False
 
     def __post_init__(self) -> None:
         """Validates the dataclass variables."""
