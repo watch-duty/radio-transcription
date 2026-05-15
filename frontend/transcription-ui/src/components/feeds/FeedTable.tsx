@@ -57,7 +57,8 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
   const handleRequestSort = (property: 'name' | 'status') => {
     setSortConfig((prev) => ({
       column: property,
-      direction: prev.column === property && prev.direction === 'asc' ? 'desc' : 'asc',
+      direction:
+        prev.column === property && prev.direction === 'asc' ? 'desc' : 'asc',
     }));
   };
 
@@ -205,7 +206,9 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
               >
                 <TableSortLabel
                   active={sortConfig.column === 'name'}
-                  direction={sortConfig.column === 'name' ? sortConfig.direction : 'asc'}
+                  direction={
+                    sortConfig.column === 'name' ? sortConfig.direction : 'asc'
+                  }
                   onClick={() => handleRequestSort('name')}
                 >
                   Name
@@ -220,7 +223,11 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
               >
                 <TableSortLabel
                   active={sortConfig.column === 'status'}
-                  direction={sortConfig.column === 'status' ? sortConfig.direction : 'asc'}
+                  direction={
+                    sortConfig.column === 'status'
+                      ? sortConfig.direction
+                      : 'asc'
+                  }
                   onClick={() => handleRequestSort('status')}
                 >
                   Status
