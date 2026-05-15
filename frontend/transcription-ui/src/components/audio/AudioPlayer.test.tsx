@@ -1,50 +1,22 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  act,
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-} from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 import AudioPlayer from './AudioPlayer';
 
-interface MockHowlOptions {
-  onplay?: () => void;
-  onpause?: () => void;
-  onend?: () => void;
-  onstop?: () => void;
-}
-
-let mockCapturedOptions: MockHowlOptions = {};
-const mockHowlInstance = {
-  play: vi.fn(),
-  pause: vi.fn(),
-  stop: vi.fn(),
-  unload: vi.fn(),
-};
-
-vi.mock('howler', () => ({
-  Howl: function (opts: MockHowlOptions) {
-    mockCapturedOptions = opts;
-    return mockHowlInstance;
-  },
-}));
-
 describe('AudioPlayer', () => {
-  const mockOnPlay = vi.fn();
+  const mockOnToggleAudio = vi.fn();
   const defaultProps = {
     audioUri: 'gs://bucket/audio.mp3',
     transmissionId: '123',
-    onPlay: mockOnPlay,
+    onToggleAudio: mockOnToggleAudio,
+    isAudioPlaying: false,
     currentlyPlayingTransmissionId: null,
   };
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockCapturedOptions = {};
   });
 
   afterEach(() => {
@@ -56,78 +28,48 @@ describe('AudioPlayer', () => {
     expect(screen.getByLabelText('play')).toBeTruthy();
   });
 
-  it('calls onPlay and plays audio when clicked', () => {
+  it('calls onToggleAudio when clicked', () => {
     render(<AudioPlayer {...defaultProps} />);
 
     const button = screen.getByLabelText('play');
     fireEvent.click(button);
 
-    expect(mockOnPlay).toHaveBeenCalledWith('123');
-    expect(mockHowlInstance.play).toHaveBeenCalled();
+    expect(mockOnToggleAudio).toHaveBeenCalledWith(
+      '123',
+      'gs://bucket/audio.mp3'
+    );
   });
 
-  it('updates UI to pause when playing', () => {
-    render(<AudioPlayer {...defaultProps} />);
-
-    // Click to initialize
-    const button = screen.getByLabelText('play');
-    fireEvent.click(button);
-
-    // Simulate onplay event
-    act(() => {
-      mockCapturedOptions.onplay?.();
-    });
-
+  it('renders pause button when playing this transmission', () => {
+    render(
+      <AudioPlayer
+        {...defaultProps}
+        currentlyPlayingTransmissionId="123"
+        isAudioPlaying={true}
+      />
+    );
     expect(screen.getByLabelText('pause')).toBeTruthy();
   });
 
-  it('calls pause when clicked while playing', () => {
-    render(<AudioPlayer {...defaultProps} />);
-
-    // Click to initialize
-    const button = screen.getByLabelText('play');
-    fireEvent.click(button);
-
-    // Simulate playing state
-    act(() => {
-      mockCapturedOptions.onplay?.();
-    });
-
-    const pauseButton = screen.getByLabelText('pause');
-    fireEvent.click(pauseButton);
-
-    expect(mockHowlInstance.pause).toHaveBeenCalled();
-  });
-
-  it('stops audio when another transmission starts playing', () => {
-    const { rerender } = render(<AudioPlayer {...defaultProps} />);
-
-    // Click to initialize
-    const button = screen.getByLabelText('play');
-    fireEvent.click(button);
-
-    // Simulate playing
-    act(() => {
-      mockCapturedOptions.onplay?.();
-    });
-
-    // Rerender with a different currentlyPlayingTransmissionId
-    rerender(
-      <AudioPlayer {...defaultProps} currentlyPlayingTransmissionId="456" />
+  it('renders play button when playing another transmission', () => {
+    render(
+      <AudioPlayer
+        {...defaultProps}
+        currentlyPlayingTransmissionId="456"
+        isAudioPlaying={true}
+      />
     );
-
-    expect(mockHowlInstance.stop).toHaveBeenCalled();
+    expect(screen.getByLabelText('play')).toBeTruthy();
   });
 
-  it('unloads sound on unmount', () => {
-    const { unmount } = render(<AudioPlayer {...defaultProps} />);
-
-    // Click to initialize
-    const button = screen.getByLabelText('play');
-    fireEvent.click(button);
-
-    unmount();
-
-    expect(mockHowlInstance.unload).toHaveBeenCalled();
+  it('renders play button when not playing even if currentlyPlayingTransmissionId matches', () => {
+    render(
+      <AudioPlayer
+        {...defaultProps}
+        currentlyPlayingTransmissionId="123"
+        isAudioPlaying={false}
+      />
+    );
+    expect(screen.getByLabelText('play')).toBeTruthy();
   });
 });

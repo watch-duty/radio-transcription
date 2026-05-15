@@ -17,30 +17,31 @@
 
 ## Pipeline E2E Local Development
 On a high level, this local pipeline runs the following:
+#### Shared infrastructure
 1. Pub/Sub emulator (manages all PubSub topics for each Pub/Sub instance in the pipeline)
-2. Rules Management service (to manage keywords and evaluation logic)
-3. Rules Evaluation service (to process transcription events)
-4. Notification service (to send alerts when rules match)
-5. Mock server (to receive and display mock notifications)
-6. Frontend API (for rules, transcript, and feed management)
+2. GCS emulator (manages all GCS buckets for audio storage in the pipeline)
+
+#### Pipeline
+1. Transcription pipeline service (for processing audio into transcript text)
+2. Rules Evaluation service (to process transcription events)
+3. Notification service (to send alerts when rules match)
+
+#### API Management Services
+1. Rules Management service (to manage keywords and evaluation logic)
+2. Transcripts API services
+3. Frontend API (proxy for rules, transcript, and feed management)
+4. Mock server (to receive and display mock notifications)
 
 Integration tests run an automated E2E test on startup.
 
 Note that currently the following are missing from the E2E setup:
 * Audio ingestion pipeline and storage
-* Transcription pipeline and storage
-* Rules storage
 
-Locally run the full pipeline from E2E
+Locally run the full pipeline from E2E:
 ```bash
-docker-compose down -v && docker-compose up --build -d &&
-docker-compose logs -f \
-  transcripts-api\
-  rules-evaluation\
-  rules-management\
-  notification\
-  mock-server\
-  frontend-api
+mise dev:start
+mise dev:log # to see logs for one or all containers
+mise dev:stop # to stop containers & rm volumes
 ```
 
 Send a test payload to the Transcription PubSub (ingested by the Rules Evaluation service) to test the path from the Rules Evaluation service to the Notification service.

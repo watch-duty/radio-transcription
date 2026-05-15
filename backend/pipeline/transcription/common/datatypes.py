@@ -64,6 +64,7 @@ class ChunkMetadata:
     session_id: str  # Required for continuous feeds ONLY.
     duration_ms: int
     feed_metadata: FeedMetadata
+    is_continuous: bool = True
     traceparent: str | None = None
 
 
@@ -97,14 +98,19 @@ class TranscriptionResult:
 
 
 @dataclass(frozen=True)
-class TransmissionContext:
-    """Dataclass storing all metadata for the current audio transmission.
+class IdleFeedState:
+    """Represents an uninitialized or flushed feed state with no active transmission session."""
 
-    This consolidated struct massively reduces I/O roundtrips to Dataflow's state storage.
-    We use standard dataclasses here because native Protobuf classes cannot be cleanly pickled.
-    """
+    out_of_order_buffer: list[BufferedChunk] = field(default_factory=list)
+    order_timer_active: bool = False
 
-    session_id: str | None = None
+
+@dataclass(frozen=True)
+class ActiveStitchingState:
+    """Represents an active audio transmission session with guaranteed feed metadata and session ID."""
+
+    session_id: str
+    feed_metadata: FeedMetadata
     last_end_time_ms: int | None = None
     stale_start_time_ms: int | None = None
     buffer_start_time_ms: int | None = None
@@ -117,12 +123,14 @@ class TransmissionContext:
     buffer_duration_ms: int = 0
     order_timer_active: bool = False
     out_of_order_buffer: list[BufferedChunk] = field(default_factory=list)
-    feed_metadata: FeedMetadata | None = None
     last_transmission_start_ms: int | None = None
     speech_segments: list[TimeRange] = field(default_factory=list)
     prior_audio_tail: np.ndarray | None = None
     traceparent: str | None = None
     sample_rate: int | None = None
+
+
+TransmissionContext = IdleFeedState | ActiveStitchingState
 
 
 @dataclass
@@ -169,7 +177,7 @@ class StitchAudioConfig:
     vad_post_roll_ms: int
     route_to_dlq: bool = True
     backfill_lateness_threshold_ms: int = 300000
-    bypass_stitching: bool = False
+    isolate_segmented_chunks: bool = False
 
     def __post_init__(self) -> None:
         """Validates the dataclass variables."""

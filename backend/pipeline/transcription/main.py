@@ -24,8 +24,9 @@ def main() -> None:
     options = pipeline_options.view_as(TranscriptionOptions)
 
     logger.info(
-        "Starting pipeline: input=%s, output=%s",
-        options.input_subscription,
+        "Starting unified pipeline: continuous_input=%s, segmented_input=%s, output=%s",
+        options.continuous_input_subscription,
+        options.segmented_input_subscription,
         options.output_topic,
     )
 

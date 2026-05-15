@@ -9,11 +9,13 @@ import Button from '@mui/material/Button';
 import ButtonGroup from '@mui/material/ButtonGroup';
 import CircularProgress from '@mui/material/CircularProgress';
 import ClickAwayListener from '@mui/material/ClickAwayListener';
+import FormControlLabel from '@mui/material/FormControlLabel';
 import Grow from '@mui/material/Grow';
 import MenuItem from '@mui/material/MenuItem';
 import MenuList from '@mui/material/MenuList';
 import Paper from '@mui/material/Paper';
 import Popper from '@mui/material/Popper';
+import Switch from '@mui/material/Switch';
 
 export interface TranscriptActionsBarProps {
   hasNewerTranscripts: boolean;
@@ -23,6 +25,8 @@ export interface TranscriptActionsBarProps {
   refreshInterval: number;
   setRefreshInterval: (interval: number) => void;
   onRefresh: () => Promise<void>;
+  redactTranscripts: boolean;
+  setRedactTranscripts: (redact: boolean) => void;
 }
 
 const refreshIntervalOptions = [
@@ -42,6 +46,8 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   refreshInterval,
   setRefreshInterval,
   onRefresh,
+  redactTranscripts,
+  setRedactTranscripts,
 }) => {
   const [anchorEl, setAnchorEl] = React.useState<HTMLElement | null>(null);
   const [refreshMenuOpen, setRefreshMenuOpen] = React.useState(false);
@@ -78,6 +84,17 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
     >
       <Box />
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <FormControlLabel
+          control={
+            <Switch
+              checked={redactTranscripts}
+              onChange={(e) => setRedactTranscripts(e.target.checked)}
+              size="small"
+            />
+          }
+          label="Redact transcripts"
+          slotProps={{ typography: { variant: 'body2' } }}
+        />
         {!hasNewerTranscripts && (
           <>
             <ButtonGroup variant="contained" ref={buttonGroupRef}>

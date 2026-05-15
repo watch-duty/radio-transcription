@@ -15,7 +15,13 @@ from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
 
 with (
     mock.patch("google.cloud.logging.Client"),
-    mock.patch.dict(os.environ, {"APP_URL": "https://app.example.com"}),
+    mock.patch.dict(
+        os.environ,
+        {
+            "APP_URL": "https://app.example.com",
+            "FEEDS_API_URL": "http://feeds-api",
+        },
+    ),
 ):
     from backend.pipeline.notification.send_notification import (
         convert_to_notification,
@@ -40,14 +46,25 @@ class TestSendNotification(TestCase):
             if original_module is not None:
                 sys.modules[module_name] = original_module
 
+    @mock.patch("requests.get")
     @mock.patch("backend.pipeline.notification.send_notification.deduplication")
     @mock.patch(
         "backend.pipeline.notification.send_notification.request_handler"
     )
     def test_send_notification(
-        self, mock_request_handler: mock.Mock, mock_dedupe: mock.Mock
+        self,
+        mock_request_handler: mock.Mock,
+        mock_dedupe: mock.Mock,
+        mock_get: mock.Mock,
     ) -> None:
         mock_dedupe.process_notification.return_value = True
+
+        mock_response = mock.Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "tags": [{"key": "env", "value": "prod"}]
+        }
+        mock_get.return_value = mock_response
 
         evaluated_payload = EvaluatedTranscribedAudio(
             transcript="This is a test!",
@@ -80,12 +97,17 @@ class TestSendNotification(TestCase):
             source_audio_uris=["gs://foo/bar.flac"],
             feed_name="asdf",
             external_id="ext-id",
-            app_url="https://app.example.com?feedId=&transmissionId=1234&timestamp=1000000&duration=5",
+            app_url="https://app.example.com/transcripts?feedId=&transmissionId=1234&timestamp=1000000",
         )
         expected_notification.start_audio_offset.seconds = 10
         expected_notification.end_audio_offset.seconds = 20
         expected_notification.start_timestamp.seconds = 1000
         expected_notification.end_timestamp.seconds = 2000
+
+        t = expected_notification.tags.add()
+        t.key = "env"
+        t.value = "prod"
+
         mock_request_handler.send_notification.assert_called_once_with(
             expected_notification
         )
@@ -119,6 +141,7 @@ class TestSendNotification(TestCase):
 
         mock_request_handler.send_notification.assert_not_called()
 
+    @mock.patch("requests.get")
     @mock.patch(
         "backend.pipeline.notification.send_notification.with_tracer_context"
     )
@@ -131,7 +154,12 @@ class TestSendNotification(TestCase):
         mock_request_handler: mock.Mock,
         mock_dedupe: mock.Mock,
         mock_with_tracer_context: mock.Mock,
+        mock_get: mock.Mock,
     ) -> None:
+        mock_response = mock.Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"tags": []}
+        mock_get.return_value = mock_response
         mock_dedupe.process_notification.return_value = True
 
         evaluated_payload = EvaluatedTranscribedAudio(
@@ -172,12 +200,12 @@ class TestSendNotification(TestCase):
         evaluated_payload.start_audio_offset.seconds = 5
         evaluated_payload.end_audio_offset.seconds = 15
 
-        notification = convert_to_notification(evaluated_payload)
+        notification = convert_to_notification(evaluated_payload, None)
 
         self.assertEqual(
             notification.app_url,
-            "https://app.example.com?feedId=feed-1&transmissionId=tx-1"
-            "&timestamp=1776280988990&duration=5",
+            "https://app.example.com/transcripts?feedId=feed-1&transmissionId=tx-1"
+            "&timestamp=1776280988990",
         )
         self.assertEqual(notification.start_timestamp.seconds, 1776280988)
         self.assertEqual(notification.start_timestamp.nanos, 990000000)

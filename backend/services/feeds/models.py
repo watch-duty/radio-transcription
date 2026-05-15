@@ -12,6 +12,13 @@ from backend.pipeline.storage.feed_store import (  # noqa: TC001
 
 
 class Tag(BaseModel):
+    """Key-value pair for any metadata on the feed.
+
+    Attributes:
+        key: The tag key.
+        value: The tag value.
+    """
+
     key: str
     value: str
 

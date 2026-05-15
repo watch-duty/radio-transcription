@@ -133,17 +133,44 @@ run = "yarn --cwd frontend/api run format:fix && yarn --cwd frontend/transcripti
 description = "Apply all frontend fixes"
 depends = ["format:frontend:eslint", "format:frontend:prettier"]
 
+# ---------------------------------------------------------------------------- #
+#                              Dev Tasks                                       #
+# ---------------------------------------------------------------------------- #
+
 [tasks."generate:protos"]
 description = "Generate Python code from Protobuf definitions"
 run = "uv run python -m grpc_tools.protoc --proto_path=protos --python_out=backend/pipeline/schema_types --grpc_python_out=backend/pipeline/schema_types --pyi_out=backend/pipeline/schema_types protos/*.proto"
 
-[tasks."test:unit"]
-description = "Run all unit tests"
-run = "uv run python -m unittest discover backend/pipeline"
+[tasks."dev:start"]
+description = "Start the dev pipeline and UI in local Docker containers"
+depends = ["dev:stop"]
+run = """
+docker-compose up --build -d
+"""
 
-[tasks.test]
-description = "Run all unit tests (alias)"
-depends = ["test:unit"]
+[tasks."dev:stop"]
+description = "Stop all dev containers"
+run = """
+docker-compose down -v
+"""
+
+[tasks."dev:log"]
+description = "Run the pipeline in local Docker containers"
+usage = """
+arg "[service]..." help="Services to log from. Default: all"
+"""
+run = """
+docker-compose logs --tail 100 -t -f {{ arg(name="service") }}
+"""
+
+# ---------------------------------------------------------------------------- #
+#                              Testing Tasks                                   #
+# ---------------------------------------------------------------------------- #
+
+[tasks."test:unit"]
+description = "Run all unit tests (alias: test)"
+alias = ["test"]
+run = "uv run python -m unittest discover backend/pipeline"
 
 [tasks."test:component:rules"]
 description = "Run RulesStore component tests"
@@ -160,8 +187,9 @@ run = "uv run pytest integration_tests/storage/"
 [tasks."test:e2e"]
 description = "Run all E2E tests in Docker Compose"
 run = """
-docker compose run --rm integration-tests
-docker compose down --remove-orphans
+docker compose --env-file local_dev/LOCAL.env build
+docker compose --env-file local_dev/LOCAL.env run --rm integration-tests
+docker compose --env-file local_dev/LOCAL.env down --remove-orphans
 """
 
 [tasks."test:api"]

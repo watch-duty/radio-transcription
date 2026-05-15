@@ -13,6 +13,7 @@ import { ApiError } from '@transcription/common';
 import AppContainer from './components/AppContainer';
 import Login from './components/Login';
 import LoginModal from './components/common/LoginModal';
+import FeedSearchView from './components/feeds/FeedSearchView';
 import FeedsView from './components/feeds/FeedsView';
 import RulesView from './components/rules/RulesView';
 import TranscriptView from './components/transcripts/TranscriptView';
@@ -170,20 +171,54 @@ function App() {
             <Route
               path="/"
               element={
-                <TranscriptView
-                  triggerSnackbar={triggerSnackbar}
-                  onError={handleError}
-                />
+                <>
+                  <title>Radio Transcription</title>
+                  <FeedSearchView
+                    triggerSnackbar={triggerSnackbar}
+                    onError={handleError}
+                  />
+                </>
               }
             />
-            <Route path="/rules" element={<RulesView />} />
-            <Route path="/feeds" element={<FeedsView />} />
+            <Route
+              path="/transcripts"
+              element={
+                <>
+                  <title>Transcripts - Radio Transcription</title>
+                  <TranscriptView
+                    triggerSnackbar={triggerSnackbar}
+                    onError={handleError}
+                  />
+                </>
+              }
+            />
+            <Route
+              path="/rules"
+              element={
+                <>
+                  <title>Rules - Radio Transcription</title>
+                  <RulesView />
+                </>
+              }
+            />
+            <Route
+              path="/feeds"
+              element={
+                <>
+                  <title>Feeds - Radio Transcription</title>
+                  <FeedsView />
+                </>
+              }
+            />
             <Route
               path="/docs"
               element={
-                <Suspense fallback={<div>Loading documentation...</div>}>
-                  <DocsView />
-                </Suspense>
+                <>
+                  <title>API Docs - Radio Transcription</title>
+                  <Suspense fallback={<div>Loading documentation...</div>}>
+                    <DocsView />
+                  </Suspense>
+                </>
               }
             />
             <Route path="/login" element={<Login />} />
