@@ -5,10 +5,10 @@ import AppRegistrationIcon from '@mui/icons-material/AppRegistration';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import DescriptionIcon from '@mui/icons-material/Description';
-import TroubleshootIcon from '@mui/icons-material/Troubleshoot';
 import MenuIcon from '@mui/icons-material/Menu';
 import RuleIcon from '@mui/icons-material/Rule';
 import SettingsIcon from '@mui/icons-material/Settings';
+import TroubleshootIcon from '@mui/icons-material/Troubleshoot';
 import VoiceChatIcon from '@mui/icons-material/VoiceChat';
 import AppBar from '@mui/material/AppBar';
 import Box from '@mui/material/Box';
@@ -61,7 +61,7 @@ export default function AppContainer({
   const handleItemClick = (path: string) => {
     navigate(path);
     handleDrawerClose();
-  }
+  };
 
   return (
     <Box sx={{ display: 'flex' }}>
