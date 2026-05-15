@@ -19,7 +19,7 @@ export function DateTimePicker({
   helperText,
   width,
 }: DateTimePickerProps) {
-  return (  
+  return (
     <LocalizationProvider dateAdapter={AdapterDateFns}>
       <MuiDateTimePicker
         label={label}
