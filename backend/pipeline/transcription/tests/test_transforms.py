@@ -23,6 +23,7 @@ from backend.pipeline.common.tracing_utils import (
 )
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.transcription.audio.audio_processor import ProcessorOutput
+from backend.pipeline.transcription.common import coders as trans_coders
 from backend.pipeline.transcription.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
     MAIN_TAG,
@@ -71,6 +72,7 @@ _SHARED_PATCHER = patch.object(
 
 
 def setUpModule() -> None:
+    trans_coders.register_custom_coders()
     _SHARED_PATCHER.start()
 
 
@@ -328,7 +330,9 @@ class TranscribeAudioTest(unittest.TestCase):
                         FlushRequest(
                             feed_id="feed-123",
                             session_id="fake-session",
-                            buffer=np.zeros(((500) * 16), dtype=np.int16),
+                            buffer=np.zeros(
+                                ((500) * 16), dtype=np.int16
+                            ).tobytes(),
                             contributing_audio_uris=["gs://f/11111111.flac"],
                             time_range=TimeRange(
                                 start_ms=101000, end_ms=101500
@@ -411,7 +415,9 @@ class TranscribeAudioTest(unittest.TestCase):
                         FlushRequest(
                             feed_id="feed-123",
                             session_id="fake-session",
-                            buffer=np.zeros(16000 * 65, dtype=np.int16),
+                            buffer=np.zeros(
+                                16000 * 65, dtype=np.int16
+                            ).tobytes(),
                             contributing_audio_uris=["gs://bucket/chunk.flac"],
                             time_range=TimeRange(start_ms=0, end_ms=65000),
                             transmission_id="tx-123",
@@ -822,7 +828,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                     coder=beam.coders.TupleCoder(
                         (
                             beam.coders.StrUtf8Coder(),
-                            beam.coders.PickleCoder(),
+                            trans_coders.ChunkMetadataCoder(),
                         )
                     )
                 )
@@ -847,7 +853,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 feed_id, request = msgs[0]
                 assert feed_id == "test-feed"
                 assert request.transmission_id is not None
-                assert isinstance(request.buffer, np.ndarray)
+                assert isinstance(request.buffer, bytes)
 
             assert_that(results, assert_results)
 
@@ -940,7 +946,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                     coder=beam.coders.TupleCoder(
                         (
                             beam.coders.StrUtf8Coder(),
-                            beam.coders.PickleCoder(),
+                            trans_coders.ChunkMetadataCoder(),
                         )
                     )
                 )
@@ -979,7 +985,9 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 for feed_id, request in msgs:
                     assert feed_id == "test-feed-ooo"
 
-                lengths = [len(request.buffer) for feed_id, request in msgs]
+                lengths = [
+                    len(request.buffer) // 2 for feed_id, request in msgs
+                ]
                 if len(msgs) == 1:
                     assert 48000 in lengths
                 else:
