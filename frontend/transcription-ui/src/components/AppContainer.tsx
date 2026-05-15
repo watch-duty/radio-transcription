@@ -5,6 +5,7 @@ import AppRegistrationIcon from '@mui/icons-material/AppRegistration';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import DescriptionIcon from '@mui/icons-material/Description';
+import TroubleshootIcon from '@mui/icons-material/Troubleshoot';
 import MenuIcon from '@mui/icons-material/Menu';
 import RuleIcon from '@mui/icons-material/Rule';
 import SettingsIcon from '@mui/icons-material/Settings';
@@ -56,6 +57,11 @@ export default function AppContainer({
   const handleDrawerClose = () => {
     setOpen(false);
   };
+
+  const handleItemClick = (path: string) => {
+    navigate(path);
+    handleDrawerClose();
+  }
 
   return (
     <Box sx={{ display: 'flex' }}>
@@ -130,31 +136,40 @@ export default function AppContainer({
         <Divider />
         <List>
           <ListItem disablePadding>
-            <ListItemButton onClick={() => navigate('/transcripts')}>
+            <ListItemButton onClick={() => handleItemClick('/')}>
+              <ListItemIcon>
+                <TroubleshootIcon />
+              </ListItemIcon>
+              <ListItemText primary={'Feeds'} />
+            </ListItemButton>
+          </ListItem>
+          <ListItem disablePadding>
+            <ListItemButton onClick={() => handleItemClick('/transcripts')}>
               <ListItemIcon>
                 <VoiceChatIcon />
               </ListItemIcon>
               <ListItemText primary={'Transcripts'} />
             </ListItemButton>
           </ListItem>
+          <Divider />
           <ListItem disablePadding>
-            <ListItemButton onClick={() => navigate('/rules')}>
+            <ListItemButton onClick={() => handleItemClick('/rules')} disabled>
               <ListItemIcon>
                 <RuleIcon />
               </ListItemIcon>
-              <ListItemText primary={'Rules'} />
+              <ListItemText primary={'Rule Configuration'} />
             </ListItemButton>
           </ListItem>
           <ListItem disablePadding>
-            <ListItemButton onClick={() => navigate('/feeds')}>
+            <ListItemButton onClick={() => handleItemClick('/feeds')} disabled>
               <ListItemIcon>
                 <AppRegistrationIcon />
               </ListItemIcon>
-              <ListItemText primary={'Feeds'} />
+              <ListItemText primary={'Feed Configuration'} />
             </ListItemButton>
           </ListItem>
           <ListItem disablePadding>
-            <ListItemButton onClick={() => navigate('/docs')}>
+            <ListItemButton onClick={() => handleItemClick('/docs')}>
               <ListItemIcon>
                 <DescriptionIcon />
               </ListItemIcon>
@@ -165,7 +180,7 @@ export default function AppContainer({
         <Divider />
         <List>
           <ListItem disablePadding>
-            <ListItemButton>
+            <ListItemButton disabled>
               <ListItemIcon>
                 <SettingsIcon />
               </ListItemIcon>

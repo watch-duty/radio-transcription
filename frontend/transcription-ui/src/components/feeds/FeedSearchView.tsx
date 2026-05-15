@@ -47,7 +47,7 @@ export function FeedSearchView({ onError }: FeedSearchViewProps) {
       }}
     >
       <Typography variant="h5" sx={{ fontWeight: 'bold' }}>
-        Radio Feeds
+        Feeds
       </Typography>
       <FeedTable feeds={feeds ?? []} isLoading={feedsLoading} />
     </Box>
