@@ -235,7 +235,6 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
             <TableRow>
               <TableCell
                 sx={{
-                  width: '35%',
                   bgcolor: 'background.paper',
                   fontWeight: 'bold',
                 }}
@@ -252,7 +251,6 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
               </TableCell>
               <TableCell
                 sx={{
-                  width: '25%',
                   bgcolor: 'background.paper',
                   fontWeight: 'bold',
                 }}
@@ -271,7 +269,6 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
               </TableCell>
               <TableCell
                 sx={{
-                  width: '30%',
                   bgcolor: 'background.paper',
                   fontWeight: 'bold',
                 }}
@@ -294,7 +291,12 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
                   component={RouterLink}
                   to={`/transcripts?feedId=${feed.id}`}
                   variant="body1"
-                  sx={{ fontWeight: 500 }}
+                  sx={{
+                    fontWeight: 500,
+                    textOverflow: 'ellipsis',
+                    width: '100%',
+                  }}
+                  noWrap
                 >
                   {feed.name}
                 </Link>
@@ -302,13 +304,13 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
                   {feed.sourceType}
                 </Typography>
               </TableCell>
-              <TableCell sx={{ verticalAlign: 'top' }}>
+              <TableCell sx={{ verticalAlign: 'top', width: '100%' }}>
                 <FeedStatusIndicator
                   status={feed.status}
                   lastHeartbeat={feed.lastHeartbeat}
                 />
               </TableCell>
-              <TableCell sx={{ verticalAlign: 'top' }}>
+              <TableCell sx={{ verticalAlign: 'top', width: '100%' }}>
                 {feed.tags && feed.tags.length > 0 ? (
                   <Box
                     sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}
