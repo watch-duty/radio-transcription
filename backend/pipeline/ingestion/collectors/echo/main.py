@@ -9,6 +9,7 @@ for downstream transcription.
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -41,6 +42,10 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 STAGING_BUCKET = _require_env("AUDIO_STAGING_BUCKET")
 RAW_AUDIO_TOPIC = _require_env("RAW_AUDIO_TOPIC")
+# Optional: set only on prod to also mirror the source MP3 into the dev
+# recordings bucket so dev's pipeline runs E2E against real prod traffic.
+# Best-effort — failures are logged and do not affect prod ingestion.
+DEV_RECORDINGS_BUCKET = os.environ.get("DEV_RECORDINGS_BUCKET")
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -180,6 +185,8 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
         # Unconditional heartbeat — also resets failure_count if recovering.
         feed_store.record_heartbeat(feed["id"])
 
+        _mirror_to_dev_best_effort(bucket, name)
+
     except Exception:
         try:
             feed_store.record_failure(feed["id"])
@@ -190,6 +197,37 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
 
 # ---------------------------------------------------------------------------
 # Helpers
+# ---------------------------------------------------------------------------
+def _mirror_to_dev_best_effort(bucket: str, name: str) -> None:
+    """Copy the source MP3 into the dev recordings bucket, best-effort.
+
+    No-op when ``DEV_RECORDINGS_BUCKET`` is unset (i.e. outside prod).
+    Any failure is logged and swallowed — a dev mirror issue is not the
+    feed's fault and must not propagate up to the outer except that
+    records a failure against the feed.
+    """
+    if not DEV_RECORDINGS_BUCKET or gcs_client is None:
+        return
+    try:
+        with tracer.start_as_current_span("mirror_to_dev"):
+            source_bucket = gcs_client.bucket(bucket)
+            source_bucket.copy_blob(
+                source_bucket.blob(name),
+                gcs_client.bucket(DEV_RECORDINGS_BUCKET),
+                name,
+                timeout=30,
+            )
+    except Exception:
+        logger.exception(
+            "Dev mirror failed (best-effort): src=%s/%s dst=%s",
+            bucket,
+            name,
+            DEV_RECORDINGS_BUCKET,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Timestamp parsing
 # ---------------------------------------------------------------------------
 def _parse_timestamp(name: str) -> datetime:
     """Extract UTC timestamp from an Echo recording filename.
