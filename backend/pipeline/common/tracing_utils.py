@@ -75,11 +75,10 @@ def get_current_traceparent() -> str:
 
 def get_trace_attributes() -> dict[str, str]:
     """Returns a dictionary of trace attributes for the current context."""
-    traceparent = get_current_traceparent()
-    if traceparent:
-        parts = traceparent.split("-")
-        trace_id = parts[1]
-        span_id = parts[2]
+    traceparent_parts = (get_current_traceparent() or "").split("-")
+    if len(traceparent_parts) >= 3:
+        trace_id = traceparent_parts[1]
+        span_id = traceparent_parts[2]
         project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or ""
         return {
             "trace": f"projects/{project_id}/traces/{trace_id}",
