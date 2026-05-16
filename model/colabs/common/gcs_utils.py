@@ -20,6 +20,22 @@ def parse_gcs_uri(gcs_uri: str) -> tuple[str, str]:
 from google.cloud.storage.retry import DEFAULT_RETRY
 
 
+def blob_exists(storage_client: storage.Client, gcs_uri: str) -> bool:
+    """Return True if the GCS object at gcs_uri exists and is reachable.
+
+    Args:
+        storage_client: Initialized GCS storage client.
+        gcs_uri: A gs:// URI to a single object.
+
+    Returns:
+        True if the object exists, False otherwise.
+    """
+    bucket_name, blob_path = parse_gcs_uri(gcs_uri)
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.blob(blob_path)
+    return blob.exists()
+
+
 def download_blob_to_file(
     storage_client: storage.Client,
     bucket_name: str,
