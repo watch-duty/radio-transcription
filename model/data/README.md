@@ -1,12 +1,34 @@
-# Training data
+# Training data artifacts
 
-Documentation and scripts to select and process training data.
+This directory holds **data artifacts only** — manifests, label exports, segmentation outputs,
+and inference results. Fetch scripts and API clients have been moved to a sibling directory.
 
-## Possible sources for unlabeled data
+## Directory layout
 
-- Watch Duty Echo recordings
-- FireNotifications recordings
-- Broadcastify recordings
+```
+model/data/
+├── inference_manifests/   — per-model inference results merged with ground truth
+├── manifests/             — batch manifests consumed by transcription notebooks
+├── label_studio_exports/  — Label Studio annotation exports
+├── segmentation/          — audio segmentation outputs
+└── README.md              — this file
+
+model/data_sources/        — fetch scripts and API clients (sibling of data/)
+├── broadcastify/          — Broadcastify API client + archive-URL fetch scripts
+├── echo/                  — Watch Duty Echo S3 scanner
+└── fire_notifications/    — FireNotifications API client + archive fetch scripts
+```
+
+## Data sources
+
+Fetch code for each source now lives under `model/data_sources/`. Run scripts from within
+each subdirectory (sibling imports rely on being co-located):
+
+```bash
+cd model/data_sources/broadcastify && python get_all_feeds.py
+cd model/data_sources/echo && python s3_file_scanner.py
+cd model/data_sources/fire_notifications && python fetch_fn_archives_day.py
+```
 
 ### Watch Duty Echo recordings
 
@@ -16,9 +38,10 @@ Considerations:
 
 - Some files are empty or only noise.
 - Some files are stereo mixed, with multiple radio streams on R and L channels. Avoid these.
-- Some audio files have [CTCSS](https://en.wikipedia.org/wiki/Squelch#CTCSS) or [DCS](https://en.wikipedia.org/wiki/Squelch#DCS) data in them.
+- Some audio files have [CTCSS](https://en.wikipedia.org/wiki/Squelch#CTCSS) or
+  [DCS](https://en.wikipedia.org/wiki/Squelch#DCS) data in them.
 
-See [echo/](echo/README.md)
+See [../data_sources/echo/](../data_sources/echo/README.md)
 
 ### FireNotifications recordings
 
@@ -31,7 +54,7 @@ Considerations:
 - Does also archive Watch Duty Echo audio, but easy to filter out
 - Archived mp3s are behind HTTP auth, so must be copied to use for labeling
 
-See [fire_notifications/](fire_notifications/)
+See [../data_sources/fire_notifications/](../data_sources/fire_notifications/README.md)
 
 ### Broadcastify recordings
 
@@ -45,4 +68,4 @@ Considerations:
 - Most streams are mono mp3
 - Hardware, channels, vary a lot
 
-See [broadcastify/](broadcastify/).
+See [../data_sources/broadcastify/](../data_sources/broadcastify/README.md)
