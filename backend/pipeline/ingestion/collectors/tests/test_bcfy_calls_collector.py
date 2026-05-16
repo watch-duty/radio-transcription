@@ -1604,9 +1604,7 @@ class TestBcfyCallsHttp01(unittest.IsolatedAsyncioTestCase):
         )
 
 
-class TestCreateChunkFromCallResumePosition(
-    unittest.IsolatedAsyncioTestCase
-):
+class TestCreateChunkFromCallResumePosition(unittest.IsolatedAsyncioTestCase):
     """resume_position cursor derivation in _create_chunk_from_call.
 
     The bcfy_calls duplicate-ingestion fix: the feed resume cursor must be
@@ -1887,9 +1885,7 @@ class TestCaptureBcfyCallsResumePosition(unittest.IsolatedAsyncioTestCase):
             committed_cursor,
             datetime.datetime.fromtimestamp(3013, datetime.UTC),
         )
-        self.assertNotEqual(
-            committed_cursor, lease1_chunks[-1].chunk_end_time
-        )
+        self.assertNotEqual(committed_cursor, lease1_chunks[-1].chunk_end_time)
 
         # --- Lease 2: resume from the persisted cursor. ---
         self.feed["last_bookmark_time"] = committed_cursor
