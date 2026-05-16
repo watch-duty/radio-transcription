@@ -1845,7 +1845,11 @@ class TestCaptureBcfyCallsResumePosition(unittest.IsolatedAsyncioTestCase):
 
         def _visible(pos: int | None) -> list[dict[str, Any]]:
             # Broadcastify Calls API filter: strict `ts > pos`.
-            return [c for c in corpus if pos is None or c["ts"] > pos]
+            # cast: corpus dicts mix str/int values, so c["ts"] widens
+            # to `str | int`; the `ts` field is always an int.
+            return [
+                c for c in corpus if pos is None or cast("int", c["ts"]) > pos
+            ]
 
         # --- Lease 1: cold start, commits the whole corpus. ---
         self.feed["last_bookmark_time"] = None
