@@ -2,6 +2,10 @@
 
 import unittest
 
+import apache_beam as beam
+import pytest
+from google.protobuf.message import DecodeError
+
 from backend.pipeline.transcription.common import coders, datatypes
 
 
@@ -125,3 +129,60 @@ class CoderVerificationTest(unittest.TestCase):
         self.assertIsInstance(decoded, datatypes.ChunkMetadata)
         self.assertEqual(decoded.gcs_uri, "gs://bucket/chunk.flac")
         self.assertEqual(decoded.duration_ms, 1000)
+
+    def test_coder_registration(self) -> None:
+        """Verifies that all domain models including TransmissionContext are correctly registered."""
+        coders.register_custom_coders()
+        self.assertIsInstance(
+            beam.coders.registry.get_coder(datatypes.FlushRequest),
+            coders.FlushRequestCoder,
+        )
+        self.assertIsInstance(
+            beam.coders.registry.get_coder(datatypes.ChunkMetadata),
+            coders.ChunkMetadataCoder,
+        )
+        self.assertIsInstance(
+            beam.coders.registry.get_coder(datatypes.IdleFeedState),
+            coders.TransmissionContextCoder,
+        )
+        self.assertIsInstance(
+            beam.coders.registry.get_coder(datatypes.ActiveStitchingState),
+            coders.TransmissionContextCoder,
+        )
+        self.assertIsInstance(
+            beam.coders.registry.get_coder(datatypes.TransmissionContext),
+            coders.TransmissionContextCoder,
+        )
+
+    def test_coder_equality_and_hashing(self) -> None:
+        """Verifies that identical Coder types evaluate equal and hash to the same value for Beam graph deduplication."""
+        coder1 = coders.TransmissionContextCoder()
+        coder2 = coders.TransmissionContextCoder()
+        self.assertEqual(coder1, coder2)
+        self.assertEqual(len({coder1, coder2}), 1)
+
+        flush_coder1 = coders.FlushRequestCoder()
+        flush_coder2 = coders.FlushRequestCoder()
+        self.assertEqual(flush_coder1, flush_coder2)
+        self.assertEqual(len({flush_coder1, flush_coder2}), 1)
+
+        self.assertNotEqual(coder1, flush_coder1)
+
+    def test_type_hint_mapping(self) -> None:
+        """Verifies that to_type_hint correctly maps custom coders back to their domain types."""
+        self.assertEqual(
+            coders.TransmissionContextCoder().to_type_hint(),
+            datatypes.TransmissionContext,
+        )
+        self.assertEqual(
+            coders.FlushRequestCoder().to_type_hint(), datatypes.FlushRequest
+        )
+        self.assertEqual(
+            coders.ChunkMetadataCoder().to_type_hint(), datatypes.ChunkMetadata
+        )
+
+    def test_corrupted_protobuf_deserialization_handling(self) -> None:
+        """Verifies that errors are explicitly raised when invalid or incomplete protobuf bytes are decoded."""
+        coder = coders.ChunkMetadataCoder()
+        with pytest.raises((ValueError, DecodeError)):
+            coder.decode(b"invalid_protobuf_bytes_payload")
