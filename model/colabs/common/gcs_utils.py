@@ -60,7 +60,7 @@ def upload_file_to_blob(
     """Uploads a local file to a GCS blob."""
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(blob_path)
-    blob.upload_from_filename(source_file_name)
+    blob.upload_from_filename(source_file_name, retry=DEFAULT_RETRY)
     logger.info(
         f"File {source_file_name} uploaded to gs://{bucket_name}/{blob_path}."
     )
@@ -104,7 +104,9 @@ def upload_inference_results(
     # Convert list of dicts to JSONL string in memory
     jsonl_content = "\n".join(json.dumps(row) for row in results_list) + "\n"
 
-    blob.upload_from_string(jsonl_content, content_type="application/jsonl")
+    blob.upload_from_string(
+        jsonl_content, content_type="application/jsonl", retry=DEFAULT_RETRY
+    )
 
     logger.info(f"Uploaded results to gs://{bucket_name}/{blob_path}")
     return f"gs://{bucket_name}/{blob_path}"

@@ -79,8 +79,10 @@ def merge_predictions_to_manifest(
     Returns:
         The same ``ground_truth`` list, mutated IN PLACE — each matched row has
         ``pred_text_{model_key}`` written directly onto it; an empty list if an
-        unexpected error occurs. The input dicts are modified directly, so a
-        caller needing the originals pristine should pass a copy.
+        unexpected error occurs. The row dicts are modified directly: a caller
+        that must keep the original manifest pristine should pass a deep copy
+        (``copy.deepcopy(ground_truth)``). A shallow copy is insufficient — it
+        shares the same row dicts, which are the objects being mutated.
     """
     try:
         # Build lookup: audio_filepath -> list of (offset, text) from predictions
