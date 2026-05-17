@@ -28,6 +28,19 @@ def _require_torch() -> None:
         ) from _TORCH_MISSING
 
 
+def _remove_local_download(path: str) -> None:
+    """Delete a cached local download (and, for a preprocessed WAV, its raw FLAC)."""
+    if os.path.exists(path):
+        os.remove(path)
+    # A preprocessed WAV (temp_prep_<stem>.wav) leaves the raw temp_<stem>.flac behind.
+    if "_prep_" in path:
+        name = os.path.basename(path)  # temp_prep_<stem>.wav
+        stem = name.removeprefix("temp_prep_").removesuffix(".wav")
+        raw_flac_path = f"/tmp/temp_{stem}.flac"
+        if os.path.exists(raw_flac_path):
+            os.remove(raw_flac_path)
+
+
 def run_inference_pipeline(
     model: Any,
     manifest_data: list[dict[str, Any]],
@@ -70,6 +83,15 @@ def run_inference_pipeline(
 
     if limit:
         manifest_data = manifest_data[:limit]
+
+    # Last manifest index at which each audio URI is needed, so a cached download
+    # can be deleted as soon as no later entry will reuse it — rather than keeping
+    # every downloaded file in /tmp until the whole run finishes.
+    last_use_index: dict[str, int] = {}
+    for idx, entry in enumerate(manifest_data):
+        uri = entry.get("audio_filepath")
+        if uri:
+            last_use_index[uri] = idx
 
     results_list = []
     cached_downloads = {}
@@ -143,17 +165,16 @@ def run_inference_pipeline(
             result_row[f"pred_text_{selected_model}"] = transcript.strip()
             results_list.append(result_row)
 
-    # Cleanup all cached local downloads at the very end of the entire run
-    for local_path in cached_downloads.values():
-        if os.path.exists(local_path):
-            os.remove(local_path)
-        # Also clean up the raw FLAC file if preprocessing created a WAV file
-        if "_prep_" in local_path:
-            name = os.path.basename(local_path)  # temp_prep_<stem>.wav
-            stem = name.removeprefix("temp_prep_").removesuffix(".wav")
-            raw_flac_path = f"/tmp/temp_{stem}.flac"
-            if os.path.exists(raw_flac_path):
-                os.remove(raw_flac_path)
+        # Drop cached downloads no remaining manifest entry will reuse, so /tmp
+        # holds only the active working set rather than every file from the run.
+        batch_end = i + batch_size - 1
+        for uri in list(cached_downloads):
+            if last_use_index.get(uri, batch_end) <= batch_end:
+                _remove_local_download(cached_downloads.pop(uri))
+
+    # Cleanup any cached downloads still held at the end of the run
+    for local_path in list(cached_downloads.values()):
+        _remove_local_download(local_path)
 
     logger.info(f"Processed {len(results_list)} results.")
     return results_list
