@@ -12,7 +12,10 @@ the suite SKIPS — never errors — on a bare-core checkout.
 import unittest
 
 try:
+    # build_normalizer() needs BOTH packages; probe both so a partial
+    # install yields a clean skip rather than a build_normalizer() error.
     import jiwer  # noqa: F401 — presence check only
+    import nemo_text_processing  # noqa: F401 — presence check only
     _SCORING_AVAILABLE = True
 except ImportError:
     _SCORING_AVAILABLE = False
