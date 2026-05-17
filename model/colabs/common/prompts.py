@@ -151,7 +151,16 @@ CHIRP_BASE_PHRASE_SET: list[str] = [
     "wind driven",
 ]
 
-CHIRP_TEN_CODES: list[str] = ["10-4", "10-7", "10-8", "10-9", "10-20", "10-22", "10-23", "10-97"]
+CHIRP_TEN_CODES: list[str] = [
+    "10-4",
+    "10-7",
+    "10-8",
+    "10-9",
+    "10-20",
+    "10-22",
+    "10-23",
+    "10-97",
+]
 
 # ---------------------------------------------------------------------------
 # PRODUCTION / PHRASE_LIST_BLOCK / WITHPL_PROMPT / USER_PROMPT
@@ -184,6 +193,8 @@ fire-behavior: being toned, box alarm, cancel the balance, chaparral, exposure p
 codes: 10-4, 10-7, 10-8, 10-9, 10-20, 10-22, 10-23, 10-97
 """
 
-WITHPL_PROMPT = PRODUCTION_PROMPT.replace("\nTASK:", PHRASE_LIST_BLOCK + "\nTASK:")
+WITHPL_PROMPT = PRODUCTION_PROMPT.replace(
+    "\nTASK:", PHRASE_LIST_BLOCK + "\nTASK:"
+)
 
 USER_PROMPT = "Transcribe this emergency radio communication segment verbatim per the rules above."

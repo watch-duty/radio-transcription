@@ -92,7 +92,9 @@ def run_inference_pipeline(
                 prompts.append(prompt_fn(entry, current_path))
             else:
                 audio_bucket, audio_blob_path = parse_gcs_uri(audio_gcs_uri)
-                file_name = os.path.splitext(os.path.basename(audio_blob_path))[0]
+                file_name = os.path.splitext(os.path.basename(audio_blob_path))[
+                    0
+                ]
                 local_path = f"/tmp/temp_{file_name}.flac"
                 try:
                     download_blob_to_file(
@@ -143,7 +145,9 @@ def run_inference_pipeline(
             os.remove(local_path)
         # Also clean up the raw FLAC file if preprocessing created a WAV file
         if "_prep_" in local_path:
-            raw_flac_path = local_path.replace("_prep_", "").replace(".wav", ".flac")
+            raw_flac_path = local_path.replace("_prep_", "").replace(
+                ".wav", ".flac"
+            )
             if os.path.exists(raw_flac_path):
                 os.remove(raw_flac_path)
 

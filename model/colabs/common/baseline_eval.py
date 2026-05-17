@@ -50,7 +50,9 @@ def run_test_baseline_inference_evaluation(
     import torch
 
     logger.info(f"Loading dataset {dataset_name} in streaming mode...")
-    dataset = load_dataset(dataset_name, dataset_config, split=split, streaming=True)
+    dataset = load_dataset(
+        dataset_name, dataset_config, split=split, streaming=True
+    )
     wer = load("wer")
 
     if num_examples and num_examples > 0:
@@ -78,7 +80,12 @@ def run_test_baseline_inference_evaluation(
         normalize_fn = default_normalize
 
     def process_current_batch():
-        nonlocal batch_prompts, batch_refs, batch_temp_paths, predictions, references
+        nonlocal \
+            batch_prompts, \
+            batch_refs, \
+            batch_temp_paths, \
+            predictions, \
+            references
         if not batch_prompts:
             return
         try:
@@ -116,7 +123,9 @@ def run_test_baseline_inference_evaluation(
         sampling_rate = example["audio"]["sampling_rate"]
         reference_text = example["text"]
 
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+        with tempfile.NamedTemporaryFile(
+            suffix=".wav", delete=False
+        ) as temp_file:
             temp_path = temp_file.name
             sf.write(temp_path, audio_array, sampling_rate)
 

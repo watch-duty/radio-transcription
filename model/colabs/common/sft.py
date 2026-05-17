@@ -39,12 +39,20 @@ def build_example(
                                           {role:model, parts:[text]}]}``.
     """
     return {
-        "systemInstruction": {"role": "system", "parts": [{"text": system_prompt}]},
+        "systemInstruction": {
+            "role": "system",
+            "parts": [{"text": system_prompt}],
+        },
         "contents": [
             {
                 "role": "user",
                 "parts": [
-                    {"fileData": {"mimeType": "audio/flac", "fileUri": audio_uri}},
+                    {
+                        "fileData": {
+                            "mimeType": "audio/flac",
+                            "fileUri": audio_uri,
+                        }
+                    },
                     {"text": user_prompt},
                 ],
             },

@@ -12,12 +12,15 @@ Do NOT add eager imports of heavy modules here — that defeats the [hf] extra g
 def __getattr__(name: str):
     if name == "run_inference_pipeline":
         from common.inference_nemo import run_inference_pipeline
+
         return run_inference_pipeline
     if name == "run_huggingface_inference_pipeline":
         from common.inference_hf import run_huggingface_inference_pipeline
+
         return run_huggingface_inference_pipeline
     if name == "run_test_baseline_inference_evaluation":
         from common.baseline_eval import run_test_baseline_inference_evaluation
+
         return run_test_baseline_inference_evaluation
     raise AttributeError(
         f"module 'common.inference_pipeline_runner' has no attribute {name!r}"

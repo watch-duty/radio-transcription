@@ -203,7 +203,9 @@ def submit_batch_inference(
         time.sleep(poll_interval)
 
     if state not in _BATCH_SUCCESS_STATES:
-        raise RuntimeError(f"Batch inference job ended in non-success state: {state}")
+        raise RuntimeError(
+            f"Batch inference job ended in non-success state: {state}"
+        )
 
     output_location: str = getattr(cur, "dest", output_uri)
     logger.info(f"Batch output location: {output_location}")

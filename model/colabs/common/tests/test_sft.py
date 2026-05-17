@@ -13,8 +13,12 @@ class TestBuildExample(unittest.TestCase):
             system_prompt="You are a transcriber.",
             user_prompt="Transcribe this.",
         )
-        file_parts = [p for p in example["contents"][0]["parts"] if "fileData" in p]
-        self.assertEqual(file_parts[0]["fileData"]["fileUri"], "gs://bucket/seg001.flac")
+        file_parts = [
+            p for p in example["contents"][0]["parts"] if "fileData" in p
+        ]
+        self.assertEqual(
+            file_parts[0]["fileData"]["fileUri"], "gs://bucket/seg001.flac"
+        )
         self.assertEqual(file_parts[0]["fileData"]["mimeType"], "audio/flac")
 
     def test_system_instruction_is_sibling_of_contents(self) -> None:
@@ -44,7 +48,9 @@ class TestBuildExample(unittest.TestCase):
             system_prompt="You are a transcriber.",
             user_prompt="Transcribe this.",
         )
-        self.assertEqual(example["contents"][1]["parts"][0]["text"], "Engine 41 copy")
+        self.assertEqual(
+            example["contents"][1]["parts"][0]["text"], "Engine 41 copy"
+        )
 
     def test_user_turn_carries_user_prompt_text(self) -> None:
         from common.sft import build_example
@@ -72,7 +78,9 @@ class TestValidateExample(unittest.TestCase):
     def test_rejects_legacy_input_output_shape(self) -> None:
         from common.sft import validate_example
 
-        self.assertFalse(validate_example({"input_text": "x", "output_text": "y"}))
+        self.assertFalse(
+            validate_example({"input_text": "x", "output_text": "y"})
+        )
 
     def test_rejects_flat_prompt_response_shape(self) -> None:
         from common.sft import validate_example
@@ -83,7 +91,9 @@ class TestValidateExample(unittest.TestCase):
         from common.sft import build_example, validate_example
 
         ex = build_example("gs://b/s.flac", "copy", "sys", "user")
-        ex["contents"][0]["parts"][0]["fileData"]["fileUri"] = "s3://bucket/file.flac"
+        ex["contents"][0]["parts"][0]["fileData"]["fileUri"] = (
+            "s3://bucket/file.flac"
+        )
         self.assertFalse(validate_example(ex))
 
     def test_rejects_wrong_mime_type(self) -> None:

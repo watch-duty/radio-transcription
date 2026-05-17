@@ -102,13 +102,19 @@ def rows_from_manifest(manifest: list[dict[str, Any]]) -> list[CanonicalRow]:
             logger.warning(f"Skipping manifest row {i}: missing audio_filepath")
             continue
         if not text:
-            logger.warning(f"Skipping manifest row {i}: missing text ({audio_filepath!r})")
+            logger.warning(
+                f"Skipping manifest row {i}: missing text ({audio_filepath!r})"
+            )
             continue
         offset: float = float(entry.get("offset", 0.0))
         duration: float = float(entry.get("duration", 0.0))
         # Derive stable example_id / segment_id from the manifest or fallback to basename
-        example_id: str = str(entry.get("example_id") or Path(audio_filepath).stem)
-        segment_id: str = str(entry.get("segment_id") or f"{example_id}_{offset:.3f}")
+        example_id: str = str(
+            entry.get("example_id") or Path(audio_filepath).stem
+        )
+        segment_id: str = str(
+            entry.get("segment_id") or f"{example_id}_{offset:.3f}"
+        )
         rows.append(
             CanonicalRow(
                 audio_filepath=audio_filepath,
@@ -166,5 +172,7 @@ def merge_predictions_to_manifest(
 
         return ground_truth
     except Exception as e:
-        logger.error(f"Failed to merge manifest predictions for model '{model_key}': {e}")
+        logger.error(
+            f"Failed to merge manifest predictions for model '{model_key}': {e}"
+        )
         return []

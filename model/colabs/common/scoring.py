@@ -196,7 +196,8 @@ def hallucination_rate(hypotheses: list[str]) -> float:
     if not hypotheses:
         return 0.0
     flagged = sum(
-        1 for h in hypotheses
+        1
+        for h in hypotheses
         if not h.strip() or h.strip() == "[UNINTELLIGIBLE]"
     )
     return round(100 * flagged / len(hypotheses), 2)
@@ -246,7 +247,8 @@ def duration_bucket_wer(
 
     for i in range(len(bins) - 1):
         idx = [
-            j for j in range(len(durations))
+            j
+            for j in range(len(durations))
             if bins[i] <= durations[j] < bins[i + 1]
         ]
         if not idx:
@@ -259,12 +261,14 @@ def duration_bucket_wer(
         for ref, hyp in zip(bucket_refs, bucket_hyps):
             if compute_wer([ref], [hyp], normalizer)["wer"] > 0:
                 non_zero += 1
-        results.append({
-            "bucket": labels[i],
-            "wer": bucket_wer,
-            "ser": round(100 * non_zero / len(idx), 2),
-            "count": len(idx),
-        })
+        results.append(
+            {
+                "bucket": labels[i],
+                "wer": bucket_wer,
+                "ser": round(100 * non_zero / len(idx), 2),
+                "count": len(idx),
+            }
+        )
     return results
 
 
@@ -329,12 +333,14 @@ def keyword_metrics(
                 count_in_hyp = count_keyword_occurrences(kw_lower, hyp.lower())
                 matches += min(count_in_ref, count_in_hyp)
         if occurrences > 0:
-            results.append({
-                "keyword": kw_lower,
-                "occurrences": occurrences,
-                "correctly_identified": matches,
-                "accuracy": round(100 * matches / occurrences, 2),
-            })
+            results.append(
+                {
+                    "keyword": kw_lower,
+                    "occurrences": occurrences,
+                    "correctly_identified": matches,
+                    "accuracy": round(100 * matches / occurrences, 2),
+                }
+            )
     return results
 
 

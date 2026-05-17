@@ -113,14 +113,18 @@ def run_huggingface_inference_pipeline(
                 # Load audio waveform at 16kHz — uses preprocess_audio_for_model
                 # for resample+mono (D-05: deduplicates inline torchaudio block)
                 resampled_path = f"/tmp/temp_resampled_{file_name}.wav"
-                if preprocess_audio_for_model(current_path, resampled_path, target_sr=16000):
+                if preprocess_audio_for_model(
+                    current_path, resampled_path, target_sr=16000
+                ):
                     waveform, sr = torchaudio.load(resampled_path)
                     local_files.append(resampled_path)
                 else:
                     # Fallback: load and resample inline if preprocessing failed
                     waveform, sr = torchaudio.load(current_path)
                     if sr != 16000:
-                        waveform = T.Resample(orig_freq=sr, new_freq=16000)(waveform)
+                        waveform = T.Resample(orig_freq=sr, new_freq=16000)(
+                            waveform
+                        )
                     if waveform.shape[0] > 1:
                         waveform = torch.mean(waveform, dim=0, keepdim=True)
 
@@ -156,19 +160,25 @@ def run_huggingface_inference_pipeline(
                 f"Processing parallel GPU batch {i // batch_size + 1}..."
             )
             with torch.no_grad():
-                outputs = model.generate(**inputs, max_new_tokens=max_new_tokens)
+                outputs = model.generate(
+                    **inputs, max_new_tokens=max_new_tokens
+                )
 
             # 3. Decode the entire batch together (slicing prompt tokens if present)
             if "input_ids" in inputs:
                 new_tokens = outputs[:, inputs["input_ids"].shape[-1] :]
             else:
                 new_tokens = outputs
-            transcripts = processor.batch_decode(new_tokens, skip_special_tokens=True)
+            transcripts = processor.batch_decode(
+                new_tokens, skip_special_tokens=True
+            )
 
             # 4. Store results
             for j, row in enumerate(batch_entries):
                 result_row = dict(row)
-                result_row[f"pred_text_{selected_model}"] = transcripts[j].strip()
+                result_row[f"pred_text_{selected_model}"] = transcripts[
+                    j
+                ].strip()
                 results_list.append(result_row)
 
         except Exception as e:
@@ -188,17 +198,23 @@ def run_huggingface_inference_pipeline(
                     )
                     inputs.to(model.device, dtype=model.dtype)
                     with torch.no_grad():
-                        out = model.generate(**inputs, max_new_tokens=max_new_tokens)
+                        out = model.generate(
+                            **inputs, max_new_tokens=max_new_tokens
+                        )
                     if "input_ids" in inputs:
                         new_tokens = out[0, inputs["input_ids"].shape[-1] :]
                     else:
                         new_tokens = out[0]
-                    pred = processor.decode(new_tokens, skip_special_tokens=True)
+                    pred = processor.decode(
+                        new_tokens, skip_special_tokens=True
+                    )
                     result_row = dict(row)
                     result_row[f"pred_text_{selected_model}"] = pred.strip()
                     results_list.append(result_row)
                 except Exception as ex:
-                    logger.error(f"Sequential fallback failed for row {j}: {ex}")
+                    logger.error(
+                        f"Sequential fallback failed for row {j}: {ex}"
+                    )
 
         # Cleanup local files
         for local_path in local_files:
