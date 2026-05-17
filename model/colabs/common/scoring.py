@@ -241,6 +241,10 @@ def duration_bucket_wer(
             "references, hypotheses, and durations must have the same length"
         )
 
+    if normalizer is not None:
+        references = [normalizer(r) for r in references]
+        hypotheses = [normalizer(h) for h in hypotheses]
+
     bins = [0, 2, 5, 15]
     labels = ["Short (0-2s)", "Medium (2-5s)", "Long (5s+)"]
     results: list[dict[str, Any]] = []
@@ -255,11 +259,13 @@ def duration_bucket_wer(
             continue
         bucket_refs = [references[j] for j in idx]
         bucket_hyps = [hypotheses[j] for j in idx]
-        bucket_wer = compute_wer(bucket_refs, bucket_hyps, normalizer)["wer"]
+        bucket_wer = compute_wer(bucket_refs, bucket_hyps, normalizer=None)[
+            "wer"
+        ]
         # SER = fraction of segments with a non-zero per-segment WER.
         non_zero = 0
         for ref, hyp in zip(bucket_refs, bucket_hyps):
-            if compute_wer([ref], [hyp], normalizer)["wer"] > 0:
+            if compute_wer([ref], [hyp], normalizer=None)["wer"] > 0:
                 non_zero += 1
         results.append(
             {
@@ -389,8 +395,13 @@ def bootstrap_paired(
     if n == 0:
         raise ValueError("cannot bootstrap an empty eval set")
 
-    wer_a = compute_wer(references, hypotheses_a, normalizer)["wer"]
-    wer_b = compute_wer(references, hypotheses_b, normalizer)["wer"]
+    if normalizer is not None:
+        references = [normalizer(r) for r in references]
+        hypotheses_a = [normalizer(h) for h in hypotheses_a]
+        hypotheses_b = [normalizer(h) for h in hypotheses_b]
+
+    wer_a = compute_wer(references, hypotheses_a, normalizer=None)["wer"]
+    wer_b = compute_wer(references, hypotheses_b, normalizer=None)["wer"]
     delta_obs = round(wer_a - wer_b, 4)
 
     rng = random.Random(seed)
@@ -401,8 +412,8 @@ def bootstrap_paired(
         rs_a = [hypotheses_a[j] for j in idx]
         rs_b = [hypotheses_b[j] for j in idx]
         d = (
-            compute_wer(rs_refs, rs_a, normalizer)["wer"]
-            - compute_wer(rs_refs, rs_b, normalizer)["wer"]
+            compute_wer(rs_refs, rs_a, normalizer=None)["wer"]
+            - compute_wer(rs_refs, rs_b, normalizer=None)["wer"]
         )
         deltas.append(d)
 
