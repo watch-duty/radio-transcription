@@ -6,17 +6,17 @@ and inference results. Fetch scripts and API clients have been moved to a siblin
 ## Directory layout
 
 ```
-model/data/
-├── inference_manifests/   — per-model inference results merged with ground truth
-├── manifests/             — batch manifests consumed by transcription notebooks
-├── label_studio_exports/  — Label Studio annotation exports
-├── segmentation/          — audio segmentation outputs
-└── README.md              — this file
-
-model/data_sources/        — fetch scripts and API clients (sibling of data/)
-├── broadcastify/          — Broadcastify API client + archive-URL fetch scripts
-├── echo/                  — Watch Duty Echo S3 scanner
-└── fire_notifications/    — FireNotifications API client + archive fetch scripts
+model/
+├── data/                      — data artifacts (this directory)
+│   ├── inference_manifests/   — per-model inference results merged with ground truth
+│   ├── manifests/             — batch manifests consumed by transcription notebooks
+│   ├── label_studio_exports/  — Label Studio annotation exports
+│   ├── segmentation/          — audio segmentation outputs
+│   └── README.md              — this file
+└── data_sources/              — fetch scripts and API clients
+    ├── broadcastify/          — Broadcastify API client + archive-URL fetch scripts
+    ├── echo/                  — Watch Duty Echo S3 scanner
+    └── fire_notifications/    — FireNotifications API client + archive fetch scripts
 ```
 
 ## Data sources

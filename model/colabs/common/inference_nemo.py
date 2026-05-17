@@ -1,7 +1,6 @@
 """NeMo-based ASR batch inference pipeline. Requires the [hf] extra (torch)."""
 
 import os
-import json
 import logging
 from typing import Callable, Any, Optional
 from google.cloud import storage

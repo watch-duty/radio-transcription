@@ -43,6 +43,5 @@ exclude = ["common.tests*"]
 
 [tool.pytest.ini_options]
 # model/ tests live under colabs/common/tests/. testpaths keeps `pytest` run from
-# model/ from collecting the backend suite. -n auto uses pytest-xdist (in the [dev] extra).
+# model/ from collecting the backend suite.
 testpaths = ["colabs/common/tests"]
-addopts = "-n auto"
