@@ -1,5 +1,7 @@
 """Custom Apache Beam Coders for Protobuf-backed streaming state models."""
 
+from typing import Any
+
 import apache_beam as beam
 
 from backend.pipeline.schema_types import streaming_state_pb2 as state_pb2
@@ -23,7 +25,10 @@ class TransmissionContextCoder(beam.coders.Coder):
 
     def decode(self, encoded: bytes) -> datatypes.TransmissionContext:
         wrapper = state_pb2.TransmissionContextProto()
-        wrapper.ParseFromString(encoded)
+        consumed = wrapper.ParseFromString(encoded)
+        if consumed != len(encoded):
+            msg = f"Protobuf decode error: consumed {consumed} bytes out of {len(encoded)}"
+            raise ValueError(msg)
         match wrapper.WhichOneof("context"):
             case "idle_state":
                 return datatypes.IdleFeedState.from_proto(wrapper.idle_state)
@@ -38,6 +43,15 @@ class TransmissionContextCoder(beam.coders.Coder):
     def is_deterministic(self) -> bool:
         return True
 
+    def to_type_hint(self) -> Any:
+        return datatypes.TransmissionContext
+
+    def __eq__(self, other: object) -> bool:
+        return type(self) is type(other)
+
+    def __hash__(self) -> int:
+        return hash(type(self))
+
 
 class FlushRequestCoder(beam.coders.Coder):
     """Binary Coder for FlushRequest."""
@@ -47,11 +61,23 @@ class FlushRequestCoder(beam.coders.Coder):
 
     def decode(self, encoded: bytes) -> datatypes.FlushRequest:
         proto = state_pb2.FlushRequestProto()
-        proto.ParseFromString(encoded)
+        consumed = proto.ParseFromString(encoded)
+        if consumed != len(encoded):
+            msg = f"Protobuf decode error: consumed {consumed} bytes out of {len(encoded)}"
+            raise ValueError(msg)
         return datatypes.FlushRequest.from_proto(proto)
 
     def is_deterministic(self) -> bool:
         return True
+
+    def to_type_hint(self) -> Any:
+        return datatypes.FlushRequest
+
+    def __eq__(self, other: object) -> bool:
+        return type(self) is type(other)
+
+    def __hash__(self) -> int:
+        return hash(type(self))
 
 
 class ChunkMetadataCoder(beam.coders.Coder):
@@ -62,11 +88,23 @@ class ChunkMetadataCoder(beam.coders.Coder):
 
     def decode(self, encoded: bytes) -> datatypes.ChunkMetadata:
         proto = state_pb2.ChunkMetadataProto()
-        proto.ParseFromString(encoded)
+        consumed = proto.ParseFromString(encoded)
+        if consumed != len(encoded):
+            msg = f"Protobuf decode error: consumed {consumed} bytes out of {len(encoded)}"
+            raise ValueError(msg)
         return datatypes.ChunkMetadata.from_proto(proto)
 
     def is_deterministic(self) -> bool:
         return True
+
+    def to_type_hint(self) -> Any:
+        return datatypes.ChunkMetadata
+
+    def __eq__(self, other: object) -> bool:
+        return type(self) is type(other)
+
+    def __hash__(self) -> int:
+        return hash(type(self))
 
 
 def register_custom_coders() -> None:
@@ -76,4 +114,13 @@ def register_custom_coders() -> None:
     )
     beam.coders.registry.register_coder(
         datatypes.ChunkMetadata, ChunkMetadataCoder
+    )
+    beam.coders.registry.register_coder(
+        datatypes.IdleFeedState, TransmissionContextCoder
+    )
+    beam.coders.registry.register_coder(
+        datatypes.ActiveStitchingState, TransmissionContextCoder
+    )
+    beam.coders.registry.register_coder(
+        datatypes.TransmissionContext, TransmissionContextCoder
     )
