@@ -149,9 +149,9 @@ def run_inference_pipeline(
             os.remove(local_path)
         # Also clean up the raw FLAC file if preprocessing created a WAV file
         if "_prep_" in local_path:
-            raw_flac_path = local_path.replace("_prep_", "").replace(
-                ".wav", ".flac"
-            )
+            name = os.path.basename(local_path)  # temp_prep_<stem>.wav
+            stem = name.removeprefix("temp_prep_").removesuffix(".wav")
+            raw_flac_path = f"/tmp/temp_{stem}.flac"
             if os.path.exists(raw_flac_path):
                 os.remove(raw_flac_path)
 
