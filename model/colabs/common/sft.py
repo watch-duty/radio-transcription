@@ -8,7 +8,6 @@ No GCP project or bucket constants are defined in this module. All GCP identifie
 caller-supplied parameters.
 """
 
-import json
 import logging
 from typing import Any
 
@@ -79,13 +78,19 @@ def validate_example(example: dict[str, Any]) -> bool:
     if not isinstance(contents, list) or len(contents) != 2:
         return False
     user_turn, model_turn = contents
+    if not isinstance(user_turn, dict) or not isinstance(model_turn, dict):
+        return False
     if user_turn.get("role") != "user" or model_turn.get("role") != "model":
         return False
     user_parts = user_turn.get("parts", [])
-    file_parts = [p for p in user_parts if "fileData" in p]
+    file_parts = [
+        p for p in user_parts if isinstance(p, dict) and "fileData" in p
+    ]
     if not file_parts:
         return False
     fd = file_parts[0]["fileData"]
+    if not isinstance(fd, dict):
+        return False
     if not fd.get("fileUri", "").startswith("gs://"):
         return False
     if fd.get("mimeType") != "audio/flac":
@@ -93,5 +98,8 @@ def validate_example(example: dict[str, Any]) -> bool:
     model_parts = model_turn.get("parts", [{}])
     if not model_parts:
         return False
-    model_text = model_parts[0].get("text", "")
+    first_model_part = model_parts[0]
+    if not isinstance(first_model_part, dict):
+        return False
+    model_text = first_model_part.get("text", "")
     return bool(model_text.strip())

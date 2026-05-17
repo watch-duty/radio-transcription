@@ -18,8 +18,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Optional, Protocol
 
-from common.gcs_utils import parse_gcs_uri
-
 logger = logging.getLogger(__name__)
 
 
@@ -66,8 +64,15 @@ def load_manifest(path: str) -> list[dict[str, Any]]:
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON array: {e}")
             return []
+        if not isinstance(data, list) or not all(
+            isinstance(row, dict) for row in data
+        ):
+            logger.error(
+                f"Expected a JSON array of objects in {path!r}, got unexpected shape"
+            )
+            return []
     else:
-        for i, obj_str in enumerate(content.splitlines()):
+        for i, obj_str in enumerate(content.splitlines(), start=1):
             if not obj_str.strip():
                 continue
             try:
@@ -136,7 +141,7 @@ def merge_predictions_to_manifest(
     model_key: str,
     offset_tolerance: float = 0.25,
 ) -> list[dict[str, Any]]:
-    """Align model predictions onto ground-truth rows by (example_id, offset).
+    """Align model predictions onto ground-truth rows by (audio_filepath, offset).
 
     Uses an absolute-difference tolerance for offset matching — NEVER exact float
     equality (CONCERNS.md flags exact equality as silently fragile). A matched
@@ -144,7 +149,7 @@ def merge_predictions_to_manifest(
 
     Args:
         ground_truth: List of ground-truth manifest dicts (NeMo-style schema).
-        predictions: List of prediction dicts, each with example_id, offset, text.
+        predictions: List of prediction dicts, each with audio_filepath, offset, text.
         model_key: Short model identifier used as the field suffix (e.g. "gemini").
         offset_tolerance: Absolute offset difference (seconds) within which two
             segments are considered the same. Default: 0.25 s.
@@ -156,19 +161,19 @@ def merge_predictions_to_manifest(
         caller needing the originals pristine should pass a copy.
     """
     try:
-        # Build lookup: example_id -> list of (offset, text) from predictions
+        # Build lookup: audio_filepath -> list of (offset, text) from predictions
         pred_index: dict[str, list[tuple[float, str]]] = {}
         for pred in predictions:
-            ex_id = str(pred.get("example_id", ""))
+            audio_fp = str(pred.get("audio_filepath", ""))
             p_offset = float(pred.get("offset", 0.0))
             p_text = str(pred.get("text", ""))
-            pred_index.setdefault(ex_id, []).append((p_offset, p_text))
+            pred_index.setdefault(audio_fp, []).append((p_offset, p_text))
 
         field_name = f"pred_text_{model_key}"
         for gt_row in ground_truth:
-            ex_id = str(gt_row.get("example_id", ""))
+            audio_fp = str(gt_row.get("audio_filepath", ""))
             gt_offset = float(gt_row.get("offset", 0.0))
-            candidates = pred_index.get(ex_id, [])
+            candidates = pred_index.get(audio_fp, [])
             for p_offset, p_text in candidates:
                 if abs(gt_offset - p_offset) < offset_tolerance:
                     gt_row[field_name] = p_text
