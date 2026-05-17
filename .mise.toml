@@ -172,6 +172,11 @@ description = "Run all unit tests (alias: test)"
 alias = ["test"]
 run = "uv run python -m unittest discover backend/pipeline"
 
+[tasks."test:model"]
+description = "Run model/ common-library unit tests (pytest)"
+dir = "model"
+run = "uv run --extra dev pytest colabs/common/tests/"
+
 [tasks."test:component:rules"]
 description = "Run RulesStore component tests"
 run = "uv run pytest integration_tests/storage/test_rules_store_integration.py"
