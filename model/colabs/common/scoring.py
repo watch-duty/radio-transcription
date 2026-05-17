@@ -17,6 +17,7 @@ Importing this module WITHOUT the extra is safe — the extra is loaded lazily s
 """
 
 import logging
+import random
 import re
 from typing import Any
 
@@ -265,3 +266,159 @@ def duration_bucket_wer(
             "count": len(idx),
         })
     return results
+
+
+def count_keyword_occurrences(keyword: str, text: str) -> int:
+    """Count whole-word occurrences of ``keyword`` in ``text`` (case handled by caller).
+
+    Verbatim port of evaluate_transcriptions.ipynb's count_keyword_occurrences:
+    a hit is a whole-word regex match (``\\b<escaped-keyword>\\b``).
+
+    Args:
+        keyword: The keyword to search for.
+        text: The text to search within.
+
+    Returns:
+        The number of whole-word occurrences.
+    """
+    return len(re.findall(rf"\b{re.escape(keyword)}\b", text))
+
+
+def keyword_metrics(
+    references: list[str],
+    hypotheses: list[str],
+    keywords: list[str],
+) -> list[dict[str, Any]]:
+    """Per-keyword identification accuracy over a domain keyword set.
+
+    Faithfully ported from evaluate_transcriptions.ipynb's
+    ``calculate_keyword_metrics``. For each keyword, counts whole-word
+    occurrences in the references; for every reference occurrence, credits a
+    match when the paired hypothesis contains the keyword too (capped at the
+    reference count per segment: ``min(count_in_gt, count_in_pred)``). Accuracy
+    is ``matches / occurrences`` — a recall over keyword instances. Matching is
+    case-insensitive (both sides are lower-cased). Pure-Python ``re`` matching —
+    requires NO extra.
+
+    Args:
+        references: Ground-truth transcript strings.
+        hypotheses: Model-predicted transcript strings (parallel to references).
+        keywords: Domain keyword set to score, e.g. common.prompts.CHIRP_TEN_CODES.
+
+    Returns:
+        A list of per-keyword dicts (one per keyword that occurs at least once
+        in the references), each with keys ``keyword`` (str), ``occurrences``
+        (int), ``correctly_identified`` (int), and ``accuracy`` (float,
+        percentage). Keywords absent from the references are omitted.
+
+    Raises:
+        ValueError: If references and hypotheses differ in length.
+    """
+    if len(references) != len(hypotheses):
+        raise ValueError("references and hypotheses must have the same length")
+
+    results: list[dict[str, Any]] = []
+    for kw in keywords:
+        kw_lower = kw.lower()
+        occurrences = 0
+        matches = 0
+        for ref, hyp in zip(references, hypotheses):
+            count_in_ref = count_keyword_occurrences(kw_lower, ref.lower())
+            if count_in_ref > 0:
+                occurrences += count_in_ref
+                count_in_hyp = count_keyword_occurrences(kw_lower, hyp.lower())
+                matches += min(count_in_ref, count_in_hyp)
+        if occurrences > 0:
+            results.append({
+                "keyword": kw_lower,
+                "occurrences": occurrences,
+                "correctly_identified": matches,
+                "accuracy": round(100 * matches / occurrences, 2),
+            })
+    return results
+
+
+def bootstrap_paired(
+    references: list[str],
+    hypotheses_a: list[str],
+    hypotheses_b: list[str],
+    normalizer: "jiwer.Compose | None" = None,
+    n_resamples: int = 1000,
+    confidence: float = 0.95,
+    seed: int = 12345,
+) -> dict[str, Any]:
+    """Paired-bootstrap WER significance test for two systems on one eval set.
+
+    Resamples the per-example (reference, hyp_a, hyp_b) triples WITH REPLACEMENT
+    ``n_resamples`` times, recomputing the WER delta (system A minus system B) on
+    each resample, and reports a sign-flip p-value plus an empirical confidence
+    interval on the delta. Deterministic: the resampling RNG is a local
+    ``random.Random(seed)`` — the global random state is never touched.
+
+    Args:
+        references: Ground-truth transcript strings.
+        hypotheses_a: System A predictions (parallel to references).
+        hypotheses_b: System B predictions (parallel to references).
+        normalizer: Optional jiwer.Compose passed through to compute_wer for
+            every WER computation (observed and resampled).
+        n_resamples: Number of bootstrap resamples (default 1000).
+        confidence: Confidence level for the interval (default 0.95).
+        seed: RNG seed — fixing it makes the result reproducible.
+
+    Returns:
+        A dict with keys: ``wer_a`` (float), ``wer_b`` (float), ``delta``
+        (float, wer_a - wer_b), ``p_value`` (float, 0-1), ``ci_low`` (float),
+        ``ci_high`` (float), ``confidence`` (float), ``n_resamples`` (int).
+
+    Raises:
+        ImportError: If the [scoring] extra is not installed.
+        ValueError: If the three input lists differ in length or are empty.
+    """
+    _require_scoring()
+    n = len(references)
+    if not (n == len(hypotheses_a) == len(hypotheses_b)):
+        raise ValueError(
+            "references, hypotheses_a, and hypotheses_b must have the same length"
+        )
+    if n == 0:
+        raise ValueError("cannot bootstrap an empty eval set")
+
+    wer_a = compute_wer(references, hypotheses_a, normalizer)["wer"]
+    wer_b = compute_wer(references, hypotheses_b, normalizer)["wer"]
+    delta_obs = round(wer_a - wer_b, 4)
+
+    rng = random.Random(seed)
+    deltas: list[float] = []
+    for _ in range(n_resamples):
+        idx = [rng.randrange(n) for _ in range(n)]
+        rs_refs = [references[j] for j in idx]
+        rs_a = [hypotheses_a[j] for j in idx]
+        rs_b = [hypotheses_b[j] for j in idx]
+        d = (
+            compute_wer(rs_refs, rs_a, normalizer)["wer"]
+            - compute_wer(rs_refs, rs_b, normalizer)["wer"]
+        )
+        deltas.append(d)
+
+    if delta_obs > 0:
+        p_value = sum(1 for d in deltas if d <= 0) / n_resamples
+    elif delta_obs < 0:
+        p_value = sum(1 for d in deltas if d >= 0) / n_resamples
+    else:
+        p_value = 1.0
+
+    deltas.sort()
+    lo_frac = (1 - confidence) / 2
+    hi_frac = 1 - lo_frac
+    lo_i = max(0, min(n_resamples - 1, int(lo_frac * n_resamples)))
+    hi_i = max(0, min(n_resamples - 1, int(hi_frac * n_resamples)))
+    return {
+        "wer_a": wer_a,
+        "wer_b": wer_b,
+        "delta": delta_obs,
+        "p_value": round(p_value, 4),
+        "ci_low": round(deltas[lo_i], 4),
+        "ci_high": round(deltas[hi_i], 4),
+        "confidence": confidence,
+        "n_resamples": n_resamples,
+    }
