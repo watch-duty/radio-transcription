@@ -368,9 +368,10 @@ def bootstrap_paired(
 
     Resamples the per-example (reference, hyp_a, hyp_b) triples WITH REPLACEMENT
     ``n_resamples`` times, recomputing the WER delta (system A minus system B) on
-    each resample, and reports a sign-flip p-value plus an empirical confidence
-    interval on the delta. Deterministic: the resampling RNG is a local
-    ``random.Random(seed)`` — the global random state is never touched.
+    each resample, and reports a one-sided, direction-aligned sign-flip significance
+    value plus an empirical confidence interval on the delta. Deterministic: the
+    resampling RNG is a local ``random.Random(seed)`` — the global random state is
+    never touched.
 
     Args:
         references: Ground-truth transcript strings.
@@ -384,7 +385,10 @@ def bootstrap_paired(
 
     Returns:
         A dict with keys: ``wer_a`` (float), ``wer_b`` (float), ``delta``
-        (float, wer_a - wer_b), ``p_value`` (float, 0-1), ``ci_low`` (float),
+        (float, wer_a - wer_b), ``p_value_one_sided`` (float, 0-1) — a ONE-SIDED,
+        direction-aligned significance value: the fraction of resamples that fail to
+        reproduce the observed sign of the WER delta. This is NOT a two-sided p-value;
+        do not interpret ``< 0.05`` as a two-sided 5% result. ``ci_low`` (float),
         ``ci_high`` (float), ``confidence`` (float), ``n_resamples`` (int).
 
     Raises:
@@ -423,11 +427,11 @@ def bootstrap_paired(
         deltas.append(d)
 
     if delta_obs > 0:
-        p_value = sum(1 for d in deltas if d <= 0) / n_resamples
+        p_value_one_sided = sum(1 for d in deltas if d <= 0) / n_resamples
     elif delta_obs < 0:
-        p_value = sum(1 for d in deltas if d >= 0) / n_resamples
+        p_value_one_sided = sum(1 for d in deltas if d >= 0) / n_resamples
     else:
-        p_value = 1.0
+        p_value_one_sided = 1.0
 
     deltas.sort()
     lo_frac = (1 - confidence) / 2
@@ -438,7 +442,7 @@ def bootstrap_paired(
         "wer_a": wer_a,
         "wer_b": wer_b,
         "delta": delta_obs,
-        "p_value": round(p_value, 4),
+        "p_value_one_sided": round(p_value_one_sided, 4),
         "ci_low": round(deltas[lo_i], 4),
         "ci_high": round(deltas[hi_i], 4),
         "confidence": confidence,
