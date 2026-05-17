@@ -1,11 +1,11 @@
 """Compatibility shim — re-exports from the split modules.
 
-Notebooks import ``from common.inference_pipeline_runner import …``. Phase 2 will
+Notebooks import ``from common.inference_pipeline_runner import …``. A later change will
 retrofit them to import from the focused submodules directly. Until then, this shim
-preserves the old import path (Pitfall 7).
+preserves the old import path.
 
-Do NOT add eager imports of heavy modules here — that defeats the [hf] extra gating
-(Pitfall 8). All imports are deferred via ``__getattr__``.
+Do NOT add eager imports of heavy modules here — that defeats the [hf] extra gating.
+All imports are deferred via ``__getattr__``.
 """
 
 

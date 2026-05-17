@@ -5,7 +5,7 @@ the ``[audio]`` extra (torchaudio + torch).
 
 Importing this module WITHOUT the extra is safe — heavy deps are deferred so that
 ``import common.audio_utils`` never triggers torch/torchaudio when ``[audio]`` is not
-installed (Pitfall 8).
+installed.
 """
 
 import logging
@@ -37,7 +37,7 @@ def preprocess_audio_for_model(
 
     Behavior-preserved from the original audio_utils.py. The signature is kept
     exactly so all existing callers (notebooks, inference_hf.py) continue to work
-    without modification (Pitfall 7).
+    without modification.
 
     Args:
         input_path: Path to input audio file.

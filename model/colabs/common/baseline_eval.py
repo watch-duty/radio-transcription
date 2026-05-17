@@ -22,9 +22,9 @@ def run_test_baseline_inference_evaluation(
     """Run a baseline evaluation on a public dataset (e.g. LibriSpeech) using streaming and batching.
 
     Moved verbatim from ``inference_pipeline_runner.py`` lines 297-413. Signature is
-    preserved exactly to avoid breaking notebook imports (Pitfall 7). Heavy imports
+    preserved exactly to avoid breaking notebook imports. Heavy imports
     (datasets, evaluate, soundfile) remain function-local as in the original — this
-    keeps ``import common.baseline_eval`` light without the [hf] extra (Pitfall 8).
+    keeps ``import common.baseline_eval`` light without the [hf] extra.
 
     Args:
         model: Loaded model instance.

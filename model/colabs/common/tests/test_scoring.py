@@ -1,6 +1,6 @@
 """Golden + policy tests for common.scoring.
 
-TEST-02 policy mapping (resolved during planning):
+WER policy mapping:
   verbatim policy           = compute_wer(refs, hyps, normalizer=None)
   spelled-to-digit policy   = compute_wer(refs, hyps, normalizer=build_normalizer())
 Both must satisfy WER(x, x) == 0 — the forward-comparability invariant.
@@ -29,7 +29,7 @@ _scoring_required = unittest.skipIf(
 
 @_scoring_required
 class TestBuildNormalizerGolden(unittest.TestCase):
-    """TEST-02: Golden tests pin normalizer behavior — changing scoring.py must update these."""
+    """Golden tests pin normalizer behavior — changing scoring.py must update these."""
 
     def setUp(self) -> None:
         from common.scoring import build_normalizer
@@ -72,7 +72,7 @@ class TestBuildNormalizerGolden(unittest.TestCase):
 
 @_scoring_required
 class TestComputeWerPolicies(unittest.TestCase):
-    """TEST-02: Verbatim vs normalized WER produce distinct results on the same input."""
+    """Verbatim vs normalized WER produce distinct results on the same input."""
 
     def test_verbatim_policy_identical_lists_score_zero(self) -> None:
         from common.scoring import compute_wer

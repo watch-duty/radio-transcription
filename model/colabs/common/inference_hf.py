@@ -44,9 +44,9 @@ def run_huggingface_inference_pipeline(
     """Run a parallel GPU batch inference pipeline for Hugging Face Speech models.
 
     Moved verbatim from ``inference_pipeline_runner.py`` lines 133-294. Signature is
-    preserved exactly to avoid breaking notebook imports (Pitfall 7). The inline
+    preserved exactly to avoid breaking notebook imports. The inline
     torchaudio resample+mono block (original lines 191-203) is replaced with a call to
-    ``preprocess_audio_for_model`` from ``common.audio_utils`` (D-05 deduplication).
+    ``preprocess_audio_for_model`` from ``common.audio_utils`` (deduplication).
 
     Handles GCS audio downloading, resampling, multi-modal padding, and parallel
     decoding natively. Falls back to sequential inference per item if the batched
@@ -111,7 +111,7 @@ def run_huggingface_inference_pipeline(
                         )
 
                 # Load audio waveform at 16kHz — uses preprocess_audio_for_model
-                # for resample+mono (D-05: deduplicates inline torchaudio block)
+                # for resample+mono (deduplicates the inline torchaudio block)
                 resampled_path = f"/tmp/temp_resampled_{file_name}.wav"
                 if preprocess_audio_for_model(
                     current_path, resampled_path, target_sr=16000

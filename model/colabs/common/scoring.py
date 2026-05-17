@@ -1,15 +1,12 @@
 """WER normalizer and ASR scoring metrics for dispatch-domain radio transcription.
 
 This module provides the re-derived dispatch text normalizer (ported faithfully from
-``evaluate_transcriptions.ipynb`` cells 2/3/8 — the sole surviving normalizer source
-after the ``echo_eval`` code-path was dropped).
+``evaluate_transcriptions.ipynb`` cells 2/3/8).
 
-**Baseline note (Pitfall 6):** The 44.93% Echo WER baseline was produced by the
-now-absent ``echo_eval`` normalizer. That baseline is NOT preserved here — the
-normalizer is re-derived from the notebook and the first Phase 2 ``eval`` run against
-the base model becomes the new reference. ``nemo_text_processing`` is version-pinned in
-the ``[scoring]`` extra; grammars are versioned with the package. Any version bump silently
-changes normalization output (and therefore WER), so pin the version explicitly.
+The dispatch normalizer is re-derived from ``evaluate_transcriptions.ipynb``; it does
+not reproduce any prior external WER baseline. ``nemo_text_processing`` is
+version-pinned in the ``[scoring]`` extra because a version bump silently changes
+normalization output (and therefore WER), so pin the version explicitly.
 
 All public functions require the ``[scoring]`` extra (``jiwer`` + ``nemo_text_processing``).
 Importing this module WITHOUT the extra is safe — the extra is loaded lazily so that
@@ -24,7 +21,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Heavy deps behind the [scoring] extra — deferred so `import common.scoring`
-# never triggers NeMo when [scoring] is not installed (Pitfall 8).
+# never triggers NeMo when [scoring] is not installed.
 try:
     import jiwer
     from nemo_text_processing.text_normalization.normalize import (
@@ -63,7 +60,7 @@ def build_normalizer() -> "jiwer.Compose":
     """Build the dispatch-domain ASR normalization pipeline (NeMo + dispatch quirks).
 
     Ported faithfully from evaluate_transcriptions.ipynb cells 2/3/8. Behavior is
-    pinned by the Phase 2 golden tests (TEST-02). Do NOT improve or change this logic
+    pinned by the golden tests. Do NOT improve or change this logic
     without updating the golden tests — the WER baseline is defined by this pipeline.
 
     The pipeline applies, in order:
@@ -135,7 +132,7 @@ def compute_wer(
         hypotheses: Model-predicted transcript strings.
         normalizer: Optional ``jiwer.Compose`` pipeline; if provided, both references
             and hypotheses are normalized before scoring (apply the SAME normalizer to
-            both — Pitfall 5 symmetric normalization).
+            both — symmetric normalization).
 
     Returns:
         Dict with keys ``wer`` (float, percentage), ``insertions`` (int),
@@ -228,7 +225,7 @@ def duration_bucket_wer(
         durations: Audio-segment durations in seconds (parallel to references).
         normalizer: Optional jiwer.Compose pipeline; if given it is passed
             straight through to compute_wer (apply the SAME normalizer to refs
-            and hyps — Pitfall 5 symmetric normalization).
+            and hyps — symmetric normalization).
 
     Returns:
         A list of per-bucket dicts, one per non-empty bucket, each with keys

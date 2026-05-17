@@ -44,7 +44,7 @@ def run_inference_pipeline(
     """Run a batch inference pipeline for a NeMo-compatible model.
 
     Moved verbatim from ``inference_pipeline_runner.py`` lines 16-130. Signature is
-    preserved exactly to avoid breaking notebook imports (Pitfall 7).
+    preserved exactly to avoid breaking notebook imports.
 
     Args:
         model: The loaded model instance. Model-agnostic — delegates inference and
