@@ -20,6 +20,7 @@ in service
 got a caller
 caller advising
 in quarters
+quarters
 arrived
 go ahead
 back at
@@ -55,12 +56,6 @@ TAC
 VFIRE
 VLAT
 
-# Resources & Stations
-patrol
-rescue
-station
-personnel
-
 # Air resources
 air attack
 air tactics
@@ -91,7 +86,6 @@ terrain driven
 wind driven
 
 # Clearances & Codes
-clear
 clear and in service
 code 1
 code 2
@@ -104,12 +98,10 @@ medical call
 fire alarm
 commercial fire alarm
 breathing problem
-cardiac
+cardiac arrest
 heart problem
 diabetic shock
 mvc
-trespass
-harassment
 
 # 10-codes
 10-4
