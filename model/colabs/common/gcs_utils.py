@@ -33,7 +33,7 @@ def blob_exists(storage_client: storage.Client, gcs_uri: str) -> bool:
     bucket_name, blob_path = parse_gcs_uri(gcs_uri)
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(blob_path)
-    return blob.exists()
+    return blob.exists(retry=DEFAULT_RETRY)
 
 
 def download_blob_to_file(
