@@ -204,22 +204,6 @@ known-first-party = ["backend", "local_dev"]
   "S608",   # Possible SQL injection via string-based query construction
   "SLF001", # Private member accessed
 ]
-"model/data/**.py" = [
-  "ANN001", # Missing type annotation for function argument
-  "ANN201", # Missing return type annotation
-  "B017",   # Do not assert blind exception: `Exception`
-  "C405",   # Unnecessary list literal (rewrite as a set literal)
-  "DTZ002", # `datetime.datetime.today()` used
-  "DTZ006", # `datetime.datetime.fromtimestamp()` called without a `tz` argument
-  "INP001", # Implicit namespaces
-  "N802",   # Function name should be lowercase
-  "N806",   # Variable in function should be lowercase
-  "RET503", # Missing explicit `return` at the end of function
-  "S105",   # Possible hardcoded password assigned
-  "S110",   # Allow swallowing exceptions
-  "S113",   # requests.* require timeout=
-  "T201",   # `print()` found
-]
 "model/data_sources/**.py" = [
   "ANN001", # Missing type annotation for function argument
   "ANN201", # Missing return type annotation
