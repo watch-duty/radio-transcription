@@ -1,8 +1,7 @@
 """Audio preprocessing utilities for ASR model input (behind [audio] extra).
 
-Provides ``preprocess_audio_for_model`` (resample + mono downmix) and
-``load_audio_segment`` (offset+duration frame-slice). Both require the ``[audio]``
-extra (torchaudio + torch).
+Provides ``preprocess_audio_for_model`` (resample + mono downmix). Requires
+the ``[audio]`` extra (torchaudio + torch).
 
 Importing this module WITHOUT the extra is safe — heavy deps are deferred so that
 ``import common.audio_utils`` never triggers torch/torchaudio when ``[audio]`` is not
@@ -10,7 +9,6 @@ installed (Pitfall 8).
 """
 
 import logging
-import os
 
 logger = logging.getLogger(__name__)
 
@@ -71,43 +69,3 @@ def preprocess_audio_for_model(
     except Exception as e:
         logger.error(f"Failed to preprocess audio {input_path}: {e}")
         return False
-
-
-def load_audio_segment(
-    path: str,
-    offset: float = 0.0,
-    duration: "float | None" = None,
-    target_sr: int = 16000,
-) -> "tuple[torch.Tensor, int]":
-    """Load an audio segment by offset + duration using torchaudio frame slicing.
-
-    Needed by the Phase 3 ``hf_dataset`` adapter for per-row audio extraction from
-    longer audio files. Uses ``torchaudio.info`` + ``torchaudio.load`` with
-    ``frame_offset`` / ``num_frames`` to avoid loading the full file into memory.
-
-    Args:
-        path: Local filesystem path to the audio file.
-        offset: Start time in seconds. Defaults to 0.0.
-        duration: Duration in seconds to load. If None, loads to end of file.
-        target_sr: Target sample rate in Hz. Defaults to 16000.
-
-    Returns:
-        Tuple of ``(waveform, target_sr)`` where waveform is a mono ``torch.Tensor``
-        of shape ``(1, num_frames)``.
-
-    Raises:
-        ImportError: If the ``[audio]`` extra is not installed.
-    """
-    _require_audio()
-    info = torchaudio.info(path)
-    native_sr = info.sample_rate
-    frame_offset = int(offset * native_sr)
-    num_frames = int(duration * native_sr) if duration is not None else -1
-    waveform, sr = torchaudio.load(
-        path, frame_offset=frame_offset, num_frames=num_frames
-    )
-    if waveform.shape[0] > 1:
-        waveform = torch.mean(waveform, dim=0, keepdim=True)
-    if sr != target_sr:
-        waveform = T.Resample(orig_freq=sr, new_freq=target_sr)(waveform)
-    return waveform, target_sr

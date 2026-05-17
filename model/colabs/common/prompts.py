@@ -5,11 +5,10 @@ Constant groups and their sources:
   COMMON_* — shared eval baseline (used by evaluate_*.ipynb notebooks)
   GEMINI_* — Gemini batch transcription notebook (gemini_transcribe_audio.ipynb)
   CHIRP_*  — Chirp batch transcription notebook (chirp_transcribe_audio.ipynb)
-  PRODUCTION / WITHPL / USER — autoresearch SFT (autoresearch-gemini-sft/src/build_e3_sft_jsonl.py)
 
-D-06: Only byte-identical duplicates collapse to a single constant. The four
-divergent prompts each appear as their own named constant — none is rewritten,
-merged, or improved. Changing any prompt text changes transcription/WER behavior.
+Only byte-identical duplicates collapse to a single constant. Each prompt
+appears as its own named constant — none is rewritten, merged, or improved.
+Changing any prompt text changes transcription/WER behavior.
 """
 
 # ---------------------------------------------------------------------------
@@ -161,40 +160,3 @@ CHIRP_TEN_CODES: list[str] = [
     "10-23",
     "10-97",
 ]
-
-# ---------------------------------------------------------------------------
-# PRODUCTION / PHRASE_LIST_BLOCK / WITHPL_PROMPT / USER_PROMPT
-# Source: autoresearch-gemini-sft/src/build_e3_sft_jsonl.py lines 29-57, verbatim.
-# WITHPL_PROMPT is a derived constant — the derivation expression is preserved exactly.
-# ---------------------------------------------------------------------------
-
-PRODUCTION_PROMPT = """ROLE: Literal, mechanical audio-to-text transcription engine.
-GOAL: Output exactly and ONLY the words spoken in the audio file.
-
-AUDIO SETTING:
-- VHF/UHF emergency radio traffic with heavy static, micro-bursts, and distortion.
-
-STRICT INSTRUCTIONS:
-1. ANTI-GUESSING & REJECTION: You are strictly forbidden from guessing. If an audio file is purely static, OR if the speech is too muffled to understand with 100% confidence, do not invent words. You MUST output exactly this token: [UNINTELLIGIBLE]
-2. AUDIO LOCALITY: Transcribe ONLY what is audible. Do not continue the speech segment.
-3. VERBATIM ONLY: Use digits for numbers (e.g., 10-4, 100, 42).
-4. SHORT TRANSMISSIONS: If the transmission is just one or two words (e.g., "copy", "received", "affirm"), output ONLY those words. Do NOT translate meanings.
-5. SANITIZATION: No asterisks, markdown, newlines, or roleplay text. Raw text only.
-
-TASK:
-Transcribe the audio. Output nothing but the transcript."""
-
-PHRASE_LIST_BLOCK = """
-DOMAIN VOCABULARY HINTS (anchor only — do not insert these unless you actually hear them):
-status: copy, received, affirmative, affirm, proceed, responding, responding to, en-route, on-scene, available, returning, in service, in quarters, arrived, go ahead, back at
-apparatus: engine, tanker, brush, brush truck, tender, battalion, squad, ladder, tower, tower-ladder, medic, ambulance, branch, chopper, copter
-tactical: AIQ, AOR, IC, ICP, LAT, RP, SEAT, TAC, VFIRE, VLAT, air attack, air tactics, helispot, lead plane, strike team, control
-fire-behavior: being toned, box alarm, cancel the balance, chaparral, exposure protection, fire attack, fire boss, forward progress stopped, heavy timber, left flank, light flashy fuels, rate of spread, right flank, structure defense, structure protection, structures threatened, terrain driven, wind driven
-codes: 10-4, 10-7, 10-8, 10-9, 10-20, 10-22, 10-23, 10-97
-"""
-
-WITHPL_PROMPT = PRODUCTION_PROMPT.replace(
-    "\nTASK:", PHRASE_LIST_BLOCK + "\nTASK:"
-)
-
-USER_PROMPT = "Transcribe this emergency radio communication segment verbatim per the rules above."

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "common"
 version = "0.1.0"
-description = "Shared transcription/SFT library for the radio-transcription model subtree."
+description = "Shared transcription library for the radio-transcription model subtree."
 requires-python = ">=3.10"
 dependencies = [
     # Core stays light: `import common.prompts` must NOT pull NeMo / torch / datasets.
@@ -19,9 +19,8 @@ audio = ["torchaudio>=2.5"]
 # PKG-03 / D-02: pinned per research.
 scoring = ["jiwer>=3.1,<4", "nemo_text_processing==1.1.0"]
 hf = ["common[audio]", "datasets>=4.0,<5", "soundfile>=0.13,<0.14", "huggingface_hub>=0.30", "evaluate>=0.4"]
-vertex = ["google-genai>=2.3,<3"]
 dev = ["pytest>=9.0,<10", "pytest-xdist>=3"]
-# Claude's Discretion (D-03 note): a convenience bundle of every runtime extra.
+# A convenience bundle of every runtime extra.
 all = [
     "torchaudio>=2.5",
     "jiwer>=3.1,<4",
@@ -29,7 +28,6 @@ all = [
     "datasets>=4.0,<5",
     "soundfile>=0.13,<0.14",
     "huggingface_hub>=0.30",
-    "google-genai>=2.3,<3",
     "evaluate>=0.4",
 ]
 
