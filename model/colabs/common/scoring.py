@@ -214,8 +214,13 @@ def duration_bucket_wer(
     Buckets are the duration edges from evaluate_transcriptions.ipynb's
     ``evaluate_by_duration_buckets``: bins ``[0, 2, 5, 15]`` seconds — segments
     whose duration is >= 15s (or negative) fall outside every bucket and are
-    excluded. WER per bucket is delegated to :func:`compute_wer`; SER is the
-    percentage of a bucket's segments whose individual WER is greater than zero.
+    excluded. Segments whose reference is empty or whitespace-only (after
+    normalization) are also excluded from every bucket — mirroring
+    ``evaluate_transcriptions.ipynb``'s empty-ground-truth filter
+    (``run_jiwer_evaluation``'s ``if not ground_truth_text: continue`` and
+    ``evaluate_by_duration_buckets``'s ``[s for s in subset if s["text_processed"]]``).
+    WER per bucket is delegated to :func:`compute_wer`; SER is the percentage of
+    a bucket's segments whose individual WER is greater than zero.
 
     Args:
         references: Ground-truth transcript strings.
@@ -253,7 +258,7 @@ def duration_bucket_wer(
         idx = [
             j
             for j in range(len(durations))
-            if bins[i] <= durations[j] < bins[i + 1]
+            if bins[i] <= durations[j] < bins[i + 1] and references[j].strip()
         ]
         if not idx:
             continue
