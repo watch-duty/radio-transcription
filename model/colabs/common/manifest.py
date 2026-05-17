@@ -46,9 +46,14 @@ def load_manifest(path: str) -> list[dict[str, Any]]:
             if not obj_str.strip():
                 continue
             try:
-                data.append(json.loads(obj_str))
+                obj = json.loads(obj_str)
             except json.JSONDecodeError:
                 logger.warning(f"Skipping malformed JSON at line {i}")
+                continue
+            if not isinstance(obj, dict):
+                logger.warning(f"Skipping non-object JSON at line {i}")
+                continue
+            data.append(obj)
     for row in data:
         if row.get("text"):
             # str() cast guards against a non-string text field in a malformed
