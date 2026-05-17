@@ -199,3 +199,69 @@ def hallucination_rate(hypotheses: list[str]) -> float:
         if not h.strip() or h.strip() == "[UNINTELLIGIBLE]"
     )
     return round(100 * flagged / len(hypotheses), 2)
+
+
+def duration_bucket_wer(
+    references: list[str],
+    hypotheses: list[str],
+    durations: list[float],
+    normalizer: "jiwer.Compose | None" = None,
+) -> list[dict[str, Any]]:
+    """Compute WER and SER grouped by audio-duration bucket.
+
+    Buckets are the duration edges from evaluate_transcriptions.ipynb's
+    ``evaluate_by_duration_buckets``: bins ``[0, 2, 5, 15]`` seconds — segments
+    whose duration is >= 15s (or negative) fall outside every bucket and are
+    excluded. WER per bucket is delegated to :func:`compute_wer`; SER is the
+    percentage of a bucket's segments whose individual WER is greater than zero.
+
+    Args:
+        references: Ground-truth transcript strings.
+        hypotheses: Model-predicted transcript strings (parallel to references).
+        durations: Audio-segment durations in seconds (parallel to references).
+        normalizer: Optional jiwer.Compose pipeline; if given it is passed
+            straight through to compute_wer (apply the SAME normalizer to refs
+            and hyps — Pitfall 5 symmetric normalization).
+
+    Returns:
+        A list of per-bucket dicts, one per non-empty bucket, each with keys
+        ``bucket`` (str label), ``wer`` (float, percentage), ``ser`` (float,
+        percentage), and ``count`` (int, member-segment count). Empty buckets
+        are omitted.
+
+    Raises:
+        ImportError: If the [scoring] extra is not installed.
+        ValueError: If references, hypotheses, and durations differ in length.
+    """
+    _require_scoring()
+    if not (len(references) == len(hypotheses) == len(durations)):
+        raise ValueError(
+            "references, hypotheses, and durations must have the same length"
+        )
+
+    bins = [0, 2, 5, 15]
+    labels = ["Short (0-2s)", "Medium (2-5s)", "Long (5s+)"]
+    results: list[dict[str, Any]] = []
+
+    for i in range(len(bins) - 1):
+        idx = [
+            j for j in range(len(durations))
+            if bins[i] <= durations[j] < bins[i + 1]
+        ]
+        if not idx:
+            continue
+        bucket_refs = [references[j] for j in idx]
+        bucket_hyps = [hypotheses[j] for j in idx]
+        bucket_wer = compute_wer(bucket_refs, bucket_hyps, normalizer)["wer"]
+        # SER = fraction of segments with a non-zero per-segment WER.
+        non_zero = 0
+        for ref, hyp in zip(bucket_refs, bucket_hyps):
+            if compute_wer([ref], [hyp], normalizer)["wer"] > 0:
+                non_zero += 1
+        results.append({
+            "bucket": labels[i],
+            "wer": bucket_wer,
+            "ser": round(100 * non_zero / len(idx), 2),
+            "count": len(idx),
+        })
+    return results
