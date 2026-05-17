@@ -2,12 +2,10 @@
 
 import os
 import logging
+import tempfile
 from typing import Callable, Any, Optional
 from google.cloud import storage
-from common.gcs_utils import (
-    parse_gcs_uri,
-    download_blob_to_file,
-)
+from common.gcs_utils import download_to_scratch
 
 logger = logging.getLogger(__name__)
 
@@ -27,19 +25,6 @@ def _require_torch() -> None:
         ) from _TORCH_MISSING
 
 
-def _remove_local_download(path: str) -> None:
-    """Delete a cached local download (and, for a preprocessed WAV, its raw FLAC)."""
-    if os.path.exists(path):
-        os.remove(path)
-    # A preprocessed WAV (temp_prep_<stem>.wav) leaves the raw temp_<stem>.flac behind.
-    if "_prep_" in path:
-        name = os.path.basename(path)  # temp_prep_<stem>.wav
-        stem = name.removeprefix("temp_prep_").removesuffix(".wav")
-        raw_flac_path = f"/tmp/temp_{stem}.flac"
-        if os.path.exists(raw_flac_path):
-            os.remove(raw_flac_path)
-
-
 def run_inference_pipeline(
     model: Any,
     manifest_data: list[dict[str, Any]],
@@ -55,8 +40,8 @@ def run_inference_pipeline(
 ) -> list[dict[str, Any]]:
     """Run a batch inference pipeline for a NeMo-compatible model.
 
-    Moved verbatim from ``inference_pipeline_runner.py`` lines 16-130. Signature is
-    preserved exactly to avoid breaking notebook imports.
+    The public signature is kept stable so the evaluation notebooks that
+    import this function keep working unchanged.
 
     Args:
         model: The loaded model instance. Model-agnostic — delegates inference and
@@ -83,97 +68,58 @@ def run_inference_pipeline(
     if limit:
         manifest_data = manifest_data[:limit]
 
-    # Last manifest index at which each audio URI is needed, so a cached download
-    # can be deleted as soon as no later entry will reuse it — rather than keeping
-    # every downloaded file in /tmp until the whole run finishes.
-    last_use_index: dict[str, int] = {}
-    for idx, entry in enumerate(manifest_data):
-        uri = entry.get("audio_filepath")
-        if uri:
-            last_use_index[uri] = idx
-
     results_list = []
-    cached_downloads = {}
-
     logger.info(
         f"--- Starting batch processing of {len(manifest_data)} entries ---"
     )
 
     for i in range(0, len(manifest_data), batch_size):
         batch = manifest_data[i : i + batch_size]
-        prompts = []
-        batch_entries = []
+        with tempfile.TemporaryDirectory(prefix="asr_dl_") as scratch_dir:
+            prompts = []
+            batch_entries = []
 
-        # Prepare batch
-        for entry in batch:
-            audio_gcs_uri = entry["audio_filepath"]
-            if audio_gcs_uri in cached_downloads:
-                current_path = cached_downloads[audio_gcs_uri]
-                batch_entries.append(entry)
-                prompts.append(prompt_fn(entry, current_path))
-            else:
-                audio_bucket, audio_blob_path = parse_gcs_uri(audio_gcs_uri)
-                file_name = os.path.splitext(os.path.basename(audio_blob_path))[
-                    0
-                ]
-                local_path = f"/tmp/temp_{file_name}.flac"
+            for entry in batch:
+                audio_gcs_uri = entry["audio_filepath"]
                 try:
-                    download_blob_to_file(
-                        storage_client,
-                        audio_bucket,
-                        audio_blob_path,
-                        local_path,
+                    local_path = download_to_scratch(
+                        storage_client, audio_gcs_uri, scratch_dir
                     )
 
                     current_path = local_path
                     if preprocess_fn:
-                        preprocessed_path = f"/tmp/temp_prep_{file_name}.wav"
+                        preprocessed_path = (
+                            os.path.splitext(local_path)[0] + "_prep.wav"
+                        )
                         if preprocess_fn(local_path, preprocessed_path):
                             current_path = preprocessed_path
                         else:
                             logger.warning(
-                                f"Preprocessing failed for {local_path}, using original."
+                                f"Preprocessing failed for {local_path}, "
+                                f"using original."
                             )
 
-                    cached_downloads[audio_gcs_uri] = current_path
                     batch_entries.append(entry)
                     prompts.append(prompt_fn(entry, current_path))
                 except Exception as e:
-                    logger.error(f"Failed to process {audio_blob_path}: {e}")
-                    # Cleanup raw flac if download succeeded but preprocessing failed
-                    if os.path.exists(local_path):
-                        os.remove(local_path)
-                    # Cleanup prep wav if preprocess_fn already wrote it
-                    preprocessed_path = f"/tmp/temp_prep_{file_name}.wav"
-                    if os.path.exists(preprocessed_path):
-                        os.remove(preprocessed_path)
+                    logger.error(f"Failed to process {audio_gcs_uri}: {e}")
                     continue
 
-        if not prompts:
-            continue
+            if not prompts:
+                continue
 
-        # Run inference
-        logger.info(f"Processing batch {i // batch_size + 1}...")
-        with torch.no_grad():
-            outputs = inference_fn(model, prompts)
+            logger.info(f"Processing batch {i // batch_size + 1}...")
+            with torch.no_grad():
+                outputs = inference_fn(model, prompts)
 
-        # Decode and store results
-        for j, ans in enumerate(outputs):
-            transcript = decode_fn(ans, model)
-            result_row = dict(batch_entries[j])
-            result_row[f"pred_text_{selected_model}"] = transcript.strip()
-            results_list.append(result_row)
-
-        # Drop cached downloads no remaining manifest entry will reuse, so /tmp
-        # holds only the active working set rather than every file from the run.
-        batch_end = i + batch_size - 1
-        for uri in list(cached_downloads):
-            if last_use_index.get(uri, batch_end) <= batch_end:
-                _remove_local_download(cached_downloads.pop(uri))
-
-    # Cleanup any cached downloads still held at the end of the run
-    for local_path in list(cached_downloads.values()):
-        _remove_local_download(local_path)
+            for j, ans in enumerate(outputs):
+                transcript = decode_fn(ans, model)
+                result_row = dict(batch_entries[j])
+                result_row[f"pred_text_{selected_model}"] = transcript.strip()
+                results_list.append(result_row)
+        # scratch_dir and every file in it are removed here — each iteration,
+        # including when inference_fn raises (the exception then propagates,
+        # preserving today's fail-loud behavior).
 
     logger.info(f"Processed {len(results_list)} results.")
     return results_list

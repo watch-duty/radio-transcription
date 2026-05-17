@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import tempfile
 from typing import Any
 from google.cloud import storage
 
@@ -107,3 +108,36 @@ def upload_inference_results(
 
     logger.info(f"Uploaded results to gs://{bucket_name}/{blob_path}")
     return f"gs://{bucket_name}/{blob_path}"
+
+
+def download_to_scratch(
+    storage_client: storage.Client, gcs_uri: str, scratch_dir: str
+) -> str:
+    """Download a GCS object into ``scratch_dir`` under a fresh, unique filename.
+
+    The local filename is allocated with :func:`tempfile.mkstemp`, so two source
+    objects that share a basename in different GCS folders can never collide on
+    one local path. The original extension is preserved for downstream
+    audio-format detection.
+
+    The caller owns ``scratch_dir``'s lifetime — pass a directory managed by a
+    :class:`tempfile.TemporaryDirectory` so the file is removed automatically,
+    including on a mid-run exception.
+
+    Args:
+        storage_client: Initialized GCS client.
+        gcs_uri: A ``gs://`` URI to a single object.
+        scratch_dir: An existing directory to download into.
+
+    Returns:
+        Absolute local path of the downloaded file.
+
+    Raises:
+        ValueError: If ``gcs_uri`` does not start with ``gs://``.
+    """
+    bucket_name, blob_path = parse_gcs_uri(gcs_uri)
+    suffix = os.path.splitext(blob_path)[1] or ".audio"
+    fd, local_path = tempfile.mkstemp(dir=scratch_dir, suffix=suffix)
+    os.close(fd)
+    download_blob_to_file(storage_client, bucket_name, blob_path, local_path)
+    return local_path
