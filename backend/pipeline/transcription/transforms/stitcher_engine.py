@@ -69,13 +69,6 @@ class StitcherEngine:
         self.order_config = order_config
         self.vad_config = vad_config
 
-        self.vad_speech_count = Metrics.counter(
-            self.__class__, "vad_speech_count"
-        )
-        self.vad_silence_count = Metrics.counter(
-            self.__class__, "vad_silence_count"
-        )
-
         # Incoming chunk counters by feed type
         self.segmented_chunks_received = Metrics.counter(
             self.__class__, "segmented_chunks_received"
@@ -377,11 +370,6 @@ class StitcherEngine:
         self, chunk_data: datatypes.AudioChunkData
     ) -> None:
         """Records VAD evaluation outcomes and chunk volume by pipeline type."""
-        if chunk_data.speech_segments:
-            self.vad_speech_count.inc()
-        else:
-            self.vad_silence_count.inc()
-
         is_segmented = self.stitch_config.isolate_segmented_chunks
         if is_segmented:
             self.segmented_chunks_received.inc()
