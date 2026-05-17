@@ -76,7 +76,9 @@ def load_manifest(path: str) -> list[dict[str, Any]]:
                 logger.warning(f"Skipping malformed JSON at line {i}")
     for row in data:
         if row.get("text"):
-            row["text"] = row["text"].replace("\n", " ").replace("\r", " ")
+            # str() cast guards against a non-string text field in a malformed
+            # manifest — .replace() on a list/int/bool would raise AttributeError.
+            row["text"] = str(row["text"]).replace("\n", " ").replace("\r", " ")
     return data
 
 
@@ -148,8 +150,10 @@ def merge_predictions_to_manifest(
             segments are considered the same. Default: 0.25 s.
 
     Returns:
-        The ground_truth list with pred_text_{model_key} written onto matched rows;
-        an empty list if an unexpected error occurs.
+        The same ``ground_truth`` list, mutated IN PLACE — each matched row has
+        ``pred_text_{model_key}`` written directly onto it; an empty list if an
+        unexpected error occurs. The input dicts are modified directly, so a
+        caller needing the originals pristine should pass a copy.
     """
     try:
         # Build lookup: example_id -> list of (offset, text) from predictions

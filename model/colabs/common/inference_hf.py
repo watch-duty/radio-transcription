@@ -125,10 +125,9 @@ def run_huggingface_inference_pipeline(
                         waveform = T.Resample(orig_freq=sr, new_freq=16000)(
                             waveform
                         )
-                    if waveform.shape[0] > 1:
-                        waveform = torch.mean(waveform, dim=0, keepdim=True)
 
-                # Averaging stereo/multi-channel to mono (ensure mono after load)
+                # Average stereo/multi-channel to mono — runs for both the
+                # preprocessed and fallback paths (ensure mono after load).
                 if waveform.shape[0] > 1:
                     waveform = torch.mean(waveform, dim=0, keepdim=True)
 
