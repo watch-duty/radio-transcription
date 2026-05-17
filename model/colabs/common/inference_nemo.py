@@ -122,6 +122,10 @@ def run_inference_pipeline(
                     # Cleanup raw flac if download succeeded but preprocessing failed
                     if os.path.exists(local_path):
                         os.remove(local_path)
+                    # Cleanup prep wav if preprocess_fn already wrote it
+                    preprocessed_path = f"/tmp/temp_prep_{file_name}.wav"
+                    if os.path.exists(preprocessed_path):
+                        os.remove(preprocessed_path)
                     continue
 
         if not prompts:

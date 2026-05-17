@@ -116,8 +116,8 @@ def run_huggingface_inference_pipeline(
                 if preprocess_audio_for_model(
                     current_path, resampled_path, target_sr=16000
                 ):
-                    waveform, sr = torchaudio.load(resampled_path)
                     local_files.append(resampled_path)
+                    waveform, sr = torchaudio.load(resampled_path)
                 else:
                     # Fallback: load and resample inline if preprocessing failed
                     waveform, sr = torchaudio.load(current_path)
