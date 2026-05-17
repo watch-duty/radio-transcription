@@ -14,9 +14,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# D-01: audio behind its own extra — torchaudio is heavy and not every path needs it.
+# audio behind its own extra — torchaudio is heavy and not every path needs it.
 audio = ["torchaudio>=2.5"]
-# PKG-03 / D-02: pinned per research.
+# pinned per research.
 scoring = ["jiwer>=3.1,<4", "nemo_text_processing==1.1.0"]
 hf = ["common[audio]", "datasets>=4.0,<5", "soundfile>=0.13,<0.14", "huggingface_hub>=0.30", "evaluate>=0.4"]
 dev = ["pytest>=9.0,<10", "pytest-xdist>=3"]
@@ -32,7 +32,7 @@ all = [
 ]
 
 [tool.setuptools]
-# PITFALLS.md Pitfall 9 / ARCHITECTURE.md Risk 1: a SINGLE top-level mapping only.
+# Use a SINGLE top-level package-dir mapping only.
 # Per-subpackage package-dir entries are the documented broken case for editable installs.
 package-dir = { common = "colabs/common" }
 
