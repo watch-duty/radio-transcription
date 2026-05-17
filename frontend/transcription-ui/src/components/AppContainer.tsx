@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router';
+import { Link as RouterLink, useNavigate } from 'react-router';
 
 import AppRegistrationIcon from '@mui/icons-material/AppRegistration';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
@@ -8,6 +8,7 @@ import DescriptionIcon from '@mui/icons-material/Description';
 import MenuIcon from '@mui/icons-material/Menu';
 import RuleIcon from '@mui/icons-material/Rule';
 import SettingsIcon from '@mui/icons-material/Settings';
+import TroubleshootIcon from '@mui/icons-material/Troubleshoot';
 import VoiceChatIcon from '@mui/icons-material/VoiceChat';
 import AppBar from '@mui/material/AppBar';
 import Box from '@mui/material/Box';
@@ -15,6 +16,7 @@ import Button from '@mui/material/Button';
 import Divider from '@mui/material/Divider';
 import Drawer from '@mui/material/Drawer';
 import IconButton from '@mui/material/IconButton';
+import Link from '@mui/material/Link';
 import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
 import ListItemButton from '@mui/material/ListItemButton';
@@ -56,6 +58,11 @@ export default function AppContainer({
     setOpen(false);
   };
 
+  const handleItemClick = (path: string) => {
+    navigate(path);
+    handleDrawerClose();
+  };
+
   return (
     <Box sx={{ display: 'flex' }}>
       <AppBar position="fixed">
@@ -75,7 +82,16 @@ export default function AppContainer({
             component="div"
             sx={{ flexGrow: 1, textAlign: 'left' }}
           >
-            Radio Transcription
+            <Link
+              component={RouterLink}
+              to="/"
+              color="inherit"
+              sx={{
+                textDecoration: 'none',
+              }}
+            >
+              Radio Transcription
+            </Link>
           </Typography>
           {token && (
             <Button
@@ -120,31 +136,40 @@ export default function AppContainer({
         <Divider />
         <List>
           <ListItem disablePadding>
-            <ListItemButton onClick={() => navigate('/transcripts')}>
+            <ListItemButton onClick={() => handleItemClick('/')}>
+              <ListItemIcon>
+                <TroubleshootIcon />
+              </ListItemIcon>
+              <ListItemText primary={'Feeds'} />
+            </ListItemButton>
+          </ListItem>
+          <ListItem disablePadding>
+            <ListItemButton onClick={() => handleItemClick('/transcripts')}>
               <ListItemIcon>
                 <VoiceChatIcon />
               </ListItemIcon>
               <ListItemText primary={'Transcripts'} />
             </ListItemButton>
           </ListItem>
+          <Divider />
           <ListItem disablePadding>
-            <ListItemButton onClick={() => navigate('/rules')}>
+            <ListItemButton onClick={() => handleItemClick('/rules')} disabled>
               <ListItemIcon>
                 <RuleIcon />
               </ListItemIcon>
-              <ListItemText primary={'Rules'} />
+              <ListItemText primary={'Rule Configuration'} />
             </ListItemButton>
           </ListItem>
           <ListItem disablePadding>
-            <ListItemButton onClick={() => navigate('/feeds')}>
+            <ListItemButton onClick={() => handleItemClick('/feeds')} disabled>
               <ListItemIcon>
                 <AppRegistrationIcon />
               </ListItemIcon>
-              <ListItemText primary={'Feeds'} />
+              <ListItemText primary={'Feed Configuration'} />
             </ListItemButton>
           </ListItem>
           <ListItem disablePadding>
-            <ListItemButton onClick={() => navigate('/docs')}>
+            <ListItemButton onClick={() => handleItemClick('/docs')}>
               <ListItemIcon>
                 <DescriptionIcon />
               </ListItemIcon>
@@ -155,7 +180,7 @@ export default function AppContainer({
         <Divider />
         <List>
           <ListItem disablePadding>
-            <ListItemButton>
+            <ListItemButton disabled>
               <ListItemIcon>
                 <SettingsIcon />
               </ListItemIcon>
