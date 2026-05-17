@@ -20,7 +20,7 @@ audio = ["torchaudio>=2.5"]
 scoring = ["jiwer>=3.1,<4", "nemo_text_processing==1.1.0"]
 hf = ["datasets>=4.0,<5", "soundfile>=0.13,<0.14", "huggingface_hub>=0.30"]
 vertex = ["google-genai>=2.3,<3"]
-dev = ["pytest>=9.0,<10"]
+dev = ["pytest>=9.0,<10", "pytest-xdist>=3"]
 # Claude's Discretion (D-03 note): a convenience bundle of every runtime extra.
 all = [
     "torchaudio>=2.5",
@@ -40,3 +40,9 @@ package-dir = { common = "colabs/common" }
 [tool.setuptools.packages.find]
 where = ["colabs"]
 include = ["common*"]
+
+[tool.pytest.ini_options]
+# model/ tests live under colabs/common/tests/. testpaths keeps `pytest` run from
+# model/ from collecting the backend suite. -n auto uses pytest-xdist (in the [dev] extra).
+testpaths = ["colabs/common/tests"]
+addopts = "-n auto"
