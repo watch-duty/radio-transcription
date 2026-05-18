@@ -21,33 +21,51 @@ class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
         """
         from common.manifest import merge_predictions_to_manifest
 
-        ground_truth = [{"audio_filepath": "gs://bucket/clip.flac", "offset": 0.0}]
+        ground_truth = [
+            {"audio_filepath": "gs://bucket/clip.flac", "offset": 0.0}
+        ]
         # Non-numeric offset triggers float() ValueError inside the try block
         bad_predictions = [
-            {"audio_filepath": "gs://bucket/clip.flac", "offset": "not-a-number", "text": "hi"}
+            {
+                "audio_filepath": "gs://bucket/clip.flac",
+                "offset": "not-a-number",
+                "text": "hi",
+            }
         ]
 
         with self.assertRaises(ValueError):
-            merge_predictions_to_manifest(ground_truth, bad_predictions, "gemini")
+            merge_predictions_to_manifest(
+                ground_truth, bad_predictions, "gemini"
+            )
 
     def test_does_not_return_empty_list_on_error(self) -> None:
         """Verify the old silent-failure path (return []) is gone."""
         from common.manifest import merge_predictions_to_manifest
 
-        ground_truth = [{"audio_filepath": "gs://bucket/clip.flac", "offset": 0.0}]
+        ground_truth = [
+            {"audio_filepath": "gs://bucket/clip.flac", "offset": 0.0}
+        ]
         bad_predictions = [
-            {"audio_filepath": "gs://bucket/clip.flac", "offset": "not-a-number", "text": "hi"}
+            {
+                "audio_filepath": "gs://bucket/clip.flac",
+                "offset": "not-a-number",
+                "text": "hi",
+            }
         ]
 
         result = None
         raised = False
         try:
-            result = merge_predictions_to_manifest(ground_truth, bad_predictions, "gemini")
+            result = merge_predictions_to_manifest(
+                ground_truth, bad_predictions, "gemini"
+            )
         except Exception:
             raised = True
 
         self.assertTrue(raised, "Expected an exception but none was raised")
-        self.assertIsNone(result, "Function must not return a value when it raises")
+        self.assertIsNone(
+            result, "Function must not return a value when it raises"
+        )
 
 
 class TestMergePredictionsHappyPath(unittest.TestCase):
@@ -56,8 +74,16 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
     def test_matched_prediction_written_to_gt_row(self) -> None:
         from common.manifest import merge_predictions_to_manifest
 
-        gt = [{"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "gold"}]
-        preds = [{"audio_filepath": "gs://b/a.flac", "offset": 1.05, "text": "predicted"}]
+        gt = [
+            {"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "gold"}
+        ]
+        preds = [
+            {
+                "audio_filepath": "gs://b/a.flac",
+                "offset": 1.05,
+                "text": "predicted",
+            }
+        ]
 
         result = merge_predictions_to_manifest(gt, preds, "whisper")
 
@@ -66,8 +92,16 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
     def test_unmatched_prediction_leaves_field_absent(self) -> None:
         from common.manifest import merge_predictions_to_manifest
 
-        gt = [{"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "gold"}]
-        preds = [{"audio_filepath": "gs://b/a.flac", "offset": 9.0, "text": "far away"}]
+        gt = [
+            {"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "gold"}
+        ]
+        preds = [
+            {
+                "audio_filepath": "gs://b/a.flac",
+                "offset": 9.0,
+                "text": "far away",
+            }
+        ]
 
         result = merge_predictions_to_manifest(gt, preds, "whisper")
 
