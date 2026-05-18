@@ -124,8 +124,10 @@ def run_huggingface_inference_pipeline(
                                 waveform
                             )
 
-                    # Average stereo/multi-channel to mono — runs for both the
-                    # preprocessed and fallback paths (ensure mono after load).
+                    # Downmix stereo/multi-channel to mono. Load-bearing
+                    # only on the fallback path (which resamples but does
+                    # not downmix); a no-op on the preprocessed path,
+                    # already mono from preprocess_audio_for_model.
                     if waveform.shape[0] > 1:
                         waveform = torch.mean(waveform, dim=0, keepdim=True)
 
