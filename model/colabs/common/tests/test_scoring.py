@@ -264,6 +264,19 @@ class TestBootstrapPaired(unittest.TestCase):
         with self.assertRaises(ValueError):
             bootstrap_paired([], [], [])
 
+    def test_non_positive_n_resamples_raises(self) -> None:
+        from common.scoring import bootstrap_paired
+
+        with self.assertRaises(ValueError):
+            bootstrap_paired(["a"], ["a"], ["a"], n_resamples=0)
+
+    def test_confidence_outside_unit_interval_raises(self) -> None:
+        from common.scoring import bootstrap_paired
+
+        for bad in (0.0, 1.0, 1.5, -0.1):
+            with self.assertRaises(ValueError):
+                bootstrap_paired(["a"], ["a"], ["a"], confidence=bad)
+
     def test_identical_systems_zero_delta_and_p_value_one(self) -> None:
         from common.scoring import bootstrap_paired
 

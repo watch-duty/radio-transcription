@@ -397,7 +397,8 @@ def bootstrap_paired(
 
     Raises:
         ImportError: If the [scoring] extra is not installed.
-        ValueError: If the three input lists differ in length or are empty.
+        ValueError: If the three input lists differ in length or are empty,
+            if n_resamples is not positive, or if confidence is outside (0, 1).
     """
     _require_scoring()
     n = len(references)
@@ -407,6 +408,10 @@ def bootstrap_paired(
         )
     if n == 0:
         raise ValueError("cannot bootstrap an empty eval set")
+    if n_resamples <= 0:
+        raise ValueError("n_resamples must be a positive integer")
+    if not 0.0 < confidence < 1.0:
+        raise ValueError("confidence must lie in the open interval (0, 1)")
 
     if normalizer is not None:
         references = [normalizer(r) for r in references]
