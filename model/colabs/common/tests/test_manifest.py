@@ -173,3 +173,29 @@ class TestLoadManifestMalformedRows(unittest.TestCase):
             os.unlink(path)
 
         self.assertEqual(rows[0]["text"], "123")
+
+    def test_falsy_non_string_text_is_coerced(self) -> None:
+        """Falsy non-string text (0, False, None) is coerced to a string."""
+        import json
+        import os
+        import tempfile
+
+        from common.manifest import load_manifest
+
+        rows_in = [
+            {"audio_filepath": "gs://b/a.flac", "text": 0},
+            {"audio_filepath": "gs://b/b.flac", "text": False},
+            {"audio_filepath": "gs://b/c.flac", "text": None},
+        ]
+        fd, path = tempfile.mkstemp(suffix=".jsonl")
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write("\n".join(json.dumps(row) for row in rows_in))
+            rows = load_manifest(path)
+        finally:
+            os.unlink(path)
+
+        # 0 / False are str()-cast; a null text becomes "" (absent transcript).
+        self.assertEqual([r["text"] for r in rows], ["0", "False", ""])
+        for row in rows:
+            self.assertIsInstance(row["text"], str)

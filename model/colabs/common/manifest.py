@@ -64,10 +64,13 @@ def load_manifest(path: str) -> list[dict[str, Any]]:
                 continue
             data.append(obj)
     for row in data:
-        if row.get("text"):
-            # str() cast guards against a non-string text field in a malformed
-            # manifest — .replace() on a list/int/bool would raise AttributeError.
-            row["text"] = str(row["text"]).replace("\n", " ").replace("\r", " ")
+        if "text" in row:
+            # Coerce a non-string text field (None / int / bool in a malformed
+            # manifest) to a string so a downstream .strip()/.lower() never
+            # raises; a null text becomes "" rather than the literal "None".
+            raw = row["text"]
+            text = "" if raw is None else str(raw)
+            row["text"] = text.replace("\n", " ").replace("\r", " ")
     return data
 
 
