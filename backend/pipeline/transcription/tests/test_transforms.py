@@ -23,6 +23,7 @@ from backend.pipeline.common.tracing_utils import (
 )
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.transcription.audio.audio_processor import ProcessorOutput
+from backend.pipeline.transcription.common import coders as trans_coders
 from backend.pipeline.transcription.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
     MAIN_TAG,
@@ -42,6 +43,7 @@ from backend.pipeline.transcription.common.datatypes import (
     TranscriptionResult,
 )
 from backend.pipeline.transcription.common.enums import TranscriberType
+from backend.pipeline.transcription.common.utils import get_duration_ms
 from backend.pipeline.transcription.services.transcribers import Transcriber
 from backend.pipeline.transcription.transforms.stateful import (
     SHARED_RESOURCE_HANDLE,
@@ -53,6 +55,15 @@ from backend.pipeline.transcription.transforms.stateless import (
     ParseAndKeyFn,
     SerializeFn,
 )
+
+# Test Helper: override ChunkMetadata locally in tests to default is_continuous to True
+_OriginalChunkMetadata = ChunkMetadata
+
+
+def ChunkMetadata(*args: Any, **kwargs: Any) -> Any:
+    kwargs.setdefault("is_continuous", True)
+    return _OriginalChunkMetadata(*args, **kwargs)
+
 
 # Configure dynamic mock interception for process-level shared GCS clients
 # using standard unittest module lifecycle hooks to avoid any type ignore annotations.
@@ -71,6 +82,7 @@ _SHARED_PATCHER = patch.object(
 
 
 def setUpModule() -> None:
+    trans_coders.register_custom_coders()
     _SHARED_PATCHER.start()
 
 
@@ -328,7 +340,9 @@ class TranscribeAudioTest(unittest.TestCase):
                         FlushRequest(
                             feed_id="feed-123",
                             session_id="fake-session",
-                            buffer=np.zeros(((500) * 16), dtype=np.int16),
+                            buffer=np.zeros(
+                                ((500) * 16), dtype=np.int16
+                            ).tobytes(),
                             contributing_audio_uris=["gs://f/11111111.flac"],
                             time_range=TimeRange(
                                 start_ms=101000, end_ms=101500
@@ -411,7 +425,9 @@ class TranscribeAudioTest(unittest.TestCase):
                         FlushRequest(
                             feed_id="feed-123",
                             session_id="fake-session",
-                            buffer=np.zeros(16000 * 65, dtype=np.int16),
+                            buffer=np.zeros(
+                                16000 * 65, dtype=np.int16
+                            ).tobytes(),
                             contributing_audio_uris=["gs://bucket/chunk.flac"],
                             time_range=TimeRange(start_ms=0, end_ms=65000),
                             transmission_id="tx-123",
@@ -822,7 +838,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                     coder=beam.coders.TupleCoder(
                         (
                             beam.coders.StrUtf8Coder(),
-                            beam.coders.PickleCoder(),
+                            trans_coders.ChunkMetadataCoder(),
                         )
                     )
                 )
@@ -847,7 +863,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 feed_id, request = msgs[0]
                 assert feed_id == "test-feed"
                 assert request.transmission_id is not None
-                assert isinstance(request.buffer, np.ndarray)
+                assert isinstance(request.buffer, bytes)
 
             assert_that(results, assert_results)
 
@@ -940,7 +956,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                     coder=beam.coders.TupleCoder(
                         (
                             beam.coders.StrUtf8Coder(),
-                            beam.coders.PickleCoder(),
+                            trans_coders.ChunkMetadataCoder(),
                         )
                     )
                 )
@@ -979,7 +995,9 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 for feed_id, request in msgs:
                     assert feed_id == "test-feed-ooo"
 
-                lengths = [len(request.buffer) for feed_id, request in msgs]
+                lengths = [
+                    len(request.buffer) // 2 for feed_id, request in msgs
+                ]
                 if len(msgs) == 1:
                     assert 48000 in lengths
                 else:
@@ -1080,7 +1098,9 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         saved_context = mock_state_context.read()
         self.assertIsInstance(saved_context, ActiveStitchingState)
         self.assertTrue(len(saved_context.speech_segments) > 0)
-        self.assertEqual(saved_context.speech_segments[0].duration_ms, 3000)
+        self.assertEqual(
+            get_duration_ms(saved_context.speech_segments[0]), 3000
+        )
 
         # 2. Trigger stale flush and verify mapped speech_segments in FlushRequest payload
         outputs = list(
@@ -1098,7 +1118,9 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         feed_id, flush_request = outputs[0]
         self.assertEqual(feed_id, "test-feed")
         self.assertTrue(len(flush_request.speech_segments) > 0)
-        self.assertEqual(flush_request.speech_segments[0].duration_ms, 3000)
+        self.assertEqual(
+            get_duration_ms(flush_request.speech_segments[0]), 3000
+        )
         self.assertIsInstance(mock_state_context.read(), IdleFeedState)
 
     @patch(
@@ -1410,14 +1432,14 @@ class OrderedSegmentedStitchAudioTest(unittest.TestCase):
         # First flushed part: 10 seconds
         feed_id_1, flush_req_1 = outputs[0]
         self.assertEqual(feed_id_1, "segmented-feed")
-        self.assertEqual(flush_req_1.time_range.duration_ms, 10000)
+        self.assertEqual(get_duration_ms(flush_req_1.time_range), 10000)
         self.assertTrue(flush_req_1.missing_post_context)
         self.assertFalse(flush_req_1.missing_prior_context)
 
         # Second flushed part: 5 seconds
         feed_id_2, flush_req_2 = outputs[1]
         self.assertEqual(feed_id_2, "segmented-feed")
-        self.assertEqual(flush_req_2.time_range.duration_ms, 5000)
+        self.assertEqual(get_duration_ms(flush_req_2.time_range), 5000)
         self.assertFalse(flush_req_2.missing_post_context)
         self.assertTrue(flush_req_2.missing_prior_context)
 
