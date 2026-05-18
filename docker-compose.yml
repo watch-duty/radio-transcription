@@ -60,7 +60,6 @@ services:
       # postgres:15-alpine image doesn't ship it). See the script for details.
       - ./terraform/modules/alloydb/sql/ingestion:/sql:ro
       - ./local_dev/docker_postgres_init.sh:/docker-entrypoint-initdb.d/00_apply_schema.sh:ro
-      - ./local_dev/test_data.sql:/docker-entrypoint-initdb.d/01_test_data.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -252,9 +251,10 @@ services:
     ports:
       - "8090:8090"
     volumes:
-      - ./backend/pipeline/transcription/tests/test_data/test_bcfy.flac:/data/test-feed.mp3:ro
-    working_dir: /data
-    command: python -m http.server 8090
+      - ./local_dev/mock_icecast.py:/app/mock_icecast.py:ro
+      - ./backend/pipeline/transcription/tests/test_data/test_bcfy.flac:/data/test_bcfy.flac:ro
+    working_dir: /app
+    command: python mock_icecast.py
     networks:
       - pipeline-network
 
