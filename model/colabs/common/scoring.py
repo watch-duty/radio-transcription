@@ -216,8 +216,9 @@ def duration_bucket_wer(
     ``evaluate_transcriptions.ipynb``'s empty-ground-truth filter
     (``run_jiwer_evaluation``'s ``if not ground_truth_text: continue`` and
     ``evaluate_by_duration_buckets``'s ``[s for s in subset if s["text_processed"]]``).
-    WER per bucket is delegated to :func:`compute_wer`; SER is the percentage of
-    a bucket's segments whose individual WER is greater than zero.
+    Per-bucket WER and SER both come from one :func:`jiwer.process_words`
+    alignment pass over the bucket; SER is the percentage of a bucket's
+    segments whose individual WER is greater than zero.
 
     Args:
         references: Ground-truth transcript strings.
@@ -261,14 +262,20 @@ def duration_bucket_wer(
             continue
         bucket_refs = [references[j] for j in idx]
         bucket_hyps = [hypotheses[j] for j in idx]
-        bucket_wer = compute_wer(bucket_refs, bucket_hyps, normalizer=None)[
-            "wer"
-        ]
-        # SER = fraction of segments with a non-zero per-segment WER.
-        non_zero = 0
-        for ref, hyp in zip(bucket_refs, bucket_hyps):
-            if compute_wer([ref], [hyp], normalizer=None)["wer"] > 0:
-                non_zero += 1
+        # One jiwer alignment pass over the whole bucket, reused for both the
+        # aggregate WER and the per-segment SER — rather than an extra
+        # process_words call per segment.
+        output = jiwer.process_words(bucket_refs, bucket_hyps)
+        bucket_wer = round(100 * output.wer, 2)
+        # SER = fraction of segments with a non-zero per-segment WER; a segment
+        # has an error iff its tokenized reference and hypothesis differ.
+        non_zero = sum(
+            1
+            for ref_words, hyp_words in zip(
+                output.references, output.hypotheses
+            )
+            if ref_words != hyp_words
+        )
         results.append(
             {
                 "bucket": labels[i],
