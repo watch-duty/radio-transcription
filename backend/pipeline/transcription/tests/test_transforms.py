@@ -830,6 +830,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
             feed_metadata=FeedMetadata(
                 feed_name="mock-feed", external_id="mock-external-id"
             ),
+            traceparent="mock-traceparent",
         )
 
         with BeamTestPipeline(options=options) as p:
@@ -864,6 +865,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 assert feed_id == "test-feed"
                 assert request.transmission_id is not None
                 assert isinstance(request.buffer, bytes)
+                assert request.traceparent == "mock-traceparent"
 
             assert_that(results, assert_results)
 
