@@ -9,6 +9,6 @@ logger = logging.getLogger(__name__)
 
 
 def test_ingestion_integration(test_feed: tuple[str, str]) -> None:
-    """Tests that audio ingestion service picks up seeded feed and results in a transcript."""
+    """Tests that audio ingestion service picks up the test feed and results in a transcript."""
     feed_id, _ = test_feed
     verify_transcript_in_db(feed_id)
