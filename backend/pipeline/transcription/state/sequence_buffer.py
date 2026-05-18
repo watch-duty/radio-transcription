@@ -3,7 +3,7 @@
 import heapq
 
 from backend.pipeline.schema_types import (
-    streaming_state_betterproto as bp_state,
+    streaming_state as bp_state,
 )
 from backend.pipeline.transcription.common.constants import (
     DEFAULT_FLOAT_TOLERANCE_MS,

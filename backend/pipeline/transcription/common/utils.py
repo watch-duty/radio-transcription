@@ -45,3 +45,8 @@ def generate_transmission_id(
         f"{feed_or_session_id}_{time_range.start_ms}_{time_range.end_ms}"
     )
     return str(uuid.uuid5(uuid.NAMESPACE_OID, deterministic_id))
+
+
+def get_duration_ms(time_range: TimeRange) -> int:
+    """Stateless helper to calculate duration of a time range in milliseconds."""
+    return time_range.end_ms - time_range.start_ms
