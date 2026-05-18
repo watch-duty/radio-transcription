@@ -26,7 +26,8 @@ class TaskJsonFormatter(logging.Formatter):
         # Add trace info from OpenTelemetry
         trace_attrs = get_trace_attributes()
         if trace_attrs.get("trace"):
-            log_record.update(trace_attrs)
+            log_record["logging.googleapis.com/trace"] = trace_attrs["trace"]
+            log_record["logging.googleapis.com/spanId"] = trace_attrs["spanId"]
 
         return json.dumps(log_record)
 

@@ -29,10 +29,12 @@ class TestTaskJsonFormatter(unittest.TestCase):
             log_record = json.loads(log_str)
 
             self.assertEqual(
-                log_record["trace"],
+                log_record["logging.googleapis.com/trace"],
                 "projects/test-project/traces/4bf92f3577b34da6a3ce929d0e0e4736",
             )
-            self.assertEqual(log_record["spanId"], "00f067aa0ba902b7")
+            self.assertEqual(
+                log_record["logging.googleapis.com/spanId"], "00f067aa0ba902b7"
+            )
 
     def test_format_sets_no_trace_info_when_span_invalid(self) -> None:
         with mock.patch(
