@@ -139,7 +139,7 @@ depends = ["format:frontend:eslint", "format:frontend:prettier"]
 
 [tasks."generate:protos"]
 description = "Generate Python code from Protobuf definitions"
-run = "uv run python -m grpc_tools.protoc --proto_path=protos --python_out=backend/pipeline/schema_types --grpc_python_out=backend/pipeline/schema_types --pyi_out=backend/pipeline/schema_types protos/*.proto && uv run python -m grpc_tools.protoc --proto_path=protos --python_betterproto_out=/tmp protos/streaming_state.proto && cp /tmp/streaming/pipeline/state/v1/__init__.py backend/pipeline/schema_types/streaming_state_betterproto.py"
+run = "mkdir -p .betterproto_out && uv run --with grpcio-tools python -m grpc_tools.protoc --proto_path=protos --python_out=backend/pipeline/schema_types --grpc_python_out=backend/pipeline/schema_types --pyi_out=backend/pipeline/schema_types protos/*.proto && uv run --with grpcio-tools --with \"betterproto[compiler]>=2.0.0b6\" python -m grpc_tools.protoc --proto_path=protos --python_betterproto_out=.betterproto_out protos/streaming_state.proto && cp .betterproto_out/streaming/pipeline/state/v1/__init__.py backend/pipeline/schema_types/streaming_state.py && rm -rf .betterproto_out"
 
 [tasks."dev:start"]
 description = "Start the dev pipeline and UI in local Docker containers"

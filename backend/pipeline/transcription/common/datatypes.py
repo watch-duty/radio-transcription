@@ -9,19 +9,13 @@ from backend.pipeline.common.constants import (
     MS_PER_SECOND,
 )
 from backend.pipeline.schema_types import (
-    streaming_state_betterproto as bp_state,
+    streaming_state as bp_state,
 )
 from backend.pipeline.transcription.common.constants import (
     DEFAULT_BACKFILL_LATENESS_THRESHOLD_MS,
     DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS,
 )
 from backend.pipeline.transcription.common.enums import TranscriberType
-
-
-def get_duration_ms(time_range: bp_state.TimeRangeProto) -> int:
-    """Stateless helper to calculate duration of a time range in milliseconds."""
-    return time_range.end_ms - time_range.start_ms
-
 
 TimeRange = bp_state.TimeRangeProto
 BufferedChunk = bp_state.BufferedChunkProto

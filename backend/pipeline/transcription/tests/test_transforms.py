@@ -41,9 +41,9 @@ from backend.pipeline.transcription.common.datatypes import (
     TimeRange,
     TranscribeAudioConfig,
     TranscriptionResult,
-    get_duration_ms,
 )
 from backend.pipeline.transcription.common.enums import TranscriberType
+from backend.pipeline.transcription.common.utils import get_duration_ms
 from backend.pipeline.transcription.services.transcribers import Transcriber
 from backend.pipeline.transcription.transforms.stateful import (
     SHARED_RESOURCE_HANDLE,

@@ -6,13 +6,19 @@ import apache_beam as beam
 import betterproto
 
 from backend.pipeline.schema_types import (
-    streaming_state_betterproto as bp_state,
+    streaming_state as bp_state,
 )
 from backend.pipeline.transcription.common import datatypes
 
 
 class TransmissionContextCoder(beam.coders.Coder):
-    """Binary Coder for TransmissionContext (Union of IdleFeedState and ActiveStitchingState)."""
+    """Binary Coder for TransmissionContext (Union of IdleFeedState and ActiveStitchingState).
+
+    Note: Registering this Coder against the concrete subtypes (IdleFeedState, ActiveStitchingState)
+    allows Beam to directly encode those concrete types when they are yielded.
+    The `decode` method correctly returns whatever concrete type is found in the union payload,
+    so pipeline elements will naturally emerge as their concrete types rather than a union type hint.
+    """
 
     def encode(self, value: datatypes.TransmissionContext) -> bytes:
         wrapper = bp_state.TransmissionContextProto()
@@ -55,7 +61,7 @@ class FlushRequestCoder(beam.coders.Coder):
 
     def decode(self, encoded: bytes) -> datatypes.FlushRequest:
         decoded = datatypes.FlushRequest().parse(encoded)
-        if not decoded.feed_id or not decoded.transmission_id:
+        if not decoded.feed_id:
             msg = "Protobuf decode error: invalid or empty FlushRequest payload"
             raise ValueError(msg)
         return decoded

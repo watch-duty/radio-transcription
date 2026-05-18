@@ -82,3 +82,4 @@ dist/
 
 # GSD workflow (user chose commit_docs=false on 2026-04-21)
 .planning/
+backend/pipeline/schema_types/streaming_state.py
