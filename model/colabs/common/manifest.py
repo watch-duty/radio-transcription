@@ -20,14 +20,23 @@ def load_manifest(path: str) -> list[dict[str, Any]]:
         path: Local filesystem path to a .json (array) or .jsonl manifest.
 
     Returns:
-        List of row dicts; an empty list if the path is missing or unparseable.
+        List of row dicts; an empty list if the path is missing, unreadable,
+        or unparseable.
     """
     data: list[dict[str, Any]] = []
-    if not Path(path).exists():
-        logger.error(f"Manifest path not found: {path}")
+    try:
+        if not Path(path).exists():
+            logger.error(f"Manifest path not found: {path}")
+            return []
+        with open(path, encoding="utf-8") as f:
+            content = f.read().strip()
+    except OSError as e:
+        # Path.exists() can raise (not just return False) when a parent
+        # directory denies search/execute permission — and open() can raise
+        # on an unreadable file. Either way, soft-fail to [] rather than
+        # crashing the caller.
+        logger.error(f"Could not read manifest {path}: {e}")
         return []
-    with open(path, encoding="utf-8") as f:
-        content = f.read().strip()
     if content.startswith("["):
         try:
             data = json.loads(content)

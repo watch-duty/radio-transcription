@@ -123,6 +123,6 @@ class TestLoadManifestEmptyReturns(unittest.TestCase):
     def test_missing_file_returns_empty(self) -> None:
         from common.manifest import load_manifest
 
-        result = load_manifest("/nonexistent/path/manifest.jsonl")
+        result = load_manifest("./nonexistent_manifest.jsonl")
 
         self.assertEqual(result, [])
