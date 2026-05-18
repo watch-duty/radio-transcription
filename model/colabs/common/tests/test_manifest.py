@@ -112,6 +112,28 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
 
         self.assertEqual(result[0]["pred_text_whisper"], "closer")
 
+    def test_one_prediction_is_not_assigned_to_two_rows(self) -> None:
+        """A single prediction near two rows binds to only the nearer one."""
+        from common.manifest import merge_predictions_to_manifest
+
+        # Two GT segments 0.2 s apart; only one prediction survived (the
+        # other model output was lost). 1.18 is within 0.25 s of BOTH
+        # rows but must bind to exactly one, leaving the other blank so
+        # WER still counts the missing output as an error.
+        gt = [
+            {"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "g1"},
+            {"audio_filepath": "gs://b/a.flac", "offset": 1.2, "text": "g2"},
+        ]
+        preds = [
+            {"audio_filepath": "gs://b/a.flac", "offset": 1.18, "text": "only"},
+        ]
+
+        result = merge_predictions_to_manifest(gt, preds, "whisper")
+
+        # 1.18 is nearer 1.2 than 1.0, so row 1 binds it; row 0 stays blank.
+        self.assertNotIn("pred_text_whisper", result[0])
+        self.assertEqual(result[1]["pred_text_whisper"], "only")
+
     def test_unmatched_prediction_leaves_field_absent(self) -> None:
         from common.manifest import merge_predictions_to_manifest
 

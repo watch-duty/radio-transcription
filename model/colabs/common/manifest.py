@@ -83,9 +83,11 @@ def merge_predictions_to_manifest(
     """Align model predictions onto ground-truth rows by (audio_filepath, offset).
 
     Uses an absolute-difference tolerance for offset matching — NEVER exact float
-    equality (exact float equality is silently fragile). The CLOSEST
-    in-tolerance prediction's text is written onto the GT row under
-    pred_text_{model_key}.
+    equality (exact float equality is silently fragile). Predictions are matched
+    to ground-truth rows ONE-TO-ONE per audio_filepath: the closest in-tolerance
+    (row, prediction) pairs are bound first, and each prediction is consumed at
+    most once — so a missing prediction leaves its row's pred_text_{model_key}
+    unset (correctly scored as an error) instead of borrowing a neighbor's.
 
     Args:
         ground_truth: List of ground-truth manifest dicts (NeMo-style schema).
@@ -116,22 +118,38 @@ def merge_predictions_to_manifest(
             p_text = str(pred.get("text", ""))
             pred_index.setdefault(audio_fp, []).append((p_offset, p_text))
 
-        field_name = f"pred_text_{model_key}"
-        for gt_row in ground_truth:
+        # Group ground-truth row indices by audio_filepath so the offset
+        # match below is resolved within each source file.
+        gt_by_file: dict[str, list[int]] = {}
+        for i, gt_row in enumerate(ground_truth):
             audio_fp = str(gt_row.get("audio_filepath", ""))
-            gt_offset = float(gt_row.get("offset", 0.0))
+            gt_by_file.setdefault(audio_fp, []).append(i)
+
+        field_name = f"pred_text_{model_key}"
+        for audio_fp, gt_indices in gt_by_file.items():
             candidates = pred_index.get(audio_fp, [])
-            # Bind the CLOSEST in-tolerance prediction, not the first match —
-            # with closely-spaced transmissions the first need not be nearest.
-            best_text: str | None = None
-            min_diff = offset_tolerance
-            for p_offset, p_text in candidates:
-                diff = abs(gt_offset - p_offset)
-                if diff < min_diff:
-                    min_diff = diff
-                    best_text = p_text
-            if best_text is not None:
-                gt_row[field_name] = best_text
+            # One-to-one match: collect every (row, prediction) pair within
+            # tolerance, then assign closest-first, consuming each row and
+            # each prediction at most once. A prediction is therefore NEVER
+            # bound to two rows — so a genuinely missing prediction leaves
+            # its row blank and still scores as an error in WER, rather than
+            # borrowing a neighbor's.
+            pairs: list[tuple[float, int, int]] = []
+            for gi in gt_indices:
+                gt_offset = float(ground_truth[gi].get("offset", 0.0))
+                for pi, (p_offset, _) in enumerate(candidates):
+                    diff = abs(gt_offset - p_offset)
+                    if diff < offset_tolerance:
+                        pairs.append((diff, gi, pi))
+            pairs.sort(key=lambda pair: pair[0])
+            used_gt: set[int] = set()
+            used_pred: set[int] = set()
+            for _, gi, pi in pairs:
+                if gi in used_gt or pi in used_pred:
+                    continue
+                ground_truth[gi][field_name] = candidates[pi][1]
+                used_gt.add(gi)
+                used_pred.add(pi)
 
         return ground_truth
     except Exception as e:
