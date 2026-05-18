@@ -18,6 +18,7 @@ from apache_beam.options.pipeline_options import (
     StandardOptions,
 )
 
+from backend.pipeline.transcription.common import coders as trans_coders
 from backend.pipeline.transcription.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
     DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS,
@@ -67,6 +68,7 @@ def get_pipeline(
     pipeline_options: PipelineOptions,
 ) -> beam.Pipeline:
     """Constructs the Apache Beam pipeline DAG and returns the pipeline object."""
+    trans_coders.register_custom_coders()
     # Require streaming mode since we handle unbounded logical streams from Pub/Sub
     standard_options = pipeline_options.view_as(StandardOptions)
     standard_options.streaming = True

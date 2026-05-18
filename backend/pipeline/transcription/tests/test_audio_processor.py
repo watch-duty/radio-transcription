@@ -102,7 +102,7 @@ class AudioProcessorTest(unittest.TestCase):
         self.assertEqual(len(processed), len(audio))
 
     @unittest.skipIf(
-        shutil.which("ffmpeg") is None, "ffmpeg is required for pydub I/O tests"
+        shutil.which("ffmpeg") is None, "ffmpeg is required for I/O tests"
     )
     def test_export_flac(self) -> None:
         """Tests that exporting to FLAC produces a valid byte array containing the expected `fLaC` header signature."""
@@ -112,7 +112,7 @@ class AudioProcessorTest(unittest.TestCase):
         self.assertTrue(flac_bytes.startswith(b"fLaC"))
 
     @unittest.skipIf(
-        shutil.which("ffmpeg") is None, "ffmpeg is required for pydub I/O tests"
+        shutil.which("ffmpeg") is None, "ffmpeg is required for I/O tests"
     )
     def test_export_m4a(self) -> None:
         """Tests that exporting to M4A produces a valid byte array with valid ftyp header."""

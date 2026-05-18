@@ -114,7 +114,7 @@ class AudioProcessor:
         gcs_path: str,
         start_ms: int,
         duration_ms: int | None = None,
-        prior_audio: np.ndarray | None = None,
+        prior_audio: bytes | None = None,
     ) -> AudioChunkData:
         """Downloads audio bytes from GCS and runs the speech segment detection natively."""
         if not self.gcs_client:
@@ -177,11 +177,11 @@ class AudioProcessor:
         if len(samples) > 0:
             samples_float = samples.astype(np.float32) / INT16_MAX_FLOAT
             # If prior audio tail is passed from context, normalize it to float32 to match vad signature
-            prior_float = (
-                prior_audio.astype(np.float32) / INT16_MAX_FLOAT
-                if prior_audio is not None
-                else None
-            )
+            if prior_audio is not None:
+                prior_arr = np.frombuffer(prior_audio, dtype=np.int16)
+                prior_float = prior_arr.astype(np.float32) / INT16_MAX_FLOAT
+            else:
+                prior_float = None
             raw_segments = self.vad.detect_speech_segments(
                 samples_float, sample_rate=sr, prior_audio=prior_float
             )
