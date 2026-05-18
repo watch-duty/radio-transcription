@@ -89,6 +89,29 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
 
         self.assertEqual(result[0]["pred_text_whisper"], "predicted")
 
+    def test_binds_closest_of_multiple_in_tolerance_candidates(self) -> None:
+        """When several predictions are within tolerance, the nearest wins."""
+        from common.manifest import merge_predictions_to_manifest
+
+        gt = [
+            {"audio_filepath": "gs://b/a.flac", "offset": 1.15, "text": "gold"}
+        ]
+        # 1.0 and 1.1 are both within the default 0.25s tolerance of 1.15;
+        # 1.1 (diff 0.05) is nearer than 1.0 (diff 0.15), so "closer" must win
+        # even though "first" appears earlier in the candidate list.
+        preds = [
+            {"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "first"},
+            {
+                "audio_filepath": "gs://b/a.flac",
+                "offset": 1.1,
+                "text": "closer",
+            },
+        ]
+
+        result = merge_predictions_to_manifest(gt, preds, "whisper")
+
+        self.assertEqual(result[0]["pred_text_whisper"], "closer")
+
     def test_unmatched_prediction_leaves_field_absent(self) -> None:
         from common.manifest import merge_predictions_to_manifest
 

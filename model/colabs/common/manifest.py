@@ -80,8 +80,9 @@ def merge_predictions_to_manifest(
     """Align model predictions onto ground-truth rows by (audio_filepath, offset).
 
     Uses an absolute-difference tolerance for offset matching — NEVER exact float
-    equality (exact float equality is silently fragile). A matched
-    prediction's text is written onto the GT row under pred_text_{model_key}.
+    equality (exact float equality is silently fragile). The CLOSEST
+    in-tolerance prediction's text is written onto the GT row under
+    pred_text_{model_key}.
 
     Args:
         ground_truth: List of ground-truth manifest dicts (NeMo-style schema).
@@ -117,10 +118,17 @@ def merge_predictions_to_manifest(
             audio_fp = str(gt_row.get("audio_filepath", ""))
             gt_offset = float(gt_row.get("offset", 0.0))
             candidates = pred_index.get(audio_fp, [])
+            # Bind the CLOSEST in-tolerance prediction, not the first match —
+            # with closely-spaced transmissions the first need not be nearest.
+            best_text: str | None = None
+            min_diff = offset_tolerance
             for p_offset, p_text in candidates:
-                if abs(gt_offset - p_offset) < offset_tolerance:
-                    gt_row[field_name] = p_text
-                    break
+                diff = abs(gt_offset - p_offset)
+                if diff < min_diff:
+                    min_diff = diff
+                    best_text = p_text
+            if best_text is not None:
+                gt_row[field_name] = best_text
 
         return ground_truth
     except Exception as e:
