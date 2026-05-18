@@ -10,7 +10,7 @@ dependencies = [
     # Adding betterproto because it's an indirect dependency of beam and is a pre-release version.
     # Since pre-release versions are not permitted in this repo, we list it explicitly here.
     # This allows it to as a depednency for beam without enabling pre-releases globally.
-    "betterproto>=2.0.0b6",
+    "betterproto[compiler]>=2.0.0b6",
     "google-cloud-speech>=2.37.0",
     "google-cloud-logging>=3.14.0",
     "protobuf>=5.29.6",
