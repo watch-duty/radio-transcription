@@ -3,7 +3,7 @@
 Covers:
   - merge_predictions_to_manifest: fail-loud (re-raise) on unexpected error
   - merge_predictions_to_manifest: happy-path offset-tolerant merge
-  - load_manifest: [] returns for missing/malformed input (unchanged)
+  - load_manifest: [] on missing input; non-string text fields coerced
 """
 
 import unittest
@@ -149,3 +149,27 @@ class TestLoadManifestEmptyReturns(unittest.TestCase):
         result = load_manifest("./nonexistent_manifest.jsonl")
 
         self.assertEqual(result, [])
+
+
+class TestLoadManifestMalformedRows(unittest.TestCase):
+    """load_manifest tolerates rows whose `text` field is not a string."""
+
+    def test_non_string_text_is_coerced(self) -> None:
+        """A row with a non-string `text` is str()-cast, not crashed."""
+        import json
+        import os
+        import tempfile
+
+        from common.manifest import load_manifest
+
+        fd, path = tempfile.mkstemp(suffix=".jsonl")
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(
+                    json.dumps({"audio_filepath": "gs://b/a.flac", "text": 123})
+                )
+            rows = load_manifest(path)
+        finally:
+            os.unlink(path)
+
+        self.assertEqual(rows[0]["text"], "123")
