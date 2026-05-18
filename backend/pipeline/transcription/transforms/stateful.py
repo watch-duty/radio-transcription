@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal, override
 
 import apache_beam as beam
+import numpy as np
 from apache_beam.metrics import Metrics
 from apache_beam.transforms.userstate import (
     BagRuntimeState,
@@ -37,6 +38,7 @@ from backend.pipeline.common import constants as common_constants
 from backend.pipeline.common import tracing_utils
 from backend.pipeline.common.storage import gcs_uploader
 from backend.pipeline.transcription.audio import audio_processor, vad
+from backend.pipeline.transcription.common import coders as trans_coders
 from backend.pipeline.transcription.common import constants as trans_constants
 from backend.pipeline.transcription.common import datatypes
 from backend.pipeline.transcription.common import logging as trans_logging
@@ -209,12 +211,12 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
     # --- State Specs ---
 
     TRANSMISSION_BUFFER_SPEC = BagStateSpec(
-        "transmission_buffer", beam.coders.PickleCoder()
+        "transmission_buffer", beam.coders.BytesCoder()
     )
     TRANSMISSION_BUFFER_STATE = beam.DoFn.StateParam(TRANSMISSION_BUFFER_SPEC)
 
     TRANSMISSION_CONTEXT_SPEC = ReadModifyWriteStateSpec(
-        "transmission_context", beam.coders.PickleCoder()
+        "transmission_context", trans_coders.TransmissionContextCoder()
     )
     TRANSMISSION_CONTEXT_STATE = beam.DoFn.StateParam(TRANSMISSION_CONTEXT_SPEC)
 
@@ -584,7 +586,7 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
     TRANSMISSION_BUFFER_STATE = beam.DoFn.StateParam(TRANSMISSION_BUFFER_SPEC)
 
     TRANSMISSION_CONTEXT_SPEC = ReadModifyWriteStateSpec(
-        "transmission_context", beam.coders.PickleCoder()
+        "transmission_context", trans_coders.TransmissionContextCoder()
     )
     TRANSMISSION_CONTEXT_STATE = beam.DoFn.StateParam(TRANSMISSION_CONTEXT_SPEC)
 
@@ -1030,7 +1032,7 @@ class TranscribeAudioFn(beam.DoFn):
             gcs_client=self.audio_processor.gcs_client,
         )
 
-    def _export_and_transcribe(  # noqa: PLR0912
+    def _export_and_transcribe(  # noqa: PLR0912, PLR0915
         self,
         request: datatypes.FlushRequest,
     ) -> datatypes.TranscriptionResult | None:
@@ -1042,11 +1044,12 @@ class TranscribeAudioFn(beam.DoFn):
             msg = "Transcriber not initialized. setup() must be called."
             raise RuntimeError(msg)
 
-        if request.buffer is None or request.buffer.size == 0:
+        if request.buffer is None or len(request.buffer) == 0:
             return None
 
+        audio_arr = np.frombuffer(request.buffer, dtype=np.int16)
         res = self.audio_processor.process_buffer(
-            request.buffer,
+            audio_arr,
             sample_rate=request.sample_rate,
             speech_segments=request.speech_segments,
         )
@@ -1117,7 +1120,10 @@ class TranscribeAudioFn(beam.DoFn):
             / float(request.sample_rate)
             * common_constants.MS_PER_SECOND
         )
-        if duration_ms > 60000:
+        if (
+            duration_ms
+            > trans_constants.MAX_SYNCHRONOUS_TRANSCRIPTION_DURATION_MS
+        ):
             msg = f"Audio payload too long for synchronous API: {duration_ms / 1000:.2f}s"
             raise ValueError(msg)
 
