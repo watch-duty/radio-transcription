@@ -3,8 +3,11 @@
 from typing import Any
 
 import apache_beam as beam
+import betterproto
 
-from backend.pipeline.schema_types import streaming_state_pb2 as state_pb2
+from backend.pipeline.schema_types import (
+    streaming_state_betterproto as bp_state,
+)
 from backend.pipeline.transcription.common import datatypes
 
 
@@ -12,33 +15,24 @@ class TransmissionContextCoder(beam.coders.Coder):
     """Binary Coder for TransmissionContext (Union of IdleFeedState and ActiveStitchingState)."""
 
     def encode(self, value: datatypes.TransmissionContext) -> bytes:
-        wrapper = state_pb2.TransmissionContextProto()
+        wrapper = bp_state.TransmissionContextProto()
         match value:
             case datatypes.IdleFeedState():
-                wrapper.idle_state.CopyFrom(value.to_proto())
+                wrapper.idle_state = value
             case datatypes.ActiveStitchingState():
-                wrapper.active_state.CopyFrom(value.to_proto())
+                wrapper.active_state = value
             case _:
                 msg = f"Unexpected TransmissionContext type: {type(value)}"
                 raise TypeError(msg)
-        return wrapper.SerializeToString()
+        return bytes(wrapper)
 
     def decode(self, encoded: bytes) -> datatypes.TransmissionContext:
-        wrapper = state_pb2.TransmissionContextProto()
-        consumed = wrapper.ParseFromString(encoded)
-        if consumed != len(encoded):
-            msg = f"Protobuf decode error: consumed {consumed} bytes out of {len(encoded)}"
+        wrapper = bp_state.TransmissionContextProto().parse(encoded)
+        field_name, value = betterproto.which_one_of(wrapper, "context")
+        if not field_name or value is None:
+            msg = "Protobuf decode error: invalid or empty TransmissionContext payload"
             raise ValueError(msg)
-        match wrapper.WhichOneof("context"):
-            case "idle_state":
-                return datatypes.IdleFeedState.from_proto(wrapper.idle_state)
-            case "active_state":
-                return datatypes.ActiveStitchingState.from_proto(
-                    wrapper.active_state
-                )
-            case which:
-                msg = f"Unknown TransmissionContext oneof: {which}"
-                raise ValueError(msg)
+        return value
 
     def is_deterministic(self) -> bool:
         return True
@@ -57,15 +51,14 @@ class FlushRequestCoder(beam.coders.Coder):
     """Binary Coder for FlushRequest."""
 
     def encode(self, value: datatypes.FlushRequest) -> bytes:
-        return value.to_proto().SerializeToString()
+        return bytes(value)
 
     def decode(self, encoded: bytes) -> datatypes.FlushRequest:
-        proto = state_pb2.FlushRequestProto()
-        consumed = proto.ParseFromString(encoded)
-        if consumed != len(encoded):
-            msg = f"Protobuf decode error: consumed {consumed} bytes out of {len(encoded)}"
+        decoded = datatypes.FlushRequest().parse(encoded)
+        if not decoded.feed_id or not decoded.transmission_id:
+            msg = "Protobuf decode error: invalid or empty FlushRequest payload"
             raise ValueError(msg)
-        return datatypes.FlushRequest.from_proto(proto)
+        return decoded
 
     def is_deterministic(self) -> bool:
         return True
@@ -84,15 +77,16 @@ class ChunkMetadataCoder(beam.coders.Coder):
     """Binary Coder for ChunkMetadata."""
 
     def encode(self, value: datatypes.ChunkMetadata) -> bytes:
-        return value.to_proto().SerializeToString()
+        return bytes(value)
 
     def decode(self, encoded: bytes) -> datatypes.ChunkMetadata:
-        proto = state_pb2.ChunkMetadataProto()
-        consumed = proto.ParseFromString(encoded)
-        if consumed != len(encoded):
-            msg = f"Protobuf decode error: consumed {consumed} bytes out of {len(encoded)}"
+        decoded = datatypes.ChunkMetadata().parse(encoded)
+        if not decoded.gcs_uri or not decoded.session_id:
+            msg = (
+                "Protobuf decode error: invalid or empty ChunkMetadata payload"
+            )
             raise ValueError(msg)
-        return datatypes.ChunkMetadata.from_proto(proto)
+        return decoded
 
     def is_deterministic(self) -> bool:
         return True

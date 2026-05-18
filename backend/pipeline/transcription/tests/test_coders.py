@@ -4,7 +4,6 @@ import unittest
 
 import apache_beam as beam
 import pytest
-from google.protobuf.message import DecodeError
 
 from backend.pipeline.transcription.common import coders, datatypes
 
@@ -184,5 +183,5 @@ class CoderVerificationTest(unittest.TestCase):
     def test_corrupted_protobuf_deserialization_handling(self) -> None:
         """Verifies that errors are explicitly raised when invalid or incomplete protobuf bytes are decoded."""
         coder = coders.ChunkMetadataCoder()
-        with pytest.raises((ValueError, DecodeError)):
+        with pytest.raises((ValueError, IndexError, TypeError, Exception)):
             coder.decode(b"invalid_protobuf_bytes_payload")

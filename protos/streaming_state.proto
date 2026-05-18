@@ -26,6 +26,7 @@ message ChunkMetadataProto {
   int64 duration_ms = 3;
   FeedMetadataProto feed_metadata = 4;
   optional string traceparent = 5;
+  bool is_continuous = 6;
 }
 
 message FlushRequestProto {

@@ -41,6 +41,7 @@ from backend.pipeline.transcription.common.datatypes import (
     TimeRange,
     TranscribeAudioConfig,
     TranscriptionResult,
+    get_duration_ms,
 )
 from backend.pipeline.transcription.common.enums import TranscriberType
 from backend.pipeline.transcription.services.transcribers import Transcriber
@@ -1088,7 +1089,9 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         saved_context = mock_state_context.read()
         self.assertIsInstance(saved_context, ActiveStitchingState)
         self.assertTrue(len(saved_context.speech_segments) > 0)
-        self.assertEqual(saved_context.speech_segments[0].duration_ms, 3000)
+        self.assertEqual(
+            get_duration_ms(saved_context.speech_segments[0]), 3000
+        )
 
         # 2. Trigger stale flush and verify mapped speech_segments in FlushRequest payload
         outputs = list(
@@ -1106,7 +1109,9 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         feed_id, flush_request = outputs[0]
         self.assertEqual(feed_id, "test-feed")
         self.assertTrue(len(flush_request.speech_segments) > 0)
-        self.assertEqual(flush_request.speech_segments[0].duration_ms, 3000)
+        self.assertEqual(
+            get_duration_ms(flush_request.speech_segments[0]), 3000
+        )
         self.assertIsInstance(mock_state_context.read(), IdleFeedState)
 
     @patch(
@@ -1418,14 +1423,14 @@ class OrderedSegmentedStitchAudioTest(unittest.TestCase):
         # First flushed part: 10 seconds
         feed_id_1, flush_req_1 = outputs[0]
         self.assertEqual(feed_id_1, "segmented-feed")
-        self.assertEqual(flush_req_1.time_range.duration_ms, 10000)
+        self.assertEqual(get_duration_ms(flush_req_1.time_range), 10000)
         self.assertTrue(flush_req_1.missing_post_context)
         self.assertFalse(flush_req_1.missing_prior_context)
 
         # Second flushed part: 5 seconds
         feed_id_2, flush_req_2 = outputs[1]
         self.assertEqual(feed_id_2, "segmented-feed")
-        self.assertEqual(flush_req_2.time_range.duration_ms, 5000)
+        self.assertEqual(get_duration_ms(flush_req_2.time_range), 5000)
         self.assertFalse(flush_req_2.missing_post_context)
         self.assertTrue(flush_req_2.missing_prior_context)
 

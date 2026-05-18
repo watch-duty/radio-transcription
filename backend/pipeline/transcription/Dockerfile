@@ -45,7 +45,10 @@ COPY protos/ ./protos
 # Generate protobuf bindings
 RUN mkdir -p ./backend/pipeline/schema_types && \
     touch ./backend/pipeline/schema_types/__init__.py && \
-    python3 -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto
+    python3 -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto && \
+    pip3 install --no-cache-dir "betterproto[compiler]" && \
+    python3 -m grpc_tools.protoc -I=protos --python_betterproto_out=/tmp protos/streaming_state.proto && \
+    cp /tmp/streaming/pipeline/state/v1/__init__.py backend/pipeline/schema_types/streaming_state_betterproto.py
 
 # Copy and set the entrypoint script
 COPY backend/pipeline/transcription/entrypoint.sh /opt/google/dataflow/entrypoint.sh
