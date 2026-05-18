@@ -20,6 +20,7 @@ in service
 got a caller
 caller advising
 in quarters
+quarters
 arrived
 go ahead
 back at
@@ -45,6 +46,7 @@ copter
 # Identifiers / designators
 AIQ
 AOR
+DO
 IC
 ICP
 LAT
@@ -83,12 +85,32 @@ structures threatened
 terrain driven
 wind driven
 
+# Clearances & Codes
+clear and in service
+code 1
+code 2
+code 3
+code 4
+code 33
+
+# Medical & Dispatch Problems
+medical call
+fire alarm
+commercial fire alarm
+breathing problem
+cardiac arrest
+heart problem
+diabetic shock
+mvc
+
 # 10-codes
 10-4
 10-7
 10-8
 10-9
+10-15
 10-20
 10-22
 10-23
+10-91
 10-97
