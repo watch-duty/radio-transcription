@@ -1,7 +1,6 @@
 """Domain objects and strongly-typed dataclasses for the transcription pipeline."""
 
 from dataclasses import dataclass, field
-from typing import Any
 
 import numpy as np
 
@@ -12,33 +11,11 @@ from backend.pipeline.common.constants import (
 from backend.pipeline.schema_types import (
     streaming_state_betterproto as bp_state,
 )
-from backend.pipeline.schema_types.streaming_state_betterproto import (
-    ActiveStitchingStateProto,
-    BufferedChunkProto,
-    ChunkMetadataProto,
-    FeedMetadataProto,
-    FlushRequestProto,
-    IdleFeedStateProto,
-    TimeRangeProto,
-    TransmissionContextProto,
-)
 from backend.pipeline.transcription.common.constants import (
     DEFAULT_BACKFILL_LATENESS_THRESHOLD_MS,
     DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS,
 )
 from backend.pipeline.transcription.common.enums import TranscriberType
-
-# Runtime reference list to satisfy import checks without using noqa comments
-_PROTOC_GENERATED_CLASSES = (
-    ActiveStitchingStateProto,
-    BufferedChunkProto,
-    ChunkMetadataProto,
-    FeedMetadataProto,
-    FlushRequestProto,
-    IdleFeedStateProto,
-    TimeRangeProto,
-    TransmissionContextProto,
-)
 
 
 def get_duration_ms(time_range: bp_state.TimeRangeProto) -> int:
@@ -65,12 +42,7 @@ class AudioChunkData:
 FeedMetadata = bp_state.FeedMetadataProto
 
 
-class ChunkMetadata(bp_state.ChunkMetadataProto):
-    """Metadata for an audio chunk before download."""
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        kwargs.setdefault("is_continuous", True)
-        super().__init__(*args, **kwargs)
+ChunkMetadata = bp_state.ChunkMetadataProto
 
 
 @dataclass(frozen=True)

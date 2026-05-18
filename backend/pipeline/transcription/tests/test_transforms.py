@@ -56,6 +56,15 @@ from backend.pipeline.transcription.transforms.stateless import (
     SerializeFn,
 )
 
+# Test Helper: override ChunkMetadata locally in tests to default is_continuous to True
+_OriginalChunkMetadata = ChunkMetadata
+
+
+def ChunkMetadata(*args: Any, **kwargs: Any) -> Any:
+    kwargs.setdefault("is_continuous", True)
+    return _OriginalChunkMetadata(*args, **kwargs)
+
+
 # Configure dynamic mock interception for process-level shared GCS clients
 # using standard unittest module lifecycle hooks to avoid any type ignore annotations.
 original_acquire = SHARED_RESOURCE_HANDLE.acquire

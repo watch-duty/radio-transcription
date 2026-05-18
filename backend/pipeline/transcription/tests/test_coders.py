@@ -119,6 +119,7 @@ class CoderVerificationTest(unittest.TestCase):
             duration_ms=1000,
             feed_metadata=datatypes.FeedMetadata("Name", "Ext"),
             traceparent="trace-01",
+            is_continuous=True,
         )
 
         encoded = coder.encode(meta)
