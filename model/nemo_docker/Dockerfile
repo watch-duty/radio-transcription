@@ -9,10 +9,6 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 
-# Fully activate the NeMo virtual environment by default so packages and extensions are found natively
-# ENV VIRTUAL_ENV=/opt/venv
-# ENV PATH="/opt/venv/bin:$PATH"
-
 # Install ZSH, Git, FFmpeg, and set up ZSH
 RUN apt-get update && \
     apt-get install -y --no-install-recommends zsh git wget ffmpeg && \
