@@ -1656,3 +1656,70 @@ class DlqTaggingTest(unittest.TestCase):
         self.assertEqual(flush_request.feed_metadata, expected_feed_metadata)
         # State should now be IdleFeedState (context reset after flush)
         self.assertIsInstance(mock_state_context.read(), IdleFeedState)
+
+    @patch(
+        "backend.pipeline.transcription.transforms.stitcher_engine.audio_processor.AudioProcessor"
+    )
+    def test_stale_flush_preserves_echo_sample_rate_in_flush_request(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that an 8 kHz echo audio feed sample rate is preserved in ActiveStitchingState
+        and correctly populated in the FlushRequest during a stale flush.
+        """
+        mock_processor_inst = mock_audio_processor.return_value
+        # 8000 Hz sample rate representing Echo feed audio
+        chunk_data = AudioChunkData(
+            start_ms=100000,
+            audio=np.zeros(8000 * 3, dtype=np.int16),
+            speech_segments=[TimeRange(0, 3000)],
+            gcs_uri="gs://bucket/echo_chunk.flac",
+            duration_ms=3000,
+            sample_rate=8000,
+        )
+        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+
+        fn, mock_state_context, mock_state_buffer, mock_last_start_ms = (
+            self._make_fn_and_states(OrderedContinuousStitchAudioFn)
+        )
+        fn.setup()
+
+        metadata = ChunkMetadata(
+            gcs_uri="gs://bucket/echo_chunk.flac",
+            session_id="test-session",
+            duration_ms=3000,
+            feed_metadata=FeedMetadata(
+                feed_name="test-feed", external_id="ext-id"
+            ),
+        )
+        # 1. Process chunk (this should update context state with the 8 kHz sample rate)
+        list(
+            fn.process(
+                element=("test-feed", metadata),
+                timestamp=Timestamp(100),
+                transmission_buffer_state=mock_state_buffer,
+                transmission_context_state=mock_state_context,
+                last_start_ms_state=mock_last_start_ms,
+                out_of_order_timer=MagicMock(),
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        # 2. Trigger stale flush
+        outputs = list(
+            fn.handle_stale_transmission_event(
+                key="test-feed",
+                transmission_buffer=mock_state_buffer,
+                transmission_context=mock_state_context,
+                last_start_ms_state=mock_last_start_ms,
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        # The flush should have produced exactly one result
+        self.assertEqual(len(outputs), 1)
+        feed_id, flush_request = outputs[0]
+        self.assertEqual(feed_id, "test-feed")
+        # sample_rate must be 8000 (preserved from chunk_data), not defaulted to 16000
+        self.assertEqual(flush_request.sample_rate, 8000)
