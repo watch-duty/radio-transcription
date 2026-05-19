@@ -10,8 +10,8 @@ ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 
 # Fully activate the NeMo virtual environment by default so packages and extensions are found natively
-ENV VIRTUAL_ENV=/opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+# ENV VIRTUAL_ENV=/opt/venv
+# ENV PATH="/opt/venv/bin:$PATH"
 
 # Install ZSH, Git, FFmpeg, and set up ZSH
 RUN apt-get update && \
@@ -30,14 +30,14 @@ COPY model/nemo_docker/requirements.txt /tmp/nemo_requirements.txt
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Install dependencies efficiently with cache mounts.
-# Note: torchaudio is installed standalone using the cu130 extra-index-url to fetch a binary matching the
-# container's native CUDA 13.0 runtime layer. The --no-deps flag prevents the package resolver
-# from replacing the custom unreleased NVIDIA PyTorch core engine (torch==2.10.0a0+b558c986e8.nv25.11) with a
-# generic public wheel, which would break things.
+# DO NOT INSTALL any torch libraries manually as they will end up conflicting with the pre-installed
+# NeMO pytorch libraries and you might end up with missing symbols and what not.
+# Unfortunately its not possible to install torchaudio manually on top of the torch version
+# that is coming with nemo either. Use the notebook_docker if you want to just use pytorch
+# without NeMO
 RUN --mount=type=cache,target=/root/.cache/uv \
     wget https://raw.githubusercontent.com/NVIDIA/NeMo/${NEMO_VERSION}/tools/speech_data_explorer/requirements.txt -O /tmp/speech_explorer_requirements.txt && \
     uv pip install --python /opt/venv/bin/python -r /tmp/speech_explorer_requirements.txt && \
-    uv pip install --python /opt/venv/bin/python --extra-index-url https://download.pytorch.org/whl/cu130 --no-deps torchaudio && \
     uv pip install --python /opt/venv/bin/python -r /tmp/nemo_requirements.txt
 
 

@@ -13,3 +13,6 @@ accelerate
 ipywidgets
 soundfile
 jupyterlab-vim
+peft
+evaluate
+tensorboardX

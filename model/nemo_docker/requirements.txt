@@ -6,3 +6,4 @@ ipywidgets
 jupyterlab-vim
 onnxruntime
 pedalboard
+notebook
