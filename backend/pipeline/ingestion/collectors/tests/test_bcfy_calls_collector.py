@@ -1602,3 +1602,317 @@ class TestBcfyCallsHttp01(unittest.IsolatedAsyncioTestCase):
             "HTTP-01: _fetch_calls did not receive resources.http_session; "
             "runtime-owned session is not being forwarded.",
         )
+
+
+class TestCreateChunkFromCallResumePosition(unittest.IsolatedAsyncioTestCase):
+    """resume_position cursor derivation in _create_chunk_from_call.
+
+    The bcfy_calls duplicate-ingestion fix: the feed resume cursor must be
+    the call's own API index time `ts`, never its audio `end_ts`. The API
+    filters `ts > pos` and `end_ts < ts`, so an end_ts-valued cursor
+    re-fetches the boundary call on every lease handoff.
+    """
+
+    def setUp(self) -> None:
+        self.session = MagicMock()
+        self.shutdown = asyncio.Event()
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._download_audio",
+        new_callable=AsyncMock,
+    )
+    async def test_resume_position_is_call_ts_not_end_ts(
+        self, mock_dl: AsyncMock
+    ) -> None:
+        """resume_position = fromtimestamp(ts), distinct from chunk_end_time."""
+        mock_dl.return_value = b"flac"
+        # `ts` deliberately a few seconds past `end_ts`, as the live API does.
+        result = {
+            "url": "http://1",
+            "start_ts": 1000,
+            "end_ts": 2000,
+            "ts": 2002,
+        }
+
+        chunk = await bcfy_calls_collector._create_chunk_from_call(
+            self.session,
+            result,
+            "http://1",
+            self.shutdown,
+            "test-session",
+            datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+        )
+
+        assert chunk is not None
+        self.assertEqual(
+            chunk.resume_position,
+            datetime.datetime.fromtimestamp(2002, datetime.UTC),
+        )
+        self.assertEqual(
+            chunk.chunk_end_time,
+            datetime.datetime.fromtimestamp(2000, datetime.UTC),
+        )
+        # The resume cursor is the API index time, NOT the audio end time.
+        self.assertNotEqual(chunk.resume_position, chunk.chunk_end_time)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._download_audio",
+        new_callable=AsyncMock,
+    )
+    async def test_missing_ts_sets_none_and_logs_warning(
+        self, mock_dl: AsyncMock
+    ) -> None:
+        """A call with no `ts` → resume_position is None AND a warning logged.
+
+        A missing pagination key signals API contract drift — the runtime's
+        `or` fallback to chunk_end_time keeps the chunk ingested (dup-biased,
+        never lost), and the warning surfaces the drift.
+        """
+        mock_dl.return_value = b"flac"
+        result = {"url": "http://1", "start_ts": 1000, "end_ts": 2000}
+
+        with self.assertLogs(
+            "backend.pipeline.ingestion.collectors.bcfy_calls"
+            ".bcfy_calls_collector",
+            level="WARNING",
+        ) as cm:
+            chunk = await bcfy_calls_collector._create_chunk_from_call(
+                self.session,
+                result,
+                "http://1",
+                self.shutdown,
+                "test-session",
+                datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+            )
+
+        assert chunk is not None
+        self.assertIsNone(chunk.resume_position)
+        missing = [
+            r
+            for r in cm.records
+            if getattr(r, "json_fields", {}).get("event_type")
+            == "bcfy_calls_missing_ts"
+        ]
+        self.assertEqual(len(missing), 1)
+
+
+class TestCaptureBcfyCallsResumePosition(unittest.IsolatedAsyncioTestCase):
+    """capture_bcfy_calls page-sort and cross-lease resume behavior."""
+
+    def setUp(self) -> None:
+        self.shutdown = asyncio.Event()
+        self.feed: dict[str, Any] = {
+            "id": uuid.uuid4(),
+            "name": "test-feed",
+            "external_id": "ext-id",
+            "source_type": SourceType.BCFY_CALLS,
+            "last_processed_filename": None,
+            "last_bookmark_time": None,
+            "fencing_token": 1,
+            "source_feed_id": "sid123",
+        }
+        self.url_base = "http://base"
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._get_jwt_token"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._fetch_calls",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._download_audio",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_page_sorted_by_ts_before_processing(
+        self,
+        mock_sleep: AsyncMock,
+        mock_dl: AsyncMock,
+        mock_fetch: AsyncMock,
+        mock_jwt: MagicMock,
+    ) -> None:
+        """A page out of `ts` order is sorted ascending before yielding.
+
+        The per-call cursor must advance monotonically; the sort bounds
+        data-loss on a mid-page crash to the accepted tie case.
+        """
+        mock_jwt.return_value = "token"
+        mock_dl.return_value = b"flac"
+        # Page deliberately NOT in `ts` order (c, a, b).
+        mock_fetch.return_value = {
+            "calls": [
+                {
+                    "url": "http://c",
+                    "start_ts": 3000,
+                    "end_ts": 3009,
+                    "ts": 3011,
+                },
+                {
+                    "url": "http://a",
+                    "start_ts": 1000,
+                    "end_ts": 1009,
+                    "ts": 1011,
+                },
+                {
+                    "url": "http://b",
+                    "start_ts": 2000,
+                    "end_ts": 2009,
+                    "ts": 2011,
+                },
+            ],
+        }
+
+        async def sleep_side_effect(*args, **kwargs) -> bool:
+            self.shutdown.set()
+            return True
+
+        mock_sleep.side_effect = sleep_side_effect
+
+        chunks = [
+            c
+            async for c in bcfy_calls_collector.capture_bcfy_calls(
+                cast("LeasedFeed", self.feed),
+                self.shutdown,
+                self.url_base,
+                _default_resources(),
+            )
+        ]
+
+        self.assertEqual(len(chunks), 3)
+        positions = [c.resume_position for c in chunks]
+        self.assertEqual(
+            positions,
+            [
+                datetime.datetime.fromtimestamp(t, datetime.UTC)
+                for t in (1011, 2011, 3011)
+            ],
+        )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._get_jwt_token"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._fetch_calls",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._download_audio",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_cross_lease_resume_refetches_nothing(
+        self,
+        mock_sleep: AsyncMock,
+        mock_dl: AsyncMock,
+        mock_fetch: AsyncMock,
+        mock_jwt: MagicMock,
+    ) -> None:
+        """A second lease resuming at the persisted `ts` cursor re-fetches nothing.
+
+        Simulates the runtime's role: lease-1 commits a page, the last
+        call's resume_position is persisted as feeds.last_bookmark_time,
+        lease-2 reads it back as `pos`. With the API's strict `ts > pos`
+        filter the prior page is fully excluded. The original bug
+        (persisting `end_ts < ts`) would instead re-return the boundary
+        call — this test fails if the cursor regresses to end_ts.
+        """
+        mock_jwt.return_value = "token"
+        mock_dl.return_value = b"flac"
+
+        # A fixed corpus; `ts` runs a few seconds past each `end_ts`.
+        corpus = [
+            {"url": "http://a", "start_ts": 1000, "end_ts": 1009, "ts": 1011},
+            {"url": "http://b", "start_ts": 2000, "end_ts": 2009, "ts": 2012},
+            {"url": "http://c", "start_ts": 3000, "end_ts": 3009, "ts": 3013},
+        ]
+
+        def _visible(pos: int | None) -> list[dict[str, Any]]:
+            # Broadcastify Calls API filter: strict `ts > pos`.
+            # cast: corpus dicts mix str/int values, so c["ts"] widens
+            # to `str | int`; the `ts` field is always an int.
+            return [
+                c for c in corpus if pos is None or cast("int", c["ts"]) > pos
+            ]
+
+        # --- Lease 1: cold start, commits the whole corpus. ---
+        self.feed["last_bookmark_time"] = None
+        lease1_shutdown = asyncio.Event()
+        fetch_n = 0
+
+        async def lease1_fetch(session, url, headers, params, *args, **kwargs):
+            nonlocal fetch_n
+            fetch_n += 1
+            if fetch_n == 1:
+                visible = _visible(params.get("pos"))
+                return {
+                    "calls": visible,
+                    "lastPos": max(c["ts"] for c in visible),
+                }
+            lease1_shutdown.set()
+            return {"calls": []}
+
+        mock_fetch.side_effect = lease1_fetch
+        mock_sleep.return_value = False
+
+        lease1_chunks = [
+            c
+            async for c in bcfy_calls_collector.capture_bcfy_calls(
+                cast("LeasedFeed", self.feed),
+                lease1_shutdown,
+                self.url_base,
+                _default_resources(),
+            )
+        ]
+
+        self.assertEqual(len(lease1_chunks), 3)
+        committed_cursor = lease1_chunks[-1].resume_position
+        assert committed_cursor is not None
+        # The persisted cursor is the call's `ts`, NOT its audio end time.
+        self.assertEqual(
+            committed_cursor,
+            datetime.datetime.fromtimestamp(3013, datetime.UTC),
+        )
+        self.assertNotEqual(committed_cursor, lease1_chunks[-1].chunk_end_time)
+
+        # --- Lease 2: resume from the persisted cursor. ---
+        self.feed["last_bookmark_time"] = committed_cursor
+        lease2_shutdown = asyncio.Event()
+        lease2_pos_seen: list[int | None] = []
+
+        async def lease2_fetch(session, url, headers, params, *args, **kwargs):
+            lease2_pos_seen.append(params.get("pos"))
+            lease2_shutdown.set()
+            return {"calls": _visible(params.get("pos"))}
+
+        mock_fetch.side_effect = lease2_fetch
+
+        lease2_chunks = [
+            c
+            async for c in bcfy_calls_collector.capture_bcfy_calls(
+                cast("LeasedFeed", self.feed),
+                lease2_shutdown,
+                self.url_base,
+                _default_resources(),
+            )
+        ]
+
+        # Lease 2 issued `pos` = the persisted `ts` and got an empty page.
+        self.assertEqual(lease2_pos_seen[0], 3013)
+        self.assertEqual(lease2_chunks, [])

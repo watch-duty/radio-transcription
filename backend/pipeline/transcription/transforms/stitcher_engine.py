@@ -291,6 +291,7 @@ class StitcherEngine:
         timer_manager: Any,
         session_id: str,
         curr_context: datatypes.ActiveStitchingState,
+        chunk_data: datatypes.AudioChunkData | None = None,
     ) -> Iterator[tuple[str, datatypes.FlushRequest]]:
         """Emits a structured FlushRequest payload downstream and resets internal state fields."""
         task_logger = _get_task_logger(
@@ -356,6 +357,7 @@ class StitcherEngine:
                     transmission_id=transmission_id,
                     feed_metadata=curr_context.feed_metadata,
                     sample_rate=curr_context.sample_rate
+                    or (chunk_data.sample_rate if chunk_data else None)
                     or common_constants.SAMPLE_RATE_HZ,
                     traceparent=action.traceparent,
                 ),
@@ -574,6 +576,7 @@ class StitcherEngine:
                                 timer_manager,
                                 curr_context.session_id or "unknown",
                                 curr_context,
+                                chunk_data,
                             )
                         )
                     )
@@ -601,6 +604,7 @@ class StitcherEngine:
                         buffer_duration_ms=ctx.buffer_duration_ms,
                         speech_segments=ctx.speech_segments,
                         prior_audio_tail=prior_tail,
+                        sample_rate=chunk_data.sample_rate,
                     )
                 case datatypes.ScheduleStaleTimerAction():
                     timer_manager.schedule(

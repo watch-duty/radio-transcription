@@ -135,6 +135,7 @@ def process_ordering(
             feed_metadata=metadata.feed_metadata,
             out_of_order_buffer=curr_context.out_of_order_buffer,
             order_timer_active=curr_context.order_timer_active,
+            traceparent=metadata.traceparent,
         )
         session_changed = True
         out_of_order_timer.clear()
@@ -147,6 +148,7 @@ def process_ordering(
         curr_context = datatypes.ActiveStitchingState(
             session_id=metadata.session_id,
             feed_metadata=metadata.feed_metadata,
+            traceparent=metadata.traceparent,
         )
 
     seq_buf = sequence_buffer.SequenceBuffer(order_config)
@@ -981,6 +983,9 @@ class TranscribeAudioFn(beam.DoFn):
         self.transcription_count = Metrics.counter(
             self.__class__, "transcription_count"
         )
+        self.unintelligible_count = Metrics.counter(
+            self.__class__, "unintelligible_count"
+        )
         self.dlq_count = Metrics.counter(self.__class__, "dlq_count")
 
         self.speech_duration_sec_dist = Metrics.distribution(
@@ -1133,9 +1138,12 @@ class TranscribeAudioFn(beam.DoFn):
             audio_data=res.flac_bytes,
             duration_ms=duration_ms,
         )
-        if transcript is None:
-            logger.info("Transcription yielded no text. Dropping transmission.")
-            return None
+        if not transcript:
+            logger.info(
+                "Transcription returned no text (or [UNINTELLIGIBLE]). Using fallback marker."
+            )
+            self.unintelligible_count.inc()
+            transcript = trans_constants.CHIRP_UNINTELLIGIBLE_MARKER
 
         duration_ms = int(
             (time.time() - transcribe_start) * common_constants.MS_PER_SECOND
