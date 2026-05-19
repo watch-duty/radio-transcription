@@ -98,7 +98,9 @@ def load_audio(audio_path: Path) -> tuple[np.ndarray, int]:
 class TestVadEngine(unittest.TestCase):
     def setUp(self) -> None:
         self.models_dir = str(Path(__file__).parent.parent / "audio" / "models")
-        self.vad = vad.VoiceActivityDetector(models_dir=self.models_dir)
+        self.vad = vad.VoiceActivityDetector(
+            models_dir=self.models_dir, pad_sec=0.0
+        )
         self.vad.setup()
 
     def test_silence_rejection(self) -> None:
