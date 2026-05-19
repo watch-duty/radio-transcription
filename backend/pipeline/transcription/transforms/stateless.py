@@ -103,6 +103,19 @@ class ParseAndKeyFn(beam.DoFn):
                     msg = "AudioChunk missing required feed_name"
                     _raise(msg)
 
+                source_type = (
+                    element.attributes.get("source_type")
+                    if element.attributes
+                    else None
+                )
+                if source_type:
+                    if self.is_continuous and source_type != "bcfy_feeds":
+                        msg = f"Received segmented source type '{source_type}' on continuous subscription"
+                        _raise(msg)
+                    elif not self.is_continuous and source_type == "bcfy_feeds":
+                        msg = f"Received continuous source type '{source_type}' on segmented subscription"
+                        _raise(msg)
+
                 traceparent = (
                     element.attributes.get("traceparent")
                     if element.attributes
