@@ -239,6 +239,88 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
                 parsed[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ"
             )
 
+    def test_parse_and_key_mismatched_routing_continuous_dlq(self) -> None:
+        """Verifies that a segmented source type received on a continuous subscription is routed to the DLQ."""
+        chunk = AudioChunk(
+            gcs_uri="gs://test-bucket/path/to/test.flac",
+            session_id="mock-session-id",
+            feed_name="mock-feed-name",
+            duration_ms=1000,
+            feed_id="test-feed",
+            external_id="mock-external-id",
+        )
+        mock_msg = PubsubMessage(
+            chunk.SerializeToString(),
+            {"feed_id": "test-feed", "source_type": "echo"},
+        )
+        options = PipelineOptions(
+            flags=[
+                "--continuous_input_subscription=projects/p/subscriptions/a",
+                "--segmented_input_subscription=projects/p/subscriptions/b",
+                "--output_topic=b",
+                "--project=c",
+            ]
+        )
+        with BeamTestPipeline(options=options) as p:
+            messages = p | beam.Create([mock_msg])
+            parsed = messages | beam.ParDo(
+                ParseAndKeyFn(is_continuous=True)
+            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+
+            def assert_dlq(
+                elements: list[dict[str, str | bool | dict[str, str]]],
+            ) -> None:
+                assert len(elements) == 1
+                assert isinstance(elements[0]["error"], str)
+                assert (
+                    "Received segmented source type 'echo' on continuous subscription"
+                    in elements[0]["error"]
+                )
+
+            assert_that(parsed[MAIN_TAG], equal_to([]))
+            assert_that(parsed[DEAD_LETTER_QUEUE_TAG], assert_dlq)
+
+    def test_parse_and_key_mismatched_routing_segmented_dlq(self) -> None:
+        """Verifies that a continuous source type received on a segmented subscription is routed to the DLQ."""
+        chunk = AudioChunk(
+            gcs_uri="gs://test-bucket/path/to/test.flac",
+            session_id="mock-session-id",
+            feed_name="mock-feed-name",
+            duration_ms=1000,
+            feed_id="test-feed",
+            external_id="mock-external-id",
+        )
+        mock_msg = PubsubMessage(
+            chunk.SerializeToString(),
+            {"feed_id": "test-feed", "source_type": "bcfy_feeds"},
+        )
+        options = PipelineOptions(
+            flags=[
+                "--continuous_input_subscription=projects/p/subscriptions/a",
+                "--segmented_input_subscription=projects/p/subscriptions/b",
+                "--output_topic=b",
+                "--project=c",
+            ]
+        )
+        with BeamTestPipeline(options=options) as p:
+            messages = p | beam.Create([mock_msg])
+            parsed = messages | beam.ParDo(
+                ParseAndKeyFn(is_continuous=False)
+            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+
+            def assert_dlq(
+                elements: list[dict[str, str | bool | dict[str, str]]],
+            ) -> None:
+                assert len(elements) == 1
+                assert isinstance(elements[0]["error"], str)
+                assert (
+                    "Received continuous source type 'bcfy_feeds' on segmented subscription"
+                    in elements[0]["error"]
+                )
+
+            assert_that(parsed[MAIN_TAG], equal_to([]))
+            assert_that(parsed[DEAD_LETTER_QUEUE_TAG], assert_dlq)
+
     def test_parse_and_key_span_lifecycle(self) -> None:
         """Verifies that ParseAndKeyFn doesn't leak trace context scope on execution."""
         chunk = AudioChunk(
