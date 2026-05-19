@@ -981,6 +981,9 @@ class TranscribeAudioFn(beam.DoFn):
         self.transcription_count = Metrics.counter(
             self.__class__, "transcription_count"
         )
+        self.unintelligible_count = Metrics.counter(
+            self.__class__, "unintelligible_count"
+        )
         self.dlq_count = Metrics.counter(self.__class__, "dlq_count")
 
         self.speech_duration_sec_dist = Metrics.distribution(
@@ -1137,6 +1140,7 @@ class TranscribeAudioFn(beam.DoFn):
             logger.info(
                 "Transcription returned no text (or [UNINTELLIGIBLE]). Using fallback marker."
             )
+            self.unintelligible_count.inc()
             transcript = trans_constants.CHIRP_UNINTELLIGIBLE_MARKER
 
         duration_ms = int(
