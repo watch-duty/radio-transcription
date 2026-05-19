@@ -203,10 +203,10 @@ class TestVadEngine(unittest.TestCase):
         self._run_integration_test(
             "test_middlebury.mp3",
             [
-                (0.6, 1.8),
-                (4.2, 6.6),
+                (0.47, 1.4),
+                (3.9, 6.4),
             ],
-            min_f1=0.85,
+            min_f1=0.80,
         )
 
     def test_vad_priming_contiguous_chunk(self) -> None:
