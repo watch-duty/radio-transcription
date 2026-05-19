@@ -1,5 +1,6 @@
 import React from 'react';
 
+import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import ArrowDropUpIcon from '@mui/icons-material/ArrowDropUp';
 import FilterIcon from '@mui/icons-material/FilterList';
@@ -107,6 +108,10 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
     setRefreshMenuOpen(false);
   };
 
+  const handleViewLatest = () => {
+    setDateTime(null);
+  };
+
   const currentRefreshLabel = refreshIntervalOptions.find(
     (option) => option.value === refreshInterval
   )?.label;
@@ -119,7 +124,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
         mb: 0.5,
       }}
     >
-      <Box>
+      <Box sx={{ display: 'flex', gap: 2 }}>
         <Tooltip title="Filter transcripts">
           <Badge
             color="primary"
@@ -183,6 +188,18 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
             </Box>
           </Box>
         </Popover>
+        {dateTime && (
+          <Button
+            variant="contained"
+            sx={{ textTransform: 'none' }}
+            onClick={handleViewLatest}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <AccessTimeIcon />
+              View latest
+            </Box>
+          </Button>
+        )}
       </Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <FormControlLabel

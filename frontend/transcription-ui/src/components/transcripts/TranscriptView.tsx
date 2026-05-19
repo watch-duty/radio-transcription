@@ -58,7 +58,7 @@ export function TranscriptView({
 
   const queryClient = useQueryClient();
 
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const targetFeedId = searchParams.get('feedId');
   const targetTransmissionId = searchParams.get('transmissionId');
   const targetTimestampParam = searchParams.get('timestamp');
@@ -672,6 +672,18 @@ export function TranscriptView({
     }
   }, [pollNewerTranscripts, updateCacheWithNewTranscripts, triggerSnackbar]);
 
+  const handleFilterByDateTime = (date: Date | null) => {
+    setSearchedTimestamp(date);
+    setSearchParams((prev) => {
+      if (date) {
+        prev.set('timestamp', date.getTime().toString());
+      } else {
+        prev.delete('timestamp');
+      }
+      return prev;
+    });
+  };
+
   if (!token) {
     return null;
   }
@@ -745,45 +757,43 @@ export function TranscriptView({
           flexDirection: 'column',
         }}
       >
+        <TranscriptActionsBar
+          searchedTimestamp={searchedTimestamp}
+          hasNewerTranscripts={hasNewerTranscripts}
+          isTranscriptsFetching={isTranscriptsFetching}
+          isTranscriptsPolling={isTranscriptsPolling}
+          refreshInterval={transcriptsPollingIntervalMs}
+          setRefreshInterval={setTranscriptsPollingIntervalMs}
+          onRefresh={handleManualRefresh}
+          redactTranscripts={redactTranscripts}
+          setRedactTranscripts={setRedactTranscripts}
+          dateTime={searchedTimestamp}
+          setDateTime={handleFilterByDateTime}
+        />
         {transcripts.length > 0 ? (
-          <>
-            <TranscriptActionsBar
-              searchedTimestamp={searchedTimestamp}
-              hasNewerTranscripts={hasNewerTranscripts}
-              isTranscriptsFetching={isTranscriptsFetching}
-              isTranscriptsPolling={isTranscriptsPolling}
-              refreshInterval={transcriptsPollingIntervalMs}
-              setRefreshInterval={setTranscriptsPollingIntervalMs}
-              onRefresh={handleManualRefresh}
-              redactTranscripts={redactTranscripts}
-              setRedactTranscripts={setRedactTranscripts}
-              dateTime={searchedTimestamp}
-              setDateTime={setSearchedTimestamp}
-            />
-            <TranscriptDisplay
-              ref={virtuosoRef}
-              transcripts={transcripts}
-              groupCounts={groupCounts}
-              groupTitles={groupTitles}
-              setIsViewAtTopOfTranscripts={setIsViewAtTopOfTranscripts}
-              hasNewerTranscripts={hasNewerTranscripts}
-              isFetchingNewerTranscripts={isFetchingNewerTranscripts}
-              fetchNewerTranscripts={fetchNewerTranscripts}
-              isTranscriptsFetching={isTranscriptsFetching}
-              hasOlderTranscripts={hasOlderTranscripts}
-              isFetchingOlderTranscripts={isFetchingOlderTranscripts}
-              fetchOlderTranscripts={fetchOlderTranscripts}
-              triggerSnackbar={triggerSnackbar}
-              ruleIdToNameMap={ruleIdToNameMap}
-              rulesLoading={rulesLoading}
-              onToggleAudio={toggleAudio}
-              isAudioPlaying={isAudioPlaying}
-              currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
-              highlightedTransmissionId={highlightedTransmissionId}
-              redactTranscripts={redactTranscripts}
-              onRowClick={handleRowClick}
-            />
-          </>
+          <TranscriptDisplay
+            ref={virtuosoRef}
+            transcripts={transcripts}
+            groupCounts={groupCounts}
+            groupTitles={groupTitles}
+            setIsViewAtTopOfTranscripts={setIsViewAtTopOfTranscripts}
+            hasNewerTranscripts={hasNewerTranscripts}
+            isFetchingNewerTranscripts={isFetchingNewerTranscripts}
+            fetchNewerTranscripts={fetchNewerTranscripts}
+            isTranscriptsFetching={isTranscriptsFetching}
+            hasOlderTranscripts={hasOlderTranscripts}
+            isFetchingOlderTranscripts={isFetchingOlderTranscripts}
+            fetchOlderTranscripts={fetchOlderTranscripts}
+            triggerSnackbar={triggerSnackbar}
+            ruleIdToNameMap={ruleIdToNameMap}
+            rulesLoading={rulesLoading}
+            onToggleAudio={toggleAudio}
+            isAudioPlaying={isAudioPlaying}
+            currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
+            highlightedTransmissionId={highlightedTransmissionId}
+            redactTranscripts={redactTranscripts}
+            onRowClick={handleRowClick}
+          />
         ) : feedsFetching || isTranscriptsInitialLoading ? (
           <Box
             sx={{
