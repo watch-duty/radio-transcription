@@ -93,7 +93,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             bucket,
             expected_object_name,
             audio_chunk,
-            metadata={"trace_id": ""},
+            metadata={"traceparent": ""},
             content_type="audio/flac",
         )
         self.assertEqual(result, expected_path)
@@ -133,7 +133,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             bucket,
             expected_object_name,
             audio_chunk,
-            metadata={"trace_id": ""},
+            metadata={"traceparent": ""},
             content_type="audio/flac",
         )
         self.assertEqual(result, expected_path)
@@ -264,7 +264,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             "test-bucket",
             expected_object_name,
             b"\x00\x01" * 100,
-            metadata={"trace_id": ""},
+            metadata={"traceparent": ""},
             content_type="audio/flac",
             parameters={"ifGenerationMatch": "0"},
         )
@@ -292,7 +292,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             bucket,
             object_name,
             audio,
-            metadata={"trace_id": ""},
+            metadata={"traceparent": ""},
             content_type="audio/flac",
         )
         self.assertEqual(result, f"gs://{bucket}/{object_name}")
@@ -311,7 +311,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         metadata = call_kwargs.kwargs.get("metadata") or call_kwargs[1].get(
             "metadata"
         )
-        self.assertEqual(metadata, {"trace_id": ""})
+        self.assertEqual(metadata, {"traceparent": ""})
 
     async def test_upload_with_if_generation_match(self) -> None:
         """ifGenerationMatch=0 is passed as parameters to storage.upload."""
@@ -329,7 +329,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             "bucket",
             "obj.flac",
             b"audio",
-            metadata={"trace_id": ""},
+            metadata={"traceparent": ""},
             content_type="audio/flac",
             parameters={"ifGenerationMatch": "0"},
         )

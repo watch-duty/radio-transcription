@@ -1,4 +1,3 @@
-version: '3.8'
 services:
   # ------------- Storage -------------
   pubsub-emulator:
@@ -75,46 +74,19 @@ services:
       - "6379:6379"
     networks:
       - pipeline-network
-  
-  # ----------- Pipeline Services ----------
-  transcription-continuous:
-    build:
-      context: .
-      dockerfile: backend/pipeline/transcription/Dockerfile
-    entrypoint: ["python3", "backend/pipeline/transcription/main.py"]
-    # DirectRunner doesn't support deduplication, so we need to give an empty field here to disable it.
-    command: >
-      --input_subscription projects/$GOOGLE_CLOUD_PROJECT/subscriptions/$CONTINUOUS_AUDIO_SUBSCRIPTION
-      --output_topic $TRANSCRIPTION_TOPIC
-      --project $GOOGLE_CLOUD_PROJECT
-      --id_label "" 
-      --canonical_audio_bucket $AUDIO_CANONICAL_BUCKET
-      --transcriber_type mock
-    env_file:
-      - ./local_dev/LOCAL.env
-    networks:
-      - pipeline-network
-    depends_on:
-      pubsub-emulator:
-        condition: service_started
-      pubsub-init:
-        condition: service_completed_successfully
-      gcs-emulator:
-        condition: service_started
-      gcs-init:
-        condition: service_completed_successfully
 
-  transcription-segmented:
+  # ----------- Pipeline Services ----------
+  transcription:
     build:
       context: .
       dockerfile: backend/pipeline/transcription/Dockerfile
     entrypoint: ["python3", "backend/pipeline/transcription/main.py"]
     # DirectRunner doesn't support deduplication, so we need to give an empty field here to disable it.
     command: >
-      --input_subscription projects/$GOOGLE_CLOUD_PROJECT/subscriptions/$SEGMENTED_AUDIO_SUBSCRIPTION
+      --continuous_input_subscription projects/$GOOGLE_CLOUD_PROJECT/subscriptions/$CONTINUOUS_AUDIO_SUBSCRIPTION
+      --segmented_input_subscription projects/$GOOGLE_CLOUD_PROJECT/subscriptions/$SEGMENTED_AUDIO_SUBSCRIPTION
       --output_topic $TRANSCRIPTION_TOPIC
       --project $GOOGLE_CLOUD_PROJECT
-      --bypass_stitching true
       --id_label ""
       --canonical_audio_bucket $AUDIO_CANONICAL_BUCKET
       --transcriber_type mock
@@ -269,6 +241,8 @@ services:
   # ----------- Integration Tests ----------
   integration-tests:
     image: python:3.13-slim
+    profiles:
+      - integration-tests
     depends_on:
       postgres:
         condition: service_healthy
@@ -294,9 +268,7 @@ services:
         condition: service_completed_successfully
       gcs-emulator:
         condition: service_started
-      transcription-continuous:
-        condition: service_started
-      transcription-segmented:
+      transcription:
         condition: service_started
     env_file:
       - ./local_dev/LOCAL.env

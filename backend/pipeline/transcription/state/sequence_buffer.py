@@ -2,6 +2,9 @@
 
 import heapq
 
+from backend.pipeline.schema_types import (
+    streaming_state as bp_state,
+)
 from backend.pipeline.transcription.common.constants import (
     DEFAULT_FLOAT_TOLERANCE_MS,
 )
@@ -14,6 +17,16 @@ from backend.pipeline.transcription.common.logging import get_task_logger
 logger = get_task_logger(
     __name__, {"system": "transcription", "component": "sequence-buffer"}
 )
+
+
+class ComparableChunk:
+    """Static type-safe wrapper to enable binary heap operations on BufferedChunkProto."""
+
+    def __init__(self, chunk: bp_state.BufferedChunkProto) -> None:
+        self.chunk = chunk
+
+    def __lt__(self, other: "ComparableChunk") -> bool:
+        return self.chunk.timestamp_ms < other.chunk.timestamp_ms
 
 
 class SequenceBuffer:
@@ -56,7 +69,7 @@ class SequenceBuffer:
         difference = current_ts_ms - expected_next_ts
 
         if abs(difference) <= epsilon_ms:
-            # HAPP PATH: The chunk matches our mathematical expectation exactly.
+            # HAPPY PATH: The chunk matches our mathematical expectation exactly.
             to_emit.append(BufferedChunk(current_ts_ms, gcs_uri, traceparent))
             # Advance the expected timestamp. Use provided duration if available (for varying lengths),
             # otherwise fallback to fixed config duration.
@@ -88,10 +101,17 @@ class SequenceBuffer:
             # FUTURE PATH: The difference > epsilon_ms, meaning this chunk arrived before
             # its predecessor. We store it in state, parking it until the missing chunk arrives.
             was_buffered = True
+            heap: list[ComparableChunk] = [
+                ComparableChunk(c) for c in buffer_elements
+            ]
+            heapq.heapify(heap)
             heapq.heappush(
-                buffer_elements,
-                BufferedChunk(current_ts_ms, gcs_uri, traceparent),
+                heap,
+                ComparableChunk(
+                    BufferedChunk(current_ts_ms, gcs_uri, traceparent)
+                ),
             )
+            buffer_elements[:] = [item.chunk for item in heap]
 
         return (
             expected_next_ts,
@@ -107,21 +127,20 @@ class SequenceBuffer:
         buffer_elements: list[BufferedChunk],
         epsilon_ms: int = DEFAULT_FLOAT_TOLERANCE_MS,
     ) -> tuple[int, list[BufferedChunk], list[BufferedChunk]]:
-        """Recursively scans the active buffer to find any chunks that sequentially match the newly advanced expected_next_ts.
-
-        If found, yields them and steps the timestamp forward.
-        """
+        """Recursively scans the active buffer heap to find any chunks that sequentially match the newly advanced expected_next_ts."""
+        heap = [ComparableChunk(c) for c in buffer_elements]
+        heapq.heapify(heap)
         to_emit = []
-        while buffer_elements:
-            smallest = buffer_elements[0]
+        while heap:
+            smallest = heap[0].chunk
             difference = smallest.timestamp_ms - expected_next_ts
             if abs(difference) <= epsilon_ms:
-                heapq.heappop(buffer_elements)
+                heapq.heappop(heap)
                 to_emit.append(smallest)
                 expected_next_ts = (
                     smallest.timestamp_ms + self.config.chunk_duration_ms
                 )
             else:
                 break
-
+        buffer_elements[:] = [item.chunk for item in heap]
         return expected_next_ts, buffer_elements, to_emit
