@@ -1135,9 +1135,11 @@ class TranscribeAudioFn(beam.DoFn):
             audio_data=res.flac_bytes,
             duration_ms=duration_ms,
         )
-        if transcript is None:
-            logger.info("Transcription yielded no text. Dropping transmission.")
-            return None
+        if not transcript:
+            logger.info(
+                "Transcription returned no text (or [UNINTELLIGIBLE]). Using fallback marker."
+            )
+            transcript = trans_constants.CHIRP_UNINTELLIGIBLE_MARKER
 
         duration_ms = int(
             (time.time() - transcribe_start) * common_constants.MS_PER_SECOND
