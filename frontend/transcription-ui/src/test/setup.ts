@@ -7,4 +7,3 @@ if (typeof window !== 'undefined') {
   window.HTMLMediaElement.prototype.pause = () => {};
   window.HTMLMediaElement.prototype.load = () => {};
 }
-
