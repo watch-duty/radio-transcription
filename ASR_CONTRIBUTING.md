@@ -61,18 +61,18 @@ git clone https://github.com/watch-duty/radio-transcription.git
 cd radio-transcription
 ```
 
-Run the containers (NeMO + Jupyter CPU/GPU, and standard Jupyter CPU/GPU)
+### Run the containers (Jupyter notebooks and NeMo CLI)
 ```
 # Add in sudo if you didn't make docker sudoless
 
-# Run NeMO CLI (CPU) | Jupyter (CPU)
-docker compose -f asr-eval-docker-compose.yml up -d [nemo-cli-cpu|notebooks-cpu]
+# 1. Run Jupyter Notebooks (CPU or GPU)
+# Use these lightweight containers for running notebooks (e.g. Whisper, Granite, etc.)
+docker compose -f asr-eval-docker-compose.yml up -d [notebooks-cpu|notebooks]
 
-# To access NeMo CLI using the nemo-cli-cpu container image (runs ZSH natively)
-docker compose -f asr-eval-docker-compose.yml run nemo-cli-cpu
-
-# Run NeMO CLI with GPU
-docker compose -f asr-eval-docker-compose.yml up -d nemo-cli-gpu
+# 2. Run NeMo CLI (CPU or GPU)
+# These containers do not run Jupyter by default; they are designed for interactive shell use.
+# Run the command below to launch an interactive ZSH shell session:
+docker compose -f asr-eval-docker-compose.yml run [nemo-cli-cpu|nemo-cli-gpu]
 ```
 
 Accessing the Jupyter notebooks from your local machine
@@ -125,13 +125,13 @@ If you make changes to the `requirements.txt` or the Dockerfiles, use these comm
     ```bash
     docker compose -f asr-eval-docker-compose.yml build nemo-cli-cpu
     ```
-*   **Start GPU Container**:
+*   **Run GPU CLI**:
     ```bash
-    docker compose -f asr-eval-docker-compose.yml up nemo-cli-gpu
+    docker compose -f asr-eval-docker-compose.yml run nemo-cli-gpu
     ```
-*   **Start CPU Container**:
+*   **Run CPU CLI**:
     ```bash
-    docker compose -f asr-eval-docker-compose.yml up nemo-cli-cpu
+    docker compose -f asr-eval-docker-compose.yml run nemo-cli-cpu
     ```
 
 ## Running Baseline Evaluations

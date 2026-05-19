@@ -1,7 +1,7 @@
 google-genai
 google-cloud-storage
 google-cloud-speech
-git+https://github.com/huggingface/transformers.git
+transformers
 huggingface_hub
 python-dotenv
 loguru
@@ -16,3 +16,6 @@ jupyterlab-vim
 peft
 evaluate
 tensorboardX
+matplotlib
+seaborn
+scipy
