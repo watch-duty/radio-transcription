@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -83,7 +83,7 @@ def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
         _handle(cloud_event)
 
 
-def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
+def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR0912, PLR0915
     """Core handler — fully synchronous."""
     if gcs_client is None or pubsub_client is None or feed_store is None:
         msg = (
@@ -126,13 +126,6 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
         )
         return
 
-    # Bad filenames are not the feed's fault — skip without failure increment.
-    try:
-        start_ts = _parse_timestamp(name)
-    except ValueError:
-        logger.warning("Unparseable filename, skipping: %s", name)
-        return
-
     try:
         # Download MP3.  A NotFound means the object was deleted between the
         # OBJECT_FINALIZE event and our download — not the feed's fault.
@@ -141,6 +134,32 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
         except NotFound:
             logger.warning("Object deleted before download, skipping: %s", name)
             return
+
+        # Calculate duration of audio bytes using shared helper
+        duration_ms = get_audio_duration(mp3_bytes)
+
+        # Resolve start_ts: use GCS timeCreated or fallback to filename parsing
+        time_created_str = data.get("timeCreated")
+        if time_created_str:
+            try:
+                end_ts = datetime.fromisoformat(time_created_str)
+                start_ts = end_ts - timedelta(milliseconds=duration_ms)
+            except ValueError:
+                logger.warning(
+                    "Failed to parse GCS timeCreated, falling back to filename: %s",
+                    time_created_str,
+                )
+                try:
+                    start_ts = _parse_timestamp(name)
+                except ValueError:
+                    logger.warning("Unparseable filename, skipping: %s", name)
+                    return
+        else:
+            try:
+                start_ts = _parse_timestamp(name)
+            except ValueError:
+                logger.warning("Unparseable filename, skipping: %s", name)
+                return
 
         # Upload MP3 directly to staging bucket.
         # if_generation_match=0 skips redundant writes but we
@@ -165,9 +184,6 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911
         feed_id_str = str(feed["id"])
         session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, staging_uri))
         publisher = pubsub_client.get_publisher()
-
-        # Calculate duration of audio bytes using shared helper
-        duration_ms = get_audio_duration(mp3_bytes)
 
         publish_audio_chunk_sync(
             publisher,
