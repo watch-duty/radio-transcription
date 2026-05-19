@@ -1,0 +1,10 @@
+# The overrides specified here are intended to establish a fully populated local environment for dev.
+# These overrides will be omitted when running integration tests, which will instantiate its own test
+# data.
+
+version: '3.8'
+services:
+  postgres:
+    volumes:
+      # Preconfigure the local dev environment with test data. 
+      - ./local_dev/test_data.sql:/docker-entrypoint-initdb.d/01_test_data.sql:ro
