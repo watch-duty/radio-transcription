@@ -23,6 +23,7 @@ from backend.pipeline.common.tracing_utils import (
 )
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 from backend.pipeline.transcription.audio.audio_processor import ProcessorOutput
+from backend.pipeline.transcription.common import coders as trans_coders
 from backend.pipeline.transcription.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
     MAIN_TAG,
@@ -42,6 +43,7 @@ from backend.pipeline.transcription.common.datatypes import (
     TranscriptionResult,
 )
 from backend.pipeline.transcription.common.enums import TranscriberType
+from backend.pipeline.transcription.common.utils import get_duration_ms
 from backend.pipeline.transcription.services.transcribers import Transcriber
 from backend.pipeline.transcription.transforms.stateful import (
     SHARED_RESOURCE_HANDLE,
@@ -53,6 +55,15 @@ from backend.pipeline.transcription.transforms.stateless import (
     ParseAndKeyFn,
     SerializeFn,
 )
+
+# Test Helper: override ChunkMetadata locally in tests to default is_continuous to True
+_OriginalChunkMetadata = ChunkMetadata
+
+
+def ChunkMetadata(*args: Any, **kwargs: Any) -> Any:
+    kwargs.setdefault("is_continuous", True)
+    return _OriginalChunkMetadata(*args, **kwargs)
+
 
 # Configure dynamic mock interception for process-level shared GCS clients
 # using standard unittest module lifecycle hooks to avoid any type ignore annotations.
@@ -71,6 +82,7 @@ _SHARED_PATCHER = patch.object(
 
 
 def setUpModule() -> None:
+    trans_coders.register_custom_coders()
     _SHARED_PATCHER.start()
 
 
@@ -227,6 +239,88 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
                 parsed[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ"
             )
 
+    def test_parse_and_key_mismatched_routing_continuous_dlq(self) -> None:
+        """Verifies that a segmented source type received on a continuous subscription is routed to the DLQ."""
+        chunk = AudioChunk(
+            gcs_uri="gs://test-bucket/path/to/test.flac",
+            session_id="mock-session-id",
+            feed_name="mock-feed-name",
+            duration_ms=1000,
+            feed_id="test-feed",
+            external_id="mock-external-id",
+        )
+        mock_msg = PubsubMessage(
+            chunk.SerializeToString(),
+            {"feed_id": "test-feed", "source_type": "echo"},
+        )
+        options = PipelineOptions(
+            flags=[
+                "--continuous_input_subscription=projects/p/subscriptions/a",
+                "--segmented_input_subscription=projects/p/subscriptions/b",
+                "--output_topic=b",
+                "--project=c",
+            ]
+        )
+        with BeamTestPipeline(options=options) as p:
+            messages = p | beam.Create([mock_msg])
+            parsed = messages | beam.ParDo(
+                ParseAndKeyFn(is_continuous=True)
+            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+
+            def assert_dlq(
+                elements: list[dict[str, str | bool | dict[str, str]]],
+            ) -> None:
+                assert len(elements) == 1
+                assert isinstance(elements[0]["error"], str)
+                assert (
+                    "Received segmented source type 'echo' on continuous subscription"
+                    in elements[0]["error"]
+                )
+
+            assert_that(parsed[MAIN_TAG], equal_to([]))
+            assert_that(parsed[DEAD_LETTER_QUEUE_TAG], assert_dlq)
+
+    def test_parse_and_key_mismatched_routing_segmented_dlq(self) -> None:
+        """Verifies that a continuous source type received on a segmented subscription is routed to the DLQ."""
+        chunk = AudioChunk(
+            gcs_uri="gs://test-bucket/path/to/test.flac",
+            session_id="mock-session-id",
+            feed_name="mock-feed-name",
+            duration_ms=1000,
+            feed_id="test-feed",
+            external_id="mock-external-id",
+        )
+        mock_msg = PubsubMessage(
+            chunk.SerializeToString(),
+            {"feed_id": "test-feed", "source_type": "bcfy_feeds"},
+        )
+        options = PipelineOptions(
+            flags=[
+                "--continuous_input_subscription=projects/p/subscriptions/a",
+                "--segmented_input_subscription=projects/p/subscriptions/b",
+                "--output_topic=b",
+                "--project=c",
+            ]
+        )
+        with BeamTestPipeline(options=options) as p:
+            messages = p | beam.Create([mock_msg])
+            parsed = messages | beam.ParDo(
+                ParseAndKeyFn(is_continuous=False)
+            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+
+            def assert_dlq(
+                elements: list[dict[str, str | bool | dict[str, str]]],
+            ) -> None:
+                assert len(elements) == 1
+                assert isinstance(elements[0]["error"], str)
+                assert (
+                    "Received continuous source type 'bcfy_feeds' on segmented subscription"
+                    in elements[0]["error"]
+                )
+
+            assert_that(parsed[MAIN_TAG], equal_to([]))
+            assert_that(parsed[DEAD_LETTER_QUEUE_TAG], assert_dlq)
+
     def test_parse_and_key_span_lifecycle(self) -> None:
         """Verifies that ParseAndKeyFn doesn't leak trace context scope on execution."""
         chunk = AudioChunk(
@@ -328,7 +422,9 @@ class TranscribeAudioTest(unittest.TestCase):
                         FlushRequest(
                             feed_id="feed-123",
                             session_id="fake-session",
-                            buffer=np.zeros(((500) * 16), dtype=np.int16),
+                            buffer=np.zeros(
+                                ((500) * 16), dtype=np.int16
+                            ).tobytes(),
                             contributing_audio_uris=["gs://f/11111111.flac"],
                             time_range=TimeRange(
                                 start_ms=101000, end_ms=101500
@@ -378,6 +474,84 @@ class TranscribeAudioTest(unittest.TestCase):
     @patch(
         "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
     )
+    def test_transcribe_empty_transcript_fallback(
+        self, mock_audio_processor: MagicMock, mock_get_transcriber: MagicMock
+    ) -> None:
+        """Verifies that when transcription yields no text or returns None,
+        TranscribeAudioFn uses the UNINTELLIGIBLE fallback marker instead of dropping the transmission.
+        """
+        mock_processor_inst = mock_audio_processor.return_value
+        mock_processor_inst.preprocess_audio.side_effect = lambda x, sr: x
+        mock_processor_inst.export_flac.return_value = b"flac_bytes"
+        mock_processor_inst.process_buffer.return_value = ProcessorOutput(
+            success=True,
+            flac_bytes=b"flac_bytes",
+            processed_audio=np.zeros(16000 * 5, dtype=np.int16),
+        )
+
+        config = get_test_transcribe_config(route_to_dlq=True)
+
+        options = PipelineOptions(
+            flags=[
+                "--continuous_input_subscription=projects/p/subscriptions/a",
+                "--segmented_input_subscription=projects/p/subscriptions/b",
+                "--output_topic=b",
+                "--project=c",
+            ]
+        )
+        with BeamTestPipeline(options=options) as p:
+            elements = p | beam.Create(
+                [
+                    (
+                        "feed-123",
+                        FlushRequest(
+                            feed_id="feed-123",
+                            session_id="fake-session",
+                            buffer=np.zeros(
+                                16000 * 5, dtype=np.int16
+                            ).tobytes(),
+                            contributing_audio_uris=["gs://bucket/chunk.flac"],
+                            time_range=TimeRange(start_ms=0, end_ms=5000),
+                            transmission_id="tx-123",
+                            missing_prior_context=False,
+                            missing_post_context=False,
+                            start_audio_offset_ms=0,
+                            end_audio_offset_ms=5000,
+                            feed_metadata=FeedMetadata(
+                                feed_name="fake-feed",
+                                external_id="fake-external",
+                            ),
+                            sample_rate=16000,
+                        ),
+                    )
+                ]
+            )
+
+            # Pass empty string as the simulated transcript (simulating no speech recognized)
+            results = elements | beam.ParDo(
+                TranscribeAudioFn(
+                    config=config,
+                    transcriber_factory=get_mock_factory(transcript=""),
+                )
+            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
+
+            def assert_main(elements: list[TranscriptionResult]) -> None:
+                assert len(elements) == 1
+                assert elements[0].transcript == "[UNINTELLIGIBLE]"
+
+            assert_that(results.main, assert_main, label="CheckMainTranscript")
+            assert_that(
+                results[DEAD_LETTER_QUEUE_TAG],
+                equal_to([]),
+                label="CheckEmptyDLQ",
+            )
+
+    @patch(
+        "backend.pipeline.transcription.services.transcribers.get_transcriber"
+    )
+    @patch(
+        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
+    )
     def test_duration_limit_dlq_routing(
         self, mock_audio_processor: MagicMock, mock_get_transcriber: MagicMock
     ) -> None:
@@ -411,7 +585,9 @@ class TranscribeAudioTest(unittest.TestCase):
                         FlushRequest(
                             feed_id="feed-123",
                             session_id="fake-session",
-                            buffer=np.zeros(16000 * 65, dtype=np.int16),
+                            buffer=np.zeros(
+                                16000 * 65, dtype=np.int16
+                            ).tobytes(),
                             contributing_audio_uris=["gs://bucket/chunk.flac"],
                             time_range=TimeRange(start_ms=0, end_ms=65000),
                             transmission_id="tx-123",
@@ -822,7 +998,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                     coder=beam.coders.TupleCoder(
                         (
                             beam.coders.StrUtf8Coder(),
-                            beam.coders.PickleCoder(),
+                            trans_coders.ChunkMetadataCoder(),
                         )
                     )
                 )
@@ -847,7 +1023,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 feed_id, request = msgs[0]
                 assert feed_id == "test-feed"
                 assert request.transmission_id is not None
-                assert isinstance(request.buffer, np.ndarray)
+                assert isinstance(request.buffer, bytes)
 
             assert_that(results, assert_results)
 
@@ -940,7 +1116,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                     coder=beam.coders.TupleCoder(
                         (
                             beam.coders.StrUtf8Coder(),
-                            beam.coders.PickleCoder(),
+                            trans_coders.ChunkMetadataCoder(),
                         )
                     )
                 )
@@ -979,7 +1155,9 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 for feed_id, request in msgs:
                     assert feed_id == "test-feed-ooo"
 
-                lengths = [len(request.buffer) for feed_id, request in msgs]
+                lengths = [
+                    len(request.buffer) // 2 for feed_id, request in msgs
+                ]
                 if len(msgs) == 1:
                     assert 48000 in lengths
                 else:
@@ -1080,7 +1258,9 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         saved_context = mock_state_context.read()
         self.assertIsInstance(saved_context, ActiveStitchingState)
         self.assertTrue(len(saved_context.speech_segments) > 0)
-        self.assertEqual(saved_context.speech_segments[0].duration_ms, 3000)
+        self.assertEqual(
+            get_duration_ms(saved_context.speech_segments[0]), 3000
+        )
 
         # 2. Trigger stale flush and verify mapped speech_segments in FlushRequest payload
         outputs = list(
@@ -1098,7 +1278,9 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         feed_id, flush_request = outputs[0]
         self.assertEqual(feed_id, "test-feed")
         self.assertTrue(len(flush_request.speech_segments) > 0)
-        self.assertEqual(flush_request.speech_segments[0].duration_ms, 3000)
+        self.assertEqual(
+            get_duration_ms(flush_request.speech_segments[0]), 3000
+        )
         self.assertIsInstance(mock_state_context.read(), IdleFeedState)
 
     @patch(
@@ -1410,14 +1592,14 @@ class OrderedSegmentedStitchAudioTest(unittest.TestCase):
         # First flushed part: 10 seconds
         feed_id_1, flush_req_1 = outputs[0]
         self.assertEqual(feed_id_1, "segmented-feed")
-        self.assertEqual(flush_req_1.time_range.duration_ms, 10000)
+        self.assertEqual(get_duration_ms(flush_req_1.time_range), 10000)
         self.assertTrue(flush_req_1.missing_post_context)
         self.assertFalse(flush_req_1.missing_prior_context)
 
         # Second flushed part: 5 seconds
         feed_id_2, flush_req_2 = outputs[1]
         self.assertEqual(feed_id_2, "segmented-feed")
-        self.assertEqual(flush_req_2.time_range.duration_ms, 5000)
+        self.assertEqual(get_duration_ms(flush_req_2.time_range), 5000)
         self.assertFalse(flush_req_2.missing_post_context)
         self.assertTrue(flush_req_2.missing_prior_context)
 
@@ -1634,3 +1816,70 @@ class DlqTaggingTest(unittest.TestCase):
         self.assertEqual(flush_request.feed_metadata, expected_feed_metadata)
         # State should now be IdleFeedState (context reset after flush)
         self.assertIsInstance(mock_state_context.read(), IdleFeedState)
+
+    @patch(
+        "backend.pipeline.transcription.transforms.stitcher_engine.audio_processor.AudioProcessor"
+    )
+    def test_stale_flush_preserves_echo_sample_rate_in_flush_request(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that an 8 kHz echo audio feed sample rate is preserved in ActiveStitchingState
+        and correctly populated in the FlushRequest during a stale flush.
+        """
+        mock_processor_inst = mock_audio_processor.return_value
+        # 8000 Hz sample rate representing Echo feed audio
+        chunk_data = AudioChunkData(
+            start_ms=100000,
+            audio=np.zeros(8000 * 3, dtype=np.int16),
+            speech_segments=[TimeRange(0, 3000)],
+            gcs_uri="gs://bucket/echo_chunk.flac",
+            duration_ms=3000,
+            sample_rate=8000,
+        )
+        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+
+        fn, mock_state_context, mock_state_buffer, mock_last_start_ms = (
+            self._make_fn_and_states(OrderedContinuousStitchAudioFn)
+        )
+        fn.setup()
+
+        metadata = ChunkMetadata(
+            gcs_uri="gs://bucket/echo_chunk.flac",
+            session_id="test-session",
+            duration_ms=3000,
+            feed_metadata=FeedMetadata(
+                feed_name="test-feed", external_id="ext-id"
+            ),
+        )
+        # 1. Process chunk (this should update context state with the 8 kHz sample rate)
+        list(
+            fn.process(
+                element=("test-feed", metadata),
+                timestamp=Timestamp(100),
+                transmission_buffer_state=mock_state_buffer,
+                transmission_context_state=mock_state_context,
+                last_start_ms_state=mock_last_start_ms,
+                out_of_order_timer=MagicMock(),
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        # 2. Trigger stale flush
+        outputs = list(
+            fn.handle_stale_transmission_event(
+                key="test-feed",
+                transmission_buffer=mock_state_buffer,
+                transmission_context=mock_state_context,
+                last_start_ms_state=mock_last_start_ms,
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        # The flush should have produced exactly one result
+        self.assertEqual(len(outputs), 1)
+        feed_id, flush_request = outputs[0]
+        self.assertEqual(feed_id, "test-feed")
+        # sample_rate must be 8000 (preserved from chunk_data), not defaulted to 16000
+        self.assertEqual(flush_request.sample_rate, 8000)

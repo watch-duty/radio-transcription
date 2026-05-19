@@ -69,13 +69,6 @@ class StitcherEngine:
         self.order_config = order_config
         self.vad_config = vad_config
 
-        self.vad_speech_count = Metrics.counter(
-            self.__class__, "vad_speech_count"
-        )
-        self.vad_silence_count = Metrics.counter(
-            self.__class__, "vad_silence_count"
-        )
-
         # Incoming chunk counters by feed type
         self.segmented_chunks_received = Metrics.counter(
             self.__class__, "segmented_chunks_received"
@@ -226,7 +219,11 @@ class StitcherEngine:
         start_time_ms = curr_ctx.stale_start_time_ms
         end_time_ms = curr_ctx.last_end_time_ms
         processed_uris = curr_ctx.contributing_audio_uris
-        audio_buffer = list(transmission_buffer.read())
+        raw_buffer = list(transmission_buffer.read())
+        audio_buffer = [
+            b if isinstance(b, np.ndarray) else np.frombuffer(b, dtype=np.int16)
+            for b in raw_buffer
+        ]
 
         if (
             audio_buffer
@@ -251,7 +248,7 @@ class StitcherEngine:
                 yield (
                     feed_id,
                     datatypes.FlushRequest(
-                        buffer=np.concatenate(audio_buffer),
+                        buffer=np.concatenate(audio_buffer).tobytes(),
                         feed_id=feed_id,
                         session_id=curr_ctx.session_id,
                         contributing_audio_uris=processed_uris,
@@ -306,14 +303,20 @@ class StitcherEngine:
 
         if not action.clear_state:
             # Isolated/Late chunk: process buffer individually
-            audio_buffer = action.isolated_audio_buffer
+            raw_buffer = action.isolated_audio_buffer
         else:
             # Normal or stale flush: combine buffer array
-            audio_buffer = action.isolated_audio_buffer or list(
+            raw_buffer = action.isolated_audio_buffer or list(
                 transmission_buffer.read()
             )
 
-        if audio_buffer:
+        if raw_buffer:
+            audio_buffer = [
+                b
+                if isinstance(b, np.ndarray)
+                else np.frombuffer(b, dtype=np.int16)
+                for b in raw_buffer
+            ]
             transmission_id = trans_utils.generate_transmission_id(
                 session_id,
                 action.speech_time_range,
@@ -327,7 +330,8 @@ class StitcherEngine:
 
             if (
                 last_start_ms is not None
-                and abs(current_start_ms - last_start_ms) < 100
+                and abs(current_start_ms - last_start_ms)
+                < trans_constants.OVERLAPPING_TRANSMISSION_TOLERANCE_MS
             ):
                 task_logger.warning(
                     f"Potential growing/overlapping transmission detected! "
@@ -339,7 +343,7 @@ class StitcherEngine:
             yield (
                 action.feed_id,
                 datatypes.FlushRequest(
-                    buffer=np.concatenate(audio_buffer),
+                    buffer=np.concatenate(audio_buffer).tobytes(),
                     feed_id=action.feed_id,
                     session_id=session_id,
                     contributing_audio_uris=processed_uris,
@@ -366,11 +370,6 @@ class StitcherEngine:
         self, chunk_data: datatypes.AudioChunkData
     ) -> None:
         """Records VAD evaluation outcomes and chunk volume by pipeline type."""
-        if chunk_data.speech_segments:
-            self.vad_speech_count.inc()
-        else:
-            self.vad_silence_count.inc()
-
         is_segmented = self.stitch_config.isolate_segmented_chunks
         if is_segmented:
             self.segmented_chunks_received.inc()
@@ -579,7 +578,7 @@ class StitcherEngine:
                         )
                     )
                 case datatypes.AppendBufferAction():
-                    transmission_buffer_state.add(action.audio_buffer)
+                    transmission_buffer_state.add(action.audio_buffer.tobytes())
                 case datatypes.UpdateStateAction():
                     # Priming Strategy: cache tail of contiguous samples
                     priming_samples = int(
@@ -587,7 +586,7 @@ class StitcherEngine:
                         * chunk_data.sample_rate
                     )
                     prior_tail = (
-                        chunk_data.audio[-priming_samples:]
+                        chunk_data.audio[-priming_samples:].tobytes()
                         if len(chunk_data.audio) > 0
                         else None
                     )
@@ -602,6 +601,7 @@ class StitcherEngine:
                         buffer_duration_ms=ctx.buffer_duration_ms,
                         speech_segments=ctx.speech_segments,
                         prior_audio_tail=prior_tail,
+                        sample_rate=chunk_data.sample_rate,
                     )
                 case datatypes.ScheduleStaleTimerAction():
                     timer_manager.schedule(

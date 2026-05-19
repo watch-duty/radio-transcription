@@ -59,6 +59,7 @@ backend/pipeline/ingestion/collectors/.*
 *_pb2.py
 *_pb2.pyi
 *_pb2_grpc.py
+*_betterproto.py
 
 # Python build artifacts
 *.egg-info/
@@ -81,3 +82,4 @@ dist/
 
 # GSD workflow (user chose commit_docs=false on 2026-04-21)
 .planning/
+backend/pipeline/schema_types/streaming_state.py

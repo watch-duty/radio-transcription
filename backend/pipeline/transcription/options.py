@@ -5,7 +5,9 @@ import argparse
 from apache_beam.options.pipeline_options import PipelineOptions
 
 from backend.pipeline.transcription.common.constants import (
+    DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_MAX_TRANSMISSION_DURATION_MS,
+    DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_SIGNIFICANT_GAP_MS,
     DEFAULT_STALE_TIMEOUT_MS,
     DEFAULT_VAD_POST_ROLL_MS,
@@ -88,13 +90,13 @@ class TranscriptionOptions(PipelineOptions):
             "--continuous_out_of_order_timeout_ms",
             type=int,
             default=None,
-            help="Milliseconds to wait for missing chunks before accepting a logical gap for continuous feeds. Default: 60000ms.",
+            help=f"Milliseconds to wait for missing chunks before accepting a logical gap for continuous feeds. Default: {DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS}ms.",
         )
         parser.add_argument(
             "--segmented_out_of_order_timeout_ms",
             type=int,
             default=None,
-            help="Milliseconds to wait for missing chunks before accepting a logical gap for segmented feeds. Default: 10000ms.",
+            help=f"Milliseconds to wait for missing chunks before accepting a logical gap for segmented feeds. Default: {DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS}ms.",
         )
         parser.add_argument(
             "--vad_pre_roll_ms",

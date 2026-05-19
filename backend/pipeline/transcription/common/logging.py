@@ -3,6 +3,8 @@ import logging
 import sys
 from typing import Any
 
+from backend.pipeline.common.tracing_utils import get_trace_attributes
+
 
 class TaskJsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
@@ -20,6 +22,12 @@ class TaskJsonFormatter(logging.Formatter):
         for attr in ["system", "component", "feed_id", "session_id"]:
             if hasattr(record, attr):
                 log_record[attr] = getattr(record, attr)
+
+        # Add trace info from OpenTelemetry
+        trace_attrs = get_trace_attributes()
+        if trace_attrs.get("trace"):
+            log_record["logging.googleapis.com/trace"] = trace_attrs["trace"]
+            log_record["logging.googleapis.com/spanId"] = trace_attrs["spanId"]
 
         return json.dumps(log_record)
 
