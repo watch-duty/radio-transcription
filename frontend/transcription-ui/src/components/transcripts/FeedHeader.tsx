@@ -64,8 +64,8 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
             gap: 1,
           }}
         >
-          <Typography>
-            <b>{searchedFeed.name}</b>
+          <Typography component="h1" sx={{ fontWeight: 'bold' }}>
+            {searchedFeed.name}
           </Typography>
           <Chip label={searchedFeed.sourceType} size="small" />
           <FeedStatusIndicator status={status} lastHeartbeat={lastHeartbeat} />

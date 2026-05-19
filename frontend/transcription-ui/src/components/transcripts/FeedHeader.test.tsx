@@ -1,10 +1,15 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { MemoryRouter } from 'react-router';
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { Feed } from '@transcription/common';
 
 import FeedHeader from './FeedHeader';
+
+const renderWithRouter = (ui: React.ReactElement) => {
+  return render(<MemoryRouter>{ui}</MemoryRouter>);
+};
 
 describe('FeedHeader', () => {
   const mockTriggerSnackbar = vi.fn();
@@ -32,7 +37,7 @@ describe('FeedHeader', () => {
   });
 
   it('renders feed name and status when available', () => {
-    render(
+    renderWithRouter(
       <FeedHeader
         searchedFeed={mockFeed}
         status="active"
@@ -40,12 +45,12 @@ describe('FeedHeader', () => {
       />
     );
 
-    expect(screen.getByText('Test Scanner Feed')).toBeTruthy();
+    expect(screen.getAllByText('Test Scanner Feed')[0]).toBeTruthy();
     expect(screen.getByText('Active')).toBeTruthy();
   });
 
   it('displays the source type chip in the header', () => {
-    render(
+    renderWithRouter(
       <FeedHeader
         searchedFeed={mockFeed}
         triggerSnackbar={mockTriggerSnackbar}
@@ -56,7 +61,7 @@ describe('FeedHeader', () => {
   });
 
   it('shows source url link when sourceUrl is available', () => {
-    render(
+    renderWithRouter(
       <FeedHeader
         searchedFeed={mockFeed}
         sourceUrl="https://test.example/source"
@@ -72,7 +77,7 @@ describe('FeedHeader', () => {
   });
 
   it('shows archive url link when archiveUrl is available', () => {
-    render(
+    renderWithRouter(
       <FeedHeader
         searchedFeed={mockFeed}
         archiveUrl="https://test.example/archives"
@@ -88,7 +93,7 @@ describe('FeedHeader', () => {
   });
 
   it('does not render links when neither sourceUrl nor archiveUrl is supplied', () => {
-    render(
+    renderWithRouter(
       <FeedHeader
         searchedFeed={{
           ...mockFeed,
@@ -111,7 +116,7 @@ describe('FeedHeader', () => {
       },
     });
 
-    render(
+    renderWithRouter(
       <FeedHeader
         searchedFeed={mockFeed}
         triggerSnackbar={mockTriggerSnackbar}
@@ -138,7 +143,7 @@ describe('FeedHeader', () => {
     vi.setSystemTime(fixedNow);
 
     try {
-      render(
+      renderWithRouter(
         <FeedHeader
           searchedFeed={mockFeed}
           status="active"

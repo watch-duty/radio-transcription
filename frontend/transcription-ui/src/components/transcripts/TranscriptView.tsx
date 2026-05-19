@@ -792,7 +792,7 @@ export function TranscriptView({
               mt: theme.spacing(2),
             }}
           >
-            <CircularProgress />
+            <CircularProgress data-testid="loading-spinner" />
           </Box>
         ) : transcriptsError ? (
           <Typography
