@@ -135,6 +135,7 @@ def process_ordering(
             feed_metadata=metadata.feed_metadata,
             out_of_order_buffer=curr_context.out_of_order_buffer,
             order_timer_active=curr_context.order_timer_active,
+            traceparent=metadata.traceparent,
         )
         session_changed = True
         out_of_order_timer.clear()
@@ -147,6 +148,7 @@ def process_ordering(
         curr_context = datatypes.ActiveStitchingState(
             session_id=metadata.session_id,
             feed_metadata=metadata.feed_metadata,
+            traceparent=metadata.traceparent,
         )
 
     seq_buf = sequence_buffer.SequenceBuffer(order_config)
