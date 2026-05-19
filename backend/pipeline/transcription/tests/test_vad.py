@@ -206,7 +206,7 @@ class TestVadEngine(unittest.TestCase):
                 (0.47, 1.4),
                 (3.9, 6.4),
             ],
-            min_f1=0.80,
+            min_f1=0.84,
         )
 
     def test_vad_priming_contiguous_chunk(self) -> None:
