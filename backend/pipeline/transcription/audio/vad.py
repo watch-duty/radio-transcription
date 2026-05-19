@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import onnxruntime as ort
-from pedalboard import HighpassFilter, LowpassFilter, PeakFilter, Pedalboard
+from pedalboard import Compressor, HighpassFilter, LowpassFilter, PeakFilter, Pedalboard
 
 from backend.pipeline.transcription.audio.dsp import (
     TorchaudioHannResampler,
@@ -19,6 +19,10 @@ from backend.pipeline.transcription.common.constants import (
     VAD_DEFAULT_BLEND_RATIO,
     VAD_DEFAULT_BOOST_FREQ_HZ,
     VAD_DEFAULT_BOOST_GAIN_DB,
+    VAD_DEFAULT_COMP_ATTACK_MS,
+    VAD_DEFAULT_COMP_RATIO,
+    VAD_DEFAULT_COMP_RELEASE_MS,
+    VAD_DEFAULT_COMP_THRESHOLD_DB,
     VAD_DEFAULT_HIGHPASS_HZ,
     VAD_DEFAULT_LOWPASS_HZ,
     VAD_DEFAULT_MIN_SILENCE_DURATION_MS,
@@ -48,6 +52,10 @@ class VoiceActivityDetector:
     def __init__(
         self,
         *,
+        comp_threshold_db: float = VAD_DEFAULT_COMP_THRESHOLD_DB,
+        comp_ratio: float = VAD_DEFAULT_COMP_RATIO,
+        comp_attack_ms: float = VAD_DEFAULT_COMP_ATTACK_MS,
+        comp_release_ms: float = VAD_DEFAULT_COMP_RELEASE_MS,
         highpass_hz: float = VAD_DEFAULT_HIGHPASS_HZ,
         lowpass_hz: float = VAD_DEFAULT_LOWPASS_HZ,
         blend_ratio: float = VAD_DEFAULT_BLEND_RATIO,
@@ -62,6 +70,10 @@ class VoiceActivityDetector:
         priming_sec: float = VAD_DEFAULT_PRIMING_SEC,
         models_dir: str | Path = MODELS_DIR,
     ) -> None:
+        self.comp_threshold_db = comp_threshold_db
+        self.comp_ratio = comp_ratio
+        self.comp_attack_ms = comp_attack_ms
+        self.comp_release_ms = comp_release_ms
         self.highpass_hz = highpass_hz
         self.lowpass_hz = lowpass_hz
         self.blend_ratio = blend_ratio
@@ -175,11 +187,23 @@ class VoiceActivityDetector:
         )
         bp_audio = bp_board(audio_array, TARGET_SAMPLE_RATE)
 
-        ulunas_denoised = self.denoise(bp_audio)
+        comp_board = Pedalboard(
+            [
+                Compressor(
+                    threshold_db=self.comp_threshold_db,
+                    ratio=self.comp_ratio,
+                    attack_ms=self.comp_attack_ms,
+                    release_ms=self.comp_release_ms,
+                )
+            ]
+        )
+        comp_audio = comp_board(bp_audio, TARGET_SAMPLE_RATE)
+
+        ulunas_denoised = self.denoise(comp_audio)
 
         mixed_audio = (
             1.0 - self.blend_ratio
-        ) * bp_audio + self.blend_ratio * ulunas_denoised
+        ) * comp_audio + self.blend_ratio * ulunas_denoised
 
         eq_board = Pedalboard(
             [
