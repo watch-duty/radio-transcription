@@ -43,6 +43,7 @@ export interface TranscriptDisplayProps {
   highlightedTransmissionId: string | null;
   redactTranscripts: boolean;
   onRowClick: (transmissionId: string) => void;
+  onViewLatestClick: () => void;
 }
 
 export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
@@ -67,6 +68,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
   highlightedTransmissionId,
   redactTranscripts,
   onRowClick,
+  onViewLatestClick,
 }) => {
   return (
     <Paper
@@ -146,6 +148,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
                   display: 'flex',
                   justifyContent: 'center',
                   py: 1,
+                  gap: 1,
                 }}
               >
                 {isFetchingNewerTranscripts ? (
@@ -173,6 +176,13 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
                     Load newer transcripts
                   </Button>
                 )}
+                <Button
+                  variant="contained"
+                  sx={{ textTransform: 'none' }}
+                  onClick={onViewLatestClick}
+                >
+                  View latest
+                </Button>
               </Box>
             ) : null,
           Footer: () => {

@@ -793,6 +793,7 @@ export function TranscriptView({
             highlightedTransmissionId={highlightedTransmissionId}
             redactTranscripts={redactTranscripts}
             onRowClick={handleRowClick}
+            onViewLatestClick={() => handleFilterByDateTime(null)}
           />
         ) : feedsFetching || isTranscriptsInitialLoading ? (
           <Box

@@ -218,7 +218,7 @@ describe('TranscriptActionsBar', () => {
     );
   });
 
-  it('calls setDateTime with the selected date on Apply, and calls setDateTime with null when View latest is clicked', () => {
+  it('calls setDateTime with the selected date on Apply, and calls setDateTime with null when the date/time filter chip is deleted', () => {
     const mockSetDateTime = vi.fn();
     const { rerender } = render(
       <TranscriptActionsBar
@@ -236,7 +236,7 @@ describe('TranscriptActionsBar', () => {
       />
     );
 
-    expect(screen.queryByRole('button', { name: /View latest/i })).toBeNull();
+    expect(screen.queryByTestId('CancelIcon')).toBeNull();
 
     const filterButton = screen.getByRole('button', { name: 'filter' });
     fireEvent.click(filterButton);
@@ -270,12 +270,10 @@ describe('TranscriptActionsBar', () => {
       />
     );
 
-    const viewLatestButton = screen.getByRole('button', {
-      name: /View latest/i,
-    });
-    expect(viewLatestButton).toBeTruthy();
+    const deleteIcon = screen.getByTestId('CancelIcon');
+    expect(deleteIcon).toBeTruthy();
 
-    fireEvent.click(viewLatestButton);
+    fireEvent.click(deleteIcon);
     expect(mockSetDateTime).toHaveBeenLastCalledWith(null);
   });
 });

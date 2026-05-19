@@ -1,14 +1,14 @@
 import React from 'react';
 
-import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import ArrowDropUpIcon from '@mui/icons-material/ArrowDropUp';
-import FilterIcon from '@mui/icons-material/FilterList';
 import SyncIcon from '@mui/icons-material/Sync';
-import { Badge, Tooltip } from '@mui/material';
+import FilterIcon from '@mui/icons-material/Tune';
+import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import ButtonGroup from '@mui/material/ButtonGroup';
+import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
 import ClickAwayListener from '@mui/material/ClickAwayListener';
 import FormControlLabel from '@mui/material/FormControlLabel';
@@ -19,6 +19,7 @@ import Paper from '@mui/material/Paper';
 import Popover from '@mui/material/Popover';
 import Popper from '@mui/material/Popper';
 import Switch from '@mui/material/Switch';
+import Tooltip from '@mui/material/Tooltip';
 
 import { DateTimePicker } from '../common/DateTimePicker';
 
@@ -108,7 +109,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
     setRefreshMenuOpen(false);
   };
 
-  const handleViewLatest = () => {
+  const handleDeleteDateTime = () => {
     setDateTime(null);
   };
 
@@ -124,7 +125,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
         mb: 0.5,
       }}
     >
-      <Box sx={{ display: 'flex', gap: 2 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
         <Tooltip title="Filter transcripts">
           <Badge
             color="primary"
@@ -134,11 +135,18 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
             <Button
               color="primary"
               variant="outlined"
-              sx={{ minWidth: 0, p: 0.75 }}
+              sx={{
+                minWidth: 0,
+                p: 0.75,
+                textTransform: 'none',
+                display: 'flex',
+                gap: 1,
+              }}
               aria-label="filter"
               onClick={handleFilterOpen}
             >
               <FilterIcon />
+              Filters
             </Button>
           </Badge>
         </Tooltip>
@@ -189,16 +197,17 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
           </Box>
         </Popover>
         {dateTime && (
-          <Button
-            variant="contained"
-            sx={{ textTransform: 'none' }}
-            onClick={handleViewLatest}
-          >
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <AccessTimeIcon />
-              View latest
-            </Box>
-          </Button>
+          <Chip
+            label={
+              <Box>
+                <b>Date/time: </b> {dateTime.toLocaleDateString()}{' '}
+                {dateTime.toLocaleTimeString()}
+              </Box>
+            }
+            variant="filled"
+            size="small"
+            onDelete={handleDeleteDateTime}
+          />
         )}
       </Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
