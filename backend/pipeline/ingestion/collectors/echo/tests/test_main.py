@@ -195,6 +195,42 @@ class TestHandle:
         mock_store.record_heartbeat.assert_called_once_with(feed_id)
 
     @pytest.mark.usefixtures("_patch_globals")
+    def test_gcs_time_created_used_for_start_ts(
+        self, mock_store, _patch_globals
+    ) -> None:
+        """Verifies that when GCS timeCreated metadata is present, it is used to calculate start_ts (timeCreated - duration_ms)."""
+        feed_id = uuid.uuid4()
+        self._set_feed(
+            mock_store,
+            {
+                "id": feed_id,
+                "name": "Central Fire",
+                "external_id": "ext-id",
+                "status": "active",
+                "failure_count": 0,
+            },
+        )
+
+        event = self._make_event()
+        # Add timeCreated to the CloudEvent data
+        event.data["timeCreated"] = "2026-05-19T16:48:12.184784Z"
+
+        _handle(event)
+
+        # Verify AudioChunk published with the correctly calculated start_ts
+        # GCS timeCreated = 16:48:12.184784 UTC
+        # get_audio_duration returns 15000ms (15s)
+        # Expected start_ts = 16:48:12.184784 - 15s = 16:47:57.184784 UTC
+        pub = _patch_globals["publisher"]
+        pub.publish.assert_called_once()
+        publish_args, _ = pub.publish.call_args
+        chunk = AudioChunk()
+        chunk.ParseFromString(publish_args[1])
+
+        expected_ts = datetime(2026, 5, 19, 16, 47, 57, 184784, tzinfo=UTC)
+        assert chunk.start_timestamp.ToDatetime(UTC) == expected_ts
+
+    @pytest.mark.usefixtures("_patch_globals")
     def test_gcs_not_found_skips_gracefully(
         self, mock_store, _patch_globals
     ) -> None:
