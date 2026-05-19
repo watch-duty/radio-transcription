@@ -5,6 +5,25 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 import { TranscriptActionsBar } from './TranscriptActionsBar';
 
+// Mock the DateTimePicker because Material UI's modern segment-based picker inputs
+// do not support standard text value setters under JSDOM, which throws:
+// "Error: The given element does not have a value setter" when using fireEvent.change().
+// Mocking it as a simple native input allows fast, isolated, and robust testing.
+vi.mock('../common/DateTimePicker', () => ({
+  DateTimePicker: (props: {
+    dateTime: Date | null;
+    setDateTime: (dateTime: Date | null) => void;
+  }) => (
+    <input
+      aria-label="Date/time"
+      value={props.dateTime ? props.dateTime.toISOString() : ''}
+      onChange={(e) => {
+        props.setDateTime(e.target.value ? new Date(e.target.value) : null);
+      }}
+    />
+  ),
+}));
+
 describe('TranscriptActionsBar', () => {
   const mockSetRefreshInterval = vi.fn();
   const mockOnRefresh = vi.fn();
@@ -197,5 +216,66 @@ describe('TranscriptActionsBar', () => {
     expect(mockSetDateTime).toHaveBeenCalledWith(
       new Date('2026-05-14T12:00:00Z')
     );
+  });
+
+  it('calls setDateTime with the selected date on Apply, and calls setDateTime with null when View latest is clicked', () => {
+    const mockSetDateTime = vi.fn();
+    const { rerender } = render(
+      <TranscriptActionsBar
+        searchedTimestamp={null}
+        hasNewerTranscripts={false}
+        isTranscriptsFetching={false}
+        isTranscriptsPolling={false}
+        refreshInterval={10000}
+        setRefreshInterval={mockSetRefreshInterval}
+        onRefresh={mockOnRefresh}
+        redactTranscripts={false}
+        setRedactTranscripts={mockSetRedactTranscripts}
+        dateTime={null}
+        setDateTime={mockSetDateTime}
+      />
+    );
+
+    expect(screen.queryByRole('button', { name: /View latest/i })).toBeNull();
+
+    const filterButton = screen.getByRole('button', { name: 'filter' });
+    fireEvent.click(filterButton);
+
+    const dateInput = screen.getAllByLabelText('Date/time')[0];
+    fireEvent.change(dateInput, {
+      target: { value: '2026-05-14T12:00:00.000Z' },
+    });
+
+    const applyButton = screen.getByRole('button', { name: 'Apply' });
+    fireEvent.click(applyButton);
+
+    expect(mockSetDateTime).toHaveBeenCalledWith(
+      new Date('2026-05-14T12:00:00.000Z')
+    );
+
+    // Simulate the parent component updating the prop in response to the setDateTime call
+    rerender(
+      <TranscriptActionsBar
+        searchedTimestamp={null}
+        hasNewerTranscripts={false}
+        isTranscriptsFetching={false}
+        isTranscriptsPolling={false}
+        refreshInterval={10000}
+        setRefreshInterval={mockSetRefreshInterval}
+        onRefresh={mockOnRefresh}
+        redactTranscripts={false}
+        setRedactTranscripts={mockSetRedactTranscripts}
+        dateTime={new Date('2026-05-14T12:00:00.000Z')}
+        setDateTime={mockSetDateTime}
+      />
+    );
+
+    const viewLatestButton = screen.getByRole('button', {
+      name: /View latest/i,
+    });
+    expect(viewLatestButton).toBeTruthy();
+
+    fireEvent.click(viewLatestButton);
+    expect(mockSetDateTime).toHaveBeenLastCalledWith(null);
   });
 });
