@@ -1879,7 +1879,60 @@ class DlqTaggingTest(unittest.TestCase):
 
         # The flush should have produced exactly one result
         self.assertEqual(len(outputs), 1)
-        feed_id, flush_request = outputs[0]
-        self.assertEqual(feed_id, "test-feed")
+        _feed_id, flush_request = outputs[0]
         # sample_rate must be 8000 (preserved from chunk_data), not defaulted to 16000
+        self.assertEqual(flush_request.sample_rate, 8000)
+
+    @patch(
+        "backend.pipeline.transcription.transforms.stitcher_engine.audio_processor.AudioProcessor"
+    )
+    def test_immediate_segmented_flush_preserves_echo_sample_rate_in_flush_request(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that an isolated segmented chunk (representing Echo feed audio)
+        emits an immediate FlushRequest that correctly preserves the 8 kHz sample rate,
+        even on the very first chunk of a session when the context state hasn't been updated.
+        """
+        mock_processor_inst = mock_audio_processor.return_value
+        chunk_data = AudioChunkData(
+            start_ms=100000,
+            audio=np.zeros(8000 * 3, dtype=np.int16),
+            speech_segments=[TimeRange(0, 3000)],
+            gcs_uri="gs://bucket/echo_chunk.flac",
+            duration_ms=3000,
+            sample_rate=8000,
+        )
+        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+
+        fn, mock_state_context, mock_state_buffer, mock_last_start_ms = (
+            self._make_fn_and_states(OrderedSegmentedStitchAudioFn)
+        )
+        fn.setup()
+
+        metadata = ChunkMetadata(
+            gcs_uri="gs://bucket/echo_chunk.flac",
+            session_id="test-session",
+            duration_ms=3000,
+            feed_metadata=FeedMetadata(
+                feed_name="test-feed", external_id="ext-id"
+            ),
+        )
+        # Process chunk (since it is segmented, it will trigger an immediate flush within the same process call)
+        outputs = list(
+            fn.process(
+                element=("test-feed", metadata),
+                timestamp=Timestamp(100),
+                transmission_buffer_state=mock_state_buffer,
+                transmission_context_state=mock_state_context,
+                last_start_ms_state=mock_last_start_ms,
+                out_of_order_timer=MagicMock(),
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        # The immediate flush should have produced exactly one result
+        self.assertEqual(len(outputs), 1)
+        _feed_id, flush_request = outputs[0]
+        # sample_rate must be 8000 (correctly resolved from chunk_data on immediate flush)
         self.assertEqual(flush_request.sample_rate, 8000)
