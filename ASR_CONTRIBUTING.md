@@ -5,8 +5,7 @@ Each model is developed on its own colab, which is run on a Jupyter notebook. Yo
 
 When developing locally, we have a standard docker-compose.yml file which can be used to spin up a jupyter notebook with all the necessary dependencies. See `asr-eval-docker-compose.yml`.
 
-> [!NOTE]
-> Use the `asr-eval` container if you need NeMo/Canary support. Otherwise, use the lightweight `notebooks` container for pure Hugging Face evaluations like Whisper or Cohere to avoid heavy dependency overhead.
+> Use the `nemo-cli-cpu` or `nemo-cli-gpu` container if you need NeMo/Canary support. Otherwise, use the lightweight `notebooks-cpu` or `notebooks` container for pure Hugging Face evaluations like Whisper or Cohere to avoid heavy dependency overhead.
 
 If you want to run the Docker image with GPUs, you will need to create a GCE instance in your GCP project with a GPU attached. There is a Terraform definition under `/terraform/modules/asr_evaluation` which can create a dedicated instance for you. Running GPUs can be costly, so you will need to manually turn on your instance. When the instance starts, there is an auto shutoff script that runs after a specified number of hours, which you can configure through the `auto_shutdown_hours` Terraform variable.
 
@@ -62,18 +61,31 @@ git clone https://github.com/watch-duty/radio-transcription.git
 cd radio-transcription
 ```
 
-Run all 3 containers (NeMO + Jupyter, NeMO CLI, and Jupyter)
+> [!IMPORTANT]
+> **Google Cloud Credentials Setup:**
+> Before starting the containers, you **must** run the following command on your host/VM machine:
+> ```bash
+> gcloud auth application-default login
+> ```
+> This generates your Application Default Credentials (ADC) under `${HOME}/.config/gcloud/`.
+> 
+> Because this directory is volume-mapped into the Docker containers (to let them natively authenticate with Google Cloud Storage and GCP APIs), running this command *before* starting the containers ensures the credential directory exists on the host with correct user ownership.
+> 
+> If you start the containers before running this command, Docker will automatically create the `${HOME}/.config/gcloud` directory with `root` ownership, causing permission-denied errors when you try to authenticate.
+
+
+### Run the containers (Jupyter notebooks and NeMo CLI)
 ```
 # Add in sudo if you didn't make docker sudoless
 
-# Run NeMO + Jupyter | Jupyter
-docker compose -f asr-eval-docker-compose.yml up -d [asr-eval-cpu|notebooks]
+# 1. Run Jupyter Notebooks (CPU or GPU)
+# Use these lightweight containers for running notebooks (e.g. Whisper, Granite, etc.)
+docker compose -f asr-eval-docker-compose.yml up -d [notebooks-cpu|notebooks]
 
-# To access NeMo CLI using the asr-eval container image
-docker compose -f asr-eval-docker-compose.yml run --entrypoint /bin/zsh asr-eval
-
-# Run NeMO + Jupyter with GPU
-docker compose -f asr-eval-docker-compose.yml up -d asr-eval
+# 2. Run NeMo CLI (CPU or GPU)
+# These containers do not run Jupyter by default; they are designed for interactive shell use.
+# Run the command below to launch an interactive ZSH shell session:
+docker compose -f asr-eval-docker-compose.yml run [nemo-cli-cpu|nemo-cli-gpu]
 ```
 
 Accessing the Jupyter notebooks from your local machine
@@ -124,15 +136,15 @@ If you make changes to the `requirements.txt` or the Dockerfiles, use these comm
 
 *   **Rebuild Image**:
     ```bash
-    docker compose -f asr-eval-docker-compose.yml build asr-eval
+    docker compose -f asr-eval-docker-compose.yml build nemo-cli-cpu
     ```
-*   **Start Container**:
+*   **Run GPU CLI**:
     ```bash
-    docker compose -f asr-eval-docker-compose.yml up asr-eval
+    docker compose -f asr-eval-docker-compose.yml run nemo-cli-gpu
     ```
-*   **Run CPU Version**:
+*   **Run CPU CLI**:
     ```bash
-    docker compose -f asr-eval-docker-compose.yml up asr-eval-cpu
+    docker compose -f asr-eval-docker-compose.yml run nemo-cli-cpu
     ```
 
 ## Running Baseline Evaluations
