@@ -238,7 +238,7 @@ class StitcherEngine:
                 transmission_id = trans_utils.generate_transmission_id(
                     curr_ctx.session_id,
                     time_range,
-                    curr_ctx.contributing_audio_uris,
+                    curr_ctx.buffer_duration_ms,
                 )
 
                 task_logger.info(
@@ -322,7 +322,7 @@ class StitcherEngine:
             transmission_id = trans_utils.generate_transmission_id(
                 session_id,
                 action.speech_time_range,
-                processed_uris,
+                trans_utils.get_duration_ms(action.speech_time_range),
             )
             task_logger.info(
                 f"[Flush] Emitting transmission {transmission_id} with {len(processed_uris)} chunks"
