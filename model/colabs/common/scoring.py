@@ -64,6 +64,9 @@ def _get_nemo_inverse_normalizer() -> "NemoInverseNormalizer":
 def build_normalizer() -> "jiwer.Compose":
     """Build the dispatch-domain ASR normalization pipeline.
 
+    Canonical home for the dispatch normalizer. `evaluate_transcriptions.ipynb`
+    imports this rather than re-implementing inline; future changes go here.
+
     Per GOO-424 (#461): uses NeMo INVERSE normalization (words → digits)
     plus a manual small-number fallback and per-digit splitting, so
     number-heavy radio dispatch is scored at single-digit granularity —
