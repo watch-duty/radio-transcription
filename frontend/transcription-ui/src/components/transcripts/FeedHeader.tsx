@@ -10,10 +10,13 @@ import Typography from '@mui/material/Typography';
 import type { Feed, FeedStatus } from '@transcription/common';
 
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
-import { NavigationBreadcrumbs } from '../common/NavigationBreadcrumbs';
+import FeedSearch from './FeedSearch';
 
 interface FeedHeaderProps {
+  feeds: Feed[]
   searchedFeed: Feed | null;
+  onSelectFeed: (feedId: string) => void;
+  feedsLoading: boolean;
   sourceUrl?: string;
   archiveUrl?: string;
   status?: FeedStatus;
@@ -22,29 +25,20 @@ interface FeedHeaderProps {
 }
 
 const FeedHeader: React.FC<FeedHeaderProps> = ({
+  feeds,
   searchedFeed,
+  onSelectFeed,
+  feedsLoading,
   sourceUrl,
   archiveUrl,
   status,
   lastHeartbeat,
   triggerSnackbar,
 }) => {
-  if (!searchedFeed) {
-    return null;
-  }
-
   return (
     <>
-      <NavigationBreadcrumbs
-        routes={[
-          { name: 'Feeds', url: '/' },
-          {
-            name: searchedFeed.name,
-            url: `/transcripts?feedId=${searchedFeed.id}`,
-          },
-        ]}
-      />
-      <Box
+      <FeedSearch feeds={feeds} selectedFeed={searchedFeed} onFeedSelect={onSelectFeed} isFetching={feedsLoading} />
+      {searchedFeed && <Box
         sx={{
           mt: 1,
           display: 'flex',
@@ -134,7 +128,7 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
             </Link>
           )}
         </Box>
-      </Box>
+      </Box>}
     </>
   );
 };

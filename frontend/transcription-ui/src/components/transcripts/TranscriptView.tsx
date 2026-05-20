@@ -684,6 +684,27 @@ export function TranscriptView({
     });
   };
 
+  const handleFeedSelect = (feedId: string) => {
+    setSearchedFeedId(feedId);
+    // Stop audio
+    currentAudio.current?.stop();
+    currentAudio.current?.unload();
+    // Reset all state
+    handleFilterByDateTime(null);
+    setNewMessageCount(0);
+    setCurrentlyPlayingTransmissionId(null);
+    setHighlightedTransmissionId(null);
+    setIsViewAtTopOfTranscripts(true);
+    setPlaybackEndedForId(null);
+    setIsAudioPlaying(false);
+    // Update URL params
+    setSearchParams((prev) => {
+      prev.set('feedId', feedId);
+      prev.delete('transmissionId');
+      return prev;
+    });
+  };
+
   if (!token) {
     return null;
   }
@@ -709,7 +730,10 @@ export function TranscriptView({
       }}
     >
       <FeedHeader
+        feeds={feeds || []}
         searchedFeed={searchedFeed}
+        onSelectFeed={handleFeedSelect}
+        feedsLoading={feedsFetching}
         sourceUrl={searchedFeed?.sourceUrl}
         archiveUrl={searchedFeed?.archiveUrl}
         status={activeFeedData?.status ?? searchedFeed?.status}
