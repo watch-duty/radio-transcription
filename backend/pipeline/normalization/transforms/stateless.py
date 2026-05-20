@@ -26,24 +26,28 @@ from backend.pipeline.common.tracing_utils import (
     extract_trace_context,
     setup_tracing,
 )
+from backend.pipeline.normalization.common.constants import (
+    DEAD_LETTER_QUEUE_TAG,
+)
+from backend.pipeline.normalization.common.datatypes import (
+    ChunkMetadata,
+    FeedMetadata,
+    NormalizationResult,
+    TranscriptionResult,
+)
+from backend.pipeline.normalization.common.logging import get_task_logger
+from backend.pipeline.normalization.options import (
+    DataflowSystemOptions,  # noqa: F401
+    TranscriptionOptions,  # noqa: F401
+)
+from backend.pipeline.schema_types.normalized_audio_pb2 import (
+    NormalizedAudio,
+)
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import (
     AudioChunk,
 )
 from backend.pipeline.schema_types.transcribed_audio_pb2 import (
     TranscribedAudio,
-)
-from backend.pipeline.transcription.common.constants import (
-    DEAD_LETTER_QUEUE_TAG,
-)
-from backend.pipeline.transcription.common.datatypes import (
-    ChunkMetadata,
-    FeedMetadata,
-    TranscriptionResult,
-)
-from backend.pipeline.transcription.common.logging import get_task_logger
-from backend.pipeline.transcription.options import (
-    DataflowSystemOptions,  # noqa: F401
-    TranscriptionOptions,  # noqa: F401
 )
 
 logger = get_task_logger(
@@ -226,6 +230,89 @@ class SerializeFn(beam.DoFn):
         except Exception as e:
             logger.exception(
                 "Error serializing transcription result for feed %s",
+                element.feed_id,
+            )
+            yield beam.pvalue.TaggedOutput(
+                DEAD_LETTER_QUEUE_TAG,
+                {"error": str(e), "feed_id": element.feed_id},
+            )
+
+
+@beam.typehints.with_input_types(NormalizationResult)
+@beam.typehints.with_output_types(PubsubMessage)
+class SerializeNormalizationClaimFn(beam.DoFn):
+    """Serializes the NormalizationResult into the standard AudioReadyForTranscription
+    protobuf format, and wraps in a PubsubMessage for egress.
+    """
+
+    @override
+    def process(
+        self,
+        element: NormalizationResult,
+    ) -> Iterator[PubsubMessage | beam.pvalue.TaggedOutput]:
+        def _raise(msg: str) -> None:
+            raise ValueError(msg)
+
+        try:
+            value = element
+
+            if value.start_audio_offset_ms is None:
+                msg = f"Missing start_audio_offset_ms for feed_id: {value.feed_id} (session: {value.session_id})"
+                _raise(msg)
+            start_offset = Duration(
+                seconds=value.start_audio_offset_ms // MICROSECONDS_PER_MS,
+                nanos=(value.start_audio_offset_ms % MICROSECONDS_PER_MS)
+                * NANOS_PER_MS,
+            )
+
+            if value.end_audio_offset_ms is None:
+                msg = f"Missing end_audio_offset_ms for feed_id: {value.feed_id} (session: {value.session_id})"
+                _raise(msg)
+            end_offset = Duration(
+                seconds=value.end_audio_offset_ms // MICROSECONDS_PER_MS,
+                nanos=(value.end_audio_offset_ms % MICROSECONDS_PER_MS)
+                * NANOS_PER_MS,
+            )
+
+            if value.feed_metadata is None:
+                msg = f"Missing feed_metadata in NormalizationResult for feed_id: {value.feed_id} (session: {value.session_id})"
+                _raise(msg)
+
+            if not value.contributing_audio_uris:
+                msg = f"Missing contributing_audio_uris in NormalizationResult for feed_id: {value.feed_id} (session: {value.session_id})"
+                _raise(msg)
+
+            proto = NormalizedAudio(
+                feed_id=value.feed_id,
+                source_audio_uris=value.contributing_audio_uris,
+                transmission_id=value.transmission_id,
+                missing_prior_context=value.missing_prior_context,
+                missing_post_context=value.missing_post_context,
+                start_audio_offset=start_offset,
+                end_audio_offset=end_offset,
+                canonical_audio_uri=value.canonical_audio_uri,
+                playback_audio_uri=value.playback_audio_uri,
+                feed_name=value.feed_metadata.feed_name,
+                external_id=value.feed_metadata.external_id,
+            )
+            proto.start_timestamp.FromMicroseconds(
+                value.time_range.start_ms * MICROSECONDS_PER_MS
+            )
+            proto.end_timestamp.FromMicroseconds(
+                value.time_range.end_ms * MICROSECONDS_PER_MS
+            )
+            attrs: dict[str, str] = {}
+            if value.traceparent:
+                attrs["traceparent"] = value.traceparent
+
+            yield PubsubMessage(
+                data=proto.SerializeToString(),
+                attributes=attrs,
+                ordering_key=value.feed_id,
+            )
+        except Exception as e:
+            logger.exception(
+                "Error serializing normalization claim result for feed %s",
                 element.feed_id,
             )
             yield beam.pvalue.TaggedOutput(

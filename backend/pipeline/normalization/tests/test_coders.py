@@ -5,7 +5,7 @@ import unittest
 import apache_beam as beam
 import pytest
 
-from backend.pipeline.transcription.common import coders, datatypes
+from backend.pipeline.normalization.common import coders, datatypes
 
 
 class CoderVerificationTest(unittest.TestCase):

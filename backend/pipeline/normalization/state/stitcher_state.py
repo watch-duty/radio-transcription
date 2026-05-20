@@ -5,11 +5,11 @@ import logging
 from apache_beam.metrics import Metrics
 
 from backend.pipeline.common.constants import MS_PER_SECOND
-from backend.pipeline.transcription.common.constants import (
+from backend.pipeline.normalization.common.constants import (
     DEFAULT_VAD_POST_ROLL_MS,
     DEFAULT_VAD_PRE_ROLL_MS,
 )
-from backend.pipeline.transcription.common.datatypes import (
+from backend.pipeline.normalization.common.datatypes import (
     AppendBufferAction,
     AudioChunkData,
     DropAction,

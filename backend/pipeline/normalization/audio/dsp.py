@@ -10,7 +10,7 @@ import math
 import numpy as np
 from numba import njit
 
-from backend.pipeline.transcription.common.constants import (
+from backend.pipeline.normalization.common.constants import (
     DEFAULT_SED_FFT_SIZE,
     DEFAULT_SED_HOP_SIZE,
 )

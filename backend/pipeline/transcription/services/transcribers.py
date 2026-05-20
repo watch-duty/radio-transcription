@@ -13,7 +13,7 @@ from google.api_core.retry import Retry
 from google.cloud import speech_v2 as cloud_speech
 from google.cloud.speech_v2 import SpeechClient
 
-from backend.pipeline.transcription.common.constants import (
+from backend.pipeline.normalization.common.constants import (
     CHIRP_UNINTELLIGIBLE_MARKER,
     DEFAULT_CHIRP_LANGUAGE_CODES,
     DEFAULT_CHIRP_LOCATION,
@@ -25,9 +25,9 @@ from backend.pipeline.transcription.common.constants import (
     DEFAULT_RETRY_MAX_SECONDS,
     MAX_SYNCHRONOUS_TRANSCRIPTION_DURATION_MS,
 )
-from backend.pipeline.transcription.common.enums import TranscriberType
-from backend.pipeline.transcription.common.logging import get_task_logger
-from backend.pipeline.transcription.common.utils import ConfigBase
+from backend.pipeline.normalization.common.enums import TranscriberType
+from backend.pipeline.normalization.common.logging import get_task_logger
+from backend.pipeline.normalization.common.utils import ConfigBase
 
 logger = get_task_logger(
     __name__, {"system": "transcription", "component": "transcribers"}
@@ -52,10 +52,11 @@ class Transcriber(abc.ABC):
     def transcribe(
         self,
         *,
-        audio_data: bytes,
+        audio_data: bytes | None = None,
+        uri: str | None = None,
         duration_ms: int,
     ) -> str | None:
-        """Transcribes the raw audio bytes and returns the text transcript."""
+        """Transcribes the audio payload either via raw bytes or a GCS URI reference and returns the text transcript."""
 
 
 class ChirpConfig(ConfigBase):
@@ -161,7 +162,8 @@ class GoogleChirpV3Transcriber(Transcriber):
     def transcribe(
         self,
         *,
-        audio_data: bytes,
+        audio_data: bytes | None = None,
+        uri: str | None = None,
         duration_ms: int,
     ) -> str | None:
         """Transcribes the given audio payload."""
@@ -174,8 +176,9 @@ class GoogleChirpV3Transcriber(Transcriber):
             raise ValueError(msg)
 
         logger.info(
-            "Transcribing %.3fs of audio",
+            "Transcribing %.3fs of audio %s",
             duration_ms / 1000,
+            f"from GCS URI: {uri}" if uri else "from in-memory bytes",
         )
 
         request = cloud_speech.RecognizeRequest(
@@ -201,6 +204,7 @@ class GoogleChirpV3Transcriber(Transcriber):
                 ),
             ),
             content=audio_data,
+            uri=uri,
         )
 
         retry_policy = Retry(
@@ -264,7 +268,13 @@ class MockTranscriber(Transcriber):
     def setup(self) -> None:
         self.index = 0
 
-    def transcribe(self, *, audio_data: bytes, duration_ms: int) -> str | None:
+    def transcribe(
+        self,
+        *,
+        audio_data: bytes | None = None,
+        uri: str | None = None,
+        duration_ms: int,
+    ) -> str | None:
         # If a sequence of transcripts is provided, return them in rotation
         if self.config.transcripts:
             transcript = self.config.transcripts[

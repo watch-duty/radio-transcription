@@ -22,12 +22,12 @@ from apache_beam.metrics import Metrics
 from google.cloud import storage
 
 from backend.pipeline.common import constants as common_constants
-from backend.pipeline.transcription.audio import audio_processor, vad
-from backend.pipeline.transcription.common import constants as trans_constants
-from backend.pipeline.transcription.common import datatypes
-from backend.pipeline.transcription.common import logging as trans_logging
-from backend.pipeline.transcription.common import utils as trans_utils
-from backend.pipeline.transcription.state import stitcher_state
+from backend.pipeline.normalization.audio import audio_processor, vad
+from backend.pipeline.normalization.common import constants as trans_constants
+from backend.pipeline.normalization.common import datatypes
+from backend.pipeline.normalization.common import logging as trans_logging
+from backend.pipeline.normalization.common import utils as trans_utils
+from backend.pipeline.normalization.state import stitcher_state
 
 logger = trans_logging.get_task_logger(
     __name__, {"system": "transcription", "component": "stitcher-engine"}
@@ -456,7 +456,7 @@ class StitcherEngine:
             with with_tracer_context(
                 traceparent,
                 "stitching_single_chunk",
-                "backend.pipeline.transcription.transforms.stateful",
+                "backend.pipeline.normalization.transforms.stateful",
             ):
                 if (
                     previous_expected_ts is not None

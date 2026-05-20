@@ -21,14 +21,13 @@ from opentelemetry.trace import get_current_span
 from backend.pipeline.common.tracing_utils import (
     extract_trace_context,
 )
-from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
-from backend.pipeline.transcription.audio.audio_processor import ProcessorOutput
-from backend.pipeline.transcription.common import coders as trans_coders
-from backend.pipeline.transcription.common.constants import (
+from backend.pipeline.normalization.audio.audio_processor import ProcessorOutput
+from backend.pipeline.normalization.common import coders as trans_coders
+from backend.pipeline.normalization.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
     MAIN_TAG,
 )
-from backend.pipeline.transcription.common.datatypes import (
+from backend.pipeline.normalization.common.datatypes import (
     ActiveStitchingState,
     AudioChunkData,
     BufferedChunk,
@@ -36,25 +35,24 @@ from backend.pipeline.transcription.common.datatypes import (
     FeedMetadata,
     FlushRequest,
     IdleFeedState,
+    NormalizationResult,
+    NormalizeAudioConfig,
     OrderRestorerConfig,
     StitchAudioConfig,
     TimeRange,
-    TranscribeAudioConfig,
-    TranscriptionResult,
 )
-from backend.pipeline.transcription.common.enums import TranscriberType
-from backend.pipeline.transcription.common.utils import get_duration_ms
-from backend.pipeline.transcription.services.transcribers import Transcriber
-from backend.pipeline.transcription.transforms.stateful import (
+from backend.pipeline.normalization.common.utils import get_duration_ms
+from backend.pipeline.normalization.transforms.stateful import (
     SHARED_RESOURCE_HANDLE,
+    NormalizeAudioFn,
     OrderedContinuousStitchAudioFn,
     OrderedSegmentedStitchAudioFn,
-    TranscribeAudioFn,
 )
-from backend.pipeline.transcription.transforms.stateless import (
+from backend.pipeline.normalization.transforms.stateless import (
     ParseAndKeyFn,
-    SerializeFn,
+    SerializeNormalizationClaimFn,
 )
+from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
 
 # Test Helper: override ChunkMetadata locally in tests to default is_continuous to True
 _OriginalChunkMetadata = ChunkMetadata
@@ -90,38 +88,6 @@ def tearDownModule() -> None:
     _SHARED_PATCHER.stop()
 
 
-class MockTranscriberFactory:
-    def __init__(
-        self, transcript: str, *, raise_exception: bool = False
-    ) -> None:
-
-        self.transcript = transcript
-        self.raise_exception = raise_exception
-
-    def __call__(
-        self,
-        transcriber_type: TranscriberType,
-        project_id: str,
-        config_json: str,
-        *args: Any,
-        **kwargs: Any,
-    ) -> Transcriber:
-
-        mock = MagicMock()
-        if self.raise_exception:
-            mock.transcribe.side_effect = Exception("Transcription API outage!")
-        else:
-            mock.transcribe.return_value = self.transcript
-        return mock
-
-
-def get_mock_factory(
-    transcript: str = "Simulated transcript.", *, raise_exception: bool = False
-) -> MockTranscriberFactory:
-
-    return MockTranscriberFactory(transcript, raise_exception=raise_exception)
-
-
 def get_test_stitch_config(**kwargs: Any) -> StitchAudioConfig:
 
     defaults = {
@@ -135,16 +101,15 @@ def get_test_stitch_config(**kwargs: Any) -> StitchAudioConfig:
     return StitchAudioConfig(**defaults)  # type: ignore
 
 
-def get_test_transcribe_config(**kwargs: Any) -> TranscribeAudioConfig:
+def get_test_normalize_config(**kwargs: Any) -> NormalizeAudioConfig:
 
     defaults = {
         "project_id": "fake-proj",
-        "transcriber_type": TranscriberType.GOOGLE_CHIRP_V3,
-        "transcriber_config": "{}",
         "vad_config": "{}",
+        "canonical_audio_bucket": "fake-bucket",
     }
     defaults.update(kwargs)
-    return TranscribeAudioConfig(**defaults)  # type: ignore
+    return NormalizeAudioConfig(**defaults)  # type: ignore
 
 
 class ParseAndKeyTimestampTest(unittest.TestCase):
@@ -366,43 +331,28 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
         self.assertEqual(format(span_ctx.span_id, "016x"), "00f067aa0ba902b7")
 
 
-class TranscribeAudioTest(unittest.TestCase):
-    def test_setup_calls_transcriber_setup(self) -> None:
-        """Verifies that TranscribeAudioFn.setup() correctly invokes setup() on the transcriber."""
-        mock_transcriber = MagicMock()
-        config = get_test_transcribe_config()
+class NormalizeAudioTest(unittest.TestCase):
+    def test_setup_initializes_processors(self) -> None:
+        """Verifies that NormalizeAudioFn.setup() correctly initializes the AudioProcessor and GCSAudioUploader."""
+        config = get_test_normalize_config()
 
-        fn = TranscribeAudioFn(
-            config=config,
-            transcriber_factory=lambda *args, **kwargs: mock_transcriber,
-        )
+        fn = NormalizeAudioFn(config=config)
         fn.setup()
 
-        # Assert that setup() was invoked on our transcriber
-        mock_transcriber.setup.assert_called_once()
+        self.assertIsNotNone(fn.audio_processor)
+        self.assertIsNotNone(fn.audio_uploader)
 
     @patch(
-        "backend.pipeline.transcription.services.transcribers.get_transcriber"
+        "backend.pipeline.normalization.audio.audio_processor.AudioProcessor"
     )
-    @patch(
-        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
-    )
-    def test_dlq_routing(
-        self, mock_audio_processor: MagicMock, mock_get_transcriber: MagicMock
-    ) -> None:
-        """Verifies that explicit Python exceptions raised randomly within transformations dynamically populate a standardized and resilient Dataflow Dead Letter Queue error."""
+    def test_dlq_routing(self, mock_audio_processor: MagicMock) -> None:
+        """Verifies that explicit Python exceptions raised within NormalizeAudioFn dynamically route to the Dead Letter Queue Resilient System."""
         mock_processor_inst = mock_audio_processor.return_value
-        mock_processor_inst.preprocess_audio.side_effect = lambda x: x
-        mock_processor_inst.export_flac.return_value = b"flac_bytes"
-        mock_processor_inst.process_buffer.side_effect = (
-            lambda *args, **kwargs: ProcessorOutput(
-                success=True,
-                flac_bytes=b"flac_bytes",
-                processed_audio=np.zeros(((500) * 16), dtype=np.int16),
-            )
+        mock_processor_inst.process_buffer.side_effect = Exception(
+            "GCS upload timeout!"
         )
 
-        config = get_test_transcribe_config(route_to_dlq=True)
+        config = get_test_normalize_config(route_to_dlq=True)
 
         options = PipelineOptions(
             flags=[
@@ -443,171 +393,7 @@ class TranscribeAudioTest(unittest.TestCase):
             )
 
             results = elements | beam.ParDo(
-                TranscribeAudioFn(
-                    config=config,
-                    transcriber_factory=get_mock_factory(raise_exception=True),
-                )
-            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
-
-            def assert_dlq(
-                elements: list[dict[str, str | bool | dict[str, str]]],
-            ) -> None:
-
-                assert len(elements) == 1
-                assert isinstance(elements[0]["error"], str)
-                assert "Transcription API outage!" in elements[0]["error"]
-
-            def assert_empty(elements):
-                assert len(elements) == 0
-
-            assert_that(results.main, assert_empty, label="CheckEmptyMain")
-
-            assert_that(
-                results[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ"
-            )
-
-    @patch(
-        "backend.pipeline.transcription.services.transcribers.get_transcriber"
-    )
-    @patch(
-        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
-    )
-    def test_transcribe_empty_transcript_fallback(
-        self, mock_audio_processor: MagicMock, mock_get_transcriber: MagicMock
-    ) -> None:
-        """Verifies that when transcription yields no text or returns None,
-        TranscribeAudioFn uses the UNINTELLIGIBLE fallback marker instead of dropping the transmission.
-        """
-        mock_processor_inst = mock_audio_processor.return_value
-        mock_processor_inst.preprocess_audio.side_effect = lambda x, sr: x
-        mock_processor_inst.export_flac.return_value = b"flac_bytes"
-        mock_processor_inst.process_buffer.return_value = ProcessorOutput(
-            success=True,
-            flac_bytes=b"flac_bytes",
-            processed_audio=np.zeros(16000 * 5, dtype=np.int16),
-        )
-
-        config = get_test_transcribe_config(route_to_dlq=True)
-
-        options = PipelineOptions(
-            flags=[
-                "--continuous_input_subscription=projects/p/subscriptions/a",
-                "--segmented_input_subscription=projects/p/subscriptions/b",
-                "--output_topic=b",
-                "--project=c",
-            ]
-        )
-        with BeamTestPipeline(options=options) as p:
-            elements = p | beam.Create(
-                [
-                    (
-                        "feed-123",
-                        FlushRequest(
-                            feed_id="feed-123",
-                            session_id="fake-session",
-                            buffer=np.zeros(
-                                16000 * 5, dtype=np.int16
-                            ).tobytes(),
-                            contributing_audio_uris=["gs://bucket/chunk.flac"],
-                            time_range=TimeRange(start_ms=0, end_ms=5000),
-                            transmission_id="tx-123",
-                            missing_prior_context=False,
-                            missing_post_context=False,
-                            start_audio_offset_ms=0,
-                            end_audio_offset_ms=5000,
-                            feed_metadata=FeedMetadata(
-                                feed_name="fake-feed",
-                                external_id="fake-external",
-                            ),
-                            sample_rate=16000,
-                        ),
-                    )
-                ]
-            )
-
-            # Pass empty string as the simulated transcript (simulating no speech recognized)
-            results = elements | beam.ParDo(
-                TranscribeAudioFn(
-                    config=config,
-                    transcriber_factory=get_mock_factory(transcript=""),
-                )
-            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
-
-            def assert_main(elements: list[TranscriptionResult]) -> None:
-                assert len(elements) == 1
-                assert elements[0].transcript == "[UNINTELLIGIBLE]"
-
-            assert_that(results.main, assert_main, label="CheckMainTranscript")
-            assert_that(
-                results[DEAD_LETTER_QUEUE_TAG],
-                equal_to([]),
-                label="CheckEmptyDLQ",
-            )
-
-    @patch(
-        "backend.pipeline.transcription.services.transcribers.get_transcriber"
-    )
-    @patch(
-        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
-    )
-    def test_duration_limit_dlq_routing(
-        self, mock_audio_processor: MagicMock, mock_get_transcriber: MagicMock
-    ) -> None:
-        """Verifies that audio payloads exceeding the strict 60s uncompressed duration limit are cleanly routed to the DLQ."""
-        mock_processor_inst = mock_audio_processor.return_value
-        mock_processor_inst.preprocess_audio.side_effect = lambda x, sr: x
-        mock_processor_inst.export_flac.return_value = b"flac_bytes"
-
-        # Mock process_buffer to return 65 seconds of uncompressed audio
-        mock_processor_inst.process_buffer.return_value = ProcessorOutput(
-            success=True,
-            flac_bytes=b"flac_bytes",
-            processed_audio=np.zeros(16000 * 65, dtype=np.int16),
-        )
-
-        config = get_test_transcribe_config(route_to_dlq=True)
-
-        options = PipelineOptions(
-            flags=[
-                "--continuous_input_subscription=projects/p/subscriptions/a",
-                "--segmented_input_subscription=projects/p/subscriptions/b",
-                "--output_topic=b",
-                "--project=c",
-            ]
-        )
-        with BeamTestPipeline(options=options) as p:
-            elements = p | beam.Create(
-                [
-                    (
-                        "feed-123",
-                        FlushRequest(
-                            feed_id="feed-123",
-                            session_id="fake-session",
-                            buffer=np.zeros(
-                                16000 * 65, dtype=np.int16
-                            ).tobytes(),
-                            contributing_audio_uris=["gs://bucket/chunk.flac"],
-                            time_range=TimeRange(start_ms=0, end_ms=65000),
-                            transmission_id="tx-123",
-                            missing_prior_context=False,
-                            missing_post_context=False,
-                            start_audio_offset_ms=0,
-                            end_audio_offset_ms=65000,
-                            feed_metadata=FeedMetadata(
-                                feed_name="fake-feed",
-                                external_id="fake-external",
-                            ),
-                            sample_rate=16000,
-                        ),
-                    )
-                ]
-            )
-
-            results = elements | beam.ParDo(
-                TranscribeAudioFn(
-                    config=config,
-                    transcriber_factory=get_mock_factory(raise_exception=False),
-                )
+                NormalizeAudioFn(config=config)
             ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
 
             def assert_dlq(
@@ -615,11 +401,7 @@ class TranscribeAudioTest(unittest.TestCase):
             ) -> None:
                 assert len(elements) == 1
                 assert isinstance(elements[0]["error"], str)
-                assert (
-                    "Audio payload too long for synchronous API"
-                    in elements[0]["error"]
-                )
-                assert "65.00s" in elements[0]["error"]
+                assert "GCS upload timeout!" in elements[0]["error"]
 
             def assert_empty(elements):
                 assert len(elements) == 0
@@ -630,9 +412,10 @@ class TranscribeAudioTest(unittest.TestCase):
             )
 
 
-class SerializeAndEnrichTest(unittest.TestCase):
-    def test_serialize_and_enrich(self) -> None:
-        """Verifies that SerializeAndEnrichFn correctly enriches and serializes the transcript."""
+
+class SerializeNormalizationClaimTest(unittest.TestCase):
+    def test_serialize_claim(self) -> None:
+        """Verifies that SerializeNormalizationClaimFn correctly serializes the NormalizationResult."""
         options = PipelineOptions(
             flags=[
                 "--continuous_input_subscription=projects/p/subscriptions/a",
@@ -648,11 +431,10 @@ class SerializeAndEnrichTest(unittest.TestCase):
                 external_id="test-external-id",
             )
 
-            res1 = TranscriptionResult(
+            res1 = NormalizationResult(
                 feed_id="test-feed",
                 session_id="fake-session",
                 contributing_audio_uris=["gs://bucket/1.flac"],
-                transcript="Hello world",
                 time_range=TimeRange(1000, 2000),
                 transmission_id="uuid-1",
                 missing_prior_context=False,
@@ -665,11 +447,10 @@ class SerializeAndEnrichTest(unittest.TestCase):
                 traceparent="00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
             )
 
-            res2 = TranscriptionResult(
+            res2 = NormalizationResult(
                 feed_id="test-feed",
                 session_id="fake-session",
                 contributing_audio_uris=["gs://bucket/2.flac"],
-                transcript="Hello world again",
                 time_range=TimeRange(1000, 3000),
                 transmission_id="uuid-2",
                 missing_prior_context=False,
@@ -682,11 +463,15 @@ class SerializeAndEnrichTest(unittest.TestCase):
                 traceparent="00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
             )
 
-            results = p | beam.Create([res1, res2]) | beam.ParDo(SerializeFn())
+            results = (
+                p
+                | beam.Create([res1, res2])
+                | beam.ParDo(SerializeNormalizationClaimFn())
+            )
 
             def assert_results(msgs):
-                from backend.pipeline.schema_types.transcribed_audio_pb2 import (  # noqa: PLC0415
-                    TranscribedAudio,
+                from backend.pipeline.schema_types.normalized_audio_pb2 import (  # noqa: PLC0415
+                    NormalizedAudio,
                 )
 
                 assert len(msgs) == 2
@@ -699,17 +484,17 @@ class SerializeAndEnrichTest(unittest.TestCase):
 
                 protos = []
                 for m in msgs:
-                    p = TranscribedAudio()
+                    p = NormalizedAudio()
                     p.ParseFromString(m.data)
                     protos.append(p)
 
-                protos.sort(key=lambda p: p.transcript)
+                protos.sort(key=lambda p: p.canonical_audio_uri)
 
-                assert protos[0].transcript == "Hello world"
+                assert protos[0].canonical_audio_uri == "gs://bucket/1.flac"
                 assert protos[0].feed_name == "Test Feed Name"
                 assert protos[0].external_id == "test-external-id"
 
-                assert protos[1].transcript == "Hello world again"
+                assert protos[1].canonical_audio_uri == "gs://bucket/2.flac"
                 assert protos[1].feed_name == "Test Feed Name"
                 assert protos[1].external_id == "test-external-id"
 
@@ -719,7 +504,7 @@ class SerializeAndEnrichTest(unittest.TestCase):
 class OrderedStitchAudioTest(unittest.TestCase):
     @patch("backend.pipeline.common.tracing_utils.with_tracer_context")
     @patch(
-        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
+        "backend.pipeline.normalization.audio.audio_processor.AudioProcessor"
     )
     def test_ordered_stitch_audio_process_span(
         self,
@@ -769,17 +554,17 @@ class OrderedStitchAudioTest(unittest.TestCase):
         mock_with_tracer_context.assert_any_call(
             "mock-traceparent",
             "stitching_process",
-            "backend.pipeline.transcription.transforms.stateful",
+            "backend.pipeline.normalization.transforms.stateful",
         )
         mock_with_tracer_context.assert_any_call(
             "mock-traceparent",
             "stitching_single_chunk",
-            "backend.pipeline.transcription.transforms.stateful",
+            "backend.pipeline.normalization.transforms.stateful",
         )
 
     @patch("backend.pipeline.common.tracing_utils.with_tracer_context")
     @patch(
-        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
+        "backend.pipeline.normalization.audio.audio_processor.AudioProcessor"
     )
     def test_ordered_stitch_audio_handle_gap_timeout_span(
         self,
@@ -821,16 +606,16 @@ class OrderedStitchAudioTest(unittest.TestCase):
         mock_with_tracer_context.assert_any_call(
             "mock-traceparent-context",
             "handle_audio_gap",
-            "backend.pipeline.transcription.transforms.stateful",
+            "backend.pipeline.normalization.transforms.stateful",
         )
         mock_with_tracer_context.assert_any_call(
             "",
             "stitching_single_chunk",
-            "backend.pipeline.transcription.transforms.stateful",
+            "backend.pipeline.normalization.transforms.stateful",
         )
 
     @patch(
-        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
+        "backend.pipeline.normalization.audio.audio_processor.AudioProcessor"
     )
     def test_late_chunk_empty_buffer_no_fallback(
         self, mock_audio_processor: MagicMock
@@ -948,7 +733,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
         )
 
     @patch(
-        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
+        "backend.pipeline.normalization.audio.audio_processor.AudioProcessor"
     )
     def test_ordered_stitch_audio_flushes_on_stale_timer(
         self, mock_audio_processor: MagicMock
@@ -1028,7 +813,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
             assert_that(results, assert_results)
 
     @patch(
-        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
+        "backend.pipeline.normalization.audio.audio_processor.AudioProcessor"
     )
     def test_ordered_stitch_audio_handles_out_of_order_chunks(
         self, mock_audio_processor: MagicMock
@@ -1169,7 +954,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
 
 class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
     @patch(
-        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
+        "backend.pipeline.normalization.audio.audio_processor.AudioProcessor"
     )
     def test_speech_segments_persistence_and_stale_flush(
         self, mock_audio_processor: MagicMock
@@ -1284,7 +1069,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         self.assertIsInstance(mock_state_context.read(), IdleFeedState)
 
     @patch(
-        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
+        "backend.pipeline.normalization.audio.audio_processor.AudioProcessor"
     )
     def test_prior_audio_tail_cleared_on_stale_flush(
         self, mock_audio_processor: MagicMock
@@ -1395,7 +1180,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         self.assertIsInstance(mock_state_context.read(), IdleFeedState)
 
     @patch(
-        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
+        "backend.pipeline.normalization.audio.audio_processor.AudioProcessor"
     )
     def test_speech_segments_exceeding_max_duration_forced_split(
         self, mock_audio_processor: MagicMock
@@ -1499,7 +1284,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         self.assertEqual(saved_context.speech_segments[0].end_ms, 65000)
 
     @patch(
-        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
+        "backend.pipeline.normalization.audio.audio_processor.AudioProcessor"
     )
     def test_speech_segments_exceeding_max_duration_natural_split(
         self, mock_audio_processor: MagicMock
@@ -1607,7 +1392,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
 class OrderedSegmentedStitchAudioTest(unittest.TestCase):
     @patch("backend.pipeline.common.tracing_utils.with_tracer_context")
     @patch(
-        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
+        "backend.pipeline.normalization.audio.audio_processor.AudioProcessor"
     )
     def test_ordered_segmented_stitch_isolates_and_splits(
         self,
@@ -1854,7 +1639,7 @@ class DlqTaggingTest(unittest.TestCase):
     # --- Bug 2: feed_metadata preserved through stale flush ---
 
     @patch(
-        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
+        "backend.pipeline.normalization.audio.audio_processor.AudioProcessor"
     )
     def test_stale_flush_preserves_feed_metadata_in_flush_request(
         self, mock_audio_processor: MagicMock
@@ -1929,7 +1714,7 @@ class DlqTaggingTest(unittest.TestCase):
         self.assertIsInstance(mock_state_context.read(), IdleFeedState)
 
     @patch(
-        "backend.pipeline.transcription.transforms.stitcher_engine.audio_processor.AudioProcessor"
+        "backend.pipeline.normalization.transforms.stitcher_engine.audio_processor.AudioProcessor"
     )
     def test_stale_flush_preserves_echo_sample_rate_in_flush_request(
         self, mock_audio_processor: MagicMock
@@ -1995,7 +1780,7 @@ class DlqTaggingTest(unittest.TestCase):
         self.assertEqual(flush_request.sample_rate, 8000)
 
     @patch(
-        "backend.pipeline.transcription.transforms.stitcher_engine.audio_processor.AudioProcessor"
+        "backend.pipeline.normalization.transforms.stitcher_engine.audio_processor.AudioProcessor"
     )
     def test_immediate_segmented_flush_preserves_echo_sample_rate_in_flush_request(
         self, mock_audio_processor: MagicMock

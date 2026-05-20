@@ -1,0 +1,125 @@
+"""Unit tests for the serverless transcription Cloud Function handler."""
+
+import base64
+import unittest
+from unittest.mock import MagicMock, patch
+
+from google.protobuf.duration_pb2 import Duration  # type: ignore
+from google.protobuf.timestamp_pb2 import Timestamp  # type: ignore
+
+from backend.pipeline.schema_types.normalized_audio_pb2 import (
+    NormalizedAudio,
+)
+from backend.pipeline.schema_types.transcribed_audio_pb2 import (
+    TranscribedAudio,
+)
+from backend.pipeline.transcription.main import transcribe_claim_check
+
+
+class DummyRequest:
+    """Dummy request object matching functions-framework Flask request interface."""
+
+    def __init__(self, json_data: dict) -> None:
+        self.json_data = json_data
+
+    def get_json(self) -> dict:
+        return self.json_data
+
+
+class TranscribeClaimCheckFunctionTest(unittest.TestCase):
+    @patch("backend.pipeline.transcription.main.get_lazy_transcriber")
+    @patch("backend.pipeline.transcription.main.get_lazy_publisher")
+    @patch.dict(
+        "os.environ",
+        {
+            "OUTPUT_TOPIC": "projects/test/topics/egress",
+            "PROJECT_ID": "test-proj",
+        },
+    )
+    def test_transcribe_claim_check_success(
+        self, mock_get_publisher: MagicMock, mock_get_transcriber: MagicMock
+    ) -> None:
+        """Verifies successful end-to-end claim-check trigger execution."""
+        # Setup mocks
+        mock_transcriber = MagicMock()
+        mock_transcriber.transcribe.return_value = "Hello world"
+        mock_get_transcriber.return_value = mock_transcriber
+
+        mock_publisher = MagicMock()
+        # Mock future object returned by publish()
+        mock_future = MagicMock()
+        mock_future.result.return_value = "msg-12345"
+        mock_publisher.publish.return_value = mock_future
+        mock_publisher.topic_path.return_value = (
+            "projects/test-proj/topics/egress"
+        )
+        mock_get_publisher.return_value = mock_publisher
+
+        # Build dummy claim proto
+        claim = NormalizedAudio(
+            transmission_id="tx-1111",
+            feed_id="feed-2222",
+            missing_prior_context=False,
+            missing_post_context=False,
+            source_audio_uris=["gs://bucket/raw1.flac"],
+            canonical_audio_uri="gs://bucket/normalized.flac",
+            playback_audio_uri="gs://bucket/normalized.m4a",
+            feed_name="Test Feed",
+            external_id="ext-1234",
+        )
+
+        # Set timestamps
+        t_start = Timestamp(seconds=1000, nanos=1000000)
+        t_end = Timestamp(seconds=1005, nanos=2000000)
+        claim.start_timestamp.CopyFrom(t_start)
+        claim.end_timestamp.CopyFrom(t_end)
+
+        # Set offsets
+        claim.start_audio_offset.CopyFrom(Duration(seconds=0, nanos=0))
+        claim.end_audio_offset.CopyFrom(Duration(seconds=5, nanos=0))
+
+        # Serialize and wrap in Pub/Sub envelope
+        data_bytes = claim.SerializeToString()
+        envelope = {
+            "message": {
+                "data": base64.b64encode(data_bytes).decode("utf-8"),
+                "attributes": {
+                    "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+                },
+                "messageId": "msg-1",
+            }
+        }
+
+        request = DummyRequest(envelope)
+        response_text, status_code = transcribe_claim_check(request)  # type: ignore
+
+        self.assertEqual(status_code, 200)
+        self.assertIn("transcribed transmission tx-1111", response_text)
+
+        # Verify transcriber was invoked with GCS reference
+        mock_transcriber.transcribe.assert_called_once_with(
+            uri="gs://bucket/normalized.flac",
+            duration_ms=5001,  # (1005 * 1000 + 2) - (1000 * 1000 + 1) = 5001 ms
+        )
+
+        # Verify final egress publishing was called with correctly serialized TranscribedAudio proto
+        mock_publisher.publish.assert_called_once()
+        call_args = mock_publisher.publish.call_args
+        self.assertEqual(call_args.kwargs["ordering_key"], "feed-2222")
+        self.assertEqual(
+            call_args.kwargs["traceparent"],
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        )
+
+        # Deserialize output data passed to publish
+        out_proto = TranscribedAudio()
+        out_proto.ParseFromString(call_args.kwargs["data"])
+        self.assertEqual(out_proto.transcript, "Hello world")
+        self.assertEqual(out_proto.transmission_id, "tx-1111")
+        self.assertEqual(out_proto.feed_name, "Test Feed")
+        self.assertEqual(
+            out_proto.canonical_audio_uri, "gs://bucket/normalized.flac"
+        )
+        self.assertEqual(
+            out_proto.playback_audio_uri, "gs://bucket/normalized.m4a"
+        )

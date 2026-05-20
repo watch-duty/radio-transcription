@@ -18,8 +18,8 @@ from apache_beam.options.pipeline_options import (
     StandardOptions,
 )
 
-from backend.pipeline.transcription.common import coders as trans_coders
-from backend.pipeline.transcription.common.constants import (
+from backend.pipeline.normalization.common import coders as trans_coders
+from backend.pipeline.normalization.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
     DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_MAX_TRANSMISSION_DURATION_MS,
@@ -29,21 +29,21 @@ from backend.pipeline.transcription.common.constants import (
     DEFAULT_STALE_TIMEOUT_MS,
     MAIN_TAG,
 )
-from backend.pipeline.transcription.common.datatypes import (
+from backend.pipeline.normalization.common.datatypes import (
+    NormalizeAudioConfig,
     OrderRestorerConfig,
     StitchAudioConfig,
-    TranscribeAudioConfig,
 )
-from backend.pipeline.transcription.common.logging import get_task_logger
-from backend.pipeline.transcription.options import TranscriptionOptions
-from backend.pipeline.transcription.transforms.stateful import (
+from backend.pipeline.normalization.common.logging import get_task_logger
+from backend.pipeline.normalization.options import TranscriptionOptions
+from backend.pipeline.normalization.transforms.stateful import (
+    NormalizeAudioFn,
     OrderedContinuousStitchAudioFn,
     OrderedSegmentedStitchAudioFn,
-    TranscribeAudioFn,
 )
-from backend.pipeline.transcription.transforms.stateless import (
+from backend.pipeline.normalization.transforms.stateless import (
     ParseAndKeyFn,
-    SerializeFn,
+    SerializeNormalizationClaimFn,
 )
 
 logger = get_task_logger(
@@ -204,12 +204,10 @@ def get_pipeline(
         segmented_stitching.main,
     ) | "FlattenStitching" >> beam.Flatten()
 
-    transcripts = stitching_main | "TranscribeAudio" >> beam.ParDo(
-        TranscribeAudioFn(
-            config=TranscribeAudioConfig(
+    normalized_audio = stitching_main | "NormalizeAudio" >> beam.ParDo(
+        NormalizeAudioFn(
+            config=NormalizeAudioConfig(
                 project_id=pipeline_options.view_as(GoogleCloudOptions).project,
-                transcriber_type=options.transcriber_type,
-                transcriber_config=options.transcriber_config,
                 vad_config=options.vad_config,
                 route_to_dlq=options.route_to_dlq
                 if options.route_to_dlq is not None
@@ -219,9 +217,9 @@ def get_pipeline(
         )
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
 
-    # Convert the native TranscriptionResult into a serialized Protobuf and wrap in a Pub/Sub message
-    serialized = transcripts.main | "Serialize" >> beam.ParDo(
-        SerializeFn()
+    # Convert the native NormalizationResult into a serialized Protobuf and wrap in a Pub/Sub message
+    serialized = normalized_audio.main | "SerializeClaim" >> beam.ParDo(
+        SerializeNormalizationClaimFn()
     ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
     serialized.main | "WriteToPubSub" >> WriteToPubSub(
         topic=options.output_topic,
@@ -231,7 +229,7 @@ def get_pipeline(
     # Route all DLQ (Dead Letter Queue) outputs from intermediate steps to a dedicated topic
     dlq_list.extend(
         [
-            transcripts[DEAD_LETTER_QUEUE_TAG],
+            normalized_audio[DEAD_LETTER_QUEUE_TAG],
             serialized[DEAD_LETTER_QUEUE_TAG],
         ]
     )

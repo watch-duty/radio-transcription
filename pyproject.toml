@@ -33,7 +33,7 @@ dependencies = [
     "uvicorn>=0.27.0",
     "redis>=7.3.0",
     "urllib3>=2.7.0",
-    "transcription-pipeline",
+    "normalization-pipeline",
     "tenacity>=9.1.4",
     "pyjwt>=2.12.0",
     "google-cloud-secret-manager>=2.26.0",
@@ -232,10 +232,10 @@ exclude = ["model/"]
 pythonVersion = "3.13"
 
 [tool.uv.workspace]
-members = ["backend/pipeline/transcription"]
+members = ["backend/pipeline/normalization"]
 
 [tool.uv.sources]
-transcription-pipeline = { workspace = true }
+normalization-pipeline = { workspace = true }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

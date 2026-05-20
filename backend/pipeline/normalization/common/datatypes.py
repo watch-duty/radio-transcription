@@ -8,14 +8,14 @@ from backend.pipeline.common.constants import (
     CHUNK_DURATION_SECONDS,
     MS_PER_SECOND,
 )
-from backend.pipeline.schema_types import (
-    streaming_state as bp_state,
-)
-from backend.pipeline.transcription.common.constants import (
+from backend.pipeline.normalization.common.constants import (
     DEFAULT_BACKFILL_LATENESS_THRESHOLD_MS,
     DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS,
 )
-from backend.pipeline.transcription.common.enums import TranscriberType
+from backend.pipeline.normalization.common.enums import TranscriberType
+from backend.pipeline.schema_types import (
+    streaming_state as bp_state,
+)
 
 TimeRange = bp_state.TimeRangeProto
 BufferedChunk = bp_state.BufferedChunkProto
@@ -46,6 +46,25 @@ class DownloadedChunkPayload:
     gcs_uri: str
     chunk_data: AudioChunkData
     session_id: str
+
+
+@dataclass(frozen=True)
+class NormalizationResult:
+    """Intermediate normalization result holding metadata and audio references, to be published as a Claim-Check payload."""
+
+    feed_id: str
+    session_id: str
+    contributing_audio_uris: list[str]
+    time_range: TimeRange
+    transmission_id: str
+    start_audio_offset_ms: int
+    end_audio_offset_ms: int
+    canonical_audio_uri: str
+    playback_audio_uri: str
+    feed_metadata: FeedMetadata
+    missing_prior_context: bool = False
+    missing_post_context: bool = False
+    traceparent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -133,6 +152,16 @@ class StitchAudioConfig:
         if self.significant_gap_ms >= self.max_transmission_duration_ms:
             msg = "significant_gap_ms must be strictly less than max_transmission_duration_ms"
             raise ValueError(msg)
+
+
+@dataclass(frozen=True)
+class NormalizeAudioConfig:
+    """Groups pipeline-level configurations passed to the NormalizeAudioFn DoFn."""
+
+    project_id: str
+    vad_config: str
+    route_to_dlq: bool = True
+    canonical_audio_bucket: str | None = None
 
 
 @dataclass(frozen=True)

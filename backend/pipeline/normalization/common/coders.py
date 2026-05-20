@@ -5,10 +5,10 @@ from typing import Any
 import apache_beam as beam
 import betterproto
 
+from backend.pipeline.normalization.common import datatypes
 from backend.pipeline.schema_types import (
     streaming_state as bp_state,
 )
-from backend.pipeline.transcription.common import datatypes
 
 
 class TransmissionContextCoder(beam.coders.Coder):

@@ -2,17 +2,17 @@
 
 import heapq
 
-from backend.pipeline.schema_types import (
-    streaming_state as bp_state,
-)
-from backend.pipeline.transcription.common.constants import (
+from backend.pipeline.normalization.common.constants import (
     DEFAULT_FLOAT_TOLERANCE_MS,
 )
-from backend.pipeline.transcription.common.datatypes import (
+from backend.pipeline.normalization.common.datatypes import (
     BufferedChunk,
     OrderRestorerConfig,
 )
-from backend.pipeline.transcription.common.logging import get_task_logger
+from backend.pipeline.normalization.common.logging import get_task_logger
+from backend.pipeline.schema_types import (
+    streaming_state as bp_state,
+)
 
 logger = get_task_logger(
     __name__, {"system": "transcription", "component": "sequence-buffer"}

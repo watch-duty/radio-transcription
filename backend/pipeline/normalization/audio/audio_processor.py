@@ -20,20 +20,20 @@ from backend.pipeline.common.constants import (
     MS_PER_SECOND,
     SAMPLE_RATE_HZ,
 )
-from backend.pipeline.transcription.audio.dsp import (
+from backend.pipeline.normalization.audio.dsp import (
     TorchaudioHannResampler,
 )
-from backend.pipeline.transcription.audio.vad import VoiceActivityDetector
-from backend.pipeline.transcription.common.constants import (
+from backend.pipeline.normalization.audio.vad import VoiceActivityDetector
+from backend.pipeline.normalization.common.constants import (
     HIGHPASS_FILTER_FREQ,
     INT16_MAX_FLOAT,
     LOWPASS_FILTER_FREQ,
 )
-from backend.pipeline.transcription.common.datatypes import (
+from backend.pipeline.normalization.common.datatypes import (
     AudioChunkData,
     TimeRange,
 )
-from backend.pipeline.transcription.common.logging import get_task_logger
+from backend.pipeline.normalization.common.logging import get_task_logger
 
 logger = get_task_logger(
     __name__, {"system": "transcription", "component": "audio-processor"}

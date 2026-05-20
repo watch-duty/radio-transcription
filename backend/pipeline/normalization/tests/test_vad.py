@@ -13,7 +13,7 @@ from typing import Final
 import numpy as np
 import soundfile as sf
 
-from backend.pipeline.transcription.audio import vad
+from backend.pipeline.normalization.audio import vad
 
 SAMPLES_PER_MS: Final = 16
 

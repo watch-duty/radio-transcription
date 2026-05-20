@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from backend.pipeline.transcription.options import TranscriptionOptions
-from backend.pipeline.transcription.orchestration import get_pipeline
+from backend.pipeline.normalization.options import TranscriptionOptions
+from backend.pipeline.normalization.orchestration import get_pipeline
 
 
 def test_pipeline_topology_typehints() -> None:

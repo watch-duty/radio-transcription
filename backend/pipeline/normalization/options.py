@@ -4,14 +4,14 @@ import argparse
 
 from apache_beam.options.pipeline_options import PipelineOptions
 
-from backend.pipeline.transcription.common.constants import (
+from backend.pipeline.normalization.common.constants import (
     DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_MAX_TRANSMISSION_DURATION_MS,
     DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_SIGNIFICANT_GAP_MS,
     DEFAULT_STALE_TIMEOUT_MS,
 )
-from backend.pipeline.transcription.common.enums import (
+from backend.pipeline.normalization.common.enums import (
     TranscriberType,
 )
 

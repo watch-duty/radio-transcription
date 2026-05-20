@@ -16,12 +16,12 @@ from pedalboard import (
     Pedalboard,
 )
 
-from backend.pipeline.transcription.audio.dsp import (
+from backend.pipeline.normalization.audio.dsp import (
     TorchaudioHannResampler,
     custom_numpy_istft,
     custom_numpy_stft,
 )
-from backend.pipeline.transcription.common.constants import (
+from backend.pipeline.normalization.common.constants import (
     VAD_DEFAULT_BLEND_RATIO,
     VAD_DEFAULT_BOOST_FREQ_HZ,
     VAD_DEFAULT_BOOST_GAIN_DB,
@@ -39,7 +39,7 @@ from backend.pipeline.transcription.common.constants import (
     VAD_DEFAULT_THRESHOLD_OFFSET,
     VAD_DEFAULT_THRESHOLD_ONSET,
 )
-from backend.pipeline.transcription.common.logging import get_task_logger
+from backend.pipeline.normalization.common.logging import get_task_logger
 
 logger = get_task_logger(
     __name__, {"system": "transcription", "component": "vad"}

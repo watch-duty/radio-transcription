@@ -3,7 +3,7 @@ from typing import Final
 
 import numpy as np
 
-from backend.pipeline.transcription.common.datatypes import (
+from backend.pipeline.normalization.common.datatypes import (
     AppendBufferAction,
     AudioChunkData,
     DropAction,
@@ -15,7 +15,7 @@ from backend.pipeline.transcription.common.datatypes import (
     TimeRange,
     UpdateStateAction,
 )
-from backend.pipeline.transcription.state.stitcher_state import (
+from backend.pipeline.normalization.state.stitcher_state import (
     AudioStitchingStateMachine,
 )
 

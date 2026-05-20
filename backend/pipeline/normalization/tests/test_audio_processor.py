@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import soundfile as sf
 
-from backend.pipeline.transcription.audio.audio_processor import AudioProcessor
+from backend.pipeline.normalization.audio.audio_processor import AudioProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +25,10 @@ class AudioProcessorTest(unittest.TestCase):
         self.processor = AudioProcessor()
 
     @patch(
-        "backend.pipeline.transcription.audio.audio_processor.get_gcs_client"
+        "backend.pipeline.normalization.audio.audio_processor.get_gcs_client"
     )
     @patch(
-        "backend.pipeline.transcription.audio.audio_processor.get_vad_engine"
+        "backend.pipeline.normalization.audio.audio_processor.get_vad_engine"
     )
     def test_setup_initializes_vad_and_gcs(
         self, mock_get_vad: MagicMock, mock_get_gcs: MagicMock
@@ -51,10 +51,10 @@ class AudioProcessorTest(unittest.TestCase):
             processor.download_audio_and_detect("gs://test/file.flac", 0)
 
     @patch(
-        "backend.pipeline.transcription.audio.audio_processor.get_gcs_client"
+        "backend.pipeline.normalization.audio.audio_processor.get_gcs_client"
     )
     @patch(
-        "backend.pipeline.transcription.audio.audio_processor.get_vad_engine"
+        "backend.pipeline.normalization.audio.audio_processor.get_vad_engine"
     )
     def test_download_audio_and_detect_calculates_duration(
         self, mock_get_vad: MagicMock, mock_get_gcs: MagicMock
@@ -123,10 +123,10 @@ class AudioProcessorTest(unittest.TestCase):
         self.assertIn(b"ftyp", m4a_bytes)
 
     @patch(
-        "backend.pipeline.transcription.audio.audio_processor.get_vad_engine"
+        "backend.pipeline.normalization.audio.audio_processor.get_vad_engine"
     )
     @patch(
-        "backend.pipeline.transcription.audio.audio_processor.get_gcs_client"
+        "backend.pipeline.normalization.audio.audio_processor.get_gcs_client"
     )
     def test_download_audio_not_found(
         self, mock_get_gcs: MagicMock, mock_get_vad: MagicMock
