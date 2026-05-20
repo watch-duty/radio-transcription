@@ -8,6 +8,8 @@ Covers:
 
 import unittest
 
+from common.manifest import load_manifest, merge_predictions_to_manifest
+
 
 class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
     """merge_predictions_to_manifest must raise on unexpected error, never return []."""
@@ -19,8 +21,6 @@ class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
         offset is a non-numeric string.  The function must propagate the
         exception rather than swallowing it and returning [].
         """
-        from common.manifest import merge_predictions_to_manifest
-
         ground_truth = [
             {"audio_filepath": "gs://bucket/clip.flac", "offset": 0.0}
         ]
@@ -40,8 +40,6 @@ class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
 
     def test_does_not_return_empty_list_on_error(self) -> None:
         """Verify the old silent-failure path (return []) is gone."""
-        from common.manifest import merge_predictions_to_manifest
-
         ground_truth = [
             {"audio_filepath": "gs://bucket/clip.flac", "offset": 0.0}
         ]
@@ -72,8 +70,6 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
     """Sanity-check the normal merge path is unaffected by the re-raise change."""
 
     def test_matched_prediction_written_to_gt_row(self) -> None:
-        from common.manifest import merge_predictions_to_manifest
-
         gt = [
             {"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "gold"}
         ]
@@ -91,8 +87,6 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
 
     def test_binds_closest_of_multiple_in_tolerance_candidates(self) -> None:
         """When several predictions are within tolerance, the nearest wins."""
-        from common.manifest import merge_predictions_to_manifest
-
         gt = [
             {"audio_filepath": "gs://b/a.flac", "offset": 1.15, "text": "gold"}
         ]
@@ -114,8 +108,6 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
 
     def test_one_prediction_is_not_assigned_to_two_rows(self) -> None:
         """A single prediction near two rows binds to only the nearer one."""
-        from common.manifest import merge_predictions_to_manifest
-
         # Two GT segments 0.2 s apart; only one prediction survived (the
         # other model output was lost). 1.18 is within 0.25 s of BOTH
         # rows but must bind to exactly one, leaving the other blank so
@@ -135,8 +127,6 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
         self.assertEqual(result[1]["pred_text_whisper"], "only")
 
     def test_unmatched_prediction_leaves_field_absent(self) -> None:
-        from common.manifest import merge_predictions_to_manifest
-
         gt = [
             {"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "gold"}
         ]
@@ -154,8 +144,6 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
 
     def test_returns_same_list_object(self) -> None:
         """Result is the ground_truth list mutated in place."""
-        from common.manifest import merge_predictions_to_manifest
-
         gt = [{"audio_filepath": "gs://b/a.flac", "offset": 0.0, "text": "x"}]
         result = merge_predictions_to_manifest(gt, [], "m")
 
@@ -166,8 +154,6 @@ class TestLoadManifestEmptyReturns(unittest.TestCase):
     """load_manifest still returns [] for bad inputs — these paths are intentional."""
 
     def test_missing_file_returns_empty(self) -> None:
-        from common.manifest import load_manifest
-
         result = load_manifest("./nonexistent_manifest.jsonl")
 
         self.assertEqual(result, [])
@@ -181,8 +167,6 @@ class TestLoadManifestMalformedRows(unittest.TestCase):
         import json
         import os
         import tempfile
-
-        from common.manifest import load_manifest
 
         fd, path = tempfile.mkstemp(suffix=".jsonl")
         try:
@@ -201,8 +185,6 @@ class TestLoadManifestMalformedRows(unittest.TestCase):
         import json
         import os
         import tempfile
-
-        from common.manifest import load_manifest
 
         rows_in = [
             {"audio_filepath": "gs://b/a.flac", "text": 0},
