@@ -40,7 +40,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         )
 
     def do_GET(self) -> None:
-        """Returns the list of received requests or mock calls."""
+        """Returns the list of received requests."""
         self.send_response(200)
         self.send_header("Content-type", "application/json")
         self.end_headers()
