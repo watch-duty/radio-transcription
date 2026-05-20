@@ -1,0 +1,18 @@
+[project]
+name = "transcription-function"
+version = "0.1.0"
+requires-python = ">=3.13, <3.14"
+
+dependencies = [
+    "functions-framework>=3.10.1",
+    "google-cloud-speech>=2.37.0",
+    "google-cloud-pubsub>=2.35.0",
+    "cloudevents>=1.12.0",
+    "protobuf>=5.29.6",
+    "opentelemetry-api>=1.41.1",
+    "opentelemetry-sdk>=1.41.1",
+    "opentelemetry-exporter-gcp-trace>=1.12.0",
+]
+
+[tool.setuptools]
+packages = []
