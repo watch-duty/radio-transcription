@@ -106,6 +106,26 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
 
         self.assertEqual(result[0]["pred_text_whisper"], "closer")
 
+    def test_prediction_with_null_text_does_not_become_literal_none(
+        self,
+    ) -> None:
+        """A prediction whose `text` is None coerces to '' (absent), not 'None'.
+
+        The naive ``str(None)`` is the four-letter word "None", which would
+        otherwise score as a real-looking prediction token against the ground
+        truth. Mirror load_manifest's None-to-empty coercion.
+        """
+        gt = [
+            {"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "gold"}
+        ]
+        preds = [
+            {"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": None}
+        ]
+
+        result = merge_predictions_to_manifest(gt, preds, "m")
+
+        self.assertEqual(result[0]["pred_text_m"], "")
+
     def test_one_prediction_is_not_assigned_to_two_rows(self) -> None:
         """A single prediction near two rows binds to only the nearer one."""
         # Two GT segments 0.2 s apart; only one prediction survived (the

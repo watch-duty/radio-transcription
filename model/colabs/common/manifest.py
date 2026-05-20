@@ -115,7 +115,11 @@ def merge_predictions_to_manifest(
         for pred in predictions:
             audio_fp = str(pred.get("audio_filepath", ""))
             p_offset = float(pred.get("offset", 0.0))
-            p_text = str(pred.get("text", ""))
+            # Mirror load_manifest's coercion: a null prediction text becomes
+            # "" (absent), NOT the literal four-letter word "None" — which
+            # would otherwise inflate WER as a real-looking prediction token.
+            raw_text = pred.get("text")
+            p_text = "" if raw_text is None else str(raw_text)
             pred_index.setdefault(audio_fp, []).append((p_offset, p_text))
 
         # Group ground-truth row indices by audio_filepath so the offset
