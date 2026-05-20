@@ -2958,6 +2958,7 @@ source = { editable = "backend/pipeline/transcription" }
 dependencies = [
     { name = "cloudevents" },
     { name = "functions-framework" },
+    { name = "google-cloud-logging" },
     { name = "google-cloud-pubsub" },
     { name = "google-cloud-speech" },
     { name = "opentelemetry-api" },
@@ -2970,6 +2971,7 @@ dependencies = [
 requires-dist = [
     { name = "cloudevents", specifier = ">=1.12.0" },
     { name = "functions-framework", specifier = ">=3.10.1" },
+    { name = "google-cloud-logging", specifier = ">=3.14.0" },
     { name = "google-cloud-pubsub", specifier = ">=2.35.0" },
     { name = "google-cloud-speech", specifier = ">=2.37.0" },
     { name = "opentelemetry-api", specifier = ">=1.41.1" },
