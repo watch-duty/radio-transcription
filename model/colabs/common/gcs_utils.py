@@ -73,7 +73,7 @@ def download_jsonl_manifest(
     bucket_name, blob_path = parse_gcs_uri(gcs_manifest_uri)
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(blob_path)
-    content = blob.download_as_text().strip()
+    content = blob.download_as_text(retry=DEFAULT_RETRY).strip()
 
     manifest_entries = []
     for line in content.split("\n"):
