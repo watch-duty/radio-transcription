@@ -1,0 +1,13 @@
+# bcfy_calls_eval — same scoring stack as echo_eval, plus the Broadcastify
+# Calls client and Chirp V3 (Speech-to-Text V2) deps for the second model arm.
+google-genai>=0.3.0
+google-cloud-storage>=2.14.0
+google-cloud-speech>=2.27.0
+loguru>=0.7.0
+jiwer>=3.0.0
+nemo_text_processing>=1.0.0
+pandas>=2.0.0
+numpy>=1.24.0
+requests>=2.31.0
+PyJWT>=2.8.0
+pytest>=8.0.0
