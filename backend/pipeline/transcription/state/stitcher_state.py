@@ -525,8 +525,11 @@ class AudioStitchingStateMachine:
                     ctx.missing_prior_context = False
 
                 ctx.transmission_start_time_ms = file_start_ms + global_start_ms
+                # Generous 1.0 second pre-roll strictly for the very first segment
+                # of a new dispatch to capture quiet dispatcher callsigns perfectly!
+                startup_pre_roll_ms = 1000
                 append_start = max(
-                    0, global_start_ms - self.config.vad_pre_roll_ms
+                    0, global_start_ms - startup_pre_roll_ms
                 )
                 ctx.start_audio_offset_ms = append_start
                 ctx.buffer_start_time_ms = file_start_ms + append_start

@@ -101,7 +101,7 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
             any(isinstance(a, AppendBufferAction) for a in actions1)
         )
         self.assertFalse(any(isinstance(a, FlushAction) for a in actions1))
-        self.assertEqual(self.ctx.start_audio_offset_ms, 500)
+        self.assertEqual(self.ctx.start_audio_offset_ms, 0)
         self.assertIn("gs://fake/1.flac", self.ctx.contributing_audio_uris)
 
         # Chunk 2: Arrives at 15.0s, speech from 0.0s to 4.0s.
@@ -221,12 +221,12 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         assert append_action is not None
 
         # Buffer duration ms updated by (global_end_ms + post_roll) - max(0, global_start - pre_roll).
-        # global_end=12000. post_roll=500. global_start=updated to 5000. pre_roll=500.
+        # global_end=12000. post_roll=500. global_start=updated to 5000. pre_roll=1000.
         # append_end = min(15000, 12000 + 500) = 12500.
-        # append_start = max(0, 5000 - 500) = 4500.
-        # Expected append_end - append_start = 12500 - 4500 = 8000ms.
-        # Size is 8000 * 16 = 128000 samples.
-        self.assertEqual(append_action.audio_buffer.size, (8000 * 16))
+        # append_start = max(0, 5000 - 1000) = 4000.
+        # Expected append_end - append_start = 12500 - 4000 = 8500ms.
+        # Size is 8500 * 16 = 136000 samples.
+        self.assertEqual(append_action.audio_buffer.size, (8500 * 16))
 
     def test_contiguous_chunks_are_stitched(self) -> None:
         """Verifies that perfectly contiguous speech segments across chunks are stitched without flushing."""
