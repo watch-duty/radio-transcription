@@ -76,6 +76,30 @@ services:
       - pipeline-network
 
   # ----------- Pipeline Services ----------
+
+  audio-ingestion:
+    build:
+      context: .
+      dockerfile: backend/pipeline/ingestion/Dockerfile
+    env_file:
+      - ./local_dev/LOCAL.env
+    environment:
+      - CONTINUOUS_PUBSUB_TOPIC_PATH=${CONTINUOUS_TOPIC}
+      - SEGMENTED_PUBSUB_TOPIC_PATH=${SEGMENTED_TOPIC}
+    depends_on:
+      pubsub-emulator:
+        condition: service_started
+      pubsub-init:
+        condition: service_completed_successfully
+      gcs-emulator:
+        condition: service_started
+      gcs-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    networks:
+      - pipeline-network
+
   transcription:
     build:
       context: .
@@ -222,6 +246,18 @@ services:
     networks:
       - pipeline-network
 
+  mock-icecast:
+    image: python:3.13-slim
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./local_dev/mock_icecast.py:/app/mock_icecast.py:ro
+      - ./backend/pipeline/transcription/tests/test_data/test_bcfy.flac:/data/test_bcfy.flac:ro
+    working_dir: /app
+    command: python mock_icecast.py
+    networks:
+      - pipeline-network
+
   frontend-api:
     build:
       context: .
@@ -269,6 +305,10 @@ services:
       gcs-emulator:
         condition: service_started
       transcription:
+        condition: service_started
+      audio-ingestion:
+        condition: service_started
+      mock-icecast:
         condition: service_started
     env_file:
       - ./local_dev/LOCAL.env

@@ -865,7 +865,10 @@ class NormalizerRuntime:
                         worker_id,
                         gcs_uri,
                         fencing_token,
-                        captured_chunk.chunk_end_time,
+                        # bcfy_calls supplies the API `ts` resume cursor;
+                        # stream collectors leave it None -> end_ts fallback.
+                        captured_chunk.resume_position
+                        or captured_chunk.chunk_end_time,
                         lease_lost=self._lease_lost,
                         shutdown=self._shutdown,
                         max_retries=settings.bookmark_max_retries,

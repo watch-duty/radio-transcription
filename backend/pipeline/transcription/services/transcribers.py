@@ -23,6 +23,7 @@ from backend.pipeline.transcription.common.constants import (
     DEFAULT_MAX_RETRIES,
     DEFAULT_PHRASE_HINTS_FILE_PATH,
     DEFAULT_RETRY_MAX_SECONDS,
+    MAX_SYNCHRONOUS_TRANSCRIPTION_DURATION_MS,
 )
 from backend.pipeline.transcription.common.enums import TranscriberType
 from backend.pipeline.transcription.common.logging import get_task_logger
@@ -168,7 +169,7 @@ class GoogleChirpV3Transcriber(Transcriber):
             msg = "Transcriber client used before setup() was called."
             raise RuntimeError(msg)
 
-        if duration_ms > 60000:
+        if duration_ms > MAX_SYNCHRONOUS_TRANSCRIPTION_DURATION_MS:
             msg = f"Audio payload too long for synchronous API: {duration_ms / 1000:.2f}s"
             raise ValueError(msg)
 
