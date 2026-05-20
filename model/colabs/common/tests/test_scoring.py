@@ -69,6 +69,34 @@ class TestBuildNormalizerGolden(unittest.TestCase):
         result2 = self.normalizer(text)
         self.assertEqual(result1, result2)
 
+    def test_splits_multi_digit_numbers_per_digit(self) -> None:
+        """Multi-digit numbers ('41') split into single-digit tokens ('4 1')."""
+        # Per GOO-424 / #461: radio dispatch numbers (engine, batt, codes)
+        # are scored per digit so "41" vs "4 1" are equivalent transcripts.
+        result = self.normalizer("engine 41 copy")
+        tokens = result.split()
+        self.assertNotIn("41", tokens)
+        self.assertIn("4", tokens)
+        self.assertIn("1", tokens)
+
+    def test_inverse_normalizes_spelled_numbers_to_digits(self) -> None:
+        """NeMo ITN converts spelled numbers to digits: 'forty one' -> '4 1'."""
+        result = self.normalizer("engine forty one copy")
+        tokens = result.split()
+        self.assertNotIn("forty", tokens)
+        self.assertNotIn("one", tokens)
+        self.assertIn("4", tokens)
+        self.assertIn("1", tokens)
+
+    def test_small_number_words_fall_back_to_manual_map(self) -> None:
+        """Small spelled numbers (one-ten) map to digits via manual fallback."""
+        # Manual fallback is the safety net for tokens NeMo ITN leaves alone.
+        result = self.normalizer("count one two three")
+        tokens = result.split()
+        self.assertIn("1", tokens)
+        self.assertIn("2", tokens)
+        self.assertIn("3", tokens)
+
 
 @_scoring_required
 class TestComputeWerPolicies(unittest.TestCase):

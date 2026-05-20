@@ -24,16 +24,16 @@ logger = logging.getLogger(__name__)
 # never triggers NeMo when [scoring] is not installed.
 try:
     import jiwer
-    from nemo_text_processing.text_normalization.normalize import (
-        Normalizer as NemoNormalizer,
+    from nemo_text_processing.inverse_text_normalization.inverse_normalize import (
+        InverseNormalizer as NemoInverseNormalizer,
     )
 except ImportError as _e:
     _SCORING_MISSING = _e
 else:
     _SCORING_MISSING = None
 
-# Module-level NeMo normalizer instance (lazy-initialized on first use, 30-60s).
-_nemo_normalizer: "NemoNormalizer | None" = None
+# Module-level NeMo inverse normalizer (lazy-initialized on first use, 30-60s).
+_nemo_inverse_normalizer: "NemoInverseNormalizer | None" = None
 
 
 def _require_scoring() -> None:
@@ -44,30 +44,39 @@ def _require_scoring() -> None:
         ) from _SCORING_MISSING
 
 
-def _get_nemo_normalizer() -> "NemoNormalizer":
-    """Lazy-initialize the NeMo normalizer (30-60s first call; cached thereafter).
+def _get_nemo_inverse_normalizer() -> "NemoInverseNormalizer":
+    """Lazy-initialize the NeMo inverse normalizer (30-60s first call; cached).
 
     Returns:
-        Cached NemoNormalizer instance initialized with cased English input.
+        Cached NemoInverseNormalizer (English) instance.
     """
-    global _nemo_normalizer
-    if _nemo_normalizer is None:
-        _nemo_normalizer = NemoNormalizer(input_case="cased", lang="en")
-    return _nemo_normalizer
+    global _nemo_inverse_normalizer
+    if _nemo_inverse_normalizer is None:
+        logger.warning(
+            "Loading NeMo text normalizer (first use only; takes 30-60 "
+            "seconds — this is not a hung kernel; cached for subsequent "
+            "calls)."
+        )
+        _nemo_inverse_normalizer = NemoInverseNormalizer(lang="en")
+    return _nemo_inverse_normalizer
 
 
 def build_normalizer() -> "jiwer.Compose":
-    """Build the dispatch-domain ASR normalization pipeline (NeMo + dispatch quirks).
+    """Build the dispatch-domain ASR normalization pipeline.
 
-    Ported faithfully from evaluate_transcriptions.ipynb cells 2/3/8. Behavior is
-    pinned by the golden tests. Do NOT improve or change this logic
-    without updating the golden tests — the WER baseline is defined by this pipeline.
+    Per GOO-424 (#461): uses NeMo INVERSE normalization (words → digits)
+    plus a manual small-number fallback and per-digit splitting, so
+    number-heavy radio dispatch is scored at single-digit granularity —
+    "engine forty one" and "engine 41" both normalize to "engine 4 1".
+    Behavior is pinned by the golden tests in tests/test_scoring.py — do
+    NOT change this logic without updating those goldens.
 
     The pipeline applies, in order:
-      1. NormalizeDispatchQuirks — hallucination placeholder, filler stripping, hyphens
-      2. NemoNormalization — NeMo WFST text normalizer (numbers → words, abbreviations)
-      3. SubstituteRegexes — collapse newlines/tabs to spaces
-      4. ToLowerCase
+      1. PreProcessCleanups — hallucination placeholder + filler stripping
+      2. NumericStandardizer — NeMo ITN + manual small-number fallback
+         + format-character cleanup + per-digit split
+      3. ToLowerCase
+      4. SubstituteRegexes — collapse newlines/tabs to spaces
       5. RemovePunctuation
       6. RemoveWhiteSpace (replace by space)
       7. RemoveMultipleSpaces
@@ -85,33 +94,51 @@ def build_normalizer() -> "jiwer.Compose":
     # even without [scoring] installed — jiwer.AbstractTransform would be
     # undefined at class-definition time if the try-except above caught an ImportError.
 
-    class NemoNormalization(jiwer.AbstractTransform):
-        """Apply NeMo WFST text normalization (verbatim from evaluate_transcriptions.ipynb cell 8)."""
+    class PreProcessCleanups(jiwer.AbstractTransform):
+        """Hallucination placeholder + filler stripping, before digit handling."""
 
         def process_string(self, s: str) -> str:
-            return _get_nemo_normalizer().normalize(s, verbose=False)
-
-    class NormalizeDispatchQuirks(jiwer.AbstractTransform):
-        """Apply dispatch-domain quirk normalization (verbatim from evaluate_transcriptions.ipynb cell 8).
-
-        Replaces long digit strings (10+ digits) with a hallucination placeholder,
-        strips filler words (uh/um/ah/er), and turns hyphens into spaces.
-        """
-
-        def process_string(self, s: str) -> str:
-            # Replace long digit strings (10+ digits) with a hallucination placeholder
+            # Hallucination placeholder for runaway digit strings (10+ digits)
             s = re.sub(r"\d{10,}", " [hallucination] ", s)
             # Strip fillers so models aren't penalized for readability
-            s = re.sub(r"\b(uh|um|ah|er)\b", "", s, flags=re.IGNORECASE)
-            # Turn hyphens into spaces
-            return s.replace("-", " ")
+            return re.sub(r"\b(uh|um|ah|er|uhh)\b", "", s, flags=re.IGNORECASE)
+
+    class NumericStandardizer(jiwer.AbstractTransform):
+        """Inverse-normalize numbers (words → digits) and split per digit."""
+
+        # Manual fallback for small number words NeMo ITN can miss.
+        _SMALL_NUMBER_MAP = {
+            "one": "1",
+            "two": "2",
+            "three": "3",
+            "four": "4",
+            "five": "5",
+            "six": "6",
+            "seven": "7",
+            "eight": "8",
+            "nine": "9",
+            "ten": "10",
+        }
+
+        def process_string(self, s: str) -> str:
+            # 1. NeMo ITN on natural text first
+            s = _get_nemo_inverse_normalizer().inverse_normalize(
+                s, verbose=False
+            )
+            # 2. Manual fallback for small number words missed by NeMo
+            for word, digit in self._SMALL_NUMBER_MAP.items():
+                s = re.sub(rf"\b{word}\b", digit, s, flags=re.IGNORECASE)
+            # 3. Remove formatting characters that produce spurious WER errors
+            s = re.sub(r"[:\-,\$]", " ", s)
+            # 4. Split remaining digits into single-digit tokens
+            return re.sub(r"(\d)", r" \1 ", s)
 
     return jiwer.Compose(
         [
-            NormalizeDispatchQuirks(),
-            NemoNormalization(),
-            jiwer.SubstituteRegexes({r"[\n\r\t]+": " "}),
+            PreProcessCleanups(),
+            NumericStandardizer(),
             jiwer.ToLowerCase(),
+            jiwer.SubstituteRegexes({r"[\n\r\t]+": " "}),
             jiwer.RemovePunctuation(),
             jiwer.RemoveWhiteSpace(replace_by_space=True),
             jiwer.RemoveMultipleSpaces(),
