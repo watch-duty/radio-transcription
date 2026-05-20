@@ -25,8 +25,6 @@ vi.mock('../common/DateTimePicker', () => ({
 }));
 
 describe('TranscriptActionsBar', () => {
-  const mockSetRefreshInterval = vi.fn();
-  const mockOnRefresh = vi.fn();
   const mockSetRedactTranscripts = vi.fn();
 
   beforeEach(() => {
@@ -42,97 +40,16 @@ describe('TranscriptActionsBar', () => {
     cleanup();
   });
 
-  it('displays the manual refresh option conditionally', () => {
-    const mockRefresh = vi.fn().mockResolvedValue(undefined);
-
-    render(
-      <TranscriptActionsBar
-        searchedTimestamp={null}
-        hasNewerTranscripts={false}
-        isTranscriptsFetching={false}
-        isTranscriptsPolling={false}
-        refreshInterval={10000}
-        setRefreshInterval={mockSetRefreshInterval}
-        onRefresh={mockRefresh}
-        redactTranscripts={false}
-        setRedactTranscripts={mockSetRedactTranscripts}
-        dateTime={null}
-        setDateTime={vi.fn()}
-      />
-    );
-
-    const refreshButton = screen.getByRole('button', {
-      name: 'refresh',
-    });
-    expect(refreshButton).toBeTruthy();
-
-    fireEvent.click(refreshButton);
-    expect(mockRefresh).toHaveBeenCalledTimes(1);
-  });
-
-  it('hides manual refresh button when newer transcripts exist', () => {
-    render(
-      <TranscriptActionsBar
-        searchedTimestamp={null}
-        hasNewerTranscripts={true}
-        isTranscriptsFetching={false}
-        isTranscriptsPolling={false}
-        refreshInterval={10000}
-        setRefreshInterval={mockSetRefreshInterval}
-        onRefresh={mockOnRefresh}
-        redactTranscripts={false}
-        setRedactTranscripts={mockSetRedactTranscripts}
-        dateTime={null}
-        setDateTime={vi.fn()}
-      />
-    );
-
-    expect(screen.queryByRole('button', { name: 'refresh' })).toBeNull();
-  });
-
-  it('displays refresh interval options and handles change', () => {
-    render(
-      <TranscriptActionsBar
-        searchedTimestamp={null}
-        hasNewerTranscripts={false}
-        isTranscriptsFetching={false}
-        isTranscriptsPolling={false}
-        refreshInterval={10000}
-        setRefreshInterval={mockSetRefreshInterval}
-        onRefresh={mockOnRefresh}
-        redactTranscripts={false}
-        setRedactTranscripts={mockSetRedactTranscripts}
-        dateTime={null}
-        setDateTime={vi.fn()}
-      />
-    );
-
-    const intervalButton = screen.getByLabelText('select refresh interval');
-    expect(intervalButton.textContent).toBe('10s');
-
-    fireEvent.click(intervalButton);
-
-    const option5s = screen.getByText('5s');
-    expect(option5s).toBeTruthy();
-    fireEvent.click(option5s);
-
-    expect(mockSetRefreshInterval).toHaveBeenCalledWith(5000);
-  });
-
   it('renders the redact switch and toggles state when changed', () => {
     render(
       <TranscriptActionsBar
         searchedTimestamp={null}
         hasNewerTranscripts={false}
-        isTranscriptsFetching={false}
-        isTranscriptsPolling={false}
-        refreshInterval={10000}
-        setRefreshInterval={mockSetRefreshInterval}
-        onRefresh={mockOnRefresh}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
         dateTime={null}
         setDateTime={vi.fn()}
+        onViewLatestClick={vi.fn()}
       />
     );
 
@@ -152,15 +69,11 @@ describe('TranscriptActionsBar', () => {
       <TranscriptActionsBar
         searchedTimestamp={null}
         hasNewerTranscripts={false}
-        isTranscriptsFetching={false}
-        isTranscriptsPolling={false}
-        refreshInterval={10000}
-        setRefreshInterval={mockSetRefreshInterval}
-        onRefresh={mockOnRefresh}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
         dateTime={new Date('2026-05-14T12:00:00Z')}
         setDateTime={mockSetDateTime}
+        onViewLatestClick={vi.fn()}
       />
     );
 
@@ -185,15 +98,11 @@ describe('TranscriptActionsBar', () => {
       <TranscriptActionsBar
         searchedTimestamp={null}
         hasNewerTranscripts={false}
-        isTranscriptsFetching={false}
-        isTranscriptsPolling={false}
-        refreshInterval={10000}
-        setRefreshInterval={mockSetRefreshInterval}
-        onRefresh={mockOnRefresh}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
         dateTime={new Date('2026-05-14T12:00:00Z')}
         setDateTime={mockSetDateTime}
+        onViewLatestClick={vi.fn()}
       />
     );
 
@@ -224,15 +133,11 @@ describe('TranscriptActionsBar', () => {
       <TranscriptActionsBar
         searchedTimestamp={null}
         hasNewerTranscripts={false}
-        isTranscriptsFetching={false}
-        isTranscriptsPolling={false}
-        refreshInterval={10000}
-        setRefreshInterval={mockSetRefreshInterval}
-        onRefresh={mockOnRefresh}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
         dateTime={null}
         setDateTime={mockSetDateTime}
+        onViewLatestClick={vi.fn()}
       />
     );
 
@@ -258,15 +163,11 @@ describe('TranscriptActionsBar', () => {
       <TranscriptActionsBar
         searchedTimestamp={null}
         hasNewerTranscripts={false}
-        isTranscriptsFetching={false}
-        isTranscriptsPolling={false}
-        refreshInterval={10000}
-        setRefreshInterval={mockSetRefreshInterval}
-        onRefresh={mockOnRefresh}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
         dateTime={new Date('2026-05-14T12:00:00.000Z')}
         setDateTime={mockSetDateTime}
+        onViewLatestClick={vi.fn()}
       />
     );
 
@@ -275,5 +176,45 @@ describe('TranscriptActionsBar', () => {
 
     fireEvent.click(deleteIcon);
     expect(mockSetDateTime).toHaveBeenLastCalledWith(null);
+  });
+
+  it('renders "Jump to latest" button when hasNewerTranscripts is true and calls onViewLatestClick when clicked', () => {
+    const mockOnViewLatestClick = vi.fn();
+    render(
+      <TranscriptActionsBar
+        searchedTimestamp={null}
+        hasNewerTranscripts={true}
+        redactTranscripts={false}
+        setRedactTranscripts={mockSetRedactTranscripts}
+        dateTime={null}
+        setDateTime={vi.fn()}
+        onViewLatestClick={mockOnViewLatestClick}
+      />
+    );
+
+    const button = screen.getByRole('button', { name: /Jump to latest/i });
+    expect(button).toBeTruthy();
+    expect(button).not.toBeDisabled();
+
+    fireEvent.click(button);
+    expect(mockOnViewLatestClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders disabled "Viewing latest" button when hasNewerTranscripts is false', () => {
+    render(
+      <TranscriptActionsBar
+        searchedTimestamp={null}
+        hasNewerTranscripts={false}
+        redactTranscripts={false}
+        setRedactTranscripts={mockSetRedactTranscripts}
+        dateTime={null}
+        setDateTime={vi.fn()}
+        onViewLatestClick={vi.fn()}
+      />
+    );
+
+    const button = screen.getByRole('button', { name: /Viewing latest/i });
+    expect(button).toBeTruthy();
+    expect(button).toBeDisabled();
   });
 });

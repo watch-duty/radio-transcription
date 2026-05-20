@@ -4,7 +4,7 @@ import { VirtuosoMockContext } from 'react-virtuoso';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import type { Transcript } from '@transcription/common';
 
 import { TranscriptDisplay } from './TranscriptDisplay';
@@ -69,7 +69,8 @@ describe('TranscriptDisplay', () => {
             highlightedTransmissionId={null}
             redactTranscripts={false}
             onRowClick={vi.fn()}
-            onViewLatestClick={vi.fn()}
+            isTranscriptsPolling={false}
+            transcriptsDataUpdatedAt={null}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>
@@ -107,7 +108,8 @@ describe('TranscriptDisplay', () => {
             highlightedTransmissionId={null}
             redactTranscripts={false}
             onRowClick={vi.fn()}
-            onViewLatestClick={vi.fn()}
+            isTranscriptsPolling={false}
+            transcriptsDataUpdatedAt={null}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>
@@ -145,7 +147,8 @@ describe('TranscriptDisplay', () => {
             highlightedTransmissionId={null}
             redactTranscripts={false}
             onRowClick={vi.fn()}
-            onViewLatestClick={vi.fn()}
+            isTranscriptsPolling={false}
+            transcriptsDataUpdatedAt={null}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>
@@ -183,7 +186,8 @@ describe('TranscriptDisplay', () => {
             highlightedTransmissionId={null}
             redactTranscripts={false}
             onRowClick={vi.fn()}
-            onViewLatestClick={vi.fn()}
+            isTranscriptsPolling={false}
+            transcriptsDataUpdatedAt={null}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>
@@ -192,9 +196,128 @@ describe('TranscriptDisplay', () => {
     expect(screen.getByText('No more transcripts found')).toBeTruthy();
   });
 
-  it('renders the "View latest" button when hasNewerTranscripts is true, and calls onViewLatestClick when clicked', () => {
-    const mockOnViewLatestClick = vi.fn();
+  it('renders "Last refresh" time with correct relative format when hasNewerTranscripts is false and transcriptsDataUpdatedAt is provided', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const fixedNow = new Date('2026-04-10T12:05:00Z');
+    vi.setSystemTime(fixedNow);
 
+    const testTimestamp = new Date('2026-04-10T12:00:00Z').getTime();
+    render(
+      <VirtuosoMockContext.Provider
+        value={{ viewportHeight: 1000, itemHeight: 100 }}
+      >
+        <MemoryRouter>
+          <TranscriptDisplay
+            transcripts={mockTranscripts}
+            groupCounts={[1]}
+            groupTitles={['Friday, April 10, 2026']}
+            setIsViewAtTopOfTranscripts={vi.fn()}
+            hasNewerTranscripts={false}
+            isFetchingNewerTranscripts={false}
+            fetchNewerTranscripts={vi.fn()}
+            isTranscriptsFetching={false}
+            hasOlderTranscripts={false}
+            isFetchingOlderTranscripts={false}
+            fetchOlderTranscripts={vi.fn()}
+            triggerSnackbar={vi.fn()}
+            ruleIdToNameMap={new Map()}
+            rulesLoading={false}
+            onToggleAudio={vi.fn()}
+            isAudioPlaying={false}
+            currentlyPlayingTransmissionId={null}
+            highlightedTransmissionId={null}
+            redactTranscripts={false}
+            onRowClick={vi.fn()}
+            isTranscriptsPolling={false}
+            transcriptsDataUpdatedAt={testTimestamp}
+          />
+        </MemoryRouter>
+      </VirtuosoMockContext.Provider>
+    );
+
+    expect(screen.getByText(/Last refresh:/i)).toBeTruthy();
+    expect(screen.getByText('5 minutes ago')).toBeTruthy();
+
+    vi.useRealTimers();
+  });
+
+  it('renders a loader/spinner instead of relative time when isTranscriptsPolling is true', () => {
+    const testTimestamp = new Date('2026-04-10T12:00:00Z').getTime();
+    render(
+      <VirtuosoMockContext.Provider
+        value={{ viewportHeight: 1000, itemHeight: 100 }}
+      >
+        <MemoryRouter>
+          <TranscriptDisplay
+            transcripts={mockTranscripts}
+            groupCounts={[1]}
+            groupTitles={['Friday, April 10, 2026']}
+            setIsViewAtTopOfTranscripts={vi.fn()}
+            hasNewerTranscripts={false}
+            isFetchingNewerTranscripts={false}
+            fetchNewerTranscripts={vi.fn()}
+            isTranscriptsFetching={false}
+            hasOlderTranscripts={false}
+            isFetchingOlderTranscripts={false}
+            fetchOlderTranscripts={vi.fn()}
+            triggerSnackbar={vi.fn()}
+            ruleIdToNameMap={new Map()}
+            rulesLoading={false}
+            onToggleAudio={vi.fn()}
+            isAudioPlaying={false}
+            currentlyPlayingTransmissionId={null}
+            highlightedTransmissionId={null}
+            redactTranscripts={false}
+            onRowClick={vi.fn()}
+            isTranscriptsPolling={true}
+            transcriptsDataUpdatedAt={testTimestamp}
+          />
+        </MemoryRouter>
+      </VirtuosoMockContext.Provider>
+    );
+
+    expect(screen.getByText(/Last refresh:/i)).toBeTruthy();
+    expect(screen.getByRole('progressbar')).toBeTruthy();
+  });
+
+  it('does not render "Last refresh" when transcriptsDataUpdatedAt is null', () => {
+    render(
+      <VirtuosoMockContext.Provider
+        value={{ viewportHeight: 1000, itemHeight: 100 }}
+      >
+        <MemoryRouter>
+          <TranscriptDisplay
+            transcripts={mockTranscripts}
+            groupCounts={[1]}
+            groupTitles={['Friday, April 10, 2026']}
+            setIsViewAtTopOfTranscripts={vi.fn()}
+            hasNewerTranscripts={false}
+            isFetchingNewerTranscripts={false}
+            fetchNewerTranscripts={vi.fn()}
+            isTranscriptsFetching={false}
+            hasOlderTranscripts={false}
+            isFetchingOlderTranscripts={false}
+            fetchOlderTranscripts={vi.fn()}
+            triggerSnackbar={vi.fn()}
+            ruleIdToNameMap={new Map()}
+            rulesLoading={false}
+            onToggleAudio={vi.fn()}
+            isAudioPlaying={false}
+            currentlyPlayingTransmissionId={null}
+            highlightedTransmissionId={null}
+            redactTranscripts={false}
+            onRowClick={vi.fn()}
+            isTranscriptsPolling={false}
+            transcriptsDataUpdatedAt={null}
+          />
+        </MemoryRouter>
+      </VirtuosoMockContext.Provider>
+    );
+
+    expect(screen.queryByText(/Last refresh:/i)).toBeNull();
+  });
+
+  it('renders "Refresh disabled while viewing historical data" when hasNewerTranscripts is true', () => {
     render(
       <VirtuosoMockContext.Provider
         value={{ viewportHeight: 1000, itemHeight: 100 }}
@@ -221,18 +344,15 @@ describe('TranscriptDisplay', () => {
             highlightedTransmissionId={null}
             redactTranscripts={false}
             onRowClick={vi.fn()}
-            onViewLatestClick={mockOnViewLatestClick}
+            isTranscriptsPolling={false}
+            transcriptsDataUpdatedAt={null}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>
     );
 
-    const viewLatestButton = screen.getByRole('button', {
-      name: /View latest/i,
-    });
-    expect(viewLatestButton).toBeTruthy();
-
-    fireEvent.click(viewLatestButton);
-    expect(mockOnViewLatestClick).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getByText(/Refresh disabled while viewing historical data/i)
+    ).toBeTruthy();
   });
 });

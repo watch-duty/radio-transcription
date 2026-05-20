@@ -98,8 +98,6 @@ export function TranscriptView({
     }
   }, [targetTimestamp]);
 
-  const [transcriptsPollingIntervalMs, setTranscriptsPollingIntervalMs] =
-    useState(DEFAULT_REFRESH_INTERVAL);
   const [redactTranscripts, setRedactTranscripts] = useState(false);
 
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
@@ -257,6 +255,7 @@ export function TranscriptView({
     isLoading: isTranscriptsInitialLoading, // isLoading is the first load, which we use to show the main loading spinner
     isFetching: isTranscriptsFetching, // isFetching is any load, which we use to show that we're loading additional data
     isSuccess: isTranscriptsSuccess,
+    dataUpdatedAt: transcriptsDataUpdatedAt,
   } = useInfiniteQuery<
     ListTranscriptsData,
     Error,
@@ -510,8 +509,7 @@ export function TranscriptView({
       // Skip polling if there are older historical pages ahead of us to load.
       hasNewerTranscripts ||
       !newestTimestamp ||
-      !searchedFeedId ||
-      transcriptsPollingIntervalMs <= 0
+      !searchedFeedId
     ) {
       return;
     }
@@ -554,7 +552,7 @@ export function TranscriptView({
       } finally {
         setIsTranscriptsPolling(false);
       }
-    }, transcriptsPollingIntervalMs);
+    }, DEFAULT_REFRESH_INTERVAL);
 
     return () => clearInterval(interval);
   }, [
@@ -564,7 +562,6 @@ export function TranscriptView({
     searchedFeedId,
     pollNewerTranscripts,
     updateCacheWithNewTranscripts,
-    transcriptsPollingIntervalMs,
     triggerSnackbar,
     toggleAudio,
     isAudioPlaying,
@@ -655,22 +652,6 @@ export function TranscriptView({
   const handleRowClick = (transmissionId: string) => {
     setHighlightedTransmissionId(transmissionId);
   };
-
-  const handleManualRefresh = useCallback(async () => {
-    setIsTranscriptsPolling(true);
-    try {
-      const newTranscripts = await pollNewerTranscripts();
-      if (newTranscripts.length > 0) {
-        updateCacheWithNewTranscripts(newTranscripts);
-      } else {
-        triggerSnackbar('No newer transcripts found');
-      }
-    } catch (error) {
-      console.error('Manual refresh error:', error);
-    } finally {
-      setIsTranscriptsPolling(false);
-    }
-  }, [pollNewerTranscripts, updateCacheWithNewTranscripts, triggerSnackbar]);
 
   const handleFilterByDateTime = (date: Date | null) => {
     setSearchedTimestamp(date);
@@ -784,15 +765,11 @@ export function TranscriptView({
         <TranscriptActionsBar
           searchedTimestamp={searchedTimestamp}
           hasNewerTranscripts={hasNewerTranscripts}
-          isTranscriptsFetching={isTranscriptsFetching}
-          isTranscriptsPolling={isTranscriptsPolling}
-          refreshInterval={transcriptsPollingIntervalMs}
-          setRefreshInterval={setTranscriptsPollingIntervalMs}
-          onRefresh={handleManualRefresh}
           redactTranscripts={redactTranscripts}
           setRedactTranscripts={setRedactTranscripts}
           dateTime={searchedTimestamp}
           setDateTime={handleFilterByDateTime}
+          onViewLatestClick={() => handleFilterByDateTime(null)}
         />
         {transcripts.length > 0 ? (
           <TranscriptDisplay
@@ -805,9 +782,13 @@ export function TranscriptView({
             isFetchingNewerTranscripts={isFetchingNewerTranscripts}
             fetchNewerTranscripts={fetchNewerTranscripts}
             isTranscriptsFetching={isTranscriptsFetching}
+            isTranscriptsPolling={isTranscriptsPolling}
             hasOlderTranscripts={hasOlderTranscripts}
             isFetchingOlderTranscripts={isFetchingOlderTranscripts}
             fetchOlderTranscripts={fetchOlderTranscripts}
+            transcriptsDataUpdatedAt={
+              transcriptsDataUpdatedAt > 0 ? transcriptsDataUpdatedAt : null
+            }
             triggerSnackbar={triggerSnackbar}
             ruleIdToNameMap={ruleIdToNameMap}
             rulesLoading={rulesLoading}
@@ -817,7 +798,6 @@ export function TranscriptView({
             highlightedTransmissionId={highlightedTransmissionId}
             redactTranscripts={redactTranscripts}
             onRowClick={handleRowClick}
-            onViewLatestClick={() => handleFilterByDateTime(null)}
           />
         ) : feedsFetching || isTranscriptsInitialLoading ? (
           <Box

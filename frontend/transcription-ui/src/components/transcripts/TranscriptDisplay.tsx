@@ -14,6 +14,7 @@ import type {
 } from '@tanstack/react-query';
 import type { Transcript } from '@transcription/common';
 
+import { getRelativeTimeString } from '../../utils/timeUtils';
 import TranscriptRow from './TranscriptRow';
 import type { ListTranscriptsData } from './TranscriptView';
 
@@ -29,11 +30,13 @@ export interface TranscriptDisplayProps {
     InfiniteQueryObserverResult<InfiniteData<ListTranscriptsData>, Error>
   >;
   isTranscriptsFetching: boolean;
+  isTranscriptsPolling: boolean;
   hasOlderTranscripts: boolean;
   isFetchingOlderTranscripts: boolean;
   fetchOlderTranscripts: () => Promise<
     InfiniteQueryObserverResult<InfiniteData<ListTranscriptsData>, Error>
   >;
+  transcriptsDataUpdatedAt: number | null;
   triggerSnackbar: (message: string) => void;
   ruleIdToNameMap: Map<string, string>;
   rulesLoading: boolean;
@@ -43,7 +46,6 @@ export interface TranscriptDisplayProps {
   highlightedTransmissionId: string | null;
   redactTranscripts: boolean;
   onRowClick: (transmissionId: string) => void;
-  onViewLatestClick: () => void;
 }
 
 export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
@@ -59,6 +61,8 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
   hasOlderTranscripts,
   isFetchingOlderTranscripts,
   fetchOlderTranscripts,
+  isTranscriptsPolling,
+  transcriptsDataUpdatedAt,
   triggerSnackbar,
   ruleIdToNameMap,
   rulesLoading,
@@ -68,7 +72,6 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
   highlightedTransmissionId,
   redactTranscripts,
   onRowClick,
-  onViewLatestClick,
 }) => {
   return (
     <Paper
@@ -104,6 +107,8 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
                   py: 0.5,
                   px: 2,
                   bgcolor: 'action.hover',
+                  display: 'flex',
+                  gap: 1,
                 }}
               >
                 <Typography
@@ -113,6 +118,48 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
                 >
                   {title}
                 </Typography>
+                {!hasNewerTranscripts ? (
+                  <>
+                    {transcriptsDataUpdatedAt && (
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 0.5,
+                        }}
+                      >
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ whiteSpace: 'nowrap' }}
+                        >
+                          Last refresh:
+                        </Typography>
+                        {isTranscriptsPolling ? (
+                          <CircularProgress size={12} />
+                        ) : (
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{ whiteSpace: 'nowrap' }}
+                          >
+                            {getRelativeTimeString(
+                              new Date(transcriptsDataUpdatedAt).toISOString()
+                            )}
+                          </Typography>
+                        )}
+                      </Box>
+                    )}
+                  </>
+                ) : (
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ whiteSpace: 'nowrap' }}
+                  >
+                    Refresh disabled while viewing historical data
+                  </Typography>
+                )}
               </Box>
             </ListItem>
           );
@@ -176,13 +223,6 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
                     Load newer transcripts
                   </Button>
                 )}
-                <Button
-                  variant="contained"
-                  sx={{ textTransform: 'none' }}
-                  onClick={onViewLatestClick}
-                >
-                  View latest
-                </Button>
               </Box>
             ) : null,
           Footer: () => {
