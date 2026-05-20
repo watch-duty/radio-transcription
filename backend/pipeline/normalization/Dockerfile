@@ -1,6 +1,6 @@
 # Use Apache Beam Python SDK as the base image
 # IMPORTANT: When updating the version tag here, you must also update the
-# apache-beam dependency version in backend/pipeline/transcription/pyproject.toml.
+# apache-beam dependency version in backend/pipeline/normalization/pyproject.toml.
 FROM apache/beam_python3.13_sdk:2.73.0
 
 
@@ -22,7 +22,7 @@ WORKDIR /app
 
 # Copy lockfiles and manifests
 COPY pyproject.toml uv.lock ./
-COPY backend/pipeline/transcription/pyproject.toml ./backend/pipeline/transcription/pyproject.toml
+COPY backend/pipeline/normalization/pyproject.toml ./backend/pipeline/normalization/pyproject.toml
 
 # Set environment variables for uv to use system python
 ENV UV_PROJECT_ENVIRONMENT="/usr/local/"
@@ -31,10 +31,10 @@ ENV UV_COMPILE_BYTECODE=1
 ENV UV_NO_CACHE=1
 
 # Install dependencies using uv sync directly into system python
-RUN uv sync --frozen --no-dev --no-install-workspace --package transcription-pipeline && \
+RUN uv sync --frozen --no-dev --no-install-workspace --package normalization-pipeline && \
     uv pip install grpcio-tools
 
-ENV FLEX_TEMPLATE_PYTHON_PY_FILE="/app/backend/pipeline/transcription/main.py"
+ENV FLEX_TEMPLATE_PYTHON_PY_FILE="/app/backend/pipeline/normalization/main.py"
 ENV PYTHONPATH="/app"
 ENV PYTHONUNBUFFERED=1
 
@@ -52,7 +52,7 @@ RUN mkdir -p ./backend/pipeline/schema_types && \
     rm -rf .betterproto_out
 
 # Copy and set the entrypoint script
-COPY backend/pipeline/transcription/entrypoint.sh /opt/google/dataflow/entrypoint.sh
+COPY backend/pipeline/normalization/entrypoint.sh /opt/google/dataflow/entrypoint.sh
 RUN chmod +x /opt/google/dataflow/entrypoint.sh
 
 ENTRYPOINT ["/opt/google/dataflow/entrypoint.sh"]
