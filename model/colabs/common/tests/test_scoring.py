@@ -260,6 +260,12 @@ class TestBootstrapPaired(unittest.TestCase):
         with self.assertRaises(ValueError):
             bootstrap_paired(["a"], ["a"], ["a"], n_resamples=0)
 
+    def test_non_int_n_resamples_raises_valueerror(self) -> None:
+        """The docstring promises ValueError; without the isinstance guard
+        a float would crash with a cryptic TypeError from range() instead."""
+        with self.assertRaises(ValueError):
+            bootstrap_paired(["a"], ["a"], ["a"], n_resamples=1.5)
+
     def test_confidence_outside_unit_interval_raises(self) -> None:
         for bad in (0.0, 1.0, 1.5, -0.1):
             with self.assertRaises(ValueError):
