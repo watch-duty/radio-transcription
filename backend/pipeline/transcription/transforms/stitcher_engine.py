@@ -591,7 +591,6 @@ class StitcherEngine:
                     prior_tail = (
                         chunk_data.audio[-priming_samples:].tobytes()
                         if len(chunk_data.audio) > 0
-                        and ctx.transmission_start_time_ms is not None
                         else None
                     )
                     curr_context = replace(
