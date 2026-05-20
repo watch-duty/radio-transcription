@@ -61,6 +61,19 @@ git clone https://github.com/watch-duty/radio-transcription.git
 cd radio-transcription
 ```
 
+> [!IMPORTANT]
+> **Google Cloud Credentials Setup:**
+> Before starting the containers, you **must** run the following command on your host/VM machine:
+> ```bash
+> gcloud auth application-default login
+> ```
+> This generates your Application Default Credentials (ADC) under `${HOME}/.config/gcloud/`.
+> 
+> Because this directory is volume-mapped into the Docker containers (to let them natively authenticate with Google Cloud Storage and GCP APIs), running this command *before* starting the containers ensures the credential directory exists on the host with correct user ownership.
+> 
+> If you start the containers before running this command, Docker will automatically create the `${HOME}/.config/gcloud` directory with `root` ownership, causing permission-denied errors when you try to authenticate.
+
+
 ### Run the containers (Jupyter notebooks and NeMo CLI)
 ```
 # Add in sudo if you didn't make docker sudoless
