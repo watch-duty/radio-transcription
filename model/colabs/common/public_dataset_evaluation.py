@@ -1,4 +1,11 @@
-"""Baseline evaluation on public ASR datasets (LibriSpeech etc). Requires [hf] extra."""
+"""HuggingFace model × streaming public ASR dataset evaluation.
+
+Streams a public ASR dataset (LibriSpeech etc.) via HuggingFace ``datasets``,
+runs the loaded HF model in batches, and computes WER directly against the
+dataset's labels — no GCS manifest. Distinct from ``inference_hf`` in its
+data source (streaming HF dataset vs. segmented GCS audio), not its model.
+Requires the [hf] extra.
+"""
 
 import logging
 import os
@@ -25,7 +32,7 @@ def run_test_baseline_inference_evaluation(
     Moved verbatim from ``inference_pipeline_runner.py`` lines 297-413. Signature is
     preserved exactly to avoid breaking notebook imports. Heavy imports
     (datasets, evaluate, soundfile) remain function-local as in the original — this
-    keeps ``import common.baseline_eval`` light without the [hf] extra.
+    keeps ``import common.public_dataset_evaluation`` light without the [hf] extra.
 
     Args:
         model: Loaded model instance.

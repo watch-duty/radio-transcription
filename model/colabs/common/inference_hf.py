@@ -1,4 +1,11 @@
-"""Hugging Face ASR parallel GPU batch inference pipeline. Requires the [hf] extra."""
+"""Hugging Face transformers × GCS-manifest ASR inference.
+
+Iterates a JSONL manifest of GCS-hosted audio segments, downloads each into a
+scoped temp dir, preprocesses (resample + mono), and runs the loaded HF model
+in parallel-GPU batches with sequential single-item fallback. Distinct from
+``public_dataset_evaluation`` (same HF model framework but a streaming HF
+dataset as the data source). Requires the [hf] extra.
+"""
 
 import os
 import logging

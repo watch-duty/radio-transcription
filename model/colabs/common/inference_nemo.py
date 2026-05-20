@@ -1,4 +1,9 @@
-"""NeMo-based ASR batch inference pipeline. Requires the [hf] extra (torch)."""
+"""NeMo SALM × GCS-manifest ASR inference.
+
+Iterates a JSONL manifest of GCS-hosted audio segments and runs a NeMo SALM
+model batch by batch. The caller passes the loaded SALM model in (it ships in
+the NeMo container). Requires torch (declared via the [hf] extra).
+"""
 
 import os
 import logging
