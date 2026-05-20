@@ -17,7 +17,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
             url_base = os.environ.get(
-                "BCFY_FEEDS_URL_BASE", "http://mock-audio-server:8090/feeds/"
+                "BCFY_FEEDS_URL_BASE", "http://mock-audio-server:8090/"
             )
             response = {
                 "calls": [
@@ -30,7 +30,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 ]
             }
             self.wfile.write(json.dumps(response).encode("utf-8"))
-        elif self.path.startswith("/feeds"):
+        else:
             self.send_response(200)
             self.send_header("Content-type", "audio/flac")
             self.end_headers()
@@ -41,10 +41,6 @@ class RequestHandler(BaseHTTPRequestHandler):
                     self.wfile.write(f.read())
             else:
                 self.wfile.write(b"File not found")
-        else:
-            self.send_response(404)
-            self.end_headers()
-            self.wfile.write(b"Not Found")
 
 
 def run(port: int = 8090) -> None:
