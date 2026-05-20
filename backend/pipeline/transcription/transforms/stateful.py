@@ -1069,6 +1069,19 @@ class TranscribeAudioFn(beam.DoFn):
             )
             return None
 
+        # Drop empty or micro-segments under 200ms to prevent GCS bloat and ASR UI noise
+        duration_ms = int(
+            len(res.processed_audio)
+            / float(request.sample_rate)
+            * common_constants.MS_PER_SECOND
+        )
+        if duration_ms < 200:
+            self.vad_silence_count.inc()
+            logger.warning(
+                f"Encountered empty or micro-segment of duration {duration_ms}ms. Dropping transmission."
+            )
+            return None
+
         self.vad_speech_count.inc()
         duration_sec = len(res.processed_audio) / float(request.sample_rate)
         self.speech_duration_sec_dist.update(int(duration_sec))
