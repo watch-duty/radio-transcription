@@ -8,7 +8,13 @@ from pathlib import Path
 
 import numpy as np
 import onnxruntime as ort
-from pedalboard import Compressor, HighpassFilter, LowpassFilter, PeakFilter, Pedalboard
+from pedalboard import (
+    Compressor,
+    HighpassFilter,
+    LowpassFilter,
+    PeakFilter,
+    Pedalboard,
+)
 
 from backend.pipeline.transcription.audio.dsp import (
     TorchaudioHannResampler,

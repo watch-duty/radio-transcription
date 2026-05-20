@@ -70,9 +70,11 @@ def load_audio(audio_path: Path) -> tuple[np.ndarray, int]:
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            check=False,
         )
         if process.returncode != 0:
-            raise RuntimeError("Failed to decode audio via ffmpeg")
+            msg = "Failed to decode audio via ffmpeg"
+            raise RuntimeError(msg)
 
         # Read the FLAC file and normalize exactly like the production pipeline does
         samples, sample_rate = sf.read(temp_filename, dtype="int16")
