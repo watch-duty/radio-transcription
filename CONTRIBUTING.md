@@ -83,22 +83,52 @@ For more details on the architecture and local execution of the pipeline, see th
 
 ## Frontend Development
 
-### Proxy API Development
+When you finish this section, you'll have the proxy API running on `:8080` and the UI on `:5173`, with Google sign-in working and the UI reading from the dev backend services in GCP.
 
-_Installation_
+The frontend consists of two pieces that must both be running in separate terminals:
+- **Proxy API** (`frontend/api`) — Node/Express service on `:8080` that handles auth and forwards requests to the dev backend Cloud Run services.
+- **UI** (`frontend/transcription-ui`) — Vite-served React app on `:5173`.
 
-1. Install the gcloud cli tool https://docs.cloud.google.com/sdk/docs/install-sdk
-```
-gcloud init
-```
+All commands below assume you're running from the top level of the repo.
 
-_Prerequisites_
+### 1. One-time setup
 
-This is assuming that you want the local proxy API to make calls to the Google Cloud services in your GCP project (as opposed to the backend services running locally in Docker).
+#### 1a. Install gcloud and sign in
 
-1. Grant yourself the "Service Account Token Creator" role on the service account associated with the proxy API
+Install the gcloud CLI (https://docs.cloud.google.com/sdk/docs/install-sdk), then:
+
 ```bash
-# Run this command if you are running this for the first time.
+gcloud init                                  # follow prompts; pick the GCP project
+gcloud config set account <your work email>
+gcloud config set project <your project ID>
+```
+
+#### 1b. Gather project-specific values
+
+You'll plug these into `.env.local` files later. Look them up now:
+
+- **GCP project ID** — GCP Console project picker, or `gcloud projects list`.
+- **Service account name** for the proxy API — GCP Console → IAM & Admin → Service Accounts (look for one named like `*-api-dev`), or:
+  ```bash
+  gcloud iam service-accounts list --project=<your project ID>
+  ```
+- **OAuth 2.0 Web application Client ID and Secret** — GCP Console → APIs & Services → Credentials → "OAuth 2.0 Client IDs". Pick the entry of type "Web application". Verify that `http://localhost:5173` is listed under **Authorized JavaScript origins** (add and save if it isn't — changes take ~30s to propagate).
+- **OAuth Client Secret** — same Credentials page. Newer clients only show it once at creation. If hidden, check Secret Manager:
+  ```bash
+  gcloud secrets list --project=<your project ID>           # look for one matching oauth/client/auth
+  gcloud secrets versions access latest --secret=<secret-name> --project=<your project ID>
+  ```
+  > **Note on copy-pasting secrets:** ensure no trailing whitespace ends up in your `.env.local`. A trailing `%` in your terminal output from `gcloud secrets versions access` is a zsh display marker indicating no trailing newline — it is **not** part of the secret value.
+
+  If neither source has a usable value, **Reset Secret** on the OAuth client in the Console — coordinate with the team first, since this invalidates the secret in any deployed environment using it.
+
+#### 1c. Get permission to impersonate the service account
+
+The proxy API makes calls to GCP services as the service account, so your user account needs the "Service Account Token Creator" role on that SA.
+
+> **Note:** this binding command requires `roles/iam.serviceAccountAdmin` on the service account, which most developers don't have. If you hit `PERMISSION_DENIED`, ask an admin to run it for you.
+
+```bash
 export SA_NAME=<your service account name for the API>
 export PROJECT_ID=$(gcloud config get-value project)
 export USER_EMAIL=$(gcloud config get-value account)
@@ -108,31 +138,37 @@ gcloud iam service-accounts add-iam-policy-binding \
     --role="roles/iam.serviceAccountTokenCreator"
 ```
 
-2. Impersonate the service account
+#### 1d. Impersonate the service account for Application Default Credentials
+
 ```bash
-# Run this command if you have not impersonated the service account or authenticated with your default account
 export SA_NAME=<your service account name for the API>
 export PROJECT_ID=$(gcloud config get-value project)
 gcloud auth application-default login --impersonate-service-account=$SA_NAME@$PROJECT_ID.iam.gserviceaccount.com
 ```
 
-Note that when you are done you can switch back to your default account by running:
+When you're done with frontend work, switch back to your default account with:
 ```bash
 gcloud auth application-default login
 ```
 
-_Building & Running Locally_
+#### 1e. Install shared frontend dependencies
 
-1. The proxy API uses `dotenv` to configure the environment, which looks for the file `.env.local` in the `frontend/api` directory. Either copy `.env.example` to `.env.local`, or create it from scratch using the below command:
+The `frontend/common` package is consumed by both the API and the UI — build it once before installing either:
 
 ```bash
-# Assuming you're running from the top level of the root dir.
-# Run this command if you are running this for the first time.
+yarn --cwd frontend/common install && yarn --cwd frontend/common build
+```
+
+### 2. Configure and run the proxy API
+
+1. Create `frontend/api/.env.local`:
+
+```bash
 cat <<EOF > frontend/api/.env.local
 ALLOWED_ORIGIN=http://localhost:5173
-TRANSCRIPTS_API_URL=<your URL for transcripts API>
-RULES_API_URL=<your URL for rules API>
-FEEDS_STORE_API_URL=<your URL for feeds store API>
+TRANSCRIPTS_API_URL=<your URL for transcripts API>/v1/transcripts
+RULES_API_URL=<your URL for rules API>/v1/rules
+FEEDS_STORE_API_URL=<your URL for feeds store API>/v1/feeds
 PROJECT_ID=<your project ID>
 API_PUBLIC_URL=http://localhost:5173
 GOOGLE_AUTH_CLIENT_ID=<your Google Auth client ID>
@@ -140,51 +176,55 @@ GOOGLE_AUTH_CLIENT_SECRET=<your Google Auth client secret>
 EOF
 ```
 
-2. Install the package dependencies
+The three `*_API_URL` values point to Cloud Run services in the GCP project. List them with:
 ```bash
-# Assuming you're running from the top level of the root dir.
-yarn --cwd frontend/common install && \
-yarn --cwd frontend/common build && \
+gcloud run services list --project=<your project ID>
+```
+Look for services named like `transcripts-api-dev`, `rules-management-dev`, and `feed-store-dev`. **The `/v1/<resource>` path suffix is required** — the proxy appends resource IDs directly to these URLs and will 404 without it.
+
+2. Install package dependencies:
+```bash
 yarn --cwd frontend/api install
 ```
 
-3. Run the API locally
+3. Run the API (leave this terminal open):
 ```bash
-# Assuming you're running from the top level of the root dir.
 yarn --cwd frontend/api local
 ```
 
-### UI Development
+The API listens on `http://localhost:8080`.
 
-_Building & Running Locally_
+### 3. Configure and run the UI
 
-1. The frontend UI uses `dotenv` to configure the environment, which looks for the file `.env.local-dev` in the `frontend/transcription-ui` directory. Vite reserves "local" for itself so we are using "local-dev" instead. Either copy `.env.example` to `.env.local-dev`, or create it from scratch using the below command:
+In a **second terminal**:
+
+1. Create `frontend/transcription-ui/.env.local-dev`. (Vite reserves `.env.local` for itself, so we use `.env.local-dev` instead.)
 
 ```bash
-# Assuming you're running from the top level of the root dir.
-# Run this command if you are running this for the first time.
 cat <<EOF > frontend/transcription-ui/.env.local-dev
-VITE_GOOGLE_AUTH_CLIENT_ID=<your Google OAuth 2.0 Client ID for your project, found under Google Auth Platform>
-VITE_API_BASE_URL=<your URL for the API, leave empty to use the local proxy>
+VITE_GOOGLE_AUTH_CLIENT_ID=<your Google OAuth 2.0 Client ID — same as GOOGLE_AUTH_CLIENT_ID in frontend/api/.env.local>
+VITE_API_BASE_URL=
 VITE_ALERT_ICON_SYMBOL_NAME=local_fire_department
 EOF
 ```
 
-2. Install the package dependencies
+**Leave `VITE_API_BASE_URL` empty** to route API calls through your local proxy. Do not copy the placeholder from `.env.example` — it's a non-resolvable hostname that will cause cross-origin errors.
+
+`VITE_GOOGLE_AUTH_CLIENT_ID` must be the **same** OAuth client ID you used in the API's `.env.local`.
+
+2. Install package dependencies:
 ```bash
-# Assuming you're running from the top level of the root dir.
-yarn --cwd frontend/common install && \
-yarn --cwd frontend/common build && \
 yarn --cwd frontend/transcription-ui install
 ```
 
-3. Run the UI locally
+3. Run the UI:
 ```bash
-# Assuming you're running from the top level of the root dir.
 yarn --cwd frontend/transcription-ui local
 ```
 
-4. Open up a web browser and navigate to http://localhost:5173/
+4. Open http://localhost:5173/ in your browser and sign in with Google.
+
+> Env file changes are only picked up at startup — restart `yarn ... local` after editing `.env.local` or `.env.local-dev`.
 
 
 ## Making Changes to Files
