@@ -254,6 +254,8 @@ services:
       - ./local_dev/mock_audio_server.py:/app/mock_audio_server.py:ro
       - ./backend/pipeline/transcription/tests/test_data/test_bcfy.flac:/data/test_bcfy.flac:ro
     working_dir: /app
+    env_file:
+      - ./local_dev/LOCAL.env
     command: python mock_audio_server.py
     networks:
       - pipeline-network

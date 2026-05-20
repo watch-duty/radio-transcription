@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -10,15 +11,18 @@ logger = logging.getLogger(__name__)
 
 class RequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
-        if self.path == "/calls":
+        if self.path.startswith("/calls"):
             self.send_response(200)
             self.send_header("Content-type", "application/json")
             self.end_headers()
 
+            url_base = os.environ.get(
+                "BCFY_FEEDS_URL_BASE", "http://mock-audio-server:8090/feeds/"
+            )
             response = {
                 "calls": [
                     {
-                        "url": "http://mock-audio-server:8090/feeds/test-feed.mp3",
+                        "url": f"{url_base}test-feed.mp3",
                         "start_ts": int(time.time()),
                         "end_ts": int(time.time()) + 5,
                         "ts": int(time.time()),

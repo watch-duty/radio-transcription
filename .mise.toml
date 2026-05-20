@@ -151,7 +151,7 @@ docker-compose up --build -d
 [tasks."dev:stop"]
 description = "Stop all dev containers"
 run = """
-docker-compose down -v
+docker-compose down -v --remove-orphans
 """
 
 [tasks."dev:log"]
