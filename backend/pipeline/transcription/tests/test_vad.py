@@ -236,3 +236,26 @@ class TestVadEngine(unittest.TestCase):
         for start, end in segments_primed:
             self.assertGreaterEqual(start, 0.0)
             self.assertLessEqual(end, 0.5)
+
+    def test_boundary_bleed_through_prevented(self) -> None:
+        """Verifies that when a silent chunk is primed with a prior speech tail,
+        the Hybrid Priming VAD successfully prevents the RNN state from bleeding through,
+        detecting absolutely zero false speech segments.
+        """
+        # 1. Generate Chunk 1: 5 seconds of active speech ending exactly at the boundary
+        # (with only 100ms of trailing silence)
+        t = np.linspace(0, 4.9, int(16000 * 4.9), endpoint=False)
+        speech = np.sin(2 * np.pi * 1000 * t).astype(np.float32) * 0.5
+        silence = np.zeros(1600, dtype=np.float32)  # 100ms silence
+        chunk1 = np.concatenate([speech, silence])
+
+        # 2. Generate Chunk 2: 3 seconds of complete digital silence (all 0s)
+        chunk2 = np.zeros(16000 * 3, dtype=np.float32)
+
+        # 3. Run VAD on Chunk 2 primed with Chunk 1's tail
+        detected_segments = self.vad.detect_speech_segments(
+            chunk2, sample_rate=16000, prior_audio=chunk1
+        )
+
+        # Assert that absolutely zero segments were detected inside the silent chunk
+        self.assertEqual(detected_segments, [])
