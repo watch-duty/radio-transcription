@@ -175,7 +175,9 @@ run = "uv run python -m unittest discover backend/pipeline"
 [tasks."test:model"]
 description = "Run model/ common-library unit tests (pytest)"
 dir = "model"
-run = "uv run --extra dev pytest colabs/common/tests/"
+# Install [scoring] alongside [dev] so the WER/normalizer/bootstrap goldens
+# (jiwer + nemo_text_processing) actually run instead of skipping silently.
+run = "uv run --extra dev --extra scoring pytest colabs/common/tests/"
 
 [tasks."test:component:rules"]
 description = "Run RulesStore component tests"
