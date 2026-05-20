@@ -220,8 +220,11 @@ async def fire_notifications_collector(
     Yields :class:`CapturedChunk` for each new MP3 file found.
     """
     if not _S3_BASE_URL:
-        logger.error("FIRE_NOTIFICATIONS_S3_BASE is not set. Cannot download audio.")
-        raise RuntimeError("FIRE_NOTIFICATIONS_S3_BASE_not_set")
+        logger.error(
+            "FIRE_NOTIFICATIONS_S3_BASE is not set. Cannot download audio."
+        )
+        msg = "FIRE_NOTIFICATIONS_S3_BASE_not_set"
+        raise RuntimeError(msg)
 
     source_feed_id = feed.get("source_feed_id")
     if not source_feed_id:
