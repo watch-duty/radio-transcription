@@ -10,6 +10,10 @@ import logging
 from cloudevents.http.event import CloudEvent
 from google.cloud import pubsub_v1
 
+from backend.pipeline.common.constants import (
+    MS_PER_SECOND,
+    NANOS_PER_MS,
+)
 from backend.pipeline.common.tracing_utils import with_tracer_context
 from backend.pipeline.schema_types.audio_ready_for_transcription_pb2 import (
     AudioReadyForTranscription,
@@ -20,6 +24,8 @@ from backend.pipeline.schema_types.transcribed_audio_pb2 import (
 from backend.pipeline.transcription import transcribers
 
 logger = logging.getLogger(__name__)
+
+CHIRP_UNINTELLIGIBLE_MARKER = "[UNINTELLIGIBLE]"
 
 
 class TranscriptionEventProcessor:
@@ -78,12 +84,12 @@ class TranscriptionEventProcessor:
             try:
                 # Determine audio duration from start and end timestamps
                 start_ms = (
-                    claim.start_timestamp.seconds * 1000
-                    + claim.start_timestamp.nanos // 1000000
+                    claim.start_timestamp.seconds * MS_PER_SECOND
+                    + claim.start_timestamp.nanos // NANOS_PER_MS
                 )
                 end_ms = (
-                    claim.end_timestamp.seconds * 1000
-                    + claim.end_timestamp.nanos // 1000000
+                    claim.end_timestamp.seconds * MS_PER_SECOND
+                    + claim.end_timestamp.nanos // NANOS_PER_MS
                 )
                 duration_ms = max(0, int(end_ms - start_ms))
 
@@ -97,7 +103,7 @@ class TranscriptionEventProcessor:
                     logger.info(
                         "Speech API returned empty transcription. Using fallback unintelligible marker."
                     )
-                    transcript = "[UNINTELLIGIBLE]"
+                    transcript = CHIRP_UNINTELLIGIBLE_MARKER
 
                 # Build TranscribedAudio egress protobuf message
                 out_proto = TranscribedAudio(
