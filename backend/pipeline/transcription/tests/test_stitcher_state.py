@@ -1,4 +1,5 @@
 import unittest
+from typing import Final
 
 import numpy as np
 
@@ -17,6 +18,8 @@ from backend.pipeline.transcription.common.datatypes import (
 from backend.pipeline.transcription.state.stitcher_state import (
     AudioStitchingStateMachine,
 )
+
+SAMPLES_PER_MS: Final = 16
 
 
 def get_test_stitch_config(
@@ -226,7 +229,9 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         # append_start = max(0, 5000 - 1000) = 4000.
         # Expected append_end - append_start = 12500 - 4000 = 8500ms.
         # Size is 8500 * 16 = 136000 samples.
-        self.assertEqual(append_action.audio_buffer.size, (8500 * 16))
+        self.assertEqual(
+            append_action.audio_buffer.size, (8500 * SAMPLES_PER_MS)
+        )
 
     def test_contiguous_chunks_are_stitched(self) -> None:
         """Verifies that perfectly contiguous speech segments across chunks are stitched without flushing."""

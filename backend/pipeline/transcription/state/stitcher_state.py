@@ -4,6 +4,10 @@ import logging
 
 from apache_beam.metrics import Metrics
 
+from backend.pipeline.common.constants import MS_PER_SECOND
+from backend.pipeline.transcription.common.constants import (
+    DEFAULT_STARTUP_VAD_PRE_ROLL_MS,
+)
 from backend.pipeline.transcription.common.datatypes import (
     AppendBufferAction,
     AudioChunkData,
@@ -351,7 +355,10 @@ class AudioStitchingStateMachine:
             if ctx.last_segment_end_time_ms is not None
             else (
                 chunk_data.start_ms
-                + (len(chunk_data.audio) // (chunk_data.sample_rate // 1000))
+                + (
+                    len(chunk_data.audio)
+                    // (chunk_data.sample_rate // MS_PER_SECOND)
+                )
             )
         ) + self.config.stale_timeout_ms
         actions.append(
@@ -525,11 +532,8 @@ class AudioStitchingStateMachine:
                     ctx.missing_prior_context = False
 
                 ctx.transmission_start_time_ms = file_start_ms + global_start_ms
-                # Generous 1.0 second pre-roll strictly for the very first segment
-                # of a new dispatch to capture quiet dispatcher callsigns perfectly!
-                startup_pre_roll_ms = 1000
                 append_start = max(
-                    0, global_start_ms - startup_pre_roll_ms
+                    0, global_start_ms - DEFAULT_STARTUP_VAD_PRE_ROLL_MS
                 )
                 ctx.start_audio_offset_ms = append_start
                 ctx.buffer_start_time_ms = file_start_ms + append_start
@@ -541,7 +545,10 @@ class AudioStitchingStateMachine:
                 )
 
             append_end = min(
-                (len(chunk_data.audio) // (chunk_data.sample_rate // 1000)),
+                (
+                    len(chunk_data.audio)
+                    // (chunk_data.sample_rate // MS_PER_SECOND)
+                ),
                 global_end_ms + self.config.vad_post_roll_ms,
             )
 
@@ -550,8 +557,10 @@ class AudioStitchingStateMachine:
                     AppendBufferAction(
                         audio_buffer=chunk_data.audio[
                             append_start
-                            * (chunk_data.sample_rate // 1000) : append_end
-                            * (chunk_data.sample_rate // 1000)
+                            * (
+                                chunk_data.sample_rate // MS_PER_SECOND
+                            ) : append_end
+                            * (chunk_data.sample_rate // MS_PER_SECOND)
                         ]
                     )
                 )
