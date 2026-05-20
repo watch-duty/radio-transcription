@@ -1,15 +1,23 @@
 services:
-  # Container for running NeMO and Jupyter Notebooks on GPU (using notebook from NeMO image)
-  asr-eval:
+  # NeMo CLI container for running NeMo on CPU - CPU version
+  nemo-cli-cpu: &nemo-cli-base
     build:
       context: .
       dockerfile: model/nemo_docker/Dockerfile
     network_mode: "host"
     volumes:
       - ./model:/app
-    working_dir: /app
+      # This maps the cloud credentials on your local machine onto the docker container.
+      - ${HOME}/.config/gcloud:/root/.config/gcloud
+    working_dir: /workspace/nemo
     environment:
       - JUPYTER_PATH=/opt/venv/share/jupyter
+      - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
+    entrypoint: ["/bin/zsh"]
+
+  # NeMo CLI container with GPU support
+  nemo-cli-gpu:
+    <<: *nemo-cli-base
     deploy:
       resources:
         reservations:
@@ -17,29 +25,25 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    # Override entrypoint to start Jupyter Notebook instead of ZSH
-    entrypoint: ["jupyter", "notebook", "--ip=0.0.0.0", "--allow-root", "--no-browser", "--NotebookApp.token=''", "--NotebookApp.password=''"]
 
-  # Contianer for running NeMO and Jupyter without GPU
-  asr-eval-cpu:
-    build:
-      context: .
-      dockerfile: model/nemo_docker/Dockerfile
-    network_mode: "host"
-    volumes:
-      - ./model:/app
-    working_dir: /app
-    environment:
-      - JUPYTER_PATH=/opt/venv/share/jupyter
-    # Override entrypoint to start Jupyter Notebook instead of ZSH
-    entrypoint: ["jupyter", "notebook", "--ip=0.0.0.0", "--allow-root", "--no-browser", "--NotebookApp.token=''", "--NotebookApp.password=''"]
-
-  # Lightweight container for simply running Jupyter notebooks (without NeMO)
-  notebooks:
+  # Lightweight container for simply running Jupyter notebooks (without NeMO) - CPU version
+  notebooks-cpu: &notebooks-base
     build:
       context: ./model/notebook_docker
       dockerfile: Dockerfile
     network_mode: "host"
+    command: ["jupyter", "notebook", "--ip=0.0.0.0", "--allow-root", "--NotebookApp.token=''", "--NotebookApp.password=''"]
+    volumes:
+      - .:/workspace
+      # This maps the cloud credentials on your local machine onto the docker container.
+      - ${HOME}/.config/gcloud:/root/.config/gcloud
+    working_dir: /workspace
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
+
+  # Lightweight container with GPU support
+  notebooks:
+    <<: *notebooks-base
     deploy:
       resources:
         reservations:
@@ -47,7 +51,3 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    command: ["jupyter", "notebook", "--ip=0.0.0.0", "--allow-root", "--NotebookApp.token=''", "--NotebookApp.password=''"]
-    working_dir: /workspace
-    volumes:
-      - .:/workspace
