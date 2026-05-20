@@ -20,7 +20,7 @@ from backend.pipeline.schema_types.normalized_audio_pb2 import (
 from backend.pipeline.schema_types.transcribed_audio_pb2 import (
     TranscribedAudio,
 )
-from backend.pipeline.transcription.services import transcribers
+from backend.pipeline.transcription import transcribers
 
 # Setup system logging
 logging.basicConfig(level=logging.INFO)
