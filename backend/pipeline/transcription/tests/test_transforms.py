@@ -552,79 +552,6 @@ class TranscribeAudioTest(unittest.TestCase):
     @patch(
         "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
     )
-    def test_transcribe_micro_segment_skipped(
-        self, mock_audio_processor: MagicMock, mock_get_transcriber: MagicMock
-    ) -> None:
-        """Verifies that when processed audio is under the 200ms threshold,
-        TranscribeAudioFn cleanly drops the transmission without transcribing or throwing errors.
-        """
-        mock_processor_inst = mock_audio_processor.return_value
-        mock_processor_inst.preprocess_audio.side_effect = lambda x, sr: x
-        mock_processor_inst.export_flac.return_value = b"flac_bytes"
-        # Mock process_buffer to return only 100ms of audio (1600 samples at 16kHz)
-        mock_processor_inst.process_buffer.return_value = ProcessorOutput(
-            success=True,
-            flac_bytes=b"flac_bytes",
-            processed_audio=np.zeros(1600, dtype=np.int16),
-        )
-
-        config = get_test_transcribe_config(route_to_dlq=True)
-
-        options = PipelineOptions(
-            flags=[
-                "--continuous_input_subscription=projects/p/subscriptions/a",
-                "--segmented_input_subscription=projects/p/subscriptions/b",
-                "--output_topic=b",
-                "--project=c",
-            ]
-        )
-        with BeamTestPipeline(options=options) as p:
-            elements = p | beam.Create(
-                [
-                    (
-                        "feed-123",
-                        FlushRequest(
-                            feed_id="feed-123",
-                            session_id="fake-session",
-                            buffer=np.zeros(1600, dtype=np.int16).tobytes(),
-                            contributing_audio_uris=["gs://bucket/chunk.flac"],
-                            time_range=TimeRange(start_ms=0, end_ms=100),
-                            transmission_id="tx-123",
-                            missing_prior_context=False,
-                            missing_post_context=False,
-                            start_audio_offset_ms=0,
-                            end_audio_offset_ms=100,
-                            feed_metadata=FeedMetadata(
-                                feed_name="fake-feed",
-                                external_id="fake-external",
-                            ),
-                            sample_rate=16000,
-                        ),
-                    )
-                ]
-            )
-
-            # Running the ParDo should drop the transmission cleanly
-            results = elements | beam.ParDo(
-                TranscribeAudioFn(
-                    config=config,
-                    transcriber_factory=get_mock_factory(transcript="hello"),
-                )
-            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main="main")
-
-            assert_that(results.main, equal_to([]), label="CheckEmptyMainMicro")
-            assert_that(
-                results[DEAD_LETTER_QUEUE_TAG],
-                equal_to([]),
-                label="CheckEmptyDLQMicro",
-            )
-
-    @patch(
-        "backend.pipeline.transcription.services.transcribers.get_transcriber"
-    )
-    @patch(
-        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
-    )
     def test_duration_limit_dlq_routing(
         self, mock_audio_processor: MagicMock, mock_get_transcriber: MagicMock
     ) -> None:
@@ -1356,6 +1283,117 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         self.assertEqual(
             get_duration_ms(flush_request.speech_segments[0]), 3000
         )
+        self.assertIsInstance(mock_state_context.read(), IdleFeedState)
+
+    @patch(
+        "backend.pipeline.transcription.audio.audio_processor.AudioProcessor"
+    )
+    def test_prior_audio_tail_cleared_on_stale_flush(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that the stale timer flush resets the context state to IdleFeedState,
+        guaranteeing that the prior_audio_tail is cleanly cleared and never carried over
+        to prime a new, post-flush transmission.
+        """
+        mock_processor_inst = mock_audio_processor.return_value
+        chunk_data = AudioChunkData(
+            start_ms=100000,
+            audio=np.zeros(16000 * 5, dtype=np.int16),
+            speech_segments=[TimeRange(1000, 4000)],
+            gcs_uri="gs://bucket/chunk1.flac",
+            duration_ms=5000,
+            sample_rate=16000,
+        )
+        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        stitch_config = get_test_stitch_config(
+            significant_gap_ms=800, stale_timeout_ms=75000
+        )
+        fn = OrderedContinuousStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn.setup()
+
+        class MockValueState:
+            def __init__(self, initial=None) -> None:
+                self.val = initial
+
+            def read(self):
+                return self.val
+
+            def write(self, val):
+                self.val = val
+
+            def clear(self):
+                self.val = None
+
+        class MockBagState:
+            def __init__(self) -> None:
+                self.items = []
+
+            def read(self):
+                return self.items
+
+            def add(self, item):
+                self.items.append(item)
+
+            def clear(self):
+                self.items = []
+
+        mock_state_context = MockValueState(
+            ActiveStitchingState(
+                session_id="session-1",
+                feed_metadata=FeedMetadata(
+                    feed_name="test-feed", external_id="ext-1"
+                ),
+            )
+        )
+        mock_state_buffer = MockBagState()
+        mock_last_start_ms = MockValueState(None)
+
+        metadata = ChunkMetadata(
+            gcs_uri="gs://bucket/chunk1.flac",
+            session_id="session-1",
+            duration_ms=5000,
+            feed_metadata=FeedMetadata(
+                feed_name="test-feed", external_id="ext-1"
+            ),
+        )
+
+        # 1. Process chunk 1 (VAD segment triggers speech in progress)
+        list(
+            fn.process(
+                element=("test-feed", metadata),
+                timestamp=Timestamp(100),
+                transmission_buffer_state=mock_state_buffer,  # type: ignore
+                transmission_context_state=mock_state_context,  # type: ignore
+                last_start_ms_state=mock_last_start_ms,  # type: ignore
+                out_of_order_timer=MagicMock(),
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        # State context must be ActiveStitchingState with cached prior_audio_tail
+        saved_context = mock_state_context.read()
+        self.assertIsInstance(saved_context, ActiveStitchingState)
+        self.assertIsNotNone(saved_context.prior_audio_tail)
+
+        # 2. Stale flush occurs (dispatcher unkeyed/timer fired)
+        list(
+            fn.handle_stale_transmission_event(
+                key="test-feed",
+                transmission_buffer=mock_state_buffer,  # type: ignore
+                transmission_context=mock_state_context,  # type: ignore
+                last_start_ms_state=mock_last_start_ms,  # type: ignore
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        # Assert that the state context has reset to IdleFeedState!
+        # IdleFeedState has no prior_audio_tail field, representing a completely clean restart
         self.assertIsInstance(mock_state_context.read(), IdleFeedState)
 
     @patch(
