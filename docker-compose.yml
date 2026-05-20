@@ -1,5 +1,5 @@
-version: '3.8'
 services:
+  # ------------- Storage -------------
   pubsub-emulator:
     image: gcr.io/google.com/cloudsdktool/cloud-sdk:emulators
     command: gcloud beta emulators pubsub start --host-port=0.0.0.0:8085
@@ -22,15 +22,111 @@ services:
     volumes:
       - ./local_dev/pubsub_init.py:/app/pubsub_init.py
     working_dir: /app
-    command: sh -c "pip install requests && python pubsub_init.py"
+    command: sh -c "pip install google-cloud-pubsub && python pubsub_init.py"
 
-  # Redis for deduping in Notification service
+  gcs-init:
+    image: python:3.13-slim
+    depends_on:
+      - gcs-emulator
+    env_file:
+      - ./local_dev/LOCAL.env
+    networks:
+      - pipeline-network
+    volumes:
+      - ./local_dev/gcs_init.py:/app/gcs_init.py
+      - ./backend/pipeline/transcription/tests/test_data:/app/data
+    working_dir: /app
+    command: sh -c "pip install google-cloud-storage && python gcs_init.py"
+
+  gcs-emulator:
+    image: fsouza/fake-gcs-server
+    ports:
+      - "4443:4443"
+    command: -scheme http -external-url http://gcs-emulator:4443
+    networks:
+      - pipeline-network
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      # Mount migrations read-only at /sql and use an init script that skips
+      # pg_cron files (extension is production-only via AlloyDB flag; the
+      # postgres:15-alpine image doesn't ship it). See the script for details.
+      - ./terraform/modules/alloydb/sql/ingestion:/sql:ro
+      - ./local_dev/docker_postgres_init.sh:/docker-entrypoint-initdb.d/00_apply_schema.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pipeline-network
+
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
     networks:
       - pipeline-network
+
+  # ----------- Pipeline Services ----------
+
+  audio-ingestion:
+    build:
+      context: .
+      dockerfile: backend/pipeline/ingestion/Dockerfile
+    env_file:
+      - ./local_dev/LOCAL.env
+    environment:
+      - CONTINUOUS_PUBSUB_TOPIC_PATH=${CONTINUOUS_TOPIC}
+      - SEGMENTED_PUBSUB_TOPIC_PATH=${SEGMENTED_TOPIC}
+    depends_on:
+      pubsub-emulator:
+        condition: service_started
+      pubsub-init:
+        condition: service_completed_successfully
+      gcs-emulator:
+        condition: service_started
+      gcs-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    networks:
+      - pipeline-network
+
+  transcription:
+    build:
+      context: .
+      dockerfile: backend/pipeline/transcription/Dockerfile
+    entrypoint: ["python3", "backend/pipeline/transcription/main.py"]
+    # DirectRunner doesn't support deduplication, so we need to give an empty field here to disable it.
+    command: >
+      --continuous_input_subscription projects/$GOOGLE_CLOUD_PROJECT/subscriptions/$CONTINUOUS_AUDIO_SUBSCRIPTION
+      --segmented_input_subscription projects/$GOOGLE_CLOUD_PROJECT/subscriptions/$SEGMENTED_AUDIO_SUBSCRIPTION
+      --output_topic $TRANSCRIPTION_TOPIC
+      --project $GOOGLE_CLOUD_PROJECT
+      --id_label ""
+      --canonical_audio_bucket $AUDIO_CANONICAL_BUCKET
+      --transcriber_type mock
+    env_file:
+      - ./local_dev/LOCAL.env
+    networks:
+      - pipeline-network
+    depends_on:
+      pubsub-emulator:
+        condition: service_started
+      pubsub-init:
+        condition: service_completed_successfully
+      gcs-emulator:
+        condition: service_started
+      gcs-init:
+        condition: service_completed_successfully
 
   rules-evaluation:
     build:
@@ -56,28 +152,29 @@ services:
       - transcripts-api
       - postgres
 
-  postgres:
-    image: postgres:15-alpine
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: postgres
+  notification:
+    build:
+      context: .
+      dockerfile: backend/pipeline/notification/Dockerfile
     ports:
-      - "5432:5432"
-    volumes:
-      # Mount migrations read-only at /sql and use an init script that skips
-      # pg_cron files (extension is production-only via AlloyDB flag; the
-      # postgres:15-alpine image doesn't ship it). See the script for details.
-      - ./terraform/modules/alloydb/sql/ingestion:/sql:ro
-      - ./local_dev/docker_postgres_init.sh:/docker-entrypoint-initdb.d/00_apply_schema.sh:ro
+      - "8081:8081"
+    env_file:
+      - ./local_dev/LOCAL.env
+    environment:
+      - REDIS_HOST=redis
+    command: ["functions-framework", "--source=backend/pipeline/notification/send_notification.py", "--target=send_notification", "--signature-type=cloudevent", "--port=8081"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8081))"]
       interval: 5s
       timeout: 5s
       retries: 5
     networks:
       - pipeline-network
+    depends_on:
+      - pubsub-emulator
+      - redis
 
+  # ----------- API Management Services ----------
   rules-management:
     build:
       context: .
@@ -138,28 +235,6 @@ services:
     networks:
       - pipeline-network
 
-  notification:
-    build:
-      context: .
-      dockerfile: backend/pipeline/notification/Dockerfile
-    ports:
-      - "8081:8081"
-    env_file:
-      - ./local_dev/LOCAL.env
-    environment:
-      - REDIS_HOST=redis
-    command: ["functions-framework", "--source=backend/pipeline/notification/send_notification.py", "--target=send_notification", "--signature-type=cloudevent", "--port=8081"]
-    healthcheck:
-      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8081))"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    networks:
-      - pipeline-network
-    depends_on:
-      - pubsub-emulator
-      - redis
-
   mock-server:
     image: python:3.13-slim
     ports:
@@ -168,6 +243,18 @@ services:
       - ./local_dev/mock_server.py:/app/mock_server.py
     working_dir: /app
     command: python -u mock_server.py
+    networks:
+      - pipeline-network
+
+  mock-icecast:
+    image: python:3.13-slim
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./local_dev/mock_icecast.py:/app/mock_icecast.py:ro
+      - ./backend/pipeline/transcription/tests/test_data/test_bcfy.flac:/data/test_bcfy.flac:ro
+    working_dir: /app
+    command: python mock_icecast.py
     networks:
       - pipeline-network
 
@@ -187,8 +274,11 @@ services:
       - transcripts-api
       - rules-management
 
+  # ----------- Integration Tests ----------
   integration-tests:
     image: python:3.13-slim
+    profiles:
+      - integration-tests
     depends_on:
       postgres:
         condition: service_healthy
@@ -209,6 +299,16 @@ services:
       mock-server:
         condition: service_started
       pubsub-init:
+        condition: service_completed_successfully
+      gcs-init:
+        condition: service_completed_successfully
+      gcs-emulator:
+        condition: service_started
+      transcription:
+        condition: service_started
+      audio-ingestion:
+        condition: service_started
+      mock-icecast:
         condition: service_started
     env_file:
       - ./local_dev/LOCAL.env
@@ -220,7 +320,7 @@ services:
     command: >
       sh -c "pip install uv && uv sync &&
       uv run python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto &&
-      uv run pytest integration_tests/* -v"
+      uv run pytest integration_tests/* -v -s --log-cli-level=INFO"
     networks:
       - pipeline-network
 

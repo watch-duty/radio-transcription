@@ -1,14 +1,15 @@
 # Use Apache Beam Python SDK as the base image
 # IMPORTANT: When updating the version tag here, you must also update the
 # apache-beam dependency version in backend/pipeline/transcription/pyproject.toml.
-FROM apache/beam_python3.13_sdk:2.72.0
+FROM apache/beam_python3.13_sdk:2.73.0
 
 
 # Install OS dependencies needed at runtime
 USER root
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        ffmpeg \
+    ffmpeg \
+    libatomic1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy uv from the official image
@@ -44,7 +45,11 @@ COPY protos/ ./protos
 # Generate protobuf bindings
 RUN mkdir -p ./backend/pipeline/schema_types && \
     touch ./backend/pipeline/schema_types/__init__.py && \
-    python3 -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto
+    uv run --with grpcio-tools python3 -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto && \
+    mkdir -p .betterproto_out && \
+    uv run --with grpcio-tools --with "betterproto[compiler]>=2.0.0b6" python3 -m grpc_tools.protoc -I=protos --python_betterproto_out=.betterproto_out protos/streaming_state.proto && \
+    cp .betterproto_out/streaming/pipeline/state/v1/__init__.py backend/pipeline/schema_types/streaming_state.py && \
+    rm -rf .betterproto_out
 
 # Copy and set the entrypoint script
 COPY backend/pipeline/transcription/entrypoint.sh /opt/google/dataflow/entrypoint.sh

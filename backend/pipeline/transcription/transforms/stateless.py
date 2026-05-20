@@ -11,7 +11,7 @@ and are highly optimized for parallel worker execution:
 """
 
 from collections.abc import Iterator
-from typing import Any, Literal, override
+from typing import Any, override
 
 import apache_beam as beam
 from apache_beam.io.gcp.pubsub import PubsubMessage
@@ -59,7 +59,15 @@ class ParseAndKeyFn(beam.DoFn):
     Routes messages missing required attributes or with invalid payload to the DLQ.
     Yields a tuple of `(feed_id, ChunkMetadata)` to establish a deterministic routing key
     for all subsequent stateful operations on that feed.
+
+    Args:
+        is_continuous: Whether this instance is processing continuous feeds (e.g. BCFY_FEEDS).
+            Determines whether session_id is required and sets the flag on ChunkMetadata.
+            Set by orchestration based on which Pub/Sub subscription the message arrived from.
     """
+
+    def __init__(self, *, is_continuous: bool) -> None:
+        self.is_continuous = is_continuous
 
     @override
     def setup(self) -> None:
@@ -69,12 +77,7 @@ class ParseAndKeyFn(beam.DoFn):
     @override
     def process(
         self, element: PubsubMessage, *args: Any, **kwargs: Any
-    ) -> Iterator[
-        tuple[str, ChunkMetadata]
-        | beam.pvalue.TaggedOutput[
-            Literal["transcription_dlq"], dict[str, str | bool | dict[str, str]]
-        ]
-    ]:
+    ) -> Iterator[tuple[str, ChunkMetadata] | beam.pvalue.TaggedOutput]:
         """Extracts the feed_id and parses the protobuf payload."""
 
         def _raise(msg: str) -> None:
@@ -93,33 +96,46 @@ class ParseAndKeyFn(beam.DoFn):
                 if not chunk_proto.gcs_uri:
                     msg = "AudioChunk missing required gcs_uri"
                     _raise(msg)
-                if not chunk_proto.session_id:
-                    msg = "AudioChunk missing required session_id"
+                if self.is_continuous and not chunk_proto.session_id:
+                    msg = "AudioChunk missing required session_id for continuous feed"
                     _raise(msg)
                 if not chunk_proto.feed_name:
                     msg = "AudioChunk missing required feed_name"
                     _raise(msg)
+
+                source_type = (
+                    element.attributes.get("source_type")
+                    if element.attributes
+                    else None
+                )
+                if source_type:
+                    if self.is_continuous and source_type != "bcfy_feeds":
+                        msg = f"Received segmented source type '{source_type}' on continuous subscription"
+                        _raise(msg)
+                    elif not self.is_continuous and source_type == "bcfy_feeds":
+                        msg = f"Received continuous source type '{source_type}' on segmented subscription"
+                        _raise(msg)
 
                 traceparent = (
                     element.attributes.get("traceparent")
                     if element.attributes
                     else None
                 )
-                outputs.append(
-                    (
-                        feed_id,
-                        ChunkMetadata(
-                            gcs_uri=chunk_proto.gcs_uri,
-                            session_id=chunk_proto.session_id,
-                            duration_ms=chunk_proto.duration_ms,
-                            feed_metadata=FeedMetadata(
-                                feed_name=chunk_proto.feed_name,
-                                external_id=chunk_proto.external_id,
-                            ),
-                            traceparent=traceparent,
-                        ),
-                    )
+                metadata = ChunkMetadata(
+                    gcs_uri=chunk_proto.gcs_uri,
+                    # For segmented feeds, session_id is typically the call ID set by ingestion.
+                    # Fall back to feed_id (not a static string) so per-feed session change
+                    # detection in the ordering buffer remains meaningful.
+                    session_id=chunk_proto.session_id or feed_id,
+                    duration_ms=chunk_proto.duration_ms,
+                    feed_metadata=FeedMetadata(
+                        feed_name=chunk_proto.feed_name,
+                        external_id=chunk_proto.external_id,
+                    ),
+                    is_continuous=self.is_continuous,
+                    traceparent=traceparent,
                 )
+                outputs.append((feed_id, metadata))
         except Exception as e:
             msg = f"Failed to parse or validate payload: {e}"
             logger.exception(msg)

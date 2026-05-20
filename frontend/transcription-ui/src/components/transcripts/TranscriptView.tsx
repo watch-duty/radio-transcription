@@ -4,6 +4,7 @@ import type { VirtuosoHandle } from 'react-virtuoso';
 
 import { Howl } from 'howler';
 
+import { Checkbox, FormControlLabel } from '@mui/material';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -65,6 +66,9 @@ export function TranscriptView({
   const [searchParams, setSearchParams] = useSearchParams();
   const targetTransmissionId = searchParams.get('transmissionId');
 
+  const [newMessageCount, setNewMessageCount] = useState(0);
+  const [playLatestAudio, setPlayLatestAudio] = useState(true);
+
   const [feedId, setFeedId] = useState<string>(
     () => searchParams.get('feedId') || ''
   );
@@ -95,7 +99,15 @@ export function TranscriptView({
   const hasScrolledToTarget = useRef(false);
 
   const currentAudio = useRef<Howl>(null);
+  const [playbackEndedForId, setPlaybackEndedForId] = useState<string | null>(
+    null
+  );
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
+
+  // A mutable reference to the latest list of transcripts. This prevents stale closures
+  // inside the Howl audio lifecycle callbacks (like onend), ensuring continuous playback logic
+  // always evaluates against the most up-to-date transcript list even if it updates mid-playback.
+  const transcriptsRef = useRef<Transcript[]>([]);
 
   // Cleanup effect to ensure audio is unloaded when component unmounts
   useEffect(() => {
@@ -127,7 +139,17 @@ export function TranscriptView({
           onplay: () => setIsAudioPlaying(true),
           onpause: () => setIsAudioPlaying(false),
           onend: () => {
-            setIsAudioPlaying(false);
+            const currentTranscripts = transcriptsRef.current;
+            const currentIndex = currentTranscripts.findIndex(
+              (t) => t.transmissionId === transmissionId
+            );
+            const hasNext = currentIndex > 0;
+
+            if (!hasNext) {
+              setIsAudioPlaying(false);
+            }
+
+            setPlaybackEndedForId(transmissionId);
             sound.unload();
             if (currentAudio.current === sound) {
               currentAudio.current = null;
@@ -187,6 +209,30 @@ export function TranscriptView({
   }, [feedIdToFeedMap, feedId]);
 
   const searchedFeed = feedIdToFeedMap.get(searchedFeedId) || null;
+
+  useEffect(() => {
+    if (!searchedFeed) return;
+
+    let pageTitle = `${searchedFeed.name} - Radio Transcription`;
+    if (newMessageCount > 0) {
+      pageTitle = `(${newMessageCount}) ${pageTitle}`;
+    }
+    if (document.title !== pageTitle) {
+      document.title = pageTitle;
+    }
+  }, [searchedFeed, newMessageCount]);
+
+  // Clear the unread message indicator when the user focuses back on the page
+  useEffect(() => {
+    const handleFocus = () => {
+      setNewMessageCount(0);
+    };
+
+    window.addEventListener('focus', handleFocus);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, []);
 
   const {
     data: listTranscriptsResponse,
@@ -284,6 +330,31 @@ export function TranscriptView({
     [listTranscriptsResponse]
   );
 
+  // Keep the ref in sync with the transcripts so that audio lifecycle callbacks can access the latest list.
+  useEffect(() => {
+    transcriptsRef.current = transcripts;
+  }, [transcripts]);
+
+  // Handles continuous auto-play by advancing to the next newer transcript when the current audio finishes.
+  // Since the transcript list is sorted newest-first, the next transmission in time is at `currentIndex - 1`.
+  useEffect(() => {
+    if (!playbackEndedForId) return;
+
+    const currentIndex = transcripts.findIndex(
+      (t) => t.transmissionId === playbackEndedForId
+    );
+
+    if (currentIndex > 0) {
+      const nextTranscript = transcripts[currentIndex - 1];
+      toggleAudio(
+        nextTranscript.transmissionId,
+        nextTranscript.playbackAudioUri
+      );
+    }
+
+    setPlaybackEndedForId(null);
+  }, [playbackEndedForId, transcripts, toggleAudio]);
+
   // This is used to group transcripts by date and display them in the UI.
   // groupCounts is an array of numbers representing the number of transcripts in each group.
   // groupTitles is an array of strings representing the title of each group.
@@ -378,8 +449,9 @@ export function TranscriptView({
    * This updates the active view without triggering a full refetch of all loaded pages.
    */
   const updateCacheWithNewTranscripts = useCallback(
-    (newTranscripts: Transcript[]) => {
-      if (!token) return;
+    (newTranscripts: Transcript[]): Transcript[] => {
+      if (!token) return [];
+      let updatedTranscripts: Transcript[] = [];
       queryClient.setQueryData<InfiniteData<ListTranscriptsData>>(
         ['listTranscripts', token, searchedFeedId, searchedTimestamp],
         (oldData) => {
@@ -397,6 +469,7 @@ export function TranscriptView({
           );
 
           if (filteredNew.length === 0) return oldData;
+          updatedTranscripts = filteredNew;
 
           // Prepend the new transcripts to the first (newest) page of the query cache.
           const newPages = [...oldData.pages];
@@ -407,6 +480,7 @@ export function TranscriptView({
           return { ...oldData, pages: newPages };
         }
       );
+      return updatedTranscripts;
     },
     [token, searchedFeedId, searchedTimestamp, queryClient]
   );
@@ -435,8 +509,34 @@ export function TranscriptView({
       try {
         setIsTranscriptsPolling(true);
         const newTranscripts = await pollNewerTranscripts();
-        if (newTranscripts.length > 0) {
-          updateCacheWithNewTranscripts(newTranscripts);
+        if (newTranscripts.length === 0) {
+          return;
+        }
+
+        // Add the transcript to cache
+        const cachedTranscripts = updateCacheWithNewTranscripts(newTranscripts);
+        if (cachedTranscripts.length === 0) {
+          return;
+        }
+
+        // Display snackbar indicator that new transcripts were received
+        const message =
+          cachedTranscripts.length === 1
+            ? 'New transcript received'
+            : `${cachedTranscripts.length} new transcripts received`;
+        triggerSnackbar(message);
+
+        // Update the new message count if the user is not viewing the screen
+        if (!document.hasFocus()) {
+          setNewMessageCount(
+            (prevCount) => prevCount + cachedTranscripts.length
+          );
+        }
+
+        // Trigger the new audio to play if no audio is currently playing
+        if (!isAudioPlaying && playLatestAudio) {
+          const audioToPlay = cachedTranscripts[cachedTranscripts.length - 1];
+          toggleAudio(audioToPlay.transmissionId, audioToPlay.playbackAudioUri);
         }
       } catch (error) {
         console.error('Polling error:', error);
@@ -454,6 +554,10 @@ export function TranscriptView({
     pollNewerTranscripts,
     updateCacheWithNewTranscripts,
     transcriptsPollingIntervalMs,
+    triggerSnackbar,
+    toggleAudio,
+    isAudioPlaying,
+    playLatestAudio,
   ]);
 
   const {
@@ -520,6 +624,24 @@ export function TranscriptView({
         behavior: 'smooth',
       });
     }
+    setHighlightedTransmissionId(transmissionId);
+  };
+
+  const handleTogglePlayPause = () => {
+    const targetId = isAudioPlaying
+      ? currentlyPlayingTransmissionId || highlightedTransmissionId
+      : highlightedTransmissionId ||
+        currentlyPlayingTransmissionId ||
+        transcripts[0]?.transmissionId;
+    if (!targetId) return;
+
+    const transcript = transcripts.find((t) => t.transmissionId === targetId);
+    if (transcript) {
+      toggleAudio(transcript.transmissionId, transcript.playbackAudioUri);
+    }
+  };
+
+  const handleRowClick = (transmissionId: string) => {
     setHighlightedTransmissionId(transmissionId);
   };
 
@@ -624,10 +746,34 @@ export function TranscriptView({
         triggerSnackbar={triggerSnackbar}
       />
 
+      <Box
+        sx={{
+          display: 'flex',
+          justifyContent: 'flex-end',
+          // This space allows room for the alert icon which hovers above the AudioDisplay.
+          mb: 2.5,
+        }}
+      >
+        <FormControlLabel
+          control={
+            <Checkbox
+              checked={playLatestAudio}
+              onChange={(e) => setPlayLatestAudio(e.target.checked)}
+              disabled={!searchedFeed}
+            />
+          }
+          label="Always play latest audio"
+          slotProps={{ typography: { variant: 'body2' } }}
+        />
+      </Box>
+
       <AudioDisplay
         transcripts={transcripts}
         currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
+        highlightedTransmissionId={highlightedTransmissionId}
         onClipClick={handleClipClick}
+        isAudioPlaying={isAudioPlaying}
+        onTogglePlayPause={handleTogglePlayPause}
       />
 
       <Box
@@ -672,6 +818,7 @@ export function TranscriptView({
               currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
               highlightedTransmissionId={highlightedTransmissionId}
               redactTranscripts={redactTranscripts}
+              onRowClick={handleRowClick}
             />
           </>
         ) : feedsFetching || isTranscriptsInitialLoading ? (

@@ -17,30 +17,34 @@
 
 ## Pipeline E2E Local Development
 On a high level, this local pipeline runs the following:
+#### Shared infrastructure
 1. Pub/Sub emulator (manages all PubSub topics for each Pub/Sub instance in the pipeline)
-2. Rules Management service (to manage keywords and evaluation logic)
+2. GCS emulator (manages all GCS buckets for audio storage in the pipeline)
+3. Mock Icecast server (simulates audio streams for testing)
+
+#### Pipeline
+1. Audio ingestion service (fetches audio from streams and uploads to GCS)
+2. Transcription pipeline service (for processing audio into transcript text)
 3. Rules Evaluation service (to process transcription events)
 4. Notification service (to send alerts when rules match)
-5. Mock server (to receive and display mock notifications)
-6. Frontend API (for rules, transcript, and feed management)
+
+#### API Management Services
+1. Rules Management service (to manage keywords and evaluation logic)
+2. Transcripts API services
+3. Frontend API (proxy for rules, transcript, and feed management)
+4. Mock server (to receive and display mock notifications)
 
 Integration tests run an automated E2E test on startup.
 
-Note that currently the following are missing from the E2E setup:
-* Audio ingestion pipeline and storage
-* Transcription pipeline and storage
-* Rules storage
+> [!NOTE]
+> `local_dev/test_data.sql` is used to seed the database with dummy feeds and rules for local development (`mise dev:start`). It is explicitly ignored in the integration tests (`mise test:e2e`) to ensure tests run in a clean, isolated database environment.
+> Also, we are currently missing audio ingestion for API polling and Echoes.
 
-Locally run the full pipeline from E2E
+Locally run the full pipeline from E2E:
 ```bash
-docker-compose down -v && docker-compose up --build -d &&
-docker-compose logs -f \
-  transcripts-api\
-  rules-evaluation\
-  rules-management\
-  notification\
-  mock-server\
-  frontend-api
+mise dev:start
+mise dev:log # to see logs for one or all containers
+mise dev:stop # to stop containers & rm volumes
 ```
 
 Send a test payload to the Transcription PubSub (ingested by the Rules Evaluation service) to test the path from the Rules Evaluation service to the Notification service.
@@ -48,58 +52,6 @@ Send a test payload to the Transcription PubSub (ingested by the Rules Evaluatio
 # Note: This script is run automatically by the integration-test service on startup.
 # To run it again manually, use the following command:
 docker-compose exec rules-evaluation python /app/test_evaluation_publish.py
-```
-
-### Audio Ingestion
-#### Icecast Collector
-*Installation*
-1. Install ffmpeg
-```
-brew install ffmpeg
-```
-
-2. Install the gcloud cli tool
-https://docs.cloud.google.com/sdk/docs/install-sdk
-```
-gcloud init
-gcloud auth login
-```
-
-*Building & Running Locally*
-```
-# Assuming you're running from the top level of the root dir
-source .venv/bin/activate
-export BROADCASTIFY_USERNAME=<your broadcastify username>
-export BROADCASTIFY_PASSWORD=<your broadcastify pword>
-export ICECAST_SOURCE_FEED_ID=123
-python backend/pipeline/ingestion/collectors/icecast/local_icecast_collector.py
-
-<optional env variable>
-export ICECAST_LOCAL_OUTPUT_DIR="/tmp/audio_chunks"
-```
-
-*Building & Running with Docker*
-```
-# Assuming you're running from the top level of the root dir.
-# Run this command if you are running this for the first time.
-cat <<EOF > backend/pipeline/ingestion/collectors/.icecast_env
-BROADCASTIFY_USERNAME=<your broadcastify username>
-BROADCASTIFY_PASSWORD=<your broadcastify pword>
-AUDIO_STAGING_BUCKET=<your audio staging bucket>
-PUBSUB_TOPIC_PATH=<your pubsub topic path>
-ALLOYDB_HOST=<your alloydb host>
-ALLOYDB_USER=<your alloydb user>
-ALLOYDB_DB=<your alloydb database name>
-# Optional: uncomment and set if needed by your deployment
-# ALLOYDB_PORT=<your alloydb port, e.g. 5432>
-# ALLOYDB_PASSWORD=<your alloydb password>
-EOF
-
-docker build -t "icecast" -f backend/pipeline/ingestion/collectors/Dockerfile .
-docker run -v ~/.config/gcloud:/.config/gcloud \
-           --env-file backend/pipeline/ingestion/collectors/.icecast_env \
-           -e GOOGLE_APPLICATION_CREDENTIALS=/.config/gcloud/application_default_credentials.json \
-           -it icecast
 ```
 
 ## Integration and E2E Tests

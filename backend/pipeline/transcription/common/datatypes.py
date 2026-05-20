@@ -8,32 +8,17 @@ from backend.pipeline.common.constants import (
     CHUNK_DURATION_SECONDS,
     MS_PER_SECOND,
 )
+from backend.pipeline.schema_types import (
+    streaming_state as bp_state,
+)
 from backend.pipeline.transcription.common.constants import (
+    DEFAULT_BACKFILL_LATENESS_THRESHOLD_MS,
     DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS,
 )
 from backend.pipeline.transcription.common.enums import TranscriberType
 
-
-@dataclass(frozen=True)
-class TimeRange:
-    """Represents a time interval in integer milliseconds."""
-
-    start_ms: int
-    end_ms: int
-
-    @property
-    def duration_ms(self) -> int:
-        """Calculates the duration of the time range in milliseconds."""
-        return self.end_ms - self.start_ms
-
-
-@dataclass(frozen=True, order=True)
-class BufferedChunk:
-    """Represents a chronologically sorted audio payload held in the jitter buffer."""
-
-    timestamp_ms: int
-    gcs_uri: str
-    traceparent: str | None = None
+TimeRange = bp_state.TimeRangeProto
+BufferedChunk = bp_state.BufferedChunkProto
 
 
 @dataclass(frozen=True)
@@ -48,23 +33,10 @@ class AudioChunkData:
     sample_rate: int
 
 
-@dataclass(frozen=True)
-class FeedMetadata:
-    """Metadata about a feed, used for enriching the output."""
-
-    feed_name: str
-    external_id: str
+FeedMetadata = bp_state.FeedMetadataProto
 
 
-@dataclass(frozen=True)
-class ChunkMetadata:
-    """Metadata for an audio chunk before download."""
-
-    gcs_uri: str
-    session_id: str  # Required for continuous feeds ONLY.
-    duration_ms: int
-    feed_metadata: FeedMetadata
-    traceparent: str | None = None
+ChunkMetadata = bp_state.ChunkMetadataProto
 
 
 @dataclass(frozen=True)
@@ -96,33 +68,11 @@ class TranscriptionResult:
     traceparent: str | None = None
 
 
-@dataclass(frozen=True)
-class TransmissionContext:
-    """Dataclass storing all metadata for the current audio transmission.
+IdleFeedState = bp_state.IdleFeedStateProto
+ActiveStitchingState = bp_state.ActiveStitchingStateProto
 
-    This consolidated struct massively reduces I/O roundtrips to Dataflow's state storage.
-    We use standard dataclasses here because native Protobuf classes cannot be cleanly pickled.
-    """
 
-    session_id: str | None = None
-    last_end_time_ms: int | None = None
-    stale_start_time_ms: int | None = None
-    buffer_start_time_ms: int | None = None
-    expected_next_chunk_start_ms: int | None = None
-    start_audio_offset_ms: int | None = None
-    end_audio_offset_ms: int | None = None
-    contributing_audio_uris: list[str] = field(default_factory=list)
-    missing_prior_context: bool = False
-    missing_post_context: bool = False
-    buffer_duration_ms: int = 0
-    order_timer_active: bool = False
-    out_of_order_buffer: list[BufferedChunk] = field(default_factory=list)
-    feed_metadata: FeedMetadata | None = None
-    last_transmission_start_ms: int | None = None
-    speech_segments: list[TimeRange] = field(default_factory=list)
-    prior_audio_tail: np.ndarray | None = None
-    traceparent: str | None = None
-    sample_rate: int | None = None
+TransmissionContext = IdleFeedState | ActiveStitchingState
 
 
 @dataclass
@@ -168,8 +118,8 @@ class StitchAudioConfig:
     vad_pre_roll_ms: int
     vad_post_roll_ms: int
     route_to_dlq: bool = True
-    backfill_lateness_threshold_ms: int = 300000
-    bypass_stitching: bool = False
+    backfill_lateness_threshold_ms: int = DEFAULT_BACKFILL_LATENESS_THRESHOLD_MS
+    isolate_segmented_chunks: bool = False
 
     def __post_init__(self) -> None:
         """Validates the dataclass variables."""
@@ -199,24 +149,7 @@ class TranscribeAudioConfig:
     canonical_audio_bucket: str | None = None
 
 
-@dataclass(frozen=True)
-class FlushRequest:
-    """Encapsulates the data required to flush an audio buffer to the transcription API."""
-
-    buffer: np.ndarray
-    feed_id: str
-    session_id: str
-    contributing_audio_uris: list[str]
-    time_range: TimeRange
-    transmission_id: str
-    feed_metadata: FeedMetadata
-    sample_rate: int
-    missing_prior_context: bool
-    missing_post_context: bool
-    start_audio_offset_ms: int | None
-    end_audio_offset_ms: int | None
-    speech_segments: list[TimeRange] = field(default_factory=list)
-    traceparent: str | None = None
+FlushRequest = bp_state.FlushRequestProto
 
 
 @dataclass(frozen=True)

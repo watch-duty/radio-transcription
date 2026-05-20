@@ -1,0 +1,9 @@
+google-genai
+google-cloud-storage
+google-cloud-speech
+num2words
+ipywidgets
+jupyterlab-vim
+onnxruntime
+pedalboard
+notebook
