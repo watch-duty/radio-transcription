@@ -113,8 +113,20 @@ def merge_predictions_to_manifest(
         # Build lookup: audio_filepath -> list of (offset, text) from predictions
         pred_index: dict[str, list[tuple[float, str]]] = {}
         for pred in predictions:
-            audio_fp = str(pred.get("audio_filepath", ""))
-            p_offset = float(pred.get("offset", 0.0))
+            # Fail loud on a malformed prediction missing the keys that drive
+            # the merge — silently defaulting audio_filepath to "" or offset
+            # to 0.0 would attach a stray prediction to whichever ground-truth
+            # row happens to share that empty bucket / sit at offset 0.0.
+            if "audio_filepath" not in pred:
+                raise ValueError(
+                    f"prediction missing required 'audio_filepath': {pred!r}"
+                )
+            if "offset" not in pred:
+                raise ValueError(
+                    f"prediction missing required 'offset': {pred!r}"
+                )
+            audio_fp = str(pred["audio_filepath"])
+            p_offset = float(pred["offset"])
             # Mirror load_manifest's coercion: a null prediction text becomes
             # "" (absent), NOT the literal four-letter word "None" — which
             # would otherwise inflate WER as a real-looking prediction token.
@@ -130,6 +142,13 @@ def merge_predictions_to_manifest(
             gt_by_file.setdefault(audio_fp, []).append(i)
 
         field_name = f"pred_text_{model_key}"
+        # Clear any stale pred_text_{model_key} from a prior merge — a row
+        # should only carry this field if THIS merge produced a match for
+        # it. Otherwise a re-run with a missing prediction for some row
+        # would leave the old prediction in place, masking the missing-
+        # output failure as a successful prediction in downstream WER.
+        for row in ground_truth:
+            row.pop(field_name, None)
         for audio_fp, gt_indices in gt_by_file.items():
             candidates = pred_index.get(audio_fp, [])
             # One-to-one match: collect every (row, prediction) pair within

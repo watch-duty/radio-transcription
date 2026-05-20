@@ -38,6 +38,20 @@ class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
                 ground_truth, bad_predictions, "gemini"
             )
 
+    def test_prediction_missing_audio_filepath_raises(self) -> None:
+        """A prediction without `audio_filepath` fails loud, not silently merges to ""."""
+        gt = [{"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "g"}]
+        preds = [{"offset": 1.0, "text": "p"}]  # no audio_filepath
+        with self.assertRaises(ValueError):
+            merge_predictions_to_manifest(gt, preds, "m")
+
+    def test_prediction_missing_offset_raises(self) -> None:
+        """A prediction without `offset` fails loud, not silently defaults to 0.0."""
+        gt = [{"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "g"}]
+        preds = [{"audio_filepath": "gs://b/a.flac", "text": "p"}]  # no offset
+        with self.assertRaises(ValueError):
+            merge_predictions_to_manifest(gt, preds, "m")
+
     def test_does_not_return_empty_list_on_error(self) -> None:
         """Verify the old silent-failure path (return []) is gone."""
         ground_truth = [
@@ -145,6 +159,42 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
         # 1.18 is nearer 1.2 than 1.0, so row 1 binds it; row 0 stays blank.
         self.assertNotIn("pred_text_whisper", result[0])
         self.assertEqual(result[1]["pred_text_whisper"], "only")
+
+    def test_stale_pred_text_field_is_cleared_on_rerun(self) -> None:
+        """Re-running clears a stale pred_text_{model_key} when no new prediction matches.
+
+        Without this, a re-run that fails to produce a prediction for some
+        row leaves the OLD prediction in place — and downstream WER scores
+        the missing output as a successful prediction.
+        """
+        gt = [
+            {"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "g1"},
+            {"audio_filepath": "gs://b/a.flac", "offset": 9.0, "text": "g2"},
+        ]
+        # First merge: both rows get predictions.
+        preds_v1 = [
+            {"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "p1"},
+            {"audio_filepath": "gs://b/a.flac", "offset": 9.0, "text": "p2"},
+        ]
+        merge_predictions_to_manifest(gt, preds_v1, "m")
+        self.assertEqual(gt[0]["pred_text_m"], "p1")
+        self.assertEqual(gt[1]["pred_text_m"], "p2")
+
+        # Re-run with a missing prediction for row 1: stale value must clear.
+        preds_v2 = [
+            {
+                "audio_filepath": "gs://b/a.flac",
+                "offset": 1.0,
+                "text": "p1_new",
+            },
+        ]
+        merge_predictions_to_manifest(gt, preds_v2, "m")
+        self.assertEqual(gt[0]["pred_text_m"], "p1_new")
+        self.assertNotIn(
+            "pred_text_m",
+            gt[1],
+            "stale prediction must be cleared on re-run",
+        )
 
     def test_unmatched_prediction_leaves_field_absent(self) -> None:
         gt = [
