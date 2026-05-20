@@ -1,9 +1,10 @@
-"""Unit tests for the serverless transcription Cloud Function handler."""
+"""Unit tests for the TranscriptionEventProcessor class."""
 
 import base64
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
+from cloudevents.http.event import CloudEvent
 from google.protobuf.duration_pb2 import Duration  # type: ignore
 from google.protobuf.timestamp_pb2 import Timestamp  # type: ignore
 
@@ -13,47 +14,23 @@ from backend.pipeline.schema_types.normalized_audio_pb2 import (
 from backend.pipeline.schema_types.transcribed_audio_pb2 import (
     TranscribedAudio,
 )
-from backend.pipeline.transcription.main import transcribe_claim_check
+from backend.pipeline.transcription.processor import TranscriptionEventProcessor
 
 
-class DummyRequest:
-    """Dummy request object matching functions-framework Flask request interface."""
-
-    def __init__(self, json_data: dict) -> None:
-        self.json_data = json_data
-
-    def get_json(self) -> dict:
-        return self.json_data
-
-
-class TranscribeClaimCheckFunctionTest(unittest.TestCase):
-    @patch("backend.pipeline.transcription.main.get_lazy_transcriber")
-    @patch("backend.pipeline.transcription.main.get_lazy_publisher")
-    @patch.dict(
-        "os.environ",
-        {
-            "OUTPUT_TOPIC": "projects/test/topics/egress",
-            "PROJECT_ID": "test-proj",
-        },
-    )
-    def test_transcribe_claim_check_success(
-        self, mock_get_publisher: MagicMock, mock_get_transcriber: MagicMock
-    ) -> None:
-        """Verifies successful end-to-end claim-check trigger execution."""
+class TranscriptionEventProcessorTest(unittest.TestCase):
+    def test_process_event_success(self) -> None:
+        """Verifies successful end-to-end claim-check Pub/Sub CloudEvent processing."""
         # Setup mocks
         mock_transcriber = MagicMock()
         mock_transcriber.transcribe.return_value = "Hello world"
-        mock_get_transcriber.return_value = mock_transcriber
 
         mock_publisher = MagicMock()
-        # Mock future object returned by publish()
         mock_future = MagicMock()
         mock_future.result.return_value = "msg-12345"
         mock_publisher.publish.return_value = mock_future
         mock_publisher.topic_path.return_value = (
             "projects/test-proj/topics/egress"
         )
-        mock_get_publisher.return_value = mock_publisher
 
         # Build dummy claim proto
         claim = NormalizedAudio(
@@ -90,11 +67,23 @@ class TranscribeClaimCheckFunctionTest(unittest.TestCase):
             }
         }
 
-        request = DummyRequest(envelope)
-        response_text, status_code = transcribe_claim_check(request)  # type: ignore
+        cloud_event = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test-source",
+            },
+            data=envelope,
+        )
 
-        self.assertEqual(status_code, 200)
-        self.assertIn("transcribed transmission tx-1111", response_text)
+        processor = TranscriptionEventProcessor(
+            project_id="test-proj",
+            output_topic="projects/test-proj/topics/egress",
+            transcriber=mock_transcriber,
+            publisher=mock_publisher,
+        )
+
+        # Run process_event
+        processor.process_event(cloud_event)
 
         # Verify transcriber was invoked with GCS reference
         mock_transcriber.transcribe.assert_called_once_with(
