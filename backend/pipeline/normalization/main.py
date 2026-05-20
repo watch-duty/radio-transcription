@@ -1,6 +1,6 @@
 """Radio Transcription Normalization Pipeline Entry Point.
 
-This is the CLI entry point for the transcription pipeline.
+This is the CLI entry point for the normalization pipeline.
 It handles argument parsing and environment configuration before launching the Beam orchestration.
 """
 

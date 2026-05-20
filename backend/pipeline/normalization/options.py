@@ -11,9 +11,6 @@ from backend.pipeline.normalization.common.constants import (
     DEFAULT_SIGNIFICANT_GAP_MS,
     DEFAULT_STALE_TIMEOUT_MS,
 )
-from backend.pipeline.normalization.common.enums import (
-    TranscriberType,
-)
 
 
 class TranscriptionOptions(PipelineOptions):
@@ -53,19 +50,7 @@ class TranscriptionOptions(PipelineOptions):
             default="gcs_uri",
             help="Pub/Sub attribute to use for strictly exactly-once deduplication.",
         )
-        parser.add_argument(
-            "--transcriber_type",
-            type=str,
-            choices=[e.value for e in TranscriberType],
-            default=TranscriberType.GOOGLE_CHIRP_V3.value,
-            help="Type of transcription model to use.",
-        )
-        parser.add_argument(
-            "--transcriber_config",
-            type=str,
-            default="{}",
-            help="JSON string of transcriber-specific configuration.",
-        )
+
         parser.add_argument(
             "--vad_config",
             type=str,
