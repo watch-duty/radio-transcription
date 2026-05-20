@@ -84,8 +84,6 @@ def test_rules_creation_evaluation_publish(
     unique_transcript = f"Attention: {unique_keyword} is required for Sector 7."
 
     create_test_rule(unique_keyword)
-    # Wait for rules evaluation cache to expire (~60s)
-    # time.sleep(65)
     feed_id, _ = test_bcfy_feed
     publish_test_message(unique_trans_id, unique_transcript, feed_id)
 
