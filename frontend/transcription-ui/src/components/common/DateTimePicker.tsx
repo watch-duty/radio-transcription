@@ -31,10 +31,7 @@ export function DateTimePicker({
             size: 'small',
             error: error,
             helperText: helperText,
-            sx: {
-              width,
-              minWidth: width ? undefined : 280,
-            },
+            sx: width ? { width } : undefined,
           },
           actionBar: {
             actions: ['clear', 'cancel', 'accept'],
