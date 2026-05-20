@@ -11,7 +11,7 @@ and are highly optimized for parallel worker execution:
 """
 
 from collections.abc import Iterator
-from typing import Any, override
+from typing import Any, Literal, override
 
 import apache_beam as beam
 from apache_beam.io.gcp.pubsub import PubsubMessage
@@ -77,7 +77,13 @@ class ParseAndKeyFn(beam.DoFn):
     @override
     def process(
         self, element: PubsubMessage, *args: Any, **kwargs: Any
-    ) -> Iterator[tuple[str, ChunkMetadata] | beam.pvalue.TaggedOutput]:
+    ) -> Iterator[
+        tuple[str, ChunkMetadata]
+        | beam.pvalue.TaggedOutput[
+            Literal["transcription_dlq"],
+            dict[str, str | dict[str, str]],
+        ]
+    ]:
         """Extracts the feed_id and parses the protobuf payload."""
 
         def _raise(msg: str) -> None:
@@ -161,7 +167,13 @@ class SerializeFn(beam.DoFn):
     def process(
         self,
         element: TranscriptionResult,
-    ) -> Iterator[PubsubMessage | beam.pvalue.TaggedOutput]:
+    ) -> Iterator[
+        PubsubMessage
+        | beam.pvalue.TaggedOutput[
+            Literal["transcription_dlq"],
+            dict[str, str],
+        ]
+    ]:
         def _raise(msg: str) -> None:
             raise ValueError(msg)
 

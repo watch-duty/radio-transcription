@@ -292,7 +292,11 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
         self,
         results: Iterable[Any],
     ) -> Iterator[
-        tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
+        tuple[str, datatypes.FlushRequest]
+        | beam.pvalue.TaggedOutput[
+            Literal["transcription_dlq"],
+            dict[str, str | bool | dict[str, str]],
+        ]
     ]:
         """Yields results, tagging DLQ outputs appropriately."""
         for res in results:
@@ -665,7 +669,11 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
         self,
         results: Iterable[Any],
     ) -> Iterator[
-        tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
+        tuple[str, datatypes.FlushRequest]
+        | beam.pvalue.TaggedOutput[
+            Literal["transcription_dlq"],
+            dict[str, str | bool | dict[str, str]],
+        ]
     ]:
         """Yields results, tagging DLQ outputs appropriately."""
         for res in results:
