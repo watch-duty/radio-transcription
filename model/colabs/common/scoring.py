@@ -442,7 +442,14 @@ def bootstrap_paired(
         )
     if n == 0:
         raise ValueError("cannot bootstrap an empty eval set")
-    if not isinstance(n_resamples, int) or n_resamples <= 0:
+    # `bool` is a subclass of `int` in Python, so isinstance(True, int) is True
+    # — exclude it explicitly so `n_resamples=True` doesn't silently run a
+    # single resample.
+    if (
+        isinstance(n_resamples, bool)
+        or not isinstance(n_resamples, int)
+        or n_resamples <= 0
+    ):
         raise ValueError("n_resamples must be a positive integer")
     if not 0.0 < confidence < 1.0:
         raise ValueError("confidence must lie in the open interval (0, 1)")
