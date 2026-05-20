@@ -586,9 +586,7 @@ class TranscribeAudioTest(unittest.TestCase):
                         FlushRequest(
                             feed_id="feed-123",
                             session_id="fake-session",
-                            buffer=np.zeros(
-                                1600, dtype=np.int16
-                            ).tobytes(),
+                            buffer=np.zeros(1600, dtype=np.int16).tobytes(),
                             contributing_audio_uris=["gs://bucket/chunk.flac"],
                             time_range=TimeRange(start_ms=0, end_ms=100),
                             transmission_id="tx-123",
