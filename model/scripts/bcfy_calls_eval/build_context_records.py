@@ -5,20 +5,26 @@ Stages (run in order from `main()`):
 2. Probe the live endpoint for historical-pos support (M1 viability).
 3. Recover groupId per call:
    - M1 if probe passed: paginated live polls per sid (cheap).
-   - M2 if probe failed: enumerate candidate talkgroups per sid (via the
-     county-scoped `groups_ctid`), then `group_archives` per (group, <=8h
-     window). Match returned calls by ts.
+   - M2 otherwise: GLOBAL enumeration — list every US county via the Common
+     API, call `groups_ctid` on each (with a 1-year secs_ago) to build a
+     global `sid -> {sName, ctids, groupIds}` index. Then `group_archives`
+     per (candidate gid, <=8h window) matches calls by ts.
 4. Fetch group + node metadata for each unique recovered groupId
    (`group_get` + `node_get` on the most-active node for county/state).
 5. Write `context_records.json` + `recovery_report.json`.
 
+The earlier per-sid `enumerate_talkgroups_by_sid` (live-based ctid lookup) is
+kept for completeness but is unreliable when sids are currently quiet -- the
+global enumeration in `enumerate_talkgroups_globally` is the primary M2 path.
+
 Throttling lives in `_broadcastify_client.py` (5s for live per Broadcastify
-spec, 1s defensive for other Calls endpoints).
+spec, 1s defensive for other Calls/Common endpoints).
 
 Outputs (under bcfy_calls_eval/results/<EXPERIMENT_NAME>/):
-- context_records.json    -- per-talkgroup descriptive metadata (keyed by groupId)
-- recovered_groupids.json -- mapping "{sid}-{ts}" -> groupId
-- recovery_report.json    -- recovery rate + method used + per-sid breakdown
+- global_groups_index.json -- one-time global sid -> groupIds cache (~50min build)
+- context_records.json     -- per-talkgroup descriptive metadata (keyed by groupId)
+- recovered_groupids.json  -- mapping "{sid}-{ts}" -> groupId
+- recovery_report.json     -- recovery rate + method used + per-sid breakdown
 """
 
 from __future__ import annotations
@@ -42,6 +48,7 @@ DEFAULT_MANIFEST = (
 )
 EXPERIMENT_NAME = "framing_context_05_2026"  # matches run_eval.py
 RESULTS_DIR = SCRIPT_DIR / "results" / EXPERIMENT_NAME
+GLOBAL_INDEX_PATH = RESULTS_DIR / "global_groups_index.json"
 
 
 # ---------------------------------------------------------------------------
@@ -149,73 +156,114 @@ def recover_via_m1(
 
 
 # ---------------------------------------------------------------------------
-# M2 recovery (group_archives enumeration — primary path for this eval set)
+# M2 recovery (group_archives enumeration)
 # ---------------------------------------------------------------------------
 
 
-def find_ctids_for_sid(sid: int) -> set[int]:
-    """Find counties associated with a sid via a one-shot live(sid) poll
-    + node_get on each unique nodeId seen.
+def enumerate_talkgroups_globally(
+    sids: list[int],
+    cache_path: Path,
+    force: bool = False,
+) -> dict[int, list[str]]:
+    """Build sid -> [groupIds] by enumerating ALL US counties via the Common API.
 
-    Returns empty set if sid is currently quiet (no recent calls). Those sids
-    cannot be M2-recovered and are reported as lost in the recovery report.
+    This is the primary M2 path: it does not depend on currently-active sids
+    (unlike the older live-based `enumerate_talkgroups_by_sid`), so it works
+    even for an eval-set whose 57 sids are all quiet right now.
+
+    Caches the global index to `cache_path` (~50 min one-time build for ~3000
+    US counties at 1s/call). On re-runs the cache is loaded instantly unless
+    `force=True`.
     """
-    try:
-        calls = bc.live(sid=sid)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("live(sid=%s) failed: %s", sid, exc)
-        return set()
-    if not calls:
-        return set()
-    node_ids = {int(c["nodeId"]) for c in calls if "nodeId" in c}
-    ctids: set[int] = set()
-    for nid in node_ids:
+    if cache_path.exists() and not force:
+        log.info("loading global groups index from cache: %s", cache_path)
+        cache = json.loads(cache_path.read_text())
+        out: dict[int, list[str]] = {}
+        for sid in sids:
+            entry = cache.get(str(sid)) or {"groupIds": []}
+            out[sid] = entry.get("groupIds", [])
+            log.info(
+                "sid=%s -> %d candidate talkgroups (cached, sName=%s)",
+                sid, len(out[sid]), (entry.get("sName") or "?")[:60],
+            )
+        return out
+
+    log.info("global enumeration: listing US states...")
+    state_rows = bc.states(coid=1)
+    log.info("  found %d states", len(state_rows))
+
+    log.info("global enumeration: listing counties per state...")
+    counties: list[dict] = []
+    for s in state_rows:
         try:
-            n = bc.node(nid)
-            ctids.add(int(n["ctid"]))
+            cs = bc.counties_in_state(int(s["stid"]))
+            counties.extend(
+                {"ctid": int(c["ctid"]), "state": s.get("stateName", "?")}
+                for c in cs
+            )
         except Exception as exc:  # noqa: BLE001
-            log.warning("node(nodeId=%s) failed: %s", nid, exc)
-    return ctids
+            log.warning(
+                "counties_in_state(stid=%s) failed: %s", s.get("stid"), exc
+            )
+    log.info("  found %d counties total", len(counties))
 
-
-def enumerate_talkgroups_by_sid(sids: list[int]) -> dict[int, list[str]]:
-    """For each sid in `sids`, build the list of candidate groupIds — talkgroups
-    on that sid as known to Broadcastify (via county enumeration).
-
-    Strategy: find each sid's counties (live -> nodeId -> node_get -> ctid), then
-    one `groups_ctid` per unique county, partition results by sid.
-    """
-    sid_to_ctids: dict[int, set[int]] = {}
-    for sid in sids:
-        ctids = find_ctids_for_sid(sid)
-        sid_to_ctids[sid] = ctids
-        log.info("sid=%s -> %d counties: %s", sid, len(ctids), sorted(ctids))
-
-    all_ctids = set().union(*sid_to_ctids.values()) if sid_to_ctids else set()
     log.info(
-        "fetching groups_ctid for %d unique counties (one call each, throttled)",
-        len(all_ctids),
+        "global enumeration: fetching groups_ctid (secs_ago=365d) for %d counties...",
+        len(counties),
     )
-    county_groups: dict[int, list[dict]] = {}
-    for ctid in sorted(all_ctids):
+    sid_index: dict[int, dict] = {}
+    secs_year = 365 * 86400
+    for i, c in enumerate(counties):
+        if i % 50 == 0:
+            log.info(
+                "  county %d/%d (%.1f%%)... index has %d sids so far",
+                i, len(counties), 100.0 * i / max(1, len(counties)),
+                len(sid_index),
+            )
         try:
-            groups = bc.groups_ctid(ctid)
-            county_groups[ctid] = groups
-            log.info("  ctid=%s -> %d talkgroups", ctid, len(groups))
+            groups = bc.groups_ctid(c["ctid"], secs_ago=secs_year)
         except Exception as exc:  # noqa: BLE001
-            log.warning("groups_ctid(%s) failed: %s", ctid, exc)
-            county_groups[ctid] = []
+            log.warning("groups_ctid(ctid=%s) failed: %s", c["ctid"], exc)
+            continue
+        for g in groups:
+            try:
+                sid = int(g["sid"])
+            except (KeyError, ValueError, TypeError):
+                continue
+            entry = sid_index.setdefault(
+                sid,
+                {"sName": g.get("sName"), "ctids": [], "groupIds": []},
+            )
+            if c["ctid"] not in entry["ctids"]:
+                entry["ctids"].append(c["ctid"])
+            if g["groupId"] not in entry["groupIds"]:
+                entry["groupIds"].append(g["groupId"])
 
-    sid_to_groups: dict[int, list[str]] = {}
-    for sid, ctids in sid_to_ctids.items():
-        candidates: set[str] = set()
-        for ctid in ctids:
-            for g in county_groups.get(ctid, []):
-                if int(g.get("sid", 0)) == sid:
-                    candidates.add(g["groupId"])
-        sid_to_groups[sid] = sorted(candidates)
-        log.info("sid=%s -> %d candidate talkgroups", sid, len(candidates))
-    return sid_to_groups
+    log.info("global enumeration complete: %d unique sids globally", len(sid_index))
+
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(
+        json.dumps(
+            {str(sid): v for sid, v in sid_index.items()},
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    log.info("wrote cache: %s", cache_path)
+
+    out_fresh: dict[int, list[str]] = {}
+    for sid in sids:
+        entry = sid_index.get(sid)
+        if entry is None:
+            log.warning("sid=%s NOT in global enumeration (no talkgroups seen in last year)", sid)
+            out_fresh[sid] = []
+            continue
+        out_fresh[sid] = entry["groupIds"]
+        log.info(
+            "sid=%s -> %d candidate talkgroups (sName=%s)",
+            sid, len(entry["groupIds"]), (entry.get("sName") or "?")[:60],
+        )
+    return out_fresh
 
 
 def _eight_hour_windows(ts_sorted: list[int]) -> list[tuple[int, int]]:
@@ -359,6 +407,11 @@ def main() -> int:
         action="store_true",
         help="run only the M1 probe and exit",
     )
+    p.add_argument(
+        "--force-enumerate",
+        action="store_true",
+        help="rebuild the global groups index even if cache exists",
+    )
     args = p.parse_args()
 
     log.info("loading manifest %s", args.manifest)
@@ -391,8 +444,10 @@ def main() -> int:
         log.info("recovering via M1 (live + historical pos)")
         recovered = recover_via_m1(pairs)
     else:
-        log.info("recovering via M2 (group_archives enumeration)")
-        sid_to_groups = enumerate_talkgroups_by_sid(sids)
+        log.info("recovering via M2 (global county enumeration + group_archives)")
+        sid_to_groups = enumerate_talkgroups_globally(
+            sids, GLOBAL_INDEX_PATH, force=args.force_enumerate
+        )
         recovered = recover_via_m2(pairs, sid_to_groups)
     log.info(
         "recovered %d/%d unique calls (%.1f%%)",
@@ -452,7 +507,7 @@ def main() -> int:
         "recovery_rate_pct": round(
             100.0 * len(recovered) / max(1, len(pairs)), 1
         ),
-        "method": "M1" if res.works else "M2",
+        "method": "M1" if res.works else "M2-global",
         "per_sid": per_sid,
     }
     rep_path = RESULTS_DIR / "recovery_report.json"

@@ -1,15 +1,17 @@
-"""Self-contained Broadcastify Calls HTTP client for the framing-context A/B.
+"""Self-contained Broadcastify Calls + Common HTTP client for the framing-context A/B.
 
 JWT logic is copy-adapted from radio-transcription/model/data/broadcastify/
 bcfy_api.py (the experiment spec forbids modifying main-repo code). Adds the
 Calls-API methods that bcfy_api.py does not expose: live calls (with
-historical pos), group_get, node_get, groups_ctid, group_archives.
+historical pos), group_get, node_get, groups_ctid, group_archives -- plus a
+few Common-API methods (states, counties_in_state) used by the global
+talkgroup enumeration in build_context_records.
 
 Rate limiting (per Broadcastify docs):
 - live: "should be polled no more than once every 5 seconds" — enforced here
   with a 5s throttle on the `live` endpoint.
-- Other Calls endpoints have no documented rate, but we apply a defensive
-  1s minimum-spacing throttle to avoid surprising the upstream.
+- Other Calls / Common endpoints have no documented rate, but we apply a
+  defensive 1s minimum-spacing throttle to avoid surprising the upstream.
 
 Env vars (preferred -> fallback):
 - BROADCASTIFY_JWT            preferred: pre-generated user-authenticated JWT
@@ -45,6 +47,7 @@ log = logging.getLogger(__name__)
 BCFY_BASE = "https://api.bcfy.io"
 TIMEOUT_S = 15
 
+# Calls endpoints
 LIVE_URL = f"{BCFY_BASE}/calls/v1/live/"
 GROUP_GET_URL = BCFY_BASE + "/calls/v1/group_get/{group_id}"
 NODE_GET_URL = BCFY_BASE + "/calls/v1/node_get/{node_id}"
@@ -52,6 +55,10 @@ GROUPS_CTID_URL = BCFY_BASE + "/calls/v1/groups_ctid/{ctid}"
 GROUP_ARCHIVES_URL = (
     BCFY_BASE + "/calls/v1/group_archives/{group_id}/{start}/{end}"
 )
+
+# Common endpoints (used by global enumeration)
+STATES_URL = BCFY_BASE + "/common/v1/states/{coid}"
+COUNTIES_URL = BCFY_BASE + "/common/v1/counties/{stid}"
 
 # Preferred: pre-generated user-auth JWT (matches production; required by Calls endpoints).
 JWT = os.getenv("BROADCASTIFY_JWT")
@@ -150,8 +157,6 @@ def live(sid: int, pos: int | None = None) -> list[dict[str, Any]]:
     )
     r.raise_for_status()
     body = r.json()
-    # The endpoint returns either {"calls": [...], "lastPos": ...} or a bare
-    # list, depending on parameters. Normalize to list.
     if isinstance(body, dict):
         return body.get("calls", [])
     return body
@@ -181,10 +186,11 @@ def node(node_id: int) -> dict[str, Any]:
     return r.json()
 
 
-def groups_ctid(ctid: int, secs_ago: int = 86400 * 30) -> list[dict[str, Any]]:
+def groups_ctid(ctid: int, secs_ago: int = 86400 * 365) -> list[dict[str, Any]]:
     """POST /calls/v1/groups_ctid/{ctid} — talkgroups recently active in a county.
 
-    `secs_ago` filters to groups seen in the last N seconds; default 30 days.
+    `secs_ago` filters to groups seen in the last N seconds. Default 1 year
+    (the global-enumeration path needs old-but-active talkgroups visible).
     """
     _throttle("call", CALL_THROTTLE_S)
     r = requests.post(
@@ -206,6 +212,35 @@ def group_archives(group_id: str, start: int, end: int) -> dict[str, Any]:
     _throttle("call", CALL_THROTTLE_S)
     r = requests.get(
         GROUP_ARCHIVES_URL.format(group_id=group_id, start=start, end=end),
+        headers=_auth_headers(),
+        timeout=TIMEOUT_S,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+# ---------------------------------------------------------------------------
+# Common API methods (used by global enumeration)
+# ---------------------------------------------------------------------------
+
+
+def states(coid: int = 1) -> list[dict[str, Any]]:
+    """GET /common/v1/states/{coid} -- list of states in a country (default US)."""
+    _throttle("call", CALL_THROTTLE_S)
+    r = requests.get(
+        STATES_URL.format(coid=coid),
+        headers=_auth_headers(),
+        timeout=TIMEOUT_S,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def counties_in_state(stid: int) -> list[dict[str, Any]]:
+    """GET /common/v1/counties/{stid} -- list of counties in a state."""
+    _throttle("call", CALL_THROTTLE_S)
+    r = requests.get(
+        COUNTIES_URL.format(stid=stid),
         headers=_auth_headers(),
         timeout=TIMEOUT_S,
     )
