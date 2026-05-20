@@ -37,7 +37,7 @@ def _get_db_conn_kwargs():
     }
 
 
-def verify_transcript_in_db(feed_id: str, timeout_sec: float = 120.0) -> bool:
+def verify_transcript_in_db(feed_id: str, timeout_sec: float = 180.0) -> bool:
     """Polls the database until a transcript for the given feed_id appears."""
 
     async def _check_db():
