@@ -5,6 +5,7 @@ against actual ground-truth voice activity segments from the Colab.
 """
 
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -49,50 +50,41 @@ def calculate_f1_score(
 
 
 def load_audio(audio_path: Path) -> tuple[np.ndarray, int]:
-    """Robust audio loader using soundfile with a bulletproof ffmpeg subprocess fallback."""
-    try:
-        audio_data, sample_rate = sf.read(str(audio_path), always_2d=True)
-        audio_data = audio_data.mean(axis=1).astype(np.float32)  # Mono
-    except Exception:
-        # Query the sample rate using ffprobe
-        probe_cmd = [
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "stream=sample_rate",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            str(audio_path),
-        ]
-        sample_rate = int(
-            subprocess.check_output(probe_cmd)
-            .decode("utf-8")
-            .strip()
-            .split("\n")[0]
-        )
+    """Robust audio loader mirroring the production pipeline's NamedTemporaryFile FLAC decoder."""
+    with tempfile.NamedTemporaryFile(suffix=".flac", delete=False) as temp_file:
+        temp_filename = temp_file.name
 
-        # Decode audio to raw PCM float32 mono
-        command = [
-            "ffmpeg",
-            "-i",
-            str(audio_path),
-            "-f",
-            "f32le",
-            "-acodec",
-            "pcm_f32le",
-            "-ac",
-            "1",
-            "-",
-        ]
-        pipe = subprocess.Popen(
-            command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+    try:
+        # Decode the file to a standard, clean FLAC file exactly like production AudioProcessor
+        process = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(audio_path),
+                "-ac",
+                "1",  # Mono
+                "-f",
+                "flac",
+                temp_filename,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
         )
-        out, _ = pipe.communicate()
-        audio_data = np.frombuffer(out, dtype=np.float32)
+        if process.returncode != 0:
+            msg = "Failed to decode audio via ffmpeg"
+            raise RuntimeError(msg)
+
+        # Read the FLAC file and normalize exactly like the production pipeline does
+        samples, sample_rate = sf.read(temp_filename, dtype="int16")
+        audio_data = samples.astype(np.float32) / 32768.0
         return audio_data, sample_rate
-    else:
-        return audio_data, sample_rate
+    finally:
+        try:
+            Path(temp_filename).unlink()
+        except OSError:
+            pass
 
 
 class TestVadEngine(unittest.TestCase):
@@ -204,6 +196,17 @@ class TestVadEngine(unittest.TestCase):
                 (45.874, 49.212),
                 (49.373, 51.884),
                 (52.768, 54.178),
+            ],
+            min_f1=0.85,
+        )
+
+    def test_integration_middlebury_file(self) -> None:
+        """Integration test to verify VAD performance on test_middlebury.mp3 (quiet segments)."""
+        self._run_integration_test(
+            "test_middlebury.mp3",
+            [
+                (0.6, 2.2),
+                (4.2, 6.7),
             ],
             min_f1=0.85,
         )
