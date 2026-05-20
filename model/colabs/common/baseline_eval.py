@@ -3,22 +3,23 @@
 import logging
 import os
 import re
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
 
 def run_test_baseline_inference_evaluation(
-    model,
-    prompt_fn,
-    inference_fn,
-    decode_fn,
-    normalize_fn=None,
-    dataset_name="librispeech_asr",
-    dataset_config="clean",
-    split="test",
-    num_examples=20,
-    batch_size=4,
-):
+    model: Any,
+    prompt_fn: Callable[[dict | None, str], Any],
+    inference_fn: Callable[[Any, list[Any]], list[Any]],
+    decode_fn: Callable[[Any, Any], str],
+    normalize_fn: Callable[[str], str] | None = None,
+    dataset_name: str = "librispeech_asr",
+    dataset_config: str = "clean",
+    split: str = "test",
+    num_examples: int = 20,
+    batch_size: int = 4,
+) -> tuple[float | None, list[str], list[str]]:
     """Run a baseline evaluation on a public dataset (e.g. LibriSpeech) using streaming and batching.
 
     Moved verbatim from ``inference_pipeline_runner.py`` lines 297-413. Signature is
