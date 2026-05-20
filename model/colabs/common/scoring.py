@@ -1,16 +1,20 @@
 """WER normalizer and ASR scoring metrics for dispatch-domain radio transcription.
 
-This module provides the re-derived dispatch text normalizer (ported faithfully from
-``evaluate_transcriptions.ipynb`` cells 2/3/8).
+This module is the canonical home for the dispatch text normalizer
+(``build_normalizer``) — ``evaluate_transcriptions.ipynb`` imports it rather
+than re-implementing inline. The normalizer adopts GOO-424's inverse-
+normalization recipe (#461, ported in commit ``99bbaf5``);
+``nemo_text_processing`` is version-pinned in the ``[scoring]`` extra
+because a version bump silently changes normalization output (and therefore
+WER).
 
-The dispatch normalizer is re-derived from ``evaluate_transcriptions.ipynb``; it does
-not reproduce any prior external WER baseline. ``nemo_text_processing`` is
-version-pinned in the ``[scoring]`` extra because a version bump silently changes
-normalization output (and therefore WER), so pin the version explicitly.
-
-All public functions require the ``[scoring]`` extra (``jiwer`` + ``nemo_text_processing``).
-Importing this module WITHOUT the extra is safe — the extra is loaded lazily so that
-``import common.scoring`` never triggers NeMo when ``[scoring]`` is not installed.
+The WER-bearing functions (``build_normalizer``, ``compute_wer``,
+``compute_cer``, ``duration_bucket_wer``, ``bootstrap_paired``) require the
+``[scoring]`` extra (``jiwer`` + ``nemo_text_processing``). The pure-Python
+helpers (``hallucination_rate``, ``count_keyword_occurrences``,
+``keyword_metrics``) work without it. Importing this module WITHOUT the
+extra is always safe — the heavy deps are loaded lazily so
+``import common.scoring`` never triggers NeMo.
 """
 
 import logging
@@ -438,7 +442,7 @@ def bootstrap_paired(
         )
     if n == 0:
         raise ValueError("cannot bootstrap an empty eval set")
-    if n_resamples <= 0:
+    if not isinstance(n_resamples, int) or n_resamples <= 0:
         raise ValueError("n_resamples must be a positive integer")
     if not 0.0 < confidence < 1.0:
         raise ValueError("confidence must lie in the open interval (0, 1)")
