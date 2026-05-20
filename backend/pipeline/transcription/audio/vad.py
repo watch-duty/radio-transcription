@@ -282,8 +282,6 @@ class VoiceActivityDetector:
             resampler = TorchaudioHannResampler(sample_rate, TARGET_SAMPLE_RATE)
             audio_array = resampler.resample(audio_array)
 
-        has_genuine_prior = prior_audio is not None
-
         # VAD Priming Strategy: Prepend historical contiguous audio waveform (if available)
         # to prime the stateful filters, sinc resampler kernels, and ONNX hidden layers.
         # If no contiguous prior tail is passed (e.g. startup chunk of a feed session),
@@ -309,6 +307,8 @@ class VoiceActivityDetector:
             extended_audio = audio_array
 
         preprocessed = self.preprocess(extended_audio)
+
+        has_genuine_prior = prior_audio is not None
 
         # Slicing strategy: If we prepended a genuine historical prior audio tail from the
         # previous chunk, we slice it off before VAD inference. This gives the stateful denoiser
