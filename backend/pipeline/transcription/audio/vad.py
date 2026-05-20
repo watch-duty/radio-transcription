@@ -187,17 +187,22 @@ class VoiceActivityDetector:
         )
         bp_audio = bp_board(audio_array, TARGET_SAMPLE_RATE)
 
-        comp_board = Pedalboard(
-            [
-                Compressor(
-                    threshold_db=self.comp_threshold_db,
-                    ratio=self.comp_ratio,
-                    attack_ms=self.comp_attack_ms,
-                    release_ms=self.comp_release_ms,
-                )
-            ]
-        )
-        comp_audio = comp_board(bp_audio, TARGET_SAMPLE_RATE)
+        # Dynamically apply Compressor only if the raw signal is quiet (peak < 0.40)
+        peak = np.max(np.abs(audio_array))
+        if peak < 0.40:
+            comp_board = Pedalboard(
+                [
+                    Compressor(
+                        threshold_db=self.comp_threshold_db,
+                        ratio=self.comp_ratio,
+                        attack_ms=self.comp_attack_ms,
+                        release_ms=self.comp_release_ms,
+                    )
+                ]
+            )
+            comp_audio = comp_board(bp_audio, TARGET_SAMPLE_RATE)
+        else:
+            comp_audio = bp_audio
 
         ulunas_denoised = self.denoise(comp_audio)
 

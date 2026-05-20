@@ -167,7 +167,7 @@ class TestVadEngine(unittest.TestCase):
                 (56.2, 60.6),
                 (62.6, 65.3),
             ],
-            min_f1=0.80,
+            min_f1=0.85,
         )
 
     def test_integration_dispatch_sku_file(self) -> None:
@@ -203,10 +203,10 @@ class TestVadEngine(unittest.TestCase):
         self._run_integration_test(
             "test_middlebury.mp3",
             [
-                (0.47, 1.4),
-                (3.9, 6.4),
+                (0.6, 2.2),
+                (4.2, 6.7),
             ],
-            min_f1=0.83,
+            min_f1=0.85,
         )
 
     def test_vad_priming_contiguous_chunk(self) -> None:
