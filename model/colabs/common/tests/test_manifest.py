@@ -52,6 +52,26 @@ class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
         with self.assertRaises(ValueError):
             merge_predictions_to_manifest(gt, preds, "m")
 
+    def test_raises_on_missing_ground_truth_offset(self) -> None:
+        """A GT row missing 'offset' raises — symmetric to the predictions side.
+
+        Silently defaulting to 0.0 would let a malformed manifest bind every
+        row missing an offset to whichever prediction sits at 0.0.
+        """
+        from common.manifest import merge_predictions_to_manifest
+
+        gt = [{"audio_filepath": "gs://b/a.flac"}]  # no 'offset' key
+        with self.assertRaises(ValueError):
+            merge_predictions_to_manifest(gt, [], "gemini")
+
+    def test_raises_on_missing_ground_truth_audio_filepath(self) -> None:
+        """A GT row missing 'audio_filepath' raises — symmetric to predictions."""
+        from common.manifest import merge_predictions_to_manifest
+
+        gt = [{"offset": 1.0}]  # no 'audio_filepath' key
+        with self.assertRaises(ValueError):
+            merge_predictions_to_manifest(gt, [], "gemini")
+
     def test_does_not_return_empty_list_on_error(self) -> None:
         """Verify the old silent-failure path (return []) is gone."""
         ground_truth = [

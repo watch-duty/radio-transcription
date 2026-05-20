@@ -135,10 +135,22 @@ def merge_predictions_to_manifest(
             pred_index.setdefault(audio_fp, []).append((p_offset, p_text))
 
         # Group ground-truth row indices by audio_filepath so the offset
-        # match below is resolved within each source file.
+        # match below is resolved within each source file. Validate the same
+        # required keys as on the predictions side — silently defaulting
+        # audio_filepath to "" or offset to 0.0 would mask a malformed GT
+        # manifest by binding every row to whichever group / segment happens
+        # to sit at the default.
         gt_by_file: dict[str, list[int]] = {}
         for i, gt_row in enumerate(ground_truth):
-            audio_fp = str(gt_row.get("audio_filepath", ""))
+            if "audio_filepath" not in gt_row:
+                raise ValueError(
+                    f"ground truth row missing required 'audio_filepath': {gt_row!r}"
+                )
+            if "offset" not in gt_row:
+                raise ValueError(
+                    f"ground truth row missing required 'offset': {gt_row!r}"
+                )
+            audio_fp = str(gt_row["audio_filepath"])
             gt_by_file.setdefault(audio_fp, []).append(i)
 
         field_name = f"pred_text_{model_key}"
@@ -159,7 +171,7 @@ def merge_predictions_to_manifest(
             # borrowing a neighbor's.
             pairs: list[tuple[float, int, int]] = []
             for gi in gt_indices:
-                gt_offset = float(ground_truth[gi].get("offset", 0.0))
+                gt_offset = float(ground_truth[gi]["offset"])
                 for pi, (p_offset, _) in enumerate(candidates):
                     diff = abs(gt_offset - p_offset)
                     if diff < offset_tolerance:
