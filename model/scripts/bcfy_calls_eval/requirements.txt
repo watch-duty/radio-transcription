@@ -2,7 +2,7 @@
 # Calls client and Chirp V3 (Speech-to-Text V2) deps for the second model arm.
 google-genai>=0.3.0
 google-cloud-storage>=2.14.0
-google-cloud-speech>=2.27.0
+google-cloud-speech>=2.37.0  # CustomPromptConfig (Chirp custom_prompt) needs this
 loguru>=0.7.0
 jiwer>=3.0.0
 nemo_text_processing>=1.0.0
