@@ -34,7 +34,10 @@ def get_lazy_transcriber(project_id: str) -> transcribers.Transcriber:
     if _transcriber_instance is None:
         t_type_str = os.environ.get("TRANSCRIBER_TYPE", "GOOGLE_CHIRP_V3")
         t_config_json = os.environ.get("TRANSCRIBER_CONFIG", "{}")
-        t_type = TranscriberType[t_type_str]
+        try:
+            t_type = TranscriberType(t_type_str)
+        except ValueError:
+            t_type = TranscriberType[t_type_str]
         logger.info("Initializing transcriber type %s", t_type.name)
         _transcriber_instance = transcribers.get_transcriber(
             t_type, project_id, t_config_json
