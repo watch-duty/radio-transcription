@@ -14,6 +14,7 @@ dependencies = [
     "opentelemetry-sdk>=1.41.1",
     "opentelemetry-exporter-gcp-trace>=1.12.0",
     "pydantic>=2.12.5",
+    "betterproto>=2.0.0b6",
 ]
 
 [tool.setuptools]
