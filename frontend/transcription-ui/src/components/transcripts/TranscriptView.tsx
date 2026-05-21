@@ -323,6 +323,11 @@ export function TranscriptView({
     }
   }, [transcriptsError, onError]);
 
+  const transcriptsLastUpdated =
+    transcriptsDataUpdatedAt && transcriptsDataUpdatedAt > 0
+      ? transcriptsDataUpdatedAt
+      : null;
+
   const transcripts = useMemo(
     () =>
       listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? [],
@@ -800,9 +805,7 @@ export function TranscriptView({
               hasOlderTranscripts={hasOlderTranscripts}
               isFetchingOlderTranscripts={isFetchingOlderTranscripts}
               fetchOlderTranscripts={fetchOlderTranscripts}
-              transcriptsDataUpdatedAt={
-                transcriptsDataUpdatedAt > 0 ? transcriptsDataUpdatedAt : null
-              }
+              transcriptsLastUpdated={transcriptsLastUpdated}
               triggerSnackbar={triggerSnackbar}
               ruleIdToNameMap={ruleIdToNameMap}
               rulesLoading={rulesLoading}
