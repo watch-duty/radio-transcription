@@ -204,7 +204,7 @@ known-first-party = ["backend", "local_dev"]
   "S608",   # Possible SQL injection via string-based query construction
   "SLF001", # Private member accessed
 ]
-"model/data/**.py" = [
+"model/data_sources/**.py" = [
   "ANN001", # Missing type annotation for function argument
   "ANN201", # Missing return type annotation
   "B017",   # Do not assert blind exception: `Exception`
