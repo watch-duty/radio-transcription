@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.pipeline.ingestion.collectors.fire_notifications import collector
+from backend.pipeline.ingestion.models import AudioMimeType
 from backend.pipeline.storage.feed_store import SourceType
 
 
@@ -146,6 +147,7 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(chunks), 2)
         self.assertEqual(chunks[0].session_id, "session-id")
         self.assertEqual(chunks[0].audio_bytes, b"mp3_bytes")
+        self.assertEqual(chunks[0].mime_type, AudioMimeType.MPEG)
         self.assertEqual(len(self.processed_uuids), 2)
         self.assertIn("uuid1", self.processed_uuids)
         self.assertIn("uuid2", self.processed_uuids)

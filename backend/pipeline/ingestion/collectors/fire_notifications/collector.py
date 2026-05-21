@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 from curl_cffi.requests import AsyncSession
 
-from backend.pipeline.ingestion.models import CapturedChunk
+from backend.pipeline.ingestion.models import AudioMimeType, CapturedChunk
 from backend.pipeline.ingestion.slo_contract import (
     EVENT_TYPE_CALL_DOWNLOAD_FAILED,
 )
@@ -206,6 +206,7 @@ async def _process_file_list(
             chunk_end_time=end_time,
             session_id=connection_session_id,
             receipt_time=receipt_time,
+            mime_type=AudioMimeType.MPEG,
         )
 
 

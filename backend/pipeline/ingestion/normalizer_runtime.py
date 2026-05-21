@@ -762,7 +762,7 @@ class NormalizerRuntime:
         if feed["source_type"] == SourceType.OPENMHZ:
             extension = "m4a"
             content_type = "audio/mp4"
-        elif feed["source_type"] == SourceType.ECHO:
+        elif feed["source_type"] in (SourceType.ECHO, SourceType.FIRE_NOTIFICATIONS):
             extension = "mp3"
             content_type = "audio/mpeg"
 
