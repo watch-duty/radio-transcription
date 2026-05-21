@@ -27,4 +27,22 @@
 ## Decisions pending
 
 - Read smoke health → launch full run → synthesize H1 → outer loop (H2/H3 as
-  analyses of the full predictions).
+  analyses of the full predictions). ✓ all done.
+
+## 2026-05-20 (cont.) — H1/H2/H3 settled; concluded
+
+- **Smoke** validated the pipeline + caught Gemini hallucination → switched gate
+  metric to **capped WER** + hallucination rate.
+- **Full run**: Gemini clean (Vertex batch). Chirp's first pass showed -24 WER —
+  **diagnosed as a 429 throttle artifact** (409 swallowed-empty segments) via
+  raw-output sanity check; fixed (retry/backoff, persist-only-successes), purged
+  corrupted predictions, re-ran clean.
+- **H1 SUPPORTED**: framing net-improves both (~+2 capped-WER); Gemini clears
+  all 4 gates (SHIP), Chirp clears net but not the strict 3-5w gate. Mechanism =
+  hallucination control (Gemini). Inverts the prior lexical-injection regression.
+- **H2**: system-name is the active ingredient; geo adds nothing. Service: gain
+  in law traffic; **fire (WatchDuty's domain) shows no clear gain**.
+- **H3 REFUTED (favorably)**: framing helps the shortest clips most, not long.
+- **Concluded** → `to_human/CONCLUSION.md` (recommendation: Gemini ship-worthy as
+  a short-clip system-name framer, but validate on fire-specific data first).
+  Productionization spec deferred per the original experiment spec.
