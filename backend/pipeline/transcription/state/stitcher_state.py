@@ -6,7 +6,7 @@ from apache_beam.metrics import Metrics
 
 from backend.pipeline.common.constants import MS_PER_SECOND
 from backend.pipeline.transcription.common.constants import (
-    DEFAULT_STARTUP_VAD_PRE_ROLL_MS,
+    DEFAULT_VAD_PRE_ROLL_MS,
 )
 from backend.pipeline.transcription.common.datatypes import (
     AppendBufferAction,
@@ -532,9 +532,7 @@ class AudioStitchingStateMachine:
                     ctx.missing_prior_context = False
 
                 ctx.transmission_start_time_ms = file_start_ms + global_start_ms
-                append_start = max(
-                    0, global_start_ms - DEFAULT_STARTUP_VAD_PRE_ROLL_MS
-                )
+                append_start = max(0, global_start_ms - DEFAULT_VAD_PRE_ROLL_MS)
                 ctx.start_audio_offset_ms = append_start
                 ctx.buffer_start_time_ms = file_start_ms + append_start
             else:
