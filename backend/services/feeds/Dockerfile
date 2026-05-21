@@ -19,7 +19,8 @@ COPY pyproject.toml uv.lock ./
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Copy transcription pyproject.toml to satisfy uv workspace requirement
+# Copy workspace pyproject.toml files to satisfy uv workspace requirement
+COPY backend/pipeline/normalization/pyproject.toml ./backend/pipeline/normalization/
 COPY backend/pipeline/transcription/pyproject.toml ./backend/pipeline/transcription/
 RUN uv sync --frozen --no-dev
 
