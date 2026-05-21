@@ -15,7 +15,6 @@ dependencies = [
     "opentelemetry-exporter-gcp-trace>=1.12.0",
     "pydantic>=2.12.5",
     # Adding betterproto because it is required to load the generated betterproto schema types.
-    # Since pre-release versions are not permitted globally in this repo, listing it explicitly allows resolving it.
     "betterproto>=2.0.0b6",
 ]
 
