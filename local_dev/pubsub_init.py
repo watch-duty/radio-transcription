@@ -106,6 +106,13 @@ if __name__ == "__main__":
         subscriber, os.environ["SEGMENTED_AUDIO_SUBSCRIPTION"], segmented_topic
     )
 
+    # Pub/Sub for Echo Raw Audio
+    raw_audio_topic = os.environ.get(
+        "RAW_AUDIO_TOPIC", "projects/local-project/topics/raw-audio"
+    )
+    create_topic(publisher, raw_audio_topic)
+    create_pull_subscription(subscriber, "raw-audio-sub", raw_audio_topic)
+
     # Pub/Sub between Transcription and Rules Evaluation Services
     transcription_topic = os.environ["TRANSCRIPTION_TOPIC"]
     create_topic(publisher, transcription_topic)

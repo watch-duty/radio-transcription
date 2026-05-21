@@ -74,3 +74,18 @@ def create_test_polling_feed() -> Generator[tuple[str, str]]:
         "external_id": f"ext-{uuid.uuid4()}",
     }
     yield from _create_and_cleanup_feed(payload)
+
+
+@pytest.fixture(name="test_echo_feed")
+def create_test_echo_feed() -> tuple[str, str]:
+    """Fixture to create a temporary echo feed for testing."""
+    feed_name = f"integration-test-echo-feed-{uuid.uuid4()}"
+    payload = {
+        "name": feed_name,
+        "source_type": "echo",
+        "source_feed_id": f"src-{uuid.uuid4()}",
+        "external_id": f"ext-{uuid.uuid4()}",
+    }
+    gen = _create_and_cleanup_feed(payload)
+    feed_id, _ = next(gen)
+    return feed_id, payload["source_feed_id"]
