@@ -32,7 +32,14 @@ class TranscriptionServiceContainer:
         self._processor: TranscriptionEventProcessor | None = None
 
     def get_transcriber(self, project_id: str) -> transcribers.Transcriber:
-        """Warms up and caches the transcriber instance."""
+        """Warms up and caches the transcriber instance.
+
+        Args:
+            project_id: The Google Cloud Project ID.
+
+        Returns:
+            The cached Transcriber instance.
+        """
         if self._transcriber is None:
             t_type_str = os.environ.get("TRANSCRIBER_TYPE", "GOOGLE_CHIRP_V3")
             t_config_json = os.environ.get("TRANSCRIBER_CONFIG", "{}")
@@ -45,7 +52,11 @@ class TranscriptionServiceContainer:
         return self._transcriber
 
     def get_publisher(self) -> pubsub_v1.PublisherClient:
-        """Warms up and caches the Pub/Sub publisher client with ordering enabled."""
+        """Warms up and caches the Pub/Sub publisher client with ordering enabled.
+
+        Returns:
+            The cached PubSub PublisherClient instance.
+        """
         if self._publisher is None:
             logger.info("Initializing Pub/Sub PublisherClient")
             publisher_options = pubsub_v1.types.PublisherOptions(
@@ -57,7 +68,14 @@ class TranscriptionServiceContainer:
         return self._publisher
 
     def get_processor(self) -> TranscriptionEventProcessor:
-        """Warms up and caches the Event Processor instance."""
+        """Warms up and caches the Event Processor instance.
+
+        Returns:
+            The cached TranscriptionEventProcessor instance.
+
+        Raises:
+            ValueError: If the OUTPUT_TOPIC environment variable is not set.
+        """
         if self._processor is None:
             project_id = os.environ.get("PROJECT_ID", "watch-duty-dev")
             output_topic = os.environ.get("OUTPUT_TOPIC")
@@ -83,6 +101,10 @@ container = TranscriptionServiceContainer()
 
 @functions_framework.cloud_event
 def transcribe_claim_check(cloud_event: CloudEvent) -> None:
-    """Entry point for Cloud Function Pub/Sub trigger events."""
+    """Entry point for Cloud Function Pub/Sub trigger events.
+
+    Args:
+        cloud_event: The triggered Pub/Sub CloudEvent.
+    """
     processor = container.get_processor()
     processor.process_event(cloud_event)
