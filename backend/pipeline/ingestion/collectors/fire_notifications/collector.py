@@ -14,6 +14,7 @@ from curl_cffi.requests import AsyncSession
 
 from backend.pipeline.common.audio import get_audio_duration
 from backend.pipeline.ingestion.models import AudioMimeType, CapturedChunk
+from backend.pipeline.ingestion.settings import _require_env
 from backend.pipeline.ingestion.slo_contract import (
     EVENT_TYPE_CALL_DOWNLOAD_FAILED,
 )
@@ -29,7 +30,6 @@ logger = logging.getLogger(__name__)
 _DOWNLOAD_MAX_RETRIES = 3
 _DOWNLOAD_BACKOFF_BASE_SEC = 1.0
 _POLL_INTERVAL_SEC = 30.0
-_S3_BASE_URL = os.environ.get("FIRE_NOTIFICATIONS_S3_BASE", "")
 _MAX_CONSECUTIVE_FAILURES = 10
 
 
@@ -137,6 +137,7 @@ async def _process_file_list(
     feed: LeasedFeed,
     processed_uuids: collections.deque[str],
     source_feed_id: str,
+    s3_base_url: str,
 ) -> AsyncIterator[CapturedChunk]:
     """Filter, sort and process audio files, yielding CapturedChunks."""
     # Filter for files and sort by name to process chronologically
@@ -171,7 +172,7 @@ async def _process_file_list(
             continue
 
         # Download the actual audio
-        s3_url = f"{_S3_BASE_URL}/{file_uuid}.mp3"
+        s3_url = f"{s3_base_url}/{file_uuid}.mp3"
         receipt_time = datetime.datetime.now(datetime.UTC)
 
         mp3_bytes = await _download_audio(session, s3_url, shutdown_event)
@@ -233,12 +234,8 @@ async def fire_notifications_collector(
 
     Yields :class:`CapturedChunk` for each new MP3 file found.
     """
-    if not _S3_BASE_URL:
-        logger.error(
-            "FIRE_NOTIFICATIONS_S3_BASE is not set. Cannot download audio."
-        )
-        msg = "FIRE_NOTIFICATIONS_S3_BASE_not_set"
-        raise RuntimeError(msg)
+    s3_base_url = _require_env("FIRE_NOTIFICATIONS_S3_BASE")
+
 
     source_feed_id = feed.get("source_feed_id")
     if not source_feed_id:
@@ -284,6 +281,7 @@ async def fire_notifications_collector(
                         feed,
                         processed_uuids,
                         source_feed_id,
+                        s3_base_url,
                     ):
                         yield chunk
                     poll_ok = True

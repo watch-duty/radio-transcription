@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import datetime
+import os
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -145,6 +146,7 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
                 self.feed,  # type: ignore
                 self.processed_uuids,
                 "CHAN",
+                "http://mock-s3-bucket",
             ):
                 chunks.append(chunk)
 
@@ -193,6 +195,7 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
                 self.feed,  # type: ignore
                 self.processed_uuids,
                 "CHAN",
+                "http://mock-s3-bucket",
             ):
                 chunks.append(chunk)
 
@@ -225,6 +228,7 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
             self.feed,  # type: ignore
             self.processed_uuids,
             "CHAN",
+            "http://mock-s3-bucket",
         ):
             chunks.append(chunk)
 
@@ -233,9 +237,9 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("uuid1", self.processed_uuids)
 
 
-@patch(
-    "backend.pipeline.ingestion.collectors.fire_notifications.collector._S3_BASE_URL",
-    "http://mock-s3-bucket",
+@patch.dict(
+    os.environ,
+    {"FIRE_NOTIFICATIONS_S3_BASE": "http://mock-s3-bucket"},
 )
 class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
