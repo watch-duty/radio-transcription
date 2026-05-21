@@ -5,6 +5,7 @@ import collections
 import datetime
 import os
 import unittest
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.pipeline.ingestion.collectors.fire_notifications import collector
@@ -99,7 +100,7 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.session = MagicMock()
         self.shutdown = asyncio.Event()
-        self.feed = {
+        self.feed: dict[str, Any] = {
             "id": "feed-id",
             "source_type": SourceType.FIRE_NOTIFICATIONS,
         }
@@ -164,9 +165,13 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
         new_callable=AsyncMock,
     )
-    async def test_process_files_with_last_bookmark_time(self, mock_download: AsyncMock) -> None:
+    async def test_process_files_with_last_bookmark_time(
+        self, mock_download: AsyncMock
+    ) -> None:
         mock_download.return_value = b"mp3_bytes"
-        self.feed["last_bookmark_time"] = datetime.datetime(2026, 5, 20, 12, 0, 0, tzinfo=datetime.UTC)
+        self.feed["last_bookmark_time"] = datetime.datetime(
+            2026, 5, 20, 12, 0, 0, tzinfo=datetime.UTC
+        )
         files = [
             {
                 "type": "file",
@@ -201,14 +206,19 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(chunks), 1)
         self.assertEqual(mock_duration.call_count, 1)
-        self.assertEqual(chunks[0].chunk_start_time, datetime.datetime(2026, 5, 20, 12, 0, 1, tzinfo=datetime.UTC))
+        self.assertEqual(
+            chunks[0].chunk_start_time,
+            datetime.datetime(2026, 5, 20, 12, 0, 1, tzinfo=datetime.UTC),
+        )
         self.assertEqual(chunks[0].resume_position, chunks[0].chunk_end_time)
 
     @patch(
         "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
         new_callable=AsyncMock,
     )
-    async def test_failed_download_does_not_mark_uuid_seen(self, mock_download: AsyncMock) -> None:
+    async def test_failed_download_does_not_mark_uuid_seen(
+        self, mock_download: AsyncMock
+    ) -> None:
         mock_download.return_value = None
         files = [
             {
@@ -244,7 +254,7 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
 class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.shutdown = asyncio.Event()
-        self.feed = {
+        self.feed: dict[str, Any] = {
             "id": "feed-id",
             "source_type": SourceType.FIRE_NOTIFICATIONS,
             "source_feed_id": "CHAN",
@@ -265,7 +275,9 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         mock_sleep.return_value = False  # Sleep normally
         mock_session = mock_session_cls.return_value
         mock_session.close = AsyncMock()
-        mock_session.get = AsyncMock(side_effect=Exception("Connection failure"))
+        mock_session.get = AsyncMock(
+            side_effect=Exception("Connection failure")
+        )
 
         collector_generator = collector.fire_notifications_collector(
             self.feed,  # type: ignore

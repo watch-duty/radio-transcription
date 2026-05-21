@@ -4,7 +4,6 @@ import asyncio
 import collections
 import datetime
 import logging
-import os
 import random
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -31,8 +30,6 @@ _DOWNLOAD_MAX_RETRIES = 3
 _DOWNLOAD_BACKOFF_BASE_SEC = 1.0
 _POLL_INTERVAL_SEC = 30.0
 _MAX_CONSECUTIVE_FAILURES = 10
-
-
 
 
 async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
@@ -235,7 +232,6 @@ async def fire_notifications_collector(
     Yields :class:`CapturedChunk` for each new MP3 file found.
     """
     s3_base_url = _require_env("FIRE_NOTIFICATIONS_S3_BASE")
-
 
     source_feed_id = feed.get("source_feed_id")
     if not source_feed_id:
