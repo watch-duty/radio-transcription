@@ -14,8 +14,9 @@ from google.cloud import pubsub_v1
 from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.normalization.common.enums import TranscriberType
-from backend.pipeline.transcription import transcribers
 from backend.pipeline.transcription.processor import TranscriptionEventProcessor
+from backend.pipeline.transcription.transcribers.base import Transcriber
+from backend.pipeline.transcription.transcribers.factory import get_transcriber
 
 # Setup Logging and Tracing
 setup_logging()
@@ -27,11 +28,11 @@ class TranscriptionServiceContainer:
     """Encapsulates the warm-started cached service container instances for GCF."""
 
     def __init__(self) -> None:
-        self._transcriber: transcribers.Transcriber | None = None
+        self._transcriber: Transcriber | None = None
         self._publisher: pubsub_v1.PublisherClient | None = None
         self._processor: TranscriptionEventProcessor | None = None
 
-    def get_transcriber(self, project_id: str) -> transcribers.Transcriber:
+    def get_transcriber(self, project_id: str) -> Transcriber:
         """Warms up and caches the transcriber instance.
 
         Args:
@@ -45,7 +46,7 @@ class TranscriptionServiceContainer:
             t_config_json = os.environ.get("TRANSCRIBER_CONFIG", "{}")
             t_type = TranscriberType(t_type_str.lower())
             logger.info("Initializing transcriber type %s", t_type.name)
-            self._transcriber = transcribers.get_transcriber(
+            self._transcriber = get_transcriber(
                 t_type, project_id, t_config_json
             )
             self._transcriber.setup()

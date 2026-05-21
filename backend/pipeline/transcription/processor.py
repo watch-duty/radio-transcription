@@ -21,7 +21,7 @@ from backend.pipeline.schema_types.audio_ready_for_transcription_pb2 import (
 from backend.pipeline.schema_types.transcribed_audio_pb2 import (
     TranscribedAudio,
 )
-from backend.pipeline.transcription import transcribers
+from backend.pipeline.transcription.transcribers.base import Transcriber
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ class TranscriptionEventProcessor:
         *,
         project_id: str,
         output_topic: str,
-        transcriber: transcribers.Transcriber,
+        transcriber: Transcriber,
         publisher: pubsub_v1.PublisherClient,
     ) -> None:
         self.project_id = project_id
