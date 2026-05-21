@@ -59,31 +59,16 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Cache Docker layers
-        uses: actions/cache@v4
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
-
       - name: Build microservices using Buildx Bake (with caching)
         run: |
           docker buildx bake \
-            --allow=fs=/tmp \
-            --set *.cache-from=type=local,src=/tmp/.buildx-cache \
-            --set *.cache-to=type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            --set *.cache-from=type=gha,scope=${{ github.workflow }} \
+            --set *.cache-to=type=gha,mode=max,scope=${{ github.workflow }} \
             -f docker-compose.yml \
             --load
 
       - name: Run E2E tests
         run: mise run test:e2e
-
-      - name: Move cache
-        # Temp fix for actions/cache to avoid growing the cache size indefinitely
-        run: |
-          rm -rf /tmp/.buildx-cache
-          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
       - name: Print container logs on failure
         if: failure()
