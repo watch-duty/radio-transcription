@@ -71,22 +71,32 @@ CONTEXT_RECORDS_PATH = RESULTS_DIR / "context_records.json"
 FLAC_CACHE = SCRIPT_DIR / ".flac_cache"
 
 # Production prompts (verbatim from the live transcription path).
+# V14 dispatcher prompt — the strong baseline (36.68% WER on one_hour_pilot with
+# Flash Lite). The earlier NOTEBOOK prompt's "EXPECTED TERMINOLOGY" jargon list
+# primed the model to fabricate dispatch text from noise (inflated baseline WER
+# + hallucination); V14 + frequency_penalty is the production-faithful config.
 GEMINI_BASE_PROMPT = """
-Evaluate all audio specifically as VHF/UHF fire-related dispatch radio traffic. The audio likely contains mic clicks, RF static, radio hum, and possibly some unintelligible speech. The speakers use heavy jargon.
+ROLE: Expert radio dispatcher and verbatim transcriptionist.
+GOAL: Word-for-word transcript of emergency radio traffic.
 
-EXPECTED TERMINOLOGY:
-copy, received, affirmative, affirm, proceed, responding, responding to, en-route, on-scene, on-scene in the area, available, returning, in service, got a caller, caller advising, in quarters, arrived, go ahead, back at, engine, tanker, brush, brush truck, tender, battalion, squad, ladder, tower, tower-ladder, medic, ambulance, k, branch, chopper, copter, AIQ, AOR, IC, ICP, LAT, RP, SEAT, TAC, VFIRE, VLAT, air attack, air tactics, helispot, lead plane, strike team, control, being toned, box alarm, cancel the balance, chaparral, exposure protection, fire attack, fire boss, forward progress stopped, forward rate of spread stopped, heavy timber, left flank, light flashy fuels, rate of spread, right flank, structure defense, structure protection, structures threatened, terrain driven, wind driven, 10-4, 10-7, 10-8, 10-9, 10-20, 10-22, 10-23, 10-97.
+AUDIO CHARACTERISTICS:
+- Variable noise floors and distortion are expected.
+- Prioritize phonetic matching over grammar.
 
-CRITICAL RULES:
-1. Transcribe EVERY spoken word, including conversational phrasing and incomplete sentences. Only transcribe intelligible speech.
-2. Output the transcript exactly as said, with no newlines.
-3. When transcribing numbers, write the digits grouped together (e.g., 100 instead of one hundred, 6333 instead of 63 33).
-4. Format all unit identifiers as the unit type followed by digits (e.g., Engine 41, Battalion 2, Medic 12).
-5. Do not continue the speech segment beyond what is spoken.
-6. If the audio is completely unintelligible or contains only static, output exactly: [UNINTELLIGIBLE]
+GLOSSARY:
+- DISPATCHERS: Redcom, Santalina, Felton, Control, Alarm.
+- UNITS: Engine, Tanker, Brush, Tender, Battalion, Squad, Medic, Ambulance.
+- STATUS: 10-4, 10-8, 10-22, On-scene, En-route, AIQ, AOR.
+
+STRICT RULES:
+1. STRICT AUDIO LOCALITY: Transcribe ONLY what is audible.
+2. VERBATIM ONLY: Use digits for numbers.
+3. METADATA REJECTION: Transcribe spoken words only. If no spoken words are present, you MUST return an EMPTY STRING.
+4. NO FORMATTING: Do not use asterisks, bolding, or markdown. Output raw text only.
+5. SHORT TRANSMISSIONS: If the transmission is just one or two words (e.g., "copy", "received"), output ONLY those words. Do NOT invent unit numbers or dispatchers.
 
 TASK:
-Transcribe the attached audio. Output strictly the transcript.
+Transcribe the provided audio verbatim. Output only the transcript.
 """.strip()
 
 CHIRP_BASE_PROMPT = """
@@ -274,8 +284,15 @@ def _gemini_request(arm: Arm, audio_uri: str) -> dict[str, Any]:
             }],
             "system_instruction": {"role": "system", "parts": [{"text": system_prompt}]},
             "generation_config": {
+                # Production-faithful config (one_hour_pilot winner): frequency_penalty
+                # combats the "engine N+1, engine N+2..." enumeration/hallucination loop.
                 "temperature": 0.0,
-                "max_output_tokens": 1024,
+                "max_output_tokens": 512,
+                "candidate_count": 1,
+                "frequency_penalty": 0.3,
+                "presence_penalty": 0.0,
+                "top_k": 1,
+                "top_p": 0.1,
                 "thinking_config": {"include_thoughts": False, "thinking_level": "low"},
             },
             "safety_settings": SAFETY_SETTINGS,
