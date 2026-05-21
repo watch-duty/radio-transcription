@@ -1,17 +1,22 @@
 import React from 'react';
 
 import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import Switch from '@mui/material/Switch';
 
 export interface TranscriptActionsBarProps {
+  hasNewerTranscripts: boolean;
   redactTranscripts: boolean;
   setRedactTranscripts: (redact: boolean) => void;
+  onClickViewLatest: () => void;
 }
 
 export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
+  hasNewerTranscripts,
   redactTranscripts,
   setRedactTranscripts,
+  onClickViewLatest,
 }) => {
   return (
     <Box
@@ -21,7 +26,16 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
         mb: 0.5,
       }}
     >
-      <Box />
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <Button
+          variant="contained"
+          sx={{ textTransform: 'none', gap: 1 }}
+          onClick={onClickViewLatest}
+          disabled={!hasNewerTranscripts}
+        >
+          {hasNewerTranscripts ? 'Jump to latest' : 'Viewing latest'}
+        </Button>
+      </Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <FormControlLabel
           control={

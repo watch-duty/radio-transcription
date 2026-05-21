@@ -642,6 +642,18 @@ export function TranscriptView({
     setHighlightedTransmissionId(transmissionId);
   };
 
+  const handleFilterByDateTime = (date: Date | null) => {
+    setSearchedTimestamp(date);
+    setSearchParams((prev) => {
+      if (date) {
+        prev.set('timestamp', date.getTime().toString());
+      } else {
+        prev.delete('timestamp');
+      }
+      return prev;
+    });
+  };
+
   if (!token) {
     return null;
   }
@@ -768,8 +780,10 @@ export function TranscriptView({
         {transcripts.length > 0 ? (
           <>
             <TranscriptActionsBar
+              hasNewerTranscripts={hasNewerTranscripts}
               redactTranscripts={redactTranscripts}
               setRedactTranscripts={setRedactTranscripts}
+              onClickViewLatest={() => handleFilterByDateTime(null)}
             />
             <TranscriptDisplay
               ref={virtuosoRef}
