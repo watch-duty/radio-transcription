@@ -32,7 +32,7 @@ services:
       context: ./model
       dockerfile: notebook_docker/Dockerfile
     network_mode: "host"
-    command: ["jupyter", "notebook", "--ip=0.0.0.0", "--allow-root", "--NotebookApp.token=''", "--NotebookApp.password=''"]
+    command: ["jupyter", "lab", "--ip=0.0.0.0", "--allow-root", "--NotebookApp.token=''", "--NotebookApp.password=''"]
     volumes:
       - .:/workspace
       # This maps the cloud credentials on your local machine onto the docker container.
@@ -51,9 +51,3 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    command: ["jupyter", "lab", "--ip=0.0.0.0", "--allow-root", "--no-browser", "--NotebookApp.token=''", "--NotebookApp.password=''"]
-    working_dir: /workspace
-    volumes:
-      - .:/workspace
-      # This maps the cloud credentials on your local machine onto the docker container.
-      - ${HOME}/.config/gcloud:/root/.config/gcloud
