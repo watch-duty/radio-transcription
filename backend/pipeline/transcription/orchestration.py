@@ -27,8 +27,6 @@ from backend.pipeline.transcription.common.constants import (
     DEFAULT_SEGMENTED_STALE_TIMEOUT_MS,
     DEFAULT_SIGNIFICANT_GAP_MS,
     DEFAULT_STALE_TIMEOUT_MS,
-    DEFAULT_VAD_POST_ROLL_MS,
-    DEFAULT_VAD_PRE_ROLL_MS,
     MAIN_TAG,
 )
 from backend.pipeline.transcription.common.datatypes import (
@@ -155,8 +153,6 @@ def get_pipeline(
         stale_timeout_ms=stale_timeout_continuous,
         max_transmission_duration_ms=options.max_transmission_duration_ms
         or DEFAULT_MAX_TRANSMISSION_DURATION_MS,
-        vad_pre_roll_ms=options.vad_pre_roll_ms or DEFAULT_VAD_PRE_ROLL_MS,
-        vad_post_roll_ms=options.vad_post_roll_ms or DEFAULT_VAD_POST_ROLL_MS,
         route_to_dlq=options.route_to_dlq
         if options.route_to_dlq is not None
         else True,
@@ -171,8 +167,6 @@ def get_pipeline(
         stale_timeout_ms=stale_timeout_segmented,
         max_transmission_duration_ms=options.max_transmission_duration_ms
         or DEFAULT_MAX_TRANSMISSION_DURATION_MS,
-        vad_pre_roll_ms=options.vad_pre_roll_ms or DEFAULT_VAD_PRE_ROLL_MS,
-        vad_post_roll_ms=options.vad_post_roll_ms or DEFAULT_VAD_POST_ROLL_MS,
         route_to_dlq=options.route_to_dlq
         if options.route_to_dlq is not None
         else True,

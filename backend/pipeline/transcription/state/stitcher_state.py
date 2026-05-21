@@ -4,6 +4,11 @@ import logging
 
 from apache_beam.metrics import Metrics
 
+from backend.pipeline.common.constants import MS_PER_SECOND
+from backend.pipeline.transcription.common.constants import (
+    DEFAULT_VAD_POST_ROLL_MS,
+    DEFAULT_VAD_PRE_ROLL_MS,
+)
 from backend.pipeline.transcription.common.datatypes import (
     AppendBufferAction,
     AudioChunkData,
@@ -304,7 +309,7 @@ class AudioStitchingStateMachine:
                     raise RuntimeError(msg)
 
                 target_post_roll_end = (
-                    ctx.last_segment_end_time_ms + self.config.vad_post_roll_ms
+                    ctx.last_segment_end_time_ms + DEFAULT_VAD_POST_ROLL_MS
                 ) - file_start_ms
                 append_end = min(
                     (len(chunk_data.audio) // (chunk_data.sample_rate // 1000)),
@@ -351,7 +356,10 @@ class AudioStitchingStateMachine:
             if ctx.last_segment_end_time_ms is not None
             else (
                 chunk_data.start_ms
-                + (len(chunk_data.audio) // (chunk_data.sample_rate // 1000))
+                + (
+                    len(chunk_data.audio)
+                    // (chunk_data.sample_rate // MS_PER_SECOND)
+                )
             )
         ) + self.config.stale_timeout_ms
         actions.append(
@@ -363,7 +371,7 @@ class AudioStitchingStateMachine:
             and ctx.last_segment_end_time_ms is not None
         ):
             target_post_roll_end = (
-                ctx.last_segment_end_time_ms + self.config.vad_post_roll_ms
+                ctx.last_segment_end_time_ms + DEFAULT_VAD_POST_ROLL_MS
             )
             append_end = min(
                 (len(chunk_data.audio) // (chunk_data.sample_rate // 1000)),
@@ -406,7 +414,7 @@ class AudioStitchingStateMachine:
                 msg = "Unreachable: active transmission without segment anchor"
                 raise RuntimeError(msg)
             target_post_roll_end = (
-                ctx.last_segment_end_time_ms + self.config.vad_post_roll_ms
+                ctx.last_segment_end_time_ms + DEFAULT_VAD_POST_ROLL_MS
             ) - file_start_ms
             append_end = min(target_post_roll_end, global_start_ms)
             append_start = audio_append_cursor_ms or 0
@@ -525,9 +533,7 @@ class AudioStitchingStateMachine:
                     ctx.missing_prior_context = False
 
                 ctx.transmission_start_time_ms = file_start_ms + global_start_ms
-                append_start = max(
-                    0, global_start_ms - self.config.vad_pre_roll_ms
-                )
+                append_start = max(0, global_start_ms - DEFAULT_VAD_PRE_ROLL_MS)
                 ctx.start_audio_offset_ms = append_start
                 ctx.buffer_start_time_ms = file_start_ms + append_start
             else:
@@ -538,8 +544,11 @@ class AudioStitchingStateMachine:
                 )
 
             append_end = min(
-                (len(chunk_data.audio) // (chunk_data.sample_rate // 1000)),
-                global_end_ms + self.config.vad_post_roll_ms,
+                (
+                    len(chunk_data.audio)
+                    // (chunk_data.sample_rate // MS_PER_SECOND)
+                ),
+                global_end_ms + DEFAULT_VAD_POST_ROLL_MS,
             )
 
             if append_end > append_start:
@@ -547,8 +556,10 @@ class AudioStitchingStateMachine:
                     AppendBufferAction(
                         audio_buffer=chunk_data.audio[
                             append_start
-                            * (chunk_data.sample_rate // 1000) : append_end
-                            * (chunk_data.sample_rate // 1000)
+                            * (
+                                chunk_data.sample_rate // MS_PER_SECOND
+                            ) : append_end
+                            * (chunk_data.sample_rate // MS_PER_SECOND)
                         ]
                     )
                 )
