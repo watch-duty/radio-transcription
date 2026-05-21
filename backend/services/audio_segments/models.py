@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta  # noqa: TC003
 from enum import StrEnum
+from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, Field
 
@@ -20,14 +21,42 @@ class AnnotationType(StrEnum):
     EVALUATION = "EVALUATION"
 
 
-class Annotation(BaseModel):
-    """Model for an annotation."""
+class TranscriptAnnotationData(BaseModel):
+    """Data for a transcript annotation."""
+
+    text: str
+
+
+class EvaluationAnnotationData(BaseModel):
+    """Data for an evaluation annotation."""
+
+    decisions: list[str]
+
+
+class TranscriptAnnotation(BaseModel):
+    """Annotation for a transcript."""
 
     audio_segment_id: str
-    type: AnnotationType
-    data: dict
+    type: Literal[AnnotationType.TRANSCRIPT] = AnnotationType.TRANSCRIPT
+    data: TranscriptAnnotationData
     created_at: datetime
     updated_at: datetime
+
+
+class EvaluationAnnotation(BaseModel):
+    """Annotation for an evaluation."""
+
+    audio_segment_id: str
+    type: Literal[AnnotationType.EVALUATION] = AnnotationType.EVALUATION
+    data: EvaluationAnnotationData
+    created_at: datetime
+    updated_at: datetime
+
+
+Annotation = Annotated[
+    Union[TranscriptAnnotation, EvaluationAnnotation],
+    Field(discriminator="type"),
+]
 
 
 class AudioSegment(BaseModel):

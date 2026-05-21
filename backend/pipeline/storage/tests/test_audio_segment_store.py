@@ -68,7 +68,27 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.audio_segment_id, str(_SEGMENT_ID))
         self.assertEqual(result.type, "TRANSCRIPT")
-        self.assertEqual(result.data, {"text": "hello"})
+        self.assertEqual(result.data.model_dump(), {"text": "hello"})
+
+    async def test_add_evaluation_annotation_success(self) -> None:
+        eval_row = {
+            "audio_segment_id": _SEGMENT_ID,
+            "type": "EVALUATION",
+            "data": '{"decisions": ["rule-1"]}',
+            "created_at": datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+            "updated_at": datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+        }
+        self.pool.fetchrow.return_value = eval_row
+
+        result = await self.store.add_annotation(
+            str(_SEGMENT_ID),
+            AnnotationType.EVALUATION,
+            {"decisions": ["rule-1"]},
+        )
+
+        self.assertEqual(result.audio_segment_id, str(_SEGMENT_ID))
+        self.assertEqual(result.type, "EVALUATION")
+        self.assertEqual(result.data.model_dump(), {"decisions": ["rule-1"]})
 
     async def test_add_annotation_invalid_uuid(self) -> None:
         with self.assertRaises(ValueError) as cm:

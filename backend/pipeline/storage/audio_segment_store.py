@@ -7,12 +7,16 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import asyncpg
 
+from pydantic import TypeAdapter
+
 from backend.pipeline.storage import audio_segment_queries
 from backend.services.audio_segments.models import (
     Annotation,
     AnnotationType,
     AudioSegment,
 )
+
+annotation_adapter = TypeAdapter(Annotation)
 
 
 class AudioSegmentStore:
@@ -71,7 +75,9 @@ class AudioSegmentStore:
             msg = f"Unable to add annotation for segment {segment_id}."
             raise ValueError(msg)
 
-        return Annotation.model_validate(self._prepare_annotation_row(row))
+        return annotation_adapter.validate_python(
+            self._prepare_annotation_row(dict(row))
+        )
 
     async def list_audio_segments(self) -> list[AudioSegment]:
         """List all audio segments bundled with their annotations."""
