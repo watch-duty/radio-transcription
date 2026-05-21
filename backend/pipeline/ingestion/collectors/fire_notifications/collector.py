@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from curl_cffi.requests import AsyncSession
 
+from backend.pipeline.common.audio import get_audio_duration
 from backend.pipeline.ingestion.models import AudioMimeType, CapturedChunk
 from backend.pipeline.ingestion.slo_contract import (
     EVENT_TYPE_CALL_DOWNLOAD_FAILED,
@@ -29,9 +30,9 @@ _DOWNLOAD_MAX_RETRIES = 3
 _DOWNLOAD_BACKOFF_BASE_SEC = 1.0
 _POLL_INTERVAL_SEC = 30.0
 _S3_BASE_URL = os.environ.get("FIRE_NOTIFICATIONS_S3_BASE", "")
+_MAX_CONSECUTIVE_FAILURES = 10
 
-# Standard cached bitrate fallback if size/duration calculation is needed.
-_DEFAULT_BITRATE_KBPS = 16
+
 
 
 async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
@@ -154,14 +155,9 @@ async def _process_file_list(
         if not file_uuid or file_uuid in processed_uuids:
             continue
 
-        # Mark as processed
-        processed_uuids.append(file_uuid)
-
         filename = f.get("name")
         if not filename:
             continue
-        size_bytes = f.get("size", 0)
-
         try:
             start_time = _parse_filename_timestamp(filename, source_feed_id)
         except ValueError:
@@ -170,10 +166,9 @@ async def _process_file_list(
             )
             continue
 
-        # Calculate duration using size and bitrate (16kbps = 2KB/sec)
-        bytes_per_sec = (_DEFAULT_BITRATE_KBPS * 1000) / 8
-        duration_sec = size_bytes / bytes_per_sec if size_bytes > 0 else 0
-        end_time = start_time + datetime.timedelta(seconds=duration_sec)
+        last_bookmark_time = feed.get("last_bookmark_time")
+        if last_bookmark_time is not None and start_time <= last_bookmark_time:
+            continue
 
         # Download the actual audio
         s3_url = f"{_S3_BASE_URL}/{file_uuid}.mp3"
@@ -194,11 +189,25 @@ async def _process_file_list(
                 )
             continue
 
+        try:
+            # to_thread: get_audio_duration shells out to ffprobe — keep it off the event loop.
+            duration_ms = await asyncio.to_thread(get_audio_duration, mp3_bytes)
+        except Exception:
+            logger.warning(
+                "Failed to compute duration for uuid=%s",
+                file_uuid,
+                exc_info=True,
+            )
+            continue
+
+        end_time = start_time + datetime.timedelta(milliseconds=duration_ms)
+
         logger.debug(
-            "FN Audio ready: source_feed_id=%s uuid=%s size=%d",
+            "FN Audio ready: source_feed_id=%s uuid=%s size=%d duration_ms=%d",
             source_feed_id,
             file_uuid,
             len(mp3_bytes),
+            duration_ms,
         )
         yield CapturedChunk(
             audio_bytes=mp3_bytes,
@@ -207,7 +216,11 @@ async def _process_file_list(
             session_id=connection_session_id,
             receipt_time=receipt_time,
             mime_type=AudioMimeType.MPEG,
+            resume_position=end_time,
         )
+        # Only mark as processed after a successful yield, confirming
+        # the chunk was handed off to the pipeline.
+        processed_uuids.append(file_uuid)
 
 
 async def fire_notifications_collector(
@@ -247,12 +260,14 @@ async def fire_notifications_collector(
     # Track UUIDs we've already ingested to prevent duplicates.
     # We use a deque with maxlen to prevent unbounded memory growth.
     processed_uuids: collections.deque[str] = collections.deque(maxlen=1000)
+    consecutive_failures = 0
 
     session = AsyncSession()
 
     try:
         while not shutdown_event.is_set():
             connection_session_id = str(uuid.uuid4())
+            poll_ok = False
 
             try:
                 # Poll the API
@@ -271,6 +286,7 @@ async def fire_notifications_collector(
                         source_feed_id,
                     ):
                         yield chunk
+                    poll_ok = True
                 else:
                     logger.warning(
                         "FN API returned %d: %s", resp.status_code, poll_url
@@ -281,6 +297,14 @@ async def fire_notifications_collector(
                     poll_url,
                     exc_info=True,
                 )
+
+            if poll_ok:
+                consecutive_failures = 0
+            else:
+                consecutive_failures += 1
+                if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+                    msg = "source_unreachable"
+                    raise RuntimeError(msg)
 
             # Sleep before next poll, with a small jitter
             jitter = random.uniform(0, 5.0)  # noqa: S311

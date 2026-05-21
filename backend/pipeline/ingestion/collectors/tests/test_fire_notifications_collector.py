@@ -133,6 +133,90 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         ]
 
         chunks = []
+        with patch(
+            "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
+            return_value=30000,
+        ) as mock_duration:
+            async for chunk in collector._process_file_list(
+                files,
+                self.session,
+                self.shutdown,
+                "session-id",
+                self.feed,  # type: ignore
+                self.processed_uuids,
+                "CHAN",
+            ):
+                chunks.append(chunk)
+
+        self.assertEqual(len(chunks), 2)
+        self.assertEqual(mock_duration.call_count, 2)
+        self.assertEqual(chunks[0].session_id, "session-id")
+        self.assertEqual(chunks[0].audio_bytes, b"mp3_bytes")
+        self.assertEqual(chunks[0].mime_type, AudioMimeType.MPEG)
+        self.assertEqual(chunks[0].resume_position, chunks[0].chunk_end_time)
+        self.assertEqual(len(self.processed_uuids), 2)
+        self.assertIn("uuid1", self.processed_uuids)
+        self.assertIn("uuid2", self.processed_uuids)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
+        new_callable=AsyncMock,
+    )
+    async def test_process_files_with_last_bookmark_time(self, mock_download: AsyncMock) -> None:
+        mock_download.return_value = b"mp3_bytes"
+        self.feed["last_bookmark_time"] = datetime.datetime(2026, 5, 20, 12, 0, 0, tzinfo=datetime.UTC)
+        files = [
+            {
+                "type": "file",
+                "name": "CHAN 2026-05-20 12-00-00.mp3",
+                "uuid": "uuid1",
+                "size": 1000,
+            },
+            {
+                "type": "file",
+                "name": "CHAN 2026-05-20 12-00-01.mp3",
+                "uuid": "uuid2",
+                "size": 1000,
+            },
+        ]
+
+        chunks = []
+        with patch(
+            "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
+            return_value=30000,
+        ) as mock_duration:
+            async for chunk in collector._process_file_list(
+                files,
+                self.session,
+                self.shutdown,
+                "session-id",
+                self.feed,  # type: ignore
+                self.processed_uuids,
+                "CHAN",
+            ):
+                chunks.append(chunk)
+
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(mock_duration.call_count, 1)
+        self.assertEqual(chunks[0].chunk_start_time, datetime.datetime(2026, 5, 20, 12, 0, 1, tzinfo=datetime.UTC))
+        self.assertEqual(chunks[0].resume_position, chunks[0].chunk_end_time)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
+        new_callable=AsyncMock,
+    )
+    async def test_failed_download_does_not_mark_uuid_seen(self, mock_download: AsyncMock) -> None:
+        mock_download.return_value = None
+        files = [
+            {
+                "type": "file",
+                "name": "CHAN 2026-05-20 12-00-00.mp3",
+                "uuid": "uuid1",
+                "size": 1000,
+            },
+        ]
+
+        chunks = []
         async for chunk in collector._process_file_list(
             files,
             self.session,
@@ -144,13 +228,97 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         ):
             chunks.append(chunk)
 
-        self.assertEqual(len(chunks), 2)
-        self.assertEqual(chunks[0].session_id, "session-id")
-        self.assertEqual(chunks[0].audio_bytes, b"mp3_bytes")
-        self.assertEqual(chunks[0].mime_type, AudioMimeType.MPEG)
-        self.assertEqual(len(self.processed_uuids), 2)
-        self.assertIn("uuid1", self.processed_uuids)
-        self.assertIn("uuid2", self.processed_uuids)
+        self.assertEqual(len(chunks), 0)
+        self.assertEqual(len(self.processed_uuids), 0)
+        self.assertNotIn("uuid1", self.processed_uuids)
+
+
+@patch(
+    "backend.pipeline.ingestion.collectors.fire_notifications.collector._S3_BASE_URL",
+    "http://mock-s3-bucket",
+)
+class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.shutdown = asyncio.Event()
+        self.feed = {
+            "id": "feed-id",
+            "source_type": SourceType.FIRE_NOTIFICATIONS,
+            "source_feed_id": "CHAN",
+            "name": "CHAN-feed",
+        }
+        self.resources = MagicMock()
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.AsyncSession",
+    )
+    async def test_max_consecutive_failures_raises_source_unreachable(
+        self, mock_session_cls: MagicMock, mock_sleep: AsyncMock
+    ) -> None:
+        mock_sleep.return_value = False  # Sleep normally
+        mock_session = mock_session_cls.return_value
+        mock_session.close = AsyncMock()
+        mock_session.get = AsyncMock(side_effect=Exception("Connection failure"))
+
+        collector_generator = collector.fire_notifications_collector(
+            self.feed,  # type: ignore
+            self.shutdown,
+            "http://base",
+            self.resources,
+        )
+
+        with self.assertRaises(RuntimeError) as ctx:
+            async for _ in collector_generator:
+                pass
+
+        self.assertEqual(str(ctx.exception), "source_unreachable")
+        self.assertEqual(mock_session.get.call_count, 10)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.AsyncSession",
+    )
+    async def test_successful_poll_resets_consecutive_failures(
+        self, mock_session_cls: MagicMock, mock_sleep: AsyncMock
+    ) -> None:
+        mock_sleep.return_value = False
+
+        mock_session = mock_session_cls.return_value
+        mock_session.close = AsyncMock()
+        resp_fail = Exception("Connection failure")
+        resp_ok = MagicMock(status_code=200)
+        resp_ok.json.return_value = {"files": []}
+
+        # 9 failures, 1 success, 2 failures, then we trigger shutdown to exit gracefully.
+        side_effect = [resp_fail] * 9 + [resp_ok] + [resp_fail] * 2
+
+        async def sleep_side_effect(event, duration):
+            if mock_sleep.call_count >= 11:
+                self.shutdown.set()
+            return False
+
+        mock_sleep.side_effect = sleep_side_effect
+        mock_session.get = AsyncMock(side_effect=side_effect)
+
+        collector_generator = collector.fire_notifications_collector(
+            self.feed,  # type: ignore
+            self.shutdown,
+            "http://base",
+            self.resources,
+        )
+
+        chunks = []
+        async for chunk in collector_generator:
+            chunks.append(chunk)
+
+        self.assertEqual(len(chunks), 0)
+        self.assertEqual(mock_session.get.call_count, 11)
 
 
 if __name__ == "__main__":
