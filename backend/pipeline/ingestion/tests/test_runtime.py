@@ -628,6 +628,21 @@ class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await task
 
+    async def test_deactivated_feed_cancels_task(self) -> None:
+        """When a feed is deactivated, its background task is cancelled."""
+        rt = _make_runtime()
+        task = asyncio.create_task(asyncio.sleep(100))
+        rt._feed_tasks[_FEED_ID] = task
+        rt._releasing_feeds = set()
+        rt._heartbeat_store = mock.AsyncMock()
+        rt._heartbeat_store.renew_heartbeats_batch_diagnostic.return_value = [
+            self._diag(_FEED_ID, status="deactivated", renewed=False),
+        ]
+
+        await rt._heartbeat_cycle()
+
+        self.assertTrue(task.cancelled())
+
     async def test_skip_if_recent_is_not_a_fence_violation(self) -> None:
         """renewed=False + current_worker=self (skip-if-recent) must not trigger os._exit."""
         rt = _make_runtime()
