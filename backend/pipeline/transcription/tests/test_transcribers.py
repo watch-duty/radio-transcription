@@ -52,7 +52,7 @@ class TestTranscribers(unittest.TestCase):
             mock_client_instance.recognize.assert_called_once()
 
     def test_google_chirp_transcriber_background(self) -> None:
-        """Verifies that the system safely filters and intercepts implicit [UNINTELLIGIBLE] generic filler outputs, converting them cleanly into None."""
+        """Verifies that the system safely propagates [UNINTELLIGIBLE] generic filler outputs downstream."""
         with patch(
             "backend.pipeline.transcription.transcribers.chirp.SpeechClient"
         ) as mock_speech_client_cls:
@@ -79,7 +79,7 @@ class TestTranscribers(unittest.TestCase):
                 audio_data=dummy_audio, duration_ms=2500
             )
 
-            self.assertIsNone(transcript)
+            self.assertEqual(transcript, CHIRP_UNINTELLIGIBLE_MARKER)
 
     def test_google_chirp_transcriber_passes_retry_policy(self) -> None:
         """Verifies that the GoogleChirpV3Transcriber passes a native Retry policy to the SpeechClient."""

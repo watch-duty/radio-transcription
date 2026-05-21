@@ -21,7 +21,6 @@ from opentelemetry.trace import get_current_span
 from backend.pipeline.common.tracing_utils import (
     extract_trace_context,
 )
-from backend.pipeline.normalization.audio.audio_processor import ProcessorOutput
 from backend.pipeline.normalization.common import coders as trans_coders
 from backend.pipeline.normalization.common.constants import (
     DEAD_LETTER_QUEUE_TAG,
@@ -410,7 +409,6 @@ class NormalizeAudioTest(unittest.TestCase):
             assert_that(
                 results[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ"
             )
-
 
 
 class SerializeNormalizationClaimTest(unittest.TestCase):

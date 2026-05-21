@@ -107,6 +107,8 @@ class TranscriptionServiceContainer:
                 "Eager warm-start skipped or failed (expected in some test/local envs): %s",
                 e,
             )
+
+
 # Global container instance managed by the GCF container instance lifecycle
 container = TranscriptionServiceContainer()
 container.eager_warmup()
