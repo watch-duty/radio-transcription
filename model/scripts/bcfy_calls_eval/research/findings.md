@@ -77,6 +77,21 @@ short clips that dominate WatchDuty traffic?
   concentrated on the very shortest clips. The two diverge exactly where the
   spec predicted — and the strict gate is what distinguishes "ship" from
   "promising but unproven on short clips."
+- **H2 (metadata richness) — the SYSTEM NAME is the active ingredient.** Both
+  models: "+system" tier is best (Gemini +3.22, Chirp +3.07, both CI>0); adding
+  full geo (county&state) adds nothing measurable (+1.87/+1.26, CIs span 0);
+  "agency+service only" is too thin (neutral/negative). → a production framer
+  should include the radio-system name; county/state can likely be dropped.
+- **Service breakdown — benefit is in LAW-ENFORCEMENT traffic; FIRE shows no
+  clear gain.** Law (n=607) +2.69/+2.33 (CI>0); fire (n=101) +0.54/+1.05, CIs
+  span 0. Important caveat: WatchDuty is fire-focused, and on the fire subset
+  framing's benefit is not statistically established. The headline gain is
+  driven by the law-heavy eval mix.
+- **H3 (length) — REFUTED, favorably.** Prediction was "helps long clips more";
+  data shows framing helps the SHORTEST clips most (1-2w: Gemini +4.94 / Chirp
+  +6.48), fading by 6-10w and dipping slightly negative at 11-20w. Right
+  direction for WatchDuty (short-traffic-dominated), but it means framing is a
+  short-clip intervention, not a general win.
 
 ## Lessons and constraints
 

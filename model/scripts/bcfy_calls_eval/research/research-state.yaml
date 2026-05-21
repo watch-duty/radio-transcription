@@ -8,7 +8,7 @@ question: >
 
 updated: 2026-05-20
 
-phase: inner_loop          # bootstrap done; H1 experiment running
+phase: concluding          # H1 supported, H2/H3 analyzed; writing recommendation
 metric:
   primary: WER (jiwer + NeMo + dispatch-quirks normalization), length-bucketed
            by GT word count (1-2 / 3-5 / 6-10 / 11-20 / 21+)
@@ -30,7 +30,10 @@ hypotheses:
       Descriptive framing prose (NOT lexical word lists) appended to the
       production prompt reduces WER, and is statistically non-worse on short
       clips — succeeding where the prior lexical-injection experiment regressed.
-    status: testing
+    status: SUPPORTED — Gemini clears all 4 gates (ship; +2.34 capped-WER,
+      raw 68->53, halluc 1.6->0.7%); Chirp net-positive (+2.02, net_signal
+      clears) but fails strict hard short-clip gate (3-5w flat). Framing is
+      decisively NOT the lexical regression.
     prediction: >
       Net WER improvement with lower-CI > 0; hard short-clip gate holds for at
       least one model. Effect may diverge between Chirp and Gemini.
@@ -40,15 +43,20 @@ hypotheses:
       Framing helps more where the agency/service signal disambiguates content
       (e.g. fire vs law dispatch jargon) — effect size correlates with metadata
       richness (system+county+service present vs agency-only).
-    status: proposed
+    status: DONE — partial. The SYSTEM NAME is the active ingredient
+      (+system tier best, both CI>0); full geo (county&state) adds nothing;
+      agency-only too thin. Benefit concentrates in LAW traffic; FIRE subset
+      (n=101) shows no clear gain (caveat for WatchDuty).
   H3:
     statement: >
       Effect differs by clip length — framing helps mid/long clips (more
       context to anchor) more than 1-2 word clips (little to disambiguate).
-    status: proposed
+    status: REFUTED (favorably) — framing helps the SHORTEST clips most
+      (1-2w +4.94/+6.48), fades by 6-10w, slightly negative at 11-20w. Good
+      for WatchDuty's short-traffic profile; framing is a short-clip lever.
 
-experiments_run: 0          # full 4-arm eval pending (smoke in flight)
-current_action: smoke run (50 segs x 4 arms) executing; full run next
+experiments_run: 1          # full 4-arm eval (clean, after 429 re-run)
+current_action: H1/H2/H3 settled; phase=concluding (write recommendation)
 cost_note: >
   Each full 4-arm eval costs ~$35-100 of GCP inference. Treat the full-run
   predictions as a fixed, expensive dataset to be mined many ways (H2/H3 are
