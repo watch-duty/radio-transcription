@@ -1,0 +1,4 @@
+# Local WAV cache (downloaded eval clips; large, reproducible from GCS)
+.wav_cache/
+# Forensic/large result artifacts are kept on disk but not committed
+results/framing_context_05_2026/global_groups_index.json

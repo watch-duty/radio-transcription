@@ -1,0 +1,354 @@
+{
+  "manifest": "gs://wd-transcription-data/segmented_audio/broadcastify/calls/eval/audio_raw/batch_manifest.jsonl",
+  "unique_segments": 1043,
+  "unique_calls": 277,
+  "unique_sids": 57,
+  "recovered_calls": 0,
+  "unique_groupids": 0,
+  "recovery_rate_pct": 0.0,
+  "method": "M2-global",
+  "per_sid": [
+    {
+      "sid": 27111,
+      "calls": 29,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 13004,
+      "calls": 16,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 20107,
+      "calls": 14,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 751,
+      "calls": 14,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 7106,
+      "calls": 13,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 46500,
+      "calls": 13,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 10753,
+      "calls": 12,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 2001,
+      "calls": 10,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 741,
+      "calls": 10,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 14041,
+      "calls": 9,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 8501,
+      "calls": 8,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 3075,
+      "calls": 7,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 361,
+      "calls": 7,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 9603,
+      "calls": 7,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 5013,
+      "calls": 6,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 17014,
+      "calls": 6,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 21353,
+      "calls": 6,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 7315,
+      "calls": 5,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 401,
+      "calls": 5,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 1199,
+      "calls": 4,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 33797,
+      "calls": 4,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 13215,
+      "calls": 4,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 3092,
+      "calls": 3,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 7332,
+      "calls": 3,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 20007,
+      "calls": 3,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 240779,
+      "calls": 3,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 10734,
+      "calls": 3,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 40400,
+      "calls": 3,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 43506,
+      "calls": 3,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 56100,
+      "calls": 3,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 7123,
+      "calls": 3,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 3209,
+      "calls": 3,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 2049,
+      "calls": 3,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 50221,
+      "calls": 2,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 9051,
+      "calls": 2,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 57,
+      "calls": 2,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 37904,
+      "calls": 2,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 1054,
+      "calls": 2,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 823,
+      "calls": 2,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 19879,
+      "calls": 2,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 8751,
+      "calls": 2,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 141,
+      "calls": 2,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 131,
+      "calls": 2,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 1216,
+      "calls": 2,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 1217,
+      "calls": 1,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 5304,
+      "calls": 1,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 21601,
+      "calls": 1,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 13541,
+      "calls": 1,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 3013,
+      "calls": 1,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 5202,
+      "calls": 1,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 12437,
+      "calls": 1,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 1381,
+      "calls": 1,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 114,
+      "calls": 1,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 1206,
+      "calls": 1,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 3066,
+      "calls": 1,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 251761,
+      "calls": 1,
+      "recovered": 0,
+      "rate_pct": 0.0
+    },
+    {
+      "sid": 46310,
+      "calls": 1,
+      "recovered": 0,
+      "rate_pct": 0.0
+    }
+  ]
+}

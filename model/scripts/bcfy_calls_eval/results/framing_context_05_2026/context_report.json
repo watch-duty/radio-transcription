@@ -1,0 +1,12 @@
+{
+  "manifest": "gs://wd-transcription-data/segmented_audio/broadcastify/calls/eval/audio_raw/batch_manifest.jsonl",
+  "unique_calls": 277,
+  "wavs_downloaded": 277,
+  "no_metadata": 25,
+  "framed_moderate": 202,
+  "framed_pct": 72.9,
+  "with_system_name": 236,
+  "with_state": 233,
+  "aggressive_adds_detail": 5,
+  "source": "wav_metadata"
+}
