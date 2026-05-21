@@ -1,0 +1,55 @@
+project: bcfy-calls-framing-context
+question: >
+  Does providing per-call descriptive metadata (system / agency / service /
+  location, rendered as natural-language framing prose) as inference-time
+  context improve transcription quality on the Broadcastify-Calls eval set,
+  for Chirp V3 and Gemini 3.1 Flash Lite — without regressing the short clips
+  that dominate the traffic?
+
+updated: 2026-05-20
+
+phase: inner_loop          # bootstrap done; H1 experiment running
+metric:
+  primary: WER (jiwer + NeMo + dispatch-quirks normalization), length-bucketed
+           by GT word count (1-2 / 3-5 / 6-10 / 11-20 / 21+)
+  effect:  improvement = baseline_WER - moderate_WER  (positive = framing better)
+  inference: 10k paired-bootstrap CIs, seed 42
+  gates:
+    - hard_short_clip   # lower CI >= 0 on BOTH 1-2 and 3-5 buckets (binding)
+    - net_signal        # lower CI of aggregate improvement > 0
+    - per_group         # block if any powered system >2 WER pts worse
+    - over_insertion    # short-clip over-insertion moderate <= baseline
+
+baseline:
+  description: production transcription prompt, no framing block
+  arms: [gemini_baseline, chirp_baseline]
+
+hypotheses:
+  H1:
+    statement: >
+      Descriptive framing prose (NOT lexical word lists) appended to the
+      production prompt reduces WER, and is statistically non-worse on short
+      clips — succeeding where the prior lexical-injection experiment regressed.
+    status: testing
+    prediction: >
+      Net WER improvement with lower-CI > 0; hard short-clip gate holds for at
+      least one model. Effect may diverge between Chirp and Gemini.
+    experiment: experiments/H1-descriptive-framing (== bcfy_calls_eval harness)
+  H2:
+    statement: >
+      Framing helps more where the agency/service signal disambiguates content
+      (e.g. fire vs law dispatch jargon) — effect size correlates with metadata
+      richness (system+county+service present vs agency-only).
+    status: proposed
+  H3:
+    statement: >
+      Effect differs by clip length — framing helps mid/long clips (more
+      context to anchor) more than 1-2 word clips (little to disambiguate).
+    status: proposed
+
+experiments_run: 0          # full 4-arm eval pending (smoke in flight)
+current_action: smoke run (50 segs x 4 arms) executing; full run next
+cost_note: >
+  Each full 4-arm eval costs ~$35-100 of GCP inference. Treat the full-run
+  predictions as a fixed, expensive dataset to be mined many ways (H2/H3 are
+  ANALYSES of it, not new inference). New paid runs only on deliberate decision.
