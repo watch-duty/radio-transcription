@@ -26,7 +26,6 @@ def get_test_stitch_config(
     significant_gap_ms: int = 3000,
     stale_timeout_ms: int = 45000,
     max_transmission_duration_ms: int = 60000,
-    vad_post_roll_ms: int = 500,
 ) -> StitchAudioConfig:
     """Helper to generate a rapid-test config."""
     return StitchAudioConfig(
@@ -35,7 +34,6 @@ def get_test_stitch_config(
         significant_gap_ms=significant_gap_ms,
         stale_timeout_ms=stale_timeout_ms,
         max_transmission_duration_ms=max_transmission_duration_ms,
-        vad_post_roll_ms=vad_post_roll_ms,
     )
 
 

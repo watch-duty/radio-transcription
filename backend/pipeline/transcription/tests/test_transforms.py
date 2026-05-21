@@ -130,7 +130,6 @@ def get_test_stitch_config(**kwargs: Any) -> StitchAudioConfig:
         "significant_gap_ms": 500,
         "stale_timeout_ms": 60000,
         "max_transmission_duration_ms": 600000,
-        "vad_post_roll_ms": 0,
     }
     defaults.update(kwargs)
     return StitchAudioConfig(**defaults)  # type: ignore

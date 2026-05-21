@@ -10,7 +10,6 @@ from backend.pipeline.transcription.common.constants import (
     DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS,
     DEFAULT_SIGNIFICANT_GAP_MS,
     DEFAULT_STALE_TIMEOUT_MS,
-    DEFAULT_VAD_POST_ROLL_MS,
 )
 from backend.pipeline.transcription.common.enums import (
     TranscriberType,
@@ -98,12 +97,6 @@ class TranscriptionOptions(PipelineOptions):
             help=f"Milliseconds to wait for missing chunks before accepting a logical gap for segmented feeds. Default: {DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS}ms.",
         )
 
-        parser.add_argument(
-            "--vad_post_roll_ms",
-            type=int,
-            default=DEFAULT_VAD_POST_ROLL_MS,
-            help="Milliseconds of audio to include after the last spoken segment to provide a background noise floor.",
-        )
         parser.add_argument(
             "--max_transmission_duration_ms",
             type=int,

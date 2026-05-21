@@ -6,6 +6,7 @@ from apache_beam.metrics import Metrics
 
 from backend.pipeline.common.constants import MS_PER_SECOND
 from backend.pipeline.transcription.common.constants import (
+    DEFAULT_VAD_POST_ROLL_MS,
     DEFAULT_VAD_PRE_ROLL_MS,
 )
 from backend.pipeline.transcription.common.datatypes import (
@@ -308,7 +309,7 @@ class AudioStitchingStateMachine:
                     raise RuntimeError(msg)
 
                 target_post_roll_end = (
-                    ctx.last_segment_end_time_ms + self.config.vad_post_roll_ms
+                    ctx.last_segment_end_time_ms + DEFAULT_VAD_POST_ROLL_MS
                 ) - file_start_ms
                 append_end = min(
                     (len(chunk_data.audio) // (chunk_data.sample_rate // 1000)),
@@ -370,7 +371,7 @@ class AudioStitchingStateMachine:
             and ctx.last_segment_end_time_ms is not None
         ):
             target_post_roll_end = (
-                ctx.last_segment_end_time_ms + self.config.vad_post_roll_ms
+                ctx.last_segment_end_time_ms + DEFAULT_VAD_POST_ROLL_MS
             )
             append_end = min(
                 (len(chunk_data.audio) // (chunk_data.sample_rate // 1000)),
@@ -413,7 +414,7 @@ class AudioStitchingStateMachine:
                 msg = "Unreachable: active transmission without segment anchor"
                 raise RuntimeError(msg)
             target_post_roll_end = (
-                ctx.last_segment_end_time_ms + self.config.vad_post_roll_ms
+                ctx.last_segment_end_time_ms + DEFAULT_VAD_POST_ROLL_MS
             ) - file_start_ms
             append_end = min(target_post_roll_end, global_start_ms)
             append_start = audio_append_cursor_ms or 0
@@ -547,7 +548,7 @@ class AudioStitchingStateMachine:
                     len(chunk_data.audio)
                     // (chunk_data.sample_rate // MS_PER_SECOND)
                 ),
-                global_end_ms + self.config.vad_post_roll_ms,
+                global_end_ms + DEFAULT_VAD_POST_ROLL_MS,
             )
 
             if append_end > append_start:
