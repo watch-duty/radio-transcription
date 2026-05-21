@@ -34,16 +34,12 @@ class ConfigBase(pydantic.BaseModel):
 
 
 def generate_transmission_id(
-    feed_or_session_id: str, time_range: TimeRange
+    feed_or_session_id: str,
+    time_range: TimeRange,
+    segment_duration_ms: int = 0,
 ) -> str:
-    """Creates a deterministic UUID string using uuid5 to ensure pipeline retries produce the exact same ID.
-
-    Uses raw VAD start and end times to ensure stability across pre-roll/post-roll configuration changes,
-    and to prevent collisions if the same audio span is processed with different boundaries.
-    """
-    deterministic_id = (
-        f"{feed_or_session_id}_{time_range.start_ms}_{time_range.end_ms}"
-    )
+    """Generates a deterministic UUID5 using raw VAD boundaries and segment duration to ensure retry stability and prevent collisions."""
+    deterministic_id = f"{feed_or_session_id}_{time_range.start_ms}_{time_range.end_ms}_{segment_duration_ms}"
     return str(uuid.uuid5(uuid.NAMESPACE_OID, deterministic_id))
 
 

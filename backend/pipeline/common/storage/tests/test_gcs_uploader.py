@@ -28,7 +28,7 @@ class GCSAudioUploaderTest(unittest.TestCase):
         mock_gcs.bucket.assert_called_with("test-bucket")
         mock_bucket.blob.assert_called_with("path/to/obj.txt")
         mock_blob.upload_from_string.assert_called_once_with(
-            b"test-data", content_type="text/plain"
+            b"test-data", content_type="text/plain", if_generation_match=0
         )
 
     def test_upload_audio_derivatives_success(self) -> None:
@@ -64,9 +64,9 @@ class GCSAudioUploaderTest(unittest.TestCase):
 
         self.assertEqual(mock_bucket.blob.call_count, 2)
         mock_blob.upload_from_string.assert_any_call(
-            flac_bytes, content_type="audio/flac"
+            flac_bytes, content_type="audio/flac", if_generation_match=0
         )
         mock_blob.upload_from_string.assert_any_call(
-            b"m4a-bytes", content_type="audio/mp4"
+            b"m4a-bytes", content_type="audio/mp4", if_generation_match=0
         )
         mock_export_m4a.assert_called_with(processed_audio)

@@ -80,8 +80,6 @@ def test_metadata_json_parameters_parity() -> None:
             "vad_config",
             "significant_gap_ms",
             "stale_timeout_ms",
-            "vad_pre_roll_ms",
-            "vad_post_roll_ms",
         )
     }
 

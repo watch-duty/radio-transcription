@@ -282,11 +282,11 @@ class VoiceActivityDetector:
             resampler = TorchaudioHannResampler(sample_rate, TARGET_SAMPLE_RATE)
             audio_array = resampler.resample(audio_array)
 
-        # VAD Priming Strategy: Prepend historical contiguous audio waveform (if available)
-        # to prime the stateful filters, sinc resampler kernels, and ONNX hidden layers.
-        # If no contiguous prior tail is passed (e.g. startup chunk of a feed session),
-        # we fall back to prepending the first N seconds of the current audio chunk (like the Colab)
-        # to prevent startup cold-start clipping on early words.
+        # Evaluate if we passed a genuine historical prior tail from a previous chunk
+        # before we derive the priming preamble from the current file itself.
+        has_genuine_prior = prior_audio is not None
+
+        # Prepend historical tail if available; fallback to current chunk start if none.
         if prior_audio is None:
             priming_samples = int(self.priming_sec * TARGET_SAMPLE_RATE)
             priming_samples = min(priming_samples, len(audio_array))
@@ -308,6 +308,15 @@ class VoiceActivityDetector:
 
         preprocessed = self.preprocess(extended_audio)
 
+        # Slice off genuine historical prior tail before VAD inference to prevent RNN bleed-through.
+        preamble_samples = int(prior_len_sec * TARGET_SAMPLE_RATE)
+        if has_genuine_prior and preamble_samples > 0:
+            vad_input = preprocessed[preamble_samples:]
+            vad_offset_sec = 0.0
+        else:
+            vad_input = preprocessed
+            vad_offset_sec = prior_len_sec
+
         state = np.zeros((2, 1, 128), dtype=np.float32)
         context = np.zeros(context_size, dtype=np.float32)
 
@@ -326,8 +335,8 @@ class VoiceActivityDetector:
         current_speech = {}
         raw_segments = []
 
-        for i in range(0, len(preprocessed), chunk_size):
-            chunk = preprocessed[i : i + chunk_size]
+        for i in range(0, len(vad_input), chunk_size):
+            chunk = vad_input[i : i + chunk_size]
             if len(chunk) < chunk_size:
                 chunk = np.pad(chunk, (0, chunk_size - len(chunk)))
 
@@ -376,7 +385,7 @@ class VoiceActivityDetector:
                 temp_end = 0
 
         if triggered:
-            current_speech["end"] = len(preprocessed) / chunk_size
+            current_speech["end"] = len(vad_input) / chunk_size
             if (
                 current_speech["end"] - current_speech["start"]
             ) >= min_speech_frames:
@@ -391,7 +400,7 @@ class VoiceActivityDetector:
 
         # Time Coordinate Trimming & Shifting Mathematics:
         shifted_segments = self._trim_and_shift_segments(
-            raw_segments, prior_len_sec
+            raw_segments, vad_offset_sec
         )
 
         # Pad and merge overlapping segments

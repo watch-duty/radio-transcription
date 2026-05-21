@@ -115,8 +115,6 @@ class StitchAudioConfig:
     significant_gap_ms: int
     stale_timeout_ms: int
     max_transmission_duration_ms: int
-    vad_pre_roll_ms: int
-    vad_post_roll_ms: int
     route_to_dlq: bool = True
     backfill_lateness_threshold_ms: int = DEFAULT_BACKFILL_LATENESS_THRESHOLD_MS
     isolate_segmented_chunks: bool = False
