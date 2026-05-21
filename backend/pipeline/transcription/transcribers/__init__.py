@@ -6,6 +6,14 @@ allowing the pipeline to dynamically swap between different engines via configur
 
 from backend.pipeline.normalization.common.enums import TranscriberType
 from backend.pipeline.transcription.transcribers.base import Transcriber
+from backend.pipeline.transcription.transcribers.chirp import (
+    ChirpConfig,
+    GoogleChirpV3Transcriber,
+)
+from backend.pipeline.transcription.transcribers.mock import (
+    MockConfig,
+    MockTranscriber,
+)
 
 
 def get_transcriber(
@@ -14,10 +22,6 @@ def get_transcriber(
     config_json: str,
 ) -> Transcriber:
     """A factory method instantiating the requested Transcriber implementation.
-
-    Uses lazy inline imports to prevent heavy cloud client dependencies (like GCP
-    Speech-to-Text client library) from being loaded during local/offline mock
-    executions.
 
     Args:
         transcriber_type: The engine type (MOCK, GOOGLE_CHIRP_V3).
@@ -31,21 +35,11 @@ def get_transcriber(
         ValueError: If the transcriber type is unrecognized.
     """
     if transcriber_type == TranscriberType.GOOGLE_CHIRP_V3:
-        from backend.pipeline.transcription.transcribers.chirp import (  # noqa: PLC0415
-            ChirpConfig,
-            GoogleChirpV3Transcriber,
-        )
-
         return GoogleChirpV3Transcriber(
             project_id, ChirpConfig.from_json(config_json)
         )
 
     if transcriber_type == TranscriberType.MOCK:
-        from backend.pipeline.transcription.transcribers.mock import (  # noqa: PLC0415
-            MockConfig,
-            MockTranscriber,
-        )
-
         return MockTranscriber(MockConfig.from_json(config_json))
 
     msg = f"Unknown transcriber type: {transcriber_type}"

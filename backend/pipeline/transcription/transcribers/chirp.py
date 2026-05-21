@@ -7,21 +7,31 @@ from google.api_core.retry import Retry
 from google.cloud import speech_v2 as cloud_speech
 from google.cloud.speech_v2 import SpeechClient
 
-from backend.pipeline.normalization.common.constants import (
-    CHIRP_UNINTELLIGIBLE_MARKER,
-    DEFAULT_CHIRP_LANGUAGE_CODES,
-    DEFAULT_CHIRP_LOCATION,
-    DEFAULT_CHIRP_MODEL,
-    DEFAULT_CHIRP_PROMPT_FILE_PATH,
-    DEFAULT_CHIRP_RECOGNIZER,
-    DEFAULT_MAX_RETRIES,
-    DEFAULT_PHRASE_HINTS_FILE_PATH,
-    DEFAULT_RETRY_MAX_SECONDS,
-    MAX_SYNCHRONOUS_TRANSCRIPTION_DURATION_MS,
-)
 from backend.pipeline.normalization.common.logging import get_task_logger
 from backend.pipeline.normalization.common.utils import ConfigBase
 from backend.pipeline.transcription.transcribers.base import Transcriber
+
+# Default paths to the packaged prompt and phrase hints configuration text assets.
+DEFAULT_PHRASE_HINTS_FILE_PATH = (
+    "/app/backend/pipeline/transcription/transcribers/chirp_phrase_hints.txt"
+)
+DEFAULT_CHIRP_PROMPT_FILE_PATH = (
+    "/app/backend/pipeline/transcription/transcribers/chirp_prompt.txt"
+)
+
+# Marker defined in the prompt to indicate when the model detects no intelligible speech.
+CHIRP_UNINTELLIGIBLE_MARKER = "[UNINTELLIGIBLE]"
+
+# Chirp model configuration defaults
+DEFAULT_CHIRP_LOCATION = "us"
+DEFAULT_CHIRP_RECOGNIZER = "_"
+DEFAULT_CHIRP_MODEL = "chirp_3"
+DEFAULT_CHIRP_LANGUAGE_CODES = ["en-US"]
+
+# API limits and retry defaults
+MAX_SYNCHRONOUS_TRANSCRIPTION_DURATION_MS = 60000
+DEFAULT_MAX_RETRIES = 5
+DEFAULT_RETRY_MAX_SECONDS = 10
 
 logger = get_task_logger(
     __name__, {"system": "transcription", "component": "chirp"}
