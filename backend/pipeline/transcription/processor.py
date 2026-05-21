@@ -15,8 +15,8 @@ from backend.pipeline.common.constants import (
     NANOS_PER_MS,
 )
 from backend.pipeline.common.tracing_utils import with_tracer_context
-from backend.pipeline.schema_types.audio_ready_for_transcription_pb2 import (
-    AudioReadyForTranscription,
+from backend.pipeline.schema_types.normalized_audio_pb2 import (
+    NormalizedAudio,
 )
 from backend.pipeline.schema_types.transcribed_audio_pb2 import (
     TranscribedAudio,
@@ -63,12 +63,10 @@ class TranscriptionEventProcessor:
             # Parse claim-check payload
             try:
                 data_bytes = base64.b64decode(raw_data)
-                claim = AudioReadyForTranscription()
+                claim = NormalizedAudio()
                 claim.ParseFromString(data_bytes)
             except Exception as e:
-                logger.exception(
-                    "Failed to parse AudioReadyForTranscription: %s", e
-                )
+                logger.exception("Failed to parse NormalizedAudio: %s", e)
                 raise
 
             feed_id = claim.feed_id

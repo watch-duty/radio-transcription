@@ -241,7 +241,7 @@ class SerializeFn(beam.DoFn):
 @beam.typehints.with_input_types(NormalizationResult)
 @beam.typehints.with_output_types(PubsubMessage)
 class SerializeNormalizationClaimFn(beam.DoFn):
-    """Serializes the NormalizationResult into the standard AudioReadyForTranscription
+    """Serializes the NormalizationResult into the standard NormalizedAudio
     protobuf format, and wraps in a PubsubMessage for egress.
     """
 

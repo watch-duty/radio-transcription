@@ -1,6 +1,6 @@
 """Serverless Cloud Run / Cloud Function transcription entry point.
 
-Triggered by Pub/Sub push events containing serialized AudioReadyForTranscription
+Triggered by Pub/Sub push events containing serialized NormalizedAudio
 claim-check metadata. Delegates processing to TranscriptionEventProcessor.
 """
 

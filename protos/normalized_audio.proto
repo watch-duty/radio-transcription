@@ -7,7 +7,7 @@ import "google/protobuf/duration.proto";
 // segment IDs, many fields below (such as source_audio_uris, feed_name, and external_id)
 // can be deprecated and removed from this schema since they can be resolved directly from
 // the database via the segment ID!
-message AudioReadyForTranscription {
+message NormalizedAudio {
 
   // --- Identifiers & Base Metadata ---
   
