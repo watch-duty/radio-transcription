@@ -34,6 +34,26 @@ The production `bcfy_calls_collector` uses `groups={source_feed_id}` where
 repo) recorded only the bare `sid`, discarding the `tgDec`. Those tg
 identifiers cannot be reconstructed from the public API months later.
 
+### "Doesn't Broadcastify keep years of archived audio?"
+
+Yes, but neither archive product unblocks us:
+
+- **Feeds-API archive** (`/feeds/v1/archives/{feedId}`) — stores live-stream
+  MP3 chunks for years, **indexed by `feedId`** (not Calls `sid`). The two
+  namespaces are disjoint. `fetch_archive_days(sid)` returned **HTTP 400**
+  for every eval sid sampled — they are not valid `feedId`s either.
+  And even if they were, this archive contains continuous live-stream MP3s,
+  not per-call audio with timestamps and tg metadata — a different data
+  product entirely.
+
+- **Calls-API archive** (`/calls/v1/group_archives/{groupId}/{start}/{end}`)
+  — stores per-call records for years, **indexed by `groupId`**. Requires
+  groupId; we have only sid. A brute-force sweep of 13 plausible per-sid URL
+  variations (`archives_sid/{sid}`, `system_archives/{sid}/{s}/{e}`,
+  `system_get/{sid}`, `common/v1/system/{sid}`, etc.) all returned 404 —
+  even on the known-active control `sid=7702`. There is no public per-sid
+  query path into the Calls archive.
+
 ## What the experiment needs
 
 Per-talkgroup descriptive framing (`tgCname`, `tgDescr`, `tgDisplay`,
