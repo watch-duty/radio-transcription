@@ -37,11 +37,11 @@ export function roundUpToNearestMinute(date: Date) {
 }
 
 export function getRelativeTimeString(
-  dateString?: string,
+  dateValue?: string | Date | number,
   capAtMinute = true
 ): string {
-  if (!dateString) return '';
-  const date = new Date(dateString);
+  if (!dateValue) return '';
+  const date = dateValue instanceof Date ? dateValue : new Date(dateValue);
   const dateMs = date.getTime();
   if (Number.isNaN(dateMs)) {
     return '';

@@ -70,7 +70,7 @@ describe('TranscriptDisplay', () => {
             redactTranscripts={false}
             onRowClick={vi.fn()}
             isTranscriptsPolling={false}
-            transcriptsDataUpdatedAt={null}
+            transcriptsLastUpdated={null}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>
@@ -109,7 +109,7 @@ describe('TranscriptDisplay', () => {
             redactTranscripts={false}
             onRowClick={vi.fn()}
             isTranscriptsPolling={false}
-            transcriptsDataUpdatedAt={null}
+            transcriptsLastUpdated={null}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>
@@ -148,7 +148,7 @@ describe('TranscriptDisplay', () => {
             redactTranscripts={false}
             onRowClick={vi.fn()}
             isTranscriptsPolling={false}
-            transcriptsDataUpdatedAt={null}
+            transcriptsLastUpdated={null}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>
@@ -187,7 +187,7 @@ describe('TranscriptDisplay', () => {
             redactTranscripts={false}
             onRowClick={vi.fn()}
             isTranscriptsPolling={false}
-            transcriptsDataUpdatedAt={null}
+            transcriptsLastUpdated={null}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>
@@ -196,7 +196,7 @@ describe('TranscriptDisplay', () => {
     expect(screen.getByText('No more transcripts found')).toBeTruthy();
   });
 
-  it('renders "Last refresh" time with correct relative format when hasNewerTranscripts is false and transcriptsDataUpdatedAt is provided', () => {
+  it('renders "Last refresh" time with correct relative format when hasNewerTranscripts is false and transcriptsLastUpdated is provided', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     const fixedNow = new Date('2026-04-10T12:05:00Z');
     vi.setSystemTime(fixedNow);
@@ -229,7 +229,7 @@ describe('TranscriptDisplay', () => {
             redactTranscripts={false}
             onRowClick={vi.fn()}
             isTranscriptsPolling={false}
-            transcriptsDataUpdatedAt={testTimestamp}
+            transcriptsLastUpdated={testTimestamp}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>
@@ -270,7 +270,7 @@ describe('TranscriptDisplay', () => {
             redactTranscripts={false}
             onRowClick={vi.fn()}
             isTranscriptsPolling={true}
-            transcriptsDataUpdatedAt={testTimestamp}
+            transcriptsLastUpdated={testTimestamp}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>
@@ -280,7 +280,7 @@ describe('TranscriptDisplay', () => {
     expect(screen.getByRole('progressbar')).toBeTruthy();
   });
 
-  it('does not render "Last refresh" when transcriptsDataUpdatedAt is null', () => {
+  it('does not render "Last refresh" when transcriptsLastUpdated is null', () => {
     render(
       <VirtuosoMockContext.Provider
         value={{ viewportHeight: 1000, itemHeight: 100 }}
@@ -308,7 +308,7 @@ describe('TranscriptDisplay', () => {
             redactTranscripts={false}
             onRowClick={vi.fn()}
             isTranscriptsPolling={false}
-            transcriptsDataUpdatedAt={null}
+            transcriptsLastUpdated={null}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>
@@ -345,7 +345,7 @@ describe('TranscriptDisplay', () => {
             redactTranscripts={false}
             onRowClick={vi.fn()}
             isTranscriptsPolling={false}
-            transcriptsDataUpdatedAt={null}
+            transcriptsLastUpdated={null}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>

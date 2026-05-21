@@ -36,7 +36,8 @@ export interface TranscriptDisplayProps {
   fetchOlderTranscripts: () => Promise<
     InfiniteQueryObserverResult<InfiniteData<ListTranscriptsData>, Error>
   >;
-  transcriptsDataUpdatedAt: number | null;
+  // Unix timestamp in ms when the transcripts query last updated with a success.
+  transcriptsLastUpdated: number | null;
   triggerSnackbar: (message: string) => void;
   ruleIdToNameMap: Map<string, string>;
   rulesLoading: boolean;
@@ -62,7 +63,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
   isFetchingOlderTranscripts,
   fetchOlderTranscripts,
   isTranscriptsPolling,
-  transcriptsDataUpdatedAt,
+  transcriptsLastUpdated,
   triggerSnackbar,
   ruleIdToNameMap,
   rulesLoading,
@@ -120,7 +121,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
                 </Typography>
                 {!hasNewerTranscripts ? (
                   <>
-                    {transcriptsDataUpdatedAt && (
+                    {transcriptsLastUpdated && (
                       <Box
                         sx={{
                           display: 'flex',
@@ -144,7 +145,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
                             sx={{ whiteSpace: 'nowrap' }}
                           >
                             {getRelativeTimeString(
-                              new Date(transcriptsDataUpdatedAt).toISOString(),
+                              transcriptsLastUpdated,
                               false
                             )}
                           </Typography>
