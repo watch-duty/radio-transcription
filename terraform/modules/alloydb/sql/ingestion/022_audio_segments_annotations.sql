@@ -1,8 +1,8 @@
--- Idempotent: DO block to safely define the audio_classification ENUM.
+-- Idempotent: DO block to safely define the AUDIO_CLASSIFICATION ENUM.
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'audio_classification') THEN
-        CREATE TYPE audio_classification AS ENUM (
+        CREATE TYPE AUDIO_CLASSIFICATION AS ENUM (
             'SPEECH_DETECTED',
             'UNCLASSIFIED'
         );
@@ -14,7 +14,7 @@ $$;
 CREATE TABLE IF NOT EXISTS audio_segments (
     id                      UUID PRIMARY KEY,
     feed_id                 UUID NOT NULL REFERENCES feeds(id),
-    classification          audio_classification NOT NULL,
+    classification          AUDIO_CLASSIFICATION NOT NULL,
     start_timestamp         TIMESTAMP WITH TIME ZONE NOT NULL,
     end_timestamp           TIMESTAMP WITH TIME ZONE NOT NULL,
     missing_prior_context   BOOLEAN NOT NULL DEFAULT FALSE,
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS audio_segments (
 CREATE TABLE IF NOT EXISTS annotations (
     audio_segment_id        UUID NOT NULL REFERENCES audio_segments(id) ON DELETE CASCADE,
     type                    VARCHAR(50) NOT NULL, -- e.g., 'TRANSCRIPTION', 'EVALUATION'
-    payload                 JSONB NOT NULL,
+    data                    JSONB NOT NULL,
     created_at              TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at              TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
 
@@ -43,6 +43,6 @@ CREATE TABLE IF NOT EXISTS annotations (
 CREATE INDEX IF NOT EXISTS idx_audio_segments_feed_pagination
     ON audio_segments (feed_id, end_timestamp DESC, id DESC);
 
--- GIN index on payload column to quickly query JSON parameters inside annotations.
-CREATE INDEX IF NOT EXISTS idx_annotations_payload
-    ON annotations USING GIN (payload);
+-- GIN index on data column to quickly query JSON parameters inside annotations.
+CREATE INDEX IF NOT EXISTS idx_annotations_data
+    ON annotations USING GIN (data);
