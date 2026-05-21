@@ -66,6 +66,30 @@ describe('timeUtils', () => {
       expect(getRelativeTimeString('invalid date')).toBe('');
     });
 
+    it('returns empty string for NaN inputs', () => {
+      expect(getRelativeTimeString(NaN)).toBe('');
+    });
+
+    it('handles Date objects as inputs', () => {
+      const date = new Date('2026-04-28T18:59:00Z');
+      expect(getRelativeTimeString(date)).toBe('1 minute ago');
+    });
+
+    it('handles primitive millisecond numbers as inputs', () => {
+      const timestamp = new Date('2026-04-28T18:55:00Z').getTime();
+      expect(getRelativeTimeString(timestamp)).toBe('5 minutes ago');
+    });
+
+    it('correctly respects granular seconds checks with primitive inputs', () => {
+      // 12 seconds diff -> <15 seconds
+      const date = new Date('2026-04-28T18:59:48Z');
+      expect(getRelativeTimeString(date, false)).toBe('<15 seconds ago');
+
+      // 5 seconds diff -> <10 seconds
+      const timestamp = new Date('2026-04-28T18:59:55Z').getTime();
+      expect(getRelativeTimeString(timestamp, false)).toBe('<10 seconds ago');
+    });
+
     it('returns "<1 minute ago" for events under 60 seconds', () => {
       expect(getRelativeTimeString('2026-04-28T18:59:45Z')).toBe(
         '<1 minute ago'
