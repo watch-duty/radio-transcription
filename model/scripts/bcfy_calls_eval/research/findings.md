@@ -29,6 +29,42 @@ short clips that dominate WatchDuty traffic?
 
 ## Patterns and insights
 
+> ### ⚠️ CORRECTION (2026-05-20, late) — the headline below was reversed by two fixes
+> The earlier "Gemini SHIPS" verdict was an **artifact of a crippled Gemini
+> baseline**. Two corrections (both at the user's prompting):
+> 1. **Baseline config:** I'd used the NOTEBOOK jargon-list prompt with no
+>    `frequency_penalty`/`top_k`/`top_p` → it hallucinated heavily (raw WER 68%).
+>    Switched to the production V14 dispatcher prompt + penalties → baseline is
+>    now sane.
+> 2. **WER method:** adopted the canonical `evaluate_transcriptions.ipynb`
+>    normalizer (ITN→digit-split) + **aggregate** WER. Numbers now align at the
+>    digit level; baselines drop into the expected range.
+>
+> **Corrected, trustworthy result (aggregate WER, canonical):**
+> | arm | aggregate WER | framed-only |
+> |---|--:|--:|
+> | gemini_baseline | 31.6% | 30.8% |
+> | gemini_moderate | 32.3% | 31.7% |
+> | chirp_baseline | 28.0% | 27.6% |
+> | chirp_moderate | **26.8%** | **26.0%** |
+>
+> - **Gemini (LLM): framing does NOT help** — aggregate +0.01 capped-WER
+>   (CI [−1.35,+1.35]); short clips slightly worse; hallucination rises
+>   0.8→1.5%. Once the baseline isn't crippled, framing's "benefit" vanishes.
+> - **Chirp (dedicated ASR): framing modestly HELPS** — aggregate 28.0→26.8;
+>   net_signal clears (+2.34 capped, CI [+1.22,+3.53]); strongest on 1-2w
+>   (+5.82 [+2.40,+9.93]). Fails the STRICT hard gate only because 3-5w just
+>   misses (lower CI −0.26 ≈ neutral). System-name is the active ingredient
+>   (H2); law traffic benefits, fire still unproven; effect concentrates on
+>   short clips (H3).
+> - **Net: framing helps the ASR, not the LLM** — the OPPOSITE of the
+>   crippled-baseline run, and consistent with the literature (contextual
+>   biasing helps ASR; a well-configured instruction-LLM gains little). Neither
+>   clears the strict short-clip gate, so **no ship** under the spec's bar;
+>   Chirp is borderline-beneficial and worth a shortest-clip follow-up.
+>
+> Everything below this box predates the correction — kept for the audit trail.
+
 - **Smoke signal (n=40 framed, EXPLORATORY — full run is the confirmatory test):**
   the two models diverge sharply, and the *mechanism* is hallucination control.
   - **Gemini 3.1 Flash Lite** hallucinates entire fictional dispatch scenes on

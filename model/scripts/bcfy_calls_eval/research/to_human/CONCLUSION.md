@@ -1,32 +1,37 @@
-# Does metadata framing improve bcfy_calls transcription? — Conclusion
+# Does metadata framing improve bcfy_calls transcription? — Conclusion (corrected)
 
-**Date:** 2026-05-20 · **Eval:** Broadcastify-Calls, 1042 scored segments / 746 framed (72.9%), 24 states / 36 P25 systems · **Arms:** Gemini 3.1 Flash Lite + Chirp V3, each baseline vs moderate-framing.
+**Date:** 2026-05-20 · **Eval:** Broadcastify-Calls, 1042 scored / 746 framed (72.9%), 24 states / 36 P25 systems · **Arms:** Gemini 3.1 Flash Lite + Chirp V3, each baseline vs moderate-framing · **WER:** canonical method from `evaluate_transcriptions.ipynb` (ITN digit-split, aggregate).
 
-## Answer: yes — modestly, and it depends on the model and the clip.
+> This conclusion supersedes an earlier draft that reported "Gemini ships." That was an artifact of a hallucination-prone Gemini baseline (NOTEBOOK jargon prompt, no frequency_penalty) scored with a non-canonical normalizer. Fixed both: V14 dispatcher prompt + production penalties, and the canonical digit-split aggregate WER.
 
-Appending a per-call **descriptive framing sentence** (system / agency / service / location, e.g. *"Law enforcement dispatch traffic for SCHP Florence in Chesterfield County, South Carolina on the Palmetto 800."*) to the production prompt **improves WER for both models** (both clear the net-signal gate, ~+2 capped-WER points). This is the **opposite** of WatchDuty's prior *lexical* context-injection experiment, which regressed short clips by over-inserting vocabulary. Descriptive prose ≠ word lists.
+## Answer: it helps the **ASR (Chirp)**, not the LLM (Gemini) — and only modestly.
 
 | | Gemini 3.1 Flash Lite | Chirp V3 |
 |---|---|---|
-| Aggregate (capped WER) | **+2.34** [+0.69, +4.01] | **+2.02** [+0.78, +3.29] |
-| Hard short-clip gate (strict) | ✅ pass | ❌ (3-5w flat: +0.10 [−2.39,+2.60]) |
-| Net-signal / per-group / over-insertion | ✅ ✅ ✅ | ✅ ✅ ✅ |
-| Raw WER | 68.2 → **52.7** | 41.6 → 38.9 |
-| Hallucination rate | 1.6% → **0.7%** | 0% (n/a) |
-| **Verdict** | **SHIP-worthy** | net-positive, fails strict gate |
+| Baseline aggregate WER | 31.6% | 28.0% |
+| + framing aggregate WER | 32.3% (**+0.7 worse**) | **26.8%** (−1.2 better) |
+| Per-segment capped improvement | +0.01 [−1.35, +1.35] | **+2.34 [+1.22, +3.53]** |
+| net_signal gate | ❌ | ✅ |
+| hard short-clip gate (strict) | ❌ | ❌ (3-5w lower CI −0.26 ≈ neutral) |
+| hallucination | 0.8% → **1.5%** (worse) | 0% (n/a) |
+| **Verdict** | **does not help** | **modest help; misses strict gate by a hair** |
 
-**Mechanism:** Gemini (an LLM) hallucinates entire fictional dispatch scenes on short noise; framing **reins that in** (the bulk of its gain). Chirp (a dedicated ASR) doesn't hallucinate, so it gets a smaller, real gain concentrated on the very shortest clips (+6.48 on 1-2w).
+- **Gemini:** with a properly-configured baseline (which doesn't hallucinate), framing adds nothing — aggregate is dead neutral, short clips slightly worse, and it nudges hallucination *up*. The earlier apparent win was framing suppressing hallucination that the right config never produces.
+- **Chirp:** framing genuinely helps (aggregate −1.2 WER, net-signal clears), concentrated on the **shortest 1-2w clips (+5.82)** — exactly WatchDuty's traffic. It fails the *strict* hard short-clip gate only because the 3-5w bucket lands at neutral (CI [−0.26, +4.58]).
 
-## Three findings that shape productionization
+This matches the literature: contextual biasing helps dedicated ASR models; an instruction-tuned LLM that already follows "transcribe verbatim" gains little from extra prose and can be mildly distracted.
 
-1. **The system name is the active ingredient (H2).** "+system" framing gives the full effect; adding county/state adds nothing measurable. → a production framer can be short: agency + service + system, **skip the geography**.
-2. **The gain is in law-enforcement traffic; fire shows no clear benefit.** Law (n=607): +2.69/+2.33 (CI>0). **Fire (n=101): +0.54/+1.05, CIs span 0.** WatchDuty is fire-focused — so the headline win is driven by the law-heavy eval, and framing's value *on fire traffic specifically is unproven*.
-3. **It's a short-clip intervention (H3, prediction refuted favorably).** Effect peaks at 1-2 words, fades by 6-10, slightly negative at 11-20. Fits WatchDuty's short-traffic profile, but it's not a general win.
+## Findings that shape any rollout (Chirp)
+
+1. **System name is the active ingredient (H2):** "+system" framing gives the effect (+2.90, CI>0); county/state adds little. Keep the framer short.
+2. **Law-enforcement traffic drives the gain; fire is unproven:** law (n=607) +2.60 (CI>0); **fire (n=101) +1.03, CI spans 0.** WatchDuty is fire-focused — the fire benefit is *not established*.
+3. **Short-clip intervention (H3):** effect peaks at 1-2 words, fades with length.
 
 ## Recommendation
 
-- **Gemini:** framing is worth productionizing **as a short-clip, system-name framer** — it clears every gate and cuts hallucination. **Before full rollout, validate on a fire-specific eval set** — the current eval can't confirm the benefit on the traffic WatchDuty actually transcribes.
-- **Chirp:** hold under the strict gate (3-5w is statistically flat), but the 1-2w gain is real and harmless — a shortest-clip-only application is defensible if Chirp is the production model.
-- **Next (deferred per spec):** a productionization spec — `feed_properties.broadcastify_metadata`, an enrichment step, prompt-builder wiring — written only if the fire-subset validation holds. Note: production would need the framing metadata at ingestion time (the WAV-tag source used here is eval-only).
+- **Under the spec's strict gate, do not ship to either model** as a blanket change. Gemini: framing doesn't help. Chirp: net-positive but the 3-5w bucket is statistically flat.
+- **Chirp is the promising direction**, specifically a **shortest-clip (1-2w), system-name framer** — but it needs (a) a fire-specific eval to confirm the benefit on WatchDuty's actual traffic, and (b) a relaxed/again-tested short-clip criterion given 3-5w sits at neutral, not negative.
+- **Gemini framing is closed** for this prompt/config.
+- Production caveat unchanged: the framing metadata came from eval-only WAV tags; productionizing needs it at ingestion time.
 
-Artifacts: `decision_report.md` (gates), `h2_h3_analysis.md` (slices), `progress_<date>.html` (charts), `../FINDINGS.md` (data provenance), `../research/findings.md` (full narrative).
+Artifacts: `decision_report.md` (gates + aggregate WER), `h2_h3_analysis.md`, `progress_<date>.html`, `../FINDINGS.md` (provenance), `../research/findings.md` (full narrative incl. the correction box).
