@@ -676,6 +676,13 @@ class FeedStore:
         if row is None:
             return None
 
+        logger.info(
+            "Feed updated successfully",
+            extra={
+                "feed_id": str(feed_id),
+                "feed_name": name,
+            },
+        )
         return self._row_to_feed(row)
 
     async def get_feed(self, feed_id: uuid.UUID) -> Feed | None:

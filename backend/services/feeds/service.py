@@ -40,10 +40,6 @@ class FeedService:
         except ValueError:
             return None
 
-        existing_feed = await self._store.get_feed(uid)
-        if not existing_feed:
-            return None
-
         store_feed = await self._store.update_feed(
             feed_id=uid,
             name=feed_in.name,

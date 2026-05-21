@@ -44,6 +44,8 @@ class FeedUpdate(BaseModel):
     external_id: str
     tags: list[Tag] | None = None
 
+    model_config = ConfigDict(extra="forbid")
+
 
 class Feed(FeedBase):
     id: uuid.UUID
