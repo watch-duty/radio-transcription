@@ -62,8 +62,8 @@ jobs:
       - name: Build microservices using Buildx Bake (with caching)
         run: |
           docker buildx bake \
-            --set *.cache-from=type=gha,scope=${{ github.workflow }} \
-            --set *.cache-to=type=gha,mode=max,scope=${{ github.workflow }} \
+            --set *.cache-from=type=gha,scope=integration-tests \
+            --set *.cache-to=type=gha,mode=max,scope=integration-tests \
             -f docker-compose.yml \
             --load
 
