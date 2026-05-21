@@ -1,6 +1,7 @@
 import React from 'react';
 
 import FilterIcon from '@mui/icons-material/Tune';
+import { Typography } from '@mui/material';
 import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -152,19 +153,17 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
           </Box>
         </Popover>
 
-        {dateTime && (
-          <Chip
-            label={
-              <Box>
-                <b>Date/time: </b> {dateTime.toLocaleDateString()}{' '}
-                {dateTime.toLocaleTimeString()}
-              </Box>
-            }
-            variant="filled"
-            size="small"
-            onDelete={handleDeleteDateTime}
-          />
-        )}
+        <Chip
+          sx={{ backgroundColor: dateTime ? '#c7e4ee' : '#ffdbbb' }}
+          label={
+            <Box>
+              <b>Date/time: </b> {dateTime ? `${dateTime.toLocaleDateString()} ${dateTime.toLocaleTimeString()}` : "Live"}
+            </Box>
+          }
+          variant="filled"
+          size="small"
+          onDelete={dateTime ? handleDeleteDateTime : undefined}
+        />
       </Box>
 
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
