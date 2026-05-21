@@ -29,7 +29,29 @@ short clips that dominate WatchDuty traffic?
 
 ## Patterns and insights
 
-- _(populated by the outer loop once H1 results land)_
+- **Smoke signal (n=40 framed, EXPLORATORY — full run is the confirmatory test):**
+  the two models diverge sharply, and the *mechanism* is hallucination control.
+  - **Gemini 3.1 Flash Lite** hallucinates entire fictional dispatch scenes on
+    short noise (GT "four ten four" → a 96-word fabricated structure-fire
+    narrative; raw WER up to 3200%). Descriptive framing **reins this in**:
+    raw WER 146.6→89.9, hallucination 5.0%→2.5%, short-clip over-insertion
+    4.55→2.32 tokens/seg, and it **passes the hard short-clip gate**
+    (+10.0 / +3.97 capped-WER pts on 1-2 / 3-5 word clips). `net_signal` not yet
+    cleared at n=40 (aggregate CI lower bound = 0).
+  - **Chirp V3** does not hallucinate (0% rate; a dedicated ASR emits short or
+    empty on noise), so framing has nothing to rein in → neutral/slightly
+    negative, fails the hard gate.
+- **This INVERTS the prior internal lexical-injection finding.** Word-list
+  injection *increased* over-insertion (parroting); descriptive prose framing
+  *decreases* it — at least for the LLM. Consistent with the literature: lexical
+  biasing over-triggers on low-context input, while a good context *prompt* can
+  reduce an LLM's hallucination (cf. "Whisper: Courtside Edition" — context nets
+  improvement but with a per-segment helps-vs-hurts split). [[lit-courtside]]
+- **Methodology:** raw WER is unusable as the headline (a few hallucination
+  blowups dominate). Gate metric = **capped WER** (per-segment min(wer,100));
+  raw WER + hallucination rate reported as the mechanism.
+- _Open: does net_signal clear for Gemini at full n (~800 framed)? Full run
+  pending (run bejhse0v5)._
 
 ## Lessons and constraints
 
