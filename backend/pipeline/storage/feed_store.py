@@ -8,7 +8,10 @@ from typing import TYPE_CHECKING, TypedDict
 import asyncpg
 import asyncpg.exceptions
 
-from backend.pipeline.common.exceptions import FeedAlreadyExistsError
+from backend.pipeline.common.exceptions import (
+    FeedAlreadyExistsError,
+    FeedNameAlreadyExistsError,
+)
 from backend.pipeline.storage.feed_queries import (
     COUNT_HELD_BY_TYPE_SQL,
     CREATE_FEED_SQL,
@@ -20,6 +23,7 @@ from backend.pipeline.storage.feed_queries import (
     RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
     REPORT_FAILURE_SQL,
     RESET_FEED_SQL,
+    UPDATE_FEED_SQL,
     UPDATE_PROGRESS_SQL,
     build_acquire_feeds_batch_sql,
     build_acquire_feeds_recovery_sql,
@@ -633,6 +637,44 @@ class FeedStore:
         if row is None:
             msg = f"Failed to create feed {name}"
             raise ValueError(msg)
+
+        return self._row_to_feed(row)
+
+    async def update_feed(
+        self,
+        feed_id: uuid.UUID,
+        name: str,
+        external_id: str,
+        tags: list[dict[str, str]] | None = None,
+    ) -> Feed | None:
+        """Update an existing feed record.
+
+        Updates the feed in the `feeds` table and its corresponding
+        properties in the `feed_properties` table.
+        """
+        if not external_id:
+            msg = "external_id cannot be empty"
+            raise ValueError(msg)
+
+        try:
+            row = await self._pool.fetchrow(
+                UPDATE_FEED_SQL,
+                feed_id,
+                name,
+                external_id,
+                json.dumps(tags or []),
+            )
+        except asyncpg.exceptions.UniqueViolationError as e:
+            logger.warning(
+                "Feed update conflicts with existing feed name",
+                extra={
+                    "feed_name": name,
+                },
+            )
+            raise FeedNameAlreadyExistsError(name) from e
+
+        if row is None:
+            return None
 
         return self._row_to_feed(row)
 

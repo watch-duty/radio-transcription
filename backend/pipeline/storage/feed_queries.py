@@ -383,3 +383,22 @@ SELECT u.*, fp.source_feed_id, fp.external_id, fp.tags
 FROM updated u
 JOIN feed_properties fp ON fp.feed_id = u.id
 """
+
+UPDATE_FEED_SQL = """\
+WITH updated_feed AS (
+    UPDATE feeds
+    SET name = $2
+    WHERE id = $1
+    RETURNING id, name, source_type, status, failure_count, worker_id, last_heartbeat, last_processed_filename, last_bookmark_time, created_at
+),
+updated_props AS (
+    UPDATE feed_properties
+    SET external_id = $3,
+        tags = $4
+    WHERE feed_id = $1
+    RETURNING source_feed_id, external_id, tags
+)
+SELECT uf.*, up.source_feed_id, up.external_id, up.tags
+FROM updated_feed uf
+JOIN updated_props up ON TRUE;
+"""
