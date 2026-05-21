@@ -144,7 +144,8 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
                             sx={{ whiteSpace: 'nowrap' }}
                           >
                             {getRelativeTimeString(
-                              new Date(transcriptsDataUpdatedAt).toISOString()
+                              new Date(transcriptsDataUpdatedAt).toISOString(),
+                              false
                             )}
                           </Typography>
                         )}

@@ -36,7 +36,10 @@ export function roundUpToNearestMinute(date: Date) {
   return new Date(Math.ceil(date.getTime() / msInMinute) * msInMinute);
 }
 
-export function getRelativeTimeString(dateString?: string): string {
+export function getRelativeTimeString(
+  dateString?: string,
+  capAtMinute = true
+): string {
   if (!dateString) return '';
   const date = new Date(dateString);
   const dateMs = date.getTime();
@@ -46,6 +49,19 @@ export function getRelativeTimeString(dateString?: string): string {
   const now = new Date();
   const diffMs = now.getTime() - dateMs;
   const diffSeconds = Math.floor(diffMs / 1000);
+
+  // Allows the option of showing second granularity.
+  if (!capAtMinute) {
+    if (diffSeconds < 10) {
+      return '<10 seconds ago';
+    }
+    if (diffSeconds < 15) {
+      return '<15 seconds ago';
+    }
+    if (diffSeconds < 30) {
+      return '<30 seconds ago';
+    }
+  }
 
   if (diffSeconds < 60) {
     return '<1 minute ago';
