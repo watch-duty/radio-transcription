@@ -6,12 +6,12 @@ DEAD_LETTER_QUEUE_TAG: Final = "transcription_dlq"
 
 # Default path to the packaged Chirp phrase hints file in the container image.
 DEFAULT_PHRASE_HINTS_FILE_PATH: Final = (
-    "/app/backend/pipeline/transcription/chirp_phrase_hints.txt"
+    "/app/backend/pipeline/transcription/transcribers/chirp_phrase_hints.txt"
 )
 
 # Default path to the packaged Chirp custom prompt file in the container image.
 DEFAULT_CHIRP_PROMPT_FILE_PATH: Final = (
-    "/app/backend/pipeline/transcription/chirp_prompt.txt"
+    "/app/backend/pipeline/transcription/transcribers/chirp_prompt.txt"
 )
 
 # Marker defined in the prompt to indicate when the model detects no intelligible speech.

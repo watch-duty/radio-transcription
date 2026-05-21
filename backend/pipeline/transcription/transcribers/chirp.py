@@ -1,11 +1,5 @@
-"""Pluggable Transcription API Architecture.
+"""Google Cloud Speech-to-Text Chirp V3 transcriber implementation."""
 
-This module defines the abstract interface for audio transcription services,
-allowing the Beam pipeline to dynamically swap between different engines
-(e.g., Google Cloud Speech-to-Text, Whisper, Custom Models) via configuration.
-"""
-
-import abc
 import pathlib
 
 from google.api_core import client_options
@@ -25,38 +19,13 @@ from backend.pipeline.normalization.common.constants import (
     DEFAULT_RETRY_MAX_SECONDS,
     MAX_SYNCHRONOUS_TRANSCRIPTION_DURATION_MS,
 )
-from backend.pipeline.normalization.common.enums import TranscriberType
 from backend.pipeline.normalization.common.logging import get_task_logger
 from backend.pipeline.normalization.common.utils import ConfigBase
+from backend.pipeline.transcription.transcribers.base import Transcriber
 
 logger = get_task_logger(
-    __name__, {"system": "transcription", "component": "transcribers"}
+    __name__, {"system": "transcription", "component": "chirp"}
 )
-
-
-class Transcriber(abc.ABC):
-    """Abstract interface for handling audio transcription.
-
-    Allows hot-swapping different external transcription APIs or models.
-    """
-
-    @abc.abstractmethod
-    def setup(self) -> None:
-        """Called once per Beam worker upon initialization.
-
-        Use this to spin up clients, establish connections, or load models
-        that cannot be pickled/serialized across processes.
-        """
-
-    @abc.abstractmethod
-    def transcribe(
-        self,
-        *,
-        audio_data: bytes | None = None,
-        uri: str | None = None,
-        duration_ms: int,
-    ) -> str | None:
-        """Transcribes the audio payload either via raw bytes or a GCS URI reference and returns the text transcript."""
 
 
 class ChirpConfig(ConfigBase):
@@ -82,6 +51,7 @@ class ChirpConfig(ConfigBase):
 
 class GoogleChirpV3Transcriber(Transcriber):
     """Transcriber implementation using Google Cloud Speech-to-Text V2 API
+
     with the 'chirp_3' model.
     """
 
@@ -166,7 +136,7 @@ class GoogleChirpV3Transcriber(Transcriber):
         uri: str | None = None,
         duration_ms: int,
     ) -> str | None:
-        """Transcribes the given audio payload."""
+        """Transcribes the given audio payload using GCP Speech V2 API."""
         if not self.client:
             msg = "Transcriber client used before setup() was called."
             raise RuntimeError(msg)
@@ -247,57 +217,3 @@ class GoogleChirpV3Transcriber(Transcriber):
             return None
 
         return transcript
-
-
-class MockConfig(ConfigBase):
-    """Configuration schema for the Mock Transcriber."""
-
-    default_transcript: str = (
-        "This is a mock transcription of the radio transmission."
-    )
-    transcripts: list[str] | None = None
-
-
-class MockTranscriber(Transcriber):
-    """A mock transcriber for offline/local testing that does not call external APIs."""
-
-    def __init__(self, config: MockConfig) -> None:
-        self.config = config
-        self.index = 0
-
-    def setup(self) -> None:
-        self.index = 0
-
-    def transcribe(
-        self,
-        *,
-        audio_data: bytes | None = None,
-        uri: str | None = None,
-        duration_ms: int,
-    ) -> str | None:
-        # If a sequence of transcripts is provided, return them in rotation
-        if self.config.transcripts:
-            transcript = self.config.transcripts[
-                self.index % len(self.config.transcripts)
-            ]
-            self.index += 1
-            return transcript
-
-        # Otherwise return the default static transcript
-        return self.config.default_transcript
-
-
-def get_transcriber(
-    transcriber_type: TranscriberType,
-    project_id: str,
-    config_json: str,
-) -> Transcriber:
-    """A factory method instantiating the requested Transcriber implementation based on the enum type."""
-    if transcriber_type == TranscriberType.GOOGLE_CHIRP_V3:
-        return GoogleChirpV3Transcriber(
-            project_id, ChirpConfig.from_json(config_json)
-        )
-    if transcriber_type == TranscriberType.MOCK:
-        return MockTranscriber(MockConfig.from_json(config_json))
-    msg = f"Unknown transcriber type: {transcriber_type}"
-    raise ValueError(msg)

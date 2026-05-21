@@ -10,10 +10,10 @@ from backend.pipeline.normalization.common.constants import (
     CHIRP_UNINTELLIGIBLE_MARKER,
 )
 from backend.pipeline.normalization.common.enums import TranscriberType
-from backend.pipeline.transcription.transcribers import (
+from backend.pipeline.transcription.transcribers import get_transcriber
+from backend.pipeline.transcription.transcribers.chirp import (
     ChirpConfig,
     GoogleChirpV3Transcriber,
-    get_transcriber,
 )
 
 BYTES_PER_SECOND_16KHZ_MONO = 16000 * 2
@@ -23,7 +23,7 @@ class TestTranscribers(unittest.TestCase):
     def test_google_chirp_transcriber_success(self) -> None:
         """Verifies that the GoogleChirpTranscriber interacts via the SpeechClient accurately rendering raw byte audio variants into basic text transcripts."""
         with patch(
-            "backend.pipeline.transcription.transcribers.SpeechClient"
+            "backend.pipeline.transcription.transcribers.chirp.SpeechClient"
         ) as mock_speech_client_cls:
             mock_client_instance = MagicMock()
             mock_speech_client_cls.return_value = mock_client_instance
@@ -57,7 +57,7 @@ class TestTranscribers(unittest.TestCase):
     def test_google_chirp_transcriber_background(self) -> None:
         """Verifies that the system safely filters and intercepts implicit [UNINTELLIGIBLE] generic filler outputs, converting them cleanly into None."""
         with patch(
-            "backend.pipeline.transcription.transcribers.SpeechClient"
+            "backend.pipeline.transcription.transcribers.chirp.SpeechClient"
         ) as mock_speech_client_cls:
             mock_client_instance = MagicMock()
             mock_speech_client_cls.return_value = mock_client_instance
@@ -89,7 +89,7 @@ class TestTranscribers(unittest.TestCase):
     def test_google_chirp_transcriber_passes_retry_policy(self) -> None:
         """Verifies that the GoogleChirpV3Transcriber passes a native Retry policy to the SpeechClient."""
         with patch(
-            "backend.pipeline.transcription.transcribers.SpeechClient"
+            "backend.pipeline.transcription.transcribers.chirp.SpeechClient"
         ) as mock_speech_client_cls:
             mock_client_instance = MagicMock()
             mock_speech_client_cls.return_value = mock_client_instance
@@ -122,10 +122,10 @@ class TestTranscribers(unittest.TestCase):
         """Verifies that adaptation=None is passed to RecognitionConfig when no phrase hints file is configured."""
         with (
             patch(
-                "backend.pipeline.transcription.transcribers.SpeechClient"
+                "backend.pipeline.transcription.transcribers.chirp.SpeechClient"
             ) as mock_speech_client_cls,
             patch(
-                "backend.pipeline.transcription.transcribers.cloud_speech"
+                "backend.pipeline.transcription.transcribers.chirp.cloud_speech"
             ) as mock_cs,
         ):
             mock_client_instance = MagicMock()
@@ -173,10 +173,10 @@ class TestTranscribers(unittest.TestCase):
 
         with (
             patch(
-                "backend.pipeline.transcription.transcribers.SpeechClient"
+                "backend.pipeline.transcription.transcribers.chirp.SpeechClient"
             ) as mock_speech_client_cls,
             patch(
-                "backend.pipeline.transcription.transcribers.cloud_speech"
+                "backend.pipeline.transcription.transcribers.chirp.cloud_speech"
             ) as mock_cs,
         ):
             mock_client_instance = MagicMock()
@@ -215,7 +215,9 @@ class TestTranscribers(unittest.TestCase):
             custom_prompt_file_path=None,
         )
 
-        with patch("backend.pipeline.transcription.transcribers.SpeechClient"):
+        with patch(
+            "backend.pipeline.transcription.transcribers.chirp.SpeechClient"
+        ):
             transcriber = GoogleChirpV3Transcriber("test-project", config)
             with self.assertRaises(FileNotFoundError):
                 transcriber.setup()
@@ -224,10 +226,10 @@ class TestTranscribers(unittest.TestCase):
         """Verifies that denoiser_config is passed to RecognitionConfig."""
         with (
             patch(
-                "backend.pipeline.transcription.transcribers.SpeechClient"
+                "backend.pipeline.transcription.transcribers.chirp.SpeechClient"
             ) as mock_speech_client_cls,
             patch(
-                "backend.pipeline.transcription.transcribers.cloud_speech"
+                "backend.pipeline.transcription.transcribers.chirp.cloud_speech"
             ) as mock_cs,
         ):
             mock_client_instance = MagicMock()
@@ -258,10 +260,10 @@ class TestTranscribers(unittest.TestCase):
         """Verifies that custom_prompt is passed to RecognitionFeatures."""
         with (
             patch(
-                "backend.pipeline.transcription.transcribers.SpeechClient"
+                "backend.pipeline.transcription.transcribers.chirp.SpeechClient"
             ) as mock_speech_client_cls,
             patch(
-                "backend.pipeline.transcription.transcribers.cloud_speech"
+                "backend.pipeline.transcription.transcribers.chirp.cloud_speech"
             ) as mock_cs,
         ):
             mock_client_instance = MagicMock()
