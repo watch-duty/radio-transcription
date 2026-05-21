@@ -50,8 +50,19 @@ short clips that dominate WatchDuty traffic?
 - **Methodology:** raw WER is unusable as the headline (a few hallucination
   blowups dominate). Gate metric = **capped WER** (per-segment min(wer,100));
   raw WER + hallucination rate reported as the mechanism.
-- _Open: does net_signal clear for Gemini at full n (~800 framed)? Full run
-  pending (run bejhse0v5)._
+- **FULL RUN — Gemini CONFIRMED (n=746 framed, CONFIRMATORY):** framing clears
+  **all four gates → SHIP**. Aggregate capped-WER improvement **+2.34**
+  (95% CI [+0.69, +4.01], net_signal clears); short clips +4.94 (1-2w) /
+  +3.51 (3-5w); raw WER **68.2→52.7**; hallucination **1.6%→0.7%**;
+  over-insertion 1.67→1.34. Only 1 flagged system (Erie County), none blocking.
+  The 11-20w bucket dips (-2.65, CI crosses 0) — framing helps short, is ~neutral
+  long. H1 supported for the LLM.
+- **FULL RUN — Chirp result was a THROTTLING ARTIFACT (caught, re-running).**
+  The first full pass showed Chirp -24 WER, but that was 409 segments returning
+  empty from **429 quota errors** (per-minute STT Recognize limit) silently
+  swallowed as empty transcripts — NOT a framing effect. Fixed with 429
+  retry/backoff + don't-persist-failures; clean Chirp re-run in progress.
+  Smoke Chirp (neutral) is the better prior; expect ~neutral, not -24.
 
 ## Lessons and constraints
 
@@ -67,6 +78,12 @@ short clips that dominate WatchDuty traffic?
   clips (tags rarely carry a distinct alpha tag + descriptor). 4 arms, not 6.
 - **Cost:** a full 4-arm eval is ~$35-100. The predictions are a fixed dataset
   to be re-analyzed (length/service/system/over-insertion), NOT re-run per idea.
+- **STT v2 per-minute quota (cost a near-miss false finding):** the `us`
+  endpoint throttles Recognize requests per minute; a concurrent eval burst
+  returns 429s. Swallowing a 429 as an empty transcript looks EXACTLY like a
+  catastrophic framing regression (-24 WER, 41% empty). Always retry 429 with
+  backoff and never persist a hard-failure as a prediction. Sanity-checking the
+  raw outputs (not just the WER number) is what caught it.
 
 ## Open questions
 

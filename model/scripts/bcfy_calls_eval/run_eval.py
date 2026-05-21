@@ -405,14 +405,18 @@ def _chirp_download(audio_uri: str, cache: Path) -> Path | None:
         return None
 
 
-def _chirp_recognize_one(arm: Arm, audio_uri: str, cache: Path) -> tuple[str, str]:
-    """Return (audio_uri, transcript). Empty transcript on failure/no-speech."""
+def _chirp_recognize_one(
+    arm: Arm, audio_uri: str, cache: Path
+) -> tuple[str, str, bool]:
+    """Return (audio_uri, transcript, ok). ok=False marks a HARD failure
+    (download/API error) so the caller can avoid persisting it as a spurious
+    empty — distinct from a genuine empty transcript (ok=True, text="")."""
     from google.cloud import speech_v2 as cloud_speech
     from google.cloud.speech_v2 import SpeechClient
 
     path = _chirp_download(audio_uri, cache)
     if path is None:
-        return audio_uri, ""
+        return audio_uri, "", False
     audio_data = path.read_bytes()
 
     custom_prompt = framing_renderer.for_chirp(
@@ -446,15 +450,25 @@ def _chirp_recognize_one(arm: Arm, audio_uri: str, cache: Path) -> tuple[str, st
         ),
         content=audio_data,
     )
-    try:
-        resp = client.recognize(request=request)
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"[{arm.tag}] recognize failed {audio_uri}: {e}")
-        return audio_uri, ""
-    text = " ".join(
-        r.alternatives[0].transcript for r in resp.results if r.alternatives
-    ).strip()
-    return audio_uri, text
+    # STT v2 enforces a per-minute Recognize quota; under concurrency we hit
+    # 429s. Retry with exponential backoff so throttling never silently becomes
+    # an empty transcript (which would look like a catastrophic framing effect).
+    for attempt in range(6):
+        try:
+            resp = client.recognize(request=request)
+            text = " ".join(
+                r.alternatives[0].transcript for r in resp.results if r.alternatives
+            ).strip()
+            return audio_uri, text, True
+        except Exception as e:  # noqa: BLE001
+            msg = str(e)
+            if "429" in msg or "Quota exceeded" in msg or "RESOURCE_EXHAUSTED" in msg:
+                time.sleep(min(2 ** attempt + 1, 45))
+                continue
+            logger.warning(f"[{arm.tag}] recognize failed {audio_uri}: {e}")
+            return audio_uri, "", False
+    logger.warning(f"[{arm.tag}] recognize gave up (429) {audio_uri}")
+    return audio_uri, "", False
 
 
 def transcribe_chirp(arm: Arm, rows: list[dict[str, Any]], limit: int | None) -> None:
@@ -469,13 +483,21 @@ def transcribe_chirp(arm: Arm, rows: list[dict[str, Any]], limit: int | None) ->
         return
     logger.info(f"[{arm.tag}] recognizing {len(todo)} segments")
     results: dict[str, str] = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+    failed = 0
+    # 5 workers + in-call 429 backoff keeps us under the STT per-minute quota.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
         futs = {ex.submit(_chirp_recognize_one, arm, uri, cache): uri for uri in todo}
         for i, fut in enumerate(concurrent.futures.as_completed(futs), 1):
-            uri, text = fut.result()
-            results[uri] = text
+            uri, text, ok = fut.result()
+            if ok:
+                results[uri] = text  # persist only successes (incl. genuine empties)
+            else:
+                failed += 1
             if i % 50 == 0:
-                logger.info(f"[{arm.tag}] {i}/{len(todo)}")
+                logger.info(f"[{arm.tag}] {i}/{len(todo)} ({failed} hard-failed)")
+    if failed:
+        logger.warning(f"[{arm.tag}] {failed} segments hard-failed; left unpersisted "
+                       f"(re-run to retry them)")
     # Persist in the same shape Gemini uses (one JSON object per line keyed by uri).
     existing = _read_blob_text(arm.predictions_uri) or ""
     lines = [ln for ln in existing.splitlines() if ln.strip()]
