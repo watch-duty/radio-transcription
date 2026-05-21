@@ -609,34 +609,50 @@ def stage_merge(arms: list[Arm]) -> None:
 # Stage 3 — Score (normalizer reused from echo_eval; gates in decision_gates)
 # ---------------------------------------------------------------------------
 
-_NEMO = None
+_ITN = None
 
 
-def _nemo():
-    global _NEMO
-    if _NEMO is None:
-        from nemo_text_processing.text_normalization.normalize import Normalizer
-        _NEMO = Normalizer(input_case="cased", lang="en")
-    return _NEMO
+def _itn():
+    """NeMo INVERSE normalizer (words -> digits), per the canonical eval method."""
+    global _ITN
+    if _ITN is None:
+        from nemo_text_processing.inverse_text_normalization.inverse_normalize import (
+            InverseNormalizer,
+        )
+        _ITN = InverseNormalizer(lang="en")
+    return _ITN
 
 
 def _build_normalizer():
+    """Canonical WER normalizer — verbatim from model/colabs/evaluate_transcriptions.ipynb
+    (GOO-424). Numbers are inverse-normalized to digits then split per-digit, so
+    "one hundred fifty" / "150" both become "1 5 0" — the number-heavy dispatch
+    traffic isn't penalized by word-vs-digit mismatches. Headline metric is
+    AGGREGATE WER (total errors / total words), not the per-segment mean."""
     import jiwer
 
-    class NemoNormalization(jiwer.AbstractTransform):
-        def process_string(self, s: str) -> str:
-            return _nemo().normalize(s, verbose=False)
-
-    class NormalizeDispatchQuirks(jiwer.AbstractTransform):
+    class PreProcessCleanups(jiwer.AbstractTransform):
         def process_string(self, s: str) -> str:
             s = re.sub(r"\d{10,}", " [hallucination] ", s)
-            s = re.sub(r"\b(uh|um|ah|er)\b", "", s, flags=re.IGNORECASE)
-            return s.replace("-", " ")
+            s = re.sub(r"\b(uh|um|ah|er|uhh)\b", "", s, flags=re.IGNORECASE)
+            return s
+
+    class NumericStandardizer(jiwer.AbstractTransform):
+        def process_string(self, s: str) -> str:
+            s = _itn().inverse_normalize(s, verbose=False)
+            number_map = {"one": "1", "two": "2", "three": "3", "four": "4",
+                          "five": "5", "six": "6", "seven": "7", "eight": "8",
+                          "nine": "9", "ten": "10"}
+            for word, digit in number_map.items():
+                s = re.sub(rf"\b{word}\b", digit, s, flags=re.IGNORECASE)
+            s = re.sub(r"[:\-,\$]", " ", s)
+            return re.sub(r"(\d)", r" \1 ", s)
 
     return jiwer.Compose([
-        NormalizeDispatchQuirks(), NemoNormalization(),
+        PreProcessCleanups(), NumericStandardizer(),
+        jiwer.ToLowerCase(),
         jiwer.SubstituteRegexes({r"[\n\r\t]+": " "}),
-        jiwer.ToLowerCase(), jiwer.RemovePunctuation(),
+        jiwer.RemovePunctuation(),
         jiwer.RemoveWhiteSpace(replace_by_space=True),
         jiwer.RemoveMultipleSpaces(), jiwer.Strip(),
     ])
@@ -653,7 +669,13 @@ def stage_score(arms: list[Arm]) -> None:
     records = _context_records()
 
     # Per-segment normalized GT + per-arm WER; only score rows with GT text.
+    # Also accumulate refs/hyps to compute the canonical AGGREGATE WER per arm
+    # (total errors / total words) — the headline, comparable to other evals.
     scored: list[dict[str, Any]] = []
+    agg_refs: list[str] = []
+    agg_refs_framed: list[str] = []
+    agg_hyps: dict[str, list[str]] = {a.tag: [] for a in arms}
+    agg_hyps_framed: dict[str, list[str]] = {a.tag: [] for a in arms}
     for row in rows:
         gt = normalizer(row.get("text", "") or "")
         if not gt:
@@ -669,6 +691,9 @@ def stage_score(arms: list[Arm]) -> None:
             "system": (rec or {}).get("sName") or "unknown",
         }
         gt_set = set(gt.split())
+        agg_refs.append(gt)
+        if framed:
+            agg_refs_framed.append(gt)
         for a in arms:
             raw = row.get(a.pred_field, "") or ""
             pred = normalizer(raw) if raw else ""
@@ -679,10 +704,25 @@ def stage_score(arms: list[Arm]) -> None:
             entry[f"pred_words_{a.tag}"] = len(pred.split())
             # over-insertion: predicted tokens absent from GT
             entry[f"ins_{a.tag}"] = sum(1 for w in pred.split() if w not in gt_set)
+            agg_hyps[a.tag].append(pred)
+            if framed:
+                agg_hyps_framed[a.tag].append(pred)
         scored.append(entry)
+
+    # Canonical aggregate WER (all-GT and framed-subset) per arm.
+    def _agg(refs, hyps):
+        return round(100 * jiwer.process_words(refs, hyps).wer, 2) if refs else None
+    aggregate_wer = {
+        a.tag: {"all": _agg(agg_refs, agg_hyps[a.tag]),
+                "framed": _agg(agg_refs_framed, agg_hyps_framed[a.tag])}
+        for a in arms
+    }
+    logger.info(f"aggregate WER (all GT segments): "
+                + ", ".join(f"{t}={v['all']}" for t, v in aggregate_wer.items()))
 
     report = decision_gates.analyze(scored, arms=[a.tag for a in arms],
                                     framing_variants=list(FRAMING_VARIANTS))
+    report["aggregate_wer"] = aggregate_wer
     (RESULTS_DIR / "eval_per_sample.jsonl").write_text(
         "\n".join(json.dumps(r, sort_keys=True) for r in scored) + "\n"
     )

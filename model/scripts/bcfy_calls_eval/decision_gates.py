@@ -244,9 +244,19 @@ def render_markdown(report: dict[str, Any]) -> str:
     L.append(
         f"Scored **{report['total_scored_segments']}** segments; "
         f"**{report['framed_segments']}** ({report['framed_pct']}%) framed "
-        f"(analysis below restricted to framed segments)."
+        f"(per-segment gate analysis below restricted to framed segments)."
     )
     L.append("")
+    agg_wer = report.get("aggregate_wer")
+    if agg_wer:
+        L.append("## Aggregate WER (canonical: total errors / total words)")
+        L.append("")
+        L.append("| arm | all GT segments | framed only |")
+        L.append("|---|--:|--:|")
+        for tag in sorted(agg_wer):
+            v = agg_wer[tag]
+            L.append(f"| `{tag}` | {v['all']}% | {v['framed']}% |")
+        L.append("")
     for model, r in report["models"].items():
         agg = r["aggregate"]
         L.append(f"## {model}  —  {'✅ SHIP moderate' if r['ship_moderate'] else '❌ do NOT ship'}")
