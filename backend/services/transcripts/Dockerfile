@@ -16,6 +16,7 @@ COPY pyproject.toml uv.lock ./
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
+COPY backend/pipeline/normalization/pyproject.toml ./backend/pipeline/normalization/
 COPY backend/pipeline/transcription/pyproject.toml ./backend/pipeline/transcription/
 RUN uv sync --frozen --no-dev && uv pip install grpcio-tools
 
