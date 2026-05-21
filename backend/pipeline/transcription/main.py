@@ -22,69 +22,67 @@ setup_logging()
 setup_tracing(use_batch=False)
 logger = logging.getLogger(__name__)
 
-# Warm start cached instances
-_transcriber_instance: transcribers.Transcriber | None = None
-_publisher_client: pubsub_v1.PublisherClient | None = None
-_processor_instance: TranscriptionEventProcessor | None = None
 
+class TranscriptionServiceContainer:
+    """Encapsulates the warm-started cached service container instances for GCF."""
 
-def get_lazy_transcriber(project_id: str) -> transcribers.Transcriber:
-    """Warms up and caches the transcriber instance."""
-    global _transcriber_instance  # noqa: PLW0603
-    if _transcriber_instance is None:
-        t_type_str = os.environ.get("TRANSCRIBER_TYPE", "GOOGLE_CHIRP_V3")
-        t_config_json = os.environ.get("TRANSCRIBER_CONFIG", "{}")
-        try:
-            t_type = TranscriberType(t_type_str)
-        except ValueError:
-            t_type = TranscriberType[t_type_str]
-        logger.info("Initializing transcriber type %s", t_type.name)
-        _transcriber_instance = transcribers.get_transcriber(
-            t_type, project_id, t_config_json
-        )
-        _transcriber_instance.setup()
-    return _transcriber_instance
+    def __init__(self) -> None:
+        self._transcriber: transcribers.Transcriber | None = None
+        self._publisher: pubsub_v1.PublisherClient | None = None
+        self._processor: TranscriptionEventProcessor | None = None
 
+    def get_transcriber(self, project_id: str) -> transcribers.Transcriber:
+        """Warms up and caches the transcriber instance."""
+        if self._transcriber is None:
+            t_type_str = os.environ.get("TRANSCRIBER_TYPE", "GOOGLE_CHIRP_V3")
+            t_config_json = os.environ.get("TRANSCRIBER_CONFIG", "{}")
+            t_type = TranscriberType(t_type_str.lower())
+            logger.info("Initializing transcriber type %s", t_type.name)
+            self._transcriber = transcribers.get_transcriber(
+                t_type, project_id, t_config_json
+            )
+            self._transcriber.setup()
+        return self._transcriber
 
-def get_lazy_publisher() -> pubsub_v1.PublisherClient:
-    """Warms up and caches the Pub/Sub publisher client."""
-    global _publisher_client  # noqa: PLW0603
-    if _publisher_client is None:
-        logger.info("Initializing Pub/Sub PublisherClient")
-        # Enable publisher side ordering keys
-        publisher_options = pubsub_v1.types.PublisherOptions(
-            enable_message_ordering=True
-        )
-        _publisher_client = pubsub_v1.PublisherClient(
-            publisher_options=publisher_options
-        )
-    return _publisher_client
+    def get_publisher(self) -> pubsub_v1.PublisherClient:
+        """Warms up and caches the Pub/Sub publisher client with ordering enabled."""
+        if self._publisher is None:
+            logger.info("Initializing Pub/Sub PublisherClient")
+            publisher_options = pubsub_v1.types.PublisherOptions(
+                enable_message_ordering=True
+            )
+            self._publisher = pubsub_v1.PublisherClient(
+                publisher_options=publisher_options
+            )
+        return self._publisher
 
+    def get_processor(self) -> TranscriptionEventProcessor:
+        """Warms up and caches the Event Processor instance."""
+        if self._processor is None:
+            project_id = os.environ.get("PROJECT_ID", "watch-duty-dev")
+            output_topic = os.environ.get("OUTPUT_TOPIC")
+            if not output_topic:
+                msg = "OUTPUT_TOPIC environment variable must be set"
+                logger.error(msg)
+                raise ValueError(msg)
 
-def get_lazy_processor() -> TranscriptionEventProcessor:
-    """Warms up and caches the Event Processor instance."""
-    global _processor_instance  # noqa: PLW0603
-    if _processor_instance is None:
-        project_id = os.environ.get("PROJECT_ID", "watch-duty-dev")
-        output_topic = os.environ.get("OUTPUT_TOPIC")
-        if not output_topic:
-            msg = "OUTPUT_TOPIC environment variable must be set"
-            logger.error(msg)
-            raise ValueError(msg)
-        transcriber = get_lazy_transcriber(project_id)
-        publisher = get_lazy_publisher()
+            transcriber = self.get_transcriber(project_id)
+            publisher = self.get_publisher()
 
-        _processor_instance = TranscriptionEventProcessor(
-            project_id=project_id,
-            output_topic=output_topic,
-            transcriber=transcriber,
-            publisher=publisher,
-        )
-    return _processor_instance
+            self._processor = TranscriptionEventProcessor(
+                project_id=project_id,
+                output_topic=output_topic,
+                transcriber=transcriber,
+                publisher=publisher,
+            )
+        return self._processor
+
+# Global container instance managed by the GCF container instance lifecycle
+container = TranscriptionServiceContainer()
 
 
 @functions_framework.cloud_event
 def transcribe_claim_check(cloud_event: CloudEvent) -> None:
     """Entry point for Cloud Function Pub/Sub trigger events."""
-    processor = get_lazy_processor()
+    processor = container.get_processor()
     processor.process_event(cloud_event)
