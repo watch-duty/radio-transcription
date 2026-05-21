@@ -70,6 +70,7 @@ jobs:
       - name: Build microservices using Buildx Bake (with caching)
         run: |
           docker buildx bake \
+            --allow=fs=/tmp \
             --set *.cache-from=type=local,src=/tmp/.buildx-cache \
             --set *.cache-to=type=local,dest=/tmp/.buildx-cache-new,mode=max \
             -f docker-compose.yml \
