@@ -196,11 +196,7 @@ class GoogleChirpV3Transcriber(Transcriber):
             if not result.alternatives:
                 continue
 
-            chunk_text = (
-                result.alternatives[0]
-                .transcript.replace(CHIRP_UNINTELLIGIBLE_MARKER, "")
-                .strip()
-            )
+            chunk_text = result.alternatives[0].transcript.strip()
             if chunk_text:
                 chunks.append(chunk_text)
 

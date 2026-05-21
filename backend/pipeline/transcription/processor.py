@@ -124,8 +124,9 @@ class TranscriptionEventProcessor:
                 )
 
                 # Egress to final output topic, strictly ordered by feed_id
+                topic_name = self.output_topic.split("/")[-1]
                 topic_path = self.publisher.topic_path(
-                    self.project_id, self.output_topic.split("/")[-1]
+                    self.project_id, topic_name
                 )
 
                 attrs: dict[str, str] = {}
