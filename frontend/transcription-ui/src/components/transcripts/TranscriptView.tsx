@@ -643,6 +643,7 @@ export function TranscriptView({
   };
 
   const handleFilterByDateTime = (date: Date | null) => {
+    setTimestamp(date);
     setSearchedTimestamp(date);
     setSearchParams((prev) => {
       if (date) {
