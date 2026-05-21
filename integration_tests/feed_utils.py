@@ -52,7 +52,11 @@ def _create_and_cleanup_feed(
 
 @pytest.fixture(name="test_bcfy_feed")
 def create_test_bcfy_feed() -> Generator[tuple[str, str]]:
-    """Fixture to create a temporary BCFY feed for testing."""
+    """Fixture to create a temporary BCFY feed for testing.
+
+    Yields:
+        tuple[str, str]: A tuple containing (feed_id, source_feed_id).
+    """
     feed_name = f"integration-test-feed-{uuid.uuid4()}"
     payload = {
         "name": feed_name,
@@ -65,7 +69,11 @@ def create_test_bcfy_feed() -> Generator[tuple[str, str]]:
 
 @pytest.fixture(name="test_polling_feed")
 def create_test_polling_feed() -> Generator[tuple[str, str]]:
-    """Fixture to create a temporary polling feed for testing."""
+    """Fixture to create a temporary polling feed for testing.
+
+    Yields:
+        tuple[str, str]: A tuple containing (feed_id, feed_name).
+    """
     feed_name = f"integration-test-polling-feed-{uuid.uuid4()}"
     payload = {
         "name": feed_name,
@@ -77,8 +85,12 @@ def create_test_polling_feed() -> Generator[tuple[str, str]]:
 
 
 @pytest.fixture(name="test_echo_feed")
-def create_test_echo_feed() -> tuple[str, str]:
-    """Fixture to create a temporary echo feed for testing."""
+def create_test_echo_feed() -> Generator[tuple[str, str]]:
+    """Fixture to create a temporary echo feed for testing.
+
+    Yields:
+        tuple[str, str]: A tuple containing (feed_id, source_feed_id).
+    """
     feed_name = f"integration-test-echo-feed-{uuid.uuid4()}"
     payload = {
         "name": feed_name,
@@ -88,4 +100,10 @@ def create_test_echo_feed() -> tuple[str, str]:
     }
     gen = _create_and_cleanup_feed(payload)
     feed_id, _ = next(gen)
-    return feed_id, payload["source_feed_id"]
+    try:
+        yield feed_id, payload["source_feed_id"]
+    finally:
+        try:
+            next(gen)
+        except StopIteration:
+            pass
