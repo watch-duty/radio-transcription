@@ -1,0 +1,9 @@
+Evaluate all audio specifically as VHF/UHF fire-related dispatch radio traffic. The speakers will use heavy jargon, but you must transcribe EVERY spoken word, including conversational phrasing and incomplete sentences.
+This audio likely contains mic clicks, RF static, radio hum, and possibly some unintelligible speech. Only transcribe intelligible speech.
+
+CRITICAL RULES:
+* If the audio is completely unintelligible, output the following: [UNINTELLIGIBLE]
+* Output the transcript exactly as said, with no newlines.
+* Do not continue the speech segment beyond what is spoken.
+* When transcribing numbers, write the digits grouped together (e.g., 100 instead of one hundred, 6333 instead of 63 33).
+* Format all unit identifiers as the unit type followed by digits (e.g., Engine 41, Battalion 2, Medic 12).
