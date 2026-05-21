@@ -9,6 +9,7 @@ if TYPE_CHECKING:
 
 import pytest
 
+from backend.pipeline.common.exceptions import FeedAlreadyExistsError
 from backend.pipeline.storage.feed_store import FeedStore, SourceType
 
 
@@ -1101,6 +1102,31 @@ async def test_create_feed_succeeds(
     assert row["name"] == "New Integration Feed"
     assert row["source_feed_id"] == "src_123"
     assert row["external_id"] == "ext_123"
+
+
+async def test_create_feed_already_exists(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """create_feed raises FeedAlreadyExistsError when feed already exists."""
+    await store.create_feed(
+        name="New Integration Feed",
+        source_type="bcfy_feeds",
+        source_feed_id="src_123",
+        external_id="ext_123",
+    )
+
+    with pytest.raises(FeedAlreadyExistsError) as cm:
+        await store.create_feed(
+            name="Another Feed Name",
+            source_type="bcfy_feeds",
+            source_feed_id="src_123",
+            external_id="ext_456",
+        )
+
+    assert (
+        "Feed with source type 'bcfy_feeds' and source feed ID 'src_123' already exists"
+        in str(cm.value)
+    )
 
 
 # -- Tests: get_feed --------------------------------------------------
