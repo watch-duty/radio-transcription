@@ -1,0 +1,54 @@
+syntax = "proto3";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+// Represents a normalized audio transmission that is ready to be transcribed by the Speech API.
+message AudioReadyForTranscription {
+
+  // --- Identifiers & Base Metadata ---
+  
+  // A unique, deterministic identifier for this specific transmission (formatted as a RFC 4122 UUID).
+  string transmission_id = 1;
+
+  // The unique identifier of the radio feed this transmission originated from (formatted as a RFC 4122 UUID).
+  string feed_id = 2;
+
+
+  // --- Global Timing & Context Flags ---
+  
+  // The exact global timestamp when this transmission started.
+  google.protobuf.Timestamp start_timestamp = 3;
+
+  // The exact global timestamp when this transmission ended.
+  google.protobuf.Timestamp end_timestamp = 4;
+
+  // Indicates this transmission lacks prior context (e.g., cut off abruptly mid-speech).
+  bool missing_prior_context = 5;
+
+  // Indicates this transmission lacks subsequent context (e.g., transmission duration exceeded).
+  bool missing_post_context = 6;
+
+
+  // --- Physical Audio Storage Details ---
+
+  // Ordered list of GCS URIs for the raw audio files used to assemble this transmission.
+  repeated string source_audio_uris = 7;
+
+  // The exact slice offset within the *first* URI in source_audio_uris where the transcribed speech formally begins.
+  google.protobuf.Duration start_audio_offset = 8;
+
+  // The exact slice offset within the *last* URI in source_audio_uris where the transcribed speech formally ends.
+  google.protobuf.Duration end_audio_offset = 9;
+
+  // The final unified canonical reference audio file URI for this transmission.
+  string canonical_audio_uri = 10;
+
+  // The URI of the audio file optimized for playback (e.g., compressed M4A/Opus).
+  string playback_audio_uri = 11;
+
+  // The human-readable name of the radio feed as stored in the database.
+  string feed_name = 12;
+
+  // The ID used for mapping the feed ID within the application.
+  string external_id = 13;
+}
