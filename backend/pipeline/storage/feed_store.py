@@ -621,6 +621,13 @@ class FeedStore:
                 json.dumps(tags or []),
             )
         except asyncpg.exceptions.UniqueViolationError as e:
+            logger.warning(
+                "Feed already exists",
+                extra={
+                    "source_type": source_type_str,
+                    "source_feed_id": source_feed_id,
+                },
+            )
             raise FeedAlreadyExistsError(source_type_str, source_feed_id) from e
 
         if row is None:
