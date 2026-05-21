@@ -629,13 +629,16 @@ def stage_score(arms: list[Arm]) -> None:
             "framed": framed,
             "system": (rec or {}).get("sName") or "unknown",
         }
+        gt_set = set(gt.split())
         for a in arms:
             raw = row.get(a.pred_field, "") or ""
             pred = normalizer(raw) if raw else ""
+            wer = 100 * jiwer.process_words(gt, pred or "").wer
             entry[f"pred_{a.tag}"] = pred
-            entry[f"wer_{a.tag}"] = round(100 * jiwer.process_words(gt, pred or "").wer, 2)
+            entry[f"wer_{a.tag}"] = round(wer, 2)
+            entry[f"wer_capped_{a.tag}"] = round(min(100.0, wer), 2)
+            entry[f"pred_words_{a.tag}"] = len(pred.split())
             # over-insertion: predicted tokens absent from GT
-            gt_set = set(gt.split())
             entry[f"ins_{a.tag}"] = sum(1 for w in pred.split() if w not in gt_set)
         scored.append(entry)
 

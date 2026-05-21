@@ -82,24 +82,40 @@ def _model_improvements(
     scored: list[dict[str, Any]], model: str, framed_only: bool
 ) -> list[dict[str, Any]]:
     """Per-segment improvement rows for one model (baseline WER - moderate WER)."""
-    b, m = f"wer_{model}_baseline", f"wer_{model}_moderate"
+    # Gate metric is CAPPED WER (per-segment min(wer,100)): Gemini hallucinates
+    # entire fictional dispatch scenes on short noise (raw WER up to 3200%), and
+    # a handful of those blowups would otherwise dominate every bucket mean.
+    # Capping keeps the comparison robust; raw WER + hallucination rate are
+    # reported alongside as the mechanism.
+    cb, cm = f"wer_capped_{model}_baseline", f"wer_capped_{model}_moderate"
+    rb, rm = f"wer_{model}_baseline", f"wer_{model}_moderate"
     ib, im = f"ins_{model}_baseline", f"ins_{model}_moderate"
+    pb, pm = f"pred_words_{model}_baseline", f"pred_words_{model}_moderate"
     rows = []
     for e in scored:
         if framed_only and not e.get("framed"):
             continue
-        if b not in e or m not in e:
+        # capped key with raw fallback (older score outputs lack the capped key)
+        wb = e.get(cb, min(100.0, e.get(rb, 0.0)))
+        wm = e.get(cm, min(100.0, e.get(rm, 0.0)))
+        if rb not in e or rm not in e:
             continue
+        gw = e["gt_words"]
         rows.append({
             "example_id": e["example_id"],
             "system": e.get("system", "unknown"),
-            "gt_words": e["gt_words"],
-            "bucket": bucket_of(e["gt_words"]),
-            "improvement": e[b] - e[m],
+            "gt_words": gw,
+            "bucket": bucket_of(gw),
+            "improvement": wb - wm,            # capped-WER improvement (gate metric)
             "ins_baseline": e.get(ib, 0),
             "ins_moderate": e.get(im, 0),
-            "wer_baseline": e[b],
-            "wer_moderate": e[m],
+            "wer_baseline": wb,                # capped, for display
+            "wer_moderate": wm,
+            "raw_wer_baseline": e.get(rb, 0.0),
+            "raw_wer_moderate": e.get(rm, 0.0),
+            # hallucination: predicted >2x+2 the reference length
+            "halluc_baseline": int(e.get(pb, 0) > 2 * gw + 2),
+            "halluc_moderate": int(e.get(pm, 0) > 2 * gw + 2),
         })
     return rows
 
@@ -170,6 +186,12 @@ def _analyze_model(scored: list[dict[str, Any]], model: str) -> dict[str, Any]:
     ins_mod = _mean([r["ins_moderate"] for r in short_rows])
     overins_pass = ins_mod <= ins_base + 1e-9
 
+    # Mechanism (reported, not gated): hallucination rate + raw (uncapped) WER.
+    halluc_base = round(100 * _mean([r["halluc_baseline"] for r in rows]), 1)
+    halluc_mod = round(100 * _mean([r["halluc_moderate"] for r in rows]), 1)
+    raw_base = _mean([r["raw_wer_baseline"] for r in rows])
+    raw_mod = _mean([r["raw_wer_moderate"] for r in rows])
+
     gates = {
         "hard_short_clip": hard_pass,
         "net_signal": net_pass,
@@ -181,10 +203,13 @@ def _analyze_model(scored: list[dict[str, Any]], model: str) -> dict[str, Any]:
     return {
         "model": model,
         "n_framed_segments": n_framed,
+        "metric": "capped_wer (per-segment min(wer,100))",
         "aggregate": {
             "mean_improvement": _mean(all_deltas),
             "ci_lo": agg_lo, "ci_hi": agg_hi,
         },
+        "raw_wer": {"baseline": raw_base, "moderate": raw_mod},
+        "hallucination_rate_pct": {"baseline": halluc_base, "moderate": halluc_mod},
         "buckets": buckets,
         "short_clip_overinsertion": {"baseline": ins_base, "moderate": ins_mod},
         "per_group": groups,
@@ -226,15 +251,23 @@ def render_markdown(report: dict[str, Any]) -> str:
         agg = r["aggregate"]
         L.append(f"## {model}  —  {'✅ SHIP moderate' if r['ship_moderate'] else '❌ do NOT ship'}")
         L.append("")
-        L.append(f"Framed segments: {r['n_framed_segments']}. "
-                 f"Sign: improvement = baseline_WER − moderate_WER (positive = framing better).")
+        L.append(f"Framed segments: {r['n_framed_segments']}. Metric: "
+                 f"**capped WER** (per-segment min(wer,100)). "
+                 f"improvement = baseline − moderate (positive = framing better).")
         L.append("")
         L.append("**Gates:**")
         for g, ok in r["gates"].items():
             L.append(f"- {'✅' if ok else '❌'} `{g}`")
         L.append("")
-        L.append(f"**Aggregate improvement:** {agg['mean_improvement']:+.2f} WER pts "
+        L.append(f"**Aggregate improvement (capped):** {agg['mean_improvement']:+.2f} WER pts "
                  f"(95% CI [{agg['ci_lo']:+.2f}, {agg['ci_hi']:+.2f}])")
+        rw = r.get("raw_wer", {})
+        hr = r.get("hallucination_rate_pct", {})
+        if rw:
+            L.append(f"**Raw (uncapped) WER:** baseline {rw['baseline']:.1f} → "
+                     f"moderate {rw['moderate']:.1f}  ·  "
+                     f"**hallucination rate:** {hr['baseline']:.1f}% → {hr['moderate']:.1f}% "
+                     f"(pred >2× ref length)")
         L.append("")
         L.append("**By GT-word bucket** (improvement, +=better):")
         L.append("")
