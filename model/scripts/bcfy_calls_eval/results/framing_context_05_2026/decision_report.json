@@ -1,0 +1,692 @@
+{
+  "experiment": "framing_context_05_2026",
+  "framing_variants": [
+    "baseline",
+    "moderate"
+  ],
+  "total_scored_segments": 1042,
+  "framed_segments": 746,
+  "framed_pct": 71.6,
+  "models": {
+    "chirp": {
+      "model": "chirp",
+      "n_framed_segments": 746,
+      "metric": "capped_wer (per-segment min(wer,100))",
+      "aggregate": {
+        "mean_improvement": 2.015,
+        "ci_lo": 0.783,
+        "ci_hi": 3.291
+      },
+      "raw_wer": {
+        "baseline": 41.59,
+        "moderate": 38.927
+      },
+      "hallucination_rate_pct": {
+        "baseline": 0.0,
+        "moderate": 0.0
+      },
+      "buckets": {
+        "1-2": {
+          "n": 162,
+          "mean_improvement": 6.481,
+          "ci_lo": 3.086,
+          "ci_hi": 10.185,
+          "wer_baseline": 51.852,
+          "wer_moderate": 45.37
+        },
+        "3-5": {
+          "n": 241,
+          "mean_improvement": 0.104,
+          "ci_lo": -2.386,
+          "ci_hi": 2.6,
+          "wer_baseline": 42.096,
+          "wer_moderate": 41.992
+        },
+        "6-10": {
+          "n": 211,
+          "mean_improvement": 2.059,
+          "ci_lo": 0.587,
+          "ci_hi": 3.577,
+          "wer_baseline": 31.168,
+          "wer_moderate": 29.109
+        },
+        "11-20": {
+          "n": 94,
+          "mean_improvement": -0.551,
+          "ci_lo": -3.006,
+          "ci_hi": 1.653,
+          "wer_baseline": 22.017,
+          "wer_moderate": 22.569
+        },
+        "21+": {
+          "n": 38,
+          "mean_improvement": 1.198,
+          "ci_lo": -0.741,
+          "ci_hi": 3.298,
+          "wer_baseline": 22.102,
+          "wer_moderate": 20.904
+        }
+      },
+      "short_clip_overinsertion": {
+        "baseline": 1.094,
+        "moderate": 0.998
+      },
+      "per_group": [
+        {
+          "system": "Massachusetts State Police",
+          "n": 4,
+          "mean_improvement": -16.668,
+          "ci_lo": -50.002,
+          "ci_hi": 0.0,
+          "powered": false
+        },
+        {
+          "system": "MOSWIN",
+          "n": 9,
+          "mean_improvement": -3.809,
+          "ci_lo": -9.204,
+          "ci_hi": 0.0,
+          "powered": false
+        },
+        {
+          "system": "HIWIN",
+          "n": 13,
+          "mean_improvement": -3.411,
+          "ci_lo": -13.846,
+          "ci_hi": 4.12,
+          "powered": true
+        },
+        {
+          "system": "Indiana Project Hoosier SAFE-T",
+          "n": 15,
+          "mean_improvement": -2.769,
+          "ci_lo": -10.714,
+          "ci_hi": 2.795,
+          "powered": true
+        },
+        {
+          "system": "Arizona Wireless Integrated Network System (AZ WINS)",
+          "n": 5,
+          "mean_improvement": -2.484,
+          "ci_lo": -6.12,
+          "ci_hi": 0.0,
+          "powered": false
+        },
+        {
+          "system": "KSICS",
+          "n": 4,
+          "mean_improvement": -2.272,
+          "ci_lo": -6.817,
+          "ci_hi": 0.0,
+          "powered": false
+        },
+        {
+          "system": "OH MARCS",
+          "n": 21,
+          "mean_improvement": -2.15,
+          "ci_lo": -11.588,
+          "ci_hi": 4.357,
+          "powered": true
+        },
+        {
+          "system": "Arkansas Wireless Information Network (AWIN)",
+          "n": 26,
+          "mean_improvement": -2.005,
+          "ci_lo": -4.561,
+          "ci_hi": 0.056,
+          "powered": true
+        },
+        {
+          "system": "Kansas Statewide Interoperable Communication System (KSICS)",
+          "n": 41,
+          "mean_improvement": -1.83,
+          "ci_lo": -4.166,
+          "ci_hi": 0.068,
+          "powered": true
+        },
+        {
+          "system": "Mississippi Wireless Information Network (MSWIN)",
+          "n": 37,
+          "mean_improvement": -1.514,
+          "ci_lo": -7.414,
+          "ci_hi": 4.342,
+          "powered": true
+        },
+        {
+          "system": "WestComm Regional",
+          "n": 16,
+          "mean_improvement": -1.007,
+          "ci_lo": -5.382,
+          "ci_hi": 3.056,
+          "powered": true
+        },
+        {
+          "system": "Nebraska State Radio System",
+          "n": 43,
+          "mean_improvement": -0.728,
+          "ci_lo": -7.046,
+          "ci_hi": 5.529,
+          "powered": true
+        },
+        {
+          "system": "unknown",
+          "n": 29,
+          "mean_improvement": -0.269,
+          "ci_lo": -2.794,
+          "ci_hi": 2.918,
+          "powered": true
+        },
+        {
+          "system": "4C9 ISICS",
+          "n": 1,
+          "mean_improvement": 0.0,
+          "ci_lo": 0.0,
+          "ci_hi": 0.0,
+          "powered": false
+        },
+        {
+          "system": "CLMRN",
+          "n": 2,
+          "mean_improvement": 0.0,
+          "ci_lo": 0.0,
+          "ci_hi": 0.0,
+          "powered": false
+        },
+        {
+          "system": "Erie County Public Safety",
+          "n": 2,
+          "mean_improvement": 0.0,
+          "ci_lo": 0.0,
+          "ci_hi": 0.0,
+          "powered": false
+        },
+        {
+          "system": "TOPAZ Regional Wireless Cooperative (TRWC)",
+          "n": 3,
+          "mean_improvement": 0.0,
+          "ci_lo": 0.0,
+          "ci_hi": 0.0,
+          "powered": false
+        },
+        {
+          "system": "VIPER",
+          "n": 2,
+          "mean_improvement": 0.0,
+          "ci_lo": 0.0,
+          "ci_hi": 0.0,
+          "powered": false
+        },
+        {
+          "system": "Monroe County",
+          "n": 4,
+          "mean_improvement": 0.0,
+          "ci_lo": 0.0,
+          "ci_hi": 0.0,
+          "powered": false
+        },
+        {
+          "system": "Connecticut Land Mobile Radio Network (CLMRN)",
+          "n": 19,
+          "mean_improvement": 0.317,
+          "ci_lo": -0.964,
+          "ci_hi": 1.619,
+          "powered": true
+        },
+        {
+          "system": "Alabama Interoperable Radio System (AIRS)",
+          "n": 12,
+          "mean_improvement": 0.426,
+          "ci_lo": -7.102,
+          "ci_hi": 8.658,
+          "powered": true
+        },
+        {
+          "system": "Missouri Statewide Wireless Interoperable Network (MOSWIN)",
+          "n": 8,
+          "mean_improvement": 1.25,
+          "ci_lo": 0.0,
+          "ci_hi": 3.75,
+          "powered": false
+        },
+        {
+          "system": "Maine State Communications Network (MSCommNet)",
+          "n": 54,
+          "mean_improvement": 1.276,
+          "ci_lo": -0.458,
+          "ci_hi": 3.049,
+          "powered": true
+        },
+        {
+          "system": "AWIN Jville",
+          "n": 8,
+          "mean_improvement": 1.389,
+          "ci_lo": 0.0,
+          "ci_hi": 4.166,
+          "powered": false
+        },
+        {
+          "system": "Idaho Cooperative Agencies Wireless Interoperable Network (ICAWIN)",
+          "n": 84,
+          "mean_improvement": 1.626,
+          "ci_lo": -2.458,
+          "ci_hi": 6.064,
+          "powered": true
+        },
+        {
+          "system": "Wisconsin Interoperable System for Communications (WISCOM)",
+          "n": 50,
+          "mean_improvement": 2.165,
+          "ci_lo": -0.473,
+          "ci_hi": 5.449,
+          "powered": true
+        },
+        {
+          "system": "STARCOM21",
+          "n": 66,
+          "mean_improvement": 2.714,
+          "ci_lo": -0.224,
+          "ci_hi": 6.249,
+          "powered": true
+        },
+        {
+          "system": "WyoLink",
+          "n": 16,
+          "mean_improvement": 3.058,
+          "ci_lo": -0.136,
+          "ci_hi": 7.106,
+          "powered": true
+        },
+        {
+          "system": "MPSSC",
+          "n": 4,
+          "mean_improvement": 5.905,
+          "ci_lo": 0.0,
+          "ci_hi": 11.81,
+          "powered": false
+        },
+        {
+          "system": "Palmetto 800",
+          "n": 125,
+          "mean_improvement": 7.084,
+          "ci_lo": 2.928,
+          "ci_hi": 11.481,
+          "powered": true
+        },
+        {
+          "system": "ISICS",
+          "n": 4,
+          "mean_improvement": 12.5,
+          "ci_lo": 0.0,
+          "ci_hi": 37.5,
+          "powered": false
+        },
+        {
+          "system": "PALMETTO 800",
+          "n": 18,
+          "mean_improvement": 23.809,
+          "ci_lo": 8.333,
+          "ci_hi": 42.063,
+          "powered": true
+        },
+        {
+          "system": "Iowa Statewide Interoperable Communications System (ISICS)",
+          "n": 1,
+          "mean_improvement": 33.33,
+          "ci_lo": 33.33,
+          "ci_hi": 33.33,
+          "powered": false
+        }
+      ],
+      "flagged_groups": [],
+      "blocked_groups": [],
+      "gates": {
+        "hard_short_clip": false,
+        "net_signal": true,
+        "per_group": true,
+        "over_insertion": true
+      },
+      "ship_moderate": false
+    },
+    "gemini": {
+      "model": "gemini",
+      "n_framed_segments": 746,
+      "metric": "capped_wer (per-segment min(wer,100))",
+      "aggregate": {
+        "mean_improvement": 2.34,
+        "ci_lo": 0.695,
+        "ci_hi": 4.015
+      },
+      "raw_wer": {
+        "baseline": 68.216,
+        "moderate": 52.655
+      },
+      "hallucination_rate_pct": {
+        "baseline": 1.6,
+        "moderate": 0.7
+      },
+      "buckets": {
+        "1-2": {
+          "n": 162,
+          "mean_improvement": 4.938,
+          "ci_lo": 0.0,
+          "ci_hi": 9.877,
+          "wer_baseline": 63.889,
+          "wer_moderate": 58.951
+        },
+        "3-5": {
+          "n": 241,
+          "mean_improvement": 3.513,
+          "ci_lo": 0.761,
+          "ci_hi": 6.411,
+          "wer_baseline": 55.0,
+          "wer_moderate": 51.487
+        },
+        "6-10": {
+          "n": 211,
+          "mean_improvement": 1.283,
+          "ci_lo": -1.191,
+          "ci_hi": 3.783,
+          "wer_baseline": 39.834,
+          "wer_moderate": 38.551
+        },
+        "11-20": {
+          "n": 94,
+          "mean_improvement": -2.647,
+          "ci_lo": -6.683,
+          "ci_hi": 0.623,
+          "wer_baseline": 28.617,
+          "wer_moderate": 31.264
+        },
+        "21+": {
+          "n": 38,
+          "mean_improvement": 2.034,
+          "ci_lo": 0.522,
+          "ci_hi": 3.619,
+          "wer_baseline": 22.857,
+          "wer_moderate": 20.823
+        }
+      },
+      "short_clip_overinsertion": {
+        "baseline": 1.67,
+        "moderate": 1.342
+      },
+      "per_group": [
+        {
+          "system": "CLMRN",
+          "n": 2,
+          "mean_improvement": -44.445,
+          "ci_lo": -88.89,
+          "ci_hi": 0.0,
+          "powered": false
+        },
+        {
+          "system": "ISICS",
+          "n": 4,
+          "mean_improvement": -25.0,
+          "ci_lo": -75.0,
+          "ci_hi": 0.0,
+          "powered": false
+        },
+        {
+          "system": "MPSSC",
+          "n": 4,
+          "mean_improvement": -25.0,
+          "ci_lo": -75.0,
+          "ci_hi": 0.0,
+          "powered": false
+        },
+        {
+          "system": "Erie County Public Safety",
+          "n": 2,
+          "mean_improvement": -10.1,
+          "ci_lo": -12.5,
+          "ci_hi": -7.7,
+          "powered": false
+        },
+        {
+          "system": "AWIN Jville",
+          "n": 8,
+          "mean_improvement": -5.804,
+          "ci_lo": -21.875,
+          "ci_hi": 7.589,
+          "powered": false
+        },
+        {
+          "system": "WestComm Regional",
+          "n": 16,
+          "mean_improvement": -3.941,
+          "ci_lo": -23.386,
+          "ci_hi": 14.983,
+          "powered": true
+        },
+        {
+          "system": "Nebraska State Radio System",
+          "n": 43,
+          "mean_improvement": -2.84,
+          "ci_lo": -10.188,
+          "ci_hi": 3.284,
+          "powered": true
+        },
+        {
+          "system": "unknown",
+          "n": 29,
+          "mean_improvement": -1.766,
+          "ci_lo": -8.397,
+          "ci_hi": 3.407,
+          "powered": true
+        },
+        {
+          "system": "STARCOM21",
+          "n": 66,
+          "mean_improvement": -1.732,
+          "ci_lo": -5.974,
+          "ci_hi": 1.515,
+          "powered": true
+        },
+        {
+          "system": "WyoLink",
+          "n": 16,
+          "mean_improvement": -1.025,
+          "ci_lo": -6.25,
+          "ci_hi": 3.471,
+          "powered": true
+        },
+        {
+          "system": "Alabama Interoperable Radio System (AIRS)",
+          "n": 12,
+          "mean_improvement": -0.253,
+          "ci_lo": -22.223,
+          "ci_hi": 16.162,
+          "powered": true
+        },
+        {
+          "system": "4C9 ISICS",
+          "n": 1,
+          "mean_improvement": 0.0,
+          "ci_lo": 0.0,
+          "ci_hi": 0.0,
+          "powered": false
+        },
+        {
+          "system": "Iowa Statewide Interoperable Communications System (ISICS)",
+          "n": 1,
+          "mean_improvement": 0.0,
+          "ci_lo": 0.0,
+          "ci_hi": 0.0,
+          "powered": false
+        },
+        {
+          "system": "TOPAZ Regional Wireless Cooperative (TRWC)",
+          "n": 3,
+          "mean_improvement": 0.0,
+          "ci_lo": 0.0,
+          "ci_hi": 0.0,
+          "powered": false
+        },
+        {
+          "system": "VIPER",
+          "n": 2,
+          "mean_improvement": 0.0,
+          "ci_lo": 0.0,
+          "ci_hi": 0.0,
+          "powered": false
+        },
+        {
+          "system": "Monroe County",
+          "n": 4,
+          "mean_improvement": 0.0,
+          "ci_lo": 0.0,
+          "ci_hi": 0.0,
+          "powered": false
+        },
+        {
+          "system": "Mississippi Wireless Information Network (MSWIN)",
+          "n": 37,
+          "mean_improvement": 0.18,
+          "ci_lo": -6.666,
+          "ci_hi": 5.856,
+          "powered": true
+        },
+        {
+          "system": "Arizona Wireless Integrated Network System (AZ WINS)",
+          "n": 5,
+          "mean_improvement": 0.91,
+          "ci_lo": 0.0,
+          "ci_hi": 2.73,
+          "powered": false
+        },
+        {
+          "system": "HIWIN",
+          "n": 13,
+          "mean_improvement": 1.175,
+          "ci_lo": -10.576,
+          "ci_hi": 12.18,
+          "powered": true
+        },
+        {
+          "system": "Missouri Statewide Wireless Interoperable Network (MOSWIN)",
+          "n": 8,
+          "mean_improvement": 1.25,
+          "ci_lo": 0.0,
+          "ci_hi": 3.75,
+          "powered": false
+        },
+        {
+          "system": "Connecticut Land Mobile Radio Network (CLMRN)",
+          "n": 19,
+          "mean_improvement": 1.699,
+          "ci_lo": -0.811,
+          "ci_hi": 5.613,
+          "powered": true
+        },
+        {
+          "system": "Maine State Communications Network (MSCommNet)",
+          "n": 54,
+          "mean_improvement": 2.168,
+          "ci_lo": -0.228,
+          "ci_hi": 4.98,
+          "powered": true
+        },
+        {
+          "system": "PALMETTO 800",
+          "n": 18,
+          "mean_improvement": 2.381,
+          "ci_lo": -11.904,
+          "ci_hi": 19.048,
+          "powered": true
+        },
+        {
+          "system": "OH MARCS",
+          "n": 21,
+          "mean_improvement": 2.381,
+          "ci_lo": 0.0,
+          "ci_hi": 7.143,
+          "powered": true
+        },
+        {
+          "system": "Wisconsin Interoperable System for Communications (WISCOM)",
+          "n": 50,
+          "mean_improvement": 2.58,
+          "ci_lo": 0.659,
+          "ci_hi": 5.028,
+          "powered": true
+        },
+        {
+          "system": "Massachusetts State Police",
+          "n": 4,
+          "mean_improvement": 3.125,
+          "ci_lo": 0.0,
+          "ci_hi": 9.375,
+          "powered": false
+        },
+        {
+          "system": "Idaho Cooperative Agencies Wireless Interoperable Network (ICAWIN)",
+          "n": 84,
+          "mean_improvement": 5.512,
+          "ci_lo": -0.291,
+          "ci_hi": 12.007,
+          "powered": true
+        },
+        {
+          "system": "Kansas Statewide Interoperable Communication System (KSICS)",
+          "n": 41,
+          "mean_improvement": 5.738,
+          "ci_lo": -1.055,
+          "ci_hi": 13.649,
+          "powered": true
+        },
+        {
+          "system": "Indiana Project Hoosier SAFE-T",
+          "n": 15,
+          "mean_improvement": 5.754,
+          "ci_lo": -5.953,
+          "ci_hi": 18.849,
+          "powered": true
+        },
+        {
+          "system": "Palmetto 800",
+          "n": 125,
+          "mean_improvement": 6.095,
+          "ci_lo": 1.504,
+          "ci_hi": 10.876,
+          "powered": true
+        },
+        {
+          "system": "Arkansas Wireless Information Network (AWIN)",
+          "n": 26,
+          "mean_improvement": 8.563,
+          "ci_lo": 0.321,
+          "ci_hi": 19.368,
+          "powered": true
+        },
+        {
+          "system": "MOSWIN",
+          "n": 9,
+          "mean_improvement": 17.46,
+          "ci_lo": 0.0,
+          "ci_hi": 41.269,
+          "powered": false
+        },
+        {
+          "system": "KSICS",
+          "n": 4,
+          "mean_improvement": 31.25,
+          "ci_lo": 0.0,
+          "ci_hi": 75.0,
+          "powered": false
+        }
+      ],
+      "flagged_groups": [
+        "Erie County Public Safety"
+      ],
+      "blocked_groups": [],
+      "gates": {
+        "hard_short_clip": true,
+        "net_signal": true,
+        "per_group": true,
+        "over_insertion": true
+      },
+      "ship_moderate": true
+    }
+  }
+}

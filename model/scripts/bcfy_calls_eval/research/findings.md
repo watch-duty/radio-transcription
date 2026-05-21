@@ -57,12 +57,26 @@ short clips that dominate WatchDuty traffic?
   over-insertion 1.67→1.34. Only 1 flagged system (Erie County), none blocking.
   The 11-20w bucket dips (-2.65, CI crosses 0) — framing helps short, is ~neutral
   long. H1 supported for the LLM.
-- **FULL RUN — Chirp result was a THROTTLING ARTIFACT (caught, re-running).**
-  The first full pass showed Chirp -24 WER, but that was 409 segments returning
-  empty from **429 quota errors** (per-minute STT Recognize limit) silently
-  swallowed as empty transcripts — NOT a framing effect. Fixed with 429
-  retry/backoff + don't-persist-failures; clean Chirp re-run in progress.
-  Smoke Chirp (neutral) is the better prior; expect ~neutral, not -24.
+- **FULL RUN — Chirp CONFIRMED (clean re-run; n=746 framed):** framing is
+  **net-positive** (+2.02, 95% CI [+0.78, +3.29], net_signal clears) and
+  **helps the shortest 1-2w clips most** (+6.48, CI [+3.09, +10.19]) — but it
+  **fails the strict hard short-clip gate** because the 3-5w bucket is
+  statistically *flat* (+0.10, CI [-2.39, +2.60], spans 0). Verdict: do NOT
+  ship under the strict gate, but framing is **not harmful** to Chirp (no
+  blocking systems; over-insertion 1.09→1.00). Raw WER 41.6→38.9; 0%
+  hallucination (a dedicated ASR doesn't fabricate).
+  - The first full pass's -24 WER was a **429 throttling artifact** (409
+    swallowed-empty segments), caught by sanity-checking raw outputs and fixed
+    (retry/backoff). [[429 lesson below]]
+- **H1 VERDICT: framing helps, model-dependent strength.** Both models net
+  improve (~+2 capped-WER pts, both clear net_signal) — descriptive prose
+  framing is beneficial, decisively *not* the lexical-injection regression.
+  **Gemini clears all gates (ship); Chirp clears net but not the strict 3-5w
+  gate.** Mechanism differs: Gemini's gain is hallucination control (raw WER
+  68→53, halluc 1.6→0.7%); Chirp (no hallucination) gets a smaller, real gain
+  concentrated on the very shortest clips. The two diverge exactly where the
+  spec predicted — and the strict gate is what distinguishes "ship" from
+  "promising but unproven on short clips."
 
 ## Lessons and constraints
 
