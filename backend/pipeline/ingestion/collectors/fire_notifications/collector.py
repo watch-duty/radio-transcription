@@ -258,12 +258,12 @@ async def fire_notifications_collector(
     # We use a deque with maxlen to prevent unbounded memory growth.
     processed_uuids: collections.deque[str] = collections.deque(maxlen=1000)
     consecutive_failures = 0
+    connection_session_id = str(uuid.uuid4())
 
     session = AsyncSession()
 
     try:
         while not shutdown_event.is_set():
-            connection_session_id = str(uuid.uuid4())
             poll_ok = False
 
             try:
