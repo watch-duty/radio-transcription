@@ -2,6 +2,7 @@
 
 import pathlib
 
+import pydantic
 from google.api_core import client_options
 from google.api_core.retry import Retry
 from google.cloud import speech_v2 as cloud_speech
@@ -13,10 +14,10 @@ from backend.pipeline.transcription.transcribers.base import Transcriber
 
 # Default paths to the packaged prompt and phrase hints configuration text assets.
 DEFAULT_PHRASE_HINTS_FILE_PATH = (
-    "/app/backend/pipeline/transcription/chirp_phrase_hints.txt"
+    "/app/backend/pipeline/transcription/transcribers/chirp_phrase_hints.txt"
 )
 DEFAULT_CHIRP_PROMPT_FILE_PATH = (
-    "/app/backend/pipeline/transcription/chirp_prompt.txt"
+    "/app/backend/pipeline/transcription/transcribers/chirp_prompt.txt"
 )
 
 # Marker defined in the prompt to indicate when the model detects no intelligible speech.
@@ -38,6 +39,25 @@ logger = get_task_logger(
 )
 
 
+def load_default_phrase_hints() -> list[str]:
+    """Loads phrase hints from the default packaged text file asset if it exists."""
+    p = pathlib.Path(DEFAULT_PHRASE_HINTS_FILE_PATH)
+    if not p.exists():
+        return []
+    with p.open("r") as f:
+        return [
+            line.strip()
+            for line in f
+            if line.strip() and not line.startswith("#")
+        ]
+
+
+def load_default_prompt() -> str | None:
+    """Loads the custom transcription prompt from the default packaged text file asset if it exists."""
+    p = pathlib.Path(DEFAULT_CHIRP_PROMPT_FILE_PATH)
+    return p.read_text() if p.exists() else None
+
+
 class ChirpConfig(ConfigBase):
     """Strongly typed configuration for the Google Chirp V3 Transcriber."""
 
@@ -48,15 +68,16 @@ class ChirpConfig(ConfigBase):
     enable_automatic_punctuation: bool = True
     enable_word_time_offsets: bool = False
     enable_denoiser: bool = True
-    # Path to a plain-text file containing the custom prompt for Chirp transcription.
-    # Defaults to the packaged file in the container image; explicitly set to
-    # None to disable the custom prompt (e.g. in tests or non-container environments).
-    custom_prompt_file_path: str | None = DEFAULT_CHIRP_PROMPT_FILE_PATH
-    # Path to a plain-text file of phrase hints for Chirp phrase-set adaptation.
-    # Each non-blank line that doesn't start with '#' is treated as a phrase.
-    # Defaults to the packaged file in the container image; explicitly set to
-    # None to disable adaptation (e.g. in tests or non-container environments).
-    phrase_hints_file_path: str | None = DEFAULT_PHRASE_HINTS_FILE_PATH
+
+    # Custom transcription prompt content. Defaults to the packaged custom prompt file.
+    custom_prompt: str | None = pydantic.Field(
+        default_factory=load_default_prompt
+    )
+
+    # List of phrase hints for Chirp adaptation. Defaults to the packaged phrase hints file.
+    phrase_hints: list[str] = pydantic.Field(
+        default_factory=load_default_phrase_hints
+    )
 
 
 class GoogleChirpV3Transcriber(Transcriber):
@@ -75,8 +96,6 @@ class GoogleChirpV3Transcriber(Transcriber):
         self.config = config
 
         self.client: SpeechClient | None = None
-        self.phrases: list[str] = []
-        self.custom_prompt: str | None = None
 
     def _init_client(self) -> SpeechClient:
         opts = client_options.ClientOptions(
@@ -85,50 +104,17 @@ class GoogleChirpV3Transcriber(Transcriber):
         return SpeechClient(client_options=opts)
 
     def setup(self) -> None:
-        """Instantiates the Speech-to-Text API gRPC client and loads phrase hints if configured."""
+        """Instantiates the Speech-to-Text API gRPC client."""
         self.client = self._init_client()
 
-        if self.config.phrase_hints_file_path:
-            p = pathlib.Path(self.config.phrase_hints_file_path)
-            if not p.exists():
-                msg = f"Phrase hints file {self.config.phrase_hints_file_path} does not exist"
-                raise FileNotFoundError(msg)
-            with p.open("r") as f:
-                self.phrases = [
-                    line.strip()
-                    for line in f
-                    if line.strip() and not line.startswith("#")
-                ]
-            logger.info(
-                "Loaded %d phrase hints from %s",
-                len(self.phrases),
-                self.config.phrase_hints_file_path,
-            )
-
-        if self.config.custom_prompt_file_path:
-            p = pathlib.Path(self.config.custom_prompt_file_path)
-            if not p.exists():
-                msg = f"Custom prompt file {self.config.custom_prompt_file_path} does not exist"
-                raise FileNotFoundError(msg)
-            try:
-                with p.open("r") as f:
-                    self.custom_prompt = f.read()
-                    logger.info(
-                        "Loaded custom prompt from %s",
-                        self.config.custom_prompt_file_path,
-                    )
-            except Exception as e:
-                msg = f"Failed to read custom prompt file {self.config.custom_prompt_file_path}: {e}"
-                raise ValueError(msg) from e
-
     def _build_adaptation(self) -> cloud_speech.SpeechAdaptation | None:
-        """Builds a SpeechAdaptation from the loaded phrase hints."""
-        if self.config.phrase_hints_file_path is None:
+        """Builds a SpeechAdaptation from the configured phrase hints."""
+        if not self.config.phrase_hints:
             return None
 
         phrases = [
             cloud_speech.PhraseSet.Phrase(value=phrase)
-            for phrase in self.phrases
+            for phrase in self.config.phrase_hints
         ]
 
         return cloud_speech.SpeechAdaptation(
@@ -174,9 +160,9 @@ class GoogleChirpV3Transcriber(Transcriber):
                     enable_automatic_punctuation=self.config.enable_automatic_punctuation,
                     enable_word_time_offsets=self.config.enable_word_time_offsets,
                     custom_prompt_config=cloud_speech.CustomPromptConfig(
-                        custom_prompt=self.custom_prompt
+                        custom_prompt=self.config.custom_prompt
                     )
-                    if self.custom_prompt
+                    if self.config.custom_prompt
                     else None,
                 ),
                 denoiser_config=cloud_speech.DenoiserConfig(

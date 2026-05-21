@@ -96,8 +96,20 @@ class TranscriptionServiceContainer:
             )
         return self._processor
 
+    def eager_warmup(self) -> None:
+        """Eagerly warms up and caches all gRPC clients during container initialization."""
+        logger.info("Performing eager warm-start for container services...")
+        try:
+            self.get_processor()
+            logger.info("Container services eagerly warmed up successfully.")
+        except Exception as e:
+            logger.warning(
+                "Eager warm-start skipped or failed (expected in some test/local envs): %s",
+                e,
+            )
 # Global container instance managed by the GCF container instance lifecycle
 container = TranscriptionServiceContainer()
+container.eager_warmup()
 
 
 @functions_framework.cloud_event
