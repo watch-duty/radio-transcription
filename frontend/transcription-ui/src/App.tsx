@@ -3,7 +3,12 @@ import { Route, Routes } from 'react-router';
 
 import { jwtDecode } from 'jwt-decode';
 
-import { CssBaseline, ThemeProvider, createTheme, useMediaQuery } from '@mui/material';
+import {
+  CssBaseline,
+  ThemeProvider,
+  createTheme,
+  useMediaQuery,
+} from '@mui/material';
 import Alert, { type AlertProps } from '@mui/material/Alert';
 import AlertTitle from '@mui/material/AlertTitle';
 import Snackbar from '@mui/material/Snackbar';
