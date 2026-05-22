@@ -220,10 +220,10 @@ class TestVadEngine(unittest.TestCase):
         )
 
     @unittest.expectedFailure
-    def test_integration_quiet_vocals_loud_transient(self) -> None:
-        """Integration test to verify VAD performance on quiet vocals followed by a loud transient spike."""
+    def test_integration_quiet_speech_loud_transient(self) -> None:
+        """Integration test to verify VAD performance on quiet speech followed by a loud transient spike."""
         self._run_integration_test(
-            "test_quiet_vocals_loud_transient.mp3",
+            "test_quiet_speech_loud_transient.mp3",
             [
                 (0.213, 0.8),
                 (2.037, 3.869),
