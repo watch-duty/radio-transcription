@@ -691,7 +691,7 @@ export function TranscriptView({
         />
 
         <DateTimePicker
-          label="Timestamp (optional)"
+          label="Date/time"
           dateTime={timestamp}
           setDateTime={setTimestamp}
           width="15%"
@@ -789,6 +789,8 @@ export function TranscriptView({
               hasNewerTranscripts={hasNewerTranscripts}
               redactTranscripts={redactTranscripts}
               setRedactTranscripts={setRedactTranscripts}
+              dateTime={searchedTimestamp}
+              setDateTime={handleFilterByDateTime}
               onClickViewLatest={() => handleFilterByDateTime(null)}
             />
             <TranscriptDisplay
