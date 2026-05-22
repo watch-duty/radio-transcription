@@ -27,7 +27,9 @@ if TYPE_CHECKING:
 BCFY_FEEDS_URL_BASE = os.environ.get(
     "BCFY_FEEDS_URL_BASE", "https://partner.broadcastify.com/"
 )
-BCFY_CALLS_URL_BASE = "https://api.bcfy.io/calls/v1/live/"
+BCFY_CALLS_URL_BASE = os.environ.get(
+    "BCFY_CALLS_URL_BASE", "https://api.bcfy.io/calls/v1/live/"
+)
 OPENMHZ_URL_BASE = "https://api.openmhz.com/"
 
 # Typed registry: ty/mypy checks each value matches CollectorFn.

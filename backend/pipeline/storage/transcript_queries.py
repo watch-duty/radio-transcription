@@ -68,8 +68,9 @@ WHERE feed_id = $1
   AND ($2::timestamptz IS NULL OR end_timestamp < $2 OR (end_timestamp = $2 AND transmission_id < $3))
   AND ($4::timestamptz IS NULL OR end_timestamp >= $4)
   AND ($5::timestamptz IS NULL OR end_timestamp <= $5)
+  AND ($6::boolean IS NULL OR (cardinality(evaluation_decisions) > 0) = $6::boolean)
 ORDER BY end_timestamp DESC, transmission_id DESC
-LIMIT $6
+LIMIT $7
 """
 )
 
@@ -84,8 +85,9 @@ WHERE feed_id = $1
   AND ($2::timestamptz IS NULL OR end_timestamp > $2 OR (end_timestamp = $2 AND transmission_id > $3))
   AND ($4::timestamptz IS NULL OR end_timestamp >= $4)
   AND ($5::timestamptz IS NULL OR end_timestamp <= $5)
+  AND ($6::boolean IS NULL OR (cardinality(evaluation_decisions) > 0) = $6::boolean)
 ORDER BY end_timestamp ASC, transmission_id ASC
-LIMIT $6
+LIMIT $7
 """
 )
 
@@ -103,8 +105,9 @@ FROM transcripts
 WHERE ($1::timestamptz IS NULL OR end_timestamp < $1 OR (end_timestamp = $1 AND transmission_id < $2))
   AND ($3::timestamptz IS NULL OR end_timestamp >= $3)
   AND ($4::timestamptz IS NULL OR end_timestamp <= $4)
+  AND ($5::boolean IS NULL OR (cardinality(evaluation_decisions) > 0) = $5::boolean)
 ORDER BY end_timestamp DESC, transmission_id DESC
-LIMIT $5
+LIMIT $6
 """
 )
 
@@ -118,8 +121,9 @@ FROM transcripts
 WHERE ($1::timestamptz IS NULL OR end_timestamp > $1 OR (end_timestamp = $1 AND transmission_id > $2))
   AND ($3::timestamptz IS NULL OR end_timestamp >= $3)
   AND ($4::timestamptz IS NULL OR end_timestamp <= $4)
+  AND ($5::boolean IS NULL OR (cardinality(evaluation_decisions) > 0) = $5::boolean)
 ORDER BY end_timestamp ASC, transmission_id ASC
-LIMIT $5
+LIMIT $6
 """
 )
 

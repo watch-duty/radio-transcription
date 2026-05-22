@@ -268,15 +268,17 @@ services:
     networks:
       - pipeline-network
 
-  mock-icecast:
+  mock-audio-server:
     image: python:3.13-slim
     ports:
       - "8090:8090"
     volumes:
-      - ./local_dev/mock_icecast.py:/app/mock_icecast.py:ro
+      - ./local_dev/mock_audio_server.py:/app/mock_audio_server.py:ro
       - ./backend/pipeline/normalization/tests/test_data/test_bcfy.flac:/data/test_bcfy.flac:ro
     working_dir: /app
-    command: python mock_icecast.py
+    env_file:
+      - ./local_dev/LOCAL.env
+    command: python mock_audio_server.py
     networks:
       - pipeline-network
 
@@ -332,8 +334,9 @@ services:
         condition: service_started
       audio-ingestion:
         condition: service_started
-      mock-icecast:
+      mock-audio-server:
         condition: service_started
+
     env_file:
       - ./local_dev/LOCAL.env
     environment:
