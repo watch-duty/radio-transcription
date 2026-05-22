@@ -25,12 +25,14 @@ class TranscriptAnnotationData(BaseModel):
     """Data for a transcript annotation."""
 
     text: str
+    errors: list[str]
 
 
 class EvaluationAnnotationData(BaseModel):
     """Data for an evaluation annotation."""
 
     decisions: list[str]
+    errors: list[str]
 
 
 class TranscriptAnnotation(BaseModel):
