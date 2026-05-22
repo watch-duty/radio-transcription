@@ -636,7 +636,8 @@ class FeedStore:
                     "source_type": source_type_str,
                 },
             )
-            raise ValueError(f"Invalid source type '{source_type_str}'") from e
+            msg = f"Invalid source type '{source_type_str}'"
+            raise ValueError(msg) from e
 
         if row is None:
             msg = f"Failed to create feed {name}"
