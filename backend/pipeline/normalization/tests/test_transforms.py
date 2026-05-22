@@ -813,6 +813,107 @@ class OrderedStitchAudioTest(unittest.TestCase):
     @patch(
         "backend.pipeline.normalization.audio.audio_processor.AudioProcessor"
     )
+    def test_segmented_sample_rate_isolation(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that consecutive segmented files with different sample rates are isolated cleanly,
+        ensuring the second segment's FlushRequest receives its own native sample rate rather than leaking from the first.
+        """
+        mock_processor_inst = mock_audio_processor.return_value
+
+        # Track which GCS URI is downloaded to return different sample rates
+        def download_side_effect(gcs_uri, *args, **kwargs):
+            if "first_chunk" in gcs_uri:
+                return AudioChunkData(
+                    start_ms=100000,
+                    audio=np.zeros(22050, dtype=np.int16),
+                    sample_rate=22050,  # First is 22.05kHz
+                    speech_segments=[TimeRange(0, 1000)],
+                    gcs_uri=gcs_uri,
+                    duration_ms=1000,
+                )
+            else:
+                return AudioChunkData(
+                    start_ms=200000,
+                    audio=np.zeros(8000, dtype=np.int16),
+                    sample_rate=8000,   # Second is 8kHz
+                    speech_segments=[TimeRange(0, 1000)],
+                    gcs_uri=gcs_uri,
+                    duration_ms=1000,
+                )
+        mock_processor_inst.download_audio_and_detect.side_effect = download_side_effect
+        mock_processor_inst.preprocess_audio.side_effect = lambda x: x
+
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        stitch_config = get_test_stitch_config()
+
+        options = PipelineOptions(
+            flags=[
+                "--continuous_input_subscription=projects/p/subscriptions/a",
+                "--segmented_input_subscription=projects/p/subscriptions/b",
+                "--output_topic=b",
+                "--project=c",
+            ]
+        )
+
+        metadata_chunk1 = ChunkMetadata(
+            gcs_uri="gs://test-bucket/first_chunk.flac",
+            session_id="session-A",
+            duration_ms=1000,
+            feed_metadata=FeedMetadata(feed_name="f", external_id="id"),
+        )
+        metadata_chunk2 = ChunkMetadata(
+            gcs_uri="gs://test-bucket/second_chunk.flac",
+            session_id="session-B",
+            duration_ms=1000,
+            feed_metadata=FeedMetadata(feed_name="f", external_id="id"),
+        )
+
+        with BeamTestPipeline(options=options) as p:
+            test_stream = (
+                TestStream(
+                    coder=beam.coders.TupleCoder(
+                        (
+                            beam.coders.StrUtf8Coder(),
+                            trans_coders.ChunkMetadataCoder(),
+                        )
+                    )
+                )
+                .advance_watermark_to(100)
+                .add_elements([TimestampedValue(("test-feed", metadata_chunk1), 100)])
+                .advance_watermark_to(200)
+                .add_elements([TimestampedValue(("test-feed", metadata_chunk2), 200)])
+                .advance_watermark_to_infinity()
+            )
+
+            results = (
+                p
+                | test_stream
+                | beam.ParDo(
+                    OrderedSegmentedStitchAudioFn(
+                        order_config=order_config, stitch_config=stitch_config
+                    )
+                )
+            )
+
+            def assert_results(msgs):
+                assert len(msgs) == 2
+                msgs.sort(key=lambda x: x[1].time_range.start_ms)
+                
+                feed_id1, request1 = msgs[0]
+                feed_id2, request2 = msgs[1]
+                
+                assert request1.session_id == "session-A"
+                assert request1.sample_rate == 22050
+                
+                assert request2.session_id == "session-B"
+                assert request2.sample_rate == 8000
+
+            assert_that(results, assert_results)
+
+    @patch(
+        "backend.pipeline.normalization.audio.audio_processor.AudioProcessor"
+    )
     def test_ordered_stitch_audio_handles_out_of_order_chunks(
         self, mock_audio_processor: MagicMock
     ) -> None:
