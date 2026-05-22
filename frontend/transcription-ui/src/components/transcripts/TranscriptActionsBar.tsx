@@ -1,7 +1,6 @@
 import React from 'react';
 
 import FilterIcon from '@mui/icons-material/Tune';
-import { Typography } from '@mui/material';
 import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -10,9 +9,9 @@ import FormControlLabel from '@mui/material/FormControlLabel';
 import Popover from '@mui/material/Popover';
 import Switch from '@mui/material/Switch';
 import Tooltip from '@mui/material/Tooltip';
+import { useTheme } from '@mui/material/styles';
 
 import { DateTimePicker } from '../common/DateTimePicker';
-import { useTheme } from '@mui/material/styles';
 
 export interface TranscriptActionsBarProps {
   hasNewerTranscripts: boolean;

@@ -15,13 +15,19 @@ import { listTranscripts } from '../../service/listTranscripts';
 import { renderWithQueryClient } from '../../test/testUtils';
 import TranscriptView from './TranscriptView';
 
-const renderTranscriptView = (ui: ReactElement) => {
+const renderTranscriptView = (
+  ui: ReactElement,
+  options: { initialEntries?: string[] } = {}
+) => {
+  const { initialEntries = ['/'] } = options;
   return renderWithQueryClient(
-    <VirtuosoMockContext.Provider
-      value={{ viewportHeight: 1000, itemHeight: 100 }}
-    >
-      {ui}
-    </VirtuosoMockContext.Provider>
+    <MemoryRouter initialEntries={initialEntries}>
+      <VirtuosoMockContext.Provider
+        value={{ viewportHeight: 1000, itemHeight: 100 }}
+      >
+        {ui}
+      </VirtuosoMockContext.Provider>
+    </MemoryRouter>
   );
 };
 
@@ -108,9 +114,8 @@ describe('TranscriptView', () => {
     });
 
     renderTranscriptView(
-      <MemoryRouter initialEntries={['/?feedId=feed123']}>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
 
     await waitFor(() => {
@@ -142,9 +147,8 @@ describe('TranscriptView', () => {
     });
 
     renderTranscriptView(
-      <MemoryRouter initialEntries={['/?feedId=feed123']}>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
 
     await waitFor(() => {
@@ -156,9 +160,8 @@ describe('TranscriptView', () => {
     vi.mocked(listTranscripts).mockRejectedValueOnce(new Error('Fetch failed'));
 
     renderTranscriptView(
-      <MemoryRouter initialEntries={['/?feedId=feed123']}>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
 
     await waitFor(() => {
@@ -178,9 +181,8 @@ describe('TranscriptView', () => {
     vi.mocked(listFeeds).mockResolvedValueOnce(mockFeeds);
 
     renderTranscriptView(
-      <MemoryRouter initialEntries={['/?feedId=feed123']}>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
 
     await waitFor(() => {
@@ -192,9 +194,8 @@ describe('TranscriptView', () => {
     vi.mocked(listFeeds).mockRejectedValueOnce(new Error('Feeds load failed'));
 
     renderTranscriptView(
-      <MemoryRouter initialEntries={['/?feedId=feed123']}>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
 
     await waitFor(() => {
@@ -212,9 +213,8 @@ describe('TranscriptView', () => {
     });
 
     renderTranscriptView(
-      <MemoryRouter initialEntries={['/?feedId=feed123']}>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
 
     await waitFor(() => {
@@ -240,9 +240,8 @@ describe('TranscriptView', () => {
     });
 
     renderTranscriptView(
-      <MemoryRouter initialEntries={['/?feedId=feed123']}>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
 
     await waitFor(() => {
@@ -276,11 +275,8 @@ describe('TranscriptView', () => {
     });
 
     renderTranscriptView(
-      <MemoryRouter
-        initialEntries={['/?feedId=feed123&transmissionId=target-id']}
-      >
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123&transmissionId=target-id'] }
     );
 
     // Wait for the transcript to be rendered
@@ -319,9 +315,8 @@ describe('TranscriptView', () => {
       });
 
     renderTranscriptView(
-      <MemoryRouter initialEntries={['/?feedId=feed123']}>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
 
     await waitFor(() => {
@@ -384,11 +379,8 @@ describe('TranscriptView', () => {
       });
 
     renderTranscriptView(
-      <MemoryRouter
-        initialEntries={[`/?feedId=feed123&timestamp=${testTimestamp}`]}
-      >
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: [`/?feedId=feed123&timestamp=${testTimestamp}`] }
     );
 
     await waitFor(() => {
@@ -464,9 +456,8 @@ describe('TranscriptView', () => {
       });
 
     renderTranscriptView(
-      <MemoryRouter initialEntries={['/?feedId=feed123']}>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
 
     await waitFor(() => {
@@ -499,9 +490,8 @@ describe('TranscriptView', () => {
     });
 
     renderTranscriptView(
-      <MemoryRouter initialEntries={['/?feedId=feed123']}>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
 
     await waitFor(() => {
@@ -543,9 +533,8 @@ describe('TranscriptView', () => {
     });
 
     renderTranscriptView(
-      <MemoryRouter initialEntries={['/?feedId=feed123']}>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
 
     await waitFor(() => {
@@ -614,9 +603,8 @@ describe('TranscriptView', () => {
       });
 
     renderTranscriptView(
-      <MemoryRouter initialEntries={['/?feedId=feed123']}>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
 
     await waitFor(() => {
@@ -694,9 +682,8 @@ describe('TranscriptView', () => {
       });
 
     renderTranscriptView(
-      <MemoryRouter initialEntries={['/?feedId=feed123']}>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
 
     await waitFor(() => {
