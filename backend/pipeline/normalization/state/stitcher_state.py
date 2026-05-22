@@ -2,6 +2,7 @@
 
 import logging
 
+import numpy as np
 from apache_beam.metrics import Metrics
 
 from backend.pipeline.common.constants import MS_PER_SECOND
@@ -463,7 +464,7 @@ class AudioStitchingStateMachine:
                 )
         return processed_segments
 
-    def _process_speech_segments(
+    def _process_speech_segments(  # noqa: PLR0912, PLR0915
         self, chunk_data: AudioChunkData, ctx: StitcherContext
     ) -> list[StateMachineAction]:
         """Evaluates consecutive speech data, updating length counters and triggering mid-stream flushes."""
@@ -523,6 +524,7 @@ class AudioStitchingStateMachine:
                 is_max_duration_exceeded=is_max_duration_exceeded,
             )
 
+            pre_roll_audio = None
             if ctx.transmission_start_time_ms is None:
                 is_natural_gap = (
                     ctx.last_segment_end_time_ms is not None
@@ -533,9 +535,41 @@ class AudioStitchingStateMachine:
                     ctx.missing_prior_context = False
 
                 ctx.transmission_start_time_ms = file_start_ms + global_start_ms
-                append_start = max(0, global_start_ms - DEFAULT_VAD_PRE_ROLL_MS)
-                ctx.start_audio_offset_ms = append_start
-                ctx.buffer_start_time_ms = file_start_ms + append_start
+
+                # Boundary Pre-Roll Priming strategy:
+                # If the segment starts near the beginning of the current chunk (global_start_ms < 200ms),
+                # and we have a continuous prior chunk's tail available in the context,
+                # we pull the missing pre-roll samples directly from the end of the prior tail!
+                missing_pre_roll_ms = DEFAULT_VAD_PRE_ROLL_MS - global_start_ms
+                if missing_pre_roll_ms > 0 and ctx.prior_audio_tail is not None:
+                    try:
+                        prior_arr = np.frombuffer(
+                            ctx.prior_audio_tail, dtype=np.int16
+                        )
+                        pre_roll_samples = int(
+                            missing_pre_roll_ms
+                            * (chunk_data.sample_rate // 1000)
+                        )
+                        if len(prior_arr) >= pre_roll_samples > 0:
+                            pre_roll_audio = prior_arr[-pre_roll_samples:]
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to extract pre-roll audio from prior tail: %s",
+                            e,
+                        )
+
+                if pre_roll_audio is not None:
+                    append_start = 0
+                    ctx.start_audio_offset_ms = -missing_pre_roll_ms
+                    ctx.buffer_start_time_ms = (
+                        file_start_ms - missing_pre_roll_ms
+                    )
+                else:
+                    append_start = max(
+                        0, global_start_ms - DEFAULT_VAD_PRE_ROLL_MS
+                    )
+                    ctx.start_audio_offset_ms = append_start
+                    ctx.buffer_start_time_ms = file_start_ms + append_start
             else:
                 append_start = (
                     audio_append_cursor_ms
@@ -552,19 +586,25 @@ class AudioStitchingStateMachine:
             )
 
             if append_end > append_start:
-                actions.append(
-                    AppendBufferAction(
-                        audio_buffer=chunk_data.audio[
-                            append_start
-                            * (
-                                chunk_data.sample_rate // MS_PER_SECOND
-                            ) : append_end
-                            * (chunk_data.sample_rate // MS_PER_SECOND)
-                        ]
+                current_audio = chunk_data.audio[
+                    append_start
+                    * (chunk_data.sample_rate // MS_PER_SECOND) : append_end
+                    * (chunk_data.sample_rate // MS_PER_SECOND)
+                ]
+                if pre_roll_audio is not None:
+                    appended_audio = np.concatenate(
+                        [pre_roll_audio, current_audio]
                     )
-                )
+                    buffer_added_duration = (append_end - append_start) + int(
+                        len(pre_roll_audio) / (chunk_data.sample_rate / 1000.0)
+                    )
+                else:
+                    appended_audio = current_audio
+                    buffer_added_duration = append_end - append_start
+
+                actions.append(AppendBufferAction(audio_buffer=appended_audio))
                 audio_append_cursor_ms = append_end
-                ctx.buffer_duration_ms += append_end - append_start
+                ctx.buffer_duration_ms += buffer_added_duration
 
             if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
                 ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
