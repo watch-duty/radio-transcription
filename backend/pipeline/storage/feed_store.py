@@ -62,6 +62,7 @@ class SourceType(enum.StrEnum):
     # Echo uses a separate cloud function for ingestion instead of VMs.
     ECHO = "echo"
     OPENMHZ = "openmhz"
+    FIRE_NOTIFICATIONS = "fire_notifications"
 
 
 class FeedStatus(enum.StrEnum):
