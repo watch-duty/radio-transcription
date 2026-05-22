@@ -231,7 +231,6 @@ known-first-party = ["backend", "local_dev"]
   "ANN202",  # Missing return type annotation for private function
   "EM101",   # Exception must not use string literal
   "EM102",   # Exception must not use f-string literal
-  "F821",    # Undefined name (CanonicalRow forward reference in hf_dataset.py)
   "FBT001",  # Boolean-typed positional argument in function definition
   "FBT002",  # Boolean default positional argument in function definition
   "INP001",  # File is part of an implicit namespace package
