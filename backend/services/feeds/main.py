@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 
 from backend.pipeline.common.auth import verify_oidc_token
+from backend.pipeline.common.exceptions import FeedAlreadyExistsError
 from backend.pipeline.storage.connection import (
     close_pool,
     create_pool_with_retry,
@@ -58,6 +59,11 @@ async def create_feed(
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except FeedAlreadyExistsError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
             detail=str(e),
         )
 
