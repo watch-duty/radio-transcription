@@ -47,7 +47,7 @@ describe('listTranscripts', () => {
     });
   });
 
-  it('should include is_alert in query parameter when specified', async () => {
+  it('should include isAlert in query parameter when specified', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       text: async () => JSON.stringify({ transcripts: [] }),
@@ -69,7 +69,7 @@ describe('listTranscripts', () => {
     );
 
     expect(mockFetch).toHaveBeenCalledWith(
-      expect.stringContaining('/api/v1/transcripts/feed123?is_alert=true'),
+      expect.stringContaining('/api/v1/transcripts/feed123?isAlert=true'),
       expect.any(Object)
     );
   });

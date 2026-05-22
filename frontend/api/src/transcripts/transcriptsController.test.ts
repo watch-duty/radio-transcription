@@ -87,7 +87,7 @@ describe('listTranscripts', () => {
     const controller = new TranscriptsController();
     await controller.listTranscripts('test', {
       limit: 100,
-      is_alert: true,
+      isAlert: true,
     });
 
     expect(mockRequest).toHaveBeenCalledWith({

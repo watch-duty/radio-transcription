@@ -19,7 +19,7 @@ export async function listTranscripts(
   if (startTime) params.append('startTime', startTime.toString());
   if (endTime) params.append('endTime', endTime.toString());
   if (order) params.append('order', order);
-  if (isAlert) params.append('is_alert', isAlert.toString());
+  if (isAlert !== undefined) params.append('isAlert', isAlert.toString());
   if (params.toString()) {
     url += `?${params.toString()}`;
   }

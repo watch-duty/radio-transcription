@@ -83,7 +83,7 @@ components:
           enum:
             - asc
             - desc
-        is_alert:
+        isAlert:
           type: boolean
       type: object
       additionalProperties: false
@@ -459,7 +459,7 @@ paths:
               - asc
               - desc
         - in: query
-          name: is_alert
+          name: isAlert
           required: false
           schema:
             type: boolean

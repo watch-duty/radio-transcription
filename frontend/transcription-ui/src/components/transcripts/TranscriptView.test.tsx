@@ -643,7 +643,7 @@ describe('TranscriptView', () => {
     });
     fireEvent.click(optionElement);
 
-    // Wait for the query containing is_alert=true to complete and render
+    // Wait for the query containing isAlert=true to complete and render
     await waitFor(() => {
       expect(screen.getByText('Transcript 2 (Alert only)')).toBeTruthy();
     });
@@ -983,7 +983,7 @@ describe('TranscriptView', () => {
     vi.useRealTimers();
   });
 
-  it('applies the is_alert filter when selected in the dropdown', async () => {
+  it('applies the isAlert filter when selected in the dropdown', async () => {
     vi.mocked(listTranscripts).mockResolvedValue({
       transcripts: [],
       nextToken: undefined,
