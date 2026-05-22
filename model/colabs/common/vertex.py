@@ -51,6 +51,12 @@ def build_request(
     the ``gemini_transcribe_audio`` notebook. ``generation_config`` is ``.copy()``-ed so a
     caller mutating the result never touches the module-level default. Pure dict
     construction — does not require the ``[vertex]`` extra.
+
+    Field keys are snake_case (``file_data``/``file_uri``/``mime_type``/
+    ``system_instruction``/``generation_config``) on purpose: the google-genai batch
+    endpoint (``client.batches.create``) accepts the proto field names, and this matches
+    the proven ``gemini_transcribe_audio`` notebook. NOTE: Vertex echoes the request back
+    in camelCase in the batch OUTPUT, so any output parser must read both casings.
     """
     return {
         "request": {
@@ -58,6 +64,7 @@ def build_request(
                 {
                     "role": "user",
                     "parts": [
+                        # snake_case keys are intentional — see the docstring note.
                         {
                             "file_data": {
                                 "file_uri": audio_uri,
