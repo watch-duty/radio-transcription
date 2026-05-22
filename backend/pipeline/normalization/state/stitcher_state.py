@@ -7,6 +7,7 @@ from apache_beam.metrics import Metrics
 from backend.pipeline.common.constants import MS_PER_SECOND
 from backend.pipeline.normalization.common.constants import (
     DEFAULT_VAD_POST_ROLL_MS,
+    DEFAULT_VAD_PRE_ROLL_MS,
 )
 from backend.pipeline.normalization.common.datatypes import (
     AppendBufferAction,
@@ -565,7 +566,7 @@ class AudioStitchingStateMachine:
         audio_append_cursor_ms: int | None,
         actions: list[StateMachineAction],
     ) -> int | None:
-        """Calculates speech boundaries and appends strictly clean voice segments to buffer."""
+        """Calculates speech boundaries and appends clean, boundary-clamped padded audio to buffer."""
         if ctx.transmission_start_time_ms is None:
             is_natural_gap = (
                 ctx.last_segment_end_time_ms is not None
@@ -577,9 +578,12 @@ class AudioStitchingStateMachine:
 
             ctx.transmission_start_time_ms = file_start_ms + global_start_ms
 
-            # Pristine canonical slice starting exactly at the VAD onset boundary
-            append_start = max(0, global_start_ms)
-            ctx.start_audio_offset_ms = 0
+            # Natural boundary-clamped pre-roll padding:
+            # We slice up to DEFAULT_VAD_PRE_ROLL_MS of real preceding audio from the source file,
+            # clamped perfectly at the recording boundary (0.0s). Zeros or vocal repeats are NEVER synthesized.
+            append_start = max(0, global_start_ms - DEFAULT_VAD_PRE_ROLL_MS)
+            actual_pre_roll_ms = global_start_ms - append_start
+            ctx.start_audio_offset_ms = actual_pre_roll_ms
             ctx.buffer_start_time_ms = file_start_ms + append_start
         else:
             append_start = (
@@ -588,12 +592,14 @@ class AudioStitchingStateMachine:
                 else 0
             )
 
+        # Natural boundary-clamped post-roll padding:
+        # We slice up to DEFAULT_VAD_POST_ROLL_MS of real succeeding audio from the source file.
         append_end = min(
             (
                 len(chunk_data.audio)
                 // (chunk_data.sample_rate // MS_PER_SECOND)
             ),
-            global_end_ms,
+            global_end_ms + DEFAULT_VAD_POST_ROLL_MS,
         )
 
         if append_end > append_start:
