@@ -58,6 +58,8 @@ function getSourceUrl(
       return `https://openmhz.com/system/${sourceFeedId}`;
     case 'echo':
       return undefined;
+    case 'fire_notifications':
+      return undefined;
     default:
       return undefined;
   }
@@ -77,6 +79,8 @@ function getArchiveUrl(
     case 'openmhz':
       return undefined;
     case 'echo':
+      return undefined;
+    case 'fire_notifications':
       return undefined;
     default:
       return undefined;
