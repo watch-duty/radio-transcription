@@ -167,7 +167,7 @@ describe('FeedTable', () => {
     expect(sourceUrlItem?.getAttribute('target')).toBe('_blank');
   });
 
-    it('opens the filter popover, displays grouped tags, and applies filter', async () => {
+  it('opens the filter popover, displays grouped tags, and applies filter', async () => {
     renderFeedTable({ feeds: mockFeeds, isLoading: false });
 
     // 1. Click the Filter button to open the popover
