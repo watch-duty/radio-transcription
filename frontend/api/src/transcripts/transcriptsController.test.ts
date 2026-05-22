@@ -75,7 +75,7 @@ describe('listTranscripts', () => {
 
     expect(result).toEqual(expectedResult);
     expect(mockRequest).toHaveBeenCalledWith({
-      url: 'http://api.example.com?feed_id=test&limit=100',
+      url: 'http://api.example.com?feed_id=test&limit=100&is_alert=false',
       method: 'GET',
     });
   });
@@ -92,6 +92,22 @@ describe('listTranscripts', () => {
 
     expect(mockRequest).toHaveBeenCalledWith({
       url: 'http://api.example.com?feed_id=test&limit=100&is_alert=true',
+      method: 'GET',
+    });
+  });
+
+  it('should forward is_alert parameter if false', async () => {
+    const mockBackendResponse = { transcripts: [] };
+    mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
+
+    const controller = new TranscriptsController();
+    await controller.listTranscripts('test', {
+      limit: 100,
+      isAlert: false,
+    });
+
+    expect(mockRequest).toHaveBeenCalledWith({
+      url: 'http://api.example.com?feed_id=test&limit=100&is_alert=false',
       method: 'GET',
     });
   });

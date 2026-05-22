@@ -61,7 +61,7 @@ export class ListTranscriptsQueryParams {
   startTime?: string;
   endTime?: string;
   order?: 'asc' | 'desc';
-  isAlert?: boolean;
+  isAlert?: boolean = false;
 }
 
 @Route('api/v1/transcripts')
@@ -87,8 +87,8 @@ export class TranscriptsController extends Controller {
       if (query.startTime) queryParams.append('start_time', query.startTime);
       if (query.endTime) queryParams.append('end_time', query.endTime);
       if (query.order) queryParams.append('order', query.order);
-      if (query.isAlert !== undefined)
-        queryParams.append('is_alert', query.isAlert.toString());
+      const isAlert = query.isAlert ?? false;
+      queryParams.append('is_alert', isAlert.toString());
 
       const auth = new GoogleAuth();
       const client = await auth.getIdTokenClient(TRANSCRIPTS_API_URL!);
