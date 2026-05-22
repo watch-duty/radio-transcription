@@ -368,9 +368,29 @@ def _tune(args: argparse.Namespace) -> int:
         cur = client.tunings.get(name=job_name)
         state = getattr(cur.state, "name", str(cur.state))
         if state in {"JOB_STATE_SUCCEEDED", "SUCCEEDED"}:
-            logger.info(
-                f"Tuning job already succeeded. Endpoint: {config.get('endpoint')}"
-            )
+            endpoint = config.get("endpoint")
+            if not endpoint:
+                # Crash recovery: the job succeeded but the endpoint was never
+                # persisted (the process died between submit and the endpoint write).
+                # Re-read it from the job resource so eval does not silently
+                # degrade to base-only.
+                tuned = getattr(cur, "tuned_model", None)
+                endpoint = getattr(tuned, "endpoint", None) if tuned else None
+                if endpoint:
+                    config["endpoint"] = endpoint
+                    write_config(RESULTS_DIR, args.round_id, config)
+                    logger.info(
+                        f"Recovered endpoint from succeeded job {job_name}: {endpoint}"
+                    )
+                else:
+                    logger.warning(
+                        f"Job {job_name} is SUCCEEDED but exposes no endpoint; "
+                        "eval will run base-only."
+                    )
+            else:
+                logger.info(
+                    f"Tuning job already succeeded. Endpoint: {endpoint}"
+                )
             return 0
         if state not in {
             "JOB_STATE_FAILED",
@@ -623,10 +643,15 @@ def _eval(args: argparse.Namespace) -> int:
             ):  # error / non-prediction
                 continue
             parts = obj["request"]["contents"][0]["parts"]
-            uri = next(
-                (p["file_data"]["file_uri"] for p in parts if "file_data" in p),
-                None,
-            )
+            # Vertex echoes the request back in camelCase even though we send
+            # snake_case, so accept BOTH fileData/fileUri and file_data/file_uri.
+            uri = None
+            for p in parts:
+                fd = p.get("file_data") or p.get("fileData")
+                if fd:
+                    uri = fd.get("file_uri") or fd.get("fileUri")
+                    if uri:
+                        break
             cands = obj.get("response", {}).get("candidates", [])
             pred = ""
             if cands:
