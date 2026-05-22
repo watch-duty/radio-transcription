@@ -15,5 +15,9 @@ adapter = "gcs_manifest"
 train_manifest_uri = ""
 # Replace with the real eval manifest URI from gs://wd-transcription-data/inference_manifests/
 eval_manifest_uri = "gs://wd-transcription-data/inference_manifests/echo/eval/gemini_transcribe_05_2026/results/results.jsonl"
+# Optional validation split for tuning-time eval_total_loss (D-12/PIPE-09). Leave empty to
+# tune without a validation dataset; like train_manifest_uri, the Phase 4 cluster-split
+# produces it. When set, `build` emits combined_val_uri and `tune` wires it to Vertex.
+val_manifest_uri = ""
 normalize = false
 license = "proprietary"

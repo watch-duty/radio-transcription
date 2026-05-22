@@ -22,7 +22,10 @@ import shutil
 import sys
 import tomllib
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Final
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -88,11 +91,13 @@ def _make_adapter(
 
         if split == "train":
             uri_key = "train_manifest_uri"
+        elif split == "val":
+            uri_key = "val_manifest_uri"
         elif split == "eval":
             uri_key = "eval_manifest_uri"
         else:
             raise ValueError(
-                f"Unknown split: {split!r} (expected 'train' or 'eval')"
+                f"Unknown split: {split!r} (expected 'train', 'val', or 'eval')"
             )
         uri = dataset_cfg.get(uri_key, "")
         if not uri:
@@ -108,11 +113,107 @@ def _make_adapter(
     raise ValueError(f"Unknown adapter type: {adapter_type!r}")
 
 
-def _build(args: argparse.Namespace) -> int:
-    """Build subcommand: adapters -> SFT JSONL -> local staging -> GCS upload."""
+def _build_split_jsonl(
+    *,
+    dataset_names: list[str],
+    registry: dict,
+    split: str,
+    staging_dir: Path,
+    storage_client: object,
+    normalizer: Callable[[str], str],
+    system_prompt: str,
+    user_prompt: str,
+    round_id: str,
+) -> tuple[dict[str, str], str, float]:
+    """Build per-dataset + combined SFT JSONL for one split and upload to GCS.
+
+    Shared by the required ``train`` split and the optional ``val`` split so both go
+    through identical example construction, validation, staging, and upload paths.
+    Returns ``(per_dataset_uris, combined_uri, total_duration_seconds)``.
+    """
     from common.gcs_utils import parse_gcs_uri, upload_file_to_blob
-    from common.scoring import build_normalizer
     from common.sft import build_example, validate_example
+
+    per_dataset_uris: dict[str, str] = {}
+    total_duration_seconds = 0.0
+
+    for ds_name in dataset_names:
+        ds_cfg = registry["datasets"][ds_name]
+        adapter = _make_adapter(
+            ds_cfg, split=split, storage_client=storage_client
+        )
+        do_normalize = ds_cfg.get("normalize", False)
+
+        examples: list[dict] = []
+        for row in adapter.iter_rows():
+            text = row.text
+            if do_normalize:
+                text = normalizer(text)
+            ex = build_example(
+                audio_uri=row.audio_filepath,
+                gt_text=text,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+            )
+            if not validate_example(ex):
+                logger.warning(
+                    f"[{ds_name}/{split}] skipping invalid example: {row.audio_filepath}"
+                )
+                continue
+            examples.append(ex)
+            total_duration_seconds += row.duration
+
+        out_path = staging_dir / f"{split}_{ds_name}.jsonl"
+        with open(out_path, "w") as f:
+            for ex in examples:
+                f.write(json.dumps(ex) + "\n")
+        logger.info(
+            f"[{ds_name}/{split}] wrote {len(examples)} examples -> {out_path}"
+        )
+
+        gcs_uri = f"{GCS_SFT_PREFIX}/{round_id}/{split}_{ds_name}.jsonl"
+        bucket_name, blob_path = parse_gcs_uri(gcs_uri)
+        upload_file_to_blob(
+            storage_client, bucket_name, blob_path, str(out_path)
+        )
+        per_dataset_uris[ds_name] = gcs_uri
+        logger.info(f"[{ds_name}/{split}] uploaded -> {gcs_uri}")
+
+    # Combined JSONL for the exact dataset set. For a single dataset the combined name
+    # equals the per-dataset name, so the per-dataset file IS the combined file --
+    # re-concatenating would open that same path in "wb" (truncating it to empty) before
+    # reading it, uploading an empty file. Reuse the per-dataset URI instead.
+    if len(dataset_names) == 1:
+        only_uri = per_dataset_uris[dataset_names[0]]
+        return per_dataset_uris, only_uri, total_duration_seconds
+
+    combined_name = "_".join(dataset_names)
+    combined_path = staging_dir / f"{split}_{combined_name}.jsonl"
+    with open(combined_path, "wb") as f:
+        for ds_name in dataset_names:
+            ds_path = staging_dir / f"{split}_{ds_name}.jsonl"
+            if ds_path.exists():
+                with ds_path.open("rb") as infile:
+                    shutil.copyfileobj(infile, f)
+    combined_uri = f"{GCS_SFT_PREFIX}/{round_id}/{split}_{combined_name}.jsonl"
+    bucket_name, blob_path = parse_gcs_uri(combined_uri)
+    upload_file_to_blob(
+        storage_client, bucket_name, blob_path, str(combined_path)
+    )
+    logger.info(f"[combined/{split}] uploaded -> {combined_uri}")
+
+    return per_dataset_uris, combined_uri, total_duration_seconds
+
+
+def _build(args: argparse.Namespace) -> int:
+    """Build subcommand: adapters -> SFT JSONL -> local staging -> GCS upload.
+
+    Always builds the required ``train`` split. Also builds an optional ``val`` split
+    for any dataset declaring a non-empty ``val_manifest_uri`` (D-12/PIPE-09): when set,
+    ``combined_val_uri`` is recorded so ``tune`` wires a Vertex validation dataset
+    (eval_total_loss). When no dataset declares one, the val split is skipped.
+    """
+    from common.scoring import build_normalizer
     from google.cloud import storage
 
     system_prompt, user_prompt = _load_prompts(args)
@@ -137,74 +238,51 @@ def _build(args: argparse.Namespace) -> int:
     staging_dir.mkdir(parents=True, exist_ok=True)
 
     normalizer = build_normalizer()
-    per_dataset_uris: dict[str, str] = {}
-    total_duration_seconds = 0.0
 
-    for ds_name in dataset_names:
-        ds_cfg = registry["datasets"][ds_name]
-        try:
-            adapter = _make_adapter(
-                ds_cfg, split="train", storage_client=storage_client
-            )
-        except ValueError as e:
-            # e.g. echo's train_manifest_uri placeholder is empty until the
-            # Phase-4 cluster-split runs -- fail cleanly, not with a traceback.
-            # logger.error (not .exception): a clean one-line reason, no traceback.
-            logger.error(f"[{ds_name}] cannot build: {e}")  # noqa: TRY400
-            return 1
-        do_normalize = ds_cfg.get("normalize", False)
-
-        examples: list[dict] = []
-        for row in adapter.iter_rows():
-            text = row.text
-            if do_normalize:
-                text = normalizer(text)
-            ex = build_example(
-                audio_uri=row.audio_filepath,
-                gt_text=text,
+    # Train split (required)
+    try:
+        per_dataset_uris, combined_train_uri, total_duration_seconds = (
+            _build_split_jsonl(
+                dataset_names=dataset_names,
+                registry=registry,
+                split="train",
+                staging_dir=staging_dir,
+                storage_client=storage_client,
+                normalizer=normalizer,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
+                round_id=args.round_id,
             )
-            if not validate_example(ex):
-                logger.warning(
-                    f"[{ds_name}] skipping invalid example: {row.audio_filepath}"
-                )
-                continue
-            examples.append(ex)
-            total_duration_seconds += row.duration
-
-        out_path = staging_dir / f"train_{ds_name}.jsonl"
-        with open(out_path, "w") as f:
-            for ex in examples:
-                f.write(json.dumps(ex) + "\n")
-        logger.info(f"[{ds_name}] wrote {len(examples)} examples -> {out_path}")
-
-        # Upload to GCS — parse URI into bucket + blob_path for upload_file_to_blob
-        gcs_uri = f"{GCS_SFT_PREFIX}/{args.round_id}/train_{ds_name}.jsonl"
-        bucket_name, blob_path = parse_gcs_uri(gcs_uri)
-        upload_file_to_blob(
-            storage_client, bucket_name, blob_path, str(out_path)
         )
-        per_dataset_uris[ds_name] = gcs_uri
-        logger.info(f"[{ds_name}] uploaded -> {gcs_uri}")
+    except ValueError as e:
+        # e.g. echo's train_manifest_uri placeholder is empty until the Phase-4
+        # cluster-split runs -- fail cleanly, not with a traceback.
+        logger.error(f"cannot build train split: {e}")  # noqa: TRY400
+        return 1
 
-    # Combined JSONL for the exact --datasets set
-    combined_name = "_".join(dataset_names)
-    combined_path = staging_dir / f"train_{combined_name}.jsonl"
-    with open(combined_path, "wb") as f:
-        for ds_name in dataset_names:
-            ds_path = staging_dir / f"train_{ds_name}.jsonl"
-            if ds_path.exists():
-                with ds_path.open("rb") as infile:
-                    shutil.copyfileobj(infile, f)
-    combined_gcs_uri = (
-        f"{GCS_SFT_PREFIX}/{args.round_id}/train_{combined_name}.jsonl"
-    )
-    bucket_name, blob_path = parse_gcs_uri(combined_gcs_uri)
-    upload_file_to_blob(
-        storage_client, bucket_name, blob_path, str(combined_path)
-    )
-    logger.info(f"[combined] uploaded -> {combined_gcs_uri}")
+    # Val split (optional) -- only datasets declaring a non-empty val_manifest_uri.
+    val_dataset_names = [
+        ds_name
+        for ds_name in dataset_names
+        if registry["datasets"][ds_name].get("val_manifest_uri")
+    ]
+    combined_val_uri = ""
+    if val_dataset_names:
+        try:
+            _, combined_val_uri, _ = _build_split_jsonl(
+                dataset_names=val_dataset_names,
+                registry=registry,
+                split="val",
+                staging_dir=staging_dir,
+                storage_client=storage_client,
+                normalizer=normalizer,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                round_id=args.round_id,
+            )
+        except ValueError as e:
+            logger.error(f"cannot build val split: {e}")  # noqa: TRY400
+            return 1
 
     # Write/update config.json
     config = _load_round_config(args.round_id)
@@ -215,7 +293,8 @@ def _build(args: argparse.Namespace) -> int:
             "system_prompt": system_prompt,
             "user_prompt": user_prompt,
             "train_uris": per_dataset_uris,
-            "combined_train_uri": combined_gcs_uri,
+            "combined_train_uri": combined_train_uri,
+            "combined_val_uri": combined_val_uri,
             "total_train_duration_seconds": total_duration_seconds,
         }
     )

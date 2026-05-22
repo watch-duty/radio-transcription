@@ -257,5 +257,78 @@ class TestPreflightTokenCap(unittest.TestCase):
         self.assertEqual(PREFLIGHT_TOKEN_CAP, 131_072)
 
 
+class TestBuildSplitJsonl(unittest.TestCase):
+    """_build_split_jsonl writes per-dataset + combined JSONL and returns URIs + duration."""
+
+    def test_train_split_builds_uploads_and_sums_duration(self) -> None:
+        from types import SimpleNamespace
+
+        import pipeline
+
+        rows = [
+            SimpleNamespace(
+                audio_filepath="gs://b/a1.flac",
+                text="engine 41 responding",
+                duration=2.0,
+            ),
+            SimpleNamespace(
+                audio_filepath="gs://b/a2.flac",
+                text="copy that",
+                duration=3.0,
+            ),
+        ]
+        fake_adapter = unittest.mock.MagicMock()
+        fake_adapter.iter_rows.return_value = iter(rows)
+        registry = {
+            "datasets": {
+                "echo": {
+                    "adapter": "gcs_manifest",
+                    "train_manifest_uri": "gs://b/train.jsonl",
+                }
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            staging = Path(tmp)
+            with (
+                unittest.mock.patch(
+                    "pipeline._make_adapter", return_value=fake_adapter
+                ),
+                unittest.mock.patch(
+                    "common.gcs_utils.upload_file_to_blob"
+                ) as mock_upload,
+                unittest.mock.patch(
+                    "common.gcs_utils.parse_gcs_uri",
+                    return_value=("bucket", "path"),
+                ),
+            ):
+                per_uris, combined_uri, total = pipeline._build_split_jsonl(
+                    dataset_names=["echo"],
+                    registry=registry,
+                    split="train",
+                    staging_dir=staging,
+                    storage_client=object(),
+                    normalizer=lambda s: s,
+                    system_prompt="sys",
+                    user_prompt="transcribe",
+                    round_id="r1",
+                )
+
+            # Per-dataset staging file written with one line per example -- and NOT
+            # truncated to empty by a self-referential combined-concat (regression guard).
+            self.assertTrue((staging / "train_echo.jsonl").exists())
+            self.assertEqual(
+                (staging / "train_echo.jsonl").read_text().count("\n"), 2
+            )
+            # Returns per-dataset URI map, combined URI, and summed duration
+            self.assertIn("echo", per_uris)
+            # Single dataset: combined URI reuses the per-dataset URI (no empty re-concat)
+            self.assertEqual(combined_uri, per_uris["echo"])
+            self.assertTrue(combined_uri.endswith("train_echo.jsonl"))
+            self.assertEqual(total, 5.0)
+            # Single dataset uploads once (per-dataset only; combined is the same file)
+            self.assertEqual(mock_upload.call_count, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
