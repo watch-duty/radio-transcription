@@ -167,6 +167,9 @@ class AudioProcessor:
                 raise RuntimeError(msg)
 
             samples, sr = sf.read(temp_filename, dtype="int16")
+            if len(samples) > 0:
+                samples = _resample_to_16k_mono(samples, sr)
+                sr = SAMPLE_RATE_HZ
         finally:
             try:
                 Path(temp_filename).unlink()
