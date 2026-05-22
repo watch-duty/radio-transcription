@@ -100,7 +100,7 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
             any(isinstance(a, AppendBufferAction) for a in actions1)
         )
         self.assertFalse(any(isinstance(a, FlushAction) for a in actions1))
-        self.assertEqual(self.ctx.start_audio_offset_ms, 1000)
+        self.assertEqual(self.ctx.start_audio_offset_ms, 0)
         self.assertIn("gs://fake/1.flac", self.ctx.contributing_audio_uris)
 
         # Chunk 2: Arrives at 15.0s, speech from 0.0s to 4.0s.
@@ -212,19 +212,19 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         # Expected actions should only append audio starting from 5.0s offset in chunk!
         actions = self.state_machine._process_speech_segments(chunk, self.ctx)
 
-        # Verify that buffer append action has audio size equivalent to 7000ms (12.0s - 5.0s) + pre-roll (1000ms) + post-roll (500ms).
+        # Verify that buffer append action only has audio size equivalent to 7000ms (12.0s - 5.0s).
         append_action = next(
             (a for a in actions if isinstance(a, AppendBufferAction)), None
         )
         self.assertIsNotNone(append_action)
         assert append_action is not None
 
-        # Buffer duration ms updated by (global_end_ms + post_roll) - max(0, global_start - pre_roll).
-        # global_end=12000. post_roll=500. global_start=updated to 5000. pre_roll=1000.
-        # Expected append_end - append_start = 12500 - 4000 = 8500ms.
-        # Size is 8500 * 16 = 136000 samples.
+        # Buffer duration ms updated by global_end_ms - max(0, global_start).
+        # global_end=12000. global_start=updated to 5000.
+        # Expected append_end - append_start = 12000 - 5000 = 7000ms.
+        # Size is 7000 * 16 = 112000 samples.
         self.assertEqual(
-            append_action.audio_buffer.size, (8500 * SAMPLES_PER_MS)
+            append_action.audio_buffer.size, (7000 * SAMPLES_PER_MS)
         )
 
     def test_contiguous_chunks_are_stitched(self) -> None:
