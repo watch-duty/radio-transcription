@@ -34,10 +34,7 @@ BCFY_CALLS_URL_BASE = os.environ.get(
     "BCFY_CALLS_URL_BASE", "https://api.bcfy.io/calls/v1/live/"
 )
 OPENMHZ_URL_BASE = "https://api.openmhz.com/"
-FIRE_NOTIFICATIONS_URL_BASE = os.environ.get(
-    "FIRE_NOTIFICATIONS_URL_BASE",
-    "https://audioplay.textmefires.info/api/audio/",
-)
+FIRE_NOTIFICATIONS_URL_BASE = os.environ.get("FIRE_NOTIFICATIONS_URL_BASE", "")
 
 # Typed registry: ty/mypy checks each value matches CollectorFn.
 # Adding a new collector = 1 import + 1 dict entry.

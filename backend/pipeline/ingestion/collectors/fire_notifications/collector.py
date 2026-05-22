@@ -243,7 +243,6 @@ async def fire_notifications_collector(
         msg = "missing_source_feed_id"
         raise ValueError(msg)
 
-    # url_base is e.g. https://audioplay.textmefires.info/api/audio/
     # source_feed_id is e.g. RECORDINGS/SAN-JOSE-DISP
     # Ensure no double slashes if url_base ends with /
     if not url_base.endswith("/"):
