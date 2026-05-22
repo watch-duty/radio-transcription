@@ -171,6 +171,10 @@ def submit_tuning_job(
         KeyError: If ``adapter_size`` is not a valid key in ``_ADAPTER_ENUM``.
     """
     _require_vertex()
+    if adapter_size not in _ADAPTER_ENUM:
+        raise ValueError(
+            f"adapter_size must be one of {sorted(_ADAPTER_ENUM)}; got {adapter_size!r}"
+        )
     client = genai.Client(vertexai=True, project=project, location=location)
 
     cfg_kwargs: dict[str, Any] = {
