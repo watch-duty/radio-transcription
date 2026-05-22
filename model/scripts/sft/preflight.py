@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Final
 
@@ -80,10 +82,8 @@ def run_preflight(
     # Load train examples
     train_examples: list[dict] = []
     try:
-        raw = train_jsonl_path.read_text()
-        train_examples = [
-            json.loads(line) for line in raw.splitlines() if line.strip()
-        ]
+        with train_jsonl_path.open() as tf:
+            train_examples = [json.loads(line) for line in tf if line.strip()]
     except Exception as exc:
         report.failures.append(f"Failed to load train JSONL: {exc}")
         _write_report(report, report_path)
@@ -113,15 +113,25 @@ def run_preflight(
         if uri:
             seen.add(uri)
 
+    # Pre-compute unreachable fileUris in parallel (network-bound; dedup + thread pool)
+    # so the per-example reachability check below is a fast set-membership test.
+    unreachable: set[str] = set()
+    if storage_client is not None:
+        unique_uris = sorted({u for u in train_uris if u})
+        with ThreadPoolExecutor(max_workers=32) as executor:
+            flags = list(
+                executor.map(partial(blob_exists, storage_client), unique_uris)
+            )
+        unreachable = {
+            u for u, ok in zip(unique_uris, flags, strict=True) if not ok
+        }
+
     # Load val examples if provided
     val_uris: set[str] = set()
     if val_jsonl_path is not None:
         try:
-            val_examples = [
-                json.loads(line)
-                for line in val_jsonl_path.read_text().splitlines()
-                if line.strip()
-            ]
+            with val_jsonl_path.open() as vf:
+                val_examples = [json.loads(line) for line in vf if line.strip()]
         except Exception as exc:
             report.failures.append(f"Failed to load val JSONL: {exc}")
             val_examples = []
@@ -164,7 +174,7 @@ def run_preflight(
             for p in parts:
                 if "fileData" in p:
                     uri = p["fileData"].get("fileUri", "")
-                    if uri and not blob_exists(storage_client, uri):
+                    if uri and uri in unreachable:
                         report.failures.append(
                             f"{ex_id}: fileUri not reachable: {uri}"
                         )

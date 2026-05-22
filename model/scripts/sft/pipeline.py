@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import shutil
 import sys
 import tomllib
 from pathlib import Path
@@ -176,11 +177,12 @@ def _build(args: argparse.Namespace) -> int:
     # Combined JSONL for the exact --datasets set
     combined_name = "_".join(dataset_names)
     combined_path = staging_dir / f"train_{combined_name}.jsonl"
-    with open(combined_path, "w") as f:
+    with open(combined_path, "wb") as f:
         for ds_name in dataset_names:
             ds_path = staging_dir / f"train_{ds_name}.jsonl"
             if ds_path.exists():
-                f.write(ds_path.read_text())
+                with ds_path.open("rb") as infile:
+                    shutil.copyfileobj(infile, f)
     combined_gcs_uri = (
         f"{GCS_SFT_PREFIX}/{args.round_id}/train_{combined_name}.jsonl"
     )
