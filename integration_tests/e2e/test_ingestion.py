@@ -3,7 +3,6 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
-from google.api_core import exceptions
 from google.cloud import storage
 
 from backend.pipeline.ingestion.collectors.echo import main as echo_main
@@ -35,25 +34,13 @@ def test_ingestion_echo(test_echo_feed: tuple[str, str]) -> None:
     """Tests that audio ingestion service picks up a feed from Echo and results in a transcript."""
     feed_id, source_feed_id = test_echo_feed
 
-    # Setup Echo bucket
-    gcs_client = storage.Client()
-    source_bucket_name = "echo-recordings-test"
-    try:
-        gcs_client.create_bucket(source_bucket_name)
-    except exceptions.Conflict:
-        # Bucket already exists, which is fine for idempotency.
-        pass
-    except Exception:
-        pytest.fail("Echo Ingestion Setup Failure: Unable to setup Echo bucket")
-
     # Read in test audio file
     audio_bytes = b"dummy mp3 audio"
-    path = "backend/pipeline/normalization/tests/test_data/test_bcfy.flac"
-    if not os.path.exists(path):
-        path = f"/app/{path}"
-
     try:
-        with open(path, "rb") as f:
+        with open(
+            "/app/backend/pipeline/normalization/tests/test_data/test_bcfy.flac",
+            "rb",
+        ) as f:
             audio_bytes = f.read()
     except Exception:
         pytest.fail(
@@ -66,6 +53,10 @@ def test_ingestion_echo(test_echo_feed: tuple[str, str]) -> None:
     filename = f"{channel_name}_{date_str}_{time_str}.mp3"
     gcs_path = f"{channel_name}/{date_str}/{filename}"
 
+    gcs_client = storage.Client()
+    source_bucket_name = os.environ.get(
+        "ECHO_RECORDINGS_BUCKET", "echo-recordings-test"
+    )
     blob = gcs_client.bucket(source_bucket_name).blob(gcs_path)
     blob.upload_from_string(audio_bytes, content_type="audio/mpeg")
 
