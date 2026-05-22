@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import tempfile
 from typing import Any
 from google.cloud import storage
 
@@ -18,6 +19,22 @@ def parse_gcs_uri(gcs_uri: str) -> tuple[str, str]:
 
 
 from google.cloud.storage.retry import DEFAULT_RETRY
+
+
+def blob_exists(storage_client: storage.Client, gcs_uri: str) -> bool:
+    """Return True if the GCS object at gcs_uri exists and is reachable.
+
+    Args:
+        storage_client: Initialized GCS storage client.
+        gcs_uri: A gs:// URI to a single object.
+
+    Returns:
+        True if the object exists, False otherwise.
+    """
+    bucket_name, blob_path = parse_gcs_uri(gcs_uri)
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.blob(blob_path)
+    return blob.exists(retry=DEFAULT_RETRY)
 
 
 def download_blob_to_file(
@@ -43,7 +60,7 @@ def upload_file_to_blob(
     """Uploads a local file to a GCS blob."""
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(blob_path)
-    blob.upload_from_filename(source_file_name)
+    blob.upload_from_filename(source_file_name, retry=DEFAULT_RETRY)
     logger.info(
         f"File {source_file_name} uploaded to gs://{bucket_name}/{blob_path}."
     )
@@ -56,7 +73,7 @@ def download_jsonl_manifest(
     bucket_name, blob_path = parse_gcs_uri(gcs_manifest_uri)
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(blob_path)
-    content = blob.download_as_text().strip()
+    content = blob.download_as_text(retry=DEFAULT_RETRY).strip()
 
     manifest_entries = []
     for line in content.split("\n"):
@@ -87,7 +104,42 @@ def upload_inference_results(
     # Convert list of dicts to JSONL string in memory
     jsonl_content = "\n".join(json.dumps(row) for row in results_list) + "\n"
 
-    blob.upload_from_string(jsonl_content, content_type="application/jsonl")
+    blob.upload_from_string(
+        jsonl_content, content_type="application/jsonl", retry=DEFAULT_RETRY
+    )
 
     logger.info(f"Uploaded results to gs://{bucket_name}/{blob_path}")
     return f"gs://{bucket_name}/{blob_path}"
+
+
+def download_to_scratch(
+    storage_client: storage.Client, gcs_uri: str, scratch_dir: str
+) -> str:
+    """Download a GCS object into ``scratch_dir`` under a fresh, unique filename.
+
+    The local filename is allocated with :func:`tempfile.mkstemp`, so two source
+    objects that share a basename in different GCS folders can never collide on
+    one local path. The original extension is preserved for downstream
+    audio-format detection.
+
+    The caller owns ``scratch_dir``'s lifetime — pass a directory managed by a
+    :class:`tempfile.TemporaryDirectory` so the file is removed automatically,
+    including on a mid-run exception.
+
+    Args:
+        storage_client: Initialized GCS client.
+        gcs_uri: A ``gs://`` URI to a single object.
+        scratch_dir: An existing directory to download into.
+
+    Returns:
+        Absolute local path of the downloaded file.
+
+    Raises:
+        ValueError: If ``gcs_uri`` does not start with ``gs://``.
+    """
+    bucket_name, blob_path = parse_gcs_uri(gcs_uri)
+    suffix = os.path.splitext(blob_path)[1] or ".audio"
+    fd, local_path = tempfile.mkstemp(dir=scratch_dir, suffix=suffix)
+    os.close(fd)
+    download_blob_to_file(storage_client, bucket_name, blob_path, local_path)
+    return local_path
