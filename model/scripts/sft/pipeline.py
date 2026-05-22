@@ -137,9 +137,16 @@ def _build(args: argparse.Namespace) -> int:
 
     for ds_name in dataset_names:
         ds_cfg = registry["datasets"][ds_name]
-        adapter = _make_adapter(
-            ds_cfg, split="train", storage_client=storage_client
-        )
+        try:
+            adapter = _make_adapter(
+                ds_cfg, split="train", storage_client=storage_client
+            )
+        except ValueError as e:
+            # e.g. echo's train_manifest_uri placeholder is empty until the
+            # Phase-4 cluster-split runs -- fail cleanly, not with a traceback.
+            # logger.error (not .exception): a clean one-line reason, no traceback.
+            logger.error(f"[{ds_name}] cannot build: {e}")  # noqa: TRY400
+            return 1
         do_normalize = ds_cfg.get("normalize", False)
 
         examples: list[dict] = []
