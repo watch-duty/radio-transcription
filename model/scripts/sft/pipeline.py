@@ -133,6 +133,21 @@ def _make_adapter(
     raise ValueError(f"Unknown adapter type: {adapter_type!r}")
 
 
+def _resolve_eval_manifest_uris(
+    registry: dict, dataset_names: list[str]
+) -> dict[str, str]:
+    """Return eval manifest URIs for every configured gcs_manifest dataset."""
+    resolved: dict[str, str] = {}
+    for ds_name in dataset_names:
+        ds_cfg = registry.get("datasets", {}).get(ds_name, {})
+        if ds_cfg.get("adapter") != "gcs_manifest":
+            continue
+        eval_uri = ds_cfg.get("eval_manifest_uri", "")
+        if eval_uri:
+            resolved[ds_name] = eval_uri
+    return resolved
+
+
 def _build_split_jsonl(
     *,
     dataset_names: list[str],
@@ -581,18 +596,11 @@ def _eval(args: argparse.Namespace) -> int:
         )
         base_only = True
 
-    # Resolve eval manifest URI from the first gcs_manifest dataset
     registry = _load_registry()
     datasets = config.get("datasets", [])
-    eval_uri = ""
-    for ds_name in datasets:
-        ds_cfg = registry.get("datasets", {}).get(ds_name, {})
-        if ds_cfg.get("adapter") == "gcs_manifest":
-            eval_uri = ds_cfg.get("eval_manifest_uri", "")
-            if eval_uri:
-                break
+    eval_uris = _resolve_eval_manifest_uris(registry, datasets)
 
-    if not eval_uri:
+    if not eval_uris:
         logger.error(
             "No eval_manifest_uri found for any gcs_manifest dataset in the build config. "
             "Check datasets.toml [datasets.echo] eval_manifest_uri."
@@ -600,9 +608,17 @@ def _eval(args: argparse.Namespace) -> int:
         return 1
 
     # Load eval manifest -> CanonicalRows
-    eval_entries = download_jsonl_manifest(storage_client, eval_uri)
+    eval_entries = []
+    for ds_name, eval_uri in eval_uris.items():
+        ds_entries = download_jsonl_manifest(storage_client, eval_uri)
+        eval_entries.extend(ds_entries)
+        logger.info(
+            f"Eval manifest [{ds_name}]: {len(ds_entries)} rows from {eval_uri}"
+        )
     eval_rows = rows_from_manifest(eval_entries)
-    logger.info(f"Eval manifest: {len(eval_rows)} rows from {eval_uri}")
+    logger.info(
+        f"Combined eval manifest: {len(eval_rows)} rows from {len(eval_uris)} dataset(s)"
+    )
 
     def _build_batch_jsonl(
         model_id: str, label: str, tmp: str

@@ -491,5 +491,41 @@ class TestBuildSplitJsonl(unittest.TestCase):
             self.assertEqual(mock_upload.call_count, 1)
 
 
+class TestEvalManifestResolution(unittest.TestCase):
+    """Eval resolves every configured gcs_manifest eval split, not just the first one."""
+
+    def test_resolves_all_configured_gcs_eval_manifests(self) -> None:
+        import pipeline
+
+        registry = {
+            "datasets": {
+                "echo": {
+                    "adapter": "gcs_manifest",
+                    "eval_manifest_uri": "gs://b/echo_eval.jsonl",
+                },
+                "bench": {
+                    "adapter": "gcs_manifest",
+                    "eval_manifest_uri": "gs://b/bench_eval.jsonl",
+                },
+                "notes": {
+                    "adapter": "notes_only",
+                    "eval_manifest_uri": "gs://b/ignored.jsonl",
+                },
+            }
+        }
+
+        resolved = pipeline._resolve_eval_manifest_uris(
+            registry, ["echo", "bench", "notes"]
+        )
+
+        self.assertEqual(
+            resolved,
+            {
+                "echo": "gs://b/echo_eval.jsonl",
+                "bench": "gs://b/bench_eval.jsonl",
+            },
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
