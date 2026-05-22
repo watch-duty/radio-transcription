@@ -130,7 +130,7 @@ class StitcherEngine:
     ) -> tuple[
         list[
             tuple[str, datatypes.FlushRequest]
-            | tuple[Literal["transcription_dlq"], dict[str, Any]]
+            | tuple[Literal["normalization_dlq"], dict[str, Any]]
         ],
         int,
     ]:
@@ -191,7 +191,7 @@ class StitcherEngine:
         timer_manager: Any,
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest]
-        | tuple[Literal["transcription_dlq"], dict[str, Any]]
+        | tuple[Literal["normalization_dlq"], dict[str, Any]]
     ]:
         """Orchestrates stale flushes when watermarks cross the timeout threshold.
 
@@ -274,7 +274,7 @@ class StitcherEngine:
                     "Error yielding stale buffer for feed %s", feed_id
                 )
                 yield (
-                    "transcription_dlq",
+                    trans_constants.DEAD_LETTER_QUEUE_TAG,
                     {"error": str(e), "feed_id": feed_id, "stale_flush": True},
                 )
 
@@ -411,7 +411,7 @@ class StitcherEngine:
     ) -> tuple[
         list[
             tuple[str, datatypes.FlushRequest]
-            | tuple[Literal["transcription_dlq"], dict[str, Any]]
+            | tuple[Literal["normalization_dlq"], dict[str, Any]]
         ],
         datatypes.TransmissionContext,
         int,
@@ -545,7 +545,7 @@ class StitcherEngine:
                 chunk.timestamp_ms + common_constants.MS_PER_SECOND
             )
             return (
-                [("transcription_dlq", dlq_payload)],
+                [(trans_constants.DEAD_LETTER_QUEUE_TAG, dlq_payload)],
                 curr_context,
                 fallback_expected,
             )
