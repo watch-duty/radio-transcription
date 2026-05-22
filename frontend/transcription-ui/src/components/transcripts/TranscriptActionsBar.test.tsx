@@ -64,7 +64,7 @@ describe('TranscriptActionsBar', () => {
     expect(onClickViewLatest).toHaveBeenCalledTimes(1);
   });
 
-  it('renders disabled "Viewing latest" button when hasNewerTranscripts is false', () => {
+  it('renders disabled "Jump to live" button when hasNewerTranscripts is false', () => {
     render(
       <TranscriptActionsBar
         hasNewerTranscripts={false}
@@ -76,7 +76,7 @@ describe('TranscriptActionsBar', () => {
       />
     );
 
-    const button = screen.getByRole('button', { name: /Viewing latest/i });
+    const button = screen.getByRole('button', { name: /Jump to live/i });
     expect(button).toBeTruthy();
     expect(button).toBeDisabled();
   });
