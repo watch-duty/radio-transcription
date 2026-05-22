@@ -105,5 +105,5 @@ def validate_example(example: dict[str, Any]) -> bool:
     first_model_part = model_parts[0]
     if not isinstance(first_model_part, dict):
         return False
-    model_text = first_model_part.get("text", "")
+    model_text = first_model_part.get("text") or ""
     return bool(model_text.strip())
