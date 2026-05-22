@@ -564,11 +564,27 @@ class AudioStitchingStateMachine:
         file_start_ms: int,
         global_start_ms: int,
     ) -> tuple[np.ndarray | None, int]:
-        """Calculates and extracts pre-roll warmup padding and starting audio offset."""
+        """Calculates and extracts pre-roll warmup padding and starting audio offset.
+
+        ASR models (e.g., Google Speech-to-Text Chirp v3) require a brief "acoustic warmup"
+        silence/static pad (at least 150ms-300ms, defaulting to 1000ms in constants) at the very
+        beginning of the audio file to initialize frame processing without clipping the first word.
+
+        When a segment onset starts too close to the beginning of the Call Recording / stream
+        (global_start_ms < DEFAULT_VAD_PRE_ROLL_MS), the physical boundary prevents us from
+        extracting the full padding duration directly. We resolve this using two strategies:
+        1. Continuous Priming (using actual preceding audio from a continuous stream's prior chunk).
+        2. Duplicate Replay (duplicating the start of an isolated Call Recording as a dummy warmup).
+        """
         pre_roll_audio = None
+
+        # 1. Calculate the missing pre-roll duration we need to supply artificially
         missing_pre_roll_ms = DEFAULT_VAD_PRE_ROLL_MS - global_start_ms
         if missing_pre_roll_ms > 0:
             if ctx.prior_audio_tail is not None:
+                # STRATEGY 1: Continuous Priming
+                # We are processing a continuous stream and have the end of the previous chunk cached.
+                # We pull the exact missing pre-roll samples from the end of this cached tail.
                 try:
                     prior_arr = np.frombuffer(
                         ctx.prior_audio_tail, dtype=np.int16
@@ -584,9 +600,10 @@ class AudioStitchingStateMachine:
                         e,
                     )
             else:
-                # Colab Replay/Duplicate strategy:
-                # Since there is no prior tail (isolated Call Recording start),
-                # we duplicate the missing pre-roll portion from the start of the current file!
+                # STRATEGY 2: Isolated Duplicate Warmup (Colab Replay)
+                # We are processing an isolated Call Recording start (no previous chunk is available).
+                # To satisfy the ASR warmup requirement, we duplicate the first 'missing_pre_roll_ms'
+                # of the current recording and prepend it as a virtual prefix warmup pad.
                 try:
                     pre_roll_samples = int(
                         missing_pre_roll_ms * (chunk_data.sample_rate // 1000)
@@ -596,17 +613,27 @@ class AudioStitchingStateMachine:
                 except Exception as e:
                     logger.warning("Failed to duplicate pre-roll audio: %s", e)
 
+        # 2. Apply boundary start offsets based on which pre-roll strategy was selected
         if pre_roll_audio is not None:
+            # Pre-rolled audio (either Strategy 1 or 2) is successfully prepended.
+            # Thus, we physically start appending the current chunk's audio from index 0.
             append_start = 0
             if ctx.prior_audio_tail is not None:
-                # Continuous pre-roll: start offset is shifted negative relative to the chunk start
+                # Continuous Priming offset:
+                # The buffer start timestamp is shifted negative relative to the current chunk's start time.
                 ctx.start_audio_offset_ms = -missing_pre_roll_ms
                 ctx.buffer_start_time_ms = file_start_ms - missing_pre_roll_ms
             else:
-                # Colab duplicate pre-roll: the real speech starts exactly after the virtual warmup pad (200ms)
+                # Duplicate Warmup offset:
+                # The physical audio buffer starts with the duplicated warmup prefix.
+                # We set start_audio_offset_ms to DEFAULT_VAD_PRE_ROLL_MS (e.g. 1000ms) to instruct
+                # downstream ASR alignments and the playback UI player to skip this duplicated prefix.
                 ctx.start_audio_offset_ms = DEFAULT_VAD_PRE_ROLL_MS
                 ctx.buffer_start_time_ms = file_start_ms
         else:
+            # STRATEGY 3: Standard Pre-Roll
+            # The segment onset is far enough into the file (global_start_ms >= DEFAULT_VAD_PRE_ROLL_MS).
+            # We can naturally slice the continuous preceding audio from the current file itself!
             append_start = max(0, global_start_ms - DEFAULT_VAD_PRE_ROLL_MS)
             ctx.start_audio_offset_ms = append_start
             ctx.buffer_start_time_ms = file_start_ms + append_start
