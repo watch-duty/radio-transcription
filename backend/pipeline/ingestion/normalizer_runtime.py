@@ -1256,6 +1256,20 @@ class NormalizerRuntime:
             r["id"] for r in results if r["current_worker"] == worker_id
         }
 
+        # Cancel tasks for feeds that have been deactivated.
+        for r in results:
+            if (
+                r["current_status"] == "deactivated"
+                and r["current_worker"] == worker_id
+            ):
+                fid = r["id"]
+                if fid in active and not active[fid].done():
+                    logger.info(
+                        "Feed %s deactivated; cancelling task",
+                        fid,
+                    )
+                    active[fid].cancel()
+
         # A feed missing from retained_ids is NOT a violation if:
         #   - active[fid].done(): task finished between snapshot and DB response
         #   - fid in _releasing_feeds: task is mid-await on release_feed /

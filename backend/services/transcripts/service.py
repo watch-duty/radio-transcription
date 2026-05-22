@@ -60,6 +60,8 @@ class TranscriptService:
         start_time: datetime.datetime | None = None,
         end_time: datetime.datetime | None = None,
         order: SortOrder | str = SortOrder.DESC,
+        *,
+        is_alert: bool | None = None,
     ) -> ListTranscriptsResponse:
         """Lists all transcripts with pagination and time window."""
         result = await self._store.list_transcripts(
@@ -68,6 +70,7 @@ class TranscriptService:
             start_time=start_time,
             end_time=end_time,
             order=order,
+            is_alert=is_alert,
         )
         return ListTranscriptsResponse(
             transcripts=[
@@ -89,6 +92,8 @@ class TranscriptService:
         start_time: datetime.datetime | None = None,
         end_time: datetime.datetime | None = None,
         order: SortOrder | str = SortOrder.DESC,
+        *,
+        is_alert: bool | None = None,
     ) -> ListTranscriptsResponse:
         """Lists transcripts filtered by feed ID with pagination and time window."""
         result = await self._store.list_transcripts_by_feed_id(
@@ -98,6 +103,7 @@ class TranscriptService:
             start_time=start_time,
             end_time=end_time,
             order=order,
+            is_alert=is_alert,
         )
         return ListTranscriptsResponse(
             transcripts=[

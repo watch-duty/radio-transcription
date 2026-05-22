@@ -4,7 +4,6 @@ import base64
 import datetime
 import unittest
 import uuid
-from unittest import mock
 
 import asyncpg.exceptions
 
@@ -12,6 +11,7 @@ from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
+from backend.pipeline.storage.tests.connection_util import make_mock_pool
 from backend.pipeline.storage.transcript_store import TranscriptStore
 
 _TRANSMISSION_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
@@ -36,26 +36,12 @@ _TRANSCRIPT_ROW = {
 }
 
 
-def _make_mock_pool(
-    *,
-    fetchrow_result: dict | None = None,
-    execute_result: str = "UPDATE 0",
-    fetch_result: list | None = None,
-) -> mock.AsyncMock:
-    """Create a mock asyncpg.Pool with the given return values."""
-    pool = mock.AsyncMock()
-    pool.fetchrow.return_value = fetchrow_result
-    pool.execute.return_value = execute_result
-    pool.fetch.return_value = fetch_result or []
-    return pool
-
-
 class BaseTranscriptStoreTest(unittest.IsolatedAsyncioTestCase):
     """Base class for TranscriptStore tests with a shared prepopulated mock pool."""
 
     def setUp(self) -> None:
         super().setUp()
-        self.pool = _make_mock_pool(
+        self.pool = make_mock_pool(
             fetchrow_result=_TRANSCRIPT_ROW, fetch_result=[_TRANSCRIPT_ROW]
         )
         self.store = TranscriptStore(self.pool)
@@ -243,9 +229,23 @@ class TestListTranscriptsByFeedId(BaseTranscriptStoreTest):
         # Verify fetch was called with time window
         self.pool.fetch.assert_called_once()
         args = self.pool.fetch.call_args[0]
-        # Params are [query, uid, cursor_ts, cursor_uid, start_time, end_time, limit+1]
+        # Params are [query, uid, cursor_ts, cursor_uid, start_time, end_time, is_alert, limit+1]
         self.assertEqual(args[4], start)
         self.assertEqual(args[5], end)
+
+    async def test_list_with_is_alert(self) -> None:
+        """Verify listing with is_alert=True passes parameter to query."""
+        self.pool.fetch.return_value = [_TRANSCRIPT_ROW]
+
+        result = await self.store.list_transcripts_by_feed_id(
+            str(_FEED_ID), is_alert=True
+        )
+
+        self.assertEqual(len(result.transcripts), 1)
+
+        self.pool.fetch.assert_called_once()
+        args = self.pool.fetch.call_args[0]
+        self.assertTrue(args[6])
 
 
 class TestListTranscripts(BaseTranscriptStoreTest):
@@ -260,6 +260,19 @@ class TestListTranscripts(BaseTranscriptStoreTest):
             result.transcripts[0].transmission_id, str(_TRANSMISSION_ID)
         )
         self.assertIsNone(result.next_token)
+
+    async def test_list_with_is_alert(self) -> None:
+        """Verify listing with is_alert=True passes parameter to query."""
+        self.pool.fetch.return_value = [_TRANSCRIPT_ROW]
+
+        result = await self.store.list_transcripts(is_alert=True)
+
+        self.assertEqual(len(result.transcripts), 1)
+
+        self.pool.fetch.assert_called_once()
+        args = self.pool.fetch.call_args[0]
+        # Params are [query, cursor_ts, cursor_uid, start_time, end_time, is_alert, limit+1]
+        self.assertTrue(args[5])
 
 
 class TestDeleteTranscript(BaseTranscriptStoreTest):

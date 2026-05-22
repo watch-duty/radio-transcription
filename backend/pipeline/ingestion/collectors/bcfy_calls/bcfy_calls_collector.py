@@ -55,6 +55,11 @@ async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
 
 def _get_jwt_token() -> str:
     """Fetch Broadcastify JWT token synchronously from Secret Manager."""
+    # Currently there is no implicit redirection support for the Secret Manager SDK to another endpoint.
+    mock_token = os.getenv("MOCK_JWT_TOKEN")
+    if mock_token:
+        return mock_token
+
     project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
     secret_id = os.getenv("BROADCASTIFY_JWT_SECRET_ID")
     if not project_id or not secret_id:

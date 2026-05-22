@@ -28,6 +28,7 @@ do_update AS (
     FROM current_state
     WHERE feeds.id = current_state.id
       AND current_state.worker_id = $2
+      AND current_state.status = 'active'::feed_status
       AND (current_state.last_heartbeat IS NULL
            OR current_state.last_heartbeat < NOW() - INTERVAL '15 seconds')
     RETURNING feeds.id

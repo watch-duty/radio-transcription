@@ -6,7 +6,7 @@ import uuid
 from google.cloud import pubsub_v1
 
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
-from integration_tests.feed_utils import create_test_feed  # noqa: F401
+from integration_tests.feed_utils import create_test_bcfy_feed  # noqa: F401
 from integration_tests.test_utils import verify_transcript_in_db
 
 logger = logging.getLogger(__name__)
@@ -43,11 +43,11 @@ def _publish_and_verify(
 
 
 def test_continuous_pipeline_flow(
-    test_feed: tuple[str, str],
+    test_bcfy_feed: tuple[str, str],
 ) -> None:
     """Tests that a message published to continuous topic reaches evaluation."""
     continuous_topic = os.environ["CONTINUOUS_TOPIC"]
-    feed_id, feed_name = test_feed
+    feed_id, feed_name = test_bcfy_feed
     _publish_and_verify(
         continuous_topic,
         feed_id,
@@ -57,11 +57,11 @@ def test_continuous_pipeline_flow(
 
 
 def test_segmented_pipeline_flow(
-    test_feed: tuple[str, str],
+    test_bcfy_feed: tuple[str, str],
 ) -> None:
     """Tests that a message published to segmented topic reaches evaluation."""
     segmented_topic = os.environ["SEGMENTED_TOPIC"]
-    feed_id, feed_name = test_feed
+    feed_id, feed_name = test_bcfy_feed
     _publish_and_verify(
         segmented_topic,
         feed_id,
