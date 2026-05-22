@@ -577,7 +577,7 @@ class AudioStitchingStateMachine:
         When a segment onset starts too close to the beginning of the Call Recording / stream
         (global_start_ms < DEFAULT_VAD_PRE_ROLL_MS), we cannot extract the full ASR pre-roll directly.
         We resolve this using two strategies:
-        1. Continuous Priming (pulling missing pre-roll samples from the contiguous prior chunk tail).
+        1. Prior Chunk Priming (pulling missing pre-roll samples from the contiguous prior chunk tail).
         2. Duplicate Replay (duplicating the start of the Call Recording as a dummy ASR warmup pad).
         """
         pre_roll_audio = None
@@ -586,8 +586,8 @@ class AudioStitchingStateMachine:
         missing_pre_roll_ms = DEFAULT_VAD_PRE_ROLL_MS - global_start_ms
         if missing_pre_roll_ms > 0:
             if ctx.prior_audio_tail is not None:
-                # STRATEGY 1: Continuous Priming (ASR Pre-Roll)
-                # We have a continuous stream and the physical tail of the prior chunk is cached.
+                # STRATEGY 1: Prior Chunk Priming (ASR Pre-Roll)
+                # We have a continuous sequence and the physical tail of the prior chunk is cached.
                 # We extract the exact missing ASR pre-roll samples from the end of this cached tail.
                 try:
                     prior_arr = np.frombuffer(
@@ -604,8 +604,8 @@ class AudioStitchingStateMachine:
                         e,
                     )
             else:
-                # STRATEGY 2: Isolated Duplicate Warmup (Colab Replay for ASR)
-                # We are processing an isolated Call Recording (no continuous prior chunk is available).
+                # STRATEGY 2: Isolated Duplicate Warmup
+                # We are processing an isolated Call Recording (no prior chunk is available in context).
                 # To satisfy the ASR warmup padding requirement, we duplicate the first 'missing_pre_roll_ms'
                 # of the Call Recording and prepend it as a virtual warmup pad.
                 try:
@@ -623,7 +623,7 @@ class AudioStitchingStateMachine:
             # Thus, we physically start appending the current chunk's audio from index 0.
             append_start = 0
             if ctx.prior_audio_tail is not None:
-                # Continuous Priming offset:
+                # Prior Chunk Priming offset:
                 # The buffer start timestamp is shifted negative relative to the current chunk's start time.
                 ctx.start_audio_offset_ms = -missing_pre_roll_ms
                 ctx.buffer_start_time_ms = file_start_ms - missing_pre_roll_ms
