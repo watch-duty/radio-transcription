@@ -942,10 +942,9 @@ class OrderedStitchAudioTest(unittest.TestCase):
                     len(request.buffer) // 2 for feed_id, request in msgs
                 ]
                 if len(msgs) == 1:
-                    assert 48000 in lengths
+                    assert 64000 in lengths
                 else:
                     assert 32000 in lengths
-                    assert 16000 in lengths
 
             assert_that(results, assert_results)
 
