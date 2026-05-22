@@ -296,12 +296,18 @@ class VoiceActivityDetector:
         # before we derive the priming preamble from the current file itself.
         has_genuine_prior = prior_audio is not None
 
-        # Prepend historical tail if available; fallback to current chunk start if none.
+        # Prepend historical tail if available; fallback to synthetic, low-amplitude white noise if none.
+        # Using synthetic white noise instead of replaying the starting speech prevents the recurrent
+        # denoiser from misidentifying repeating vocal envelopes as echoing noise, completely bypassing the
+        # RNN echo-suppression muting bug on Segment 0 starts.
         if prior_audio is None:
             priming_samples = int(self.priming_sec * TARGET_SAMPLE_RATE)
-            priming_samples = min(priming_samples, len(audio_array))
             if priming_samples > 0:
-                prior_audio = audio_array[:priming_samples]
+                prior_audio = (
+                    np.random.default_rng()
+                    .normal(0.0, 0.002, priming_samples)
+                    .astype(np.float32)
+                )
 
         # Perform physical audio concatenation to create a continuous audio stream for the VAD
         if prior_audio is not None and len(prior_audio) > 0:
