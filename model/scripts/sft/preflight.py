@@ -34,6 +34,21 @@ class PreflightReport:
         return len(self.failures) == 0
 
 
+def _safe_blob_exists(storage_client: object, uri: str) -> bool:
+    """``blob_exists`` that never raises -- a malformed/unparseable URI is unreachable.
+
+    ``blob_exists`` calls ``parse_gcs_uri``, which raises on a non-``gs://`` URI. Without
+    this guard a single malformed fileUri would crash ``run_preflight`` before the report
+    is written, violating the D-13 contract (a hard gate ALWAYS writes a preflight report).
+    A malformed URI is reported downstream as "not reachable" (and also fails
+    validate_example), so the operator still gets a clear, actionable failure.
+    """
+    try:
+        return blob_exists(storage_client, uri)
+    except Exception:
+        return False
+
+
 def _estimate_text_tokens(
     example: dict, system_prompt: str, user_prompt: str
 ) -> int:
@@ -117,7 +132,9 @@ def run_preflight(
         unique_uris = sorted({u for u in train_uris if u})
         with ThreadPoolExecutor(max_workers=32) as executor:
             flags = list(
-                executor.map(partial(blob_exists, storage_client), unique_uris)
+                executor.map(
+                    partial(_safe_blob_exists, storage_client), unique_uris
+                )
             )
         unreachable = {
             u for u, ok in zip(unique_uris, flags, strict=True) if not ok
