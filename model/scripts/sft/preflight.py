@@ -135,8 +135,9 @@ def run_preflight(
         except Exception as exc:
             report.failures.append(f"Failed to load val JSONL: {exc}")
             val_examples = []
-        if not val_examples:
-            report.failures.append("Val JSONL is empty.")
+        else:
+            if not val_examples:
+                report.failures.append("Val JSONL is empty.")
         for ex in val_examples:
             parts = (ex.get("contents") or [{}])[0].get("parts", [])
             for p in parts:
