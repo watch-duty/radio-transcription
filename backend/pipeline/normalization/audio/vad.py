@@ -26,6 +26,7 @@ from backend.pipeline.normalization.common.constants import (
     VAD_DEFAULT_BOOST_FREQ_HZ,
     VAD_DEFAULT_BOOST_GAIN_DB,
     VAD_DEFAULT_COMP_ATTACK_MS,
+    VAD_DEFAULT_COMP_PEAK_THRESHOLD,
     VAD_DEFAULT_COMP_RATIO,
     VAD_DEFAULT_COMP_RELEASE_MS,
     VAD_DEFAULT_COMP_THRESHOLD_DB,
@@ -38,6 +39,8 @@ from backend.pipeline.normalization.common.constants import (
     VAD_DEFAULT_PRIMING_SEC,
     VAD_DEFAULT_THRESHOLD_OFFSET,
     VAD_DEFAULT_THRESHOLD_ONSET,
+    VAD_NORMALIZATION_MIN_PEAK,
+    VAD_NORMALIZATION_TARGET_PEAK,
 )
 from backend.pipeline.normalization.common.logging import get_task_logger
 
@@ -74,6 +77,9 @@ class VoiceActivityDetector:
         min_silence_duration_ms: int = VAD_DEFAULT_MIN_SILENCE_DURATION_MS,
         pad_sec: float = VAD_DEFAULT_PAD_SEC,
         priming_sec: float = VAD_DEFAULT_PRIMING_SEC,
+        comp_peak_threshold: float = VAD_DEFAULT_COMP_PEAK_THRESHOLD,
+        normalization_target_peak: float = VAD_NORMALIZATION_TARGET_PEAK,
+        normalization_min_peak: float = VAD_NORMALIZATION_MIN_PEAK,
         models_dir: str | Path = MODELS_DIR,
     ) -> None:
         self.comp_threshold_db = comp_threshold_db
@@ -92,6 +98,9 @@ class VoiceActivityDetector:
         self.min_silence_duration_ms = min_silence_duration_ms
         self.pad_sec = pad_sec
         self.priming_sec = priming_sec
+        self.comp_peak_threshold = comp_peak_threshold
+        self.normalization_target_peak = normalization_target_peak
+        self.normalization_min_peak = normalization_min_peak
 
         self.silero_path = Path(models_dir) / "silero_vad.onnx"
         self.ulunas_path = Path(models_dir) / "ulunas_stream_simple.onnx"
@@ -193,10 +202,10 @@ class VoiceActivityDetector:
         )
         bp_audio = bp_board(audio_array, TARGET_SAMPLE_RATE)
 
-        # Dynamically apply Compressor only if the raw signal is quiet (peak < 0.55)
+        # Dynamically apply Compressor only if the raw signal is quiet (peak < self.comp_peak_threshold)
         # This optimizes low-gain vocal signals while avoiding dynamic distortion on loud continuous streams.
         peak = np.max(np.abs(audio_array))
-        if peak < 0.55:
+        if peak < self.comp_peak_threshold:
             comp_board = Pedalboard(
                 [
                     Compressor(
