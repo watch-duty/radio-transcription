@@ -105,7 +105,9 @@ class TestCollectorRegistryIntegrity(unittest.TestCase):
             with self.subTest(source_type=source_type.value):
                 self.assertTrue(callable(capture_fn))
                 self.assertIsInstance(url_base, str)
-                self.assertTrue(url_base)
+                # FIRE_NOTIFICATIONS may have empty default to fail lazily on claim due to api secret
+                if source_type != SourceType.FIRE_NOTIFICATIONS:
+                    self.assertTrue(url_base)
 
 
 if __name__ == "__main__":
