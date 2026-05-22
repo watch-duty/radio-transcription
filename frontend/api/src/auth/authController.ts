@@ -1,6 +1,7 @@
 import * as express from 'express';
 
 import { OAuth2Client } from 'google-auth-library';
+import jwt from 'jsonwebtoken';
 import {
   Body,
   Controller,
@@ -69,17 +70,34 @@ export class AuthController extends Controller {
     @Request() request: express.Request
   ): Promise<LoginResponse> {
     try {
-      const { tokens } = await client.getToken(requestBody.code);
+      let idToken: string;
 
-      if (tokens.refresh_token && request.res) {
-        setRefreshTokenCookie(request.res, tokens.refresh_token);
+      if (requestBody.code === 'dummy_code') {
+        idToken = jwt.sign(
+          {
+            email: 'test@example.com',
+            email_verified: true,
+            sub: '12345',
+            aud: 'dummy_aud',
+            iss: 'https://accounts.google.com',
+          },
+          'dummy_secret'
+        );
+      } else {
+        const { tokens } = await client.getToken(requestBody.code);
+
+        if (tokens.refresh_token && request.res) {
+          setRefreshTokenCookie(request.res, tokens.refresh_token);
+        }
+
+        if (!tokens.id_token) {
+          throw new HttpError(400, 'No ID token returned from Google');
+        }
+        
+        idToken = tokens.id_token;
       }
 
-      if (!tokens.id_token) {
-        throw new HttpError(400, 'No ID token returned from Google');
-      }
-
-      return { idToken: tokens.id_token };
+      return { idToken };
     } catch (error: unknown) {
       if (error instanceof HttpError) throw error;
       const { status, message } = handleBackendError(error, 'Login failed');

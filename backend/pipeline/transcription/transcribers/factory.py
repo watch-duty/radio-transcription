@@ -13,6 +13,7 @@ from backend.pipeline.transcription.transcribers.mock import (
     MockConfig,
     MockTranscriber,
 )
+from backend.pipeline.transcription.transcribers.local_api import LocalApiTranscriber
 
 
 def get_transcriber(
@@ -39,5 +40,7 @@ def get_transcriber(
         )
     if transcriber_type == TranscriberType.MOCK:
         return MockTranscriber(MockConfig.from_json(config_json))
+    if transcriber_type == TranscriberType.LOCAL_WHISPER:
+        return LocalApiTranscriber()
     msg = f"Unknown transcriber type: {transcriber_type}"
     raise ValueError(msg)
