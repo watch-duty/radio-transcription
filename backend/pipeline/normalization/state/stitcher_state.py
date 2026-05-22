@@ -565,9 +565,16 @@ class AudioStitchingStateMachine:
                         file_start_ms - missing_pre_roll_ms
                     )
                 else:
-                    append_start = max(
-                        0, global_start_ms - DEFAULT_VAD_PRE_ROLL_MS
-                    )
+                    # Segmented Call / Isolated First Segment strategy:
+                    # If there is no prior tail available (like in a segmented call recording),
+                    # but the segment onset starts near the very beginning of the file (global_start_ms < 400ms),
+                    # we force the pre-roll to capture from 0.0s to prevent slicing off the warm-up speech transient!
+                    if global_start_ms < 400:
+                        append_start = 0
+                    else:
+                        append_start = max(
+                            0, global_start_ms - DEFAULT_VAD_PRE_ROLL_MS
+                        )
                     ctx.start_audio_offset_ms = append_start
                     ctx.buffer_start_time_ms = file_start_ms + append_start
             else:
