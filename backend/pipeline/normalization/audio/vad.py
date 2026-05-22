@@ -38,6 +38,7 @@ from backend.pipeline.normalization.common.constants import (
     VAD_DEFAULT_PRIMING_SEC,
     VAD_DEFAULT_THRESHOLD_OFFSET,
     VAD_DEFAULT_THRESHOLD_ONSET,
+    VAD_RMS_SILENCE_THRESHOLD,
 )
 from backend.pipeline.normalization.common.logging import get_task_logger
 
@@ -185,6 +186,15 @@ class VoiceActivityDetector:
 
     def preprocess(self, audio_array: np.ndarray) -> np.ndarray:
         """Applies the VAD bandpass, denoiser, and eq presence boost pipeline."""
+        # Dynamic Peak Normalization with a soft noise gate:
+        # We only normalize if the signal has a peak > 0.01 and an RMS energy above the silence threshold
+        # to avoid boosting pure background static or empty files.
+        peak = np.max(np.abs(audio_array))
+        if peak > 0.01:
+            rms_energy = np.sqrt(np.mean(audio_array**2))
+            if rms_energy >= VAD_RMS_SILENCE_THRESHOLD:
+                audio_array = audio_array * (0.95 / peak)
+
         bp_board = Pedalboard(
             [
                 HighpassFilter(cutoff_frequency_hz=self.highpass_hz),
