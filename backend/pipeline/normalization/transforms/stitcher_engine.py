@@ -502,6 +502,7 @@ class StitcherEngine:
                     buffer_duration_ms=curr_context.buffer_duration_ms,
                     speech_segments=curr_context.speech_segments.copy(),
                     traceparent=curr_context.traceparent,
+                    prior_audio_tail=curr_context.prior_audio_tail,
                 )
 
                 actions = state_machine.process_chunk(payload.chunk_data, ctx)
