@@ -187,6 +187,46 @@ class TestPreflightDuplicateUri(unittest.TestCase):
             report.passed, f"Unexpected failures: {report.failures}"
         )
 
+    def test_preflight_batches_gcs_reachability_checks(self) -> None:
+        from preflight import run_preflight
+
+        with tempfile.TemporaryDirectory() as tmp:
+            train_path = Path(tmp) / "train.jsonl"
+            report_path = Path(tmp) / "preflight_report.json"
+            train_path.write_text(
+                "".join(
+                    json.dumps(
+                        self._make_good_example(f"gs://b/audio{i}.flac")
+                    )
+                    + "\n"
+                    for i in range(5)
+                )
+            )
+
+            with (
+                unittest.mock.patch(
+                    "preflight._safe_blob_exists",
+                    side_effect=lambda _client, _uri: True,
+                ) as mock_exists,
+                unittest.mock.patch("preflight.time.sleep") as mock_sleep,
+            ):
+                report = run_preflight(
+                    train_jsonl_path=train_path,
+                    val_jsonl_path=None,
+                    storage_client=object(),
+                    report_path=report_path,
+                    gcs_max_workers=2,
+                    gcs_batch_size=2,
+                    gcs_batch_pause_seconds=0.5,
+                )
+
+        self.assertTrue(report.passed, f"Unexpected failures: {report.failures}")
+        self.assertEqual(mock_exists.call_count, 5)
+        self.assertEqual(mock_sleep.call_count, 2)
+        mock_sleep.assert_has_calls(
+            [unittest.mock.call(0.5), unittest.mock.call(0.5)]
+        )
+
     def test_preflight_fails_on_empty_train(self) -> None:
         from preflight import run_preflight
 

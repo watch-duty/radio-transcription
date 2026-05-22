@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from functools import partial
@@ -22,6 +23,8 @@ from common.sft import validate_example
 logger = logging.getLogger(__name__)
 
 PREFLIGHT_TOKEN_CAP: Final = 131_072  # VERIFIED: docs.cloud.google.com SFT docs
+PREFLIGHT_GCS_MAX_WORKERS: Final = 16
+PREFLIGHT_GCS_BATCH_SIZE: Final = 256
 
 
 @dataclass
@@ -72,6 +75,43 @@ def _estimate_text_tokens(
     return text_len // 3
 
 
+def _iter_batches(items: list[str], batch_size: int) -> list[list[str]]:
+    if batch_size <= 0:
+        raise ValueError("gcs_batch_size must be > 0")
+    return [items[i : i + batch_size] for i in range(0, len(items), batch_size)]
+
+
+def _find_unreachable_gcs_uris(
+    storage_client: object,
+    uris: list[str],
+    *,
+    max_workers: int,
+    batch_size: int,
+    batch_pause_seconds: float,
+) -> set[str]:
+    if max_workers <= 0:
+        raise ValueError("gcs_max_workers must be > 0")
+    if batch_pause_seconds < 0:
+        raise ValueError("gcs_batch_pause_seconds must be >= 0")
+    if not uris:
+        return set()
+
+    unreachable: set[str] = set()
+    batches = _iter_batches(uris, batch_size)
+    worker_count = min(max_workers, len(uris))
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        for batch_index, batch in enumerate(batches):
+            flags = list(
+                executor.map(partial(_safe_blob_exists, storage_client), batch)
+            )
+            unreachable.update(
+                u for u, ok in zip(batch, flags, strict=True) if not ok
+            )
+            if batch_pause_seconds and batch_index < len(batches) - 1:
+                time.sleep(batch_pause_seconds)
+    return unreachable
+
+
 def run_preflight(
     train_jsonl_path: Path,
     val_jsonl_path: Path | None,
@@ -79,6 +119,9 @@ def run_preflight(
     report_path: Path,
     system_prompt: str = "",
     user_prompt: str = "",
+    gcs_max_workers: int = PREFLIGHT_GCS_MAX_WORKERS,
+    gcs_batch_size: int = PREFLIGHT_GCS_BATCH_SIZE,
+    gcs_batch_pause_seconds: float = 0.0,
 ) -> PreflightReport:
     """Run all preflight checks. Write report + return result. Never mutates data.
 
@@ -130,15 +173,13 @@ def run_preflight(
     unreachable: set[str] = set()
     if storage_client is not None:
         unique_uris = sorted({u for u in train_uris if u})
-        with ThreadPoolExecutor(max_workers=32) as executor:
-            flags = list(
-                executor.map(
-                    partial(_safe_blob_exists, storage_client), unique_uris
-                )
-            )
-        unreachable = {
-            u for u, ok in zip(unique_uris, flags, strict=True) if not ok
-        }
+        unreachable = _find_unreachable_gcs_uris(
+            storage_client,
+            unique_uris,
+            max_workers=gcs_max_workers,
+            batch_size=gcs_batch_size,
+            batch_pause_seconds=gcs_batch_pause_seconds,
+        )
 
     # Load val examples if provided
     val_uris: set[str] = set()
