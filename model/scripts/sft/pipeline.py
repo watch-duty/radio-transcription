@@ -618,7 +618,9 @@ def _eval(args: argparse.Namespace) -> int:
             if not line.strip():
                 continue
             obj = json.loads(line)
-            if obj.get("status"):  # error entry
+            if (
+                obj.get("status") or "request" not in obj
+            ):  # error / non-prediction
                 continue
             parts = obj["request"]["contents"][0]["parts"]
             uri = next(
@@ -807,9 +809,10 @@ def _all(args: argparse.Namespace) -> int:
     rc = _build(args)
     if rc != 0:
         return rc
-    rc = _tune(args)
-    if rc != 0:
-        return rc
+    if not getattr(args, "base_only", False):
+        rc = _tune(args)
+        if rc != 0:
+            return rc
     return _eval(args)
 
 
