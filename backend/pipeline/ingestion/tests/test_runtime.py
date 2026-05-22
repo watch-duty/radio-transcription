@@ -640,7 +640,8 @@ class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
         ]
 
         await rt._heartbeat_cycle()
-
+        # Yield to let the event loop process the cancellation
+        await asyncio.sleep(0)
         self.assertTrue(task.cancelled())
 
     async def test_skip_if_recent_is_not_a_fence_violation(self) -> None:
