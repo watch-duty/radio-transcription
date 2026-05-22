@@ -10,17 +10,10 @@ import requests
 FEEDS_API_HOST = os.environ.get("FEEDS_API_HOST", "localhost:8089")
 
 
-@pytest.fixture(name="test_feed")
-def create_test_feed() -> Generator[tuple[str, str]]:
-    """Fixture to create a temporary feed for testing."""
-    feed_name = f"integration-test-feed-{uuid.uuid4()}"
-    payload = {
-        "name": feed_name,
-        "source_type": "bcfy_feeds",
-        "source_feed_id": f"src-{uuid.uuid4()}",
-        "external_id": f"ext-{uuid.uuid4()}",
-    }
-
+def _create_and_cleanup_feed(
+    payload: dict[str, str],
+) -> Generator[tuple[str, str]]:
+    """Helper to create a feed via API and clean up after test."""
     url = f"http://{FEEDS_API_HOST}/v1/feeds"
     response = requests.post(url, json=payload, timeout=10)
     response.raise_for_status()
@@ -31,7 +24,7 @@ def create_test_feed() -> Generator[tuple[str, str]]:
         raise ValueError(msg)
 
     try:
-        yield feed_id, feed_name
+        yield feed_id, payload["name"]
     finally:
         # Clean up transcripts via DB
         _conn_kwargs = {
@@ -55,3 +48,29 @@ def create_test_feed() -> Generator[tuple[str, str]]:
         del_url = f"http://{FEEDS_API_HOST}/v1/feeds/{feed_id}/deactivate"
         del_response = requests.post(del_url, timeout=10)
         del_response.raise_for_status()
+
+
+@pytest.fixture(name="test_bcfy_feed")
+def create_test_bcfy_feed() -> Generator[tuple[str, str]]:
+    """Fixture to create a temporary BCFY feed for testing."""
+    feed_name = f"integration-test-feed-{uuid.uuid4()}"
+    payload = {
+        "name": feed_name,
+        "source_type": "bcfy_feeds",
+        "source_feed_id": f"src-{uuid.uuid4()}",
+        "external_id": f"ext-{uuid.uuid4()}",
+    }
+    yield from _create_and_cleanup_feed(payload)
+
+
+@pytest.fixture(name="test_polling_feed")
+def create_test_polling_feed() -> Generator[tuple[str, str]]:
+    """Fixture to create a temporary polling feed for testing."""
+    feed_name = f"integration-test-polling-feed-{uuid.uuid4()}"
+    payload = {
+        "name": feed_name,
+        "source_type": "bcfy_calls",
+        "source_feed_id": f"src-{uuid.uuid4()}",
+        "external_id": f"ext-{uuid.uuid4()}",
+    }
+    yield from _create_and_cleanup_feed(payload)

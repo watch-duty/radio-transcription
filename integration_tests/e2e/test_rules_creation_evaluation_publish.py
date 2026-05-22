@@ -8,7 +8,7 @@ import uuid
 import requests
 
 from backend.pipeline.schema_types.transcribed_audio_pb2 import TranscribedAudio
-from integration_tests.feed_utils import create_test_feed  # noqa: F401
+from integration_tests.feed_utils import create_test_bcfy_feed  # noqa: F401
 from integration_tests.utils import assert_eventually
 
 # Constants from environment with sensible defaults for local development
@@ -75,14 +75,16 @@ def publish_test_message(
     response.raise_for_status()
 
 
-def test_rules_creation_evaluation_publish(test_feed: tuple[str, str]) -> None:
+def test_rules_creation_evaluation_publish(
+    test_bcfy_feed: tuple[str, str],
+) -> None:
     test_uuid = str(uuid.uuid4())[:8]
     unique_keyword = f"evacuation-{test_uuid}"
     unique_trans_id = str(uuid.uuid4())
     unique_transcript = f"Attention: {unique_keyword} is required for Sector 7."
 
     create_test_rule(unique_keyword)
-    feed_id, _ = test_feed
+    feed_id, _ = test_bcfy_feed
     publish_test_message(unique_trans_id, unique_transcript, feed_id)
 
     def transcript_and_notification_received() -> bool:
