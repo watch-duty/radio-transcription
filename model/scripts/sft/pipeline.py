@@ -133,6 +133,7 @@ def _build(args: argparse.Namespace) -> int:
 
     normalizer = build_normalizer()
     per_dataset_uris: dict[str, str] = {}
+    total_duration_seconds = 0.0
 
     for ds_name in dataset_names:
         ds_cfg = registry["datasets"][ds_name]
@@ -158,6 +159,7 @@ def _build(args: argparse.Namespace) -> int:
                 )
                 continue
             examples.append(ex)
+            total_duration_seconds += row.duration
 
         out_path = staging_dir / f"train_{ds_name}.jsonl"
         with open(out_path, "w") as f:
@@ -202,6 +204,7 @@ def _build(args: argparse.Namespace) -> int:
             "user_prompt": user_prompt,
             "train_uris": per_dataset_uris,
             "combined_train_uri": combined_gcs_uri,
+            "total_train_duration_seconds": total_duration_seconds,
         }
     )
     _save_round_config(args.round_id, config)
