@@ -592,7 +592,7 @@ def _eval(args: argparse.Namespace) -> int:
                 user_prompt=user_prompt,
             )
             lines.append(json.dumps(req))
-        batch_input_path.write_text("\n".join(lines))
+        batch_input_path.write_text("\n".join(lines) + "\n")
 
         batch_input_gcs = (
             f"{GCS_SFT_PREFIX}/{args.round_id}/eval_batch_{label}_input.jsonl"
