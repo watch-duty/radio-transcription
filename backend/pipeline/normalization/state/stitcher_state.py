@@ -536,45 +536,58 @@ class AudioStitchingStateMachine:
 
                 ctx.transmission_start_time_ms = file_start_ms + global_start_ms
 
-                # Boundary Pre-Roll Priming strategy:
-                # If the segment starts near the beginning of the current chunk (global_start_ms < 200ms),
-                # and we have a continuous prior chunk's tail available in the context,
-                # we pull the missing pre-roll samples directly from the end of the prior tail!
                 missing_pre_roll_ms = DEFAULT_VAD_PRE_ROLL_MS - global_start_ms
-                if missing_pre_roll_ms > 0 and ctx.prior_audio_tail is not None:
-                    try:
-                        prior_arr = np.frombuffer(
-                            ctx.prior_audio_tail, dtype=np.int16
-                        )
-                        pre_roll_samples = int(
-                            missing_pre_roll_ms
-                            * (chunk_data.sample_rate // 1000)
-                        )
-                        if len(prior_arr) >= pre_roll_samples > 0:
-                            pre_roll_audio = prior_arr[-pre_roll_samples:]
-                    except Exception as e:
-                        logger.warning(
-                            "Failed to extract pre-roll audio from prior tail: %s",
-                            e,
-                        )
+                if missing_pre_roll_ms > 0:
+                    if ctx.prior_audio_tail is not None:
+                        try:
+                            prior_arr = np.frombuffer(
+                                ctx.prior_audio_tail, dtype=np.int16
+                            )
+                            pre_roll_samples = int(
+                                missing_pre_roll_ms
+                                * (chunk_data.sample_rate // 1000)
+                            )
+                            if len(prior_arr) >= pre_roll_samples > 0:
+                                pre_roll_audio = prior_arr[-pre_roll_samples:]
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to extract pre-roll audio from prior tail: %s",
+                                e,
+                            )
+                    else:
+                        # Colab Replay/Duplicate strategy:
+                        # Since there is no prior tail (isolated Call Recording start),
+                        # we duplicate the missing pre-roll portion from the start of the current file!
+                        try:
+                            pre_roll_samples = int(
+                                missing_pre_roll_ms
+                                * (chunk_data.sample_rate // 1000)
+                            )
+                            if len(chunk_data.audio) >= pre_roll_samples > 0:
+                                pre_roll_audio = chunk_data.audio[
+                                    :pre_roll_samples
+                                ]
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to duplicate pre-roll audio: %s", e
+                            )
 
                 if pre_roll_audio is not None:
                     append_start = 0
-                    ctx.start_audio_offset_ms = -missing_pre_roll_ms
-                    ctx.buffer_start_time_ms = (
-                        file_start_ms - missing_pre_roll_ms
-                    )
-                else:
-                    # Segmented Call / Isolated First Segment strategy:
-                    # If there is no prior tail available (like in a segmented call recording),
-                    # but the segment onset starts near the very beginning of the file (global_start_ms < 400ms),
-                    # we force the pre-roll to capture from 0.0s to prevent slicing off the warm-up speech transient!
-                    if global_start_ms < 400:
-                        append_start = 0
-                    else:
-                        append_start = max(
-                            0, global_start_ms - DEFAULT_VAD_PRE_ROLL_MS
+                    if ctx.prior_audio_tail is not None:
+                        # Continuous pre-roll: start offset is shifted negative relative to the chunk start
+                        ctx.start_audio_offset_ms = -missing_pre_roll_ms
+                        ctx.buffer_start_time_ms = (
+                            file_start_ms - missing_pre_roll_ms
                         )
+                    else:
+                        # Colab duplicate pre-roll: the real speech starts exactly after the virtual warmup pad (200ms)
+                        ctx.start_audio_offset_ms = DEFAULT_VAD_PRE_ROLL_MS
+                        ctx.buffer_start_time_ms = file_start_ms
+                else:
+                    append_start = max(
+                        0, global_start_ms - DEFAULT_VAD_PRE_ROLL_MS
+                    )
                     ctx.start_audio_offset_ms = append_start
                     ctx.buffer_start_time_ms = file_start_ms + append_start
             else:
