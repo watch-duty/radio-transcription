@@ -114,7 +114,9 @@ class TestPollTuningJob(unittest.TestCase):
 
     @unittest.mock.patch("common.vertex.genai")
     def test_poll_raises_on_failed_state(self, mock_genai):
-        mock_genai.Client.return_value = _make_mock_client(state="JOB_STATE_FAILED")
+        mock_genai.Client.return_value = _make_mock_client(
+            state="JOB_STATE_FAILED"
+        )
         from common.vertex import poll_tuning_job
 
         with self.assertRaises(RuntimeError):
@@ -126,7 +128,9 @@ class TestPollTuningJob(unittest.TestCase):
 
     @unittest.mock.patch("common.vertex.genai")
     def test_poll_raises_on_cancelled_state(self, mock_genai):
-        mock_genai.Client.return_value = _make_mock_client(state="JOB_STATE_CANCELLED")
+        mock_genai.Client.return_value = _make_mock_client(
+            state="JOB_STATE_CANCELLED"
+        )
         from common.vertex import poll_tuning_job
 
         with self.assertRaises(RuntimeError):
