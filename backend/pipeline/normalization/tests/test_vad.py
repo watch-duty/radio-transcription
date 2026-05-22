@@ -220,10 +220,10 @@ class TestVadEngine(unittest.TestCase):
         )
 
     @unittest.expectedFailure
-    def test_integration_middlebury_quiet_loud_file(self) -> None:
-        """Integration test to verify VAD performance on the quiet/loud multi-segment test file."""
+    def test_integration_quiet_vocals_loud_transient(self) -> None:
+        """Integration test to verify VAD performance on quiet vocals followed by a loud transient spike."""
         self._run_integration_test(
-            "Middlebury_Regional_EMS_20260522_115720.mp3",
+            "test_quiet_vocals_loud_transient.mp3",
             [
                 (0.213, 0.8),
                 (2.037, 3.869),
