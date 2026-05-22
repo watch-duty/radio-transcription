@@ -647,6 +647,19 @@ export function TranscriptView({
     setHighlightedTransmissionId(transmissionId);
   };
 
+  const handleFilterByDateTime = (date: Date | null) => {
+    setTimestamp(date);
+    setSearchedTimestamp(date);
+    setSearchParams((prev) => {
+      if (date) {
+        prev.set('timestamp', date.getTime().toString());
+      } else {
+        prev.delete('timestamp');
+      }
+      return prev;
+    });
+  };
+
   if (!token) {
     return null;
   }
@@ -678,7 +691,7 @@ export function TranscriptView({
         />
 
         <DateTimePicker
-          label="Timestamp (optional)"
+          label="Date/time"
           dateTime={timestamp}
           setDateTime={setTimestamp}
           width="15%"
@@ -773,8 +786,12 @@ export function TranscriptView({
         {transcripts.length > 0 ? (
           <>
             <TranscriptActionsBar
+              hasNewerTranscripts={hasNewerTranscripts}
               redactTranscripts={redactTranscripts}
               setRedactTranscripts={setRedactTranscripts}
+              dateTime={searchedTimestamp}
+              setDateTime={handleFilterByDateTime}
+              onClickViewLatest={() => handleFilterByDateTime(null)}
             />
             <TranscriptDisplay
               ref={virtuosoRef}

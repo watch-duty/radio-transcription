@@ -1,3 +1,4 @@
+import type { SourceType } from '@transcription/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FeedsController } from './feedsController.js';
@@ -311,8 +312,24 @@ describe('FeedsController', () => {
       expect(url).toBeUndefined();
     });
 
+    it('fire_notifications produces undefined', async () => {
+      const url = await listFeedsWithSourceType(
+        'fire_notifications',
+        'some-id'
+      );
+      expect(url).toBeUndefined();
+    });
+
     it('produces undefined when sourceFeedId is absent', async () => {
       const url = await listFeedsWithSourceType('bcfy_feeds', undefined);
+      expect(url).toBeUndefined();
+    });
+
+    it('returns undefined for unknown source type', async () => {
+      const url = await listFeedsWithSourceType(
+        'unknown' as SourceType,
+        'some-id'
+      );
       expect(url).toBeUndefined();
     });
   });
@@ -357,8 +374,18 @@ describe('FeedsController', () => {
       expect(url).toBeUndefined();
     });
 
+    it('fire_notifications produces undefined', async () => {
+      const url = await listFeedsArchiveUrl('fire_notifications', 'some-id');
+      expect(url).toBeUndefined();
+    });
+
     it('produces undefined when sourceFeedId is absent', async () => {
       const url = await listFeedsArchiveUrl('bcfy_feeds', undefined);
+      expect(url).toBeUndefined();
+    });
+
+    it('returns undefined for unknown source type', async () => {
+      const url = await listFeedsArchiveUrl('unknown' as SourceType, 'some-id');
       expect(url).toBeUndefined();
     });
   });
