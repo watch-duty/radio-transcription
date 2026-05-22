@@ -229,8 +229,6 @@ async def _process_file_list(
         processed_uuids.append(file_uuid)
 
 
-
-
 async def fire_notifications_collector(
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
