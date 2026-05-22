@@ -776,16 +776,6 @@ export function TranscriptView({
             onChange={(e) => {
               const newFilter = e.target.value as AlertFilter;
               setAlertFilter(newFilter);
-              if (transcripts.length > 0) {
-                const newTs = new Date(transcripts[0].startTimestamp);
-                setTimestamp(newTs);
-                setSearchedTimestamp(newTs);
-                setSearchParams((prev) => {
-                  const next = new URLSearchParams(prev);
-                  next.set('timestamp', newTs.getTime().toString());
-                  return next;
-                });
-              }
             }}
             displayEmpty
             inputProps={{ 'aria-label': 'Transcript Filter' }}

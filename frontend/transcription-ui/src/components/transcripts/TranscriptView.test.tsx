@@ -1035,9 +1035,8 @@ describe('TranscriptView', () => {
     });
   });
 
-  it('preserves the timeline and sets timestamp in search params when toggling alerts filter', async () => {
+  it('does not set timestamp in query/params when toggling alerts filter', async () => {
     const testTimestampString = '2026-04-10T12:00:00Z';
-    const testTimestampMs = new Date(testTimestampString).getTime();
     const initialTranscripts = [
       {
         feedId: 'feed123',
@@ -1087,7 +1086,7 @@ describe('TranscriptView', () => {
     });
     fireEvent.click(optionElement);
 
-    // React query should refetch transcripts using the isAlert filter and the timestamp of the first loaded transcript
+    // React query should refetch transcripts using the isAlert filter and undefined for timestamps
     await waitFor(() => {
       expect(listTranscripts).toHaveBeenCalledTimes(2);
       expect(listTranscripts).toHaveBeenLastCalledWith(
@@ -1096,7 +1095,7 @@ describe('TranscriptView', () => {
         undefined,
         undefined,
         undefined,
-        testTimestampMs,
+        undefined,
         'desc',
         true
       );
