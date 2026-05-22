@@ -29,6 +29,7 @@ SELECT
     ) AS annotations
 FROM audio_segments s
 LEFT JOIN annotations a ON s.id = a.audio_segment_id
+WHERE $1::uuid[] IS NULL OR s.feed_id = ANY($1)
 GROUP BY s.id
 """
 

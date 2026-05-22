@@ -42,7 +42,6 @@ class TranscriptAnnotation(BaseModel):
     type: Literal[AnnotationType.TRANSCRIPT] = AnnotationType.TRANSCRIPT
     data: TranscriptAnnotationData
     created_at: datetime
-    updated_at: datetime
 
 
 class EvaluationAnnotation(BaseModel):
@@ -52,7 +51,6 @@ class EvaluationAnnotation(BaseModel):
     type: Literal[AnnotationType.EVALUATION] = AnnotationType.EVALUATION
     data: EvaluationAnnotationData
     created_at: datetime
-    updated_at: datetime
 
 
 Annotation = Annotated[

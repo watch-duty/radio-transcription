@@ -15,6 +15,7 @@ from backend.pipeline.storage.feed_store import (
     HeartbeatResult,
     SourceType,
 )
+from backend.pipeline.storage.tests.connection_util import make_mock_pool
 
 _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 _FEED_ID_B = uuid.UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
@@ -32,26 +33,12 @@ _LEASE_ROW = {
 }
 
 
-def _make_pool(
-    *,
-    fetchrow_result: dict | None = None,
-    execute_result: str = "UPDATE 0",
-    fetch_result: list | None = None,
-) -> mock.AsyncMock:
-    """Create a mock asyncpg.Pool with the given return values."""
-    pool = mock.AsyncMock()
-    pool.fetchrow.return_value = fetchrow_result
-    pool.execute.return_value = execute_result
-    pool.fetch.return_value = fetch_result or []
-    return pool
-
-
 class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.update_feed_progress."""
 
     async def test_returns_true_when_lease_held(self) -> None:
         """True is returned when the fenced update succeeds."""
-        pool = _make_pool(execute_result="UPDATE 1")
+        pool = make_mock_pool(execute_result="UPDATE 1")
         store = FeedStore(pool)
 
         result = await store.update_feed_progress(
@@ -66,7 +53,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
 
     async def test_returns_false_when_lease_lost(self) -> None:
         """False is returned when no row matches (lease was lost)."""
-        pool = _make_pool(execute_result="UPDATE 0")
+        pool = make_mock_pool(execute_result="UPDATE 0")
         store = FeedStore(pool)
 
         result = await store.update_feed_progress(
@@ -81,7 +68,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
 
     async def test_passes_correct_parameters(self) -> None:
         """Parameters are passed in the correct order."""
-        pool = _make_pool(execute_result="UPDATE 1")
+        pool = make_mock_pool(execute_result="UPDATE 1")
         store = FeedStore(pool)
         gcs_path = "gs://bucket/path/file.ogg"
 
@@ -94,7 +81,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
 
     async def test_passes_non_none_last_bookmark_time(self) -> None:
         """Non-None last_bookmark_time is forwarded as the 5th SQL parameter."""
-        pool = _make_pool(execute_result="UPDATE 1")
+        pool = make_mock_pool(execute_result="UPDATE 1")
         store = FeedStore(pool)
         gcs_path = "gs://bucket/path/file.ogg"
         last_bookmark_time = datetime.datetime(
@@ -123,7 +110,7 @@ class TestRenewHeartbeatsBatchDiagnostic(unittest.IsolatedAsyncioTestCase):
     async def test_returns_diagnostic_results(self) -> None:
         """Returned list contains HeartbeatResult dicts with diagnostic info."""
         other_worker = uuid.UUID("22222222-3333-4444-5555-666666666666")
-        pool = _make_pool(
+        pool = make_mock_pool(
             fetch_result=[
                 {
                     "id": _FEED_ID,
@@ -178,7 +165,7 @@ class TestRenewHeartbeatsBatchDiagnostic(unittest.IsolatedAsyncioTestCase):
 
     async def test_passes_correct_parameters(self) -> None:
         """Parameters are passed as (feed_ids_list, worker_id)."""
-        pool = _make_pool(
+        pool = make_mock_pool(
             fetch_result=[
                 {
                     "id": _FEED_ID,
@@ -198,7 +185,7 @@ class TestRenewHeartbeatsBatchDiagnostic(unittest.IsolatedAsyncioTestCase):
 
     async def test_mixed_renewed_and_unrenewed(self) -> None:
         """Results correctly distinguish renewed vs unrenewed feeds."""
-        pool = _make_pool(
+        pool = make_mock_pool(
             fetch_result=[
                 {
                     "id": _FEED_ID,
@@ -234,7 +221,7 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
 
     async def test_returns_status_when_lease_held(self) -> None:
         """Status string is returned when the RETURNING row is present."""
-        pool = _make_pool(
+        pool = make_mock_pool(
             fetchrow_result={
                 "status": "failing",
                 "failure_count": 1,
@@ -249,7 +236,7 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
 
     async def test_returns_none_when_lease_lost(self) -> None:
         """None is returned when RETURNING yields no row."""
-        pool = _make_pool(fetchrow_result=None)
+        pool = make_mock_pool(fetchrow_result=None)
         store = FeedStore(pool)
 
         result = await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
@@ -258,7 +245,7 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
 
     async def test_returns_quarantined_status(self) -> None:
         """Quarantined status string is returned at threshold."""
-        pool = _make_pool(
+        pool = make_mock_pool(
             fetchrow_result={
                 "status": "quarantined",
                 "failure_count": 5,
@@ -273,7 +260,7 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
 
     async def test_passes_correct_parameters(self) -> None:
         """Parameters are passed in the correct order to the atomic SQL."""
-        pool = _make_pool(
+        pool = make_mock_pool(
             fetchrow_result={
                 "status": "failing",
                 "failure_count": 1,
@@ -300,7 +287,7 @@ class TestReleaseFeed(unittest.IsolatedAsyncioTestCase):
 
     async def test_returns_true_when_lease_held(self) -> None:
         """True is returned when the feed was released."""
-        pool = _make_pool(execute_result="UPDATE 1")
+        pool = make_mock_pool(execute_result="UPDATE 1")
         store = FeedStore(pool)
 
         result = await store.release_feed(_FEED_ID, _WORKER_ID, 1)
@@ -309,7 +296,7 @@ class TestReleaseFeed(unittest.IsolatedAsyncioTestCase):
 
     async def test_returns_false_when_lease_lost(self) -> None:
         """False is returned when the lease was already lost."""
-        pool = _make_pool(execute_result="UPDATE 0")
+        pool = make_mock_pool(execute_result="UPDATE 0")
         store = FeedStore(pool)
 
         result = await store.release_feed(_FEED_ID, _WORKER_ID, 1)
@@ -318,7 +305,7 @@ class TestReleaseFeed(unittest.IsolatedAsyncioTestCase):
 
     async def test_passes_correct_parameters(self) -> None:
         """Parameters are passed in the correct order."""
-        pool = _make_pool(execute_result="UPDATE 1")
+        pool = make_mock_pool(execute_result="UPDATE 1")
         store = FeedStore(pool)
 
         await store.release_feed(_FEED_ID, _WORKER_ID, 1)
@@ -361,7 +348,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
                 "source_feed_id": None,
             },
         ]
-        pool = _make_pool(fetch_result=rows)
+        pool = make_mock_pool(fetch_result=rows)
         store = FeedStore(pool)
 
         result = await store.acquire_feeds_batch(_WORKER_ID, _DEFAULT_LIMITS)
@@ -372,7 +359,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
 
     async def test_returns_empty_list_when_none_available(self) -> None:
         """Empty list returned when no feeds can be leased."""
-        pool = _make_pool(fetch_result=[])
+        pool = make_mock_pool(fetch_result=[])
         store = FeedStore(pool)
 
         result = await store.acquire_feeds_batch(_WORKER_ID, _DEFAULT_LIMITS)
@@ -381,7 +368,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
 
     async def test_passes_positional_in_claim_types_order(self) -> None:
         """Limits dict is unpacked in claim_types iteration order."""
-        pool = _make_pool(fetch_result=[])
+        pool = make_mock_pool(fetch_result=[])
         store = FeedStore(
             pool,
             claim_types=[
@@ -411,7 +398,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
 
     async def test_per_type_limit_zero_is_passed_through(self) -> None:
         """A branch's LIMIT of 0 reaches the SQL — DB enforces the skip."""
-        pool = _make_pool(fetch_result=[])
+        pool = make_mock_pool(fetch_result=[])
         store = FeedStore(
             pool,
             claim_types=[
@@ -435,7 +422,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
 
     async def test_absent_limit_key_treated_as_zero(self) -> None:
         """Types absent from limits dict pass 0 to the SQL — same effect as LIMIT 0."""
-        pool = _make_pool(fetch_result=[])
+        pool = make_mock_pool(fetch_result=[])
         store = FeedStore(
             pool,
             claim_types=[
@@ -457,7 +444,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
 
     async def test_raises_on_unknown_limit_key(self) -> None:
         """A SourceType not in claim_types raises ValueError."""
-        pool = _make_pool(fetch_result=[])
+        pool = make_mock_pool(fetch_result=[])
         # Default claim_types = SourceType minus ECHO. Construct a store
         # that only claims BCFY_FEEDS so OPENMHZ is unknown.
         store = FeedStore(pool, claim_types=[SourceType.BCFY_FEEDS])
@@ -479,7 +466,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
             "fencing_token": 1,
             "source_feed_id": None,
         }
-        pool = _make_pool(fetch_result=[bad_row])
+        pool = make_mock_pool(fetch_result=[bad_row])
         store = FeedStore(pool)
 
         with self.assertRaises(ValueError) as ctx:
@@ -632,7 +619,7 @@ class TestReportFeedFailureWithThreshold(unittest.IsolatedAsyncioTestCase):
 
     async def test_custom_threshold_passed_to_sql(self) -> None:
         """Custom failure_threshold is passed as $3 parameter."""
-        pool = _make_pool(
+        pool = make_mock_pool(
             fetchrow_result={
                 "status": "failing",
                 "failure_count": 1,
@@ -650,7 +637,7 @@ class TestReportFeedFailureWithThreshold(unittest.IsolatedAsyncioTestCase):
 
     async def test_default_threshold_is_5(self) -> None:
         """Default threshold is 5."""
-        pool = _make_pool(
+        pool = make_mock_pool(
             fetchrow_result={
                 "status": "failing",
                 "failure_count": 1,
@@ -691,7 +678,7 @@ class TestRowToLeasedFeed(unittest.TestCase):
     """Tests for the shared row-to-LeasedFeed mapping helper."""
 
     def test_returns_leased_feed_from_valid_row(self) -> None:
-        store = FeedStore(_make_pool())
+        store = FeedStore(make_mock_pool())
 
         # asyncpg.Record exposes __getitem__ like a dict; tests pass a
         # dict literal that quacks like Record. Cast tells the type
@@ -705,7 +692,7 @@ class TestRowToLeasedFeed(unittest.TestCase):
 
     def test_invalid_source_type_raises(self) -> None:
         bad_row = {**_LEASE_ROW, "source_type": "not_a_real_type"}
-        store = FeedStore(_make_pool())
+        store = FeedStore(make_mock_pool())
 
         with self.assertRaises(ValueError) as context:
             store._row_to_leased_feed(cast("asyncpg.Record", bad_row))
@@ -720,7 +707,7 @@ class TestAcquireFeedsRecovery(unittest.IsolatedAsyncioTestCase):
 
     async def test_all_zero_limits_skip_pool(self) -> None:
         """All-zero limits dict returns [] without touching the pool."""
-        pool = _make_pool()
+        pool = make_mock_pool()
         store = FeedStore(pool)
 
         # Build an all-zero dict over the store's claim_types only —
@@ -734,7 +721,7 @@ class TestAcquireFeedsRecovery(unittest.IsolatedAsyncioTestCase):
 
     async def test_empty_limits_dict_skips_pool(self) -> None:
         """Empty limits dict returns [] without touching the pool."""
-        pool = _make_pool()
+        pool = make_mock_pool()
         store = FeedStore(pool)
 
         result = await store.acquire_feeds_recovery(_WORKER_ID, 60.0, {})
@@ -744,7 +731,7 @@ class TestAcquireFeedsRecovery(unittest.IsolatedAsyncioTestCase):
 
     async def test_passes_positional_in_claim_types_order(self) -> None:
         """worker_id, abandonment_interval, then per-type LIMITs in claim_types order."""
-        pool = _make_pool(fetch_result=[])
+        pool = make_mock_pool(fetch_result=[])
         store = FeedStore(
             pool,
             claim_types=[
@@ -775,7 +762,7 @@ class TestAcquireFeedsRecovery(unittest.IsolatedAsyncioTestCase):
 
     async def test_absent_limit_key_treated_as_zero(self) -> None:
         """Types absent from limits dict pass 0 to the SQL."""
-        pool = _make_pool(fetch_result=[])
+        pool = make_mock_pool(fetch_result=[])
         store = FeedStore(
             pool,
             claim_types=[
@@ -798,7 +785,7 @@ class TestAcquireFeedsRecovery(unittest.IsolatedAsyncioTestCase):
 
     async def test_raises_on_unknown_limit_key(self) -> None:
         """A SourceType not in claim_types raises ValueError."""
-        pool = _make_pool(fetch_result=[])
+        pool = make_mock_pool(fetch_result=[])
         store = FeedStore(pool, claim_types=[SourceType.BCFY_FEEDS])
 
         with self.assertRaises(ValueError) as ctx:
@@ -811,7 +798,7 @@ class TestAcquireFeedsRecovery(unittest.IsolatedAsyncioTestCase):
 
     async def test_returns_leased_feeds(self) -> None:
         """Rows are converted to LeasedFeed dicts via the shared helper."""
-        pool = _make_pool(fetch_result=[_LEASE_ROW])
+        pool = make_mock_pool(fetch_result=[_LEASE_ROW])
         store = FeedStore(pool)
 
         result = await store.acquire_feeds_recovery(
@@ -889,7 +876,7 @@ class TestCountHeldByType(unittest.IsolatedAsyncioTestCase):
 
     async def test_returns_counts_for_returned_source_types(self) -> None:
         """Returned rows populate the corresponding SourceType keys."""
-        pool = _make_pool(
+        pool = make_mock_pool(
             fetch_result=[
                 {"source_type": "bcfy_feeds", "n": 12},
                 {"source_type": "bcfy_calls", "n": 7},
@@ -904,7 +891,7 @@ class TestCountHeldByType(unittest.IsolatedAsyncioTestCase):
 
     async def test_returns_zeros_for_absent_source_types(self) -> None:
         """Every SourceType key is present in output, even if not in rows."""
-        pool = _make_pool(
+        pool = make_mock_pool(
             fetch_result=[
                 {"source_type": "bcfy_feeds", "n": 3},
             ],
@@ -923,7 +910,7 @@ class TestCountHeldByType(unittest.IsolatedAsyncioTestCase):
 
     async def test_skips_unknown_source_type_rows(self) -> None:
         """Bogus source_type strings are silently skipped, not raised."""
-        pool = _make_pool(
+        pool = make_mock_pool(
             fetch_result=[
                 {"source_type": "bcfy_feeds", "n": 4},
                 {"source_type": "future_type_not_in_enum", "n": 99},
@@ -941,7 +928,7 @@ class TestCountHeldByType(unittest.IsolatedAsyncioTestCase):
 
     async def test_empty_db_result_returns_all_zeros(self) -> None:
         """No rows → dict has every SourceType mapped to 0."""
-        pool = _make_pool(fetch_result=[])
+        pool = make_mock_pool(fetch_result=[])
         store = FeedStore(pool)
 
         result = await store.count_held_by_type(_WORKER_ID)
@@ -951,7 +938,7 @@ class TestCountHeldByType(unittest.IsolatedAsyncioTestCase):
 
     async def test_passes_worker_id_as_param(self) -> None:
         """Worker ID is forwarded as the only SQL parameter."""
-        pool = _make_pool(fetch_result=[])
+        pool = make_mock_pool(fetch_result=[])
         store = FeedStore(pool)
 
         await store.count_held_by_type(_WORKER_ID)
@@ -965,7 +952,7 @@ class TestReleaseFeedsBatch(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.release_feeds_batch."""
 
     async def test_passes_worker_id(self) -> None:
-        pool = _make_pool(execute_result="UPDATE 2")
+        pool = make_mock_pool(execute_result="UPDATE 2")
         store = FeedStore(pool)
 
         result = await store.release_feeds_batch(_WORKER_ID)
@@ -976,7 +963,7 @@ class TestReleaseFeedsBatch(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[1], _WORKER_ID)
 
     async def test_parses_update_count(self) -> None:
-        pool = _make_pool(execute_result="UPDATE 7")
+        pool = make_mock_pool(execute_result="UPDATE 7")
         store = FeedStore(pool)
 
         result = await store.release_feeds_batch(_WORKER_ID)
@@ -984,7 +971,7 @@ class TestReleaseFeedsBatch(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, 7)
 
     async def test_returns_zero_for_unparseable_result(self) -> None:
-        pool = _make_pool(execute_result="ROLLBACK")
+        pool = make_mock_pool(execute_result="ROLLBACK")
         store = FeedStore(pool)
 
         result = await store.release_feeds_batch(_WORKER_ID)
@@ -1011,7 +998,7 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
             "source_feed_id": "123",
             "external_id": "ext_123",
         }
-        pool = _make_pool(fetchrow_result=row)
+        pool = make_mock_pool(fetchrow_result=row)
         store = FeedStore(pool)
 
         result = await store.create_feed(
@@ -1039,7 +1026,7 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
             "external_id": "ext_123",
             "tags": '[{"key": "env", "value": "prod"}]',
         }
-        pool = _make_pool(fetchrow_result=row)
+        pool = make_mock_pool(fetchrow_result=row)
         store = FeedStore(pool)
 
         tags = [{"key": "env", "value": "prod"}]
@@ -1053,7 +1040,7 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
 
     async def test_create_feed_invalid_tags(self) -> None:
         """CheckViolationError is raised when DB constraint fails for invalid tags."""
-        pool = _make_pool()
+        pool = make_mock_pool()
         pool.fetchrow.side_effect = asyncpg.CheckViolationError(
             "valid_tags_schema"
         )
@@ -1067,7 +1054,7 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
 
     async def test_raises_value_error_on_failure(self) -> None:
         """ValueError is raised if the DB returns no row."""
-        pool = _make_pool(fetchrow_result=None)
+        pool = make_mock_pool(fetchrow_result=None)
         store = FeedStore(pool)
 
         with self.assertRaises(ValueError):
@@ -1075,7 +1062,7 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
 
     async def test_create_feed_invalid_source_type(self) -> None:
         """ValueError is raised when an invalid source type is passed."""
-        pool = _make_pool()
+        pool = make_mock_pool()
         store = FeedStore(pool)
 
         with self.assertRaises(ValueError) as cm:
@@ -1107,7 +1094,7 @@ class TestGetFeed(unittest.IsolatedAsyncioTestCase):
             "source_feed_id": "123",
             "external_id": "ext_123",
         }
-        pool = _make_pool(fetchrow_result=row)
+        pool = make_mock_pool(fetchrow_result=row)
         store = FeedStore(pool)
 
         result = await store.get_feed(_FEED_ID)
@@ -1132,7 +1119,7 @@ class TestGetFeed(unittest.IsolatedAsyncioTestCase):
             "external_id": "ext_123",
             "tags": '[{"key": "county", "value": "Fulton"}]',
         }
-        pool = _make_pool(fetchrow_result=row)
+        pool = make_mock_pool(fetchrow_result=row)
         store = FeedStore(pool)
 
         result = await store.get_feed(_FEED_ID)
@@ -1142,7 +1129,7 @@ class TestGetFeed(unittest.IsolatedAsyncioTestCase):
 
     async def test_returns_none_when_not_exists(self) -> None:
         """None is returned when the feed does not exist."""
-        pool = _make_pool(fetchrow_result=None)
+        pool = make_mock_pool(fetchrow_result=None)
         store = FeedStore(pool)
 
         result = await store.get_feed(_FEED_ID)
@@ -1191,7 +1178,7 @@ class TestListFeeds(unittest.IsolatedAsyncioTestCase):
                 "external_id": "ext_456",
             },
         ]
-        pool = _make_pool(fetch_result=rows)
+        pool = make_mock_pool(fetch_result=rows)
         store = FeedStore(pool)
 
         result = await store.list_feeds()
@@ -1222,7 +1209,7 @@ class TestListFeeds(unittest.IsolatedAsyncioTestCase):
                 "tags": '[{"key": "county", "value": "Fulton"}]',
             },
         ]
-        pool = _make_pool(fetch_result=rows)
+        pool = make_mock_pool(fetch_result=rows)
         store = FeedStore(pool)
 
         result = await store.list_feeds()
@@ -1238,7 +1225,7 @@ class TestDeactivateFeed(unittest.IsolatedAsyncioTestCase):
 
     async def test_delete_succeeds(self) -> None:
         """True is returned when a feed is deactivated."""
-        pool = _make_pool(execute_result="UPDATE 1")
+        pool = make_mock_pool(execute_result="UPDATE 1")
         store = FeedStore(pool)
 
         result = await store.deactivate_feed(_FEED_ID)
@@ -1250,7 +1237,7 @@ class TestDeactivateFeed(unittest.IsolatedAsyncioTestCase):
 
     async def test_delete_fails_when_not_found(self) -> None:
         """False is returned when no feed is deactivated."""
-        pool = _make_pool(execute_result="UPDATE 0")
+        pool = make_mock_pool(execute_result="UPDATE 0")
         store = FeedStore(pool)
 
         result = await store.deactivate_feed(_FEED_ID)
@@ -1277,7 +1264,7 @@ class TestResetFeed(unittest.IsolatedAsyncioTestCase):
             "source_feed_id": "123",
             "external_id": "ext_123",
         }
-        pool = _make_pool(fetchrow_result=row)
+        pool = make_mock_pool(fetchrow_result=row)
         store = FeedStore(pool)
 
         result = await store.reset_feed(_FEED_ID)
@@ -1289,7 +1276,7 @@ class TestResetFeed(unittest.IsolatedAsyncioTestCase):
 
     async def test_reset_fails_when_not_found(self) -> None:
         """None is returned when no feed is found."""
-        pool = _make_pool(fetchrow_result=None)
+        pool = make_mock_pool(fetchrow_result=None)
         store = FeedStore(pool)
 
         result = await store.reset_feed(_FEED_ID)
