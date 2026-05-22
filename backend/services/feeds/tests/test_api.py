@@ -6,6 +6,7 @@ from fastapi import status
 from fastapi.testclient import TestClient
 
 from backend.pipeline.common.auth import verify_oidc_token
+from backend.pipeline.common.exceptions import FeedAlreadyExistsError
 from backend.pipeline.storage.feed_store import FeedStatus, SourceType
 from backend.services.feeds.main import app
 from backend.services.feeds.models import Feed, Tag
@@ -54,6 +55,27 @@ class TestFeedsAPI(unittest.TestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         data = response.json()
         self.assertEqual(data["id"], str(feed_id))
+        self.mock_service.create_feed.assert_called_once()
+
+    def test_create_feed_already_exists(self) -> None:
+        """Test creating a feed that already exists returns 409."""
+        payload = {
+            "name": "Test Feed",
+            "source_type": "bcfy_feeds",
+            "source_feed_id": "123",
+            "external_id": "ext_123",
+        }
+        self.mock_service.create_feed.side_effect = FeedAlreadyExistsError(
+            "bcfy_feeds", "123"
+        )
+
+        response = self.client.post("/v1/feeds", json=payload)
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertIn(
+            "Feed with source type 'bcfy_feeds' and source feed ID '123' already exists",
+            response.json()["detail"],
+        )
         self.mock_service.create_feed.assert_called_once()
 
     def test_create_feed_validation_error(self) -> None:
