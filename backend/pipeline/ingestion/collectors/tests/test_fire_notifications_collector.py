@@ -229,20 +229,19 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
             },
         ]
 
-        chunks = []
-        async for chunk in collector._process_file_list(
-            files,
-            self.session,
-            self.shutdown,
-            "session-id",
-            self.feed,  # type: ignore
-            self.processed_uuids,
-            "CHAN",
-            "http://mock-s3-bucket",
-        ):
-            chunks.append(chunk)
+        with self.assertRaises(collector.DownloadFailedError):
+            async for _ in collector._process_file_list(
+                files,
+                self.session,
+                self.shutdown,
+                "session-id",
+                self.feed,  # type: ignore
+                self.processed_uuids,
+                "CHAN",
+                "http://mock-s3-bucket",
+            ):
+                pass
 
-        self.assertEqual(len(chunks), 0)
         self.assertEqual(len(self.processed_uuids), 0)
         self.assertNotIn("uuid1", self.processed_uuids)
 

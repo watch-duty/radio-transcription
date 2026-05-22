@@ -32,6 +32,14 @@ _POLL_INTERVAL_SEC = 30.0
 _MAX_CONSECUTIVE_FAILURES = 10
 
 
+class DownloadFailedError(Exception):
+    """Raised when an audio download fails after retries."""
+
+    def __init__(self, file_uuid: str) -> None:
+        msg = f"Failed to download audio file: {file_uuid}"
+        super().__init__(msg)
+
+
 async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
     """Sleep for *seconds*, returning ``True`` if interrupted by shutdown."""
     try:
@@ -185,8 +193,8 @@ async def _process_file_list(
                         },
                     },
                 )
+                raise DownloadFailedError(file_uuid)
             continue
-
         try:
             # to_thread: get_audio_duration shells out to ffprobe — keep it off the event loop.
             duration_ms = await asyncio.to_thread(get_audio_duration, mp3_bytes)
@@ -221,6 +229,8 @@ async def _process_file_list(
         processed_uuids.append(file_uuid)
 
 
+
+
 async def fire_notifications_collector(
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
@@ -245,8 +255,7 @@ async def fire_notifications_collector(
 
     # source_feed_id is e.g. RECORDINGS/SAN-JOSE-DISP
     # Ensure no double slashes if url_base ends with /
-    if not url_base.endswith("/"):
-        url_base += "/"
+    url_base = url_base.rstrip("/") + "/"
     poll_url = f"{url_base}{source_feed_id}"
 
     # Track UUIDs we've already ingested to prevent duplicates.
@@ -284,6 +293,8 @@ async def fire_notifications_collector(
                     logger.warning(
                         "FN API returned %d: %s", resp.status_code, poll_url
                     )
+            except DownloadFailedError:
+                raise
             except Exception:
                 logger.warning(
                     "FN API poll error: %s",
