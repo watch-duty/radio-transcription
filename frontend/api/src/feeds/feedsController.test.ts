@@ -313,7 +313,10 @@ describe('FeedsController', () => {
     });
 
     it('fire_notifications produces undefined', async () => {
-      const url = await listFeedsWithSourceType('fire_notifications', 'some-id');
+      const url = await listFeedsWithSourceType(
+        'fire_notifications',
+        'some-id'
+      );
       expect(url).toBeUndefined();
     });
 
@@ -323,7 +326,10 @@ describe('FeedsController', () => {
     });
 
     it('returns undefined for unknown source type', async () => {
-      const url = await listFeedsWithSourceType('unknown' as SourceType, 'some-id');
+      const url = await listFeedsWithSourceType(
+        'unknown' as SourceType,
+        'some-id'
+      );
       expect(url).toBeUndefined();
     });
   });
