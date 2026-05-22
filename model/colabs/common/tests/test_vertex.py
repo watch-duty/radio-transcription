@@ -1,4 +1,9 @@
-"""Tests for common.vertex — no real GCP calls (all genai.Client mocked)."""
+"""Tests for common.vertex — no real GCP calls (all genai.Client mocked).
+
+PR3 splits submit_tuning_job (submit + return job.name) and poll_tuning_job
+(re-fetch by name, poll to terminal, return endpoint). The batch output URI
+bug (cur.dest as object not str) is also fixed in PR3.
+"""
 
 import builtins
 import importlib.util
@@ -27,10 +32,26 @@ def _make_mock_client(
 
 
 class TestSubmitTuningJob(unittest.TestCase):
-    """Tests for common.vertex.submit_tuning_job (PR1 monolithic — submits+polls)."""
+    """Tests for common.vertex.submit_tuning_job (PR3: submit-only, returns job.name)."""
 
     @unittest.mock.patch("common.vertex.genai")
-    def test_returns_endpoint_on_success(self, mock_genai):
+    def test_returns_job_name_not_endpoint(self, mock_genai):
+        """PR3: submit_tuning_job now returns job.name (str), not endpoint."""
+        mock_genai.Client.return_value = _make_mock_client()
+        from common.vertex import submit_tuning_job
+
+        result = submit_tuning_job(
+            train_uri="gs://b/train.jsonl",
+            display_name="test",
+            project="p",
+            location="us-central1",
+        )
+        # Must be job.name ("projects/p/.../tuningJobs/123"), not an endpoint
+        self.assertIn("tuningJobs", result)
+        self.assertNotIn("endpoints", result)
+
+    @unittest.mock.patch("common.vertex.genai")
+    def test_submit_returns_string(self, mock_genai):
         mock_genai.Client.return_value = _make_mock_client()
         from common.vertex import submit_tuning_job
 
@@ -41,22 +62,20 @@ class TestSubmitTuningJob(unittest.TestCase):
             location="us-central1",
         )
         self.assertIsInstance(result, str)
-        self.assertIn("endpoints", result)
 
     @unittest.mock.patch("common.vertex.genai")
-    def test_raises_runtime_error_on_failed_state(self, mock_genai):
-        mock_genai.Client.return_value = _make_mock_client(
-            state="JOB_STATE_FAILED"
-        )
+    def test_submit_does_not_poll(self, mock_genai):
+        """PR3: submit_tuning_job must NOT call tunings.get (no polling)."""
+        mock_genai.Client.return_value = _make_mock_client()
         from common.vertex import submit_tuning_job
 
-        with self.assertRaises(RuntimeError):
-            submit_tuning_job(
-                train_uri="gs://bucket/train.jsonl",
-                display_name="test",
-                project="p",
-                location="us-central1",
-            )
+        submit_tuning_job(
+            train_uri="gs://b/train.jsonl",
+            display_name="test",
+            project="p",
+            location="us-central1",
+        )
+        mock_genai.Client.return_value.tunings.get.assert_not_called()
 
     @unittest.mock.patch("common.vertex.genai")
     def test_wires_validation_dataset_when_val_uri_provided(self, mock_genai):
@@ -75,6 +94,63 @@ class TestSubmitTuningJob(unittest.TestCase):
         cfg = call_kwargs.get("config")
         # validation_dataset must be present in the config
         self.assertIsNotNone(cfg)
+
+
+class TestPollTuningJob(unittest.TestCase):
+    """Tests for common.vertex.poll_tuning_job (new in PR3)."""
+
+    @unittest.mock.patch("common.vertex.genai")
+    def test_poll_returns_endpoint(self, mock_genai):
+        """poll_tuning_job polls and returns endpoint."""
+        mock_genai.Client.return_value = _make_mock_client()
+        from common.vertex import poll_tuning_job
+
+        result = poll_tuning_job(
+            name="projects/p/locations/l/tuningJobs/123",
+            project="p",
+            location="us-central1",
+        )
+        self.assertIn("endpoints", result)
+
+    @unittest.mock.patch("common.vertex.genai")
+    def test_poll_raises_on_failed_state(self, mock_genai):
+        mock_genai.Client.return_value = _make_mock_client(state="JOB_STATE_FAILED")
+        from common.vertex import poll_tuning_job
+
+        with self.assertRaises(RuntimeError):
+            poll_tuning_job(
+                name="projects/p/locations/l/tuningJobs/1",
+                project="p",
+                location="us-central1",
+            )
+
+    @unittest.mock.patch("common.vertex.genai")
+    def test_poll_raises_on_cancelled_state(self, mock_genai):
+        mock_genai.Client.return_value = _make_mock_client(state="JOB_STATE_CANCELLED")
+        from common.vertex import poll_tuning_job
+
+        with self.assertRaises(RuntimeError):
+            poll_tuning_job(
+                name="projects/p/locations/l/tuningJobs/1",
+                project="p",
+                location="us-central1",
+            )
+
+    @unittest.mock.patch("common.vertex.genai")
+    def test_poll_calls_tunings_get(self, mock_genai):
+        """poll_tuning_job must call tunings.get to re-fetch by name."""
+        mock_client = _make_mock_client()
+        mock_genai.Client.return_value = mock_client
+        from common.vertex import poll_tuning_job
+
+        poll_tuning_job(
+            name="projects/p/locations/l/tuningJobs/123",
+            project="p",
+            location="us-central1",
+        )
+        mock_client.tunings.get.assert_called_once_with(
+            name="projects/p/locations/l/tuningJobs/123"
+        )
 
 
 class TestAdapterEnum(unittest.TestCase):
@@ -235,6 +311,61 @@ class TestBuildRequest(unittest.TestCase):
         self.assertEqual(
             result["request"]["generation_config"]["temperature"], 0.5
         )
+
+
+class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
+    """PR3 bug fix: cur.dest.gcs_uri replaces getattr(cur, 'dest', ...)."""
+
+    @unittest.mock.patch("common.vertex.genai")
+    def test_returns_dest_gcs_uri(self, mock_genai):
+        """submit_batch_inference returns cur.dest.gcs_uri, not BatchJobDestination object."""
+        mock_dest = unittest.mock.MagicMock()
+        mock_dest.gcs_uri = "gs://bucket/output/"
+        mock_batch_job = unittest.mock.MagicMock()
+        mock_batch_job.name = "projects/p/locations/l/batchPredictionJobs/1"
+        mock_cur = unittest.mock.MagicMock()
+        mock_cur.state.name = "JOB_STATE_SUCCEEDED"
+        mock_cur.dest = mock_dest
+        mock_client = unittest.mock.MagicMock()
+        mock_client.batches.create.return_value = mock_batch_job
+        mock_client.batches.get.return_value = mock_cur
+        mock_genai.Client.return_value = mock_client
+
+        from common.vertex import submit_batch_inference
+
+        result = submit_batch_inference(
+            input_uri="gs://bucket/input.jsonl",
+            output_uri="gs://bucket/output/",
+            model="gemini-2.5-flash",
+            project="p",
+            location="us-central1",
+        )
+        # Must be the string gcs_uri, not the mock object
+        self.assertEqual(result, "gs://bucket/output/")
+
+    @unittest.mock.patch("common.vertex.genai")
+    def test_falls_back_to_output_uri_when_dest_is_none(self, mock_genai):
+        """submit_batch_inference uses output_uri fallback when cur.dest is None."""
+        mock_batch_job = unittest.mock.MagicMock()
+        mock_batch_job.name = "projects/p/locations/l/batchPredictionJobs/1"
+        mock_cur = unittest.mock.MagicMock()
+        mock_cur.state.name = "JOB_STATE_SUCCEEDED"
+        mock_cur.dest = None
+        mock_client = unittest.mock.MagicMock()
+        mock_client.batches.create.return_value = mock_batch_job
+        mock_client.batches.get.return_value = mock_cur
+        mock_genai.Client.return_value = mock_client
+
+        from common.vertex import submit_batch_inference
+
+        result = submit_batch_inference(
+            input_uri="gs://bucket/input.jsonl",
+            output_uri="gs://bucket/fallback/",
+            model="gemini-2.5-flash",
+            project="p",
+            location="us-central1",
+        )
+        self.assertEqual(result, "gs://bucket/fallback/")
 
 
 if __name__ == "__main__":
