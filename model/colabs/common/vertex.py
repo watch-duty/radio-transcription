@@ -22,6 +22,62 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Canonical Gemini transcription inference setup — shared by the SFT pipeline ``_eval``
+# stage and the ``gemini_transcribe_audio`` eval notebook (single source, prevents drift).
+# Plain stdlib dicts/lists only, defined BEFORE the google-genai guard so they import
+# without the [vertex] extra.
+GEMINI_GENERATION_CONFIG = {"temperature": 0.0, "max_output_tokens": 512}
+
+GEMINI_SAFETY_SETTINGS = [
+    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+]
+
+
+def build_request(
+    audio_uri: str,
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    generation_config: dict = GEMINI_GENERATION_CONFIG,
+    safety_settings: list = GEMINI_SAFETY_SETTINGS,
+) -> dict:
+    """Build the canonical Vertex batch-inference request dict for one audio segment.
+
+    Returns the plain-dict batch request consumed by ``submit_batch_inference`` and the
+    Gemini batch API — the single shape used by both the SFT pipeline ``_eval`` stage and
+    the ``gemini_transcribe_audio`` notebook. ``generation_config`` is ``.copy()``-ed so a
+    caller mutating the result never touches the module-level default. Pure dict
+    construction — does not require the ``[vertex]`` extra.
+    """
+    return {
+        "request": {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "file_data": {
+                                "file_uri": audio_uri,
+                                "mime_type": "audio/flac",
+                            }
+                        },
+                        {"text": user_prompt},
+                    ],
+                }
+            ],
+            "system_instruction": {
+                "role": "system",
+                "parts": [{"text": system_prompt.strip()}],
+            },
+            "generation_config": generation_config.copy(),
+            "safety_settings": safety_settings,
+        }
+    }
+
+
 try:
     from google import genai
     from google.genai import types

@@ -105,5 +105,96 @@ class TestImportGuard(unittest.TestCase):
             vmod._VERTEX_MISSING = orig
 
 
+class TestBuildRequest(unittest.TestCase):
+    """Tests for common.vertex.build_request — no GCP calls, pure dict construction."""
+
+    def setUp(self):
+        from common.vertex import (
+            GEMINI_GENERATION_CONFIG,
+            GEMINI_SAFETY_SETTINGS,
+            build_request,
+        )
+
+        self.build_request = build_request
+        self.default_gen_config = GEMINI_GENERATION_CONFIG
+        self.default_safety = GEMINI_SAFETY_SETTINGS
+
+    def test_return_shape(self):
+        """build_request returns the canonical nested dict shape."""
+        result = self.build_request(
+            "gs://bucket/audio.flac",
+            system_prompt="System.",
+            user_prompt="Transcribe.",
+        )
+        req = result["request"]
+        self.assertIn("contents", req)
+        self.assertIn("system_instruction", req)
+        self.assertIn("generation_config", req)
+        self.assertIn("safety_settings", req)
+        part = req["contents"][0]["parts"][0]
+        self.assertEqual(
+            part["file_data"]["file_uri"], "gs://bucket/audio.flac"
+        )
+        self.assertEqual(part["file_data"]["mime_type"], "audio/flac")
+
+    def test_default_generation_config(self):
+        """Default generation_config has temperature 0.0 and max_output_tokens 512."""
+        result = self.build_request(
+            "gs://bucket/audio.flac",
+            system_prompt="S",
+            user_prompt="U",
+        )
+        gen_cfg = result["request"]["generation_config"]
+        self.assertEqual(gen_cfg["temperature"], 0.0)
+        self.assertEqual(gen_cfg["max_output_tokens"], 512)
+
+    def test_generation_config_is_copied(self):
+        """generation_config.copy() is used — mutating the result leaves the default intact."""
+        result = self.build_request(
+            "gs://bucket/audio.flac",
+            system_prompt="S",
+            user_prompt="U",
+        )
+        result["request"]["generation_config"]["extra_key"] = (
+            "should_not_propagate"
+        )
+        self.assertNotIn("extra_key", self.default_gen_config)
+
+    def test_default_safety_settings_four_block_none(self):
+        """Default safety_settings has 4 BLOCK_NONE entries."""
+        result = self.build_request(
+            "gs://bucket/audio.flac",
+            system_prompt="S",
+            user_prompt="U",
+        )
+        safety = result["request"]["safety_settings"]
+        self.assertEqual(len(safety), 4)
+        for entry in safety:
+            self.assertEqual(entry["threshold"], "BLOCK_NONE")
+
+    def test_system_prompt_stripped(self):
+        """system_prompt is stripped before embedding."""
+        result = self.build_request(
+            "gs://bucket/audio.flac",
+            system_prompt="  Leading space.  ",
+            user_prompt="U",
+        )
+        parts = result["request"]["system_instruction"]["parts"]
+        self.assertEqual(parts[0]["text"], "Leading space.")
+
+    def test_custom_generation_config_override(self):
+        """Caller can pass a custom generation_config."""
+        custom_cfg = {"temperature": 0.5, "max_output_tokens": 256}
+        result = self.build_request(
+            "gs://bucket/audio.flac",
+            system_prompt="S",
+            user_prompt="U",
+            generation_config=custom_cfg,
+        )
+        self.assertEqual(
+            result["request"]["generation_config"]["temperature"], 0.5
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
