@@ -312,6 +312,11 @@ describe('FeedsController', () => {
       expect(url).toBeUndefined();
     });
 
+    it('fire_notifications produces undefined', async () => {
+      const url = await listFeedsWithSourceType('fire_notifications', 'some-id');
+      expect(url).toBeUndefined();
+    });
+
     it('produces undefined when sourceFeedId is absent', async () => {
       const url = await listFeedsWithSourceType('bcfy_feeds', undefined);
       expect(url).toBeUndefined();
@@ -360,6 +365,11 @@ describe('FeedsController', () => {
 
     it('echo produces undefined', async () => {
       const url = await listFeedsArchiveUrl('echo', 'some-id');
+      expect(url).toBeUndefined();
+    });
+
+    it('fire_notifications produces undefined', async () => {
+      const url = await listFeedsArchiveUrl('fire_notifications', 'some-id');
       expect(url).toBeUndefined();
     });
 
