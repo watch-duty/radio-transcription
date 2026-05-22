@@ -1,3 +1,4 @@
+import type { SourceType } from '@transcription/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FeedsController } from './feedsController.js';
@@ -315,6 +316,11 @@ describe('FeedsController', () => {
       const url = await listFeedsWithSourceType('bcfy_feeds', undefined);
       expect(url).toBeUndefined();
     });
+
+    it('returns undefined for unknown source type', async () => {
+      const url = await listFeedsWithSourceType('unknown' as SourceType, 'some-id');
+      expect(url).toBeUndefined();
+    });
   });
 
   describe('archiveUrl computation', () => {
@@ -359,6 +365,11 @@ describe('FeedsController', () => {
 
     it('produces undefined when sourceFeedId is absent', async () => {
       const url = await listFeedsArchiveUrl('bcfy_feeds', undefined);
+      expect(url).toBeUndefined();
+    });
+
+    it('returns undefined for unknown source type', async () => {
+      const url = await listFeedsArchiveUrl('unknown' as SourceType, 'some-id');
       expect(url).toBeUndefined();
     });
   });
