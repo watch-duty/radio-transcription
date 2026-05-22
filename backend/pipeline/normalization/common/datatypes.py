@@ -28,6 +28,12 @@ NormalizationDlqOutput = beam.pvalue.TaggedOutput[
 # Type alias for the raw DLQ payload tuple yielded by StitcherEngine
 NormalizationRawDlqOutput = tuple[Literal["normalization_dlq"], dict[str, Any]]
 
+# Type alias for stateless Dead Letter Queue tagged outputs
+NormalizationStatelessDlqOutput = beam.pvalue.TaggedOutput[
+    Literal["normalization_dlq"],
+    dict[str, str],
+]
+
 
 TimeRange = bp_state.TimeRangeProto
 BufferedChunk = bp_state.BufferedChunkProto
