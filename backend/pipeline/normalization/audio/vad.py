@@ -37,6 +37,7 @@ from backend.pipeline.normalization.common.constants import (
     VAD_DEFAULT_PAD_SEC,
     VAD_DEFAULT_PEAK_FILTER_Q,
     VAD_DEFAULT_PRIMING_SEC,
+    VAD_DEFAULT_SEED,
     VAD_DEFAULT_THRESHOLD_OFFSET,
     VAD_DEFAULT_THRESHOLD_ONSET,
     VAD_NORMALIZATION_MIN_PEAK,
@@ -80,6 +81,7 @@ class VoiceActivityDetector:
         comp_peak_threshold: float = VAD_DEFAULT_COMP_PEAK_THRESHOLD,
         normalization_target_peak: float = VAD_NORMALIZATION_TARGET_PEAK,
         normalization_min_peak: float = VAD_NORMALIZATION_MIN_PEAK,
+        seed: int = VAD_DEFAULT_SEED,
         models_dir: str | Path = MODELS_DIR,
     ) -> None:
         self.comp_threshold_db = comp_threshold_db
@@ -101,6 +103,7 @@ class VoiceActivityDetector:
         self.comp_peak_threshold = comp_peak_threshold
         self.normalization_target_peak = normalization_target_peak
         self.normalization_min_peak = normalization_min_peak
+        self.seed = seed
 
         self.silero_path = Path(models_dir) / "silero_vad.onnx"
         self.ulunas_path = Path(models_dir) / "ulunas_stream_simple.onnx"
@@ -304,7 +307,7 @@ class VoiceActivityDetector:
             priming_samples = int(self.priming_sec * TARGET_SAMPLE_RATE)
             if priming_samples > 0:
                 prior_audio = (
-                    np.random.default_rng()
+                    np.random.default_rng(seed=self.seed)
                     .normal(0.0, 0.002, priming_samples)
                     .astype(np.float32)
                 )
