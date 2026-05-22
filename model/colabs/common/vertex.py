@@ -90,6 +90,8 @@ try:
     from google.genai import types
 except ImportError as _e:
     _VERTEX_MISSING = _e
+    genai = None
+    types = None
 else:
     _VERTEX_MISSING = None
 

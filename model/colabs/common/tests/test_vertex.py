@@ -1,5 +1,8 @@
 """Tests for common.vertex — no real GCP calls (all genai.Client mocked)."""
 
+import builtins
+import importlib.util
+from pathlib import Path
 import unittest
 import unittest.mock
 
@@ -92,6 +95,34 @@ class TestAdapterEnum(unittest.TestCase):
 
 class TestImportGuard(unittest.TestCase):
     """Test that ImportError is raised when [vertex] extra is absent."""
+
+    def test_patch_targets_exist_when_vertex_extra_missing(self):
+        vertex_path = Path(__file__).resolve().parents[1] / "vertex.py"
+        spec = importlib.util.spec_from_file_location(
+            "common_vertex_without_genai_for_test", vertex_path
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        real_import = builtins.__import__
+
+        def _raise_for_google_genai(
+            name, globals=None, locals=None, fromlist=(), level=0
+        ):
+            if (name == "google" and "genai" in fromlist) or (
+                name == "google.genai"
+            ):
+                raise ImportError("No module named google.genai")
+            return real_import(name, globals, locals, fromlist, level)
+
+        with unittest.mock.patch(
+            "builtins.__import__", new=_raise_for_google_genai
+        ):
+            spec.loader.exec_module(module)
+
+        self.assertIsNotNone(module._VERTEX_MISSING)
+        self.assertIsNone(module.genai)
+        self.assertIsNone(module.types)
 
     def test_require_vertex_raises_when_missing(self):
         import common.vertex as vmod
