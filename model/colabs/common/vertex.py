@@ -73,7 +73,7 @@ def build_request(
                 "parts": [{"text": system_prompt.strip()}],
             },
             "generation_config": generation_config.copy(),
-            "safety_settings": safety_settings,
+            "safety_settings": list(safety_settings),
         }
     }
 

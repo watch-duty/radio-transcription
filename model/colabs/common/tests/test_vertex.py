@@ -172,6 +172,16 @@ class TestBuildRequest(unittest.TestCase):
         for entry in safety:
             self.assertEqual(entry["threshold"], "BLOCK_NONE")
 
+    def test_safety_settings_is_copied(self):
+        """safety_settings is shallow-copied — mutating the result leaves the default intact."""
+        result = self.build_request(
+            "gs://bucket/audio.flac",
+            system_prompt="S",
+            user_prompt="U",
+        )
+        result["request"]["safety_settings"].pop()
+        self.assertEqual(len(self.default_safety), 4)
+
     def test_system_prompt_stripped(self):
         """system_prompt is stripped before embedding."""
         result = self.build_request(

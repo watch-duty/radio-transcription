@@ -67,8 +67,8 @@ def rows_from_manifest(manifest: list[dict[str, Any]]) -> list[CanonicalRow]:
                 f"Skipping manifest row {i}: missing text ({audio_filepath!r})"
             )
             continue
-        offset: float = float(entry.get("offset", 0.0))
-        duration: float = float(entry.get("duration", 0.0))
+        offset: float = float(entry.get("offset") or 0.0)
+        duration: float = float(entry.get("duration") or 0.0)
         # Derive stable example_id / segment_id from the manifest or fallback to basename
         example_id: str = str(
             entry.get("example_id") or Path(audio_filepath).stem
