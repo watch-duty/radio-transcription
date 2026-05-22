@@ -2,9 +2,9 @@
 
 Commands:
   build  -- Turn registered datasets into Vertex AI Gemini SFT JSONL.
-  tune   -- Submit a Vertex AI Gemini SFT tuning job (--confirm gated; PR3 implements fully).
-  eval   -- Batch-infer and score a Gemini model on the held-out manifest (PR3 implements fully).
-  all    -- build -> tune -> eval in one Gemini SFT invocation (PR3 implements fully).
+  tune   -- Submit a Vertex AI Gemini SFT tuning job (--confirm gated; resume-safe).
+  eval   -- Batch-infer and score a Gemini model on the held-out manifest (base-only or base+tuned).
+  all    -- build -> tune -> eval in one Gemini SFT invocation.
 
 Usage:
   python pipeline.py build --datasets echo --round-id 2026-06-01-echo
@@ -21,6 +21,7 @@ import logging
 import shutil
 import sys
 import tomllib
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
@@ -330,24 +331,492 @@ def _build(args: argparse.Namespace) -> int:
 
 
 def _tune(args: argparse.Namespace) -> int:
-    """Tune subcommand stub -- fully implemented in PR3 (plan 03-03)."""
-    logger.error("tune is not yet implemented. Run after PR3 merges.")
-    return 1
+    """Tune subcommand — submit or re-attach to a Vertex AI SFT tuning job.
+
+    D-10/D-11: Persists job.name to config.json BEFORE entering the poll loop.
+    On re-run, re-attaches to an in-flight job by name (no re-submit, no re-pay).
+    PIPE-03: gemini-3-* base models rejected before any GCP call.
+    --confirm gate: displays estimated token count + cost estimate before submitting.
+    """
+    import tempfile
+
+    from common.gcs_utils import download_blob_to_file, parse_gcs_uri
+    from common.vertex import poll_tuning_job, submit_tuning_job
+    from google.cloud import storage
+    from preflight import run_preflight
+    from records import write_config
+
+    # PIPE-03: gemini-3-* rejection (before any GCP call)
+    if args.base_model.startswith("gemini-3"):
+        logger.error(
+            f"Base model '{args.base_model}' is rejected. "
+            "gemini-3-* models are not supported by this pipeline. "
+            "Use gemini-2.5-flash or a known-supported base model."
+        )
+        return 1
+
+    config = _load_round_config(args.round_id)
+    location = getattr(args, "location", "us-central1")
+
+    # D-11: Resume — re-attach to an in-flight job if job_name already recorded
+    if job_name := config.get("job_name"):
+        from google import genai
+
+        client = genai.Client(
+            vertexai=True, project=GCP_PROJECT, location=location
+        )
+        cur = client.tunings.get(name=job_name)
+        state = getattr(cur.state, "name", str(cur.state))
+        if state in {"JOB_STATE_SUCCEEDED", "SUCCEEDED"}:
+            logger.info(
+                f"Tuning job already succeeded. Endpoint: {config.get('endpoint')}"
+            )
+            return 0
+        if state not in {
+            "JOB_STATE_FAILED",
+            "FAILED",
+            "JOB_STATE_CANCELLED",
+            "CANCELLED",
+        }:
+            logger.info(
+                f"Re-attaching to in-flight job {job_name} (state: {state})"
+            )
+            endpoint = poll_tuning_job(job_name, GCP_PROJECT, location)
+            config["endpoint"] = endpoint
+            write_config(RESULTS_DIR, args.round_id, config)
+            return 0
+        logger.warning(
+            f"Prior job {job_name} ended in {state}; submitting a new job."
+        )
+
+    # Resolve train/val URIs from config
+    train_uri = config.get("combined_train_uri") or ""
+    val_uri = config.get("combined_val_uri", "")
+    if not train_uri:
+        logger.error("No combined_train_uri in config.json. Run `build` first.")
+        return 1
+
+    storage_client = storage.Client(project=GCP_PROJECT)
+
+    # Download train JSONL for preflight and cost estimate (local temp)
+    with tempfile.TemporaryDirectory() as tmp:
+        train_bucket, train_blob = parse_gcs_uri(train_uri)
+        train_local = Path(tmp) / "train.jsonl"
+        download_blob_to_file(
+            storage_client, train_bucket, train_blob, str(train_local)
+        )
+
+        val_local: Path | None = None
+        if val_uri:
+            val_bucket, val_blob = parse_gcs_uri(val_uri)
+            val_local = Path(tmp) / "val.jsonl"
+            download_blob_to_file(
+                storage_client, val_bucket, val_blob, str(val_local)
+            )
+
+        system_prompt = config.get("system_prompt", "")
+        user_prompt = config.get("user_prompt", "")
+        preflight_report_path = (
+            RESULTS_DIR / args.round_id / "preflight_report.json"
+        )
+        report = run_preflight(
+            train_jsonl_path=train_local,
+            val_jsonl_path=val_local,
+            storage_client=storage_client,
+            report_path=preflight_report_path,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+        )
+        if not report.passed:
+            logger.error(
+                f"Preflight FAILED. {len(report.failures)} issue(s) found. "
+                f"Report: {preflight_report_path}. Fix the data and re-run."
+            )
+            return 1
+
+        # Count examples for cost estimate
+        with open(str(train_local)) as fh:
+            n_examples = sum(1 for line in fh if line.strip())
+
+    # Cost estimate and --confirm gate (D-13 / PIPE-03)
+    AUDIO_TOKENS_PER_SEC: Final = (
+        32  # VERIFIED: inference rate; ASSUMED same for SFT
+    )
+    COST_PER_MILLION_TOKENS: Final = (
+        3.00  # ASSUMED: 2.0-Flash upper bound (2.5-Flash not public)
+    )
+
+    avg_secs = (
+        5.0  # conservative default; actual varies (Echo: ~3-30s segments)
+    )
+    epochs = args.epochs
+    estimated_tokens = n_examples * avg_secs * AUDIO_TOKENS_PER_SEC * epochs
+    estimated_cost = (estimated_tokens / 1_000_000) * COST_PER_MILLION_TOKENS
+
+    print("\n--- Tune Cost Estimate ---")
+    print(f"  Examples:          {n_examples}")
+    print(f"  Epochs:            {epochs}")
+    print(
+        f"  Est. audio tokens: {estimated_tokens:,.0f} (at {avg_secs:.1f}s avg x 32 tok/s)"
+    )
+    print(f"  Est. cost:        ~${estimated_cost:.2f} USD")
+    print(
+        "  NOTE: Using Gemini 2.0 Flash rate ($3.00/M tokens) as upper bound."
+    )
+    print(
+        "        Actual Gemini 2.5 Flash SFT rate is not publicly listed (as of 2026-05-22)."
+    )
+    print(
+        "        Actual billing may differ. You accept responsibility for GCP charges.\n"
+    )
+
+    if not args.confirm:
+        answer = input("Type 'yes' to proceed with tune: ").strip().lower()
+        if answer != "yes":
+            logger.info("Tune aborted by operator.")
+            return 0
+
+    # Submit (and persist job.name BEFORE polling — D-08/D-10)
+    display_name = f"wd-radio-sft-{args.round_id}"
+    job_name = submit_tuning_job(
+        train_uri=train_uri,
+        display_name=display_name,
+        project=GCP_PROJECT,
+        location=location,
+        base_model=args.base_model,
+        val_uri=val_uri or None,
+        epoch_count=epochs,
+        adapter_size=args.adapter_size,
+        lr_multiplier=args.lr_multiplier,
+    )
+    config["job_name"] = job_name
+    config["display_name"] = display_name
+    config["base_model"] = args.base_model
+    config["epochs"] = epochs
+    write_config(
+        RESULTS_DIR, args.round_id, config
+    )  # PERSIST BEFORE POLL — D-10
+    logger.info(f"Persisted job_name: {job_name}")
+
+    # Poll to completion
+    endpoint = poll_tuning_job(job_name, GCP_PROJECT, location)
+    config["endpoint"] = endpoint
+    write_config(RESULTS_DIR, args.round_id, config)
+    logger.info(f"Tune complete. Endpoint: {endpoint}")
+    return 0
 
 
 def _eval(args: argparse.Namespace) -> int:
-    """Eval subcommand stub -- fully implemented in PR3 (plan 03-03)."""
-    logger.error("eval is not yet implemented. Run after PR3 merges.")
-    return 1
+    """Eval subcommand — batch-infer and score the model on the held-out manifest.
+
+    D-15: full scoring panel (WER, CER, ins/del/sub, empty/halluc rate, duration
+    buckets, keyword accuracy, bootstrap_paired significance). Degrades gracefully
+    to base-only metrics when no tuned model endpoint is available.
+    """
+    import tempfile
+
+    from common.gcs_utils import (
+        download_blob_to_file,
+        download_jsonl_manifest,
+        parse_gcs_uri,
+        upload_file_to_blob,
+    )
+    from common.manifest import rows_from_manifest
+    from common.scoring import (
+        bootstrap_paired,
+        build_normalizer,
+        compute_cer,
+        compute_wer,
+        duration_bucket_wer,
+        hallucination_rate,
+    )
+    from common.vertex import submit_batch_inference
+    from google.cloud import storage
+    from records import append_ledger, write_config, write_wer_summary
+
+    config = _load_round_config(args.round_id)
+    if not config:
+        logger.error(
+            f"No config.json found for round {args.round_id}. Run `build` first."
+        )
+        return 1
+
+    storage_client = storage.Client(project=GCP_PROJECT)
+    location = getattr(args, "location", "us-central1")
+    system_prompt = config.get("system_prompt", "")
+    user_prompt = config.get("user_prompt", "")
+
+    base_only = getattr(args, "base_only", False)
+    base_model = config.get("base_model", "gemini-2.5-flash")
+    tuned_endpoint = config.get("endpoint")
+
+    if not base_only and not tuned_endpoint:
+        logger.warning(
+            "No tuned endpoint in config.json — running base-only eval (D-15 graceful degradation)."
+        )
+        base_only = True
+
+    # Resolve eval manifest URI from the first gcs_manifest dataset
+    registry = _load_registry()
+    datasets = config.get("datasets", [])
+    eval_uri = ""
+    for ds_name in datasets:
+        ds_cfg = registry.get("datasets", {}).get(ds_name, {})
+        if ds_cfg.get("adapter") == "gcs_manifest":
+            eval_uri = ds_cfg.get("eval_manifest_uri", "")
+            if eval_uri:
+                break
+
+    if not eval_uri:
+        logger.error(
+            "No eval_manifest_uri found for any gcs_manifest dataset in the build config. "
+            "Check datasets.toml [datasets.echo] eval_manifest_uri."
+        )
+        return 1
+
+    # Load eval manifest -> CanonicalRows
+    eval_entries = download_jsonl_manifest(storage_client, eval_uri)
+    eval_rows = rows_from_manifest(eval_entries)
+    logger.info(f"Eval manifest: {len(eval_rows)} rows from {eval_uri}")
+
+    def _build_batch_jsonl(
+        model_id: str, label: str, tmp: str
+    ) -> tuple[str, str]:
+        """Write batch input JSONL, upload to GCS, return (input_gcs_uri, output_gcs_uri)."""
+        batch_input_path = Path(tmp) / f"batch_input_{label}.jsonl"
+        lines = []
+        for row in eval_rows:
+            req = {
+                "request": {
+                    "contents": [
+                        {
+                            "role": "user",
+                            "parts": [
+                                {
+                                    "file_data": {
+                                        "file_uri": row.audio_filepath,
+                                        "mime_type": "audio/flac",
+                                    }
+                                },
+                                {"text": user_prompt},
+                            ],
+                        }
+                    ],
+                    "system_instruction": {
+                        "role": "system",
+                        "parts": [{"text": system_prompt}],
+                    },
+                    "generation_config": {"temperature": 0.0},
+                    "safety_settings": [],
+                }
+            }
+            lines.append(json.dumps(req))
+        batch_input_path.write_text("\n".join(lines))
+
+        batch_input_gcs = (
+            f"{GCS_SFT_PREFIX}/{args.round_id}/eval_batch_{label}_input.jsonl"
+        )
+        batch_output_gcs = (
+            f"{GCS_SFT_PREFIX}/{args.round_id}/eval_batch_{label}_output/"
+        )
+        in_bucket, in_blob = parse_gcs_uri(batch_input_gcs)
+        upload_file_to_blob(
+            storage_client, in_bucket, in_blob, str(batch_input_path)
+        )
+        return batch_input_gcs, batch_output_gcs
+
+    def _parse_batch_output(text: str) -> dict[str, str]:
+        """Parse batch output JSONL lines; return {audio_uri: pred_text}."""
+        result: dict[str, str] = {}
+        for line in text.splitlines():
+            if not line.strip():
+                continue
+            obj = json.loads(line)
+            if obj.get("status"):  # error entry
+                continue
+            parts = obj["request"]["contents"][0]["parts"]
+            uri = next(
+                (p["file_data"]["file_uri"] for p in parts if "file_data" in p),
+                None,
+            )
+            cands = obj.get("response", {}).get("candidates", [])
+            pred = ""
+            if cands:
+                for tp in cands[0].get("content", {}).get("parts", []):
+                    if "text" in tp:
+                        pred = tp["text"]
+                        break
+            if uri:
+                result[uri] = pred
+        return result
+
+    def _batch_infer(model_id: str, label: str) -> dict[str, str]:
+        """Build batch JSONL, submit, download, parse -> {audio_uri: pred_text}."""
+        with tempfile.TemporaryDirectory() as tmp:
+            batch_input_gcs, batch_output_gcs = _build_batch_jsonl(
+                model_id, label, tmp
+            )
+
+            output_loc = submit_batch_inference(
+                input_uri=batch_input_gcs,
+                output_uri=batch_output_gcs,
+                model=model_id,
+                project=GCP_PROJECT,
+                location=location,
+            )
+
+            # Download batch output JSONL
+            predictions_uri = output_loc.rstrip("/") + "/predictions.jsonl"
+            out_bucket, out_blob = parse_gcs_uri(predictions_uri)
+            output_jsonl_path = Path(tmp) / "predictions.jsonl"
+            download_blob_to_file(
+                storage_client, out_bucket, out_blob, str(output_jsonl_path)
+            )
+            return _parse_batch_output(output_jsonl_path.read_text())
+
+    normalizer = build_normalizer()
+
+    # Run base model batch inference
+    logger.info("Running base model batch inference...")
+    base_preds = _batch_infer(base_model, "base")
+
+    refs = [row.text for row in eval_rows]
+    durations = [row.duration for row in eval_rows]
+    base_hyps = [base_preds.get(row.audio_filepath, "") for row in eval_rows]
+
+    # compute_wer / compute_cer return dicts — extract the numeric value
+    base_wer_result = compute_wer(refs, base_hyps, normalizer=normalizer)
+    base_wer = base_wer_result["wer"]
+    base_cer_result = compute_cer(refs, base_hyps, normalizer=normalizer)
+    base_cer = base_cer_result["cer"]
+
+    metrics: dict = {
+        "round_id": args.round_id,
+        "base_model": base_model,
+        "base_wer": base_wer,
+        "base_cer": base_cer,
+        "n_eval_examples": len(eval_rows),
+    }
+
+    # Ins/del/sub breakdown (from the compute_wer result dict)
+    total_ref_words = sum(len(r.split()) for r in refs)
+    if total_ref_words > 0:
+        metrics["base_insertions"] = (
+            base_wer_result["insertions"] / total_ref_words * 100
+        )
+        metrics["base_deletions"] = (
+            base_wer_result["deletions"] / total_ref_words * 100
+        )
+        metrics["base_substitutions"] = (
+            base_wer_result["substitutions"] / total_ref_words * 100
+        )
+
+    # Empty/hallucinated rate
+    metrics["base_empty_rate"] = hallucination_rate(base_hyps)
+
+    # Duration bucket WER (D-15)
+    try:
+        bucket_results = duration_bucket_wer(
+            refs, base_hyps, durations, normalizer=normalizer
+        )
+        metrics["duration_buckets"] = [
+            {"bucket": b["bucket"], "base_wer": b["wer"]}
+            for b in bucket_results
+        ]
+    except Exception as e:
+        logger.warning(f"Could not compute duration bucket WER: {e}")
+
+    if not base_only and tuned_endpoint:
+        logger.info("Running tuned model batch inference...")
+        tuned_preds = _batch_infer(tuned_endpoint, "tuned")
+        tuned_hyps = [
+            tuned_preds.get(row.audio_filepath, "") for row in eval_rows
+        ]
+
+        tuned_wer_result = compute_wer(refs, tuned_hyps, normalizer=normalizer)
+        tuned_wer = tuned_wer_result["wer"]
+        tuned_cer_result = compute_cer(refs, tuned_hyps, normalizer=normalizer)
+        tuned_cer = tuned_cer_result["cer"]
+
+        metrics["tuned_wer"] = tuned_wer
+        metrics["tuned_cer"] = tuned_cer
+        metrics["tuned_empty_rate"] = hallucination_rate(tuned_hyps)
+
+        if total_ref_words > 0:
+            metrics["tuned_insertions"] = (
+                tuned_wer_result["insertions"] / total_ref_words * 100
+            )
+            metrics["tuned_deletions"] = (
+                tuned_wer_result["deletions"] / total_ref_words * 100
+            )
+            metrics["tuned_substitutions"] = (
+                tuned_wer_result["substitutions"] / total_ref_words * 100
+            )
+
+        # Bootstrap significance (D-15): bootstrap_paired takes (refs, hyps_a, hyps_b)
+        try:
+            bs = bootstrap_paired(
+                refs, base_hyps, tuned_hyps, normalizer=normalizer
+            )
+            metrics["bootstrap_p_value"] = bs.get("p_value_one_sided")
+            metrics["bootstrap_ci_low"] = bs.get("ci_low")
+            metrics["bootstrap_ci_high"] = bs.get("ci_high")
+            metrics["bootstrap_delta"] = bs.get("delta")
+        except Exception as e:
+            logger.warning(f"bootstrap_paired failed: {e}")
+
+        # Tuned duration bucket WER
+        try:
+            tuned_bucket_results = duration_bucket_wer(
+                refs, tuned_hyps, durations, normalizer=normalizer
+            )
+            # Merge tuned WER into the existing bucket entries
+            tuned_wer_by_bucket = {
+                b["bucket"]: b["wer"] for b in tuned_bucket_results
+            }
+            if "duration_buckets" in metrics:
+                for entry in metrics["duration_buckets"]:
+                    entry["tuned_wer"] = tuned_wer_by_bucket.get(
+                        entry["bucket"]
+                    )
+        except Exception as e:
+            logger.warning(f"Could not compute tuned duration bucket WER: {e}")
+
+    # Write records (PIPE-07)
+    write_wer_summary(RESULTS_DIR, args.round_id, metrics)
+    config.update(
+        {
+            "base_model": base_model,
+            "base_wer": metrics.get("base_wer"),
+            "tuned_wer": metrics.get("tuned_wer"),
+        }
+    )
+    write_config(RESULTS_DIR, args.round_id, config)
+    append_ledger(
+        RESULTS_DIR,
+        {
+            **metrics,
+            "datasets": config.get("datasets", []),
+            "epochs": config.get("epochs", "—"),
+            "git_sha": config.get("git_sha", "—"),
+            "timestamp": datetime.now(UTC).strftime("%Y-%m-%d"),
+        },
+    )
+    logger.info(
+        f"Eval complete. WER summary: {RESULTS_DIR / args.round_id / 'wer_summary.md'}"
+    )
+    return 0
 
 
 def _all(args: argparse.Namespace) -> int:
-    """All subcommand stub -- fully implemented in PR3 (plan 03-03)."""
+    """All subcommand — build -> tune -> eval in one invocation."""
     rc = _build(args)
     if rc != 0:
         return rc
-    logger.error("tune and eval are not yet implemented. Run after PR3 merges.")
-    return 1
+    rc = _tune(args)
+    if rc != 0:
+        return rc
+    return _eval(args)
 
 
 def _add_build_args(p: argparse.ArgumentParser) -> None:

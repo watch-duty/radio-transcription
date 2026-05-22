@@ -229,14 +229,18 @@ known-first-party = ["backend", "local_dev"]
   "ANN001",  # Missing type annotation for function argument
   "ANN201",  # Missing return type annotation for public function
   "ANN202",  # Missing return type annotation for private function
+  "D403",    # First word of docstring capitalized (tune/eval/all names start lowercase)
   "EM101",   # Exception must not use string literal
   "EM102",   # Exception must not use f-string literal
   "FBT001",  # Boolean-typed positional argument in function definition
   "FBT002",  # Boolean default positional argument in function definition
   "INP001",  # File is part of an implicit namespace package
   "PLC0415", # import should be at top-level (lazy imports by design)
+  "PLR0911", # Too many return statements (resume state machine has multiple early returns)
   "PLR0912", # Too many branches
   "PLR0915", # Too many statements
+  "PLW1510", # subprocess.run without check (returncode checked manually)
+  "T201",    # print() found (cost-estimate gate uses print by design)
   "TC002",   # Move third-party import into type-checking block
   "TC003",   # Move stdlib import into type-checking block
   "TRY003",  # Avoid specifying long messages outside the exception class
