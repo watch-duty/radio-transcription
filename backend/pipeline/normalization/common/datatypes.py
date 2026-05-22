@@ -22,17 +22,11 @@ from backend.pipeline.schema_types import (
 # Type alias for the normalization Dead Letter Queue tagged output
 NormalizationDlqOutput = beam.pvalue.TaggedOutput[
     Literal["normalization_dlq"],
-    dict[str, str | bool | dict[str, str]],
+    dict[str, Any],
 ]
 
 # Type alias for the raw DLQ payload tuple yielded by StitcherEngine
 NormalizationRawDlqOutput = tuple[Literal["normalization_dlq"], dict[str, Any]]
-
-# Type alias for stateless Dead Letter Queue tagged outputs
-NormalizationStatelessDlqOutput = beam.pvalue.TaggedOutput[
-    Literal["normalization_dlq"],
-    dict[str, str],
-]
 
 
 TimeRange = bp_state.TimeRangeProto
