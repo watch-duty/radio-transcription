@@ -2,11 +2,19 @@ import React, { useMemo, useState } from 'react';
 import { Link as RouterLink } from 'react-router';
 import { TableVirtuoso } from 'react-virtuoso';
 
+import CheckBoxIcon from '@mui/icons-material/CheckBox';
+import CheckBoxOutlineBlankIcon from '@mui/icons-material/CheckBoxOutlineBlank';
 import InventoryIcon from '@mui/icons-material/Inventory';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import OpenInNewOutlinedIcon from '@mui/icons-material/OpenInNewOutlined';
 import SearchIcon from '@mui/icons-material/Search';
+import TuneIcon from '@mui/icons-material/Tune';
+import FilterIcon from '@mui/icons-material/Tune';
+import Autocomplete from '@mui/material/Autocomplete';
+import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
+import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
 import IconButton from '@mui/material/IconButton';
 import InputAdornment from '@mui/material/InputAdornment';
@@ -16,6 +24,7 @@ import ListItemText from '@mui/material/ListItemText';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import Paper from '@mui/material/Paper';
+import Popover from '@mui/material/Popover';
 import Table from '@mui/material/Table';
 import TableBody from '@mui/material/TableBody';
 import TableCell from '@mui/material/TableCell';
@@ -24,19 +33,201 @@ import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import TableSortLabel from '@mui/material/TableSortLabel';
 import TextField from '@mui/material/TextField';
+import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import type { Feed } from '@transcription/common';
 
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 
+interface FeedStatusFilterProps {
+  selectedStatuses: string[];
+  onChange: (selectedStatuses: string[]) => void;
+  size?: 'small' | 'medium';
+}
+
+function FeedStatusFilter({
+  selectedStatuses,
+  onChange,
+  size,
+}: FeedStatusFilterProps) {
+  const options = ['Active', 'Inactive'];
+
+  return (
+    <Autocomplete
+      multiple={true}
+      options={options}
+      value={selectedStatuses}
+      onChange={(_, value) => onChange(value)}
+      disableCloseOnSelect={true}
+      getOptionLabel={(option) => option}
+      size={size}
+      renderOption={(props, option, { selected }) => {
+        const { key, ...optionProps } = props;
+        const SelectionIcon = selected
+          ? CheckBoxIcon
+          : CheckBoxOutlineBlankIcon;
+
+        return (
+          <li key={key} {...optionProps}>
+            <SelectionIcon
+              fontSize="small"
+              style={{ marginRight: 8, padding: 9, boxSizing: 'content-box' }}
+            />
+            {option}
+          </li>
+        );
+      }}
+      renderInput={(params) => (
+        <TextField {...params} label="Status" placeholder="" size={size} />
+      )}
+      renderValue={(value) => (
+        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+          {value.map((status) => (
+            <Chip key={status} label={status} size="small" variant="filled" />
+          ))}
+        </Box>
+      )}
+    />
+  );
+}
+
+interface FeedSourceTypeFilterProps {
+  sourceTypes: string[];
+  selectedSourceTypes: string[];
+  onChange: (selectedSourceTypes: string[]) => void;
+  size?: 'small' | 'medium';
+}
+
+function FeedSourceTypeFilter({
+  sourceTypes,
+  selectedSourceTypes,
+  onChange,
+  size,
+}: FeedSourceTypeFilterProps) {
+  return (
+    <Autocomplete
+      multiple={true}
+      options={sourceTypes}
+      value={selectedSourceTypes}
+      onChange={(_, value) => onChange(value)}
+      disableCloseOnSelect={true}
+      getOptionLabel={(option) => option}
+      size={size}
+      renderOption={(props, option, { selected }) => {
+        const { key, ...optionProps } = props;
+        const SelectionIcon = selected
+          ? CheckBoxIcon
+          : CheckBoxOutlineBlankIcon;
+
+        return (
+          <li key={key} {...optionProps}>
+            <SelectionIcon
+              fontSize="small"
+              style={{ marginRight: 8, padding: 9, boxSizing: 'content-box' }}
+            />
+            {option}
+          </li>
+        );
+      }}
+      renderInput={(params) => (
+        <TextField {...params} label="Source Type" placeholder="" size={size} />
+      )}
+      renderValue={(value) => (
+        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+          {value.map((sourceType) => (
+            <Chip
+              key={sourceType}
+              label={sourceType}
+              size="small"
+              variant="filled"
+            />
+          ))}
+        </Box>
+      )}
+    />
+  );
+}
+
 interface FeedTableProps {
   feeds: Feed[];
   isLoading: boolean;
+  collapse?: boolean;
 }
 
 interface SortConfig {
   column: 'name' | 'status';
   direction: 'asc' | 'desc';
+}
+
+function FeedFilterChip({ tag }: { tag: { key: string; value: string } }) {
+  return (
+    <Chip
+      label={
+        <Typography variant="body2">
+          <b>{tag.key}</b>: {tag.value}
+        </Typography>
+      }
+      size="small"
+      variant="filled"
+    />
+  );
+}
+
+interface FeedFilterProps {
+  tags: { key: string; value: string }[];
+  selectedTags: { key: string; value: string }[];
+  onChange: (selectedTags: { key: string; value: string }[]) => void;
+  size?: 'small' | 'medium';
+}
+
+function FeedFilter({ tags, selectedTags, onChange, size }: FeedFilterProps) {
+  return (
+    <Autocomplete
+      multiple={true}
+      options={tags}
+      groupBy={(tag) => tag.key}
+      value={selectedTags}
+      onChange={(_, value) => onChange(value)}
+      isOptionEqualToValue={(option, value) =>
+        option.key === value.key && option.value === value.value
+      }
+      disableCloseOnSelect={true}
+      getOptionLabel={(option) => `${option.key}: ${option.value}`}
+      size={size}
+      renderOption={(props, option, { selected }) => {
+        const { key, ...optionProps } = props;
+        const SelectionIcon = selected
+          ? CheckBoxIcon
+          : CheckBoxOutlineBlankIcon;
+
+        return (
+          <li key={key} {...optionProps}>
+            <SelectionIcon
+              fontSize="small"
+              style={{ marginRight: 8, padding: 9, boxSizing: 'content-box' }}
+            />
+            {option.value}
+          </li>
+        );
+      }}
+      renderGroup={(group) => (
+        <li key={group.key}>
+          <Box sx={{ padding: 1, fontWeight: 'bold' }}>{group.group}</Box>
+          <ul style={{ padding: 0 }}>{group.children}</ul>
+        </li>
+      )}
+      renderInput={(params) => (
+        <TextField {...params} label="Tags" placeholder="" size={size} />
+      )}
+      renderValue={(value) => (
+        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+          {value.map((tag) => (
+            <FeedFilterChip key={tag.key} tag={tag} />
+          ))}
+        </Box>
+      )}
+    />
+  );
 }
 
 function ActionsMenu({ feed }: { feed: Feed }) {
@@ -101,12 +292,57 @@ function ActionsMenu({ feed }: { feed: Feed }) {
   );
 }
 
-export function FeedTable({ feeds, isLoading }: FeedTableProps) {
+export function FeedTable({
+  feeds,
+  isLoading,
+  collapse = true,
+}: FeedTableProps) {
+  const [filterAnchorEl, setFilterAnchorEl] =
+    React.useState<HTMLElement | null>(null);
+
   const [searchQuery, setSearchQuery] = useState('');
   const [sortConfig, setSortConfig] = useState<SortConfig>({
     column: 'name',
     direction: 'asc',
   });
+
+  const [selectedTags, setSelectedTags] = useState<
+    { key: string; value: string }[]
+  >([]);
+  const [appliedTags, setAppliedTags] = useState<
+    { key: string; value: string }[]
+  >([]);
+
+  const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
+  const [appliedStatuses, setAppliedStatuses] = useState<string[]>([]);
+
+  const [selectedSourceTypes, setSelectedSourceTypes] = useState<string[]>([]);
+  const [appliedSourceTypes, setAppliedSourceTypes] = useState<string[]>([]);
+
+  const tags = useMemo<{ key: string; value: string }[]>(() => {
+    const seen = new Set<string>();
+    const uniqueTags: { key: string; value: string }[] = [];
+    feeds.forEach((feed) => {
+      feed.tags?.forEach((tag) => {
+        const identifier = `${tag.key}:${tag.value}`;
+        if (!seen.has(identifier)) {
+          seen.add(identifier);
+          uniqueTags.push({ key: tag.key, value: tag.value });
+        }
+      });
+    });
+    return uniqueTags;
+  }, [feeds]);
+
+  const sourceTypes = useMemo<string[]>(() => {
+    const seen = new Set<string>();
+    feeds.forEach((feed) => {
+      if (feed.sourceType) {
+        seen.add(feed.sourceType);
+      }
+    });
+    return Array.from(seen).sort();
+  }, [feeds]);
 
   const handleRequestSort = (property: 'name' | 'status') => {
     setSortConfig((prev) => ({
@@ -116,19 +352,74 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
     }));
   };
 
+  const handleFilterOpen = (event: React.MouseEvent<HTMLElement>) => {
+    setFilterAnchorEl(event.currentTarget);
+  };
+
+  const handleFilterClose = () => {
+    setSelectedTags(appliedTags);
+    setSelectedStatuses(appliedStatuses);
+    setSelectedSourceTypes(appliedSourceTypes);
+    setFilterAnchorEl(null);
+  };
+
+  const handleFilterApply = () => {
+    setAppliedTags(selectedTags);
+    setAppliedStatuses(selectedStatuses);
+    setAppliedSourceTypes(selectedSourceTypes);
+    setFilterAnchorEl(null);
+  };
+
+  const handleFilterClear = () => {
+    setSelectedTags([]);
+    setAppliedTags([]);
+    setSelectedStatuses([]);
+    setAppliedStatuses([]);
+    setSelectedSourceTypes([]);
+    setAppliedSourceTypes([]);
+  };
+
   const filteredAndSortedFeeds = useMemo(() => {
     const query = searchQuery.toLowerCase().trim();
-    const filtered = feeds.filter((feed) => {
-      if (!query) return true;
-      const nameMatches = feed.name.toLowerCase().includes(query);
-      const tagMatches =
-        feed.tags?.some(
-          (tag) =>
-            tag.key.toLowerCase().includes(query) ||
-            tag.value.toLowerCase().includes(query)
-        ) ?? false;
-      return nameMatches || tagMatches;
-    });
+    let filtered = feeds;
+
+    if (query) {
+      filtered = filtered.filter((feed) => {
+        const nameMatches = feed.name.toLowerCase().includes(query);
+        const tagMatches =
+          feed.tags?.some(
+            (tag) =>
+              tag.key.toLowerCase().includes(query) ||
+              tag.value.toLowerCase().includes(query)
+          ) ?? false;
+        return nameMatches || tagMatches;
+      });
+    }
+
+    if (appliedTags.length > 0) {
+      filtered = filtered.filter((feed) => {
+        return appliedTags.every((appliedTag) =>
+          feed.tags?.some(
+            (tag) =>
+              tag.key === appliedTag.key && tag.value === appliedTag.value
+          )
+        );
+      });
+    }
+
+    if (appliedStatuses.length > 0) {
+      filtered = filtered.filter((feed) => {
+        const capitalizedStatus =
+          feed.status.charAt(0).toUpperCase() + feed.status.slice(1);
+        return appliedStatuses.includes(capitalizedStatus);
+      });
+    }
+
+    if (appliedSourceTypes.length > 0) {
+      filtered = filtered.filter((feed) =>
+        appliedSourceTypes.includes(feed.sourceType)
+      );
+    }
 
     return filtered.sort((a, b) => {
       let comparison = 0;
@@ -139,7 +430,14 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
       }
       return sortConfig.direction === 'asc' ? comparison : -comparison;
     });
-  }, [feeds, searchQuery, sortConfig]);
+  }, [
+    feeds,
+    searchQuery,
+    appliedTags,
+    appliedStatuses,
+    appliedSourceTypes,
+    sortConfig,
+  ]);
 
   return (
     <Paper
@@ -184,6 +482,137 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
             maxWidth: 600,
           }}
         />
+
+        {collapse ? (
+          <>
+            <Tooltip title="Filter feeds">
+              <Badge
+                color="primary"
+                badgeContent={
+                  appliedTags.length +
+                  appliedStatuses.length +
+                  appliedSourceTypes.length
+                }
+                invisible={
+                  appliedTags.length +
+                    appliedStatuses.length +
+                    appliedSourceTypes.length ===
+                  0
+                }
+              >
+                <Button
+                  color="primary"
+                  variant="outlined"
+                  sx={{
+                    minWidth: 0,
+                    p: 0.75,
+                    textTransform: 'none',
+                    display: 'flex',
+                    gap: 1,
+                  }}
+                  aria-label="filter"
+                  onClick={handleFilterOpen}
+                >
+                  <FilterIcon />
+                  Filters
+                </Button>
+              </Badge>
+            </Tooltip>
+            <Popover
+              open={Boolean(filterAnchorEl)}
+              anchorEl={filterAnchorEl}
+              onClose={handleFilterClose}
+              transitionDuration={0}
+              anchorOrigin={{
+                vertical: 'bottom',
+                horizontal: 'left',
+              }}
+              transformOrigin={{
+                vertical: 'top',
+                horizontal: 'left',
+              }}
+              sx={{ zIndex: 1300 }}
+            >
+              <Box
+                sx={{
+                  p: 2,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 2,
+                  width: 320,
+                  maxWidth: '100%',
+                }}
+              >
+                <FeedSourceTypeFilter
+                  sourceTypes={sourceTypes}
+                  selectedSourceTypes={selectedSourceTypes}
+                  onChange={setSelectedSourceTypes}
+                />
+                <FeedStatusFilter
+                  selectedStatuses={selectedStatuses}
+                  onChange={setSelectedStatuses}
+                />
+                <FeedFilter
+                  tags={tags}
+                  selectedTags={selectedTags}
+                  onChange={setSelectedTags}
+                />
+                <Box
+                  sx={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}
+                >
+                  <Button size="small" onClick={handleFilterClear}>
+                    Clear
+                  </Button>
+                  <Box sx={{ display: 'flex', gap: 1 }}>
+                    <Button size="small" onClick={handleFilterClose}>
+                      Cancel
+                    </Button>
+                    <Button
+                      size="small"
+                      variant="contained"
+                      color="primary"
+                      onClick={handleFilterApply}
+                    >
+                      Apply
+                    </Button>
+                  </Box>
+                </Box>
+              </Box>
+            </Popover>
+          </>
+        ) : (
+          <>
+            <TuneIcon color="action" sx={{ ml: 1 }} />
+            <Box sx={{ width: 250, maxWidth: '100%' }}>
+              <FeedSourceTypeFilter
+                sourceTypes={sourceTypes}
+                selectedSourceTypes={appliedSourceTypes}
+                onChange={setAppliedSourceTypes}
+                size="small"
+              />
+            </Box>
+            <Box sx={{ width: 250, maxWidth: '100%' }}>
+              <FeedStatusFilter
+                selectedStatuses={appliedStatuses}
+                onChange={setAppliedStatuses}
+                size="small"
+              />
+            </Box>
+            <Box sx={{ width: 250, maxWidth: '100%' }}>
+              <FeedFilter
+                tags={tags}
+                selectedTags={appliedTags}
+                onChange={setAppliedTags}
+                size="small"
+              />
+            </Box>
+          </>
+        )}
+
         {filteredAndSortedFeeds.length !== feeds.length && (
           <Typography
             variant="body2"
@@ -313,21 +742,20 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
               <TableCell sx={{ verticalAlign: 'top', width: '100%' }}>
                 {feed.tags && feed.tags.length > 0 ? (
                   <Box
-                    sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}
+                    sx={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 0.5,
+                      alignItems: 'flex-start',
+                    }}
                   >
-                    {feed.tags.map((tag, i) => (
-                      <Typography
-                        key={i}
-                        variant="body2"
-                        sx={{ fontFamily: 'monospace' }}
-                      >
-                        <b>{tag.key}</b>: {tag.value}
-                      </Typography>
+                    {feed.tags.map((tag) => (
+                      <FeedFilterChip key={tag.key} tag={tag} />
                     ))}
                   </Box>
                 ) : (
                   <Typography variant="body2" color="text.secondary">
-                    None
+                    -
                   </Typography>
                 )}
               </TableCell>

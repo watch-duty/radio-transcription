@@ -49,7 +49,7 @@ export function FeedSearchView({ onError }: FeedSearchViewProps) {
       <Typography variant="h5" sx={{ fontWeight: 'bold' }}>
         Feeds
       </Typography>
-      <FeedTable feeds={feeds ?? []} isLoading={feedsLoading} />
+      <FeedTable feeds={feeds ?? []} isLoading={feedsLoading} collapse={false} />
     </Box>
   );
 }
