@@ -629,6 +629,14 @@ class FeedStore:
                 },
             )
             raise FeedAlreadyExistsError(source_type_str, source_feed_id) from e
+        except asyncpg.exceptions.ForeignKeyViolationError as e:
+            logger.warning(
+                "Invalid source type provided",
+                extra={
+                    "source_type": source_type_str,
+                },
+            )
+            raise ValueError(f"Invalid source type '{source_type_str}'") from e
 
         if row is None:
             msg = f"Failed to create feed {name}"
