@@ -248,39 +248,6 @@ class TestGcsManifestAdapter(unittest.TestCase):
         self.assertTrue(callable(GcsManifestAdapter))
 
 
-class TestHfDatasetAdapter(unittest.TestCase):
-    """HfDatasetAdapter import guard raises ImportError when [hf] extra absent."""
-
-    def test_module_imports_without_datasets_installed(self) -> None:
-        """The module itself must import without [hf] extra installed."""
-        # This should succeed even if datasets is not installed
-        # (lazy import guard at module level)
-        try:
-            import adapters.hf_dataset as hf_mod
-
-            self.assertTrue(hasattr(hf_mod, "HfDatasetAdapter"))
-        except ImportError:
-            self.fail(
-                "adapters.hf_dataset module-level import should not raise ImportError"
-            )
-
-    def test_instantiation_raises_if_datasets_missing(self) -> None:
-        """HfDatasetAdapter() raises ImportError if [hf] extra is absent."""
-        import adapters.hf_dataset as hf_mod
-
-        # If datasets IS installed, skip this test (environment has the extra)
-        if hf_mod._HF_MISSING is None:
-            self.skipTest("datasets is installed; import guard bypassed")
-
-        mock_client = unittest.mock.MagicMock()
-        with self.assertRaises(ImportError):
-            hf_mod.HfDatasetAdapter(
-                hf_repo="jlvdoorn/atcosim",
-                split="train",
-                storage_client=mock_client,
-            )
-
-
 class TestPreflightTokenCap(unittest.TestCase):
     """PREFLIGHT_TOKEN_CAP is 131_072 per D-14."""
 

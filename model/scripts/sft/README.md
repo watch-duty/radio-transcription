@@ -17,46 +17,47 @@ python pipeline.py all     build -> tune -> eval in one invocation
 From this directory (`model/scripts/sft/`):
 
 ```bash
-pip install -e "../../.[scoring,hf,audio,vertex]"
+pip install -e "../../.[scoring,vertex]"
 ```
 
 Or using uv:
 
 ```bash
-uv pip install -e "../../.[scoring,hf,audio,vertex]"
+uv pip install -e "../../.[scoring,vertex]"
 ```
 
 ## Usage
 
 ```bash
-# Build SFT JSONL for echo + atcosim datasets
-python pipeline.py build --datasets echo,atcosim --round-id 2026-06-01-echo-atcosim
+# Build SFT JSONL for the echo dataset
+python pipeline.py build --datasets echo --round-id 2026-06-01-echo
 
 # Submit a tuning job (requires --confirm to prevent accidental runs)
-python pipeline.py tune --round-id 2026-06-01-echo-atcosim \
+python pipeline.py tune --round-id 2026-06-01-echo \
   --base-model gemini-2.5-flash --confirm
 
 # Run evaluation on the tuned model
-python pipeline.py eval --round-id 2026-06-01-echo-atcosim
+python pipeline.py eval --round-id 2026-06-01-echo
 
 # Full pipeline: build -> tune -> eval
-python pipeline.py all --datasets echo,atcosim --round-id 2026-06-01-echo-atcosim \
+python pipeline.py all --datasets echo --round-id 2026-06-01-echo \
   --base-model gemini-2.5-flash --confirm
 ```
 
 ## Datasets
 
-The `datasets.toml` registry registers four datasets:
+The pipeline is **Echo-only** — it fine-tunes on Watch Duty's proprietary emergency-radio
+data. The `datasets.toml` registry registers one dataset via the `gcs_manifest` adapter:
 
-| Name       | Adapter      | License            | Notes |
-|------------|--------------|--------------------|-------|
-| `echo`     | gcs_manifest | Proprietary (WD)   | train_manifest_uri requires Phase 4 cluster-split script |
-| `atcosim`  | hf_dataset   | CC-BY-NC-SA-4.0    | 7,650 train / 1,910 val examples |
-| `uwb_atcc` | hf_dataset   | CC-BY-NC-SA-4.0    | 8 kHz audio; auto-resampled to 16kHz; confirm NonCommercial before prod |
-| `atco2`    | hf_dataset   | CC-BY-NC-SA-4.0    | 446 train / 113 val examples |
+| Name   | Adapter      | License          | Notes |
+|--------|--------------|------------------|-------|
+| `echo` | gcs_manifest | Proprietary (WD) | `train_manifest_uri` requires the Phase 4 cluster-split script |
 
 Note: The Echo `train_manifest_uri` in `datasets.toml` is a placeholder — it must be
 populated after the cluster-split script runs (Phase 4 prerequisite, DESIGN.md #14).
+
+(The earlier HuggingFace ATC augmentation datasets — atcosim / uwb_atcc / atco2 — and the
+`hf_dataset` adapter were removed to keep the pipeline Echo-only.)
 
 ## Cost
 
@@ -72,11 +73,13 @@ Per-run records are written to `results/<round-id>/`:
 - `wer_summary.{md,json}` — evaluation metrics (base WER, tuned WER, delta, bootstrap CI)
 - `results/ledger.md` — one-row-per-run summary table
 
-Built training JSONL files are NOT git-committed (D-16 governance — may contain
-NonCommercial UWB-ATCC data and proprietary Watch Duty Echo transcripts).
+Built training JSONL files are NOT git-committed (D-16 governance — they contain proprietary
+Watch Duty Echo transcripts).
 
 ## Prompt Parity
 
-The `prompts.py` module contains `PIPELINE_SYSTEM_PROMPT` seeded byte-for-byte from
-`model/colabs/gemini_transcribe_audio.ipynb` (D-06 hard constraint). The drift-guard
-test (`tests/test_prompt_parity.py`) asserts this parity on every run.
+`prompts.py` re-exports `PIPELINE_SYSTEM_PROMPT` / `PIPELINE_USER_PROMPT` from
+`common.prompts` (`GEMINI_TRANSCRIBE_*`) — the single canonical source it shares with
+`model/colabs/gemini_transcribe_audio.ipynb` and the `eval` stage's request builder
+(`common.vertex.build_request`). A drift-guard test asserts both sides import from
+`common`, so the prompt and inference setup can't silently diverge.

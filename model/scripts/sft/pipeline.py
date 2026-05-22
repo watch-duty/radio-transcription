@@ -7,10 +7,10 @@ Commands:
   all    -- build -> tune -> eval in one invocation (PR3 implements fully).
 
 Usage:
-  python pipeline.py build --datasets echo,atcosim --round-id 2026-06-01-echo-atcosim
-  python pipeline.py tune  --round-id 2026-06-01-echo-atcosim --base-model gemini-2.5-flash --confirm
-  python pipeline.py eval  --round-id 2026-06-01-echo-atcosim
-  python pipeline.py all   --datasets echo,atcosim --round-id 2026-06-01-echo-atcosim --base-model gemini-2.5-flash --confirm
+  python pipeline.py build --datasets echo --round-id 2026-06-01-echo
+  python pipeline.py tune  --round-id 2026-06-01-echo --base-model gemini-2.5-flash --confirm
+  python pipeline.py eval  --round-id 2026-06-01-echo
+  python pipeline.py all   --datasets echo --round-id 2026-06-01-echo --base-model gemini-2.5-flash --confirm
 """
 
 from __future__ import annotations
@@ -97,19 +97,6 @@ def _make_adapter(
         return GcsManifestAdapter(
             manifest_uri=uri,
             storage_client=storage_client,
-            normalize=dataset_cfg.get("normalize", False),
-        )
-    if adapter_type == "hf_dataset":
-        from adapters.hf_dataset import HfDatasetAdapter
-
-        split_key = "train_split" if split == "train" else "eval_split"
-        return HfDatasetAdapter(
-            hf_repo=dataset_cfg["hf_repo"],
-            split=dataset_cfg[split_key],
-            storage_client=storage_client,
-            audio_column=dataset_cfg.get("audio_column", "audio"),
-            text_column=dataset_cfg.get("text_column", "text"),
-            gcs_audio_prefix=dataset_cfg.get("gcs_audio_prefix", ""),
             normalize=dataset_cfg.get("normalize", False),
         )
     raise ValueError(f"Unknown adapter type: {adapter_type!r}")
@@ -247,12 +234,12 @@ def _add_build_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--datasets",
         required=True,
-        help="Comma-separated dataset names from datasets.toml (e.g. echo,atcosim)",
+        help="Comma-separated dataset names from datasets.toml (e.g. echo)",
     )
     p.add_argument(
         "--round-id",
         required=True,
-        help="Round identifier: YYYY-MM-DD-<slug> (e.g. 2026-06-01-echo-atcosim)",
+        help="Round identifier: YYYY-MM-DD-<slug> (e.g. 2026-06-01-echo)",
     )
     p.add_argument(
         "--system-prompt",
