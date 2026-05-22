@@ -678,14 +678,31 @@ def _eval(args: argparse.Namespace) -> int:
                 location=location,
             )
 
-            # Download batch output JSONL
-            predictions_uri = output_loc.rstrip("/") + "/predictions.jsonl"
-            out_bucket, out_blob = parse_gcs_uri(predictions_uri)
-            output_jsonl_path = Path(tmp) / "predictions.jsonl"
-            download_blob_to_file(
-                storage_client, out_bucket, out_blob, str(output_jsonl_path)
-            )
-            preds = _parse_batch_output(output_jsonl_path.read_text())
+            # Locate the batch results. The genai batches API writes them under
+            # output_loc (often in a generated subfolder) and may shard the output,
+            # so list and read every *.jsonl rather than hardcoding a single
+            # output_loc/predictions.jsonl path (which 404s when the layout differs).
+            out_bucket, out_prefix = parse_gcs_uri(output_loc.rstrip("/") + "/")
+            pred_blobs = [
+                blob
+                for blob in storage_client.bucket(out_bucket).list_blobs(
+                    prefix=out_prefix
+                )
+                if blob.name.endswith(".jsonl")
+            ]
+            if not pred_blobs:
+                logger.error(
+                    f"[{label}] no .jsonl prediction output under {output_loc} -- "
+                    "batch produced no readable results."
+                )
+                return {}
+            preds: dict[str, str] = {}
+            for i, blob in enumerate(pred_blobs):
+                local_path = Path(tmp) / f"predictions_{i}.jsonl"
+                download_blob_to_file(
+                    storage_client, out_bucket, blob.name, str(local_path)
+                )
+                preds.update(_parse_batch_output(local_path.read_text()))
             missing = len(eval_rows) - len(preds)
             if missing > 0:
                 logger.warning(
