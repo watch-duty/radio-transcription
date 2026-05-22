@@ -106,6 +106,16 @@ if __name__ == "__main__":
         subscriber, os.environ["SEGMENTED_AUDIO_SUBSCRIPTION"], segmented_topic
     )
 
+    # Pub/Sub between Normalization and Transcription Services
+    normalized_audio_topic = "projects/local-project/topics/normalized-audio"
+    create_topic(publisher, normalized_audio_topic)
+    create_push_subscription(
+        subscriber,
+        "transcription-sub",
+        normalized_audio_topic,
+        f"http://{os.environ['TRANSCRIPTION_SERVICE_HOST']}/",
+    )
+
     # Pub/Sub between Transcription and Rules Evaluation Services
     transcription_topic = os.environ["TRANSCRIPTION_TOPIC"]
     create_topic(publisher, transcription_topic)

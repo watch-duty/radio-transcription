@@ -8,7 +8,7 @@ import asyncpg
 import httpx
 import pytest
 
-from integration_tests.feed_utils import create_test_feed  # noqa: F401
+from integration_tests.feed_utils import create_test_bcfy_feed  # noqa: F401
 
 TRANSCRIPTS_API_HOST = os.environ.get("TRANSCRIPTS_API_HOST", "localhost:8087")
 
@@ -34,12 +34,12 @@ async def create_api_client() -> AsyncIterator[httpx.AsyncClient]:
 
 @pytest.mark.asyncio
 async def test_transcripts_api(
-    api_client: httpx.AsyncClient, test_feed: tuple[str, str]
+    api_client: httpx.AsyncClient, test_bcfy_feed: tuple[str, str]
 ) -> None:
     transmission_id = str(uuid.uuid4())
     transcript_text = "Hello integration test for transcripts API"
 
-    feed_id, _ = test_feed
+    feed_id, _ = test_bcfy_feed
     payload = {
         "feed_id": feed_id,
         "transmission_id": transmission_id,
@@ -89,13 +89,13 @@ async def test_transcripts_api(
 
 @pytest.mark.asyncio
 async def test_transcripts_api_duplicate_conflict(
-    api_client: httpx.AsyncClient, test_feed: tuple[str, str]
+    api_client: httpx.AsyncClient, test_bcfy_feed: tuple[str, str]
 ) -> None:
     """Verify that creating a transcript with a duplicate transmission_id returns 409."""
     transmission_id = str(uuid.uuid4())
     transcript_text = "Hello integration test for duplicate conflict"
 
-    feed_id, _ = test_feed
+    feed_id, _ = test_bcfy_feed
     payload = {
         "feed_id": feed_id,
         "transmission_id": transmission_id,
