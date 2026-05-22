@@ -836,12 +836,15 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 return AudioChunkData(
                     start_ms=200000,
                     audio=np.zeros(8000, dtype=np.int16),
-                    sample_rate=8000,   # Second is 8kHz
+                    sample_rate=8000,  # Second is 8kHz
                     speech_segments=[TimeRange(0, 1000)],
                     gcs_uri=gcs_uri,
                     duration_ms=1000,
                 )
-        mock_processor_inst.download_audio_and_detect.side_effect = download_side_effect
+
+        mock_processor_inst.download_audio_and_detect.side_effect = (
+            download_side_effect
+        )
         mock_processor_inst.preprocess_audio.side_effect = lambda x: x
 
         order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
@@ -880,9 +883,13 @@ class OrderedStitchAudioTest(unittest.TestCase):
                     )
                 )
                 .advance_watermark_to(100)
-                .add_elements([TimestampedValue(("test-feed", metadata_chunk1), 100)])
+                .add_elements(
+                    [TimestampedValue(("test-feed", metadata_chunk1), 100)]
+                )
                 .advance_watermark_to(200)
-                .add_elements([TimestampedValue(("test-feed", metadata_chunk2), 200)])
+                .add_elements(
+                    [TimestampedValue(("test-feed", metadata_chunk2), 200)]
+                )
                 .advance_watermark_to_infinity()
             )
 
@@ -899,13 +906,13 @@ class OrderedStitchAudioTest(unittest.TestCase):
             def assert_results(msgs):
                 assert len(msgs) == 2
                 msgs.sort(key=lambda x: x[1].time_range.start_ms)
-                
+
                 feed_id1, request1 = msgs[0]
                 feed_id2, request2 = msgs[1]
-                
+
                 assert request1.session_id == "session-A"
                 assert request1.sample_rate == 22050
-                
+
                 assert request2.session_id == "session-B"
                 assert request2.sample_rate == 8000
 
