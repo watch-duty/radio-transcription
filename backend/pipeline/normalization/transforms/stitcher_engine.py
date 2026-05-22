@@ -15,7 +15,7 @@ straightforward, light-speed unit testing capabilities.
 import logging as std_logging
 from collections.abc import Callable, Iterator
 from dataclasses import replace
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 from apache_beam.metrics import Metrics
@@ -130,7 +130,7 @@ class StitcherEngine:
     ) -> tuple[
         list[
             tuple[str, datatypes.FlushRequest]
-            | tuple[Literal["normalization_dlq"], dict[str, Any]]
+            | datatypes.NormalizationRawDlqOutput
         ],
         int,
     ]:
@@ -190,8 +190,7 @@ class StitcherEngine:
         last_start_ms_state: Any,
         timer_manager: Any,
     ) -> Iterator[
-        tuple[str, datatypes.FlushRequest]
-        | tuple[Literal["normalization_dlq"], dict[str, Any]]
+        tuple[str, datatypes.FlushRequest] | datatypes.NormalizationRawDlqOutput
     ]:
         """Orchestrates stale flushes when watermarks cross the timeout threshold.
 
@@ -411,7 +410,7 @@ class StitcherEngine:
     ) -> tuple[
         list[
             tuple[str, datatypes.FlushRequest]
-            | tuple[Literal["normalization_dlq"], dict[str, Any]]
+            | datatypes.NormalizationRawDlqOutput
         ],
         datatypes.TransmissionContext,
         int,

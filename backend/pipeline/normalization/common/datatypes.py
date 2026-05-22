@@ -1,7 +1,7 @@
 """Domain objects and strongly-typed dataclasses for the transcription pipeline."""
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 import apache_beam as beam
 import numpy as np
@@ -24,6 +24,9 @@ NormalizationDlqOutput = beam.pvalue.TaggedOutput[
     Literal["normalization_dlq"],
     dict[str, str | bool | dict[str, str]],
 ]
+
+# Type alias for the raw DLQ payload tuple yielded by StitcherEngine
+NormalizationRawDlqOutput = tuple[Literal["normalization_dlq"], dict[str, Any]]
 
 
 TimeRange = bp_state.TimeRangeProto
