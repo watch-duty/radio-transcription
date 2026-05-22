@@ -94,7 +94,8 @@ def validate_example(example: dict[str, Any]) -> bool:
     fd = file_parts[0]["fileData"]
     if not isinstance(fd, dict):
         return False
-    if not fd.get("fileUri", "").startswith("gs://"):
+    file_uri = fd.get("fileUri", "")
+    if not isinstance(file_uri, str) or not file_uri.startswith("gs://"):
         return False
     if fd.get("mimeType") != "audio/flac":
         return False

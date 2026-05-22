@@ -101,6 +101,14 @@ class TestValidateExample(unittest.TestCase):
         )
         self.assertFalse(validate_example(ex))
 
+    def test_rejects_null_file_uri(self) -> None:
+        from common.sft import build_example, validate_example
+
+        ex = build_example("gs://b/s.flac", "copy", "sys", "user")
+        ex["contents"][0]["parts"][0]["fileData"]["fileUri"] = None
+        # Must return False, not raise AttributeError on None.startswith(...)
+        self.assertFalse(validate_example(ex))
+
     def test_rejects_wrong_mime_type(self) -> None:
         from common.sft import build_example, validate_example
 
