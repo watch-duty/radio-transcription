@@ -1,0 +1,51 @@
+# SFT dataset registry — read by pipeline.py via tomllib (stdlib, Python 3.11+).
+# Each [datasets.<name>] section maps a dataset to its adapter and source location.
+# Per D-17: pipeline.py build always writes per-dataset JSONLs plus one combined JSONL
+# for the exact --datasets set passed. The combined JSONL name is derived at runtime.
+
+[datasets.echo]
+# gcs_manifest adapter: reads a pre-split GCS JSONL manifest directly (no audio re-encode).
+adapter = "gcs_manifest"
+# NOTE: train_manifest_uri is a placeholder. The cluster-split script (Phase 4 prerequisite)
+# must run before this URI is valid. See Phase 4 / DESIGN.md decision #14 (out-of-scope split).
+train_manifest_uri = ""
+# Replace with the real eval manifest URI from gs://wd-transcription-data/inference_manifests/
+eval_manifest_uri = "gs://wd-transcription-data/inference_manifests/echo/eval/gemini_transcribe_05_2026/results/results.jsonl"
+normalize = false
+license = "proprietary"
+
+[datasets.atcosim]
+adapter = "hf_dataset"
+hf_repo = "jlvdoorn/atcosim"
+train_split = "train"
+eval_split = "validation"
+audio_column = "audio"
+text_column = "text"
+normalize = true
+license = "CC-BY-NC-SA-4.0"
+# GCS prefix where re-encoded 16kHz FLACs are uploaded idempotently.
+gcs_audio_prefix = "gs://wd-transcription-data/sft/datasets/atcosim/"
+
+[datasets.uwb_atcc]
+adapter = "hf_dataset"
+hf_repo = "Jzuluaga/uwb_atcc"
+train_split = "train"
+eval_split = "test"   # no validation split; test is the held-out set
+audio_column = "audio"
+text_column = "text"
+normalize = true
+license = "CC-BY-NC-SA-4.0"
+# WARNING: UWB-ATCC audio is 8 kHz — hf_dataset adapter MUST resample to 16 kHz.
+# WARNING: CC BY-NC-SA 4.0 (NonCommercial) — confirm with Watch Duty before production use.
+gcs_audio_prefix = "gs://wd-transcription-data/sft/datasets/uwb_atcc/"
+
+[datasets.atco2]
+adapter = "hf_dataset"
+hf_repo = "jlvdoorn/atco2-asr"
+train_split = "train"
+eval_split = "validation"
+audio_column = "audio"
+text_column = "text"
+normalize = true
+license = "CC-BY-NC-SA-4.0"
+gcs_audio_prefix = "gs://wd-transcription-data/sft/datasets/atco2/"
