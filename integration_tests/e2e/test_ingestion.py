@@ -1,7 +1,9 @@
 import logging
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
+from google.api_core import exceptions
 from google.cloud import storage
 
 from backend.pipeline.ingestion.collectors.echo import main as echo_main
@@ -38,16 +40,20 @@ def test_ingestion_echo(test_echo_feed: tuple[str, str]) -> None:
     source_bucket_name = "echo-recordings-test"
     try:
         gcs_client.create_bucket(source_bucket_name)
+    except exceptions.Conflict:
+        # Bucket already exists, which is fine for idempotency.
+        pass
     except Exception:
         pytest.fail("Echo Ingestion Setup Failure: Unable to setup Echo bucket")
 
     # Read in test audio file
     audio_bytes = b"dummy mp3 audio"
+    path = "backend/pipeline/normalization/tests/test_data/test_bcfy.flac"
+    if not os.path.exists(path):
+        path = f"/app/{path}"
+
     try:
-        with open(
-            "/app/backend/pipeline/normalization/tests/test_data/test_bcfy.flac",
-            "rb",
-        ) as f:
+        with open(path, "rb") as f:
             audio_bytes = f.read()
     except Exception:
         pytest.fail(
