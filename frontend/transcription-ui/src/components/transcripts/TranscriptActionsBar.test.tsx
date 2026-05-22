@@ -49,7 +49,7 @@ describe('TranscriptActionsBar', () => {
         setRedactTranscripts={mockSetRedactTranscripts}
         dateTime={null}
         setDateTime={vi.fn()}
-        onViewLatestClick={vi.fn()}
+        onClickViewLatest={vi.fn()}
       />
     );
 
@@ -63,6 +63,46 @@ describe('TranscriptActionsBar', () => {
     expect(mockSetRedactTranscripts).toHaveBeenCalledWith(true);
   });
 
+  it('renders "Jump to live" button when hasNewerTranscripts is true and calls onClickViewLatest when clicked', () => {
+    const onClickViewLatest = vi.fn();
+    render(
+      <TranscriptActionsBar
+        searchedTimestamp={null}
+        hasNewerTranscripts={true}
+        redactTranscripts={false}
+        setRedactTranscripts={mockSetRedactTranscripts}
+        dateTime={null}
+        setDateTime={vi.fn()}
+        onClickViewLatest={onClickViewLatest}
+      />
+    );
+
+    const button = screen.getByRole('button', { name: /Jump to live/i });
+    expect(button).toBeTruthy();
+    expect(button).not.toBeDisabled();
+
+    fireEvent.click(button);
+    expect(onClickViewLatest).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders disabled "Jump to live" button when hasNewerTranscripts is false', () => {
+    render(
+      <TranscriptActionsBar
+        searchedTimestamp={null}
+        hasNewerTranscripts={false}
+        redactTranscripts={false}
+        setRedactTranscripts={mockSetRedactTranscripts}
+        dateTime={null}
+        setDateTime={vi.fn()}
+        onClickViewLatest={vi.fn()}
+      />
+    );
+
+    const button = screen.getByRole('button', { name: /Jump to live/i });
+    expect(button).toBeTruthy();
+    expect(button).toBeDisabled();
+  });
+
   it('opens the filter menu, clears local value, and applies new value on Apply', () => {
     const mockSetDateTime = vi.fn();
     render(
@@ -73,7 +113,7 @@ describe('TranscriptActionsBar', () => {
         setRedactTranscripts={mockSetRedactTranscripts}
         dateTime={new Date('2026-05-14T12:00:00Z')}
         setDateTime={mockSetDateTime}
-        onViewLatestClick={vi.fn()}
+        onClickViewLatest={vi.fn()}
       />
     );
 
@@ -102,7 +142,7 @@ describe('TranscriptActionsBar', () => {
         setRedactTranscripts={mockSetRedactTranscripts}
         dateTime={new Date('2026-05-14T12:00:00Z')}
         setDateTime={mockSetDateTime}
-        onViewLatestClick={vi.fn()}
+        onClickViewLatest={vi.fn()}
       />
     );
 
@@ -137,7 +177,7 @@ describe('TranscriptActionsBar', () => {
         setRedactTranscripts={mockSetRedactTranscripts}
         dateTime={null}
         setDateTime={mockSetDateTime}
-        onViewLatestClick={vi.fn()}
+        onClickViewLatest={vi.fn()}
       />
     );
 
@@ -167,7 +207,7 @@ describe('TranscriptActionsBar', () => {
         setRedactTranscripts={mockSetRedactTranscripts}
         dateTime={new Date('2026-05-14T12:00:00.000Z')}
         setDateTime={mockSetDateTime}
-        onViewLatestClick={vi.fn()}
+        onClickViewLatest={vi.fn()}
       />
     );
 
@@ -176,45 +216,5 @@ describe('TranscriptActionsBar', () => {
 
     fireEvent.click(deleteIcon);
     expect(mockSetDateTime).toHaveBeenLastCalledWith(null);
-  });
-
-  it('renders "Jump to latest" button when hasNewerTranscripts is true and calls onViewLatestClick when clicked', () => {
-    const mockOnViewLatestClick = vi.fn();
-    render(
-      <TranscriptActionsBar
-        searchedTimestamp={null}
-        hasNewerTranscripts={true}
-        redactTranscripts={false}
-        setRedactTranscripts={mockSetRedactTranscripts}
-        dateTime={null}
-        setDateTime={vi.fn()}
-        onViewLatestClick={mockOnViewLatestClick}
-      />
-    );
-
-    const button = screen.getByRole('button', { name: /Jump to latest/i });
-    expect(button).toBeTruthy();
-    expect(button).not.toBeDisabled();
-
-    fireEvent.click(button);
-    expect(mockOnViewLatestClick).toHaveBeenCalledTimes(1);
-  });
-
-  it('renders disabled "Viewing latest" button when hasNewerTranscripts is false', () => {
-    render(
-      <TranscriptActionsBar
-        searchedTimestamp={null}
-        hasNewerTranscripts={false}
-        redactTranscripts={false}
-        setRedactTranscripts={mockSetRedactTranscripts}
-        dateTime={null}
-        setDateTime={vi.fn()}
-        onViewLatestClick={vi.fn()}
-      />
-    );
-
-    const button = screen.getByRole('button', { name: /Viewing latest/i });
-    expect(button).toBeTruthy();
-    expect(button).toBeDisabled();
   });
 });

@@ -12,6 +12,7 @@ import Switch from '@mui/material/Switch';
 import Tooltip from '@mui/material/Tooltip';
 
 import { DateTimePicker } from '../common/DateTimePicker';
+import { useTheme } from '@mui/material/styles';
 
 export interface TranscriptActionsBarProps {
   hasNewerTranscripts: boolean;
@@ -20,7 +21,7 @@ export interface TranscriptActionsBarProps {
   setRedactTranscripts: (redact: boolean) => void;
   dateTime: Date | null;
   setDateTime: (dateTime: Date | null) => void;
-  onViewLatestClick: () => void;
+  onClickViewLatest: () => void;
 }
 
 export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
@@ -29,8 +30,11 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   setRedactTranscripts,
   dateTime,
   setDateTime,
-  onViewLatestClick,
+  onClickViewLatest,
 }) => {
+  const theme = useTheme();
+  const isDarkTheme = theme.palette.mode === 'dark';
+
   const [filterAnchorEl, setFilterAnchorEl] =
     React.useState<HTMLElement | null>(null);
   const [localDateTime, setLocalDateTime] = React.useState<Date | null>(
@@ -76,10 +80,10 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
         <Button
           variant="contained"
           sx={{ textTransform: 'none', gap: 1 }}
-          onClick={onViewLatestClick}
+          onClick={onClickViewLatest}
           disabled={!hasNewerTranscripts}
         >
-          {hasNewerTranscripts ? 'Jump to latest' : 'Viewing latest'}
+          Jump to live
         </Button>
 
         <Tooltip title="Filter transcripts">
@@ -154,11 +158,33 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
         </Popover>
 
         <Chip
-          sx={{ backgroundColor: dateTime ? '#c7e4ee' : '#ffdbbb' }}
+          sx={
+            isDarkTheme
+              ? {
+                  backgroundColor: dateTime
+                    ? theme.palette.primary.main
+                    : '#f9bf90',
+                  color: 'black',
+                  '& .MuiChip-deleteIcon': {
+                    color: 'black',
+                  },
+                }
+              : {
+                  backgroundColor: dateTime ? '#bbdefb' : '#f9bf90',
+                  color: 'black',
+                }
+          }
           label={
-            <Box>
-              <b>Date/time: </b> {dateTime ? `${dateTime.toLocaleDateString()} ${dateTime.toLocaleTimeString()}` : "Live"}
-            </Box>
+            dateTime ? (
+              <Box>
+                <b>Date/time:</b>{' '}
+                {`${dateTime.toLocaleDateString()} ${dateTime.toLocaleTimeString()}`}
+              </Box>
+            ) : (
+              <Box>
+                <b>Date/time:</b> Viewing live
+              </Box>
+            )
           }
           variant="filled"
           size="small"

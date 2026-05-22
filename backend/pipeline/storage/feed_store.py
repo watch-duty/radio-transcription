@@ -5,6 +5,10 @@ import json
 import logging
 from typing import TYPE_CHECKING, TypedDict
 
+import asyncpg
+import asyncpg.exceptions
+
+from backend.pipeline.common.exceptions import FeedAlreadyExistsError
 from backend.pipeline.storage.feed_queries import (
     COUNT_HELD_BY_TYPE_SQL,
     CREATE_FEED_SQL,
@@ -25,8 +29,6 @@ if TYPE_CHECKING:
     import datetime
     import uuid
     from collections.abc import Sequence
-
-    import asyncpg
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +62,7 @@ class SourceType(enum.StrEnum):
     # Echo uses a separate cloud function for ingestion instead of VMs.
     ECHO = "echo"
     OPENMHZ = "openmhz"
+    FIRE_NOTIFICATIONS = "fire_notifications"
 
 
 class FeedStatus(enum.StrEnum):
@@ -609,14 +612,25 @@ class FeedStore:
         else:
             source_type_str = source_type.value
 
-        row = await self._pool.fetchrow(
-            CREATE_FEED_SQL,
-            name,
-            source_type_str,
-            source_feed_id,
-            external_id,
-            json.dumps(tags or []),
-        )
+        try:
+            row = await self._pool.fetchrow(
+                CREATE_FEED_SQL,
+                name,
+                source_type_str,
+                source_feed_id,
+                external_id,
+                json.dumps(tags or []),
+            )
+        except asyncpg.exceptions.UniqueViolationError as e:
+            logger.warning(
+                "Feed already exists",
+                extra={
+                    "source_type": source_type_str,
+                    "source_feed_id": source_feed_id,
+                },
+            )
+            raise FeedAlreadyExistsError(source_type_str, source_feed_id) from e
+
         if row is None:
             msg = f"Failed to create feed {name}"
             raise ValueError(msg)

@@ -756,15 +756,24 @@ class NormalizerRuntime:
         _fallback_session_id: str | None = None
         topic_path = self._get_pubsub_topic_path(feed)
 
-        extension = "flac"
-        content_type = "audio/flac"
-
         if feed["source_type"] == SourceType.OPENMHZ:
             extension = "m4a"
             content_type = "audio/mp4"
-        elif feed["source_type"] == SourceType.ECHO:
+        elif feed["source_type"] in (
+            SourceType.ECHO,
+            SourceType.FIRE_NOTIFICATIONS,
+        ):
             extension = "mp3"
             content_type = "audio/mpeg"
+        elif feed["source_type"] in (
+            SourceType.BCFY_FEEDS,
+            SourceType.BCFY_CALLS,
+        ):
+            extension = "flac"
+            content_type = "audio/flac"
+        else:
+            msg = f"Unhandled source type: {feed['source_type']}"
+            raise ValueError(msg)
 
         try:
             async for captured_chunk in self._capture_fn(
@@ -1255,6 +1264,20 @@ class NormalizerRuntime:
         retained_ids = {
             r["id"] for r in results if r["current_worker"] == worker_id
         }
+
+        # Cancel tasks for feeds that have been deactivated.
+        for r in results:
+            if (
+                r["current_status"] == "deactivated"
+                and r["current_worker"] == worker_id
+            ):
+                fid = r["id"]
+                if fid in active and not active[fid].done():
+                    logger.info(
+                        "Feed %s deactivated; cancelling task",
+                        fid,
+                    )
+                    active[fid].cancel()
 
         # A feed missing from retained_ids is NOT a violation if:
         #   - active[fid].done(): task finished between snapshot and DB response

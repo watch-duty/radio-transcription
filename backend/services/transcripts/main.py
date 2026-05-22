@@ -94,6 +94,8 @@ async def list_transcripts(
     start_time: datetime.datetime | None = None,
     end_time: datetime.datetime | None = None,
     order: SortOrder = SortOrder.DESC,
+    *,
+    is_alert: bool | None = None,
 ) -> ListTranscriptsResponse:
     """List transcripts, optionally filtered by feed ID, with pagination and time window.
 
@@ -110,6 +112,7 @@ async def list_transcripts(
                 start_time=start_time,
                 end_time=end_time,
                 order=order,
+                is_alert=is_alert,
             )
         return await service.list_transcripts(
             limit=limit,
@@ -117,6 +120,7 @@ async def list_transcripts(
             start_time=start_time,
             end_time=end_time,
             order=order,
+            is_alert=is_alert,
         )
     except ValueError as e:
         raise HTTPException(

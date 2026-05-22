@@ -774,7 +774,7 @@ export function TranscriptView({
           setRedactTranscripts={setRedactTranscripts}
           dateTime={searchedTimestamp}
           setDateTime={handleFilterByDateTime}
-          onViewLatestClick={() => handleFilterByDateTime(null)}
+          onClickViewLatest={() => handleFilterByDateTime(null)}
         />
         {transcripts.length > 0 ? (
           <TranscriptDisplay
