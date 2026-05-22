@@ -47,6 +47,12 @@ from backend.pipeline.normalization.transforms import stitcher_engine
 
 SHARED_RESOURCE_HANDLE = Shared()
 
+# Type alias for transcription Dead Letter Queue tagged output to simplify typing annotations
+TranscriptionDlqOutput = beam.pvalue.TaggedOutput[
+    Literal["transcription_dlq"],
+    dict[str, str | bool | dict[str, str]],
+]
+
 logger = trans_logging.get_task_logger(
     __name__, {"system": "transcription", "component": "ordered-stitcher"}
 )
@@ -311,13 +317,7 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
         out_of_order_timer: RuntimeTimer = OUT_OF_ORDER_TIMER,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
-    ) -> Iterator[
-        tuple[str, datatypes.FlushRequest]
-        | beam.pvalue.TaggedOutput[
-            Literal["transcription_dlq"],
-            dict[str, str | bool | dict[str, str]],
-        ]
-    ]:
+    ) -> Iterator[tuple[str, datatypes.FlushRequest] | TranscriptionDlqOutput]:
         """Intercepts chunk arrival, resolves chronological ordering, and delegates to StitcherEngine."""
         feed_id, metadata = element
         traceparent = metadata.traceparent or ""
@@ -409,13 +409,7 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
-    ) -> Iterator[
-        tuple[str, datatypes.FlushRequest]
-        | beam.pvalue.TaggedOutput[
-            Literal["transcription_dlq"],
-            dict[str, str | bool | dict[str, str]],
-        ]
-    ]:
+    ) -> Iterator[tuple[str, datatypes.FlushRequest] | TranscriptionDlqOutput]:
         """Handles the gap timeout by advancing the expected sequence."""
         curr_context = (
             transmission_context_state.read() or datatypes.IdleFeedState()
@@ -508,13 +502,7 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
-    ) -> Iterator[
-        tuple[str, datatypes.FlushRequest]
-        | beam.pvalue.TaggedOutput[
-            Literal["transcription_dlq"],
-            dict[str, str | bool | dict[str, str]],
-        ]
-    ]:
+    ) -> Iterator[tuple[str, datatypes.FlushRequest] | TranscriptionDlqOutput]:
         """Watermark crossed stale duration, delegate flush to StitcherEngine."""
         timer_manager = StaleTimerManager(
             stale_timer_event, stale_timer_proc, self.stitch_config
@@ -538,13 +526,7 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
-    ) -> Iterator[
-        tuple[str, datatypes.FlushRequest]
-        | beam.pvalue.TaggedOutput[
-            Literal["transcription_dlq"],
-            dict[str, str | bool | dict[str, str]],
-        ]
-    ]:
+    ) -> Iterator[tuple[str, datatypes.FlushRequest] | TranscriptionDlqOutput]:
         """Wall-clock crossed stale duration, delegate flush to StitcherEngine."""
         timer_manager = StaleTimerManager(
             stale_timer_event, stale_timer_proc, self.stitch_config
@@ -684,13 +666,7 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
         out_of_order_timer: RuntimeTimer = OUT_OF_ORDER_TIMER,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
-    ) -> Iterator[
-        tuple[str, datatypes.FlushRequest]
-        | beam.pvalue.TaggedOutput[
-            Literal["transcription_dlq"],
-            dict[str, str | bool | dict[str, str]],
-        ]
-    ]:
+    ) -> Iterator[tuple[str, datatypes.FlushRequest] | TranscriptionDlqOutput]:
         """Intercepts chunk arrival, resolves chronological ordering, and delegates to StitcherEngine."""
         feed_id, metadata = element
         traceparent = metadata.traceparent or ""
@@ -786,13 +762,7 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
-    ) -> Iterator[
-        tuple[str, datatypes.FlushRequest]
-        | beam.pvalue.TaggedOutput[
-            Literal["transcription_dlq"],
-            dict[str, str | bool | dict[str, str]],
-        ]
-    ]:
+    ) -> Iterator[tuple[str, datatypes.FlushRequest] | TranscriptionDlqOutput]:
         """Handles the gap timeout by advancing the expected sequence."""
         curr_context = (
             transmission_context_state.read() or datatypes.IdleFeedState()
@@ -885,13 +855,7 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
-    ) -> Iterator[
-        tuple[str, datatypes.FlushRequest]
-        | beam.pvalue.TaggedOutput[
-            Literal["transcription_dlq"],
-            dict[str, str | bool | dict[str, str]],
-        ]
-    ]:
+    ) -> Iterator[tuple[str, datatypes.FlushRequest] | TranscriptionDlqOutput]:
         """Watermark crossed stale duration, delegate flush to StitcherEngine."""
         timer_manager = StaleTimerManager(
             stale_timer_event, stale_timer_proc, self.stitch_config
@@ -915,13 +879,7 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
-    ) -> Iterator[
-        tuple[str, datatypes.FlushRequest]
-        | beam.pvalue.TaggedOutput[
-            Literal["transcription_dlq"],
-            dict[str, str | bool | dict[str, str]],
-        ]
-    ]:
+    ) -> Iterator[tuple[str, datatypes.FlushRequest] | TranscriptionDlqOutput]:
         """Wall-clock crossed stale duration, delegate flush to StitcherEngine."""
         timer_manager = StaleTimerManager(
             stale_timer_event, stale_timer_proc, self.stitch_config
@@ -1113,13 +1071,7 @@ class NormalizeAudioFn(beam.DoFn):
         element: tuple[str, datatypes.FlushRequest],
         *args: Any,
         **kwargs: Any,
-    ) -> Iterator[
-        datatypes.NormalizationResult
-        | beam.pvalue.TaggedOutput[
-            Literal["transcription_dlq"],
-            dict[str, str | bool | dict[str, str]],
-        ]
-    ]:
+    ) -> Iterator[datatypes.NormalizationResult | TranscriptionDlqOutput]:
         """Submits the consolidated flushed buffer to GCS uploading and normalization."""
         feed_id, request = element
 
