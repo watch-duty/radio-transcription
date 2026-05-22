@@ -1,4 +1,4 @@
-export type SourceType = 'bcfy_feeds' | 'bcfy_calls' | 'echo' | 'openmhz';
+export type SourceType = 'bcfy_feeds' | 'bcfy_calls' | 'echo' | 'openmhz' | 'fire_notifications';
 
 export type BackendFeedStatus =
   | 'unclaimed'
