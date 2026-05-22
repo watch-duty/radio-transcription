@@ -6,6 +6,7 @@ If this test fails, either:
 
 Fix: re-seed prompts.py from the notebook (source of truth per D-06).
 """
+
 from __future__ import annotations
 
 import json
@@ -16,7 +17,9 @@ from pathlib import Path
 
 # Path from scripts/sft/tests/ -> sft/ -> scripts/ -> model/ -> colabs/
 NOTEBOOK_PATH = (
-    Path(__file__).resolve().parent.parent.parent.parent  # tests/ -> sft/ -> scripts/ -> model/
+    Path(__file__)
+    .resolve()
+    .parent.parent.parent.parent  # tests/ -> sft/ -> scripts/ -> model/
     / "colabs"
     / "gemini_transcribe_audio.ipynb"
 )
@@ -67,9 +70,7 @@ class TestPromptParity(unittest.TestCase):
             sys.path.insert(0, sft_dir)
         from prompts import PIPELINE_USER_PROMPT
 
-        expected = (
-            "Transcribe this emergency radio communication segment verbatim per the rules above."
-        )
+        expected = "Transcribe this emergency radio communication segment verbatim per the rules above."
         self.assertEqual(PIPELINE_USER_PROMPT, expected)
 
 

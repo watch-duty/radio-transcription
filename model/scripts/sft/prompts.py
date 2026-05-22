@@ -7,6 +7,7 @@ The drift-guard test (tests/test_prompt_parity.py) asserts this matches the note
 
 WARNING: Do NOT edit without also updating the notebook AND running test_prompt_parity.py.
 """
+
 from __future__ import annotations
 
 from typing import Final
@@ -45,6 +46,4 @@ PIPELINE_SYSTEM_PROMPT: Final = (
 )
 
 # VERIFIED byte-identical to the notebook user instruction and autoresearch USER_PROMPT.
-PIPELINE_USER_PROMPT: Final = (
-    "Transcribe this emergency radio communication segment verbatim per the rules above."
-)
+PIPELINE_USER_PROMPT: Final = "Transcribe this emergency radio communication segment verbatim per the rules above."

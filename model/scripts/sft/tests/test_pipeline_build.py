@@ -3,6 +3,7 @@
 RED phase: tests written before implementation — all should FAIL until
 implementation is complete.
 """
+
 from __future__ import annotations
 
 import json
@@ -12,18 +13,22 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-# Ensure scripts/sft/ is on path
+# Ensure scripts/sft/ and model/colabs/ (for common) are on path
 _SFT_DIR = str(Path(__file__).resolve().parent.parent)
+_COLABS_DIR = str(
+    Path(__file__).resolve().parent.parent.parent.parent / "colabs"
+)
 if _SFT_DIR not in sys.path:
     sys.path.insert(0, _SFT_DIR)
+if _COLABS_DIR not in sys.path:
+    sys.path.insert(0, _COLABS_DIR)
 
 
 class TestPipelineCLI(unittest.TestCase):
     """pipeline.py --help and build --help exit 0 and show expected subcommands."""
 
     def test_help_exits_zero(self) -> None:
-        """python pipeline.py --help exits 0."""
-        import argparse
+        """Python pipeline.py --help exits 0."""
         import pipeline
 
         # Re-parse with --help should raise SystemExit(0)
@@ -33,17 +38,20 @@ class TestPipelineCLI(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 0)
 
     def test_build_help_exits_zero(self) -> None:
-        """python pipeline.py build --help exits 0."""
+        """Python pipeline.py build --help exits 0."""
         import pipeline
 
         with self.assertRaises(SystemExit) as ctx:
-            with unittest.mock.patch("sys.argv", ["pipeline.py", "build", "--help"]):
+            with unittest.mock.patch(
+                "sys.argv", ["pipeline.py", "build", "--help"]
+            ):
                 pipeline.main()
         self.assertEqual(ctx.exception.code, 0)
 
     def test_subcommands_listed(self) -> None:
         """Verify main() is callable and returns int."""
         import pipeline
+
         self.assertTrue(callable(pipeline.main))
 
 
@@ -58,7 +66,12 @@ class TestPreflightEmptyTarget(unittest.TestCase):
                 {
                     "role": "user",
                     "parts": [
-                        {"fileData": {"mimeType": "audio/flac", "fileUri": "gs://b/a.flac"}},
+                        {
+                            "fileData": {
+                                "mimeType": "audio/flac",
+                                "fileUri": "gs://b/a.flac",
+                            }
+                        },
                         {"text": "transcribe"},
                     ],
                 },
@@ -99,9 +112,10 @@ class TestPreflightEmptyTarget(unittest.TestCase):
                 report_path=report_path,
             )
 
-        self.assertTrue(report_path.exists())
-        data = json.loads(report_path.read_text())
-        self.assertFalse(data["passed"])
+            # Check inside the context while directory still exists
+            self.assertTrue(report_path.exists())
+            data = json.loads(report_path.read_text())
+            self.assertFalse(data["passed"])
 
 
 class TestPreflightDuplicateUri(unittest.TestCase):
@@ -114,7 +128,12 @@ class TestPreflightDuplicateUri(unittest.TestCase):
                 {
                     "role": "user",
                     "parts": [
-                        {"fileData": {"mimeType": "audio/flac", "fileUri": uri}},
+                        {
+                            "fileData": {
+                                "mimeType": "audio/flac",
+                                "fileUri": uri,
+                            }
+                        },
                         {"text": "transcribe"},
                     ],
                 },
@@ -131,7 +150,8 @@ class TestPreflightDuplicateUri(unittest.TestCase):
             report_path = Path(tmp) / "preflight_report.json"
             lines = [
                 json.dumps(self._make_good_example(duplicate_uri)) + "\n",
-                json.dumps(self._make_good_example(duplicate_uri)) + "\n",  # duplicate
+                json.dumps(self._make_good_example(duplicate_uri))
+                + "\n",  # duplicate
             ]
             train_path.write_text("".join(lines))
 
@@ -163,7 +183,9 @@ class TestPreflightDuplicateUri(unittest.TestCase):
                 report_path=report_path,
             )
 
-        self.assertTrue(report.passed, f"Unexpected failures: {report.failures}")
+        self.assertTrue(
+            report.passed, f"Unexpected failures: {report.failures}"
+        )
 
     def test_preflight_fails_on_empty_train(self) -> None:
         from preflight import run_preflight
@@ -215,11 +237,14 @@ class TestGcsManifestAdapter(unittest.TestCase):
 
         self.assertEqual(len(rows), 1)
         self.assertIsInstance(rows[0], CanonicalRow)
-        self.assertEqual(rows[0].audio_filepath, "gs://bucket/audio/seg_001.flac")
+        self.assertEqual(
+            rows[0].audio_filepath, "gs://bucket/audio/seg_001.flac"
+        )
         self.assertEqual(rows[0].text, "engine 41 responding")
 
     def test_import_succeeds(self) -> None:
         from adapters.gcs_manifest import GcsManifestAdapter
+
         self.assertTrue(callable(GcsManifestAdapter))
 
 
@@ -228,14 +253,16 @@ class TestHfDatasetAdapter(unittest.TestCase):
 
     def test_module_imports_without_datasets_installed(self) -> None:
         """The module itself must import without [hf] extra installed."""
-        import importlib
         # This should succeed even if datasets is not installed
         # (lazy import guard at module level)
         try:
             import adapters.hf_dataset as hf_mod
+
             self.assertTrue(hasattr(hf_mod, "HfDatasetAdapter"))
         except ImportError:
-            self.fail("adapters.hf_dataset module-level import should not raise ImportError")
+            self.fail(
+                "adapters.hf_dataset module-level import should not raise ImportError"
+            )
 
     def test_instantiation_raises_if_datasets_missing(self) -> None:
         """HfDatasetAdapter() raises ImportError if [hf] extra is absent."""
@@ -259,6 +286,7 @@ class TestPreflightTokenCap(unittest.TestCase):
 
     def test_token_cap_value(self) -> None:
         from preflight import PREFLIGHT_TOKEN_CAP
+
         self.assertEqual(PREFLIGHT_TOKEN_CAP, 131_072)
 
 
