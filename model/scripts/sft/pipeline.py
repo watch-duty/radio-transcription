@@ -86,9 +86,14 @@ def _make_adapter(
     if adapter_type == "gcs_manifest":
         from adapters.gcs_manifest import GcsManifestAdapter
 
-        uri_key = (
-            "train_manifest_uri" if split == "train" else "eval_manifest_uri"
-        )
+        if split == "train":
+            uri_key = "train_manifest_uri"
+        elif split == "eval":
+            uri_key = "eval_manifest_uri"
+        else:
+            raise ValueError(
+                f"Unknown split: {split!r} (expected 'train' or 'eval')"
+            )
         uri = dataset_cfg.get(uri_key, "")
         if not uri:
             raise ValueError(

@@ -22,9 +22,6 @@ from common.sft import validate_example
 logger = logging.getLogger(__name__)
 
 PREFLIGHT_TOKEN_CAP: Final = 131_072  # VERIFIED: docs.cloud.google.com SFT docs
-AUDIO_TOKENS_PER_SEC: Final = (
-    32  # VERIFIED: ai.google.dev/gemini-api/docs/tokens
-)
 
 
 @dataclass
