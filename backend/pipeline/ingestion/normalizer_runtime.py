@@ -772,7 +772,8 @@ class NormalizerRuntime:
             extension = "flac"
             content_type = "audio/flac"
         else:
-            raise ValueError(f"Unhandled source type: {feed['source_type']}")
+            msg = f"Unhandled source type: {feed['source_type']}"
+            raise ValueError(msg)
 
         try:
             async for captured_chunk in self._capture_fn(
