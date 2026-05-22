@@ -156,6 +156,23 @@ class TestPollTuningJob(unittest.TestCase):
             name="projects/p/locations/l/tuningJobs/123"
         )
 
+    @unittest.mock.patch("common.vertex.genai")
+    def test_poll_raises_timeout_when_never_terminal(self, mock_genai):
+        """poll_tuning_job raises TimeoutError if no terminal state within timeout_hours."""
+        mock_genai.Client.return_value = _make_mock_client(
+            state="JOB_STATE_RUNNING"
+        )
+        from common.vertex import poll_tuning_job
+
+        with self.assertRaises(TimeoutError):
+            poll_tuning_job(
+                name="projects/p/locations/l/tuningJobs/123",
+                project="p",
+                location="us-central1",
+                poll_interval=0,
+                timeout_hours=0,
+            )
+
 
 class TestAdapterEnum(unittest.TestCase):
     """Guard against silent miskeys in _ADAPTER_ENUM."""

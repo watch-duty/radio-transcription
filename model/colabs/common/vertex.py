@@ -218,6 +218,7 @@ def poll_tuning_job(
     project: str,
     location: str,
     poll_interval: int = 30,
+    timeout_hours: float = 24.0,
 ) -> str:
     """Re-fetch a Vertex AI tuning job by name and poll until terminal state.
 
@@ -229,6 +230,8 @@ def poll_tuning_job(
         project: GCP project ID.
         location: GCP region.
         poll_interval: Seconds between state-poll requests.
+        timeout_hours: Max wall-clock hours to poll before raising TimeoutError
+            (default 24) -- guards against an indefinite hang on an API/network stall.
 
     Returns:
         Tuned model endpoint string (cur.tuned_model.endpoint).
@@ -236,11 +239,13 @@ def poll_tuning_job(
     Raises:
         ImportError: If the [vertex] extra is not installed.
         RuntimeError: If the tuning job ends in a non-success terminal state.
+        TimeoutError: If no terminal state is reached within timeout_hours.
     """
     _require_vertex()
     client = genai.Client(vertexai=True, project=project, location=location)
     last_state: "str | None" = None
     state: str = ""
+    deadline = time.monotonic() + timeout_hours * 3600
     while True:
         cur = client.tunings.get(name=name)
         state = getattr(cur.state, "name", str(cur.state))
@@ -249,6 +254,12 @@ def poll_tuning_job(
             last_state = state
         if state in _TERMINAL_STATES:
             break
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"Tuning job {name} did not reach a terminal state within "
+                f"{timeout_hours}h (last state: {state}). It may still be running "
+                "on Vertex; re-run tune to resume polling by job name."
+            )
         time.sleep(poll_interval)
 
     if state not in _TUNING_SUCCESS_STATES:
@@ -267,6 +278,7 @@ def submit_batch_inference(
     project: str,
     location: str,
     poll_interval: int = 60,
+    timeout_hours: float = 24.0,
 ) -> str:
     """Submit a Vertex AI batch inference job and poll until a terminal state.
 
@@ -277,6 +289,8 @@ def submit_batch_inference(
         project: GCP project ID (required — no silent default).
         location: GCP region for the batch job.
         poll_interval: Seconds between state-poll requests.
+        timeout_hours: Max wall-clock hours to poll before raising TimeoutError
+            (default 24) -- guards against an indefinite hang on an API/network stall.
 
     Returns:
         Resolved batch output location (GCS URI string).
@@ -285,6 +299,7 @@ def submit_batch_inference(
     Raises:
         ImportError: If the ``[vertex]`` extra is not installed.
         RuntimeError: If the batch job ends in FAILED or CANCELLED state.
+        TimeoutError: If no terminal state is reached within timeout_hours.
     """
     _require_vertex()
     client = genai.Client(vertexai=True, project=project, location=location)
@@ -298,6 +313,7 @@ def submit_batch_inference(
 
     last_state: "str | None" = None
     state: str = ""
+    deadline = time.monotonic() + timeout_hours * 3600
     while True:
         cur = client.batches.get(name=batch_job.name)
         state = getattr(cur.state, "name", str(cur.state))
@@ -306,6 +322,11 @@ def submit_batch_inference(
             last_state = state
         if state in _BATCH_TERMINAL_STATES:
             break
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"Batch job {batch_job.name} did not reach a terminal state "
+                f"within {timeout_hours}h (last state: {state})."
+            )
         time.sleep(poll_interval)
 
     if state not in _BATCH_SUCCESS_STATES:
