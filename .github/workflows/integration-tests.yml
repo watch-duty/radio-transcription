@@ -56,6 +56,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-uv-
 
+      - name: Install dependencies (host)
+        run: uv sync
+
+      - name: Generate protobufs (host)
+        run: mise run generate:protos
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -68,7 +74,12 @@ jobs:
             --load
 
       - name: Run E2E tests
-        run: mise run test:e2e
+        run: |
+          docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run --rm integration-tests /app/.venv/bin/pytest integration_tests/ -v -s --log-cli-level=INFO
+
+      - name: Clean up containers
+        if: always()
+        run: docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env down --remove-orphans
 
       - name: Print container logs on failure
         if: failure()
