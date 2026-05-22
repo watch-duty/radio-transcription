@@ -26,7 +26,7 @@ def _git_sha() -> str:
             text=True,
             cwd=str(
                 Path(__file__).resolve().parent.parent.parent
-            ),  # model/../.. = radio-transcription/
+            ),  # resolves to model/ (inside the repo; git finds the root from here)
         )
         return result.stdout.strip() if result.returncode == 0 else "unknown"
     except Exception:

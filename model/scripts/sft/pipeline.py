@@ -446,19 +446,24 @@ def _tune(args: argparse.Namespace) -> int:
         3.00  # ASSUMED: 2.0-Flash upper bound (2.5-Flash not public)
     )
 
-    avg_secs = (
-        5.0  # conservative default; actual varies (Echo: ~3-30s segments)
-    )
     epochs = args.epochs
-    estimated_tokens = n_examples * avg_secs * AUDIO_TOKENS_PER_SEC * epochs
+    total_secs = config.get("total_train_duration_seconds")
+    if total_secs:
+        total_secs = float(total_secs)
+        basis = f"{total_secs:,.0f}s actual total"
+    else:
+        # No recorded durations (older build) -- worst-case fallback so the estimate
+        # does not under-state cost (Echo segments run ~3-30s; avg ~15s).
+        avg_secs = 15.0
+        total_secs = n_examples * avg_secs
+        basis = f"{n_examples} x {avg_secs:.1f}s avg (estimated)"
+    estimated_tokens = total_secs * AUDIO_TOKENS_PER_SEC * epochs
     estimated_cost = (estimated_tokens / 1_000_000) * COST_PER_MILLION_TOKENS
 
     print("\n--- Tune Cost Estimate ---")
     print(f"  Examples:          {n_examples}")
     print(f"  Epochs:            {epochs}")
-    print(
-        f"  Est. audio tokens: {estimated_tokens:,.0f} (at {avg_secs:.1f}s avg x 32 tok/s)"
-    )
+    print(f"  Est. audio tokens: {estimated_tokens:,.0f} ({basis} x 32 tok/s)")
     print(f"  Est. cost:        ~${estimated_cost:.2f} USD")
     print(
         "  NOTE: Using Gemini 2.0 Flash rate ($3.00/M tokens) as upper bound."
@@ -653,7 +658,15 @@ def _eval(args: argparse.Namespace) -> int:
             download_blob_to_file(
                 storage_client, out_bucket, out_blob, str(output_jsonl_path)
             )
-            return _parse_batch_output(output_jsonl_path.read_text())
+            preds = _parse_batch_output(output_jsonl_path.read_text())
+            missing = len(eval_rows) - len(preds)
+            if missing > 0:
+                logger.warning(
+                    f"[{label}] {missing}/{len(eval_rows)} segments returned no "
+                    f"prediction (Vertex batch errors or skips) -- they score as full "
+                    f"deletions; check for a batch/API failure, not just model quality."
+                )
+            return preds
 
     normalizer = build_normalizer()
 
