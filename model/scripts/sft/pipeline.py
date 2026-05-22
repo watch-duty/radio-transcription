@@ -530,7 +530,7 @@ def _eval(args: argparse.Namespace) -> int:
         duration_bucket_wer,
         hallucination_rate,
     )
-    from common.vertex import submit_batch_inference
+    from common.vertex import build_request, submit_batch_inference
     from google.cloud import storage
     from records import append_ledger, write_config, write_wer_summary
 
@@ -586,30 +586,11 @@ def _eval(args: argparse.Namespace) -> int:
         batch_input_path = Path(tmp) / f"batch_input_{label}.jsonl"
         lines = []
         for row in eval_rows:
-            req = {
-                "request": {
-                    "contents": [
-                        {
-                            "role": "user",
-                            "parts": [
-                                {
-                                    "file_data": {
-                                        "file_uri": row.audio_filepath,
-                                        "mime_type": "audio/flac",
-                                    }
-                                },
-                                {"text": user_prompt},
-                            ],
-                        }
-                    ],
-                    "system_instruction": {
-                        "role": "system",
-                        "parts": [{"text": system_prompt}],
-                    },
-                    "generation_config": {"temperature": 0.0},
-                    "safety_settings": [],
-                }
-            }
+            req = build_request(
+                row.audio_filepath,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+            )
             lines.append(json.dumps(req))
         batch_input_path.write_text("\n".join(lines))
 
