@@ -1,8 +1,18 @@
 """Vertex AI Gemini tuning job and batch inference submission (behind [vertex] extra).
 
-Provides ``submit_tuning_job`` (LIB-05) and ``submit_batch_inference`` for submitting
-and polling Vertex AI Gemini SFT tuning and batch inference jobs via ``google-genai``
-2.x.
+Provides ``submit_tuning_job`` (submit-only, returns job.name), ``poll_tuning_job``
+(re-fetch by name and poll to terminal, returns endpoint), and
+``submit_batch_inference`` for Vertex AI Gemini SFT tuning and batch inference
+via ``google-genai`` 2.x.
+
+PR3 refactors ``submit_tuning_job`` to return ``job.name`` immediately (D-10):
+the caller persists ``job.name`` to ``config.json`` before calling
+``poll_tuning_job``, preventing job loss on crash between submission and first
+poll.
+
+PR3 also fixes ``submit_batch_inference``: ``cur.dest`` is a
+``BatchJobDestination`` object — the correct expression is
+``cur.dest.gcs_uri if cur.dest else output_uri``.
 
 Key corrections from the frozen autoresearch-gemini-sft source (submit_sft.py):
 - Validation dataset uses ``types.TuningDataset`` (STACK.md §2 corrects the stale type — Pitfall 2)
@@ -151,33 +161,31 @@ def submit_tuning_job(
     epoch_count: int = 5,
     adapter_size: str = "ONE",
     lr_multiplier: float = 1.0,
-    poll_interval: int = 30,
 ) -> str:
-    """Submit a Vertex AI Gemini SFT tuning job and poll until a terminal state.
+    """Submit a Vertex AI Gemini SFT tuning job and return job.name immediately.
 
-    Ported from ``autoresearch-gemini-sft/src/submit_sft.py`` with mandatory
-    corrections: validation dataset uses ``types.TuningDataset`` (corrected per STACK.md §2), parameterized
-    hyperparameters, required project/location, RuntimeError on failure.
+    D-10: Returns job.name without polling so the caller can persist it to
+    config.json before entering the poll loop. This prevents losing the job
+    reference if the process crashes between submission and first poll.
 
     Args:
         train_uri: GCS URI for training JSONL (gs://...).
-        display_name: Display name for the tuned model resource.
-        project: GCP project ID (required — no silent default, Pitfall 4).
+        display_name: Display name for the tuned model resource (encode round-id here).
+        project: GCP project ID (required — no silent default).
         location: GCP region (use 'us-central1' for evaluation feature availability).
         base_model: Base model name. Defaults to 'gemini-2.5-flash'.
-        val_uri: Optional GCS URI for validation JSONL.
+        val_uri: Optional GCS URI for validation JSONL. Wires eval_total_loss (D-12/PIPE-09).
         epoch_count: Number of training epochs (1-100). SDK default is 5.
         adapter_size: Adapter size key — one of ONE, FOUR, EIGHT, SIXTEEN.
         lr_multiplier: Learning-rate multiplier (0.001-10.0). Defaults to 1.0.
-        poll_interval: Seconds between state-poll requests.
 
     Returns:
-        Tuned model endpoint name (resource name string).
+        job.name — the stable Vertex AI resource name for the tuning job.
+        Example: "projects/123/locations/us-central1/tuningJobs/456"
 
     Raises:
-        ImportError: If the ``[vertex]`` extra is not installed.
-        RuntimeError: If the tuning job ends in a non-success terminal state.
-        KeyError: If ``adapter_size`` is not a valid key in ``_ADAPTER_ENUM``.
+        ImportError: If the [vertex] extra is not installed.
+        KeyError: If adapter_size is not in _ADAPTER_ENUM.
     """
     _require_vertex()
     if adapter_size not in _ADAPTER_ENUM:
@@ -202,14 +210,42 @@ def submit_tuning_job(
         config=types.CreateTuningJobConfig(**cfg_kwargs),
     )
     logger.info(f"Submitted tuning job: {job.name}")
+    return job.name  # RETURN IMMEDIATELY — caller persists before polling
 
+
+def poll_tuning_job(
+    name: str,
+    project: str,
+    location: str,
+    poll_interval: int = 30,
+) -> str:
+    """Re-fetch a Vertex AI tuning job by name and poll until terminal state.
+
+    D-09: Tuning jobs are server-side, stable by resource name, re-fetchable
+    from a fresh client process. Used by the resume state machine (D-08/D-11).
+
+    Args:
+        name: Vertex AI tuning job resource name (from submit_tuning_job return value).
+        project: GCP project ID.
+        location: GCP region.
+        poll_interval: Seconds between state-poll requests.
+
+    Returns:
+        Tuned model endpoint string (cur.tuned_model.endpoint).
+
+    Raises:
+        ImportError: If the [vertex] extra is not installed.
+        RuntimeError: If the tuning job ends in a non-success terminal state.
+    """
+    _require_vertex()
+    client = genai.Client(vertexai=True, project=project, location=location)
     last_state: "str | None" = None
     state: str = ""
     while True:
-        cur = client.tunings.get(name=job.name)
+        cur = client.tunings.get(name=name)
         state = getattr(cur.state, "name", str(cur.state))
         if state != last_state:
-            logger.info(f"[{time.strftime('%H:%M:%S')}] state: {state}")
+            logger.info(f"[{time.strftime('%H:%M:%S')}] tuning state: {state}")
             last_state = state
         if state in _TERMINAL_STATES:
             break
@@ -244,6 +280,7 @@ def submit_batch_inference(
 
     Returns:
         Resolved batch output location (GCS URI string).
+        PR3 fix: cur.dest is a BatchJobDestination object — use cur.dest.gcs_uri.
 
     Raises:
         ImportError: If the ``[vertex]`` extra is not installed.
@@ -276,6 +313,9 @@ def submit_batch_inference(
             f"Batch inference job ended in non-success state: {state}"
         )
 
-    output_location: str = getattr(cur, "dest", output_uri)
+    # PR3 fix: cur.dest is a BatchJobDestination object, not a string
+    # BEFORE (buggy): output_location: str = getattr(cur, "dest", output_uri)
+    # AFTER (correct): use .gcs_uri attribute
+    output_location: str = cur.dest.gcs_uri if cur.dest else output_uri
     logger.info(f"Batch output location: {output_location}")
     return output_location
