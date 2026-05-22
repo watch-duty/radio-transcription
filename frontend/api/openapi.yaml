@@ -273,6 +273,7 @@ components:
         - bcfy_calls
         - echo
         - openmhz
+        - fire_notification
     Feed:
       properties:
         name:
