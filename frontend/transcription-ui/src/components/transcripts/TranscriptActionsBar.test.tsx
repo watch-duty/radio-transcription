@@ -24,8 +24,12 @@ describe('TranscriptActionsBar', () => {
   it('renders the redact switch and toggles state when changed', () => {
     render(
       <TranscriptActionsBar
+        hasNewerTranscripts={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
+        dateTime={null}
+        setDateTime={vi.fn()}
+        onClickViewLatest={vi.fn()}
       />
     );
 
@@ -37,5 +41,43 @@ describe('TranscriptActionsBar', () => {
 
     fireEvent.click(redactSwitch);
     expect(mockSetRedactTranscripts).toHaveBeenCalledWith(true);
+  });
+
+  it('renders "Jump to live" button when hasNewerTranscripts is true and calls onClickViewLatest when clicked', () => {
+    const onClickViewLatest = vi.fn();
+    render(
+      <TranscriptActionsBar
+        hasNewerTranscripts={true}
+        redactTranscripts={false}
+        setRedactTranscripts={mockSetRedactTranscripts}
+        dateTime={null}
+        setDateTime={vi.fn()}
+        onClickViewLatest={onClickViewLatest}
+      />
+    );
+
+    const button = screen.getByRole('button', { name: /Jump to live/i });
+    expect(button).toBeTruthy();
+    expect(button).not.toBeDisabled();
+
+    fireEvent.click(button);
+    expect(onClickViewLatest).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders disabled "Jump to live" button when hasNewerTranscripts is false', () => {
+    render(
+      <TranscriptActionsBar
+        hasNewerTranscripts={false}
+        redactTranscripts={false}
+        setRedactTranscripts={mockSetRedactTranscripts}
+        dateTime={null}
+        setDateTime={vi.fn()}
+        onClickViewLatest={vi.fn()}
+      />
+    );
+
+    const button = screen.getByRole('button', { name: /Jump to live/i });
+    expect(button).toBeTruthy();
+    expect(button).toBeDisabled();
   });
 });
