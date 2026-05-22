@@ -1,7 +1,9 @@
 """Domain objects and strongly-typed dataclasses for the transcription pipeline."""
 
 from dataclasses import dataclass, field
+from typing import Literal
 
+import apache_beam as beam
 import numpy as np
 
 from backend.pipeline.common.constants import (
@@ -16,6 +18,13 @@ from backend.pipeline.normalization.common.enums import TranscriberType
 from backend.pipeline.schema_types import (
     streaming_state as bp_state,
 )
+
+# Type alias for the normalization Dead Letter Queue tagged output
+NormalizationDlqOutput = beam.pvalue.TaggedOutput[
+    Literal["normalization_dlq"],
+    dict[str, str | bool | dict[str, str]],
+]
+
 
 TimeRange = bp_state.TimeRangeProto
 BufferedChunk = bp_state.BufferedChunkProto
