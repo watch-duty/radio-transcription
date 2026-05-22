@@ -464,7 +464,7 @@ class AudioStitchingStateMachine:
                 )
         return processed_segments
 
-    def _process_speech_segments(  # noqa: PLR0912, PLR0915
+    def _process_speech_segments(
         self, chunk_data: AudioChunkData, ctx: StitcherContext
     ) -> list[StateMachineAction]:
         """Evaluates consecutive speech data, updating length counters and triggering mid-stream flushes."""
@@ -524,107 +524,15 @@ class AudioStitchingStateMachine:
                 is_max_duration_exceeded=is_max_duration_exceeded,
             )
 
-            pre_roll_audio = None
-            if ctx.transmission_start_time_ms is None:
-                is_natural_gap = (
-                    ctx.last_segment_end_time_ms is not None
-                    and (file_start_ms + global_start_ms)
-                    > ctx.last_segment_end_time_ms
-                )
-                if ctx.missing_prior_context and is_natural_gap:
-                    ctx.missing_prior_context = False
-
-                ctx.transmission_start_time_ms = file_start_ms + global_start_ms
-
-                missing_pre_roll_ms = DEFAULT_VAD_PRE_ROLL_MS - global_start_ms
-                if missing_pre_roll_ms > 0:
-                    if ctx.prior_audio_tail is not None:
-                        try:
-                            prior_arr = np.frombuffer(
-                                ctx.prior_audio_tail, dtype=np.int16
-                            )
-                            pre_roll_samples = int(
-                                missing_pre_roll_ms
-                                * (chunk_data.sample_rate // 1000)
-                            )
-                            if len(prior_arr) >= pre_roll_samples > 0:
-                                pre_roll_audio = prior_arr[-pre_roll_samples:]
-                        except Exception as e:
-                            logger.warning(
-                                "Failed to extract pre-roll audio from prior tail: %s",
-                                e,
-                            )
-                    else:
-                        # Colab Replay/Duplicate strategy:
-                        # Since there is no prior tail (isolated Call Recording start),
-                        # we duplicate the missing pre-roll portion from the start of the current file!
-                        try:
-                            pre_roll_samples = int(
-                                missing_pre_roll_ms
-                                * (chunk_data.sample_rate // 1000)
-                            )
-                            if len(chunk_data.audio) >= pre_roll_samples > 0:
-                                pre_roll_audio = chunk_data.audio[
-                                    :pre_roll_samples
-                                ]
-                        except Exception as e:
-                            logger.warning(
-                                "Failed to duplicate pre-roll audio: %s", e
-                            )
-
-                if pre_roll_audio is not None:
-                    append_start = 0
-                    if ctx.prior_audio_tail is not None:
-                        # Continuous pre-roll: start offset is shifted negative relative to the chunk start
-                        ctx.start_audio_offset_ms = -missing_pre_roll_ms
-                        ctx.buffer_start_time_ms = (
-                            file_start_ms - missing_pre_roll_ms
-                        )
-                    else:
-                        # Colab duplicate pre-roll: the real speech starts exactly after the virtual warmup pad (200ms)
-                        ctx.start_audio_offset_ms = DEFAULT_VAD_PRE_ROLL_MS
-                        ctx.buffer_start_time_ms = file_start_ms
-                else:
-                    append_start = max(
-                        0, global_start_ms - DEFAULT_VAD_PRE_ROLL_MS
-                    )
-                    ctx.start_audio_offset_ms = append_start
-                    ctx.buffer_start_time_ms = file_start_ms + append_start
-            else:
-                append_start = (
-                    audio_append_cursor_ms
-                    if audio_append_cursor_ms is not None
-                    else 0
-                )
-
-            append_end = min(
-                (
-                    len(chunk_data.audio)
-                    // (chunk_data.sample_rate // MS_PER_SECOND)
-                ),
-                global_end_ms + DEFAULT_VAD_POST_ROLL_MS,
+            audio_append_cursor_ms = self._append_speech_audio_to_buffer(
+                chunk_data=chunk_data,
+                ctx=ctx,
+                file_start_ms=file_start_ms,
+                global_start_ms=global_start_ms,
+                global_end_ms=global_end_ms,
+                audio_append_cursor_ms=audio_append_cursor_ms,
+                actions=actions,
             )
-
-            if append_end > append_start:
-                current_audio = chunk_data.audio[
-                    append_start
-                    * (chunk_data.sample_rate // MS_PER_SECOND) : append_end
-                    * (chunk_data.sample_rate // MS_PER_SECOND)
-                ]
-                if pre_roll_audio is not None:
-                    appended_audio = np.concatenate(
-                        [pre_roll_audio, current_audio]
-                    )
-                    buffer_added_duration = (append_end - append_start) + int(
-                        len(pre_roll_audio) / (chunk_data.sample_rate / 1000.0)
-                    )
-                else:
-                    appended_audio = current_audio
-                    buffer_added_duration = append_end - append_start
-
-                actions.append(AppendBufferAction(audio_buffer=appended_audio))
-                audio_append_cursor_ms = append_end
-                ctx.buffer_duration_ms += buffer_added_duration
 
             if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
                 ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
@@ -648,3 +556,121 @@ class AudioStitchingStateMachine:
             ScheduleStaleTimerAction(deadline_ms=expected_stale_deadline_ms)
         )
         return actions
+
+    def _calculate_pre_roll_padding(
+        self,
+        chunk_data: AudioChunkData,
+        ctx: StitcherContext,
+        file_start_ms: int,
+        global_start_ms: int,
+    ) -> tuple[np.ndarray | None, int]:
+        """Calculates and extracts pre-roll warmup padding and starting audio offset."""
+        pre_roll_audio = None
+        missing_pre_roll_ms = DEFAULT_VAD_PRE_ROLL_MS - global_start_ms
+        if missing_pre_roll_ms > 0:
+            if ctx.prior_audio_tail is not None:
+                try:
+                    prior_arr = np.frombuffer(
+                        ctx.prior_audio_tail, dtype=np.int16
+                    )
+                    pre_roll_samples = int(
+                        missing_pre_roll_ms * (chunk_data.sample_rate // 1000)
+                    )
+                    if len(prior_arr) >= pre_roll_samples > 0:
+                        pre_roll_audio = prior_arr[-pre_roll_samples:]
+                except Exception as e:
+                    logger.warning(
+                        "Failed to extract pre-roll audio from prior tail: %s",
+                        e,
+                    )
+            else:
+                # Colab Replay/Duplicate strategy:
+                # Since there is no prior tail (isolated Call Recording start),
+                # we duplicate the missing pre-roll portion from the start of the current file!
+                try:
+                    pre_roll_samples = int(
+                        missing_pre_roll_ms * (chunk_data.sample_rate // 1000)
+                    )
+                    if len(chunk_data.audio) >= pre_roll_samples > 0:
+                        pre_roll_audio = chunk_data.audio[:pre_roll_samples]
+                except Exception as e:
+                    logger.warning("Failed to duplicate pre-roll audio: %s", e)
+
+        if pre_roll_audio is not None:
+            append_start = 0
+            if ctx.prior_audio_tail is not None:
+                # Continuous pre-roll: start offset is shifted negative relative to the chunk start
+                ctx.start_audio_offset_ms = -missing_pre_roll_ms
+                ctx.buffer_start_time_ms = file_start_ms - missing_pre_roll_ms
+            else:
+                # Colab duplicate pre-roll: the real speech starts exactly after the virtual warmup pad (200ms)
+                ctx.start_audio_offset_ms = DEFAULT_VAD_PRE_ROLL_MS
+                ctx.buffer_start_time_ms = file_start_ms
+        else:
+            append_start = max(0, global_start_ms - DEFAULT_VAD_PRE_ROLL_MS)
+            ctx.start_audio_offset_ms = append_start
+            ctx.buffer_start_time_ms = file_start_ms + append_start
+
+        return pre_roll_audio, append_start
+
+    def _append_speech_audio_to_buffer(
+        self,
+        chunk_data: AudioChunkData,
+        ctx: StitcherContext,
+        file_start_ms: int,
+        global_start_ms: int,
+        global_end_ms: int,
+        audio_append_cursor_ms: int | None,
+        actions: list[StateMachineAction],
+    ) -> int | None:
+        """Calculates speech boundaries, handles pre-roll duplication/priming, and appends to buffer."""
+        pre_roll_audio = None
+        if ctx.transmission_start_time_ms is None:
+            is_natural_gap = (
+                ctx.last_segment_end_time_ms is not None
+                and (file_start_ms + global_start_ms)
+                > ctx.last_segment_end_time_ms
+            )
+            if ctx.missing_prior_context and is_natural_gap:
+                ctx.missing_prior_context = False
+
+            ctx.transmission_start_time_ms = file_start_ms + global_start_ms
+
+            pre_roll_audio, append_start = self._calculate_pre_roll_padding(
+                chunk_data, ctx, file_start_ms, global_start_ms
+            )
+        else:
+            append_start = (
+                audio_append_cursor_ms
+                if audio_append_cursor_ms is not None
+                else 0
+            )
+
+        append_end = min(
+            (
+                len(chunk_data.audio)
+                // (chunk_data.sample_rate // MS_PER_SECOND)
+            ),
+            global_end_ms + DEFAULT_VAD_POST_ROLL_MS,
+        )
+
+        if append_end > append_start:
+            current_audio = chunk_data.audio[
+                append_start
+                * (chunk_data.sample_rate // MS_PER_SECOND) : append_end
+                * (chunk_data.sample_rate // MS_PER_SECOND)
+            ]
+            if pre_roll_audio is not None:
+                appended_audio = np.concatenate([pre_roll_audio, current_audio])
+                buffer_added_duration = (append_end - append_start) + int(
+                    len(pre_roll_audio) / (chunk_data.sample_rate / 1000.0)
+                )
+            else:
+                appended_audio = current_audio
+                buffer_added_duration = append_end - append_start
+
+            actions.append(AppendBufferAction(audio_buffer=appended_audio))
+            audio_append_cursor_ms = append_end
+            ctx.buffer_duration_ms += buffer_added_duration
+
+        return audio_append_cursor_ms
