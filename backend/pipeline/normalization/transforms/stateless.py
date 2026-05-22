@@ -142,6 +142,12 @@ class ParseAndKeyFn(beam.DoFn):
                     is_continuous=self.is_continuous,
                     traceparent=traceparent,
                 )
+                logger.debug(
+                    "Parsed AudioChunk feed_id=%s gcs_uri=%s duration=%dms",
+                    feed_id,
+                    chunk_proto.gcs_uri,
+                    chunk_proto.duration_ms,
+                )
                 outputs.append((feed_id, metadata))
         except Exception as e:
             msg = f"Failed to parse or validate payload: {e}"
