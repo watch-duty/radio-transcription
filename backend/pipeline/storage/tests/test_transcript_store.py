@@ -4,7 +4,6 @@ import base64
 import datetime
 import unittest
 import uuid
-from unittest import mock
 
 import asyncpg.exceptions
 
@@ -12,6 +11,7 @@ from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
+from backend.pipeline.storage.tests.connection_util import make_mock_pool
 from backend.pipeline.storage.transcript_store import TranscriptStore
 
 _TRANSMISSION_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
@@ -36,26 +36,12 @@ _TRANSCRIPT_ROW = {
 }
 
 
-def _make_mock_pool(
-    *,
-    fetchrow_result: dict | None = None,
-    execute_result: str = "UPDATE 0",
-    fetch_result: list | None = None,
-) -> mock.AsyncMock:
-    """Create a mock asyncpg.Pool with the given return values."""
-    pool = mock.AsyncMock()
-    pool.fetchrow.return_value = fetchrow_result
-    pool.execute.return_value = execute_result
-    pool.fetch.return_value = fetch_result or []
-    return pool
-
-
 class BaseTranscriptStoreTest(unittest.IsolatedAsyncioTestCase):
     """Base class for TranscriptStore tests with a shared prepopulated mock pool."""
 
     def setUp(self) -> None:
         super().setUp()
-        self.pool = _make_mock_pool(
+        self.pool = make_mock_pool(
             fetchrow_result=_TRANSCRIPT_ROW, fetch_result=[_TRANSCRIPT_ROW]
         )
         self.store = TranscriptStore(self.pool)
