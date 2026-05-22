@@ -2,13 +2,11 @@
 
 import logging
 
-import numpy as np
 from apache_beam.metrics import Metrics
 
 from backend.pipeline.common.constants import MS_PER_SECOND
 from backend.pipeline.normalization.common.constants import (
     DEFAULT_VAD_POST_ROLL_MS,
-    DEFAULT_VAD_PRE_ROLL_MS,
 )
 from backend.pipeline.normalization.common.datatypes import (
     AppendBufferAction,
@@ -557,93 +555,6 @@ class AudioStitchingStateMachine:
         )
         return actions
 
-    def _calculate_pre_roll_padding(
-        self,
-        chunk_data: AudioChunkData,
-        ctx: StitcherContext,
-        file_start_ms: int,
-        global_start_ms: int,
-    ) -> tuple[np.ndarray | None, int]:
-        """Calculates and extracts pre-roll warmup padding and starting audio offset.
-
-        CRITICAL DISTINCTION:
-        - VAD/Denoiser Priming Padding: Warm-up context (e.g., prior_audio_tail) fed strictly
-          into neural VAD/denoiser model states (Silero/UL-UNAS) upstream. It is NEVER appended
-          to the final exported audio payload.
-        - ASR Pre-Roll Padding (This logic): An acoustic silence/static pad (DEFAULT_VAD_PRE_ROLL_MS)
-          physically prepended to the exported GCS audio file. This ensures the downstream ASR
-          model (Speech-to-Text) has a sufficient warm-up window to avoid clipping the first word.
-
-        When a segment onset starts too close to the beginning of the Call Recording / stream
-        (global_start_ms < DEFAULT_VAD_PRE_ROLL_MS), we cannot extract the full ASR pre-roll directly.
-        We resolve this using two strategies:
-        1. Prior Chunk Priming (pulling missing pre-roll samples from the contiguous prior chunk tail).
-        2. Duplicate Replay (duplicating the start of the Call Recording as a dummy ASR warmup pad).
-        """
-        pre_roll_audio = None
-
-        # 1. Calculate the missing pre-roll duration we need to supply for ASR warmup
-        missing_pre_roll_ms = DEFAULT_VAD_PRE_ROLL_MS - global_start_ms
-        if missing_pre_roll_ms > 0:
-            if ctx.prior_audio_tail is not None:
-                # STRATEGY 1: Prior Chunk Priming (ASR Pre-Roll)
-                # We have a continuous sequence and the physical tail of the prior chunk is cached.
-                # We extract the exact missing ASR pre-roll samples from the end of this cached tail.
-                try:
-                    prior_arr = np.frombuffer(
-                        ctx.prior_audio_tail, dtype=np.int16
-                    )
-                    pre_roll_samples = int(
-                        missing_pre_roll_ms * (chunk_data.sample_rate // 1000)
-                    )
-                    if len(prior_arr) >= pre_roll_samples > 0:
-                        pre_roll_audio = prior_arr[-pre_roll_samples:]
-                except Exception as e:
-                    logger.warning(
-                        "Failed to extract pre-roll audio from prior tail: %s",
-                        e,
-                    )
-            else:
-                # STRATEGY 2: Isolated Duplicate Warmup
-                # We are processing an isolated Call Recording (no prior chunk is available in context).
-                # To satisfy the ASR warmup padding requirement, we duplicate the first 'missing_pre_roll_ms'
-                # of the Call Recording and prepend it as a virtual warmup pad.
-                try:
-                    pre_roll_samples = int(
-                        missing_pre_roll_ms * (chunk_data.sample_rate // 1000)
-                    )
-                    if len(chunk_data.audio) >= pre_roll_samples > 0:
-                        pre_roll_audio = chunk_data.audio[:pre_roll_samples]
-                except Exception as e:
-                    logger.warning("Failed to duplicate pre-roll audio: %s", e)
-
-        # 2. Apply boundary start offsets based on which pre-roll strategy was selected
-        if pre_roll_audio is not None:
-            # Pre-rolled audio (either Strategy 1 or 2) is successfully prepended.
-            # Thus, we physically start appending the current chunk's audio from index 0.
-            append_start = 0
-            if ctx.prior_audio_tail is not None:
-                # Prior Chunk Priming offset:
-                # The buffer start timestamp is shifted negative relative to the current chunk's start time.
-                ctx.start_audio_offset_ms = -missing_pre_roll_ms
-                ctx.buffer_start_time_ms = file_start_ms - missing_pre_roll_ms
-            else:
-                # Duplicate Warmup offset:
-                # The physical audio buffer starts with the duplicated warmup prefix.
-                # We set start_audio_offset_ms to DEFAULT_VAD_PRE_ROLL_MS to instruct
-                # downstream ASR alignments and the playback UI player to skip this duplicated prefix.
-                ctx.start_audio_offset_ms = DEFAULT_VAD_PRE_ROLL_MS
-                ctx.buffer_start_time_ms = file_start_ms
-        else:
-            # STRATEGY 3: Standard ASR Pre-Roll
-            # The segment onset is far enough into the file (global_start_ms >= DEFAULT_VAD_PRE_ROLL_MS).
-            # We naturally slice the preceding audio from the current file itself as the ASR pre-roll.
-            append_start = max(0, global_start_ms - DEFAULT_VAD_PRE_ROLL_MS)
-            ctx.start_audio_offset_ms = append_start
-            ctx.buffer_start_time_ms = file_start_ms + append_start
-
-        return pre_roll_audio, append_start
-
     def _append_speech_audio_to_buffer(
         self,
         chunk_data: AudioChunkData,
@@ -654,8 +565,7 @@ class AudioStitchingStateMachine:
         audio_append_cursor_ms: int | None,
         actions: list[StateMachineAction],
     ) -> int | None:
-        """Calculates speech boundaries, handles pre-roll duplication/priming, and appends to buffer."""
-        pre_roll_audio = None
+        """Calculates speech boundaries and appends strictly clean voice segments to buffer."""
         if ctx.transmission_start_time_ms is None:
             is_natural_gap = (
                 ctx.last_segment_end_time_ms is not None
@@ -667,9 +577,10 @@ class AudioStitchingStateMachine:
 
             ctx.transmission_start_time_ms = file_start_ms + global_start_ms
 
-            pre_roll_audio, append_start = self._calculate_pre_roll_padding(
-                chunk_data, ctx, file_start_ms, global_start_ms
-            )
+            # Pristine canonical slice starting exactly at the VAD onset boundary
+            append_start = max(0, global_start_ms)
+            ctx.start_audio_offset_ms = 0
+            ctx.buffer_start_time_ms = file_start_ms + append_start
         else:
             append_start = (
                 audio_append_cursor_ms
@@ -682,7 +593,7 @@ class AudioStitchingStateMachine:
                 len(chunk_data.audio)
                 // (chunk_data.sample_rate // MS_PER_SECOND)
             ),
-            global_end_ms + DEFAULT_VAD_POST_ROLL_MS,
+            global_end_ms,
         )
 
         if append_end > append_start:
@@ -691,14 +602,8 @@ class AudioStitchingStateMachine:
                 * (chunk_data.sample_rate // MS_PER_SECOND) : append_end
                 * (chunk_data.sample_rate // MS_PER_SECOND)
             ]
-            if pre_roll_audio is not None:
-                appended_audio = np.concatenate([pre_roll_audio, current_audio])
-                buffer_added_duration = (append_end - append_start) + int(
-                    len(pre_roll_audio) / (chunk_data.sample_rate / 1000.0)
-                )
-            else:
-                appended_audio = current_audio
-                buffer_added_duration = append_end - append_start
+            appended_audio = current_audio
+            buffer_added_duration = append_end - append_start
 
             actions.append(AppendBufferAction(audio_buffer=appended_audio))
             audio_append_cursor_ms = append_end
