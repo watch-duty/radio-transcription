@@ -255,6 +255,17 @@ components:
       enum:
         - active
         - inactive
+    Tag:
+      properties:
+        key:
+          type: string
+        value:
+          type: string
+      required:
+        - key
+        - value
+      type: object
+      additionalProperties: false
     SourceType:
       type: string
       enum:
@@ -282,6 +293,10 @@ components:
           $ref: "#/components/schemas/FeedStatus"
         lastHeartbeat:
           type: string
+        tags:
+          items:
+            $ref: "#/components/schemas/Tag"
+          type: array
       required:
         - name
         - sourceType
@@ -299,6 +314,10 @@ components:
           type: string
         externalId:
           type: string
+        tags:
+          items:
+            $ref: "#/components/schemas/Tag"
+          type: array
       required:
         - name
         - sourceType
@@ -916,11 +935,16 @@ paths:
           schema:
             type: string
       x-google-backend: radio-transcription-api
-    delete:
-      operationId: DeleteFeed
+  /api/v1/feeds/{feedId}/reset:
+    post:
+      operationId: ResetFeed
       responses:
-        "204":
-          description: No Content
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Feed"
         "401":
           description: Unauthorized
           content:
@@ -976,16 +1000,12 @@ paths:
           schema:
             type: string
       x-google-backend: radio-transcription-api
-  /api/v1/feeds/{feedId}/reset:
+  /api/v1/feeds/{feedId}/deactivate:
     post:
-      operationId: ResetFeed
+      operationId: DeactivateFeed
       responses:
-        "200":
-          description: Ok
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Feed"
+        "204":
+          description: No Content
         "401":
           description: Unauthorized
           content:
@@ -1030,6 +1050,9 @@ paths:
                 required:
                   - message
                 type: object
+      description: |-
+        Deactivate a feed (soft delete).
+        Marks the feed as deactivated to preserve historical transcripts.
       tags:
         - Feeds
       security:

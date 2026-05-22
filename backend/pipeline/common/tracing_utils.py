@@ -62,13 +62,32 @@ def setup_tracing(*, use_batch: bool = True) -> None:
         set_tracer_provider(provider)
 
 
-def get_current_trace_id() -> str:
-    """Returns the trace ID for the current context from OpenTelemetry."""
+def get_current_traceparent() -> str:
+    """Returns the W3C traceparent for the current context."""
     span = get_current_span()
     span_context = span.get_span_context()
     if span_context.is_valid:
-        return format(span_context.trace_id, "032x")
+        carrier = {}
+        TraceContextTextMapPropagator().inject(carrier)
+        return carrier.get("traceparent", "")
     return ""
+
+
+def get_trace_attributes() -> dict[str, str]:
+    """Returns a dictionary of trace attributes for the current context."""
+    traceparent_parts = (get_current_traceparent() or "").split("-")
+    if len(traceparent_parts) >= 3:
+        trace_id = traceparent_parts[1]
+        span_id = traceparent_parts[2]
+        project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or ""
+        return {
+            "trace": f"projects/{project_id}/traces/{trace_id}",
+            "spanId": span_id,
+        }
+    return {
+        "trace": "",
+        "spanId": "",
+    }
 
 
 def extract_trace_context(attributes: dict[str, str] | None) -> Context:

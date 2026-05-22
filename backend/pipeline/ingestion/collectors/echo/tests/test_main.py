@@ -195,6 +195,42 @@ class TestHandle:
         mock_store.record_heartbeat.assert_called_once_with(feed_id)
 
     @pytest.mark.usefixtures("_patch_globals")
+    def test_gcs_time_created_used_for_start_ts(
+        self, mock_store, _patch_globals
+    ) -> None:
+        """Verifies that when GCS timeCreated metadata is present, it is used to calculate start_ts (timeCreated - duration_ms)."""
+        feed_id = uuid.uuid4()
+        self._set_feed(
+            mock_store,
+            {
+                "id": feed_id,
+                "name": "Central Fire",
+                "external_id": "ext-id",
+                "status": "active",
+                "failure_count": 0,
+            },
+        )
+
+        event = self._make_event()
+        # Add timeCreated to the CloudEvent data
+        event.data["timeCreated"] = "2026-05-19T16:48:12.184784Z"
+
+        _handle(event)
+
+        # Verify AudioChunk published with the correctly calculated start_ts
+        # GCS timeCreated = 16:48:12.184784 UTC
+        # get_audio_duration returns 15000ms (15s)
+        # Expected start_ts = 16:48:12.184784 - 15s = 16:47:57.184784 UTC
+        pub = _patch_globals["publisher"]
+        pub.publish.assert_called_once()
+        publish_args, _ = pub.publish.call_args
+        chunk = AudioChunk()
+        chunk.ParseFromString(publish_args[1])
+
+        expected_ts = datetime(2026, 5, 19, 16, 47, 57, 184784, tzinfo=UTC)
+        assert chunk.start_timestamp.ToDatetime(UTC) == expected_ts
+
+    @pytest.mark.usefixtures("_patch_globals")
     def test_gcs_not_found_skips_gracefully(
         self, mock_store, _patch_globals
     ) -> None:
@@ -314,6 +350,91 @@ class TestHandle:
             _handle(self._make_event())
 
         mock_store.record_failure.assert_called_once_with(feed_id)
+
+    # -----------------------------------------------------------------
+    # Dual-write to dev recordings bucket (best-effort mirror)
+    # -----------------------------------------------------------------
+    def _active_feed(self) -> dict:
+        return {
+            "id": uuid.uuid4(),
+            "name": "Central Fire",
+            "external_id": "ext-id",
+            "status": "active",
+            "failure_count": 0,
+        }
+
+    @pytest.mark.usefixtures("_patch_globals")
+    def test_dual_write_disabled_when_env_unset(
+        self, mock_store, _patch_globals
+    ) -> None:
+        self._set_feed(mock_store, self._active_feed())
+
+        _handle(self._make_event())
+
+        # DEV_RECORDINGS_BUCKET is None by default (conftest does not set it),
+        # so copy_blob must never be invoked.
+        gcs = _patch_globals["gcs"]
+        gcs.bucket.return_value.copy_blob.assert_not_called()
+
+    @pytest.mark.usefixtures("_patch_globals")
+    def test_dual_write_enabled_when_env_set(
+        self, mock_store, _patch_globals
+    ) -> None:
+        self._set_feed(mock_store, self._active_feed())
+
+        with patch(
+            "backend.pipeline.ingestion.collectors.echo.main.DEV_RECORDINGS_BUCKET",
+            "wd-echo-recordings-dev",
+        ):
+            _handle(self._make_event())
+
+        gcs = _patch_globals["gcs"]
+        gcs.bucket.return_value.copy_blob.assert_called_once()
+        # Third positional arg to copy_blob is the new_name; verify it
+        # matches the source object name (we preserve the path).
+        copy_args = gcs.bucket.return_value.copy_blob.call_args
+        assert copy_args[0][2] == "fire-ca/20260326/fire_20260326_143022.mp3"
+        # timeout kwarg is set so the rewrite cannot hang past the
+        # Cloud Run request deadline.
+        assert copy_args.kwargs["timeout"] == 30
+
+    @pytest.mark.usefixtures("_patch_globals")
+    def test_dual_write_failure_does_not_fail_handler(
+        self, mock_store, _patch_globals
+    ) -> None:
+        feed = self._active_feed()
+        self._set_feed(mock_store, feed)
+
+        # Capture call order across both mocks so the heartbeat-before-mirror
+        # invariant is verified explicitly — guards against a future refactor
+        # that swaps the two lines and silently suppresses the heartbeat.
+        call_order: list[str] = []
+        mock_store.record_heartbeat.side_effect = lambda _fid: (
+            call_order.append("heartbeat")
+        )
+
+        gcs = _patch_globals["gcs"]
+
+        def _failing_copy(*_args: object, **_kw: object) -> None:
+            call_order.append("copy_blob")
+            msg = "Cross-project IAM denied"
+            raise RuntimeError(msg)
+
+        gcs.bucket.return_value.copy_blob.side_effect = _failing_copy
+
+        with patch(
+            "backend.pipeline.ingestion.collectors.echo.main.DEV_RECORDINGS_BUCKET",
+            "wd-echo-recordings-dev",
+        ):
+            # Must complete without raising — mirror failure is best-effort.
+            _handle(self._make_event())
+
+        # Ordering invariant: heartbeat fires first; mirror is best-effort after.
+        assert call_order == ["heartbeat", "copy_blob"], call_order
+        # Prod path completed (heartbeat recorded) and the feed was NOT
+        # punished for the dev-side failure.
+        mock_store.record_heartbeat.assert_called_once_with(feed["id"])
+        mock_store.record_failure.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

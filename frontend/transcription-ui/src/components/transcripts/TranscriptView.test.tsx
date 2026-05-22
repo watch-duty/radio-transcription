@@ -3,6 +3,7 @@ import type { ReactElement } from 'react';
 import { MemoryRouter } from 'react-router';
 import { VirtuosoMockContext } from 'react-virtuoso';
 
+import { Howl } from 'howler';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
@@ -576,94 +577,6 @@ describe('TranscriptView', () => {
     });
   });
 
-  it('manual refresh button fetches newer transcripts', async () => {
-    const initialTranscripts = [
-      {
-        feedId: 'feed123',
-        transmissionId: '1',
-        transcript: 'Transcript 1',
-        canonicalAudioUri: 'gs:://foo.flac',
-        playbackAudioUri: 'gs:://foo.m4a',
-        startTimestamp: '2026-04-10T12:00:00Z',
-        endTimestamp: '2026-04-10T12:00:05Z',
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: ['gs:://foo.flac'],
-        startAudioOffset: '0s',
-        endAudioOffset: '5s',
-        evaluationDecisions: [],
-      },
-    ];
-
-    const newerTranscripts = [
-      {
-        feedId: 'feed123',
-        transmissionId: '2',
-        transcript: 'Newer Transcript',
-        canonicalAudioUri: 'gs:://foo.flac',
-        playbackAudioUri: 'gs:://foo.m4a',
-        startTimestamp: '2026-04-10T12:05:00Z',
-        endTimestamp: '2026-04-10T12:05:05Z',
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: ['gs:://foo.flac'],
-        startAudioOffset: '0s',
-        endAudioOffset: '5s',
-        evaluationDecisions: [],
-      },
-    ];
-
-    vi.mocked(listTranscripts)
-      .mockResolvedValueOnce({
-        transcripts: initialTranscripts,
-        nextToken: undefined,
-      })
-      .mockResolvedValueOnce({
-        transcripts: newerTranscripts,
-        nextToken: undefined,
-      });
-
-    renderTranscriptView(
-      <MemoryRouter>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
-    );
-
-    const input = screen.getByLabelText(/Select a registered feed/i);
-    await waitFor(() => {
-      expect((input as HTMLInputElement).disabled).toBe(false);
-    });
-    fireEvent.change(input, { target: { value: 'feed123' } });
-    fireEvent.keyDown(input, { key: 'ArrowDown' });
-    fireEvent.keyDown(input, { key: 'Enter' });
-
-    const button = screen.getByRole('button', { name: /Load transcripts/i });
-    fireEvent.click(button);
-
-    await waitFor(() => {
-      expect(screen.getByText('Transcript 1')).toBeTruthy();
-    });
-
-    const refreshButton = screen.getByRole('button', {
-      name: 'refresh',
-    });
-    fireEvent.click(refreshButton);
-
-    await waitFor(() => {
-      expect(listTranscripts).toHaveBeenCalledTimes(2);
-      expect(listTranscripts).toHaveBeenLastCalledWith(
-        'feed123',
-        'fake-token',
-        undefined,
-        undefined,
-        new Date('2026-04-10T12:00:00Z').getTime(),
-        undefined,
-        'asc'
-      );
-      expect(screen.getByText('Newer Transcript')).toBeTruthy();
-    });
-  });
-
   it('polls for newer transcripts in background', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
@@ -801,6 +714,180 @@ describe('TranscriptView', () => {
       expect(screen.getByText('Active')).toBeTruthy();
       expect(screen.getByText('Last updated: 5 minutes ago')).toBeTruthy();
     });
+
+    vi.useRealTimers();
+  });
+
+  it('automatically plays newly received audio when Always play latest audio checkbox is checked', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+
+    const playSpy = vi.spyOn(Howl.prototype, 'play');
+
+    const initialTranscripts = [
+      {
+        feedId: 'feed123',
+        transmissionId: '1',
+        transcript: 'Transcript 1',
+        canonicalAudioUri: 'gs:://foo.flac',
+        playbackAudioUri: 'gs:://foo.m4a',
+        startTimestamp: '2026-04-10T12:00:00Z',
+        endTimestamp: '2026-04-10T12:00:05Z',
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: ['gs:://foo.flac'],
+        startAudioOffset: '0s',
+        endAudioOffset: '5s',
+        evaluationDecisions: [],
+      },
+    ];
+
+    const newerTranscripts = [
+      {
+        feedId: 'feed123',
+        transmissionId: '2',
+        transcript: 'Newer Transcript 1',
+        canonicalAudioUri: 'gs:://foo.flac',
+        playbackAudioUri: 'gs:://foo.m4a',
+        startTimestamp: '2026-04-10T12:05:00Z',
+        endTimestamp: '2026-04-10T12:05:05Z',
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: ['gs:://foo.flac'],
+        startAudioOffset: '0s',
+        endAudioOffset: '5s',
+        evaluationDecisions: [],
+      },
+    ];
+
+    vi.mocked(listTranscripts)
+      .mockResolvedValueOnce({
+        transcripts: initialTranscripts,
+        nextToken: undefined,
+      })
+      .mockResolvedValueOnce({
+        transcripts: newerTranscripts,
+        nextToken: undefined,
+      });
+
+    renderTranscriptView(
+      <MemoryRouter>
+        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    const input = screen.getByLabelText(/Select a registered feed/i);
+    await waitFor(() => {
+      expect((input as HTMLInputElement).disabled).toBe(false);
+    });
+    fireEvent.change(input, { target: { value: 'feed123' } });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    const button = screen.getByRole('button', { name: /Load transcripts/i });
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(screen.getByText('Transcript 1')).toBeTruthy();
+    });
+
+    // Advance time by 15 seconds to trigger background polling
+    vi.advanceTimersByTime(15000);
+
+    await waitFor(() => {
+      expect(screen.getByText('Newer Transcript 1')).toBeTruthy();
+    });
+
+    // Verify that audio was automatically played since "Always play latest audio" is checked by default
+    expect(playSpy).toHaveBeenCalled();
+
+    vi.useRealTimers();
+  });
+
+  it('does not automatically play newly received audio when Always play latest audio checkbox is unchecked', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+
+    const playSpy = vi.spyOn(Howl.prototype, 'play');
+
+    const initialTranscripts = [
+      {
+        feedId: 'feed123',
+        transmissionId: '1',
+        transcript: 'Transcript 1',
+        canonicalAudioUri: 'gs:://foo.flac',
+        playbackAudioUri: 'gs:://foo.m4a',
+        startTimestamp: '2026-04-10T12:00:00Z',
+        endTimestamp: '2026-04-10T12:00:05Z',
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: ['gs:://foo.flac'],
+        startAudioOffset: '0s',
+        endAudioOffset: '5s',
+        evaluationDecisions: [],
+      },
+    ];
+
+    const newerTranscripts = [
+      {
+        feedId: 'feed123',
+        transmissionId: '2',
+        transcript: 'Newer Transcript 1',
+        canonicalAudioUri: 'gs:://foo.flac',
+        playbackAudioUri: 'gs:://foo.m4a',
+        startTimestamp: '2026-04-10T12:05:00Z',
+        endTimestamp: '2026-04-10T12:05:05Z',
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: ['gs:://foo.flac'],
+        startAudioOffset: '0s',
+        endAudioOffset: '5s',
+        evaluationDecisions: [],
+      },
+    ];
+
+    vi.mocked(listTranscripts)
+      .mockResolvedValueOnce({
+        transcripts: initialTranscripts,
+        nextToken: undefined,
+      })
+      .mockResolvedValueOnce({
+        transcripts: newerTranscripts,
+        nextToken: undefined,
+      });
+
+    renderTranscriptView(
+      <MemoryRouter>
+        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    const input = screen.getByLabelText(/Select a registered feed/i);
+    await waitFor(() => {
+      expect((input as HTMLInputElement).disabled).toBe(false);
+    });
+    fireEvent.change(input, { target: { value: 'feed123' } });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    const button = screen.getByRole('button', { name: /Load transcripts/i });
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(screen.getByText('Transcript 1')).toBeTruthy();
+    });
+
+    // Uncheck "Always play latest audio" checkbox
+    const autoplayCheckbox = screen.getByLabelText(/Always play latest audio/i);
+    fireEvent.click(autoplayCheckbox);
+
+    // Advance time by 15 seconds to trigger background polling
+    vi.advanceTimersByTime(15000);
+
+    await waitFor(() => {
+      expect(screen.getByText('Newer Transcript 1')).toBeTruthy();
+    });
+
+    // Verify that audio was NOT automatically played when disabled
+    expect(playSpy).not.toHaveBeenCalled();
 
     vi.useRealTimers();
   });

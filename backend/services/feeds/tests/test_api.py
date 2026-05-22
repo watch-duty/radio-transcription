@@ -6,9 +6,10 @@ from fastapi import status
 from fastapi.testclient import TestClient
 
 from backend.pipeline.common.auth import verify_oidc_token
+from backend.pipeline.common.exceptions import FeedAlreadyExistsError
 from backend.pipeline.storage.feed_store import FeedStatus, SourceType
 from backend.services.feeds.main import app
-from backend.services.feeds.models import Feed
+from backend.services.feeds.models import Feed, Tag
 
 
 async def skip_auth() -> dict[str, str]:
@@ -56,6 +57,27 @@ class TestFeedsAPI(unittest.TestCase):
         self.assertEqual(data["id"], str(feed_id))
         self.mock_service.create_feed.assert_called_once()
 
+    def test_create_feed_already_exists(self) -> None:
+        """Test creating a feed that already exists returns 409."""
+        payload = {
+            "name": "Test Feed",
+            "source_type": "bcfy_feeds",
+            "source_feed_id": "123",
+            "external_id": "ext_123",
+        }
+        self.mock_service.create_feed.side_effect = FeedAlreadyExistsError(
+            "bcfy_feeds", "123"
+        )
+
+        response = self.client.post("/v1/feeds", json=payload)
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertIn(
+            "Feed with source type 'bcfy_feeds' and source feed ID '123' already exists",
+            response.json()["detail"],
+        )
+        self.mock_service.create_feed.assert_called_once()
+
     def test_create_feed_validation_error(self) -> None:
         """Test creating a feed with invalid data."""
         payload = {
@@ -68,6 +90,36 @@ class TestFeedsAPI(unittest.TestCase):
         self.assertEqual(
             response.status_code, status.HTTP_422_UNPROCESSABLE_CONTENT
         )
+
+    def test_create_feed_with_tags(self) -> None:
+        """Test creating a feed with tags."""
+        payload = {
+            "name": "Test Feed",
+            "source_type": "bcfy_feeds",
+            "source_feed_id": "123",
+            "external_id": "ext_123",
+            "tags": [{"key": "county", "value": "Fulton"}],
+        }
+        feed_id = uuid.uuid4()
+        mock_feed = Feed(
+            id=feed_id,
+            name="Test Feed",
+            source_type=SourceType.BCFY_FEEDS,
+            source_feed_id="123",
+            external_id="ext_123",
+            status=FeedStatus.ACTIVE,
+            last_heartbeat=None,
+            tags=[Tag(key="county", value="Fulton")],
+        )
+        self.mock_service.create_feed.return_value = mock_feed
+
+        response = self.client.post("/v1/feeds", json=payload)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        data = response.json()
+        self.assertEqual(data["id"], str(feed_id))
+        self.assertEqual(data["tags"], [{"key": "county", "value": "Fulton"}])
+        self.mock_service.create_feed.assert_called_once()
 
     def test_get_feed_success(self) -> None:
         """Test fetching an existing feed."""
@@ -89,6 +141,28 @@ class TestFeedsAPI(unittest.TestCase):
         self.assertEqual(response.json()["id"], str(feed_id))
         self.mock_service.get_feed.assert_called_once_with(str(feed_id))
 
+    def test_get_feed_with_tags(self) -> None:
+        """Test fetching an existing feed with tags."""
+        feed_id = uuid.uuid4()
+        mock_feed = Feed(
+            id=feed_id,
+            name="Test Feed",
+            source_type=SourceType.BCFY_FEEDS,
+            source_feed_id="123",
+            external_id="ext_123",
+            status=FeedStatus.ACTIVE,
+            last_heartbeat=None,
+            tags=[Tag(key="county", value="Fulton")],
+        )
+        self.mock_service.get_feed.return_value = mock_feed
+
+        response = self.client.get(f"/v1/feeds/{feed_id}")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertEqual(data["id"], str(feed_id))
+        self.assertEqual(data["tags"], [{"key": "county", "value": "Fulton"}])
+
     def test_get_feed_not_found(self) -> None:
         """Test fetching a non-existent feed returns 404."""
         self.mock_service.get_feed.return_value = None
@@ -103,21 +177,21 @@ class TestFeedsAPI(unittest.TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIsInstance(response.json(), list)
 
-    def test_delete_feed_success(self) -> None:
-        """Test deleting a feed successfully."""
+    def test_deactivate_feed_success(self) -> None:
+        """Test deactivating a feed successfully."""
         feed_id = uuid.uuid4()
-        self.mock_service.delete_feed.return_value = True
+        self.mock_service.deactivate_feed.return_value = True
 
-        response = self.client.delete(f"/v1/feeds/{feed_id}")
+        response = self.client.post(f"/v1/feeds/{feed_id}/deactivate")
 
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
-        self.mock_service.delete_feed.assert_called_once_with(str(feed_id))
+        self.mock_service.deactivate_feed.assert_called_once_with(str(feed_id))
 
-    def test_delete_feed_not_found(self) -> None:
-        """Test deleting a non-existent feed returns 404."""
+    def test_deactivate_feed_not_found(self) -> None:
+        """Test deactivating a non-existent feed returns 404."""
         feed_id = uuid.uuid4()
-        self.mock_service.delete_feed.return_value = False
-        response = self.client.delete(f"/v1/feeds/{feed_id}")
+        self.mock_service.deactivate_feed.return_value = False
+        response = self.client.post(f"/v1/feeds/{feed_id}/deactivate")
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_reset_feed_success(self) -> None:

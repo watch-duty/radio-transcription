@@ -10,4 +10,6 @@ COMMON_SYSTEM_PROMPT = (
     "exactly as spoken (e.g., Engine 41). Output strictly the verbatim transcript."
 )
 
-COMMON_USER_INSTRUCTION = "Transcribe this emergency radio audio verbatim per the rules above."
+COMMON_USER_INSTRUCTION = (
+    "Transcribe this emergency radio audio verbatim per the rules above."
+)

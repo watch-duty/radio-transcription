@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
@@ -23,8 +24,12 @@ if TYPE_CHECKING:
     from backend.pipeline.ingestion.settings import NormalizerSettings
     from backend.pipeline.storage.feed_store import LeasedFeed
 
-BCFY_FEEDS_URL_BASE = "https://partner.broadcastify.com/"
-BCFY_CALLS_URL_BASE = "https://api.bcfy.io/calls/v1/live/"
+BCFY_FEEDS_URL_BASE = os.environ.get(
+    "BCFY_FEEDS_URL_BASE", "https://partner.broadcastify.com/"
+)
+BCFY_CALLS_URL_BASE = os.environ.get(
+    "BCFY_CALLS_URL_BASE", "https://api.bcfy.io/calls/v1/live/"
+)
 OPENMHZ_URL_BASE = "https://api.openmhz.com/"
 
 # Typed registry: ty/mypy checks each value matches CollectorFn.

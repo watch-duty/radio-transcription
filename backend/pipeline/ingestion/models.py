@@ -125,6 +125,10 @@ class CapturedChunk:
             entirely from the payload when unset (the key is absent, not null).
             Required to be tz-aware UTC when set.
         mime_type: Optional validated HTTP Content-Type as an AudioMimeType enum value.
+        resume_position: Source-specific position the runtime persists as the
+            feed's resume cursor. ``None`` → the runtime falls back to
+            ``chunk_end_time``. Set by cursor-paginated collectors (bcfy_calls);
+            ``None`` for stream/push collectors.
     """
 
     audio_bytes: bytes
@@ -133,6 +137,7 @@ class CapturedChunk:
     session_id: str | None = None
     receipt_time: datetime.datetime | None = None
     mime_type: AudioMimeType | None = None
+    resume_position: datetime.datetime | None = None
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)

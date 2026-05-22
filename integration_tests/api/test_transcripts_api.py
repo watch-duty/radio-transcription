@@ -8,6 +8,8 @@ import asyncpg
 import httpx
 import pytest
 
+from integration_tests.feed_utils import create_test_bcfy_feed  # noqa: F401
+
 TRANSCRIPTS_API_HOST = os.environ.get("TRANSCRIPTS_API_HOST", "localhost:8087")
 
 
@@ -30,33 +32,16 @@ async def create_api_client() -> AsyncIterator[httpx.AsyncClient]:
         yield client
 
 
-@pytest.fixture(name="test_feed")
-async def create_test_feed() -> AsyncIterator[str]:
-    """Feed set up, which are required to associated with transcripts."""
-    conn = await _get_db_connection()
-    feed_name = f"integration-test-feed-{uuid.uuid4()}"
-    feed_id = await conn.fetchval(
-        "INSERT INTO feeds (name, source_type) VALUES ($1, $2) RETURNING id",
-        feed_name,
-        "bcfy_feeds",
-    )
-    feed_id_str = str(feed_id)
-    try:
-        yield feed_id_str
-    finally:
-        await conn.execute("DELETE FROM feeds WHERE id = $1::uuid", feed_id_str)
-        await conn.close()
-
-
 @pytest.mark.asyncio
 async def test_transcripts_api(
-    api_client: httpx.AsyncClient, test_feed: str
+    api_client: httpx.AsyncClient, test_bcfy_feed: tuple[str, str]
 ) -> None:
     transmission_id = str(uuid.uuid4())
     transcript_text = "Hello integration test for transcripts API"
 
+    feed_id, _ = test_bcfy_feed
     payload = {
-        "feed_id": test_feed,
+        "feed_id": feed_id,
         "transmission_id": transmission_id,
         "transcript": transcript_text,
     }
@@ -104,14 +89,15 @@ async def test_transcripts_api(
 
 @pytest.mark.asyncio
 async def test_transcripts_api_duplicate_conflict(
-    api_client: httpx.AsyncClient, test_feed: str
+    api_client: httpx.AsyncClient, test_bcfy_feed: tuple[str, str]
 ) -> None:
     """Verify that creating a transcript with a duplicate transmission_id returns 409."""
     transmission_id = str(uuid.uuid4())
     transcript_text = "Hello integration test for duplicate conflict"
 
+    feed_id, _ = test_bcfy_feed
     payload = {
-        "feed_id": test_feed,
+        "feed_id": feed_id,
         "transmission_id": transmission_id,
         "transcript": transcript_text,
     }

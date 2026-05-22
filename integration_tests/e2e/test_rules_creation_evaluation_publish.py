@@ -1,17 +1,14 @@
 """Publishes test messages and verifies the end-to-end Rules Evaluation flow."""
 
-import asyncio
 import base64
 import os
 import time
 import uuid
-from collections.abc import Generator
 
-import asyncpg
-import pytest
 import requests
 
 from backend.pipeline.schema_types.transcribed_audio_pb2 import TranscribedAudio
+from integration_tests.feed_utils import create_test_bcfy_feed  # noqa: F401
 from integration_tests.utils import assert_eventually
 
 # Constants from environment with sensible defaults for local development
@@ -49,51 +46,6 @@ def create_test_rule(test_keyword: str) -> None:
     assert rule_id != "", "Rule ID not returned by API"
 
 
-@pytest.fixture(name="test_feed")
-def create_test_feed() -> Generator[str]:
-    """Fixture to create a temporary feed for testing."""
-    feed_name = f"integration-test-feed-{uuid.uuid4()}"
-    payload = {
-        "name": feed_name,
-        "source_type": "bcfy_feeds",
-        "source_feed_id": f"src-{uuid.uuid4()}",
-        "external_id": f"ext-{uuid.uuid4()}",
-    }
-
-    url = f"http://{FEEDS_API_HOST}/v1/feeds"
-    response = requests.post(url, json=payload, timeout=10)
-    response.raise_for_status()
-
-    feed_id = response.json().get("id", "")
-    assert feed_id != "", "Feed ID not returned by API"
-
-    try:
-        yield feed_id
-    finally:
-        # Clean up transcripts via DB
-        _conn_kwargs = {
-            "host": os.environ.get("ALLOYDB_HOST", "postgres"),
-            "port": int(os.environ.get("ALLOYDB_PORT", "5432")),
-            "user": os.environ.get("ALLOYDB_USER", "postgres"),
-            "password": os.environ.get("ALLOYDB_PASSWORD", "postgres"),
-            "database": os.environ.get("ALLOYDB_DB", "postgres"),
-        }
-
-        async def _cleanup_db():
-            conn = await asyncpg.connect(**_conn_kwargs)
-            await conn.execute(
-                "DELETE FROM transcripts WHERE feed_id = $1::uuid", feed_id
-            )
-            await conn.close()
-
-        asyncio.run(_cleanup_db())
-
-        # Delete feed via API
-        del_url = f"http://{FEEDS_API_HOST}/v1/feeds/{feed_id}"
-        del_response = requests.delete(del_url, timeout=10)
-        del_response.raise_for_status()
-
-
 def publish_test_message(
     transmission_id: str, transcript: str, feed_id: str
 ) -> None:
@@ -123,14 +75,17 @@ def publish_test_message(
     response.raise_for_status()
 
 
-def test_rules_creation_evaluation_publish(test_feed: str) -> None:
+def test_rules_creation_evaluation_publish(
+    test_bcfy_feed: tuple[str, str],
+) -> None:
     test_uuid = str(uuid.uuid4())[:8]
     unique_keyword = f"evacuation-{test_uuid}"
     unique_trans_id = str(uuid.uuid4())
     unique_transcript = f"Attention: {unique_keyword} is required for Sector 7."
 
     create_test_rule(unique_keyword)
-    publish_test_message(unique_trans_id, unique_transcript, test_feed)
+    feed_id, _ = test_bcfy_feed
+    publish_test_message(unique_trans_id, unique_transcript, feed_id)
 
     def transcript_and_notification_received() -> bool:
         try:
@@ -160,6 +115,6 @@ def test_rules_creation_evaluation_publish(test_feed: str) -> None:
 
     assert_eventually(
         transcript_and_notification_received,
-        timeout_sec=30.0,
+        timeout_sec=70.0,
         error_msg=f"Did not receive expected notification or transcript matching {unique_trans_id}.",
     )

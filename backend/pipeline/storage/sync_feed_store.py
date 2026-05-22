@@ -36,7 +36,7 @@ _HEARTBEAT_SQL = """\
 UPDATE feeds
 SET last_heartbeat = NOW(),
     failure_count = CASE WHEN failure_count > 0 THEN 0 ELSE failure_count END,
-    status = CASE WHEN failure_count > 0 THEN 'active'::feed_status ELSE status END
+    status = 'active'::feed_status
 WHERE id = %s
 """
 
@@ -107,7 +107,7 @@ class SyncFeedStore:
     def record_heartbeat(self, feed_id: uuid.UUID) -> None:
         """Record a successful processing heartbeat.
 
-        Resets ``failure_count`` and ``status`` back to ``active`` if the
+        Marks status as ``active``, and resets ``failure_count`` if the
         feed was previously in a failing state.
         """
         with self._connect_db() as conn:

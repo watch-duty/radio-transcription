@@ -5,123 +5,139 @@ import os
 import sys
 import time
 
-import requests
+from google.cloud import pubsub_v1
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-PUBSUB_EMULATOR_HOST = os.environ["PUBSUB_EMULATOR_HOST"]
+
 PROJECT_ID = os.environ["GOOGLE_CLOUD_PROJECT"]
-PUBSUB_ENDPOINT = f"http://{PUBSUB_EMULATOR_HOST}/v1"
 
 
 def wait_for_emulator() -> None:
     """Waits for the Pub/Sub emulator to become ready."""
     logger.info("Waiting for Pub/Sub emulator...")
+
+    client = pubsub_v1.PublisherClient()
+    project_path = f"projects/{PROJECT_ID}"
+
     for _ in range(30):
         try:
-            response = requests.get(
-                f"http://{PUBSUB_EMULATOR_HOST}/", timeout=10
-            )
-            if response.status_code == 200:
-                logger.info("Pub/Sub emulator is ready.")
-                return
-        except requests.exceptions.RequestException:
-            pass
+            client.list_topics(project=project_path)
+        except Exception as e:
+            # Failures expected if Pub/Sub emulator isn't ready yet.
+            logger.info(f"Pub/Sub emulator not ready yet: {e}")
+        else:
+            logger.info("Pub/Sub emulator is ready.")
+            return
         time.sleep(1)
+
     logger.error("Timed out waiting for Pub/Sub emulator.")
     sys.exit(1)
 
 
-def create_topic(topic_path: str) -> None:
-    """Creates a topic in the Pub/Sub emulator.
+def create_topic(publisher: pubsub_v1.PublisherClient, topic_path: str) -> None:
+    try:
+        publisher.create_topic(name=topic_path)
+        logger.info(f"Topic '{topic_path}' created.")
+    except Exception:
+        logger.exception(f"Failed to create topic '{topic_path}'")
 
-    Ignores pre-existing topics.
 
-    Args:
-        topic_path: The full resource path of the topic to create.
-    """
-    url = f"{PUBSUB_ENDPOINT}/{topic_path}"
-    response = requests.put(url, json={}, timeout=10)
-    # 200 Created, 409 Already exists
-    if response.status_code in (200, 409):
-        logger.info("Topic '%s' ready.", topic_path)
-    else:
-        logger.error(
-            "Failed to create topic '%s': %s", topic_path, response.text
+def create_pull_subscription(
+    subscriber: pubsub_v1.SubscriberClient,
+    subscription_id: str,
+    topic_path: str,
+) -> None:
+    subscription_path = subscriber.subscription_path(
+        PROJECT_ID, subscription_id
+    )
+    try:
+        subscriber.create_subscription(name=subscription_path, topic=topic_path)
+        logger.info(f"Pull subscription '{subscription_id}' ready.")
+    except Exception:
+        logger.exception(
+            f"Failed to create pull subscription '{subscription_id}'"
         )
 
 
 def create_push_subscription(
-    subscription_id: str, topic_path: str, push_endpoint: str
+    subscriber: pubsub_v1.SubscriberClient,
+    subscription_id: str,
+    topic_path: str,
+    push_endpoint: str,
 ) -> None:
-    """Creates a push subscription in the Pub/Sub emulator.
-
-    Ignores pre-existing subscriptions.
-
-    Args:
-        subscription_id: The ID of the subscription to create.
-        topic_path: The full resource path of the topic to subscribe to.
-        push_endpoint: The HTTP endpoint to push messages to.
-    """
-    url = f"{PUBSUB_ENDPOINT}/projects/{PROJECT_ID}/subscriptions/{subscription_id}"
-    payload = {
-        "topic": topic_path,
-        "pushConfig": {"pushEndpoint": push_endpoint},
-    }
-    response = requests.put(url, json=payload, timeout=10)
-    if response.status_code in (200, 409):
-        logger.info(
-            "Subscription '%s' ready, pushing to %s.",
-            subscription_id,
-            push_endpoint,
+    subscription_path = subscriber.subscription_path(
+        PROJECT_ID, subscription_id
+    )
+    push_config = pubsub_v1.types.PushConfig(push_endpoint=push_endpoint)  # ty: ignore[unresolved-attribute]
+    try:
+        subscriber.create_subscription(
+            name=subscription_path, topic=topic_path, push_config=push_config
         )
-    else:
-        logger.error(
-            "Failed to create subscription '%s': %s",
-            subscription_id,
-            response.text,
+        logger.info(
+            f"Push subscription '{subscription_id}' ready, pushing to {push_endpoint}."
+        )
+    except Exception:
+        logger.exception(
+            f"Failed to create push subscription '{subscription_id}'"
         )
 
 
 if __name__ == "__main__":
     wait_for_emulator()
 
-    # Set up Pub/Sub between Capturer and Normalizer in Audio Ingestion Service
-    STAGING_TOPIC = os.environ["STAGING_TOPIC"]
-    create_topic(STAGING_TOPIC)
-    create_push_subscription(
-        "normalizer-sub",
-        STAGING_TOPIC,
-        f"http://{os.environ['NORMALIZER_SERVICE_HOST']}/",
+    publisher = pubsub_v1.PublisherClient()
+    subscriber = pubsub_v1.SubscriberClient()
+
+    # Pub/Sub for Continuous Audio
+    continuous_topic = os.environ["CONTINUOUS_TOPIC"]
+    create_topic(publisher, continuous_topic)
+    create_pull_subscription(
+        subscriber,
+        os.environ["CONTINUOUS_AUDIO_SUBSCRIPTION"],
+        continuous_topic,
     )
 
-    # Pub/Sub between Audio Ingestion and Transcription Services
-    CANONICAL_TOPIC = os.environ["CANONICAL_TOPIC"]
-    create_topic(CANONICAL_TOPIC)
+    # Pub/Sub for Segmented Audio
+    segmented_topic = os.environ["SEGMENTED_TOPIC"]
+    create_topic(publisher, segmented_topic)
+    create_pull_subscription(
+        subscriber, os.environ["SEGMENTED_AUDIO_SUBSCRIPTION"], segmented_topic
+    )
+
+    # Pub/Sub between Normalization and Transcription Services
+    normalized_audio_topic = "projects/local-project/topics/normalized-audio"
+    create_topic(publisher, normalized_audio_topic)
     create_push_subscription(
+        subscriber,
         "transcription-sub",
-        CANONICAL_TOPIC,
+        normalized_audio_topic,
         f"http://{os.environ['TRANSCRIPTION_SERVICE_HOST']}/",
     )
 
     # Pub/Sub between Transcription and Rules Evaluation Services
-    TRANSCRIPTION_TOPIC = os.environ["TRANSCRIPTION_TOPIC"]
-    create_topic(TRANSCRIPTION_TOPIC)
+    transcription_topic = os.environ["TRANSCRIPTION_TOPIC"]
+    create_topic(publisher, transcription_topic)
     create_push_subscription(
+        subscriber,
         "rules-evaluation-sub",
-        TRANSCRIPTION_TOPIC,
+        transcription_topic,
         f"http://{os.environ['RULES_EVALUATION_SERVICE_HOST']}/",
     )
 
+    # DLQ for Transcription Pipeline failures
+    create_topic(publisher, os.environ["TRANSCRIPTION_DLQ_TOPIC"])
+
     # Pub/Sub between Rules Evaluation and Notification Services
-    RULES_EVALUATION_RESULTS_TOPIC = os.environ[
+    rules_evaluation_results_topic = os.environ[
         "RULES_EVALUATION_RESULTS_TOPIC"
     ]
-    create_topic(RULES_EVALUATION_RESULTS_TOPIC)
+    create_topic(publisher, rules_evaluation_results_topic)
     create_push_subscription(
+        subscriber,
         "notification-sub",
-        RULES_EVALUATION_RESULTS_TOPIC,
+        rules_evaluation_results_topic,
         f"http://{os.environ['NOTIFICATION_SERVICE_HOST']}/",
     )
 

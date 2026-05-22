@@ -810,7 +810,8 @@ class NormalizerRuntime:
                     # (network, gax, paused-key, our-code-bug) propagates to the
                     # outer except Exception arm, which records the reason and
                     # quarantines after threshold strikes. The worker is dumb;
-                    # the operator triages from `quarantine_reason`.
+                    # the operator triages from the `feed_quarantined` log entry
+                    # (or `quarantine_reason` in AlloyDB for forensics).
                     gcs_uri = await retry_with_lease_check(
                         gcp_helper.upload_staged_audio,
                         self._gcs_client,
@@ -864,7 +865,10 @@ class NormalizerRuntime:
                         worker_id,
                         gcs_uri,
                         fencing_token,
-                        captured_chunk.chunk_end_time,
+                        # bcfy_calls supplies the API `ts` resume cursor;
+                        # stream collectors leave it None -> end_ts fallback.
+                        captured_chunk.resume_position
+                        or captured_chunk.chunk_end_time,
                         lease_lost=self._lease_lost,
                         shutdown=self._shutdown,
                         max_retries=settings.bookmark_max_retries,
@@ -947,9 +951,10 @@ class NormalizerRuntime:
             # Single catch-all: every failure (source-side, pipeline-side, code
             # bug) goes through report_feed_failure with a reason string. The
             # worker doesn't try to attribute fault; the operator reads the
-            # reason from `quarantine_reason` after threshold strikes and
-            # decides what to investigate. Transient failures auto-recover
-            # because failure_count resets to 0 on the next successful publish.
+            # reason from the structured `feed_quarantined` log entry (and/or
+            # `feeds.quarantine_reason` for AlloyDB-side forensics) and decides
+            # what to investigate. Transient failures auto-recover because
+            # failure_count resets to 0 on the next successful publish.
             reason = str(e)[:200] if str(e) else type(e).__name__
             logger.exception(
                 "Feed processing error: feed=%s reason=%s",
@@ -972,6 +977,7 @@ class NormalizerRuntime:
                         feed_id=str(feed["id"]),
                         feed_name=feed["name"],
                         source_type=str(feed["source_type"]),
+                        reason=reason,
                     )
             except Exception:
                 # 60s abandonment window is the safety net if this fails.
@@ -1249,6 +1255,20 @@ class NormalizerRuntime:
         retained_ids = {
             r["id"] for r in results if r["current_worker"] == worker_id
         }
+
+        # Cancel tasks for feeds that have been deactivated.
+        for r in results:
+            if (
+                r["current_status"] == "deactivated"
+                and r["current_worker"] == worker_id
+            ):
+                fid = r["id"]
+                if fid in active and not active[fid].done():
+                    logger.info(
+                        "Feed %s deactivated; cancelling task",
+                        fid,
+                    )
+                    active[fid].cancel()
 
         # A feed missing from retained_ids is NOT a violation if:
         #   - active[fid].done(): task finished between snapshot and DB response

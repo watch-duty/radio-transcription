@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 
 from backend.pipeline.common.auth import verify_oidc_token
+from backend.pipeline.common.exceptions import FeedAlreadyExistsError
 from backend.pipeline.storage.connection import (
     close_pool,
     create_pool_with_retry,
@@ -34,7 +35,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="Feeds Management Service",
-    description="API for creating, reading, and deleting feeds.",
+    description="API for creating, reading, and deactivating feeds.",
     version="1.0.0",
     lifespan=lifespan,
     dependencies=[Depends(verify_oidc_token)],
@@ -58,6 +59,11 @@ async def create_feed(
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except FeedAlreadyExistsError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
             detail=str(e),
         )
 
@@ -95,18 +101,18 @@ async def list_feeds(
     return await service.list_feeds()
 
 
-@app.delete(
-    "/v1/feeds/{feed_id}",
+@app.post(
+    "/v1/feeds/{feed_id}/deactivate",
     status_code=status.HTTP_204_NO_CONTENT,
     tags=["feeds"],
 )
-async def delete_feed(
+async def deactivate_feed(
     request: Request,
     feed_id: str,
 ) -> None:
-    """Delete a feed."""
+    """Deactivate a feed (soft delete)."""
     service: FeedService = request.app.state.feed_service
-    success = await service.delete_feed(feed_id)
+    success = await service.deactivate_feed(feed_id)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import enum
+import json
 import logging
 from typing import TYPE_CHECKING, TypedDict
 
+import asyncpg
+import asyncpg.exceptions
+
+from backend.pipeline.common.exceptions import FeedAlreadyExistsError
 from backend.pipeline.storage.feed_queries import (
     COUNT_HELD_BY_TYPE_SQL,
     CREATE_FEED_SQL,
-    DELETE_FEED_SQL,
+    DEACTIVATE_FEED_SQL,
     GET_FEED_SQL,
     LIST_FEEDS_SQL,
     RELEASE_FEED_SQL,
@@ -24,8 +29,6 @@ if TYPE_CHECKING:
     import datetime
     import uuid
     from collections.abc import Sequence
-
-    import asyncpg
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +119,7 @@ class Feed(TypedDict):
     created_at: datetime.datetime
     source_feed_id: str | None
     external_id: str | None
+    tags: list[dict[str, str]] | None
 
 
 class FeedStore:
@@ -176,6 +180,10 @@ class FeedStore:
             msg = f"Unknown status {row['status']!r} for feed {row['id']}"
             raise ValueError(msg) from e
 
+        tags = row.get("tags")
+        if tags is not None:
+            tags = json.loads(tags)
+
         return Feed(
             id=row["id"],
             name=row["name"],
@@ -189,6 +197,7 @@ class FeedStore:
             created_at=row["created_at"],
             source_feed_id=row["source_feed_id"],
             external_id=row["external_id"],
+            tags=tags,
         )
 
     def _row_to_leased_feed(self, row: asyncpg.Record) -> LeasedFeed:
@@ -577,6 +586,7 @@ class FeedStore:
         source_type: str | SourceType,
         source_feed_id: str,
         external_id: str,
+        tags: list[dict[str, str]] | None = None,
     ) -> Feed:
         """Create a new feed record.
 
@@ -601,13 +611,25 @@ class FeedStore:
         else:
             source_type_str = source_type.value
 
-        row = await self._pool.fetchrow(
-            CREATE_FEED_SQL,
-            name,
-            source_type_str,
-            source_feed_id,
-            external_id,
-        )
+        try:
+            row = await self._pool.fetchrow(
+                CREATE_FEED_SQL,
+                name,
+                source_type_str,
+                source_feed_id,
+                external_id,
+                json.dumps(tags or []),
+            )
+        except asyncpg.exceptions.UniqueViolationError as e:
+            logger.warning(
+                "Feed already exists",
+                extra={
+                    "source_type": source_type_str,
+                    "source_feed_id": source_feed_id,
+                },
+            )
+            raise FeedAlreadyExistsError(source_type_str, source_feed_id) from e
+
         if row is None:
             msg = f"Failed to create feed {name}"
             raise ValueError(msg)
@@ -633,13 +655,13 @@ class FeedStore:
         rows = await self._pool.fetch(LIST_FEEDS_SQL)
         return [self._row_to_feed(row) for row in rows]
 
-    async def delete_feed(self, feed_id: uuid.UUID) -> bool:
-        """Delete a feed by ID.
+    async def deactivate_feed(self, feed_id: uuid.UUID) -> bool:
+        """Deactivate a feed by ID (soft delete).
 
-        Returns True if a row was deleted, False otherwise.
+        Returns True if the feed status was set to deactivated, False otherwise.
         """
-        result = await self._pool.execute(DELETE_FEED_SQL, feed_id)
-        return result == "DELETE 1"
+        result = await self._pool.execute(DEACTIVATE_FEED_SQL, feed_id)
+        return result == "UPDATE 1"
 
     async def reset_feed(self, feed_id: uuid.UUID) -> Feed | None:
         """Reset a feed to an unclaimed, unassigned state.

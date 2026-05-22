@@ -40,21 +40,29 @@ async def emit_quarantine_event(
     feed_id: str,
     feed_name: str,
     source_type: str,
+    reason: str,
 ) -> None:
     """Emit a quarantine event signal.  **Never raises.**
 
     1. Structured ERROR log (always, even when metrics are disabled).
+       ``reason`` is interpolated into the message and included as
+       ``json_fields.reason`` so on-callers see the failure cause in the
+       Logs Explorer summary row without expanding the payload.
     2. Cloud Monitoring GAUGE metric (only when *configure* was called
-       with a project ID).
+       with a project ID). ``reason`` is deliberately NOT in the metric
+       labels — its cardinality is unbounded and would fragment the
+       metric's time series.
     """
     try:
         logger.error(
-            "Feed quarantined",
+            "Feed quarantined: %s",
+            reason,
             extra={
                 "json_fields": {
                     "event_type": EVENT_TYPE_FEED_QUARANTINED,
                     "feed_id": feed_id,
                     "feed_name": feed_name,
+                    "reason": reason,
                     "source_type": source_type,
                 },
             },
@@ -66,6 +74,7 @@ async def emit_quarantine_event(
         return
 
     try:
+        # Cardinality: keep labels bounded; reason is unbounded and would fragment time series.
         await _client.write_time_series(
             metric_type=METRIC_TYPE_QUARANTINE_EVENTS,
             labels={

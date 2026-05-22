@@ -9,6 +9,7 @@ if TYPE_CHECKING:
 
 import pytest
 
+from backend.pipeline.common.exceptions import FeedAlreadyExistsError
 from backend.pipeline.storage.feed_store import FeedStore, SourceType
 
 
@@ -1103,6 +1104,31 @@ async def test_create_feed_succeeds(
     assert row["external_id"] == "ext_123"
 
 
+async def test_create_feed_already_exists(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """create_feed raises FeedAlreadyExistsError when feed already exists."""
+    await store.create_feed(
+        name="New Integration Feed",
+        source_type="bcfy_feeds",
+        source_feed_id="src_123",
+        external_id="ext_123",
+    )
+
+    with pytest.raises(FeedAlreadyExistsError) as cm:
+        await store.create_feed(
+            name="Another Feed Name",
+            source_type="bcfy_feeds",
+            source_feed_id="src_123",
+            external_id="ext_456",
+        )
+
+    assert (
+        "Feed with source type 'bcfy_feeds' and source feed ID 'src_123' already exists"
+        in str(cm.value)
+    )
+
+
 # -- Tests: get_feed --------------------------------------------------
 
 
@@ -1165,20 +1191,23 @@ async def test_list_feeds_returns_all_feeds(
 async def test_delete_feed_succeeds(
     db_pool: asyncpg.Pool, store: FeedStore
 ) -> None:
-    """delete_feed deletes the feed and returns True."""
+    """deactivate_feed deactivates the feed and returns True."""
     feed_id = await _insert_feed(db_pool, "Delete Test Feed")
 
-    result = await store.delete_feed(feed_id)
+    result = await store.deactivate_feed(feed_id)
 
     assert result is True
-    # Verify deleted
-    row = await db_pool.fetchrow("SELECT 1 FROM feeds WHERE id = $1", feed_id)
-    assert row is None
+    # Verify deactivated
+    row = await db_pool.fetchrow(
+        "SELECT status FROM feeds WHERE id = $1", feed_id
+    )
+    assert row is not None
+    assert row["status"] == "deactivated"
 
 
 async def test_delete_feed_returns_false_if_not_found(store: FeedStore) -> None:
-    """delete_feed returns False for non-existent ID."""
-    result = await store.delete_feed(uuid.uuid4())
+    """deactivate_feed returns False for non-existent ID."""
+    result = await store.deactivate_feed(uuid.uuid4())
     assert result is False
 
 

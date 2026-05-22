@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import datetime
+import json
 import unittest
 import uuid
-from typing import TYPE_CHECKING, cast
+from typing import cast
 from unittest import mock
+
+import asyncpg
 
 from backend.pipeline.storage import feed_queries
 from backend.pipeline.storage.feed_store import (
@@ -12,9 +15,6 @@ from backend.pipeline.storage.feed_store import (
     HeartbeatResult,
     SourceType,
 )
-
-if TYPE_CHECKING:
-    import asyncpg
 
 _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 _FEED_ID_B = uuid.UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
@@ -1022,6 +1022,49 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["name"], "New Feed")
         self.assertEqual(result["source_type"], SourceType.BCFY_FEEDS)
 
+    async def test_create_feed_with_tags(self) -> None:
+        """Tags are passed to the SQL and returned in the Feed."""
+        row = {
+            "id": _FEED_ID,
+            "name": "New Feed",
+            "source_type": "bcfy_feeds",
+            "status": "unclaimed",
+            "failure_count": 0,
+            "worker_id": None,
+            "last_heartbeat": None,
+            "last_processed_filename": None,
+            "last_bookmark_time": None,
+            "created_at": datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
+            "source_feed_id": "123",
+            "external_id": "ext_123",
+            "tags": '[{"key": "env", "value": "prod"}]',
+        }
+        pool = _make_pool(fetchrow_result=row)
+        store = FeedStore(pool)
+
+        tags = [{"key": "env", "value": "prod"}]
+        result = await store.create_feed(
+            "New Feed", "bcfy_feeds", "123", "ext_123", tags=tags
+        )
+
+        self.assertEqual(result["tags"], tags)
+        args = pool.fetchrow.call_args[0]
+        self.assertEqual(args[5], json.dumps(tags))
+
+    async def test_create_feed_invalid_tags(self) -> None:
+        """CheckViolationError is raised when DB constraint fails for invalid tags."""
+        pool = _make_pool()
+        pool.fetchrow.side_effect = asyncpg.CheckViolationError(
+            "valid_tags_schema"
+        )
+        store = FeedStore(pool)
+
+        tags = [{"invalid": "shape"}]
+        with self.assertRaises(asyncpg.CheckViolationError):
+            await store.create_feed(
+                "New Feed", "bcfy_feeds", "123", "ext_123", tags=tags
+            )
+
     async def test_raises_value_error_on_failure(self) -> None:
         """ValueError is raised if the DB returns no row."""
         pool = _make_pool(fetchrow_result=None)
@@ -1071,6 +1114,31 @@ class TestGetFeed(unittest.IsolatedAsyncioTestCase):
 
         assert result is not None
         self.assertEqual(result["id"], _FEED_ID)
+
+    async def test_get_feed_returns_tags(self) -> None:
+        """Tags are returned in the Feed dict when they exist."""
+        row = {
+            "id": _FEED_ID,
+            "name": "My Feed",
+            "source_type": "bcfy_feeds",
+            "status": "unclaimed",
+            "failure_count": 0,
+            "worker_id": None,
+            "last_heartbeat": None,
+            "last_processed_filename": None,
+            "last_bookmark_time": None,
+            "created_at": datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
+            "source_feed_id": "123",
+            "external_id": "ext_123",
+            "tags": '[{"key": "county", "value": "Fulton"}]',
+        }
+        pool = _make_pool(fetchrow_result=row)
+        store = FeedStore(pool)
+
+        result = await store.get_feed(_FEED_ID)
+
+        assert result is not None
+        self.assertEqual(result["tags"], [{"key": "county", "value": "Fulton"}])
 
     async def test_returns_none_when_not_exists(self) -> None:
         """None is returned when the feed does not exist."""
@@ -1133,28 +1201,59 @@ class TestListFeeds(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result[1]["id"], _FEED_ID_B)
         self.assertEqual(result[1]["source_type"], SourceType.OPENMHZ)
 
-
-class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
-    """Tests for FeedStore.delete_feed."""
-
-    async def test_delete_succeeds(self) -> None:
-        """True is returned when a feed is deleted."""
-        pool = _make_pool(execute_result="DELETE 1")
+    async def test_list_feeds_returns_tags(self) -> None:
+        """Tags are returned in the Feed dicts when they exist."""
+        rows = [
+            {
+                "id": _FEED_ID,
+                "name": "Feed A",
+                "source_type": "bcfy_feeds",
+                "status": "unclaimed",
+                "failure_count": 0,
+                "worker_id": None,
+                "last_heartbeat": None,
+                "last_processed_filename": None,
+                "last_bookmark_time": None,
+                "created_at": datetime.datetime(
+                    2026, 4, 10, tzinfo=datetime.UTC
+                ),
+                "source_feed_id": "123",
+                "external_id": "ext_123",
+                "tags": '[{"key": "county", "value": "Fulton"}]',
+            },
+        ]
+        pool = _make_pool(fetch_result=rows)
         store = FeedStore(pool)
 
-        result = await store.delete_feed(_FEED_ID)
+        result = await store.list_feeds()
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(
+            result[0]["tags"], [{"key": "county", "value": "Fulton"}]
+        )
+
+
+class TestDeactivateFeed(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.deactivate_feed."""
+
+    async def test_delete_succeeds(self) -> None:
+        """True is returned when a feed is deactivated."""
+        pool = _make_pool(execute_result="UPDATE 1")
+        store = FeedStore(pool)
+
+        result = await store.deactivate_feed(_FEED_ID)
 
         self.assertTrue(result)
         pool.execute.assert_called_once_with(
-            feed_queries.DELETE_FEED_SQL, _FEED_ID
+            feed_queries.DEACTIVATE_FEED_SQL, _FEED_ID
         )
 
     async def test_delete_fails_when_not_found(self) -> None:
-        """False is returned when no feed is deleted."""
-        pool = _make_pool(execute_result="DELETE 0")
+        """False is returned when no feed is deactivated."""
+        pool = _make_pool(execute_result="UPDATE 0")
         store = FeedStore(pool)
 
-        result = await store.delete_feed(_FEED_ID)
+        result = await store.deactivate_feed(_FEED_ID)
 
         self.assertFalse(result)
 

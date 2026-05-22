@@ -628,6 +628,22 @@ class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await task
 
+    async def test_deactivated_feed_cancels_task(self) -> None:
+        """When a feed is deactivated, its background task is cancelled."""
+        rt = _make_runtime()
+        task = asyncio.create_task(asyncio.sleep(100))
+        rt._feed_tasks[_FEED_ID] = task
+        rt._releasing_feeds = set()
+        rt._heartbeat_store = mock.AsyncMock()
+        rt._heartbeat_store.renew_heartbeats_batch_diagnostic.return_value = [
+            self._diag(_FEED_ID, status="deactivated", renewed=False),
+        ]
+
+        await rt._heartbeat_cycle()
+        # Yield to let the event loop process the cancellation
+        await asyncio.sleep(0)
+        self.assertTrue(task.cancelled())
+
     async def test_skip_if_recent_is_not_a_fence_violation(self) -> None:
         """renewed=False + current_worker=self (skip-if-recent) must not trigger os._exit."""
         rt = _make_runtime()
@@ -1404,6 +1420,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             feed_id=str(_FEED_ID),
             feed_name="Test Feed",
             source_type="bcfy_feeds",
+            reason="capture_failed",
         )
         # _releasing_feeds cleaned up
         self.assertEqual(rt._releasing_feeds, set())
@@ -2056,6 +2073,81 @@ class TestLogPayloadBound(unittest.TestCase):
             f"800-feed Sub-timeout warning is {len(encoded)} bytes, "
             f"must be under 1 MB (ROADMAP SC#2)",
         )
+
+
+class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
+    """_process_feed forwards the chunk's resume cursor to update_feed_progress.
+
+    Contract: the feed's persisted last_bookmark_time is the chunk's
+    resume_position when the collector sets it (bcfy_calls), and falls back
+    to chunk_end_time when it is None (stream/push collectors). The runtime
+    invokes update_feed_progress positionally via retry_with_lease_check as
+    (feed_id, worker_id, gcs_uri, fencing_token, last_bookmark_time) — so the
+    bookmark is the 5th positional argument.
+    """
+
+    _BOOKMARK_ARG_INDEX = 4
+
+    async def test_persists_resume_position_when_chunk_sets_it(self) -> None:
+        """A chunk with resume_position set → that value is the bookmark."""
+        resume = datetime.datetime(2026, 5, 14, 2, 30, 31, tzinfo=datetime.UTC)
+
+        async def _one_chunk(feed, shutdown, _resources):
+            now = datetime.datetime.now(datetime.UTC)
+            yield CapturedChunk(
+                audio_bytes=b"audio",
+                chunk_start_time=now,
+                chunk_end_time=now + datetime.timedelta(seconds=15),
+                resume_position=resume,
+            )
+
+        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress.return_value = True
+        rt._releasing_feeds = set()
+
+        with _mock_upload_audio(), _mock_pubsub_publish():
+            await rt._process_feed(_FEED)
+
+        rt._store.update_feed_progress.assert_awaited_once()
+        bookmark = rt._store.update_feed_progress.await_args.args[
+            self._BOOKMARK_ARG_INDEX
+        ]
+        self.assertEqual(bookmark, resume)
+
+    async def test_falls_back_to_chunk_end_time_when_resume_position_none(
+        self,
+    ) -> None:
+        """A chunk leaving resume_position None → bookmark is chunk_end_time."""
+        end_time = datetime.datetime(2026, 5, 14, 2, 31, 0, tzinfo=datetime.UTC)
+
+        async def _one_chunk(feed, shutdown, _resources):
+            yield CapturedChunk(
+                audio_bytes=b"audio",
+                chunk_start_time=end_time - datetime.timedelta(seconds=15),
+                chunk_end_time=end_time,
+                # resume_position defaults to None (stream/push collectors).
+            )
+
+        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress.return_value = True
+        rt._releasing_feeds = set()
+
+        with _mock_upload_audio(), _mock_pubsub_publish():
+            await rt._process_feed(_FEED)
+
+        rt._store.update_feed_progress.assert_awaited_once()
+        bookmark = rt._store.update_feed_progress.await_args.args[
+            self._BOOKMARK_ARG_INDEX
+        ]
+        self.assertEqual(bookmark, end_time)
 
 
 if __name__ == "__main__":

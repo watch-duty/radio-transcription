@@ -4,12 +4,12 @@ import type {
   FeedCreate,
   FeedStatus,
   SourceType,
+  Tag,
 } from '@transcription/common';
 import { GoogleAuth } from 'google-auth-library';
 import {
   Body,
   Controller,
-  Delete,
   Extension,
   Get,
   Path,
@@ -35,11 +35,13 @@ interface FeedBackend extends BaseFeedBackend {
   external_id: string;
   status: BackendFeedStatus;
   last_heartbeat: string | null;
+  tags?: Tag[];
 }
 
 interface FeedCreateBackend extends BaseFeedBackend {
   source_feed_id: string;
   external_id: string;
+  tags?: Tag[];
 }
 
 function getSourceUrl(
@@ -96,6 +98,7 @@ function convertFeedBackend(response: FeedBackend): Feed {
     archiveUrl: getArchiveUrl(response.source_type, response.source_feed_id),
     status: convertFeedStatusBackend(response.status),
     lastHeartbeat: response.last_heartbeat ?? undefined,
+    tags: response.tags,
   };
 }
 
@@ -105,6 +108,7 @@ function convertFeedCreate(create: FeedCreate): FeedCreateBackend {
     source_type: create.sourceType,
     source_feed_id: create.sourceFeedId,
     external_id: create.externalId,
+    tags: create.tags,
   };
 }
 
@@ -207,7 +211,11 @@ export class FeedsController extends Controller {
     }
   }
 
-  @Delete('{feedId}')
+  /**
+   * Deactivate a feed (soft delete).
+   * Marks the feed as deactivated to preserve historical transcripts.
+   */
+  @Post('{feedId}/deactivate')
   @Security('google_id_token')
   @SuccessResponse('204', 'No Content')
   @Response<{ message: string }>(401, 'Unauthorized')
@@ -215,12 +223,12 @@ export class FeedsController extends Controller {
   @Response<{ message: string }>(404, 'Not Found')
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
-  public async deleteFeed(@Path() feedId: string): Promise<void> {
+  public async deactivateFeed(@Path() feedId: string): Promise<void> {
     const client = await this.getClient();
     try {
       await client.request({
-        url: `${FEEDS_STORE_API_URL}/${feedId}`,
-        method: 'DELETE',
+        url: `${FEEDS_STORE_API_URL}/${feedId}/deactivate`,
+        method: 'POST',
       });
     } catch (error: unknown) {
       const { status, message } = handleBackendError(

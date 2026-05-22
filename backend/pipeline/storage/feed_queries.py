@@ -28,6 +28,7 @@ do_update AS (
     FROM current_state
     WHERE feeds.id = current_state.id
       AND current_state.worker_id = $2
+      AND current_state.status = 'active'::feed_status
       AND (current_state.last_heartbeat IS NULL
            OR current_state.last_heartbeat < NOW() - INTERVAL '15 seconds')
     RETURNING feeds.id
@@ -331,11 +332,11 @@ WITH new_feed AS (
     RETURNING id, name, source_type, status, failure_count, worker_id, last_heartbeat, last_processed_filename, last_bookmark_time, created_at
 ),
 new_props AS (
-    INSERT INTO feed_properties (feed_id, source_feed_id, external_id, source_type)
-    SELECT id, $3, $4, source_type FROM new_feed
-    RETURNING source_feed_id, external_id
+    INSERT INTO feed_properties (feed_id, source_feed_id, external_id, source_type, tags)
+    SELECT id, $3, $4, source_type, $5 FROM new_feed
+    RETURNING source_feed_id, external_id, tags
 )
-SELECT nf.*, np.source_feed_id, np.external_id
+SELECT nf.*, np.source_feed_id, np.external_id, np.tags
 FROM new_feed nf
 JOIN new_props np ON TRUE;
 """
@@ -344,7 +345,7 @@ GET_FEED_SQL = """\
 SELECT f.id, f.name, f.source_type, f.status, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
        f.last_bookmark_time, f.created_at,
-       fp.source_feed_id, fp.external_id
+       fp.source_feed_id, fp.external_id, fp.tags
 FROM feeds f
 JOIN feed_properties fp ON f.id = fp.feed_id
 WHERE f.id = $1
@@ -354,14 +355,15 @@ LIST_FEEDS_SQL = """\
 SELECT f.id, f.name, f.source_type, f.status, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
        f.last_bookmark_time, f.created_at,
-       fp.source_feed_id, fp.external_id
+       fp.source_feed_id, fp.external_id, fp.tags
 FROM feeds f
 JOIN feed_properties fp ON f.id = fp.feed_id
 ORDER BY f.created_at DESC
 """
 
-DELETE_FEED_SQL = """\
-DELETE FROM feeds
+DEACTIVATE_FEED_SQL = """\
+UPDATE feeds
+SET status = 'deactivated'::feed_status
 WHERE id = $1
 """
 
@@ -378,7 +380,7 @@ WITH updated AS (
     RETURNING id, name, source_type, status, failure_count, worker_id,
               last_heartbeat, last_processed_filename, last_bookmark_time, created_at
 )
-SELECT u.*, fp.source_feed_id, fp.external_id
+SELECT u.*, fp.source_feed_id, fp.external_id, fp.tags
 FROM updated u
 JOIN feed_properties fp ON fp.feed_id = u.id
 """

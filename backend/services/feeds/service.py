@@ -25,6 +25,9 @@ class FeedService:
             source_type=feed_in.source_type,
             source_feed_id=feed_in.source_feed_id,
             external_id=feed_in.external_id,
+            tags=[t.model_dump() for t in feed_in.tags]
+            if feed_in.tags
+            else None,
         )
         return Feed.model_validate(store_feed)
 
@@ -45,13 +48,13 @@ class FeedService:
         store_feeds = await self._store.list_feeds()
         return [Feed.model_validate(f) for f in store_feeds]
 
-    async def delete_feed(self, feed_id: str) -> bool:
-        """Deletes a feed by ID."""
+    async def deactivate_feed(self, feed_id: str) -> bool:
+        """Deactivates a feed by ID."""
         try:
             uid = uuid.UUID(feed_id)
         except ValueError:
             return False
-        return await self._store.delete_feed(uid)
+        return await self._store.deactivate_feed(uid)
 
     async def reset_feed(self, feed_id: str) -> Feed | None:
         """Reset a failed or quarantined feed to an unclaimed state.

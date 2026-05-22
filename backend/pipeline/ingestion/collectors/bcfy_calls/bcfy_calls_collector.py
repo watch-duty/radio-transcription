@@ -55,6 +55,11 @@ async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
 
 def _get_jwt_token() -> str:
     """Fetch Broadcastify JWT token synchronously from Secret Manager."""
+    # Currently there is no implicit redirection support for the Secret Manager SDK to another endpoint.
+    mock_token = os.getenv("MOCK_JWT_TOKEN")
+    if mock_token:
+        return mock_token
+
     project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
     secret_id = os.getenv("BROADCASTIFY_JWT_SECRET_ID")
     if not project_id or not secret_id:
@@ -309,6 +314,20 @@ async def _create_chunk_from_call(
         else now
     )
 
+    # Resume cursor: the call's own API index time `ts`. On a mid-page crash
+    # between two calls sharing a `ts` second the later one is not re-fetched
+    # (strict `ts > pos`) -- an accepted, bounded data-loss case.
+    ts = result.get("ts")
+    if ts is not None:
+        resume_position = datetime.datetime.fromtimestamp(ts, datetime.UTC)
+    else:
+        resume_position = None
+        logger.warning(
+            "bcfy_calls call missing 'ts' (API pagination key) -- resume "
+            "cursor falls back to chunk_end_time",
+            extra={"json_fields": {"event_type": "bcfy_calls_missing_ts"}},
+        )
+
     content_type = out_h.get("Content-Type")
     mime_type = AudioMimeType.from_string(content_type)
 
@@ -319,6 +338,7 @@ async def _create_chunk_from_call(
         session_id=session_id,
         receipt_time=receipt_time,
         mime_type=mime_type,
+        resume_position=resume_position,
     )
 
 
@@ -404,6 +424,10 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
             calls = _extract_calls_from_response(bcfy_calls)
 
             if calls:
+                # Sort the page by the API index time `ts` so the per-call
+                # resume cursor advances monotonically; data-loss is then
+                # bounded to the accepted tie case (calls sharing a `ts`).
+                calls.sort(key=lambda c: c.get("ts") or 0)
                 for result in calls:
                     if shutdown_event.is_set():
                         break
