@@ -97,6 +97,9 @@ class ParseAndKeyFn(beam.DoFn):
             with tracer.start_as_current_span(
                 "receive_audio_chunk_for_normalization", context=context
             ):
+                if not feed_id:
+                    msg = "AudioChunk missing required feed_id"
+                    _raise(msg)
                 if not chunk_proto.gcs_uri:
                     msg = "AudioChunk missing required gcs_uri"
                     _raise(msg)
