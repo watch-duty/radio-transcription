@@ -80,6 +80,22 @@ describe('listTranscripts', () => {
     });
   });
 
+  it('should forward is_alert parameter if provided', async () => {
+    const mockBackendResponse = { transcripts: [] };
+    mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
+
+    const controller = new TranscriptsController();
+    await controller.listTranscripts('test', {
+      limit: 100,
+      is_alert: true,
+    });
+
+    expect(mockRequest).toHaveBeenCalledWith({
+      url: 'http://api.example.com?feed_id=test&limit=100&is_alert=true',
+      method: 'GET',
+    });
+  });
+
   it('should throw error on API failure with error message', async () => {
     const errorMessage = 'Network Error';
     mockRequest.mockRejectedValueOnce(new Error(errorMessage));
