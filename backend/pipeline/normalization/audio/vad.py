@@ -57,6 +57,27 @@ DEFAULT_SILERO_WINDOW_SIZE = 512
 class VoiceActivityDetector:
     """The voice activity detector engine incorporating a Pedalboard filter,
     UL-UNAS denoiser, presence boost, and the Silero VAD model to perform full speech segment detection.
+
+    ### Core Priming Design & Slicing Strategy
+    The normalization pipeline operates on both contiguous live streaming chunks (where prior audio tail history is present)
+    and Segment 0 starts/offline evaluations (where no history exists). To ensure absolute safety and sensitivity:
+
+    1. **Denoiser Priming (UL-UNAS):**
+       The recurrent neural denoiser (UL-UNAS) MUST be primed with audio history before processing sudden vocal envelopes.
+       Without priming, a sudden vocal onset saturates the RNN, causing it to misidentify voice as echoing noise and mute it
+       for the first 1-2 seconds (the echo-suppression muting bug).
+       - On Live Streaming Boundaries: We prepend the contiguous real prior audio tail (which warms up the recurrent states naturally).
+       - On Segment 0 / Call Starts: We fallback to prepending synthetic comfort noise (lowpass static) or replayed starting speech.
+
+    2. **VAD Priming (Silero VAD):**
+       Unlike the denoiser, Silero VAD does not suffer from echo muting. In fact, VAD desensitizes heavily if primed with static noise floor.
+       - Synthetic Priming Fallback (`synthetic_comfort_noise`): We prepend comfort noise to warm up the denoiser, but ALWAYS slice it off
+         the preprocessed array before feeding it to VAD. The VAD runs strictly on denoised actual audio starting from zero-state,
+         maintaining maximum sensitivity on quiet starting speech.
+       - Replayed Speech Priming Fallback (`replayed_speech`): Pre-rolls replayed starting speech to warm up the denoiser, and does NOT
+         slice it off from the VAD input. This allows voice signal to naturally prime both models, preserving exact original suite goldens.
+       - Live Streaming Boundaries: The denoiser and VAD are kept naturally primed using contiguous real streaming prior tails. Slicing
+         is applied to shifted time coordinates ONLY to prevent boundary bleed-through.
     """
 
     def __init__(
@@ -82,9 +103,11 @@ class VoiceActivityDetector:
         normalization_target_peak: float = VAD_NORMALIZATION_TARGET_PEAK,
         normalization_min_peak: float = VAD_NORMALIZATION_MIN_PEAK,
         seed: int = VAD_DEFAULT_SEED,
-        synthetic_priming: bool = False,
+        priming_fallback: str = "synthetic_comfort_noise",
+        slice_vad_preamble: bool = True,
         models_dir: str | Path = MODELS_DIR,
     ) -> None:
+
         self.comp_threshold_db = comp_threshold_db
         self.comp_ratio = comp_ratio
         self.comp_attack_ms = comp_attack_ms
@@ -105,7 +128,8 @@ class VoiceActivityDetector:
         self.normalization_target_peak = normalization_target_peak
         self.normalization_min_peak = normalization_min_peak
         self.seed = seed
-        self.synthetic_priming = synthetic_priming
+        self.priming_fallback = priming_fallback
+        self.slice_vad_preamble = slice_vad_preamble
 
         self.silero_path = Path(models_dir) / "silero_vad.onnx"
         self.ulunas_path = Path(models_dir) / "ulunas_stream_simple.onnx"
@@ -296,29 +320,27 @@ class VoiceActivityDetector:
         # Evaluate if we passed a genuine historical prior tail from a previous chunk
         has_genuine_prior = prior_audio is not None
 
-        if self.synthetic_priming:
-            # --- SYNTHETIC NOISE PRIMING PIPELINE (PRODUCTION) ---
-            # 1. Resample incoming audio array to TARGET_SAMPLE_RATE first
+        # 1. Resample incoming audio array to TARGET_SAMPLE_RATE first
+        if sample_rate != TARGET_SAMPLE_RATE:
+            resampler = TorchaudioHannResampler(sample_rate, TARGET_SAMPLE_RATE)
+            audio_array = resampler.resample(audio_array)
+
+        # 2. Resample genuine prior tail to TARGET_SAMPLE_RATE if it exists
+        if (
+            has_genuine_prior
+            and prior_audio is not None
+            and len(prior_audio) > 0
+        ):
             if sample_rate != TARGET_SAMPLE_RATE:
                 resampler = TorchaudioHannResampler(
                     sample_rate, TARGET_SAMPLE_RATE
                 )
-                audio_array = resampler.resample(audio_array)
+                prior_audio = resampler.resample(prior_audio)
 
-            # 2. Resample genuine prior tail to TARGET_SAMPLE_RATE if it exists
-            if (
-                has_genuine_prior
-                and prior_audio is not None
-                and len(prior_audio) > 0
-            ):
-                if sample_rate != TARGET_SAMPLE_RATE:
-                    resampler = TorchaudioHannResampler(
-                        sample_rate, TARGET_SAMPLE_RATE
-                    )
-                    prior_audio = resampler.resample(prior_audio)
-
-            # 3. Fallback to synthetic comfort noise if no prior audio tail is available
-            if prior_audio is None:
+        # 3. Fallback priming when no prior audio tail is available
+        if prior_audio is None:
+            if self.priming_fallback == "synthetic_comfort_noise":
+                # Synthetic comfort noise priming (production call-recording safe, prevents Segment 0 muting)
                 priming_samples = int(self.priming_sec * TARGET_SAMPLE_RATE)
                 if priming_samples > 0:
                     prior_audio = (
@@ -330,65 +352,35 @@ class VoiceActivityDetector:
                     prior_audio = np.convolve(
                         prior_audio, np.ones(5) / 5, mode="same"
                     )
-
-            # 4. Perform physical audio concatenation
-            if prior_audio is not None and len(prior_audio) > 0:
-                prior_len_sec = len(prior_audio) / float(TARGET_SAMPLE_RATE)
-                extended_audio = np.concatenate([prior_audio, audio_array])
-            else:
-                prior_len_sec = 0.0
-                extended_audio = audio_array
-
-            preprocessed = self.preprocess(extended_audio)
-
-            # Slicing strategy: always slice off synthetic preamble to prevent desensitization
-            preamble_samples = int(prior_len_sec * TARGET_SAMPLE_RATE)
-            if preamble_samples > 0:
-                vad_input = preprocessed[preamble_samples:]
-                vad_offset_sec = 0.0
-            else:
-                vad_input = preprocessed
-                vad_offset_sec = 0.0
-
-        else:
-            # --- EXACT ORIGINAL REPLAYED SPEECH PRIMING PIPELINE (OFFLINE / TEST SUITE) ---
-            # Resample incoming audio array to TARGET_SAMPLE_RATE first (single resampling)
-            if sample_rate != TARGET_SAMPLE_RATE:
-                resampler = TorchaudioHannResampler(
-                    sample_rate, TARGET_SAMPLE_RATE
-                )
-                audio_array = resampler.resample(audio_array)
-
-            # Prepend historical tail if available; fallback to current chunk start if none.
-            if prior_audio is None:
+            elif self.priming_fallback == "replayed_speech":
+                # Replayed starting speech priming (offline/test suite compatible, preserves maximum sensitivity)
                 priming_samples = int(self.priming_sec * TARGET_SAMPLE_RATE)
                 priming_samples = min(priming_samples, len(audio_array))
                 if priming_samples > 0:
                     prior_audio = audio_array[:priming_samples]
 
-            # Perform physical audio concatenation to create a continuous audio stream for the VAD
-            if prior_audio is not None and len(prior_audio) > 0:
-                prior_len_sec = len(prior_audio) / float(sample_rate)
-                if sample_rate != TARGET_SAMPLE_RATE:
-                    resampler = TorchaudioHannResampler(
-                        sample_rate, TARGET_SAMPLE_RATE
-                    )
-                    prior_audio = resampler.resample(prior_audio)
-                extended_audio = np.concatenate([prior_audio, audio_array])
-            else:
-                prior_len_sec = 0.0
-                extended_audio = audio_array
+        # 4. Perform physical audio concatenation to create a continuous audio stream
+        if prior_audio is not None and len(prior_audio) > 0:
+            prior_len_sec = len(prior_audio) / float(TARGET_SAMPLE_RATE)
+            extended_audio = np.concatenate([prior_audio, audio_array])
+        else:
+            prior_len_sec = 0.0
+            extended_audio = audio_array
 
-            preprocessed = self.preprocess(extended_audio)
+        preprocessed = self.preprocess(extended_audio)
 
-            # Slice off genuine prior tail, but NOT replayed speech preamble
-            preamble_samples = int(prior_len_sec * TARGET_SAMPLE_RATE)
-            if has_genuine_prior and preamble_samples > 0:
-                vad_input = preprocessed[preamble_samples:]
-                vad_offset_sec = 0.0
-            else:
-                vad_input = preprocessed
-                vad_offset_sec = prior_len_sec
+        # 5. Slicing strategy:
+        # If slice_vad_preamble is True, we slice off the preamble before VAD inference to maintain onset sensitivity.
+        # In continuous streaming boundaries, we ALWAYS slice if has_genuine_prior is True (to prevent bleed-through).
+        should_slice = self.slice_vad_preamble or has_genuine_prior
+
+        preamble_samples = int(prior_len_sec * TARGET_SAMPLE_RATE)
+        if should_slice and preamble_samples > 0:
+            vad_input = preprocessed[preamble_samples:]
+            vad_offset_sec = 0.0
+        else:
+            vad_input = preprocessed
+            vad_offset_sec = prior_len_sec
 
         state = np.zeros((2, 1, 128), dtype=np.float32)
         context = np.zeros(context_size, dtype=np.float32)

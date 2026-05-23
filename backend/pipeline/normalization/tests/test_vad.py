@@ -94,7 +94,10 @@ class TestVadEngine(unittest.TestCase):
     def setUp(self) -> None:
         self.models_dir = str(Path(__file__).parent.parent / "audio" / "models")
         self.vad = vad.VoiceActivityDetector(
-            models_dir=self.models_dir, pad_sec=0.0
+            models_dir=self.models_dir,
+            pad_sec=0.0,
+            priming_fallback="replayed_speech",
+            slice_vad_preamble=False,
         )
         self.vad.setup()
 
