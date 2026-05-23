@@ -56,9 +56,11 @@ docker-compose exec rules-evaluation python /app/test_evaluation_publish.py
 ## Integration and E2E Tests
 We categorize our non-unit tests into three levels to balance speed and coverage. These are located under `integration_tests/`:
 
-1. **Component Tests**: Isolated tests for database stores using `testcontainers`.
+Default local pytest runs are intentionally safe: `uv run pytest` collects backend tests and excludes Docker-backed or service-backed tests. Use the existing `mise run test:*` commands below for those heavier lanes; they opt in explicitly and run without pytest-xdist so AlloyDB/testcontainers do not multiply across workers.
+
+1. **Component Tests**: Isolated tests for database stores and collectors using `testcontainers`.
    * Run all: `mise run test:component`
-   * Run specific: `mise run test:component:rules` or `test:component:feeds`
+   * Run specific: `mise run test:component:rules` or `mise run test:component:feeds`
 
 2. **API Tests**: Tests targeting running services via HTTP.
    * Run all: `mise run test:api`

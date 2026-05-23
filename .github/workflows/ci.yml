@@ -159,7 +159,7 @@ jobs:
       - name: Generate Protobuf Python files
         run: mise run generate:protos
       - name: Run tests
-        run: uv run python -m pytest backend/ -q
+        run: uv run python -m pytest backend/ -q -n auto
 
   run-frontend-tests:
     needs: [setup]
