@@ -299,13 +299,20 @@ class VoiceActivityDetector:
         # Using synthetic white noise instead of replaying the starting speech prevents the recurrent
         # denoiser from misidentifying repeating vocal envelopes as echoing noise, completely bypassing the
         # RNN echo-suppression muting bug on Segment 0 starts.
+        # We generate the synthetic preamble noise exactly at the native sample_rate before down-sampling
+        # and apply a moving average filter to low-pass it, converting harsh white noise to natural, soft comfort static
+        # so it behaves uniformly during subsequent concatenation and resampling without desensitizing quiet speech.
         if prior_audio is None:
-            priming_samples = int(self.priming_sec * TARGET_SAMPLE_RATE)
+            priming_samples = int(self.priming_sec * sample_rate)
             if priming_samples > 0:
                 prior_audio = (
                     np.random.default_rng(seed=self.seed)
                     .normal(0.0, 0.002, priming_samples)
                     .astype(np.float32)
+                )
+                # Apply a 5-point moving average lowpass filter to shape it into soft colored comfort noise
+                prior_audio = np.convolve(
+                    prior_audio, np.ones(5) / 5, mode="same"
                 )
 
         # Perform physical audio concatenation to create a continuous audio stream for the VAD
