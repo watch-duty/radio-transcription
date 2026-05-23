@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 
 import functions_framework
@@ -30,6 +31,13 @@ def _get_rules_cache_ttl_seconds() -> float:
         logger.warning(
             "Invalid RULES_CACHE_TTL_SECONDS value %r. Defaulting to %.1f.",
             raw_value,
+            DEFAULT_RULES_CACHE_TTL_SECONDS,
+        )
+        return DEFAULT_RULES_CACHE_TTL_SECONDS
+
+    if math.isnan(ttl_seconds):
+        logger.warning(
+            "NaN RULES_CACHE_TTL_SECONDS value. Defaulting to %.1f.",
             DEFAULT_RULES_CACHE_TTL_SECONDS,
         )
         return DEFAULT_RULES_CACHE_TTL_SECONDS

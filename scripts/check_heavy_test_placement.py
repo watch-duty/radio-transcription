@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-HEAVY_IMPORT_ROOTS = {"docker", "testcontainers"}
+HEAVY_IMPORT_ROOTS = {"docker", "integration_tests", "testcontainers"}
 HEAVY_STRING_MARKERS = ("alloydbomni",)
 SKIP_DIRS = {
     ".git",

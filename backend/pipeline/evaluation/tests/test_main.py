@@ -61,6 +61,11 @@ class TestMainConfiguration(unittest.TestCase):
 
         self.assertEqual(ttl_seconds, 60.0)
 
+    def test_nan_rules_cache_ttl_defaults_to_sixty_seconds(self) -> None:
+        ttl_seconds = self._get_rules_cache_ttl("nan")
+
+        self.assertEqual(ttl_seconds, 60.0)
+
     def test_subsecond_rules_cache_ttl_is_preserved(self) -> None:
         ttl_seconds = self._get_rules_cache_ttl("0.5")
 
