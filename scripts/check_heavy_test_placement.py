@@ -77,8 +77,11 @@ def _is_allowed_heavy_test_path(path: Path) -> bool:
 
 def _uses_heavy_test_helpers(path: Path) -> bool:
     try:
-        tree = ast.parse(path.read_text(), filename=str(path))
-    except SyntaxError as exc:
+        tree = ast.parse(
+            path.read_text(encoding="utf-8"),
+            filename=str(path),
+        )
+    except (SyntaxError, UnicodeDecodeError) as exc:
         sys.stderr.write(f"Could not parse {path.relative_to(ROOT)}: {exc}\n")
         return True
 

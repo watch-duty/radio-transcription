@@ -61,6 +61,7 @@ Default local pytest runs are intentionally safe: `uv run pytest` collects backe
 1. **Component Tests**: Isolated tests for database stores and collectors using `testcontainers`.
    * Run all: `mise run test:component`
    * Run specific: `mise run test:component:rules` or `mise run test:component:feeds`
+   * Run one heavy test directly: `uv run pytest --include-heavy-tests -n 0 integration_tests/storage/test_rules_store_integration.py -k "test_specific_behavior"`
 
 2. **API Tests**: Tests targeting running services via HTTP.
    * Run all: `mise run test:api`
