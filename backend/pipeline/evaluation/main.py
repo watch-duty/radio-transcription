@@ -32,9 +32,13 @@ transcripts_client = TranscriptsClient(api_url=TRANSCRIPTS_API_URL)
 
 # 3. Initialize Evaluator
 RULES_API_URL = os.environ.get("RULES_API_URL")
+RULES_CACHE_TTL_SECONDS = float(os.environ.get("RULES_CACHE_TTL_SECONDS", "60"))
 if RULES_API_URL:
     logger.info("Using RemoteTextEvaluator with API: %s", RULES_API_URL)
-    text_evaluator = evaluator.RemoteTextEvaluator(api_url=RULES_API_URL)
+    text_evaluator = evaluator.RemoteTextEvaluator(
+        api_url=RULES_API_URL,
+        cache_ttl_seconds=RULES_CACHE_TTL_SECONDS,
+    )
 else:
     logger.info("Using StaticTextEvaluator (no RULES_API_URL set)")
     text_evaluator = evaluator.StaticTextEvaluator()

@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from backend.pipeline.evaluation.rules_evaluation import evaluator
 
@@ -310,6 +310,48 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         result2 = self.remote_evaluator.evaluate(text, feed_id="test_feed")
         self.assertTrue(result2["is_flagged"])
         self.assertEqual(mock_get.call_count, 1)  # Still 1
+
+    @patch("backend.pipeline.evaluation.rules_evaluation.evaluator.is_gcp_env")
+    @patch("requests.Session.get")
+    def test_evaluate_refetches_rules_when_cache_ttl_is_zero(
+        self, mock_get, mock_is_gcp
+    ) -> None:
+        """Test that a zero TTL disables rule caching."""
+        mock_is_gcp.return_value = False
+        evaluator_without_cache = evaluator.RemoteTextEvaluator(
+            self.api_url,
+            cache_ttl_seconds=0,
+        )
+        mock_rule = {
+            "rule_id": "dynamic_rule",
+            "rule_name": "Dynamic Rule",
+            "is_active": True,
+            "scope": {"level": "GLOBAL", "target_feeds": []},
+            "conditions": {
+                "evaluation_type": "KEYWORD_MATCH",
+                "operator": "ANY",
+                "keywords": ["dynamic"],
+                "case_sensitive": False,
+            },
+        }
+        first_response = Mock()
+        first_response.json.return_value = []
+        first_response.status_code = 200
+        second_response = Mock()
+        second_response.json.return_value = [mock_rule]
+        second_response.status_code = 200
+        mock_get.side_effect = [first_response, second_response]
+
+        result1 = evaluator_without_cache.evaluate(
+            "dynamic message", feed_id="test_feed"
+        )
+        result2 = evaluator_without_cache.evaluate(
+            "dynamic message", feed_id="test_feed"
+        )
+
+        self.assertFalse(result1["is_flagged"])
+        self.assertTrue(result2["is_flagged"])
+        self.assertEqual(mock_get.call_count, 2)
 
     def test_evaluate_missing_feed_id(self) -> None:
         """Test that missing feed_id returns ERROR_FEED_ID_MISSING rule."""
