@@ -291,19 +291,32 @@ class VoiceActivityDetector:
         if len(audio_array) == 0:
             return []
 
+        # 1. Resample incoming audio array to TARGET_SAMPLE_RATE first
         if sample_rate != TARGET_SAMPLE_RATE:
             resampler = TorchaudioHannResampler(sample_rate, TARGET_SAMPLE_RATE)
             audio_array = resampler.resample(audio_array)
 
-        # Prepend historical tail if available; fallback to synthetic, low-amplitude white noise if none.
-        # Using synthetic white noise instead of replaying the starting speech prevents the recurrent
-        # denoiser from misidentifying repeating vocal envelopes as echoing noise, completely bypassing the
-        # RNN echo-suppression muting bug on Segment 0 starts.
-        # We generate the synthetic preamble noise exactly at the native sample_rate before down-sampling
-        # and apply a moving average filter to low-pass it, converting harsh white noise to natural, soft comfort static
-        # so it behaves uniformly during subsequent concatenation and resampling without desensitizing quiet speech.
+        # 2. Evaluate if we passed a genuine historical prior tail from a previous chunk
+        has_genuine_prior = prior_audio is not None
+
+        # 3. Resample genuine prior tail to TARGET_SAMPLE_RATE if it exists
+        if (
+            has_genuine_prior
+            and prior_audio is not None
+            and len(prior_audio) > 0
+        ):
+            if sample_rate != TARGET_SAMPLE_RATE:
+                resampler = TorchaudioHannResampler(
+                    sample_rate, TARGET_SAMPLE_RATE
+                )
+                prior_audio = resampler.resample(prior_audio)
+
+        # 4. Fallback to synthetic, low-amplitude comfort noise if no prior audio tail is available
+        # We generate the synthetic preamble noise directly at TARGET_SAMPLE_RATE (16000 Hz)
+        # to avoid any resampling distortion, and low-pass filter it to convert harsh white noise
+        # into natural, soft comfort static.
         if prior_audio is None:
-            priming_samples = int(self.priming_sec * sample_rate)
+            priming_samples = int(self.priming_sec * TARGET_SAMPLE_RATE)
             if priming_samples > 0:
                 prior_audio = (
                     np.random.default_rng(seed=self.seed)
@@ -315,13 +328,8 @@ class VoiceActivityDetector:
                     prior_audio, np.ones(5) / 5, mode="same"
                 )
 
-        # Perform physical audio concatenation to create a continuous audio stream for the VAD
+        # 5. Perform physical audio concatenation to create a continuous audio stream for the VAD
         if prior_audio is not None and len(prior_audio) > 0:
-            if sample_rate != TARGET_SAMPLE_RATE:
-                resampler = TorchaudioHannResampler(
-                    sample_rate, TARGET_SAMPLE_RATE
-                )
-                prior_audio = resampler.resample(prior_audio)
             prior_len_sec = len(prior_audio) / float(TARGET_SAMPLE_RATE)
             extended_audio = np.concatenate([prior_audio, audio_array])
         else:
