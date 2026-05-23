@@ -181,7 +181,7 @@ class RemoteTextEvaluator(BaseTextEvaluator):
         self._cache_ttl_seconds = cache_ttl_seconds
         self._cache = cachetools.TTLCache(
             maxsize=1,
-            ttl=max(cache_ttl_seconds, 1),
+            ttl=cache_ttl_seconds,
         )
 
     def evaluate(self, text: str, feed_id: str) -> EvaluationResult:
