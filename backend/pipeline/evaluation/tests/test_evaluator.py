@@ -353,6 +353,16 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         self.assertTrue(result2["is_flagged"])
         self.assertEqual(mock_get.call_count, 2)
 
+    def test_init_raises_value_error_for_negative_ttl(self) -> None:
+        """Test that negative rule cache TTLs are rejected."""
+        with self.assertRaises(ValueError) as ctx:
+            evaluator.RemoteTextEvaluator(self.api_url, cache_ttl_seconds=-5)
+
+        self.assertEqual(
+            str(ctx.exception),
+            "cache_ttl_seconds must be non-negative",
+        )
+
     def test_evaluate_missing_feed_id(self) -> None:
         """Test that missing feed_id returns ERROR_FEED_ID_MISSING rule."""
         result = self.remote_evaluator.evaluate("Some text", feed_id="")
