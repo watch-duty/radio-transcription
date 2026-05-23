@@ -295,10 +295,6 @@ class VoiceActivityDetector:
             resampler = TorchaudioHannResampler(sample_rate, TARGET_SAMPLE_RATE)
             audio_array = resampler.resample(audio_array)
 
-        # Evaluate if we passed a genuine historical prior tail from a previous chunk
-        # before we derive the priming preamble from the current file itself.
-        has_genuine_prior = prior_audio is not None
-
         # Prepend historical tail if available; fallback to synthetic, low-amplitude white noise if none.
         # Using synthetic white noise instead of replaying the starting speech prevents the recurrent
         # denoiser from misidentifying repeating vocal envelopes as echoing noise, completely bypassing the
@@ -327,14 +323,15 @@ class VoiceActivityDetector:
 
         preprocessed = self.preprocess(extended_audio)
 
-        # Slice off genuine historical prior tail before VAD inference to prevent RNN bleed-through.
+        # Slice off the priming preamble tail before VAD inference to prevent RNN bleed-through
+        # and maintain maximum onset sensitivity.
         preamble_samples = int(prior_len_sec * TARGET_SAMPLE_RATE)
-        if has_genuine_prior and preamble_samples > 0:
+        if preamble_samples > 0:
             vad_input = preprocessed[preamble_samples:]
             vad_offset_sec = 0.0
         else:
             vad_input = preprocessed
-            vad_offset_sec = prior_len_sec
+            vad_offset_sec = 0.0
 
         state = np.zeros((2, 1, 128), dtype=np.float32)
         context = np.zeros(context_size, dtype=np.float32)
