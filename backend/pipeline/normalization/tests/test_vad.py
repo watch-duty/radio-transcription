@@ -135,7 +135,6 @@ class TestVadEngine(unittest.TestCase):
             f1, min_f1, f"F1 score on {filename} was {f1:.3f}"
         )
 
-    @unittest.expectedFailure
     def test_integration_stress_file(self) -> None:
         """Integration test to verify VAD performance on test_stress.flac."""
         self._run_integration_test(

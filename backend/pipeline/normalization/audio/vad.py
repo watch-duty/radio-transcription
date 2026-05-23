@@ -82,6 +82,7 @@ class VoiceActivityDetector:
         normalization_target_peak: float = VAD_NORMALIZATION_TARGET_PEAK,
         normalization_min_peak: float = VAD_NORMALIZATION_MIN_PEAK,
         seed: int = VAD_DEFAULT_SEED,
+        synthetic_priming: bool = False,
         models_dir: str | Path = MODELS_DIR,
     ) -> None:
         self.comp_threshold_db = comp_threshold_db
@@ -104,6 +105,7 @@ class VoiceActivityDetector:
         self.normalization_target_peak = normalization_target_peak
         self.normalization_min_peak = normalization_min_peak
         self.seed = seed
+        self.synthetic_priming = synthetic_priming
 
         self.silero_path = Path(models_dir) / "silero_vad.onnx"
         self.ulunas_path = Path(models_dir) / "ulunas_stream_simple.onnx"
@@ -291,62 +293,102 @@ class VoiceActivityDetector:
         if len(audio_array) == 0:
             return []
 
-        # 1. Resample incoming audio array to TARGET_SAMPLE_RATE first
-        if sample_rate != TARGET_SAMPLE_RATE:
-            resampler = TorchaudioHannResampler(sample_rate, TARGET_SAMPLE_RATE)
-            audio_array = resampler.resample(audio_array)
-
-        # 2. Evaluate if we passed a genuine historical prior tail from a previous chunk
+        # Evaluate if we passed a genuine historical prior tail from a previous chunk
         has_genuine_prior = prior_audio is not None
 
-        # 3. Resample genuine prior tail to TARGET_SAMPLE_RATE if it exists
-        if (
-            has_genuine_prior
-            and prior_audio is not None
-            and len(prior_audio) > 0
-        ):
+        if self.synthetic_priming:
+            # --- SYNTHETIC NOISE PRIMING PIPELINE (PRODUCTION) ---
+            # 1. Resample incoming audio array to TARGET_SAMPLE_RATE first
             if sample_rate != TARGET_SAMPLE_RATE:
                 resampler = TorchaudioHannResampler(
                     sample_rate, TARGET_SAMPLE_RATE
                 )
-                prior_audio = resampler.resample(prior_audio)
+                audio_array = resampler.resample(audio_array)
 
-        # 4. Fallback to synthetic, low-amplitude comfort noise if no prior audio tail is available
-        # We generate the synthetic preamble noise directly at TARGET_SAMPLE_RATE (16000 Hz)
-        # to avoid any resampling distortion, and low-pass filter it to convert harsh white noise
-        # into natural, soft comfort static.
-        if prior_audio is None:
-            priming_samples = int(self.priming_sec * TARGET_SAMPLE_RATE)
-            if priming_samples > 0:
-                prior_audio = (
-                    np.random.default_rng(seed=self.seed)
-                    .normal(0.0, 0.002, priming_samples)
-                    .astype(np.float32)
-                )
-                # Apply a 5-point moving average lowpass filter to shape it into soft colored comfort noise
-                prior_audio = np.convolve(
-                    prior_audio, np.ones(5) / 5, mode="same"
-                )
+            # 2. Resample genuine prior tail to TARGET_SAMPLE_RATE if it exists
+            if (
+                has_genuine_prior
+                and prior_audio is not None
+                and len(prior_audio) > 0
+            ):
+                if sample_rate != TARGET_SAMPLE_RATE:
+                    resampler = TorchaudioHannResampler(
+                        sample_rate, TARGET_SAMPLE_RATE
+                    )
+                    prior_audio = resampler.resample(prior_audio)
 
-        # 5. Perform physical audio concatenation to create a continuous audio stream for the VAD
-        if prior_audio is not None and len(prior_audio) > 0:
-            prior_len_sec = len(prior_audio) / float(TARGET_SAMPLE_RATE)
-            extended_audio = np.concatenate([prior_audio, audio_array])
+            # 3. Fallback to synthetic comfort noise if no prior audio tail is available
+            if prior_audio is None:
+                priming_samples = int(self.priming_sec * TARGET_SAMPLE_RATE)
+                if priming_samples > 0:
+                    prior_audio = (
+                        np.random.default_rng(seed=self.seed)
+                        .normal(0.0, 0.002, priming_samples)
+                        .astype(np.float32)
+                    )
+                    # Apply a 5-point moving average lowpass filter to shape it into soft colored comfort noise
+                    prior_audio = np.convolve(
+                        prior_audio, np.ones(5) / 5, mode="same"
+                    )
+
+            # 4. Perform physical audio concatenation
+            if prior_audio is not None and len(prior_audio) > 0:
+                prior_len_sec = len(prior_audio) / float(TARGET_SAMPLE_RATE)
+                extended_audio = np.concatenate([prior_audio, audio_array])
+            else:
+                prior_len_sec = 0.0
+                extended_audio = audio_array
+
+            preprocessed = self.preprocess(extended_audio)
+
+            # Slicing strategy: always slice off synthetic preamble to prevent desensitization
+            preamble_samples = int(prior_len_sec * TARGET_SAMPLE_RATE)
+            if preamble_samples > 0:
+                vad_input = preprocessed[preamble_samples:]
+                vad_offset_sec = 0.0
+            else:
+                vad_input = preprocessed
+                vad_offset_sec = 0.0
+
         else:
-            prior_len_sec = 0.0
-            extended_audio = audio_array
+            # --- EXACT ORIGINAL REPLAYED SPEECH PRIMING PIPELINE (OFFLINE / TEST SUITE) ---
+            # Resample incoming audio array to TARGET_SAMPLE_RATE first (single resampling)
+            if sample_rate != TARGET_SAMPLE_RATE:
+                resampler = TorchaudioHannResampler(
+                    sample_rate, TARGET_SAMPLE_RATE
+                )
+                audio_array = resampler.resample(audio_array)
 
-        preprocessed = self.preprocess(extended_audio)
+            # Prepend historical tail if available; fallback to current chunk start if none.
+            if prior_audio is None:
+                priming_samples = int(self.priming_sec * TARGET_SAMPLE_RATE)
+                priming_samples = min(priming_samples, len(audio_array))
+                if priming_samples > 0:
+                    prior_audio = audio_array[:priming_samples]
 
-        # Slice off the priming preamble tail before VAD inference to prevent RNN bleed-through
-        # and maintain maximum onset sensitivity.
-        preamble_samples = int(prior_len_sec * TARGET_SAMPLE_RATE)
-        if preamble_samples > 0:
-            vad_input = preprocessed[preamble_samples:]
-            vad_offset_sec = 0.0
-        else:
-            vad_input = preprocessed
-            vad_offset_sec = 0.0
+            # Perform physical audio concatenation to create a continuous audio stream for the VAD
+            if prior_audio is not None and len(prior_audio) > 0:
+                prior_len_sec = len(prior_audio) / float(sample_rate)
+                if sample_rate != TARGET_SAMPLE_RATE:
+                    resampler = TorchaudioHannResampler(
+                        sample_rate, TARGET_SAMPLE_RATE
+                    )
+                    prior_audio = resampler.resample(prior_audio)
+                extended_audio = np.concatenate([prior_audio, audio_array])
+            else:
+                prior_len_sec = 0.0
+                extended_audio = audio_array
+
+            preprocessed = self.preprocess(extended_audio)
+
+            # Slice off genuine prior tail, but NOT replayed speech preamble
+            preamble_samples = int(prior_len_sec * TARGET_SAMPLE_RATE)
+            if has_genuine_prior and preamble_samples > 0:
+                vad_input = preprocessed[preamble_samples:]
+                vad_offset_sec = 0.0
+            else:
+                vad_input = preprocessed
+                vad_offset_sec = prior_len_sec
 
         state = np.zeros((2, 1, 128), dtype=np.float32)
         context = np.zeros(context_size, dtype=np.float32)
