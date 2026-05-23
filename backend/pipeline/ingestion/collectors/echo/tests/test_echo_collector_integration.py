@@ -24,7 +24,7 @@ import requests as sync_requests
 from google.cloud import storage
 from psycopg.rows import dict_row
 from testcontainers.core.container import DockerContainer
-from testcontainers.core.waiting_utils import wait_for_logs
+from testcontainers.core.wait_strategies import LogMessageWaitStrategy
 from testcontainers.postgres import PostgresContainer
 
 from backend.pipeline.ingestion.collectors.echo import main as echo_main
@@ -103,9 +103,9 @@ class TestEchoCollectorIntegration(unittest.TestCase):
             DockerContainer("fsouza/fake-gcs-server")
             .with_exposed_ports(_FAKE_GCS_PORT)
             .with_command(f"-scheme http -port {_FAKE_GCS_PORT}")
+            .waiting_for(LogMessageWaitStrategy("server started at"))
         )
         cls.gcs_container.start()
-        wait_for_logs(cls.gcs_container, "server started at")
 
         cls._gcs_host = cls.gcs_container.get_container_host_ip()
         cls._gcs_port = int(cls.gcs_container.get_exposed_port(_FAKE_GCS_PORT))
