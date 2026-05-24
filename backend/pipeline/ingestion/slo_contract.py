@@ -18,6 +18,8 @@ Constants:
                                     No Terraform metric references this yet; the
                                     constant exists so future alerts/metrics can
                                     key on a stable literal.
+    EVENT_TYPE_BATCH_UNPRODUCTIVE:  structured-log event_type emitted for
+                                    evidence-only unproductive collector batches.
     METRIC_TYPE_QUARANTINE_EVENTS:  metric type URL for existing quarantine metric
                                     (pinned to match shipped value — migrated from
                                     quarantine_telemetry.py's private _METRIC_TYPE)
@@ -28,6 +30,7 @@ from __future__ import annotations
 
 __all__ = [
     "EVENT_TYPE_CALL_AUTH_FAILURE",
+    "EVENT_TYPE_BATCH_UNPRODUCTIVE",
     "EVENT_TYPE_CALL_DOWNLOAD_FAILED",
     "EVENT_TYPE_CHUNK_INGESTED",
     "EVENT_TYPE_FEED_QUARANTINED",
@@ -44,6 +47,7 @@ EVENT_TYPE_CHUNK_INGESTED: str = "chunk_ingested"
 EVENT_TYPE_CALL_DOWNLOAD_FAILED: str = "call_download_failed"
 EVENT_TYPE_FEED_QUARANTINED: str = "feed_quarantined"
 EVENT_TYPE_CALL_AUTH_FAILURE: str = "call_auth_failure"
+EVENT_TYPE_BATCH_UNPRODUCTIVE: str = "batch_unproductive"
 
 # ---------------------------------------------------------------------------
 # Cloud Monitoring metric type for the existing quarantine_events metric.
