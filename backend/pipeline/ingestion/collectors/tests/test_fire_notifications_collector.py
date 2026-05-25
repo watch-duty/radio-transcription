@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import datetime
+import logging
 import os
 import unittest
 from typing import Any
@@ -315,6 +316,40 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         }
         self.resources = MagicMock()
 
+    @staticmethod
+    def _audio_file(file_uuid: str, second: int = 0) -> dict[str, Any]:
+        return {
+            "type": "file",
+            "name": f"CHAN 2026-05-20 12-00-{second:02d}.mp3",
+            "uuid": file_uuid,
+            "size": 1000,
+        }
+
+    @staticmethod
+    def _ok_response(files: list[dict[str, Any]]) -> MagicMock:
+        resp = MagicMock(status_code=200)
+        resp.json.return_value = {"files": files}
+        return resp
+
+    @staticmethod
+    def _batch_unproductive_records(
+        records: list[logging.LogRecord],
+    ) -> list[logging.LogRecord]:
+        return [
+            r
+            for r in records
+            if getattr(r, "json_fields", {}).get("event_type")
+            == EVENT_TYPE_BATCH_UNPRODUCTIVE
+        ]
+
+    def _collector_generator(self):
+        return collector.fire_notifications_collector(
+            self.feed,  # type: ignore
+            self.shutdown,
+            "http://base",
+            self.resources,
+        )
+
     @patch(
         "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
         new_callable=AsyncMock,
@@ -452,6 +487,306 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(emits[0].json_fields["attempted"], 1)
         self.assertEqual(emits[0].json_fields["produced"], 0)
         self.assertEqual(emits[0].json_fields["reason"], "downloads_failing")
+
+    @patch.object(collector, "_MAX_CONSECUTIVE_FAILURES", 3)
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.AsyncSession",
+    )
+    async def test_unproductive_polls_raise_downloads_failing_after_threshold(
+        self,
+        mock_session_cls: MagicMock,
+        mock_sleep: AsyncMock,
+        mock_download: AsyncMock,
+    ) -> None:
+        mock_download.return_value = None
+        mock_sleep.return_value = False
+        mock_session = mock_session_cls.return_value
+        mock_session.close = AsyncMock()
+        mock_session.get = AsyncMock(
+            return_value=self._ok_response([self._audio_file("uuid1")])
+        )
+
+        with self.assertLogs(
+            "backend.pipeline.ingestion.collectors.fire_notifications.collector",
+            level="WARNING",
+        ) as cm:
+            with self.assertRaises(RuntimeError) as ctx:
+                async for _ in self._collector_generator():
+                    pass
+
+        self.assertEqual(str(ctx.exception), "downloads_failing")
+        self.assertEqual(mock_session.get.call_count, 3)
+        emits = self._batch_unproductive_records(cm.records)
+        self.assertEqual(len(emits), 3)
+        for emit in emits:
+            self.assertEqual(emit.json_fields["reason"], "downloads_failing")
+            self.assertEqual(emit.json_fields["attempted"], 1)
+            self.assertEqual(emit.json_fields["produced"], 0)
+
+    @patch.object(collector, "_MAX_CONSECUTIVE_FAILURES", 3)
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.AsyncSession",
+    )
+    async def test_endpoint_failures_then_unproductive_poll_raises_downloads_failing(
+        self,
+        mock_session_cls: MagicMock,
+        mock_sleep: AsyncMock,
+        mock_download: AsyncMock,
+    ) -> None:
+        mock_download.return_value = None
+        mock_sleep.return_value = False
+        mock_session = mock_session_cls.return_value
+        mock_session.close = AsyncMock()
+        resp_ok = self._ok_response([self._audio_file("uuid1")])
+        mock_session.get = AsyncMock(
+            side_effect=[
+                Exception("Connection failure"),
+                Exception("Connection failure"),
+                resp_ok,
+            ]
+        )
+
+        with self.assertRaises(RuntimeError) as ctx:
+            async for _ in self._collector_generator():
+                pass
+
+        self.assertEqual(str(ctx.exception), "downloads_failing")
+        self.assertEqual(mock_session.get.call_count, 3)
+        self.assertEqual(mock_download.call_count, 1)
+
+    @patch.object(collector, "_MAX_CONSECUTIVE_FAILURES", 3)
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.AsyncSession",
+    )
+    async def test_unproductive_polls_then_endpoint_failure_raises_source_unreachable(
+        self,
+        mock_session_cls: MagicMock,
+        mock_sleep: AsyncMock,
+        mock_download: AsyncMock,
+    ) -> None:
+        mock_download.return_value = None
+        mock_sleep.return_value = False
+        mock_session = mock_session_cls.return_value
+        mock_session.close = AsyncMock()
+        resp_ok = self._ok_response([self._audio_file("uuid1")])
+        mock_session.get = AsyncMock(
+            side_effect=[
+                resp_ok,
+                resp_ok,
+                Exception("Connection failure"),
+            ]
+        )
+
+        with self.assertRaises(RuntimeError) as ctx:
+            async for _ in self._collector_generator():
+                pass
+
+        self.assertEqual(str(ctx.exception), "source_unreachable")
+        self.assertEqual(mock_session.get.call_count, 3)
+        self.assertEqual(mock_download.call_count, 2)
+
+    @patch.object(collector, "_MAX_CONSECUTIVE_FAILURES", 3)
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.AsyncSession",
+    )
+    async def test_silent_poll_resets_unproductive_streak(
+        self,
+        mock_session_cls: MagicMock,
+        mock_sleep: AsyncMock,
+        mock_download: AsyncMock,
+    ) -> None:
+        mock_download.return_value = None
+        mock_session = mock_session_cls.return_value
+        mock_session.close = AsyncMock()
+        resp_unproductive = self._ok_response([self._audio_file("uuid1")])
+        resp_silent = self._ok_response([])
+        mock_session.get = AsyncMock(
+            side_effect=[
+                resp_unproductive,
+                resp_unproductive,
+                resp_silent,
+                resp_unproductive,
+                resp_unproductive,
+            ]
+        )
+
+        async def sleep_side_effect(
+            _event: asyncio.Event, _duration: float
+        ) -> bool:
+            if mock_sleep.call_count >= 5:
+                self.shutdown.set()
+            return False
+
+        mock_sleep.side_effect = sleep_side_effect
+
+        with self.assertLogs(
+            "backend.pipeline.ingestion.collectors.fire_notifications.collector",
+            level="WARNING",
+        ) as cm:
+            chunks = [chunk async for chunk in self._collector_generator()]
+
+        self.assertEqual(chunks, [])
+        self.assertEqual(mock_session.get.call_count, 5)
+        emits = self._batch_unproductive_records(cm.records)
+        self.assertEqual(len(emits), 4)
+        for emit in emits:
+            self.assertEqual(emit.json_fields["reason"], "downloads_failing")
+            self.assertEqual(emit.json_fields["attempted"], 1)
+            self.assertEqual(emit.json_fields["produced"], 0)
+
+    @patch.object(collector, "_MAX_CONSECUTIVE_FAILURES", 3)
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
+        return_value=30000,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.AsyncSession",
+    )
+    async def test_mixed_success_poll_resets_unproductive_streak(
+        self,
+        mock_session_cls: MagicMock,
+        mock_sleep: AsyncMock,
+        mock_download: AsyncMock,
+        _mock_duration: MagicMock,
+    ) -> None:
+        mock_download.side_effect = [
+            None,
+            None,
+            None,
+            b"mp3_bytes",
+            None,
+            None,
+        ]
+        mock_session = mock_session_cls.return_value
+        mock_session.close = AsyncMock()
+        resp_unproductive = self._ok_response([self._audio_file("uuid1")])
+        resp_mixed = self._ok_response(
+            [self._audio_file("uuid1"), self._audio_file("uuid2", second=1)]
+        )
+        mock_session.get = AsyncMock(
+            side_effect=[
+                resp_unproductive,
+                resp_unproductive,
+                resp_mixed,
+                resp_unproductive,
+                resp_unproductive,
+            ]
+        )
+
+        async def sleep_side_effect(
+            _event: asyncio.Event, _duration: float
+        ) -> bool:
+            if mock_sleep.call_count >= 5:
+                self.shutdown.set()
+            return False
+
+        mock_sleep.side_effect = sleep_side_effect
+
+        with self.assertLogs(
+            "backend.pipeline.ingestion.collectors.fire_notifications.collector",
+            level="WARNING",
+        ) as cm:
+            chunks = [chunk async for chunk in self._collector_generator()]
+
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0].audio_bytes, b"mp3_bytes")
+        self.assertEqual(mock_session.get.call_count, 5)
+        emits = self._batch_unproductive_records(cm.records)
+        self.assertEqual(len(emits), 4)
+        for emit in emits:
+            self.assertEqual(emit.json_fields["reason"], "downloads_failing")
+            self.assertEqual(emit.json_fields["attempted"], 1)
+            self.assertEqual(emit.json_fields["produced"], 0)
+
+    @patch.object(collector, "_MAX_CONSECUTIVE_FAILURES", 3)
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.AsyncSession",
+    )
+    async def test_shutdown_interrupted_unproductive_poll_is_neutral(
+        self,
+        mock_session_cls: MagicMock,
+        mock_sleep: AsyncMock,
+        mock_download: AsyncMock,
+    ) -> None:
+        mock_sleep.return_value = False
+        mock_session = mock_session_cls.return_value
+        mock_session.close = AsyncMock()
+        mock_session.get = AsyncMock(
+            return_value=self._ok_response([self._audio_file("uuid1")])
+        )
+        download_count = 0
+
+        async def download_side_effect(*_args: Any, **_kwargs: Any) -> None:
+            nonlocal download_count
+            download_count += 1
+            if download_count == 3:
+                self.shutdown.set()
+            return None
+
+        mock_download.side_effect = download_side_effect
+
+        with self.assertLogs(
+            "backend.pipeline.ingestion.collectors.fire_notifications.collector",
+            level="WARNING",
+        ) as cm:
+            chunks = [chunk async for chunk in self._collector_generator()]
+
+        self.assertEqual(chunks, [])
+        self.assertEqual(mock_session.get.call_count, 3)
+        emits = self._batch_unproductive_records(cm.records)
+        self.assertEqual(len(emits), 2)
+        for emit in emits:
+            self.assertEqual(emit.json_fields["reason"], "downloads_failing")
+            self.assertEqual(emit.json_fields["attempted"], 1)
+            self.assertEqual(emit.json_fields["produced"], 0)
 
     @patch(
         "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
