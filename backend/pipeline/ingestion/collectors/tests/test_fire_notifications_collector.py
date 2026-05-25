@@ -8,8 +8,12 @@ import unittest
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from backend.pipeline.ingestion.collectors.batch_outcome import BatchOutcome
 from backend.pipeline.ingestion.collectors.fire_notifications import collector
 from backend.pipeline.ingestion.models import AudioMimeType
+from backend.pipeline.ingestion.slo_contract import (
+    EVENT_TYPE_BATCH_UNPRODUCTIVE,
+)
 from backend.pipeline.storage.feed_store import SourceType
 
 
@@ -246,6 +250,55 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.processed_uuids), 0)
         self.assertNotIn("uuid1", self.processed_uuids)
 
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
+        new_callable=AsyncMock,
+    )
+    async def test_failed_download_then_success_continues_and_tracks_outcome(
+        self, mock_download: AsyncMock
+    ) -> None:
+        mock_download.side_effect = [None, b"mp3_bytes"]
+        files = [
+            {
+                "type": "file",
+                "name": "CHAN 2026-05-20 12-00-00.mp3",
+                "uuid": "uuid1",
+                "size": 1000,
+            },
+            {
+                "type": "file",
+                "name": "CHAN 2026-05-20 12-00-01.mp3",
+                "uuid": "uuid2",
+                "size": 1000,
+            },
+        ]
+        outcome = BatchOutcome()
+
+        chunks = []
+        with patch(
+            "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
+            return_value=30000,
+        ):
+            async for chunk in collector._process_file_list(
+                files,
+                self.session,
+                self.shutdown,
+                "session-id",
+                self.feed,  # type: ignore
+                self.processed_uuids,
+                "CHAN",
+                "http://mock-s3-bucket",
+                outcome,
+            ):
+                chunks.append(chunk)
+
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0].audio_bytes, b"mp3_bytes")
+        self.assertEqual(outcome.attempted, 2)
+        self.assertEqual(outcome.produced, 1)
+        self.assertNotIn("uuid1", self.processed_uuids)
+        self.assertIn("uuid2", self.processed_uuids)
+
 
 @patch.dict(
     os.environ,
@@ -335,6 +388,178 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(chunks), 0)
         self.assertEqual(mock_session.get.call_count, 11)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.AsyncSession",
+    )
+    async def test_all_downloads_fail_emits_batch_unproductive_without_raising(
+        self,
+        mock_session_cls: MagicMock,
+        mock_sleep: AsyncMock,
+        mock_download: AsyncMock,
+    ) -> None:
+        mock_download.return_value = None
+        mock_sleep.return_value = True
+        mock_session = mock_session_cls.return_value
+        mock_session.close = AsyncMock()
+        resp = MagicMock(status_code=200)
+        resp.json.return_value = {
+            "files": [
+                {
+                    "type": "file",
+                    "name": "CHAN 2026-05-20 12-00-00.mp3",
+                    "uuid": "uuid1",
+                    "size": 1000,
+                }
+            ]
+        }
+        mock_session.get = AsyncMock(return_value=resp)
+
+        collector_generator = collector.fire_notifications_collector(
+            self.feed,  # type: ignore
+            self.shutdown,
+            "http://base",
+            self.resources,
+        )
+
+        with self.assertLogs(
+            "backend.pipeline.ingestion.collectors.fire_notifications.collector",
+            level="WARNING",
+        ) as cm:
+            chunks = [chunk async for chunk in collector_generator]
+
+        self.assertEqual(chunks, [])
+        self.assertEqual(mock_session.get.call_count, 1)
+        emits = [
+            r
+            for r in cm.records
+            if getattr(r, "json_fields", {}).get("event_type")
+            == EVENT_TYPE_BATCH_UNPRODUCTIVE
+        ]
+        self.assertEqual(len(emits), 1)
+        self.assertEqual(emits[0].json_fields["feed_id"], "feed-id")
+        self.assertEqual(
+            emits[0].json_fields["source_type"], self.feed["source_type"]
+        )
+        self.assertEqual(emits[0].json_fields["attempted"], 1)
+        self.assertEqual(emits[0].json_fields["produced"], 0)
+        self.assertEqual(emits[0].json_fields["reason"], "downloads_failing")
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.AsyncSession",
+    )
+    async def test_silent_poll_does_not_emit_batch_unproductive(
+        self,
+        mock_session_cls: MagicMock,
+        mock_sleep: AsyncMock,
+        mock_download: AsyncMock,
+    ) -> None:
+        mock_sleep.return_value = True
+        mock_session = mock_session_cls.return_value
+        mock_session.close = AsyncMock()
+        resp = MagicMock(status_code=200)
+        resp.json.return_value = {"files": []}
+        mock_session.get = AsyncMock(return_value=resp)
+
+        collector_generator = collector.fire_notifications_collector(
+            self.feed,  # type: ignore
+            self.shutdown,
+            "http://base",
+            self.resources,
+        )
+
+        with self.assertNoLogs(
+            "backend.pipeline.ingestion.collectors.fire_notifications.collector",
+            level="WARNING",
+        ):
+            chunks = [chunk async for chunk in collector_generator]
+
+        self.assertEqual(chunks, [])
+        mock_download.assert_not_called()
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
+        return_value=30000,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.AsyncSession",
+    )
+    async def test_mixed_failure_success_poll_yields_chunk_without_batch_unproductive(
+        self,
+        mock_session_cls: MagicMock,
+        mock_sleep: AsyncMock,
+        mock_download: AsyncMock,
+        _mock_duration: MagicMock,
+    ) -> None:
+        mock_download.side_effect = [None, b"mp3_bytes"]
+        mock_sleep.return_value = True
+        mock_session = mock_session_cls.return_value
+        mock_session.close = AsyncMock()
+        resp = MagicMock(status_code=200)
+        resp.json.return_value = {
+            "files": [
+                {
+                    "type": "file",
+                    "name": "CHAN 2026-05-20 12-00-00.mp3",
+                    "uuid": "uuid1",
+                    "size": 1000,
+                },
+                {
+                    "type": "file",
+                    "name": "CHAN 2026-05-20 12-00-01.mp3",
+                    "uuid": "uuid2",
+                    "size": 1000,
+                },
+            ]
+        }
+        mock_session.get = AsyncMock(return_value=resp)
+
+        collector_generator = collector.fire_notifications_collector(
+            self.feed,  # type: ignore
+            self.shutdown,
+            "http://base",
+            self.resources,
+        )
+
+        with self.assertLogs(
+            "backend.pipeline.ingestion.collectors.fire_notifications.collector",
+            level="WARNING",
+        ) as cm:
+            chunks = [chunk async for chunk in collector_generator]
+
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0].audio_bytes, b"mp3_bytes")
+        emits = [
+            r
+            for r in cm.records
+            if getattr(r, "json_fields", {}).get("event_type")
+            == EVENT_TYPE_BATCH_UNPRODUCTIVE
+        ]
+        self.assertEqual(emits, [])
 
 
 if __name__ == "__main__":
