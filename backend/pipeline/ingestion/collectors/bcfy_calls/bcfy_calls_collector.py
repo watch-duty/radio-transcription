@@ -14,6 +14,10 @@ from urllib.parse import urlparse
 import aiohttp
 from google.cloud import secretmanager
 
+from backend.pipeline.ingestion.collectors.batch_outcome import (
+    BatchOutcome,
+    emit_batch_unproductive,
+)
 from backend.pipeline.ingestion.models import (
     AudioMimeType,
     CapturedChunk,
@@ -422,6 +426,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
             )
 
             calls = _extract_calls_from_response(bcfy_calls)
+            outcome = BatchOutcome()
 
             if calls:
                 # Sort the page by the API index time `ts` so the per-call
@@ -439,6 +444,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                     if not audio_url or audio_url in seen_urls:
                         continue
 
+                    outcome.attempted += 1
                     chunk = await _create_chunk_from_call(
                         session,
                         result,
@@ -466,6 +472,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
 
                     # Only mark as seen and update pagination after a successful
                     # yield, confirming the chunk was handed off to the pipeline.
+                    outcome.produced += 1
                     seen_urls.append(audio_url)
                     # Reset consecutive failures on successful yield
                     consecutive_failures = 0
