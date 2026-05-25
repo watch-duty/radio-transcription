@@ -476,6 +476,14 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                     seen_urls.append(audio_url)
                     # Reset consecutive failures on successful yield
                     consecutive_failures = 0
+            if shutdown_event.is_set():
+                return
+            emit_batch_unproductive(
+                logger,
+                feed,
+                outcome,
+                reason="downloads_failing",
+            )
             # Update last_bookmark_time_unix for pagination AFTER processing
             # all calls in the response — ensures we don't skip any calls if
             # an error occurs mid-page.
