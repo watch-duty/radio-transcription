@@ -35,6 +35,7 @@ _DOWNLOAD_BACKOFF_BASE_SEC = 1.0
 _POLL_INTERVAL_SEC = 30.0
 _MAX_CONSECUTIVE_FAILURES = 10
 _DOWNLOADS_FAILING_REASON = "downloads_failing"
+_SOURCE_UNREACHABLE_REASON = "source_unreachable"
 
 
 async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
@@ -45,6 +46,13 @@ async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
         return False
     else:
         return True
+
+
+def _record_unhealthy_poll(consecutive_failures: int, reason: str) -> int:
+    consecutive_failures += 1
+    if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+        raise RuntimeError(reason)
+    return consecutive_failures
 
 
 async def _download_audio(
@@ -270,7 +278,7 @@ async def fire_notifications_collector(
 
     try:
         while not shutdown_event.is_set():
-            poll_ok = False
+            unhealthy_reason: str | None = None
 
             try:
                 # Poll the API
@@ -300,25 +308,28 @@ async def fire_notifications_collector(
                         outcome,
                         reason=_DOWNLOADS_FAILING_REASON,
                     )
-                    poll_ok = True
+                    if outcome.is_unproductive:
+                        unhealthy_reason = _DOWNLOADS_FAILING_REASON
                 else:
                     logger.warning(
                         "FN API returned %d: %s", resp.status_code, poll_url
                     )
+                    unhealthy_reason = _SOURCE_UNREACHABLE_REASON
             except Exception:
                 logger.warning(
                     "FN API poll error: %s",
                     poll_url,
                     exc_info=True,
                 )
+                unhealthy_reason = _SOURCE_UNREACHABLE_REASON
 
-            if poll_ok:
+            if unhealthy_reason is None:
                 consecutive_failures = 0
             else:
-                consecutive_failures += 1
-                if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
-                    msg = "source_unreachable"
-                    raise RuntimeError(msg)
+                consecutive_failures = _record_unhealthy_poll(
+                    consecutive_failures,
+                    unhealthy_reason,
+                )
 
             # Sleep before next poll, with a small jitter
             jitter = random.uniform(0, 5.0)  # noqa: S311
