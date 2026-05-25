@@ -12,6 +12,10 @@ from zoneinfo import ZoneInfo
 from curl_cffi.requests import AsyncSession
 
 from backend.pipeline.common.audio import get_audio_duration
+from backend.pipeline.ingestion.collectors.batch_outcome import (
+    BatchOutcome,
+    emit_batch_unproductive,
+)
 from backend.pipeline.ingestion.models import AudioMimeType, CapturedChunk
 from backend.pipeline.ingestion.settings import _require_env
 from backend.pipeline.ingestion.slo_contract import (
@@ -30,6 +34,7 @@ _DOWNLOAD_MAX_RETRIES = 3
 _DOWNLOAD_BACKOFF_BASE_SEC = 1.0
 _POLL_INTERVAL_SEC = 30.0
 _MAX_CONSECUTIVE_FAILURES = 10
+_DOWNLOADS_FAILING_REASON = "downloads_failing"
 
 
 async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
@@ -135,8 +140,12 @@ async def _process_file_list(
     processed_uuids: collections.deque[str],
     source_feed_id: str,
     s3_base_url: str,
+    outcome: BatchOutcome | None = None,
 ) -> AsyncIterator[CapturedChunk]:
     """Filter, sort and process audio files, yielding CapturedChunks."""
+    if outcome is None:
+        outcome = BatchOutcome()
+
     # Filter for files and sort by name to process chronologically
     audio_files = [
         f
@@ -172,6 +181,7 @@ async def _process_file_list(
         s3_url = f"{s3_base_url.rstrip('/')}/{file_uuid}.mp3"
         receipt_time = datetime.datetime.now(datetime.UTC)
 
+        outcome.attempted += 1
         mp3_bytes = await _download_audio(session, s3_url, shutdown_event)
         if mp3_bytes is None:
             if not shutdown_event.is_set():
@@ -218,6 +228,7 @@ async def _process_file_list(
         )
         # Only mark as processed after a successful yield, confirming
         # the chunk was handed off to the pipeline.
+        outcome.produced += 1
         processed_uuids.append(file_uuid)
 
 
@@ -267,6 +278,7 @@ async def fire_notifications_collector(
                 if resp.status_code == 200:
                     data = resp.json()
                     files = data.get("files", [])
+                    outcome = BatchOutcome()
 
                     async for chunk in _process_file_list(
                         files,
@@ -277,8 +289,17 @@ async def fire_notifications_collector(
                         processed_uuids,
                         source_feed_id,
                         s3_base_url,
+                        outcome,
                     ):
                         yield chunk
+                    if shutdown_event.is_set():
+                        return
+                    emit_batch_unproductive(
+                        logger,
+                        feed,
+                        outcome,
+                        reason=_DOWNLOADS_FAILING_REASON,
+                    )
                     poll_ok = True
                 else:
                     logger.warning(
