@@ -55,6 +55,12 @@ def _record_unhealthy_poll(consecutive_failures: int, reason: str) -> int:
     return consecutive_failures
 
 
+def _unhealthy_reason_for_outcome(outcome: BatchOutcome) -> str | None:
+    if outcome.is_unproductive:
+        return _DOWNLOADS_FAILING_REASON
+    return None
+
+
 async def _download_audio(
     session: AsyncSession,
     url: str,
@@ -308,8 +314,7 @@ async def fire_notifications_collector(
                         outcome,
                         reason=_DOWNLOADS_FAILING_REASON,
                     )
-                    if outcome.is_unproductive:
-                        unhealthy_reason = _DOWNLOADS_FAILING_REASON
+                    unhealthy_reason = _unhealthy_reason_for_outcome(outcome)
                 else:
                     logger.warning(
                         "FN API returned %d: %s", resp.status_code, poll_url

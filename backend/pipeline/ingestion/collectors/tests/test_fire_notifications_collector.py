@@ -3,10 +3,9 @@ from __future__ import annotations
 import asyncio
 import collections
 import datetime
-import logging
 import os
 import unittest
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.pipeline.ingestion.collectors.batch_outcome import BatchOutcome
@@ -16,6 +15,9 @@ from backend.pipeline.ingestion.slo_contract import (
     EVENT_TYPE_BATCH_UNPRODUCTIVE,
 )
 from backend.pipeline.storage.feed_store import SourceType
+
+if TYPE_CHECKING:
+    import logging
 
 
 class TestParseFilenameTimestamp(unittest.TestCase):
@@ -769,7 +771,6 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
             download_count += 1
             if download_count == 3:
                 self.shutdown.set()
-            return None
 
         mock_download.side_effect = download_side_effect
 
