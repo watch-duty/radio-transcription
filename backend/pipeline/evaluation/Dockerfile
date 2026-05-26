@@ -7,11 +7,13 @@ WORKDIR /app
 
 ENV PYTHONPATH=/app
 
-# 1. Install dependencies
+# 1. Install locked, scoped dependencies
 COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
-COPY backend/pipeline/evaluation/pyproject.toml ./pyproject.toml
-RUN uv pip install --system -r pyproject.toml && uv pip install --system grpcio-tools
+COPY pyproject.toml uv.lock ./
 COPY backend/ ./backend/
+RUN uv export --package evaluation-function --no-dev --locked --no-emit-project -o requirements.txt && \
+    uv pip install --system -r requirements.txt && \
+    uv pip install --system grpcio-tools
 COPY protos/ ./protos
 
 # 2. Create the directory for the generated files
