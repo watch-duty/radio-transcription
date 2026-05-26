@@ -114,6 +114,52 @@ def _find_unreachable_gcs_uris(
     return unreachable
 
 
+def _extract_file_uris(example: dict) -> list[str]:
+    uris: list[str] = []
+    parts = (example.get("contents") or [{}])[0].get("parts", [])
+    for p in parts:
+        if "fileData" in p:
+            uris.append(p["fileData"].get("fileUri", ""))
+    return uris
+
+
+def _check_examples(
+    *,
+    report: PreflightReport,
+    split: str,
+    examples: list[dict],
+    system_prompt: str,
+    user_prompt: str,
+    storage_client: object,
+    unreachable: set[str],
+) -> None:
+    for i, ex in enumerate(examples):
+        ex_id = f"{split}[{i}]"
+        if not validate_example(ex):
+            report.failures.append(
+                f"{ex_id}: failed validate_example (empty target or malformed schema)"
+            )
+            if ex_id not in report.offending_ids:
+                report.offending_ids.append(ex_id)
+        # Token cap check (text portion only -- audio duration not available here)
+        text_tokens = _estimate_text_tokens(ex, system_prompt, user_prompt)
+        if text_tokens > PREFLIGHT_TOKEN_CAP:
+            report.failures.append(
+                f"{ex_id}: estimated text tokens {text_tokens} exceed cap {PREFLIGHT_TOKEN_CAP}"
+            )
+            if ex_id not in report.offending_ids:
+                report.offending_ids.append(ex_id)
+        # fileUri reachability check (only when storage_client is provided)
+        if storage_client is not None:
+            for uri in _extract_file_uris(ex):
+                if uri and uri in unreachable:
+                    report.failures.append(
+                        f"{ex_id}: fileUri not reachable: {uri}"
+                    )
+                    if ex_id not in report.offending_ids:
+                        report.offending_ids.append(ex_id)
+
+
 def run_preflight(
     train_jsonl_path: Path,
     val_jsonl_path: Path | None,
@@ -157,10 +203,7 @@ def run_preflight(
     # Check 4: duplicate fileUris in train
     train_uris: list[str] = []
     for ex in train_examples:
-        parts = (ex.get("contents") or [{}])[0].get("parts", [])
-        for p in parts:
-            if "fileData" in p:
-                train_uris.append(p["fileData"].get("fileUri", ""))
+        train_uris.extend(_extract_file_uris(ex))
     seen: set[str] = set()
     for uri in train_uris:
         if uri and uri in seen:
@@ -170,11 +213,34 @@ def run_preflight(
         if uri:
             seen.add(uri)
 
+    # Load val examples if provided
+    val_examples: list[dict] = []
+    val_uris: list[str] = []
+    if val_jsonl_path is not None:
+        try:
+            with val_jsonl_path.open() as vf:
+                val_examples = [json.loads(line) for line in vf if line.strip()]
+        except Exception as exc:
+            report.failures.append(f"Failed to load val JSONL: {exc}")
+        else:
+            if not val_examples:
+                report.failures.append("Val JSONL is empty.")
+        for ex in val_examples:
+            val_uris.extend(_extract_file_uris(ex))
+        # Check 2: disjoint
+        overlap = {u for u in train_uris if u} & {u for u in val_uris if u}
+        for uri in sorted(overlap):
+            report.failures.append(
+                f"fileUri in both train and val (not disjoint): {uri}"
+            )
+            if uri not in report.offending_ids:
+                report.offending_ids.append(uri)
+
     # Pre-compute unreachable fileUris in parallel (network-bound; dedup + thread pool)
     # so the per-example reachability check below is a fast set-membership test.
     unreachable: set[str] = set()
     if storage_client is not None:
-        unique_uris = sorted({u for u in train_uris if u})
+        unique_uris = sorted({u for u in [*train_uris, *val_uris] if u})
         unreachable = _find_unreachable_gcs_uris(
             storage_client,
             unique_uris,
@@ -183,61 +249,25 @@ def run_preflight(
             batch_pause_seconds=gcs_batch_pause_seconds,
         )
 
-    # Load val examples if provided
-    val_uris: set[str] = set()
-    if val_jsonl_path is not None:
-        try:
-            with val_jsonl_path.open() as vf:
-                val_examples = [json.loads(line) for line in vf if line.strip()]
-        except Exception as exc:
-            report.failures.append(f"Failed to load val JSONL: {exc}")
-            val_examples = []
-        else:
-            if not val_examples:
-                report.failures.append("Val JSONL is empty.")
-        for ex in val_examples:
-            parts = (ex.get("contents") or [{}])[0].get("parts", [])
-            for p in parts:
-                if "fileData" in p:
-                    val_uris.add(p["fileData"].get("fileUri", ""))
-        # Check 2: disjoint
-        overlap = set(train_uris) & val_uris
-        for uri in sorted(overlap):
-            report.failures.append(
-                f"fileUri in both train and val (not disjoint): {uri}"
-            )
-            if uri not in report.offending_ids:
-                report.offending_ids.append(uri)
-
     # Check 3: per-example validate_example + token cap + reachability
-    for i, ex in enumerate(train_examples):
-        ex_id = f"train[{i}]"
-        if not validate_example(ex):
-            report.failures.append(
-                f"{ex_id}: failed validate_example (empty target or malformed schema)"
-            )
-            if ex_id not in report.offending_ids:
-                report.offending_ids.append(ex_id)
-        # Token cap check (text portion only -- audio duration not available here)
-        text_tokens = _estimate_text_tokens(ex, system_prompt, user_prompt)
-        if text_tokens > PREFLIGHT_TOKEN_CAP:
-            report.failures.append(
-                f"{ex_id}: estimated text tokens {text_tokens} exceed cap {PREFLIGHT_TOKEN_CAP}"
-            )
-            if ex_id not in report.offending_ids:
-                report.offending_ids.append(ex_id)
-        # fileUri reachability check (only when storage_client is provided)
-        if storage_client is not None:
-            parts = (ex.get("contents") or [{}])[0].get("parts", [])
-            for p in parts:
-                if "fileData" in p:
-                    uri = p["fileData"].get("fileUri", "")
-                    if uri and uri in unreachable:
-                        report.failures.append(
-                            f"{ex_id}: fileUri not reachable: {uri}"
-                        )
-                        if ex_id not in report.offending_ids:
-                            report.offending_ids.append(ex_id)
+    _check_examples(
+        report=report,
+        split="train",
+        examples=train_examples,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        storage_client=storage_client,
+        unreachable=unreachable,
+    )
+    _check_examples(
+        report=report,
+        split="val",
+        examples=val_examples,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        storage_client=storage_client,
+        unreachable=unreachable,
+    )
 
     _write_report(report, report_path)
     return report

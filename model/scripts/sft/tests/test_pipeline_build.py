@@ -245,6 +245,63 @@ class TestPreflightDuplicateUri(unittest.TestCase):
             [unittest.mock.call(0.5), unittest.mock.call(0.5)]
         )
 
+    def test_preflight_validates_val_examples(self) -> None:
+        from preflight import run_preflight
+
+        with tempfile.TemporaryDirectory() as tmp:
+            train_path = Path(tmp) / "train.jsonl"
+            val_path = Path(tmp) / "val.jsonl"
+            report_path = Path(tmp) / "preflight_report.json"
+            train_path.write_text(
+                json.dumps(self._make_good_example("gs://b/train.flac")) + "\n"
+            )
+            val_path.write_text(
+                json.dumps(self._make_good_example("gs://b/missing.flac"))
+                + "\n"
+            )
+
+            with unittest.mock.patch(
+                "preflight._safe_blob_exists",
+                side_effect=lambda _client, uri: uri != "gs://b/missing.flac",
+            ):
+                report = run_preflight(
+                    train_jsonl_path=train_path,
+                    val_jsonl_path=val_path,
+                    storage_client=object(),
+                    report_path=report_path,
+                )
+
+        self.assertFalse(report.passed)
+        self.assertTrue(
+            any("val[0]: fileUri not reachable" in f for f in report.failures)
+        )
+        self.assertIn("val[0]", report.offending_ids)
+
+    def test_preflight_rejects_malformed_val_examples(self) -> None:
+        from preflight import run_preflight
+
+        with tempfile.TemporaryDirectory() as tmp:
+            train_path = Path(tmp) / "train.jsonl"
+            val_path = Path(tmp) / "val.jsonl"
+            report_path = Path(tmp) / "preflight_report.json"
+            train_path.write_text(
+                json.dumps(self._make_good_example("gs://b/train.flac")) + "\n"
+            )
+            val_path.write_text(json.dumps(self._make_good_example("")) + "\n")
+
+            report = run_preflight(
+                train_jsonl_path=train_path,
+                val_jsonl_path=val_path,
+                storage_client=None,
+                report_path=report_path,
+            )
+
+        self.assertFalse(report.passed)
+        self.assertTrue(
+            any("val[0]: failed validate_example" in f for f in report.failures)
+        )
+        self.assertIn("val[0]", report.offending_ids)
+
     def test_preflight_fails_on_empty_train(self) -> None:
         from preflight import run_preflight
 

@@ -38,6 +38,14 @@ class TestNotebookDockerRuntime(unittest.TestCase):
         self.assertIn("[scoring,vertex]", entrypoint)
         self.assertIn('exec "$@"', entrypoint)
 
+    def test_notebook_runtime_marks_workspace_git_safe(self) -> None:
+        entrypoint = (
+            _REPO_ROOT / "model" / "notebook_docker" / "entrypoint.sh"
+        ).read_text()
+
+        self.assertIn("safe.directory", entrypoint)
+        self.assertIn("/workspace", entrypoint)
+
     def test_notebook_requirements_align_with_common_scoring_extra(
         self,
     ) -> None:
