@@ -22,7 +22,9 @@ from common.sft import validate_example
 
 logger = logging.getLogger(__name__)
 
-PREFLIGHT_TOKEN_CAP: Final = 131_072  # VERIFIED: docs.cloud.google.com Gemini SFT docs
+PREFLIGHT_TOKEN_CAP: Final = (
+    131_072  # VERIFIED: docs.cloud.google.com Gemini SFT docs
+)
 PREFLIGHT_GCS_MAX_WORKERS: Final = 16
 PREFLIGHT_GCS_BATCH_SIZE: Final = 256
 

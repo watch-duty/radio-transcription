@@ -5,7 +5,6 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
@@ -39,7 +38,9 @@ class TestNotebookDockerRuntime(unittest.TestCase):
         self.assertIn("[scoring,vertex]", entrypoint)
         self.assertIn('exec "$@"', entrypoint)
 
-    def test_notebook_requirements_align_with_common_scoring_extra(self) -> None:
+    def test_notebook_requirements_align_with_common_scoring_extra(
+        self,
+    ) -> None:
         requirements = (
             _REPO_ROOT / "model" / "notebook_docker" / "requirements.txt"
         ).read_text()

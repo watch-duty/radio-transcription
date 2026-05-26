@@ -5,7 +5,6 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-
 _SFT_DIR = Path(__file__).resolve().parent.parent
 _README = _SFT_DIR / "README.md"
 

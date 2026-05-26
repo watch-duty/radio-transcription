@@ -6,9 +6,9 @@ implementation is complete.
 
 from __future__ import annotations
 
-import json
 import contextlib
 import io
+import json
 import sys
 import tempfile
 import unittest
@@ -213,9 +213,7 @@ class TestPreflightDuplicateUri(unittest.TestCase):
             report_path = Path(tmp) / "preflight_report.json"
             train_path.write_text(
                 "".join(
-                    json.dumps(
-                        self._make_good_example(f"gs://b/audio{i}.flac")
-                    )
+                    json.dumps(self._make_good_example(f"gs://b/audio{i}.flac"))
                     + "\n"
                     for i in range(5)
                 )
@@ -238,7 +236,9 @@ class TestPreflightDuplicateUri(unittest.TestCase):
                     gcs_batch_pause_seconds=0.5,
                 )
 
-        self.assertTrue(report.passed, f"Unexpected failures: {report.failures}")
+        self.assertTrue(
+            report.passed, f"Unexpected failures: {report.failures}"
+        )
         self.assertEqual(mock_exists.call_count, 5)
         self.assertEqual(mock_sleep.call_count, 2)
         mock_sleep.assert_has_calls(

@@ -455,7 +455,8 @@ def main() -> int:
     )
     _add_eval_args(
         sub.add_parser(
-            "eval", help="Batch-infer and score Gemini model on held-out manifest"
+            "eval",
+            help="Batch-infer and score Gemini model on held-out manifest",
         )
     )
     _add_all_args(
