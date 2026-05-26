@@ -1468,6 +1468,204 @@ class TestBcfyCallsCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
         new_callable=AsyncMock,
     )
+    async def test_empty_page_does_not_emit_batch_unproductive(
+        self,
+        mock_sleep: AsyncMock,
+        mock_create: AsyncMock,
+        mock_fetch: AsyncMock,
+        mock_jwt: MagicMock,
+    ) -> None:
+        mock_jwt.return_value = "tok"
+        shutdown = asyncio.Event()
+        mock_fetch.return_value = {"calls": [], "lastPos": 1_700_000_010}
+
+        async def _sleep_side_effect(*args, **kwargs) -> bool:
+            shutdown.set()
+            return True
+
+        mock_sleep.side_effect = _sleep_side_effect
+
+        with self.assertLogs(
+            "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector",
+            level="WARNING",
+        ) as cm:
+            bcfy_calls_collector.logger.warning("_test_placeholder_")
+            chunks = [
+                c
+                async for c in bcfy_calls_collector.capture_bcfy_calls(
+                    self.leased_feed,
+                    shutdown,
+                    "https://api.bcfy/",
+                    _default_resources(),
+                )
+            ]
+
+        self.assertEqual(chunks, [])
+        mock_create.assert_not_called()
+        self.assertEqual(self._batch_unproductive_records(cm.records), [])
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._create_chunk_from_call",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_missing_url_only_page_does_not_attempt_or_emit_batch_unproductive(
+        self,
+        mock_sleep: AsyncMock,
+        mock_create: AsyncMock,
+        mock_fetch: AsyncMock,
+        mock_jwt: MagicMock,
+    ) -> None:
+        mock_jwt.return_value = "tok"
+        shutdown = asyncio.Event()
+        mock_fetch.return_value = {
+            "calls": [
+                {"start_ts": 1_700_000_000, "end_ts": 1_700_000_010},
+                {
+                    "url": "",
+                    "start_ts": 1_700_000_020,
+                    "end_ts": 1_700_000_030,
+                },
+            ],
+            "lastPos": 1_700_000_030,
+        }
+
+        async def _sleep_side_effect(*args, **kwargs) -> bool:
+            shutdown.set()
+            return True
+
+        mock_sleep.side_effect = _sleep_side_effect
+
+        with self.assertLogs(
+            "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector",
+            level="WARNING",
+        ) as cm:
+            bcfy_calls_collector.logger.warning("_test_placeholder_")
+            chunks = [
+                c
+                async for c in bcfy_calls_collector.capture_bcfy_calls(
+                    self.leased_feed,
+                    shutdown,
+                    "https://api.bcfy/",
+                    _default_resources(),
+                )
+            ]
+
+        self.assertEqual(chunks, [])
+        mock_create.assert_not_called()
+        self.assertEqual(self._batch_unproductive_records(cm.records), [])
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._create_chunk_from_call",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_duplicate_only_page_does_not_attempt_or_emit_batch_unproductive(
+        self,
+        mock_sleep: AsyncMock,
+        mock_create: AsyncMock,
+        mock_fetch: AsyncMock,
+        mock_jwt: MagicMock,
+    ) -> None:
+        mock_jwt.return_value = "tok"
+        now = datetime.datetime.now(datetime.UTC)
+        chunk_ok = bcfy_calls_collector.CapturedChunk(
+            audio_bytes=b"x",
+            chunk_start_time=now,
+            chunk_end_time=now + datetime.timedelta(seconds=10),
+            session_id="sid",
+            receipt_time=now,
+        )
+        mock_create.return_value = chunk_ok
+        shutdown = asyncio.Event()
+        fetch_calls = 0
+
+        async def _fetch_side_effect(*args, **kwargs):
+            nonlocal fetch_calls
+            fetch_calls += 1
+            if fetch_calls == 1:
+                return {
+                    "calls": [
+                        {
+                            "url": "https://x/a.mp3",
+                            "start_ts": 1_700_000_000,
+                            "end_ts": 1_700_000_010,
+                        }
+                    ],
+                    "lastPos": 1_700_000_010,
+                }
+            if fetch_calls == 2:
+                return {
+                    "calls": [
+                        {
+                            "url": "https://x/a.mp3",
+                            "start_ts": 1_700_000_020,
+                            "end_ts": 1_700_000_030,
+                        }
+                    ],
+                    "lastPos": 1_700_000_030,
+                }
+            shutdown.set()
+            return {"calls": []}
+
+        mock_fetch.side_effect = _fetch_side_effect
+        mock_sleep.return_value = False
+
+        with self.assertLogs(
+            "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector",
+            level="WARNING",
+        ) as cm:
+            bcfy_calls_collector.logger.warning("_test_placeholder_")
+            chunks = [
+                c
+                async for c in bcfy_calls_collector.capture_bcfy_calls(
+                    self.leased_feed,
+                    shutdown,
+                    "https://api.bcfy/",
+                    _default_resources(),
+                )
+            ]
+
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(mock_fetch.call_count, 3)
+        self.assertEqual(mock_create.call_count, 1)
+        self.assertEqual(self._batch_unproductive_records(cm.records), [])
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._create_chunk_from_call",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
     async def test_no_emit_during_shutdown(
         self,
         mock_sleep: AsyncMock,
