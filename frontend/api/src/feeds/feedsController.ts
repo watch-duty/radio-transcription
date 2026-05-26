@@ -14,6 +14,7 @@ import {
   Get,
   Path,
   Post,
+  Put,
   Response,
   Route,
   Security,
@@ -40,6 +41,18 @@ interface FeedBackend extends BaseFeedBackend {
 
 interface FeedCreateBackend extends BaseFeedBackend {
   source_feed_id: string;
+  external_id: string;
+  tags?: Tag[];
+}
+// NOTE: Duplicated from common/src/types/feeds.ts due to TSOA resolution limitations in monorepos.
+export interface FeedUpdate {
+  name: string;
+  externalId: string;
+  tags?: Tag[];
+}
+
+interface FeedUpdateBackend {
+  name: string;
   external_id: string;
   tags?: Tag[];
 }
@@ -116,6 +129,14 @@ function convertFeedCreate(create: FeedCreate): FeedCreateBackend {
   };
 }
 
+function convertFeedUpdate(update: FeedUpdate): FeedUpdateBackend {
+  return {
+    name: update.name,
+    external_id: update.externalId,
+    tags: update.tags,
+  };
+}
+
 @Route('api/v1/feeds')
 @Tags('Feeds')
 @Response(401, 'Unauthorized')
@@ -187,6 +208,38 @@ export class FeedsController extends Controller {
       return convertFeedBackend(response.data);
     } catch (error: unknown) {
       const { status, message } = handleBackendError(error, 'creating feed');
+      throw new HttpError(status, message);
+    }
+  }
+
+  /**
+   * Update an existing feed (Full override).
+   * The fields passed here will fully override the fields stored. There is no coalesing done, so make sure these are the final desired fields.
+   */
+  @Put('{feedId}')
+  @Security('google_id_token')
+  @Response<{ message: string }>(401, 'Unauthorized')
+  @Response<{ message: string }>(403, 'Forbidden')
+  @Response<{ message: string }>(404, 'Not Found')
+  @Response<{ message: string }>(500, 'Internal Server Error')
+  @Extension('x-google-backend', 'radio-transcription-api')
+  public async updateFeed(
+    @Path() feedId: string,
+    @Body() requestBody: FeedUpdate
+  ): Promise<Feed> {
+    try {
+      const client = await this.getClient();
+      const response = await client.request<FeedBackend>({
+        url: `${FEEDS_STORE_API_URL}/${feedId}`,
+        method: 'PUT',
+        data: convertFeedUpdate(requestBody),
+      });
+      return convertFeedBackend(response.data);
+    } catch (error: unknown) {
+      const { status, message } = handleBackendError(
+        error,
+        `updating feed ${feedId}`
+      );
       throw new HttpError(status, message);
     }
   }
