@@ -6,6 +6,7 @@ implementation is complete.
 
 from __future__ import annotations
 
+import argparse
 import contextlib
 import io
 import json
@@ -71,6 +72,26 @@ class TestPipelineCLI(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 0)
         self.assertIn("Gemini SFT pipeline", out.getvalue())
         self.assertIn("Batch-infer and score Gemini model", out.getvalue())
+
+    def test_build_returns_clean_error_for_missing_prompt_file(self) -> None:
+        """Missing @file prompt overrides should fail cleanly, not traceback."""
+        import pipeline
+
+        missing = Path(tempfile.gettempdir()) / "missing-sft-system-prompt.txt"
+        args = argparse.Namespace(
+            datasets="echo",
+            round_id="test-round",
+            system_prompt=f"@{missing}",
+            user_prompt="",
+            staging_dir="",
+        )
+
+        with self.assertLogs("pipeline", level="ERROR") as logs:
+            rc = pipeline._build(args)
+
+        self.assertEqual(rc, 1)
+        self.assertIn("system prompt file not found", "\n".join(logs.output))
+        self.assertIn(str(missing), "\n".join(logs.output))
 
 
 class TestPreflightEmptyTarget(unittest.TestCase):

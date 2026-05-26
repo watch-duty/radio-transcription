@@ -39,6 +39,10 @@ _DATASETS_TOML: Final = _SCRIPT_DIR / "datasets.toml"
 RESULTS_DIR: Final = _SCRIPT_DIR / "results"
 
 
+class PromptOverrideError(ValueError):
+    """Clean CLI error for unreadable @file prompt overrides."""
+
+
 def _load_registry() -> dict:
     with open(_DATASETS_TOML, "rb") as f:
         return tomllib.load(f)
@@ -57,6 +61,22 @@ def _save_round_config(round_id: str, config: dict) -> None:
     cfg_path.write_text(json.dumps(config, indent=2, default=str))
 
 
+def _load_prompt_override(value: str, label: str) -> str:
+    if not value.startswith("@"):
+        return value
+    path = Path(value[1:]).expanduser()
+    try:
+        return path.read_text()
+    except FileNotFoundError as exc:
+        raise PromptOverrideError(
+            f"{label} prompt file not found: {path}"
+        ) from exc
+    except OSError as exc:
+        raise PromptOverrideError(
+            f"could not read {label} prompt file {path}: {exc}"
+        ) from exc
+
+
 def _load_prompts(args: argparse.Namespace) -> tuple[str, str]:
     """Return (system_prompt, user_prompt) -- from args or pipeline defaults."""
     from prompts import PIPELINE_SYSTEM_PROMPT, PIPELINE_USER_PROMPT
@@ -66,17 +86,11 @@ def _load_prompts(args: argparse.Namespace) -> tuple[str, str]:
 
     if getattr(args, "system_prompt", None):
         val = args.system_prompt
-        if val.startswith("@"):
-            system_prompt = Path(val[1:]).read_text()
-        else:
-            system_prompt = val
+        system_prompt = _load_prompt_override(val, "system")
 
     if getattr(args, "user_prompt", None):
         val = args.user_prompt
-        if val.startswith("@"):
-            user_prompt = Path(val[1:]).read_text()
-        else:
-            user_prompt = val
+        user_prompt = _load_prompt_override(val, "user")
 
     return system_prompt, user_prompt
 
@@ -213,10 +227,15 @@ def _build(args: argparse.Namespace) -> int:
     ``combined_val_uri`` is recorded so ``tune`` wires a Vertex validation dataset
     (eval_total_loss). When no dataset declares one, the val split is skipped.
     """
+    try:
+        system_prompt, user_prompt = _load_prompts(args)
+    except PromptOverrideError as e:
+        logger.error(str(e))  # noqa: TRY400
+        return 1
+
     from common.scoring import build_normalizer
     from google.cloud import storage
 
-    system_prompt, user_prompt = _load_prompts(args)
     registry = _load_registry()
     dataset_names = [d.strip() for d in args.datasets.split(",")]
 
