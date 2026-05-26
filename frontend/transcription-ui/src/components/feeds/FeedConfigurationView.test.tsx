@@ -99,7 +99,7 @@ describe('FeedConfigurationView', () => {
     expect(screen.getByLabelText('Feed Display Name')).toBeInTheDocument();
     expect(screen.getByLabelText('Source Type')).toBeInTheDocument();
     expect(screen.getByLabelText('Source Feed ID')).toBeInTheDocument();
-    expect(screen.getByLabelText('External Indexing ID')).toBeInTheDocument();
+    expect(screen.getByLabelText('External ID')).toBeInTheDocument();
 
     // Verify existing feeds list renders active items
     await waitFor(() => {
@@ -113,46 +113,18 @@ describe('FeedConfigurationView', () => {
     renderView();
 
     const submitBtn = screen.getByRole('button', {
-      name: /Register Pipeline Feed/i,
+      name: /Register feed/i,
     });
     fireEvent.click(submitBtn);
 
     // Verify validation errors are populated on screen
     expect(
-      screen.getByText('Feed Display Name is required.')
+      screen.getByText('Feed display name is required.')
     ).toBeInTheDocument();
-    expect(
-      screen.getByText('Source Feed ID is required to register a feed.')
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText('External Reference ID is required.')
-    ).toBeInTheDocument();
+    expect(screen.getByText('Source feed ID is required.')).toBeInTheDocument();
+    expect(screen.getByText('External ID is required.')).toBeInTheDocument();
 
     expect(createFeed).not.toHaveBeenCalled();
-  });
-
-  it('updates the Source Feed ID helper text dynamically based on Source Type dropdown selection', async () => {
-    renderView();
-
-    // Initial default: Broadcastify Audio Feed (bcfy_feeds)
-    expect(
-      screen.getByText(/Broadcastify audio feed number/i)
-    ).toBeInTheDocument();
-
-    // Click to change dropdown to OpenMHZ
-    const selectDropdown = screen.getByRole('combobox', {
-      name: /Source Type/i,
-    });
-    fireEvent.mouseDown(selectDropdown);
-
-    // MUI dropdown opens in popover, locate OpenMHZ menu item
-    const openMhzOption = await screen.findByRole('option', {
-      name: /OpenMHZ Trunked System/i,
-    });
-    fireEvent.click(openMhzOption);
-
-    // Verify ID description helper text changes dynamically
-    expect(screen.getByText(/OpenMHZ system slug name/i)).toBeInTheDocument();
   });
 
   it('supports interactive key-value tags generation, adding, and deletion', async () => {
@@ -175,10 +147,11 @@ describe('FeedConfigurationView', () => {
     fireEvent.change(tagValInput, { target: { value: 'CHP' } });
     fireEvent.click(addTagBtn);
 
-    // Verify tag chip is registered and displayed
-    const formCard = screen.getByTestId('feed-config-card');
-    expect(within(formCard).getByText('agency')).toBeInTheDocument();
-    expect(within(formCard).getByText(/: CHP/)).toBeInTheDocument();
+    // Verify tag row is registered and populated as input values
+    expect(screen.getAllByLabelText('Tag Key')[0]).toHaveValue('');
+    expect(screen.getAllByLabelText('Tag Value')[0]).toHaveValue('');
+    expect(screen.getAllByLabelText('Tag Key')[1]).toHaveValue('agency');
+    expect(screen.getAllByLabelText('Tag Value')[1]).toHaveValue('CHP');
 
     // Clear tag fields on success
     expect(tagKeyInput).toHaveValue('');
@@ -192,12 +165,16 @@ describe('FeedConfigurationView', () => {
       screen.getByText('A tag with key "agency" already exists.')
     ).toBeInTheDocument();
 
-    // Delete tag using chip delete trigger
-    const deleteButton = within(formCard).getByTestId('CancelIcon');
+    // Delete tag using native delete button visual trigger
+    const deleteButton = screen.getByRole('button', {
+      name: 'Remove tag agency',
+    });
     fireEvent.click(deleteButton);
 
-    // Verify chip is successfully removed
-    expect(screen.queryByText(/CHP/i)).not.toBeInTheDocument();
+    // Verify tag inputs row is successfully removed
+    expect(
+      screen.queryByRole('button', { name: 'Remove tag agency' })
+    ).not.toBeInTheDocument();
   });
 
   it('submits form successfully, registers feed in API, calls snackbar and clears state', async () => {
@@ -223,21 +200,25 @@ describe('FeedConfigurationView', () => {
       name: /Source Type/i,
     });
     fireEvent.mouseDown(selectDropdown);
-    const bcfyCallsOption = await screen.findByRole('option', {
-      name: /Broadcastify Talkgroup Calls/i,
-    });
+
+    // Wait for popover listbox portal to mount inside body
+    const listbox = await screen.findByRole('listbox', {}, { timeout: 3000 });
+    expect(listbox).toBeInTheDocument();
+
+    const bcfyCallsOption =
+      await within(listbox).findByText('Broadcastify Calls');
     fireEvent.click(bcfyCallsOption);
 
     fireEvent.change(screen.getByLabelText('Source Feed ID'), {
       target: { value: '9988-77' },
     });
-    fireEvent.change(screen.getByLabelText('External Indexing ID'), {
+    fireEvent.change(screen.getByLabelText('External ID'), {
       target: { value: 'ca-nap-amb' },
     });
 
     // Submit
     const submitBtn = screen.getByRole('button', {
-      name: /Register Pipeline Feed/i,
+      name: /Register feed/i,
     });
     fireEvent.click(submitBtn);
 
@@ -263,7 +244,7 @@ describe('FeedConfigurationView', () => {
       // Verify state clears on success
       expect(screen.getByLabelText('Feed Display Name')).toHaveValue('');
       expect(screen.getByLabelText('Source Feed ID')).toHaveValue('');
-      expect(screen.getByLabelText('External Indexing ID')).toHaveValue('');
+      expect(screen.getByLabelText('External ID')).toHaveValue('');
     });
   });
 
@@ -292,25 +273,22 @@ describe('FeedConfigurationView', () => {
     });
     fireEvent.click(editBtn);
 
-    // Verify form transitions to "Update Mode"
-    expect(screen.getByText('Update Feed')).toBeInTheDocument();
+    // Verify form transitions to "Edit Mode"
+    expect(screen.getByText('Edit Feed')).toBeInTheDocument();
     expect(screen.getByText(/Modifying configuration/i)).toBeInTheDocument();
-    expect(
-      screen.getByText(/Live Update Protocol Active/i)
-    ).toBeInTheDocument();
 
     // Verify form details are prepopulated from selected feed definition
     expect(screen.getByLabelText('Feed Display Name')).toHaveValue(
       'Marin Fire Dispatch'
     );
     expect(screen.getByLabelText('Source Feed ID')).toHaveValue('33156');
-    expect(screen.getByLabelText('External Indexing ID')).toHaveValue(
-      'ca-mrn-fire'
-    );
+    expect(screen.getByLabelText('External ID')).toHaveValue('ca-mrn-fire');
 
-    const formCard = screen.getByTestId('feed-config-card');
-    expect(within(formCard).getByText('county')).toBeInTheDocument();
-    expect(within(formCard).getByText(/: Marin/)).toBeInTheDocument();
+    // Verify registered tag row is populated in input fields
+    expect(screen.getAllByLabelText('Tag Key')[0]).toHaveValue('');
+    expect(screen.getAllByLabelText('Tag Value')[0]).toHaveValue('');
+    expect(screen.getAllByLabelText('Tag Key')[1]).toHaveValue('county');
+    expect(screen.getAllByLabelText('Tag Value')[1]).toHaveValue('Marin');
 
     // Verify permanent fields are disabled in update mode
     expect(screen.getByLabelText('Source Type')).toHaveAttribute(
@@ -330,19 +308,19 @@ describe('FeedConfigurationView', () => {
 
     // Enter Edit Mode again to test saving
     fireEvent.click(editBtn);
-    expect(screen.getByText('Update Feed')).toBeInTheDocument();
+    expect(screen.getByText('Edit Feed')).toBeInTheDocument();
 
     // Update modifyable properties
     fireEvent.change(screen.getByLabelText('Feed Display Name'), {
       target: { value: 'Marin Unified Fire Dispatch' },
     });
-    fireEvent.change(screen.getByLabelText('External Indexing ID'), {
+    fireEvent.change(screen.getByLabelText('External ID'), {
       target: { value: 'ca-mrn-fire-v2' },
     });
 
     // Submit update changes
     const submitBtn = screen.getByRole('button', {
-      name: /Save Feed Changes/i,
+      name: /Edit feed/i,
     });
     fireEvent.click(submitBtn);
 
@@ -378,7 +356,7 @@ describe('FeedConfigurationView', () => {
       expect(screen.getByText('Sonoma Sheriff dispatch')).toBeInTheDocument();
     });
 
-    const filterInput = screen.getByPlaceholderText(/Filter receiver streams/i);
+    const filterInput = screen.getByPlaceholderText(/Filter feeds/i);
     fireEvent.change(filterInput, { target: { value: 'sonoma' } });
 
     // Sonoma Sheriff matches, Marin Fire is hidden

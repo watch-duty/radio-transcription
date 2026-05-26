@@ -3,12 +3,12 @@ import { useEffect, useMemo, useState } from 'react';
 import AddIcon from '@mui/icons-material/Add';
 import AppRegistrationIcon from '@mui/icons-material/AppRegistration';
 import ClearIcon from '@mui/icons-material/Clear';
+import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import RssFeedIcon from '@mui/icons-material/RssFeed';
 import SearchIcon from '@mui/icons-material/Search';
 import TagIcon from '@mui/icons-material/Tag';
-import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
@@ -178,6 +178,27 @@ export function FeedConfigurationView({
     setTags((prev) => prev.filter((tag) => tag.key !== keyToRemove));
   };
 
+  const handleUpdateTag = (
+    index: number,
+    field: 'key' | 'value',
+    newValue: string
+  ) => {
+    setTags((prev) => {
+      const copy = [...prev];
+      if (field === 'key') {
+        copy[index] = { ...copy[index], key: newValue.toLowerCase() };
+      } else {
+        copy[index] = { ...copy[index], value: newValue };
+      }
+      return copy;
+    });
+    setValidationErrors((prev) => {
+      const copy = { ...prev };
+      delete copy.tags;
+      return copy;
+    });
+  };
+
   // Local schema verification before dispatching mutations
   const validateForm = (): boolean => {
     const errors: Record<string, string> = {};
@@ -196,6 +217,22 @@ export function FeedConfigurationView({
 
     if (!externalId.trim()) {
       errors.externalId = 'External ID is required.';
+    }
+
+    // Verify tags data integrity
+    const duplicateKeys = tags.filter(
+      (tag, idx) => tags.findIndex((t) => t.key === tag.key) !== idx
+    );
+    if (duplicateKeys.length > 0) {
+      errors.tags = `Duplicate tag keys discovered: ${duplicateKeys
+        .map((d) => d.key)
+        .join(', ')}. Keys must be unique.`;
+    }
+
+    const blankTags = tags.some((tag) => !tag.key.trim() || !tag.value.trim());
+    if (blankTags) {
+      errors.tags =
+        'Tag key and value inputs cannot be blank. Discard empty tag rows using the delete button.';
     }
 
     setValidationErrors(errors);
@@ -249,11 +286,21 @@ export function FeedConfigurationView({
       return;
     }
 
+    // Defensive UX: automatically register the builder tag if it has inputs on submit
+    let finalTags = [...tags];
+    if (newTagKey.trim() && newTagValue.trim()) {
+      const key = newTagKey.trim().toLowerCase();
+      const value = newTagValue.trim();
+      if (!finalTags.some((t) => t.key === key)) {
+        finalTags.push({ key, value });
+      }
+    }
+
     if (editingFeed) {
       const payload: FeedUpdate = {
         name: name.trim(),
         externalId: externalId.trim(),
-        tags: tags.length > 0 ? tags : undefined,
+        tags: finalTags.length > 0 ? finalTags : undefined,
       };
       updateMutation.mutate({
         feedId: editingFeed.id,
@@ -265,7 +312,7 @@ export function FeedConfigurationView({
         sourceType,
         sourceFeedId: sourceFeedId.trim(),
         externalId: externalId.trim(),
-        tags: tags.length > 0 ? tags : undefined,
+        tags: finalTags.length > 0 ? finalTags : undefined,
       };
       createMutation.mutate(payload);
     }
@@ -383,8 +430,7 @@ export function FeedConfigurationView({
                     onChange={(e) => setName(e.target.value)}
                     error={!!validationErrors.name}
                     helperText={
-                      validationErrors.name ||
-                      'Display name of the feed.'
+                      validationErrors.name || 'Display name of the feed.'
                     }
                     disabled={isSubmitting}
                   />
@@ -434,9 +480,7 @@ export function FeedConfigurationView({
                         value={sourceFeedId}
                         onChange={(e) => setSourceFeedId(e.target.value)}
                         error={!!validationErrors.sourceFeedId}
-                        helperText={
-                          validationErrors.sourceFeedId
-                        }
+                        helperText={validationErrors.sourceFeedId}
                         disabled={!!editingFeed || isSubmitting}
                         slotProps={{
                           input: {
@@ -493,7 +537,9 @@ export function FeedConfigurationView({
                       color="text.secondary"
                       sx={{ display: 'block', mb: 2 }}
                     >
-                      Metadata tags (e.g. county, agency, state) allow for better searchability, grouping, and routing of notifications.
+                      Metadata tags (e.g. county, agency, state) allow for
+                      better searchability, grouping, and routing of
+                      notifications.
                     </Typography>
 
                     <Stack
@@ -546,7 +592,7 @@ export function FeedConfigurationView({
                       </Typography>
                     )}
 
-                    {/* Tag list horizontal grid visualization */}
+                    {/* Tag list horizontal rows visualization */}
                     <Box
                       sx={{
                         p: 2,
@@ -554,35 +600,57 @@ export function FeedConfigurationView({
                         border: '1px dashed',
                         borderColor: 'divider',
                         bgcolor: 'background.default',
-                        minHeight: 60,
                         display: 'flex',
-                        flexWrap: 'wrap',
-                        alignItems: 'center',
-                        gap: 1,
+                        flexDirection: 'column',
+                        gap: 1.5,
                       }}
                     >
                       {tags.length === 0 ? (
                         <Typography
                           variant="body2"
                           color="text.secondary"
-                          sx={{ mx: 'auto', fontStyle: 'italic' }}
+                          sx={{ mx: 'auto', py: 2, fontStyle: 'italic' }}
                         >
                           No custom tags added.
                         </Typography>
                       ) : (
-                        tags.map((tag) => (
-                          <Chip
-                            key={tag.key}
-                            label={
-                              <span>
-                                <b style={{ opacity: 0.85 }}>{tag.key}</b>:{' '}
-                                {tag.value}
-                              </span>
-                            }
-                            onDelete={() => handleRemoveTag(tag.key)}
-                            disabled={isSubmitting}
-                            variant="outlined"
-                          />
+                        tags.map((tag, index) => (
+                          <Stack
+                            key={index}
+                            direction="row"
+                            spacing={1.5}
+                            sx={{ alignItems: 'center' }}
+                          >
+                            <TextField
+                              size="small"
+                              label="Tag Key"
+                              value={tag.key}
+                              onChange={(e) =>
+                                handleUpdateTag(index, 'key', e.target.value)
+                              }
+                              disabled={isSubmitting}
+                              sx={{ flexGrow: 1 }}
+                            />
+                            <TextField
+                              size="small"
+                              label="Tag Value"
+                              value={tag.value}
+                              onChange={(e) =>
+                                handleUpdateTag(index, 'value', e.target.value)
+                              }
+                              disabled={isSubmitting}
+                              sx={{ flexGrow: 1 }}
+                            />
+                            <IconButton
+                              size="small"
+                              onClick={() => handleRemoveTag(tag.key)}
+                              disabled={isSubmitting}
+                              color="error"
+                              aria-label={`Remove tag ${tag.key}`}
+                            >
+                              <DeleteIcon fontSize="small" />
+                            </IconButton>
+                          </Stack>
                         ))
                       )}
                     </Box>
@@ -616,7 +684,7 @@ export function FeedConfigurationView({
                       {isSubmitting ? (
                         <CircularProgress size={20} color="inherit" />
                       ) : editingFeed ? (
-                        'Edit feed'
+                        'Save changes'
                       ) : (
                         'Register feed'
                       )}
@@ -788,7 +856,13 @@ export function FeedConfigurationView({
                           hover
                           selected={isCurrentlyEditingThis}
                         >
-                          <TableCell sx={{ py: 1, display: 'flex', flexDirection: 'column' }}>
+                          <TableCell
+                            sx={{
+                              py: 1,
+                              display: 'flex',
+                              flexDirection: 'column',
+                            }}
+                          >
                             <Typography>
                               <b>{feed.name}</b>
                             </Typography>
