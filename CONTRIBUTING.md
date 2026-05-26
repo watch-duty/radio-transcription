@@ -20,7 +20,7 @@ On a high level, this local pipeline runs the following:
 #### Shared infrastructure
 1. Pub/Sub emulator (manages all PubSub topics for each Pub/Sub instance in the pipeline)
 2. GCS emulator (manages all GCS buckets for audio storage in the pipeline)
-3. Mock Icecast server (simulates audio streams for testing)
+3. Mock Audio server (simulates all the supported audio streams for testing e.g. Icecast and API polling)
 
 #### Pipeline
 1. Audio ingestion service (fetches audio from streams and uploads to GCS)
@@ -38,7 +38,6 @@ Integration tests run an automated E2E test on startup.
 
 > [!NOTE]
 > `local_dev/test_data.sql` is used to seed the database with dummy feeds and rules for local development (`mise dev:start`). It is explicitly ignored in the integration tests (`mise test:e2e`) to ensure tests run in a clean, isolated database environment.
-> Also, we are currently missing audio ingestion for API polling and Echoes.
 
 Locally run the full pipeline from E2E:
 ```bash
@@ -244,9 +243,6 @@ You can also run the pre-commit hooks manually on all files at any time:
 ```bash
 uv run pre-commit run --all-files
 ```
-
-## Deployments and Local Testing
-* Docker
 
 ## Debugging
 

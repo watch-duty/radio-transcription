@@ -9,6 +9,10 @@ if TYPE_CHECKING:
 
 import pytest
 
+from backend.pipeline.common.exceptions import (
+    FeedAlreadyExistsError,
+    FeedNameAlreadyExistsError,
+)
 from backend.pipeline.storage.feed_store import FeedStore, SourceType
 
 
@@ -1101,6 +1105,93 @@ async def test_create_feed_succeeds(
     assert row["name"] == "New Integration Feed"
     assert row["source_feed_id"] == "src_123"
     assert row["external_id"] == "ext_123"
+
+
+async def test_create_feed_already_exists(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """create_feed raises FeedAlreadyExistsError when feed already exists."""
+    await store.create_feed(
+        name="New Integration Feed",
+        source_type="bcfy_feeds",
+        source_feed_id="src_123",
+        external_id="ext_123",
+    )
+
+    with pytest.raises(FeedAlreadyExistsError) as cm:
+        await store.create_feed(
+            name="Another Feed Name",
+            source_type="bcfy_feeds",
+            source_feed_id="src_123",
+            external_id="ext_456",
+        )
+
+    assert (
+        "Feed with source type 'bcfy_feeds' and source feed ID 'src_123' already exists"
+        in str(cm.value)
+    )
+
+
+async def test_update_feed_succeeds(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """update_feed updates feed metadata."""
+    feed = await store.create_feed(
+        name="Original Name",
+        source_type="bcfy_feeds",
+        source_feed_id="src_123",
+        external_id="ext_123",
+    )
+
+    updated_feed = await store.update_feed(
+        feed_id=feed["id"],
+        name="Updated Name",
+        external_id="ext_456",
+    )
+
+    assert updated_feed is not None
+    assert updated_feed["name"] == "Updated Name"
+    assert updated_feed["source_feed_id"] == "src_123"
+    assert updated_feed["external_id"] == "ext_456"
+
+    # Verify in DB
+    row = await db_pool.fetchrow(
+        "SELECT f.name, fp.source_feed_id, fp.external_id "
+        "FROM feeds f "
+        "JOIN feed_properties fp ON f.id = fp.feed_id "
+        "WHERE f.id = $1",
+        feed["id"],
+    )
+    assert row is not None
+    assert row["name"] == "Updated Name"
+    assert row["source_feed_id"] == "src_123"
+    assert row["external_id"] == "ext_456"
+
+
+async def test_update_feed_already_exists(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """update_feed raises FeedNameAlreadyExistsError when name conflicts."""
+    await store.create_feed(
+        name="Existing Feed",
+        source_type="bcfy_feeds",
+        source_feed_id="src_456",
+        external_id="ext_456",
+    )
+
+    feed = await store.create_feed(
+        name="Original Name",
+        source_type="bcfy_feeds",
+        source_feed_id="src_123",
+        external_id="ext_123",
+    )
+
+    with pytest.raises(FeedNameAlreadyExistsError):
+        await store.update_feed(
+            feed_id=feed["id"],
+            name="Existing Feed",
+            external_id="ext_123",
+        )
 
 
 # -- Tests: get_feed --------------------------------------------------

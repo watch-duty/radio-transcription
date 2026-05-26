@@ -54,7 +54,7 @@ describe('FeedSearch', () => {
       />
     );
 
-    expect(screen.getByLabelText(/Select a registered feed/i)).toBeTruthy();
+    expect(screen.getByLabelText(/Select feed/i)).toBeTruthy();
   });
 
   it('displays the currently selected feed in the input', () => {
@@ -67,9 +67,7 @@ describe('FeedSearch', () => {
       />
     );
 
-    const input = screen.getByLabelText(
-      /Select a registered feed/i
-    ) as HTMLInputElement;
+    const input = screen.getByLabelText(/Select feed/i) as HTMLInputElement;
     expect(input.value).toBe('Alpha Feed');
   });
 
@@ -83,7 +81,7 @@ describe('FeedSearch', () => {
       />
     );
 
-    const input = screen.getByLabelText(/Select a registered feed/i);
+    const input = screen.getByLabelText(/Select feed/i);
 
     fireEvent.focus(input);
     fireEvent.keyDown(input, { key: 'ArrowDown' });
@@ -106,7 +104,7 @@ describe('FeedSearch', () => {
       />
     );
 
-    const input = screen.getByLabelText(/Select a registered feed/i);
+    const input = screen.getByLabelText(/Select feed/i);
     fireEvent.focus(input);
     fireEvent.keyDown(input, { key: 'ArrowDown' });
 
@@ -124,9 +122,7 @@ describe('FeedSearch', () => {
       />
     );
 
-    const input = screen.getByLabelText(
-      /Select a registered feed/i
-    ) as HTMLInputElement;
+    const input = screen.getByLabelText(/Select feed/i) as HTMLInputElement;
     expect(input.disabled).toBe(true);
   });
 
@@ -140,7 +136,7 @@ describe('FeedSearch', () => {
       />
     );
 
-    const input = screen.getByLabelText(/Select a registered feed/i);
+    const input = screen.getByLabelText(/Select feed/i);
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: 'Alpha Feed' } });
     fireEvent.keyDown(input, { key: 'ArrowDown' });
@@ -160,7 +156,7 @@ describe('FeedSearch', () => {
       />
     );
 
-    const input = screen.getByLabelText(/Select a registered feed/i);
+    const input = screen.getByLabelText(/Select feed/i);
     fireEvent.focus(input);
 
     fireEvent.change(input, { target: { value: 'char' } });
@@ -181,7 +177,7 @@ describe('FeedSearch', () => {
       />
     );
 
-    const input = screen.getByLabelText(/Select a registered feed/i);
+    const input = screen.getByLabelText(/Select feed/i);
     fireEvent.focus(input);
 
     fireEvent.change(input, { target: { value: 'alpha-f' } });
@@ -202,7 +198,7 @@ describe('FeedSearch', () => {
       />
     );
 
-    const input = screen.getByLabelText(/Select a registered feed/i);
+    const input = screen.getByLabelText(/Select feed/i);
     fireEvent.focus(input);
     fireEvent.keyDown(input, { key: 'ArrowDown' });
 

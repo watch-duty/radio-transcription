@@ -3,7 +3,12 @@ import { Route, Routes } from 'react-router';
 
 import { jwtDecode } from 'jwt-decode';
 
-import { ThemeProvider, createTheme, useMediaQuery } from '@mui/material';
+import {
+  CssBaseline,
+  ThemeProvider,
+  createTheme,
+  useMediaQuery,
+} from '@mui/material';
 import Alert, { type AlertProps } from '@mui/material/Alert';
 import AlertTitle from '@mui/material/AlertTitle';
 import Snackbar from '@mui/material/Snackbar';
@@ -132,10 +137,23 @@ function App() {
     palette: {
       mode: prefersDarkMode ? 'dark' : 'light',
     },
+    components: {
+      MuiListItem: {
+        styleOverrides: {
+          root: {
+            '&.compactTable': {
+              paddingTop: '6px',
+              paddingBottom: '6px',
+            },
+          },
+        },
+      },
+    },
   });
 
   return (
     <ThemeProvider theme={theme}>
+      <CssBaseline />
       {!token ? (
         <Login />
       ) : (
@@ -174,6 +192,7 @@ function App() {
                 <>
                   <title>Radio Transcription</title>
                   <FeedSearchView
+                    title="Feeds"
                     triggerSnackbar={triggerSnackbar}
                     onError={handleError}
                   />

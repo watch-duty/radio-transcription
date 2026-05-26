@@ -4,7 +4,6 @@ Utilities for authentication in Colab and Jupyter notebooks.
 
 import os
 from getpass import getpass
-from huggingface_hub import login
 
 
 def login_to_huggingface() -> bool:
@@ -19,6 +18,14 @@ def login_to_huggingface() -> bool:
     Returns:
         bool: True if login was successful, False otherwise.
     """
+    try:
+        from huggingface_hub import login
+    except ImportError as e:
+        raise ImportError(
+            "login_to_huggingface requires the huggingface_hub package: "
+            "pip install huggingface_hub"
+        ) from e
+
     HF_TOKEN = os.environ.get("HF_TOKEN")
 
     if not HF_TOKEN:

@@ -41,7 +41,9 @@ class GCSAudioUploader:
         try:
             bucket = self.gcs_client.bucket(bucket_name)
             blob = bucket.blob(destination_path)
-            blob.upload_from_string(data, content_type=content_type)
+            blob.upload_from_string(
+                data, content_type=content_type, if_generation_match=0
+            )
             uri = f"gs://{bucket_name}/{destination_path}"
             logger.debug("Uploaded artifact to %s", uri)
         except Exception:

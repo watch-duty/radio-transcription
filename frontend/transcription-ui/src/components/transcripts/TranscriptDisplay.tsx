@@ -1,7 +1,6 @@
 import React from 'react';
 import { GroupedVirtuoso, type VirtuosoHandle } from 'react-virtuoso';
 
-import SyncIcon from '@mui/icons-material/Sync';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -14,6 +13,7 @@ import type {
 } from '@tanstack/react-query';
 import type { Transcript } from '@transcription/common';
 
+import { getRelativeTimeString } from '../../utils/timeUtils';
 import TranscriptRow from './TranscriptRow';
 import type { ListTranscriptsData } from './TranscriptView';
 
@@ -29,11 +29,14 @@ export interface TranscriptDisplayProps {
     InfiniteQueryObserverResult<InfiniteData<ListTranscriptsData>, Error>
   >;
   isTranscriptsFetching: boolean;
+  isTranscriptsPolling: boolean;
   hasOlderTranscripts: boolean;
   isFetchingOlderTranscripts: boolean;
   fetchOlderTranscripts: () => Promise<
     InfiniteQueryObserverResult<InfiniteData<ListTranscriptsData>, Error>
   >;
+  // Unix timestamp in ms when the transcripts query last updated with a success.
+  transcriptsLastUpdated: number | null;
   triggerSnackbar: (message: string) => void;
   ruleIdToNameMap: Map<string, string>;
   rulesLoading: boolean;
@@ -58,6 +61,8 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
   hasOlderTranscripts,
   isFetchingOlderTranscripts,
   fetchOlderTranscripts,
+  isTranscriptsPolling,
+  transcriptsLastUpdated,
   triggerSnackbar,
   ruleIdToNameMap,
   rulesLoading,
@@ -102,6 +107,8 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
                   py: 0.5,
                   px: 2,
                   bgcolor: 'action.hover',
+                  display: 'flex',
+                  gap: 1,
                 }}
               >
                 <Typography
@@ -111,6 +118,49 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
                 >
                   {title}
                 </Typography>
+                {!hasNewerTranscripts ? (
+                  <>
+                    {transcriptsLastUpdated && (
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 0.5,
+                        }}
+                      >
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ whiteSpace: 'nowrap' }}
+                        >
+                          Last refresh:
+                        </Typography>
+                        {isTranscriptsPolling ? (
+                          <CircularProgress size={12} />
+                        ) : (
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{ whiteSpace: 'nowrap' }}
+                          >
+                            {getRelativeTimeString(
+                              transcriptsLastUpdated,
+                              false
+                            )}
+                          </Typography>
+                        )}
+                      </Box>
+                    )}
+                  </>
+                ) : (
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ whiteSpace: 'nowrap' }}
+                  >
+                    Refresh disabled while viewing historical data
+                  </Typography>
+                )}
               </Box>
             </ListItem>
           );
@@ -146,6 +196,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
                   display: 'flex',
                   justifyContent: 'center',
                   py: 1,
+                  gap: 1,
                 }}
               >
                 {isFetchingNewerTranscripts ? (
@@ -168,7 +219,6 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
                     }}
                     disabled={isTranscriptsFetching}
                     sx={{ minWidth: '160px', textTransform: 'none' }}
-                    startIcon={<SyncIcon />}
                   >
                     Load newer transcripts
                   </Button>
@@ -193,7 +243,6 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
                       onClick={() => fetchOlderTranscripts()}
                       disabled={isTranscriptsFetching}
                       sx={{ minWidth: '160px', textTransform: 'none' }}
-                      startIcon={<SyncIcon />}
                     >
                       Load older transcripts
                     </Button>

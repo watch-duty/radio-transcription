@@ -58,8 +58,10 @@ function getSourceUrl(
       return `https://openmhz.com/system/${sourceFeedId}`;
     case 'echo':
       return undefined;
+    case 'fire_notifications':
+      return undefined;
     default:
-      throw new Error(`Unsupported source type: ${sourceType}`);
+      return undefined;
   }
 }
 
@@ -78,8 +80,10 @@ function getArchiveUrl(
       return undefined;
     case 'echo':
       return undefined;
+    case 'fire_notifications':
+      return undefined;
     default:
-      throw new Error(`Unsupported source type: ${sourceType}`);
+      return undefined;
   }
 }
 

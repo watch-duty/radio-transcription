@@ -151,7 +151,7 @@ docker-compose up --build -d
 [tasks."dev:stop"]
 description = "Stop all dev containers"
 run = """
-docker-compose down -v
+docker-compose down -v --remove-orphans
 """
 
 [tasks."dev:log"]
@@ -172,6 +172,13 @@ description = "Run all unit tests (alias: test)"
 alias = ["test"]
 run = "uv run python -m unittest discover backend/pipeline"
 
+[tasks."test:model"]
+description = "Run model/ common-library unit tests (pytest)"
+dir = "model"
+# Install [scoring] alongside [dev] so the WER/normalizer/bootstrap goldens
+# (jiwer + nemo_text_processing) actually run instead of skipping silently.
+run = "uv run --extra dev --extra scoring pytest colabs/common/tests/"
+
 [tasks."test:component:rules"]
 description = "Run RulesStore component tests"
 run = "uv run pytest integration_tests/storage/test_rules_store_integration.py"
@@ -187,9 +194,9 @@ run = "uv run pytest integration_tests/storage/"
 [tasks."test:e2e"]
 description = "Run all E2E tests in Docker Compose"
 run = """
+docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env down -v --remove-orphans
 docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env build
 docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run --rm integration-tests
-docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env down --remove-orphans
 """
 
 [tasks."test:api"]
