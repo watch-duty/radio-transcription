@@ -124,6 +124,42 @@ describe('FeedTable', () => {
     expect(cells[0].textContent).toContain('Alpha Radio');
   });
 
+  it('preserves virtualized scroller position on feed refresh rerender', () => {
+    const { container, rerender } = renderFeedTable({
+      feeds: mockFeeds,
+      isLoading: false,
+    });
+    const scroller = container.querySelector(
+      '[data-testid="virtuoso-scroller"]'
+    );
+    expect(scroller).toBeTruthy();
+    if (!scroller) {
+      throw new Error('Expected virtuoso scroller to be rendered');
+    }
+
+    scroller.scrollTop = 200;
+    const refreshedFeeds = mockFeeds.map((feed) => ({
+      ...feed,
+      name: `${feed.name} (updated)`,
+    }));
+
+    rerender(
+      <MemoryRouter>
+        <VirtuosoMockContext.Provider
+          value={{ viewportHeight: 1000, itemHeight: 100 }}
+        >
+          <FeedTable feeds={refreshedFeeds} isLoading={false} />
+        </VirtuosoMockContext.Provider>
+      </MemoryRouter>
+    );
+
+    const refreshedScroller = container.querySelector(
+      '[data-testid="virtuoso-scroller"]'
+    );
+    expect(refreshedScroller).toBe(scroller);
+    expect(refreshedScroller?.scrollTop).toBe(200);
+  });
+
   it('opens the three dot menu and disables links if not present', () => {
     renderFeedTable({ feeds: mockFeeds, isLoading: false });
 
