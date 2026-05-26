@@ -607,7 +607,7 @@ export function FeedTable({
                   sx={{
                     fontWeight: 500,
                     textOverflow: 'ellipsis',
-                    width: '100%',
+                    maxWidth: '100%',
                   }}
                   noWrap
                 >
