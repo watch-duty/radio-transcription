@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-import logging
-from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from backend.pipeline.ingestion.slo_contract import (
     EVENT_TYPE_BATCH_UNPRODUCTIVE,
 )
+
+if TYPE_CHECKING:
+    import logging
+    from collections.abc import Mapping
 
 
 @dataclass
