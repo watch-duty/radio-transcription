@@ -1800,7 +1800,9 @@ class TestBcfyCallsCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(emits), 1)
         rec = cast("Any", emits[0])
         self.assertEqual(rec.json_fields["feed_id"], str(self.feed_uuid))
-        self.assertEqual(rec.json_fields["source_type"], self.feed["source_type"])
+        self.assertEqual(
+            rec.json_fields["source_type"], self.feed["source_type"]
+        )
         self.assertEqual(rec.json_fields["attempted"], 2)
         self.assertEqual(rec.json_fields["produced"], 0)
         self.assertEqual(rec.json_fields["reason"], "downloads_failing")
