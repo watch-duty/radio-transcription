@@ -2,15 +2,12 @@ import React, { useMemo, useState } from 'react';
 import { Link as RouterLink } from 'react-router';
 import { TableVirtuoso } from 'react-virtuoso';
 
-import CheckBoxIcon from '@mui/icons-material/CheckBox';
-import CheckBoxOutlineBlankIcon from '@mui/icons-material/CheckBoxOutlineBlank';
 import InventoryIcon from '@mui/icons-material/Inventory';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import OpenInNewOutlinedIcon from '@mui/icons-material/OpenInNewOutlined';
 import SearchIcon from '@mui/icons-material/Search';
 import TuneIcon from '@mui/icons-material/Tune';
 import FilterIcon from '@mui/icons-material/Tune';
-import Autocomplete from '@mui/material/Autocomplete';
 import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -38,115 +35,7 @@ import Typography from '@mui/material/Typography';
 import type { Feed } from '@transcription/common';
 
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
-
-interface FeedStatusFilterProps {
-  selectedStatuses: string[];
-  onChange: (selectedStatuses: string[]) => void;
-  size?: 'small' | 'medium';
-}
-
-function FeedStatusFilter({
-  selectedStatuses,
-  onChange,
-  size,
-}: FeedStatusFilterProps) {
-  const options = ['Active', 'Inactive'];
-
-  return (
-    <Autocomplete
-      multiple={true}
-      options={options}
-      value={selectedStatuses}
-      onChange={(_, value) => onChange(value)}
-      disableCloseOnSelect={true}
-      getOptionLabel={(option) => option}
-      size={size}
-      renderOption={(props, option, { selected }) => {
-        const { key, ...optionProps } = props;
-        const SelectionIcon = selected
-          ? CheckBoxIcon
-          : CheckBoxOutlineBlankIcon;
-
-        return (
-          <li key={key} {...optionProps}>
-            <SelectionIcon
-              fontSize="small"
-              style={{ marginRight: 8, padding: 9, boxSizing: 'content-box' }}
-            />
-            {option}
-          </li>
-        );
-      }}
-      renderInput={(params) => (
-        <TextField {...params} label="Status" placeholder="" size={size} />
-      )}
-      renderValue={(value) => (
-        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-          {value.map((status) => (
-            <Chip key={status} label={status} size="small" variant="filled" />
-          ))}
-        </Box>
-      )}
-    />
-  );
-}
-
-interface FeedSourceTypeFilterProps {
-  sourceTypes: string[];
-  selectedSourceTypes: string[];
-  onChange: (selectedSourceTypes: string[]) => void;
-  size?: 'small' | 'medium';
-}
-
-function FeedSourceTypeFilter({
-  sourceTypes,
-  selectedSourceTypes,
-  onChange,
-  size,
-}: FeedSourceTypeFilterProps) {
-  return (
-    <Autocomplete
-      multiple={true}
-      options={sourceTypes}
-      value={selectedSourceTypes}
-      onChange={(_, value) => onChange(value)}
-      disableCloseOnSelect={true}
-      getOptionLabel={(option) => option}
-      size={size}
-      renderOption={(props, option, { selected }) => {
-        const { key, ...optionProps } = props;
-        const SelectionIcon = selected
-          ? CheckBoxIcon
-          : CheckBoxOutlineBlankIcon;
-
-        return (
-          <li key={key} {...optionProps}>
-            <SelectionIcon
-              fontSize="small"
-              style={{ marginRight: 8, padding: 9, boxSizing: 'content-box' }}
-            />
-            {option}
-          </li>
-        );
-      }}
-      renderInput={(params) => (
-        <TextField {...params} label="Source Type" placeholder="" size={size} />
-      )}
-      renderValue={(value) => (
-        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-          {value.map((sourceType) => (
-            <Chip
-              key={sourceType}
-              label={sourceType}
-              size="small"
-              variant="filled"
-            />
-          ))}
-        </Box>
-      )}
-    />
-  );
-}
+import { MultiSelectFilter } from '../common/MultiSelectFilter';
 
 interface FeedTableProps {
   feeds: Feed[];
@@ -211,63 +100,6 @@ function FeedFilterChip({ tag }: { tag: { key: string; value: string } }) {
       }
       size="small"
       variant="filled"
-    />
-  );
-}
-
-interface FeedFilterProps {
-  tags: { key: string; value: string }[];
-  selectedTags: { key: string; value: string }[];
-  onChange: (selectedTags: { key: string; value: string }[]) => void;
-  size?: 'small' | 'medium';
-}
-
-function FeedFilter({ tags, selectedTags, onChange, size }: FeedFilterProps) {
-  return (
-    <Autocomplete
-      multiple={true}
-      options={tags}
-      groupBy={(tag) => tag.key}
-      value={selectedTags}
-      onChange={(_, value) => onChange(value)}
-      isOptionEqualToValue={(option, value) =>
-        option.key === value.key && option.value === value.value
-      }
-      disableCloseOnSelect={true}
-      getOptionLabel={(option) => `${option.key}: ${option.value}`}
-      size={size}
-      renderOption={(props, option, { selected }) => {
-        const { key, ...optionProps } = props;
-        const SelectionIcon = selected
-          ? CheckBoxIcon
-          : CheckBoxOutlineBlankIcon;
-
-        return (
-          <li key={key} {...optionProps}>
-            <SelectionIcon
-              fontSize="small"
-              style={{ marginRight: 8, padding: 9, boxSizing: 'content-box' }}
-            />
-            {option.value}
-          </li>
-        );
-      }}
-      renderGroup={(group) => (
-        <li key={group.key}>
-          <Box sx={{ padding: 1, fontWeight: 'bold' }}>{group.group}</Box>
-          <ul style={{ padding: 0 }}>{group.children}</ul>
-        </li>
-      )}
-      renderInput={(params) => (
-        <TextField {...params} label="Tags" placeholder="" size={size} />
-      )}
-      renderValue={(value) => (
-        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-          {value.map((tag) => (
-            <FeedFilterChip key={tag.key} tag={tag} />
-          ))}
-        </Box>
-      )}
     />
   );
 }
@@ -585,19 +417,34 @@ export function FeedTable({
                   maxWidth: '100%',
                 }}
               >
-                <FeedSourceTypeFilter
-                  sourceTypes={sourceTypes}
-                  selectedSourceTypes={selectedSourceTypes}
+                <MultiSelectFilter
+                  label="Source Type"
+                  options={sourceTypes}
+                  value={selectedSourceTypes}
                   onChange={setSelectedSourceTypes}
                 />
-                <FeedStatusFilter
-                  selectedStatuses={selectedStatuses}
+                <MultiSelectFilter
+                  label="Status"
+                  options={['Active', 'Inactive']}
+                  value={selectedStatuses}
                   onChange={setSelectedStatuses}
                 />
-                <FeedFilter
-                  tags={tags}
-                  selectedTags={selectedTags}
+                <MultiSelectFilter
+                  label="Tags"
+                  options={tags}
+                  value={selectedTags}
                   onChange={setSelectedTags}
+                  groupBy={(tag) => tag.key}
+                  getOptionLabel={(tag) => `${tag.key}: ${tag.value}`}
+                  isOptionEqualToValue={(a, b) =>
+                    a.key === b.key && a.value === b.value
+                  }
+                  renderOptionContent={(tag) => tag.value}
+                  renderValueLabel={(tag) => (
+                    <Typography variant="body2">
+                      <b>{tag.key}</b>: {tag.value}
+                    </Typography>
+                  )}
                 />
                 <Box
                   sx={{
@@ -630,26 +477,41 @@ export function FeedTable({
           <>
             <TuneIcon color="action" sx={{ ml: 1 }} />
             <Box sx={{ width: 250, maxWidth: '100%' }}>
-              <FeedSourceTypeFilter
-                sourceTypes={sourceTypes}
-                selectedSourceTypes={appliedSourceTypes}
+              <MultiSelectFilter
+                label="Source Type"
+                options={sourceTypes}
+                value={appliedSourceTypes}
                 onChange={setAppliedSourceTypes}
                 size="small"
               />
             </Box>
             <Box sx={{ width: 250, maxWidth: '100%' }}>
-              <FeedStatusFilter
-                selectedStatuses={appliedStatuses}
+              <MultiSelectFilter
+                label="Status"
+                options={['Active', 'Inactive']}
+                value={appliedStatuses}
                 onChange={setAppliedStatuses}
                 size="small"
               />
             </Box>
             <Box sx={{ width: 250, maxWidth: '100%' }}>
-              <FeedFilter
-                tags={tags}
-                selectedTags={appliedTags}
+              <MultiSelectFilter
+                label="Tags"
+                options={tags}
+                value={appliedTags}
                 onChange={setAppliedTags}
                 size="small"
+                groupBy={(tag) => tag.key}
+                getOptionLabel={(tag) => `${tag.key}: ${tag.value}`}
+                isOptionEqualToValue={(a, b) =>
+                  a.key === b.key && a.value === b.value
+                }
+                renderOptionContent={(tag) => tag.value}
+                renderValueLabel={(tag) => (
+                  <Typography variant="body2">
+                    <b>{tag.key}</b>: {tag.value}
+                  </Typography>
+                )}
               />
             </Box>
           </>
