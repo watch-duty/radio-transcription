@@ -47,6 +47,33 @@ describe('listTranscripts', () => {
     });
   });
 
+  it('should include isAlert in query parameter when specified', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () => JSON.stringify({ transcripts: [] }),
+      headers: {
+        get: (key: string) =>
+          key === 'content-type' ? 'application/json' : null,
+      },
+    });
+
+    await listTranscripts(
+      'feed123',
+      'tokenXYZ',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true
+    );
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/transcripts/feed123?isAlert=true'),
+      expect.any(Object)
+    );
+  });
+
   it('should return empty array if transcripts missing in response', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
