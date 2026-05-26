@@ -8,7 +8,11 @@ Covers:
 
 import unittest
 
-from common.manifest import load_manifest, merge_predictions_to_manifest
+from common.manifest import (
+    load_manifest,
+    merge_predictions_to_manifest,
+    rows_from_manifest,
+)
 
 
 class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
@@ -293,3 +297,22 @@ class TestLoadManifestMalformedRows(unittest.TestCase):
         self.assertEqual([r["text"] for r in rows], ["0", "False", ""])
         for row in rows:
             self.assertIsInstance(row["text"], str)
+
+
+class TestRowsFromManifestNullSafe(unittest.TestCase):
+    """rows_from_manifest tolerates explicit null offset/duration (no TypeError)."""
+
+    def test_explicit_null_offset_duration_default_to_zero(self) -> None:
+        rows = rows_from_manifest(
+            [
+                {
+                    "audio_filepath": "gs://b/a.flac",
+                    "text": "hello",
+                    "offset": None,
+                    "duration": None,
+                }
+            ]
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].offset, 0.0)
+        self.assertEqual(rows[0].duration, 0.0)

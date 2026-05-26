@@ -36,3 +36,9 @@ export interface FeedCreate extends BaseFeed {
   externalId: string;
   tags?: Tag[];
 }
+
+export interface FeedUpdate {
+  name: string;
+  externalId: string;
+  tags?: Tag[];
+}
