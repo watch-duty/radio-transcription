@@ -458,16 +458,22 @@ describe('TranscriptView', () => {
       expect(screen.getByText('Transcript 1 (Alert)')).toBeTruthy();
     });
 
-    // Select "Alerts only" from the select dropdown
-    const selectButton = screen.getByRole('combobox', {
-      name: /Transcript Filter/i,
-    });
-    fireEvent.mouseDown(selectButton);
+    // Open the filter menu popover
+    const filterButton = screen.getByRole('button', { name: 'filter' });
+    fireEvent.click(filterButton);
+
+    // Click on the alerts filter select dropdown trigger
+    const selectTrigger = screen.getByRole('combobox', { name: /Show/i });
+    fireEvent.mouseDown(selectTrigger);
 
     const optionElement = await screen.findByRole('option', {
       name: /Alerts only/i,
     });
     fireEvent.click(optionElement);
+
+    // Click the "Apply" button to apply changes
+    const applyButton = screen.getByRole('button', { name: 'Apply' });
+    fireEvent.click(applyButton);
 
     // Wait for the query containing isAlert=true to complete and render
     await waitFor(() => {
@@ -820,16 +826,22 @@ describe('TranscriptView', () => {
       );
     });
 
-    // Select "Alerts only" from the select dropdown
-    const selectButton = screen.getByRole('combobox', {
-      name: /Transcript Filter/i,
-    });
-    fireEvent.mouseDown(selectButton);
+    // Open the filter menu popover
+    const filterButton = screen.getByRole('button', { name: 'filter' });
+    fireEvent.click(filterButton);
+
+    // Click on the alerts filter select dropdown trigger
+    const selectTrigger = screen.getByRole('combobox', { name: /Show/i });
+    fireEvent.mouseDown(selectTrigger);
 
     const optionElement = await screen.findByRole('option', {
       name: /Alerts only/i,
     });
     fireEvent.click(optionElement);
+
+    // Click the "Apply" button to apply changes
+    const applyButton = screen.getByRole('button', { name: 'Apply' });
+    fireEvent.click(applyButton);
 
     // React query should refetch transcripts using the isAlert filter
     await waitFor(() => {
@@ -885,16 +897,22 @@ describe('TranscriptView', () => {
       expect(screen.getByText('Transcript 1')).toBeTruthy();
     });
 
-    // Select "Alerts only" from the select dropdown
-    const selectButton = screen.getByRole('combobox', {
-      name: /Transcript Filter/i,
-    });
-    fireEvent.mouseDown(selectButton);
+    // Open the filter menu popover
+    const filterButton = screen.getByRole('button', { name: 'filter' });
+    fireEvent.click(filterButton);
+
+    // Click on the alerts filter select dropdown trigger
+    const selectTrigger = screen.getByRole('combobox', { name: /Show/i });
+    fireEvent.mouseDown(selectTrigger);
 
     const optionElement = await screen.findByRole('option', {
       name: /Alerts only/i,
     });
     fireEvent.click(optionElement);
+
+    // Click the "Apply" button to apply changes
+    const applyButton = screen.getByRole('button', { name: 'Apply' });
+    fireEvent.click(applyButton);
 
     // React query should refetch transcripts using the isAlert filter and undefined for timestamps
     await waitFor(() => {
