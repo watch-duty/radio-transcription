@@ -5,7 +5,7 @@ Each model is developed on its own colab, which is run on a Jupyter notebook. Yo
 
 When developing locally, we have a standard docker-compose.yml file which can be used to spin up a jupyter notebook with all the necessary dependencies. See `asr-eval-docker-compose.yml`.
 
-> Use the `nemo-cli-cpu` or `nemo-cli-gpu` container if you need NeMo/Canary support. Otherwise, use the lightweight `notebooks-cpu` or `notebooks` container for pure Hugging Face evaluations like Whisper or Cohere to avoid heavy dependency overhead.
+> Use the `nemo-cli-cpu` or `nemo-cli-gpu` container if you need NeMo/Canary support. Otherwise, use the lightweight `notebooks-cpu` or `notebooks` ASR experiment runtime for notebooks and non-NeMo command-line workflows like Gemini SFT, Whisper, Granite, or Cohere to avoid heavy dependency overhead.
 
 If you want to run the Docker image with GPUs, you will need to create a GCE instance in your GCP project with a GPU attached. There is a Terraform definition under `/terraform/modules/asr_evaluation` which can create a dedicated instance for you. Running GPUs can be costly, so you will need to manually turn on your instance. When the instance starts, there is an auto shutoff script that runs after a specified number of hours, which you can configure through the `auto_shutdown_hours` Terraform variable.
 
@@ -74,15 +74,20 @@ cd radio-transcription
 > If you start the containers before running this command, Docker will automatically create the `${HOME}/.config/gcloud` directory with `root` ownership, causing permission-denied errors when you try to authenticate.
 
 
-### Run the containers (Jupyter notebooks and NeMo CLI)
+### Run the containers (Jupyter notebooks, ASR CLI workflows, and NeMo CLI)
 ```
 # Add in sudo if you didn't make docker sudoless
 
-# 1. Run Jupyter Notebooks (CPU or GPU)
-# Use these lightweight containers for running notebooks (e.g. Whisper, Granite, etc.)
+# 1. Run Jupyter notebooks in the lightweight ASR experiment runtime (CPU or GPU)
 docker compose -f asr-eval-docker-compose.yml up -d [notebooks-cpu|notebooks]
 
-# 2. Run NeMo CLI (CPU or GPU)
+# 2. Run non-NeMo command-line workflows in the same lightweight runtime
+# The container installs the mounted repo package as /workspace/model[scoring,vertex]
+# before executing the command.
+docker compose -f asr-eval-docker-compose.yml run --rm notebooks-cpu \
+  bash -lc 'cd /workspace/model/scripts/sft && python pipeline.py --help'
+
+# 3. Run NeMo CLI (CPU or GPU)
 # These containers do not run Jupyter by default; they are designed for interactive shell use.
 # Run the command below to launch an interactive ZSH shell session:
 docker compose -f asr-eval-docker-compose.yml run [nemo-cli-cpu|nemo-cli-gpu]
@@ -110,7 +115,7 @@ To add a new model to the evaluation framework, follow these guidelines:
     *   `prompt_formatter(entry, local_path)`: Returns the prompt structure for the model.
     *   `inference_fn(model, prompts)`: Runs inference on a batch of prompts.
     *   `decode_fn(output, model)`: Extracts the text transcription from the output.
-4.  **Dependencies**: If the model requires new packages, add them to `model/notebook_docker/requirements.txt`. If a cutting-edge version is needed (e.g. not in stable release yet), you can use a Git URL (e.g., `git+https://github.com/...`).
+4.  **Dependencies**: If the model requires new third-party packages, add them to `model/notebook_docker/requirements.txt`. The lightweight runtime already installs the mounted repo's local `common` package in editable mode on startup, so changes under `model/colabs/common/` are immediately available to notebooks and CLI workflows. If a cutting-edge version is needed (e.g. not in stable release yet), you can use a Git URL (e.g., `git+https://github.com/...`).
 
 ## Formatting and Linting Notebooks
 
@@ -136,6 +141,7 @@ If you make changes to the `requirements.txt` or the Dockerfiles, use these comm
 
 *   **Rebuild Image**:
     ```bash
+    docker compose -f asr-eval-docker-compose.yml build notebooks-cpu
     docker compose -f asr-eval-docker-compose.yml build nemo-cli-cpu
     ```
 *   **Run GPU CLI**:

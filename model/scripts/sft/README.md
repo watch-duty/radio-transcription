@@ -1,7 +1,7 @@
-# Watch Duty Radio Transcription SFT Pipeline
+# Watch Duty Radio Transcription Gemini SFT Pipeline
 
-A re-runnable pipeline for supervised fine-tuning (SFT) of Watch Duty's emergency-radio
-transcription model on Vertex AI.
+A re-runnable pipeline for supervised fine-tuning (SFT) of Watch Duty's
+emergency-radio transcription model on Vertex AI Gemini.
 
 ## Subcommands
 
@@ -12,7 +12,24 @@ python pipeline.py eval    Batch-infer and score a model on the held-out manifes
 python pipeline.py all     build -> tune -> eval in one invocation
 ```
 
-## Installation
+## Runtime
+
+Preferred local runtime is the repo's lightweight ASR experiment Docker service. It
+mounts the repo at `/workspace` and bootstraps the local `common` package as
+`/workspace/model[scoring,vertex]` on container startup.
+
+From the repo root:
+
+```bash
+docker compose -f asr-eval-docker-compose.yml run --rm notebooks-cpu \
+  bash -lc 'cd /workspace/model/scripts/sft && python pipeline.py --help'
+```
+
+Use `notebooks-cpu` for Gemini SFT CLI work. The paid tune/eval jobs run remotely on
+Vertex AI, so no local GPU is required. The `notebooks` service remains available for
+GPU-backed notebook workflows that need it.
+
+## Local Installation
 
 From this directory (`model/scripts/sft/`):
 
