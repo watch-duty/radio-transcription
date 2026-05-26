@@ -192,6 +192,7 @@ function App() {
                 <>
                   <title>Radio Transcription</title>
                   <FeedSearchView
+                    title="Feeds"
                     triggerSnackbar={triggerSnackbar}
                     onError={handleError}
                   />

@@ -12,7 +12,6 @@ import {
   Select,
 } from '@mui/material';
 import Box from '@mui/material/Box';
-import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
@@ -31,14 +30,10 @@ import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { listTranscripts } from '../../service/listTranscripts';
 import { getAudioUrl } from '../../utils/audioUtils';
-import {
-  getInitialTimestamp,
-  roundUpToNearestMinute,
-} from '../../utils/timeUtils';
+import { roundUpToNearestMinute } from '../../utils/timeUtils';
 import AudioDisplay from '../audio/AudioDisplay';
-import DateTimePicker from '../common/DateTimePicker';
+import FeedSearchView from '../feeds/FeedSearchView';
 import FeedHeader from './FeedHeader';
-import FeedSearch from './FeedSearch';
 import TranscriptActionsBar from './TranscriptActionsBar';
 import TranscriptDisplay from './TranscriptDisplay';
 
@@ -72,23 +67,44 @@ export function TranscriptView({
   const queryClient = useQueryClient();
 
   const [searchParams, setSearchParams] = useSearchParams();
+  const targetFeedId = searchParams.get('feedId');
   const targetTransmissionId = searchParams.get('transmissionId');
+  const targetTimestampParam = searchParams.get('timestamp');
+
+  // Need to memoize the timestamp since Dates are compared by object reference.
+  const targetTimestamp = useMemo(
+    () =>
+      targetTimestampParam ? new Date(Number(targetTimestampParam)) : null,
+    [targetTimestampParam]
+  );
+
+  const [searchedFeedId, setSearchedFeedId] = useState<string>(
+    targetFeedId || ''
+  );
+  const [searchedTimestamp, setSearchedTimestamp] = useState<Date | null>(
+    targetTimestamp
+  );
 
   const [newMessageCount, setNewMessageCount] = useState(0);
   const [playLatestAudio, setPlayLatestAudio] = useState(true);
 
-  const [feedId, setFeedId] = useState<string>(
-    () => searchParams.get('feedId') || ''
-  );
-  const [searchedFeedId, setSearchedFeedId] = useState<string>(
-    () => searchParams.get('feedId') || ''
-  );
-  const [timestamp, setTimestamp] = useState<Date | null>(() =>
-    getInitialTimestamp(searchParams)
-  );
-  const [searchedTimestamp, setSearchedTimestamp] = useState<Date | null>(() =>
-    getInitialTimestamp(searchParams)
-  );
+  // Effect which sets the searched feed ID based on the search params changing.
+  useEffect(() => {
+    if (targetFeedId) {
+      setSearchedFeedId(targetFeedId);
+    } else {
+      setSearchedFeedId('');
+    }
+  }, [targetFeedId]);
+
+  // Effect which sets the searched timestamp based on the search params changing.
+  useEffect(() => {
+    if (targetTimestamp) {
+      setSearchedTimestamp(targetTimestamp);
+    } else {
+      setSearchedTimestamp(null);
+    }
+  }, [targetTimestamp]);
 
   const [redactTranscripts, setRedactTranscripts] = useState(false);
   const [alertFilter, setAlertFilter] = useState<AlertFilter>('all');
@@ -209,11 +225,6 @@ export function TranscriptView({
     }
     return new Map(feeds.map((f) => [f.id, f]));
   }, [feeds]);
-
-  // Memoizing the selected feed object derived from the feedId state.
-  const selectedFeed = useMemo(() => {
-    return feedIdToFeedMap.get(feedId) || null;
-  }, [feedIdToFeedMap, feedId]);
 
   const searchedFeed = feedIdToFeedMap.get(searchedFeedId) || null;
 
@@ -671,7 +682,6 @@ export function TranscriptView({
   };
 
   const handleFilterByDateTime = (date: Date | null) => {
-    setTimestamp(date);
     setSearchedTimestamp(date);
     setSearchParams((prev) => {
       if (date) {
@@ -683,8 +693,39 @@ export function TranscriptView({
     });
   };
 
+  const handleFeedSelect = (feedId: string) => {
+    setSearchedFeedId(feedId);
+    // Stop audio
+    currentAudio.current?.stop();
+    currentAudio.current?.unload();
+    // Reset all state
+    handleFilterByDateTime(null);
+    setNewMessageCount(0);
+    setCurrentlyPlayingTransmissionId(null);
+    setHighlightedTransmissionId(null);
+    setIsViewAtTopOfTranscripts(true);
+    setPlaybackEndedForId(null);
+    setIsAudioPlaying(false);
+    // Update URL params
+    setSearchParams((prev) => {
+      prev.set('feedId', feedId);
+      prev.delete('transmissionId');
+      return prev;
+    });
+  };
+
   if (!token) {
     return null;
+  }
+
+  if (!searchedFeedId) {
+    return (
+      <FeedSearchView
+        title="Select a feed to view transcripts"
+        triggerSnackbar={triggerSnackbar}
+        onError={onError}
+      />
+    );
   }
 
   return (
@@ -697,69 +738,11 @@ export function TranscriptView({
         height: 'calc(100vh)',
       }}
     >
-      <Box
-        sx={{
-          display: 'flex',
-          gap: 2,
-          mb: 1,
-          alignItems: 'center',
-          width: '100%',
-        }}
-      >
-        <FeedSearch
-          feeds={feeds ?? []}
-          selectedFeed={selectedFeed}
-          onFeedSelect={setFeedId}
-          isFetching={feedsFetching}
-        />
-
-        <DateTimePicker
-          label="Date/time"
-          dateTime={timestamp}
-          setDateTime={setTimestamp}
-          width="15%"
-        />
-
-        <Button
-          variant="contained"
-          onClick={() => {
-            if (!feedId) {
-              return;
-            }
-
-            const newParams: Record<string, string> = { feedId: feedId.trim() };
-            if (timestamp) {
-              newParams.timestamp = timestamp.getTime().toString();
-            }
-            setSearchedFeedId(feedId);
-            setSearchedTimestamp(timestamp);
-            setSearchParams(newParams);
-
-            if (searchedFeedId === feedId) {
-              queryClient.resetQueries({
-                queryKey: [
-                  'listTranscripts',
-                  token,
-                  searchedFeedId,
-                  searchedTimestamp,
-                  alertFilter,
-                ],
-              });
-            }
-          }}
-          disabled={feedsFetching || isTranscriptsInitialLoading || !feedId}
-          sx={{ minWidth: '100px', height: '40px', textTransform: 'none' }}
-        >
-          {isTranscriptsInitialLoading ? (
-            <CircularProgress size={24} color="inherit" />
-          ) : (
-            'Load transcripts'
-          )}
-        </Button>
-      </Box>
-
       <FeedHeader
+        feeds={feeds || []}
         searchedFeed={searchedFeed}
+        onSelectFeed={handleFeedSelect}
+        feedsLoading={feedsFetching}
         sourceUrl={searchedFeed?.sourceUrl}
         archiveUrl={searchedFeed?.archiveUrl}
         status={activeFeedData?.status ?? searchedFeed?.status}
@@ -829,42 +812,41 @@ export function TranscriptView({
           flexDirection: 'column',
         }}
       >
+        <TranscriptActionsBar
+          searchedTimestamp={searchedTimestamp}
+          hasNewerTranscripts={hasNewerTranscripts}
+          redactTranscripts={redactTranscripts}
+          setRedactTranscripts={setRedactTranscripts}
+          dateTime={searchedTimestamp}
+          setDateTime={handleFilterByDateTime}
+          onClickViewLatest={() => handleFilterByDateTime(null)}
+        />
         {transcripts.length > 0 ? (
-          <>
-            <TranscriptActionsBar
-              hasNewerTranscripts={hasNewerTranscripts}
-              redactTranscripts={redactTranscripts}
-              setRedactTranscripts={setRedactTranscripts}
-              dateTime={searchedTimestamp}
-              setDateTime={handleFilterByDateTime}
-              onClickViewLatest={() => handleFilterByDateTime(null)}
-            />
-            <TranscriptDisplay
-              ref={virtuosoRef}
-              transcripts={transcripts}
-              groupCounts={groupCounts}
-              groupTitles={groupTitles}
-              setIsViewAtTopOfTranscripts={setIsViewAtTopOfTranscripts}
-              hasNewerTranscripts={hasNewerTranscripts}
-              isFetchingNewerTranscripts={isFetchingNewerTranscripts}
-              fetchNewerTranscripts={fetchNewerTranscripts}
-              isTranscriptsFetching={isTranscriptsFetching}
-              isTranscriptsPolling={isTranscriptsPolling}
-              hasOlderTranscripts={hasOlderTranscripts}
-              isFetchingOlderTranscripts={isFetchingOlderTranscripts}
-              fetchOlderTranscripts={fetchOlderTranscripts}
-              transcriptsLastUpdated={transcriptsLastUpdated}
-              triggerSnackbar={triggerSnackbar}
-              ruleIdToNameMap={ruleIdToNameMap}
-              rulesLoading={rulesLoading}
-              onToggleAudio={toggleAudio}
-              isAudioPlaying={isAudioPlaying}
-              currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
-              highlightedTransmissionId={highlightedTransmissionId}
-              redactTranscripts={redactTranscripts}
-              onRowClick={handleRowClick}
-            />
-          </>
+          <TranscriptDisplay
+            ref={virtuosoRef}
+            transcripts={transcripts}
+            groupCounts={groupCounts}
+            groupTitles={groupTitles}
+            setIsViewAtTopOfTranscripts={setIsViewAtTopOfTranscripts}
+            hasNewerTranscripts={hasNewerTranscripts}
+            isFetchingNewerTranscripts={isFetchingNewerTranscripts}
+            fetchNewerTranscripts={fetchNewerTranscripts}
+            isTranscriptsFetching={isTranscriptsFetching}
+            isTranscriptsPolling={isTranscriptsPolling}
+            hasOlderTranscripts={hasOlderTranscripts}
+            isFetchingOlderTranscripts={isFetchingOlderTranscripts}
+            fetchOlderTranscripts={fetchOlderTranscripts}
+            transcriptsLastUpdated={transcriptsLastUpdated}
+            triggerSnackbar={triggerSnackbar}
+            ruleIdToNameMap={ruleIdToNameMap}
+            rulesLoading={rulesLoading}
+            onToggleAudio={toggleAudio}
+            isAudioPlaying={isAudioPlaying}
+            currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
+            highlightedTransmissionId={highlightedTransmissionId}
+            redactTranscripts={redactTranscripts}
+            onRowClick={handleRowClick}
+          />
         ) : feedsFetching || isTranscriptsInitialLoading ? (
           <Box
             sx={{
@@ -873,7 +855,7 @@ export function TranscriptView({
               mt: theme.spacing(2),
             }}
           >
-            <CircularProgress />
+            <CircularProgress data-testid="loading-spinner" />
           </Box>
         ) : transcriptsError ? (
           <Typography
