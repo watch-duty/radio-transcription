@@ -5,7 +5,7 @@ import collections
 import datetime
 import os
 import unittest
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.pipeline.ingestion.collectors.batch_outcome import BatchOutcome
@@ -344,6 +344,10 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
             == EVENT_TYPE_BATCH_UNPRODUCTIVE
         ]
 
+    @staticmethod
+    def _json_fields(record: logging.LogRecord) -> dict[str, Any]:
+        return cast("Any", record).json_fields
+
     def _collector_generator(self):
         return collector.fire_notifications_collector(
             self.feed,  # type: ignore
@@ -482,13 +486,12 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
             == EVENT_TYPE_BATCH_UNPRODUCTIVE
         ]
         self.assertEqual(len(emits), 1)
-        self.assertEqual(emits[0].json_fields["feed_id"], "feed-id")
-        self.assertEqual(
-            emits[0].json_fields["source_type"], self.feed["source_type"]
-        )
-        self.assertEqual(emits[0].json_fields["attempted"], 1)
-        self.assertEqual(emits[0].json_fields["produced"], 0)
-        self.assertEqual(emits[0].json_fields["reason"], "downloads_failing")
+        fields = self._json_fields(emits[0])
+        self.assertEqual(fields["feed_id"], "feed-id")
+        self.assertEqual(fields["source_type"], self.feed["source_type"])
+        self.assertEqual(fields["attempted"], 1)
+        self.assertEqual(fields["produced"], 0)
+        self.assertEqual(fields["reason"], "downloads_failing")
 
     @patch.object(collector, "_MAX_CONSECUTIVE_FAILURES", 3)
     @patch(
@@ -529,9 +532,10 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         emits = self._batch_unproductive_records(cm.records)
         self.assertEqual(len(emits), 3)
         for emit in emits:
-            self.assertEqual(emit.json_fields["reason"], "downloads_failing")
-            self.assertEqual(emit.json_fields["attempted"], 1)
-            self.assertEqual(emit.json_fields["produced"], 0)
+            fields = self._json_fields(emit)
+            self.assertEqual(fields["reason"], "downloads_failing")
+            self.assertEqual(fields["attempted"], 1)
+            self.assertEqual(fields["produced"], 0)
 
     @patch.object(collector, "_MAX_CONSECUTIVE_FAILURES", 3)
     @patch(
@@ -664,9 +668,10 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         emits = self._batch_unproductive_records(cm.records)
         self.assertEqual(len(emits), 4)
         for emit in emits:
-            self.assertEqual(emit.json_fields["reason"], "downloads_failing")
-            self.assertEqual(emit.json_fields["attempted"], 1)
-            self.assertEqual(emit.json_fields["produced"], 0)
+            fields = self._json_fields(emit)
+            self.assertEqual(fields["reason"], "downloads_failing")
+            self.assertEqual(fields["attempted"], 1)
+            self.assertEqual(fields["produced"], 0)
 
     @patch.object(collector, "_MAX_CONSECUTIVE_FAILURES", 3)
     @patch(
@@ -736,9 +741,10 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         emits = self._batch_unproductive_records(cm.records)
         self.assertEqual(len(emits), 4)
         for emit in emits:
-            self.assertEqual(emit.json_fields["reason"], "downloads_failing")
-            self.assertEqual(emit.json_fields["attempted"], 1)
-            self.assertEqual(emit.json_fields["produced"], 0)
+            fields = self._json_fields(emit)
+            self.assertEqual(fields["reason"], "downloads_failing")
+            self.assertEqual(fields["attempted"], 1)
+            self.assertEqual(fields["produced"], 0)
 
     @patch.object(collector, "_MAX_CONSECUTIVE_FAILURES", 3)
     @patch(
@@ -785,9 +791,10 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         emits = self._batch_unproductive_records(cm.records)
         self.assertEqual(len(emits), 2)
         for emit in emits:
-            self.assertEqual(emit.json_fields["reason"], "downloads_failing")
-            self.assertEqual(emit.json_fields["attempted"], 1)
-            self.assertEqual(emit.json_fields["produced"], 0)
+            fields = self._json_fields(emit)
+            self.assertEqual(fields["reason"], "downloads_failing")
+            self.assertEqual(fields["attempted"], 1)
+            self.assertEqual(fields["produced"], 0)
 
     @patch(
         "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
