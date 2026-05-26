@@ -4,7 +4,13 @@ import type { VirtuosoHandle } from 'react-virtuoso';
 
 import { Howl } from 'howler';
 
-import { Checkbox, FormControlLabel } from '@mui/material';
+import {
+  Checkbox,
+  FormControl,
+  FormControlLabel,
+  MenuItem,
+  Select,
+} from '@mui/material';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -50,6 +56,8 @@ export type ListTranscriptsData = {
   transcripts: Transcript[];
 } & ListTranscriptsPage;
 
+export type AlertFilter = 'all' | 'alerts';
+
 const DEFAULT_REFRESH_INTERVAL = 10000;
 const MAX_TRANSCRIPTS_POLLING_ITERATIONS = 10;
 const FEED_POLLING_INTERVAL_MS = 15000; // 15 seconds
@@ -83,6 +91,7 @@ export function TranscriptView({
   );
 
   const [redactTranscripts, setRedactTranscripts] = useState(false);
+  const [alertFilter, setAlertFilter] = useState<AlertFilter>('all');
 
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
@@ -252,7 +261,13 @@ export function TranscriptView({
     QueryKey,
     ListTranscriptsPage
   >({
-    queryKey: ['listTranscripts', token, searchedFeedId, searchedTimestamp],
+    queryKey: [
+      'listTranscripts',
+      token,
+      searchedFeedId,
+      searchedTimestamp,
+      alertFilter,
+    ],
     queryFn: async ({ pageParam }) => {
       const { nextToken, order } = pageParam;
 
@@ -270,7 +285,8 @@ export function TranscriptView({
         nextToken,
         /*startTime=*/ order === 'asc' ? originalTimestampMs : undefined,
         /*endTime=*/ order === 'desc' ? originalTimestampMs : undefined,
-        order
+        order,
+        alertFilter === 'alerts' ? true : undefined
       );
 
       // The API returns transcripts in ascending order, meaning that the first transcript in
@@ -430,7 +446,8 @@ export function TranscriptView({
           // Query for transcripts with a start time greater than our current newest
           /*startTime=*/ new Date(newestTimestamp).getTime(),
           /*endTime=*/ undefined,
-          /*order=*/ 'asc'
+          /*order=*/ 'asc',
+          alertFilter === 'alerts' ? true : undefined
         );
 
         if (response.transcripts && response.transcripts.length > 0) {
@@ -446,7 +463,7 @@ export function TranscriptView({
 
     // Reverse the array so the newest transcripts are at index 0 for prepending
     return allNewTranscripts.reverse();
-  }, [newestTimestamp, searchedFeedId, token]);
+  }, [newestTimestamp, searchedFeedId, token, alertFilter]);
 
   /**
    * Merges newly polled transcripts into the top of the infinite query cache.
@@ -457,7 +474,13 @@ export function TranscriptView({
       if (!token) return [];
       let updatedTranscripts: Transcript[] = [];
       queryClient.setQueryData<InfiniteData<ListTranscriptsData>>(
-        ['listTranscripts', token, searchedFeedId, searchedTimestamp],
+        [
+          'listTranscripts',
+          token,
+          searchedFeedId,
+          searchedTimestamp,
+          alertFilter,
+        ],
         (oldData) => {
           if (!oldData) return oldData;
 
@@ -486,7 +509,7 @@ export function TranscriptView({
       );
       return updatedTranscripts;
     },
-    [token, searchedFeedId, searchedTimestamp, queryClient]
+    [token, searchedFeedId, searchedTimestamp, alertFilter, queryClient]
   );
 
   /**
@@ -647,6 +670,19 @@ export function TranscriptView({
     setHighlightedTransmissionId(transmissionId);
   };
 
+  const handleFilterByDateTime = (date: Date | null) => {
+    setTimestamp(date);
+    setSearchedTimestamp(date);
+    setSearchParams((prev) => {
+      if (date) {
+        prev.set('timestamp', date.getTime().toString());
+      } else {
+        prev.delete('timestamp');
+      }
+      return prev;
+    });
+  };
+
   if (!token) {
     return null;
   }
@@ -678,7 +714,7 @@ export function TranscriptView({
         />
 
         <DateTimePicker
-          label="Timestamp (optional)"
+          label="Date/time"
           dateTime={timestamp}
           setDateTime={setTimestamp}
           width="15%"
@@ -706,6 +742,7 @@ export function TranscriptView({
                   token,
                   searchedFeedId,
                   searchedTimestamp,
+                  alertFilter,
                 ],
               });
             }
@@ -736,10 +773,32 @@ export function TranscriptView({
         sx={{
           display: 'flex',
           justifyContent: 'flex-end',
+          alignItems: 'center',
+          gap: 2,
           // This space allows room for the alert icon which hovers above the AudioDisplay.
           mb: 2.5,
         }}
       >
+        <FormControl
+          size="small"
+          sx={{ minWidth: 150 }}
+          disabled={!searchedFeed}
+        >
+          <Select
+            value={alertFilter}
+            onChange={(e) => {
+              const newFilter = e.target.value as AlertFilter;
+              setAlertFilter(newFilter);
+            }}
+            displayEmpty
+            inputProps={{ 'aria-label': 'Transcript Filter' }}
+            sx={{ height: 35, fontSize: '0.875rem' }}
+          >
+            <MenuItem value="all">All transcripts</MenuItem>
+            <MenuItem value="alerts">Alerts only</MenuItem>
+          </Select>
+        </FormControl>
+
         <FormControlLabel
           control={
             <Checkbox
@@ -773,8 +832,12 @@ export function TranscriptView({
         {transcripts.length > 0 ? (
           <>
             <TranscriptActionsBar
+              hasNewerTranscripts={hasNewerTranscripts}
               redactTranscripts={redactTranscripts}
               setRedactTranscripts={setRedactTranscripts}
+              dateTime={searchedTimestamp}
+              setDateTime={handleFilterByDateTime}
+              onClickViewLatest={() => handleFilterByDateTime(null)}
             />
             <TranscriptDisplay
               ref={virtuosoRef}

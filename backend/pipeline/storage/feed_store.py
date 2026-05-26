@@ -66,6 +66,7 @@ class SourceType(enum.StrEnum):
     # Echo uses a separate cloud function for ingestion instead of VMs.
     ECHO = "echo"
     OPENMHZ = "openmhz"
+    FIRE_NOTIFICATIONS = "fire_notifications"
 
 
 class FeedStatus(enum.StrEnum):
@@ -633,6 +634,15 @@ class FeedStore:
                 },
             )
             raise FeedAlreadyExistsError(source_type_str, source_feed_id) from e
+        except asyncpg.exceptions.ForeignKeyViolationError as e:
+            logger.warning(
+                "Invalid source type provided",
+                extra={
+                    "source_type": source_type_str,
+                },
+            )
+            msg = f"Invalid source type '{source_type_str}'"
+            raise ValueError(msg) from e
 
         if row is None:
             msg = f"Failed to create feed {name}"

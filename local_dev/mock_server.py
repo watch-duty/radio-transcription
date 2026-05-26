@@ -40,7 +40,39 @@ class RequestHandler(BaseHTTPRequestHandler):
         )
 
     def do_GET(self) -> None:
-        """Returns the list of received requests."""
+        """Returns the list of received requests or mocks FN API."""
+        if self.path.startswith("/api/audio/"):
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+
+            # Generate a consistent mock file.
+            mock_uuid = "mock-uuid-1234"
+            mock_name = "MOCK-DISP 2026-05-20 12-00-00.mp3"
+
+            payload = {
+                "files": [
+                    {
+                        "type": "file",
+                        "name": mock_name,
+                        "uuid": mock_uuid,
+                        "size": 10240,
+                    }
+                ],
+                "directories": [],
+            }
+            self.wfile.write(json.dumps(payload).encode("utf-8"))
+            return
+
+        if self.path.startswith("/mock-s3/") and self.path.endswith(".mp3"):
+            self.send_response(200)
+            self.send_header("Content-type", "audio/mpeg")
+            self.end_headers()
+            # Send dummy bytes for the audio file
+            self.wfile.write(b"\0" * 1024)
+            return
+
+        # Default GET behavior for tracking
         self.send_response(200)
         self.send_header("Content-type", "application/json")
         self.end_headers()
