@@ -20,3 +20,11 @@ class FeedAlreadyExistsError(Exception):
         super().__init__(
             f"Feed with source type '{source_type}' and source feed ID '{source_feed_id}' already exists"
         )
+
+
+class FeedNameAlreadyExistsError(Exception):
+    """Raised when a feed with the same name already exists."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        super().__init__(f"Feed with name '{name}' already exists")

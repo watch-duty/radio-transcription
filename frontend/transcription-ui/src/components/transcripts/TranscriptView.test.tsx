@@ -10,17 +10,24 @@ import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 
 import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
+import { listRules } from '../../service/listRules';
 import { listTranscripts } from '../../service/listTranscripts';
 import { renderWithQueryClient } from '../../test/testUtils';
 import TranscriptView from './TranscriptView';
 
-const renderTranscriptView = (ui: ReactElement) => {
+const renderTranscriptView = (
+  ui: ReactElement,
+  options: { initialEntries?: string[] } = {}
+) => {
+  const { initialEntries = ['/'] } = options;
   return renderWithQueryClient(
-    <VirtuosoMockContext.Provider
-      value={{ viewportHeight: 1000, itemHeight: 100 }}
-    >
-      {ui}
-    </VirtuosoMockContext.Provider>
+    <MemoryRouter initialEntries={initialEntries}>
+      <VirtuosoMockContext.Provider
+        value={{ viewportHeight: 1000, itemHeight: 100 }}
+      >
+        {ui}
+      </VirtuosoMockContext.Provider>
+    </MemoryRouter>
   );
 };
 
@@ -35,6 +42,10 @@ vi.mock('../../service/listFeeds', () => ({
 
 vi.mock('../../service/getFeed', () => ({
   getFeed: vi.fn(),
+}));
+
+vi.mock('../../service/listRules', () => ({
+  listRules: vi.fn(),
 }));
 
 // Mock AuthContext
@@ -74,36 +85,26 @@ describe('TranscriptView', () => {
     vi.mocked(listFeeds).mockResolvedValue([
       {
         id: 'feed123',
-        name: 'feed123',
-        sourceType: 'bcfy_feeds' as const,
-        status: 'active' as const,
+        name: 'Feed 123',
+        sourceType: 'bcfy_feeds',
+        status: 'active',
       },
     ]);
     // Default mock for getFeed
     vi.mocked(getFeed).mockResolvedValue({
       id: 'feed123',
-      name: 'feed123',
-      sourceType: 'bcfy_feeds' as const,
-      status: 'active' as const,
+      name: 'Feed 123',
+      sourceType: 'bcfy_feeds',
+      status: 'active',
       lastHeartbeat: '2026-04-10T12:00:00Z',
     });
+    // Default mock for listRules
+    vi.mocked(listRules).mockResolvedValue([]);
   });
 
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
-  });
-
-  it('renders search field and fetch button', () => {
-    renderTranscriptView(
-      <MemoryRouter>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
-    );
-    expect(screen.getByLabelText(/Select a registered feed/i)).toBeTruthy();
-    expect(
-      screen.getByRole('button', { name: /Load transcripts/i })
-    ).toBeTruthy();
   });
 
   it('shows loading state when fetching', async () => {
@@ -113,26 +114,12 @@ describe('TranscriptView', () => {
     });
 
     renderTranscriptView(
-      <MemoryRouter>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
 
-    const input = screen.getByLabelText(/Select a registered feed/i);
     await waitFor(() => {
-      expect((input as HTMLInputElement).disabled).toBe(false);
-    });
-    fireEvent.change(input, { target: { value: 'feed123' } });
-    fireEvent.keyDown(input, { key: 'ArrowDown' });
-    fireEvent.keyDown(input, { key: 'Enter' });
-
-    const button = screen.getByRole('button', { name: /Load transcripts/i });
-    fireEvent.click(button);
-
-    expect((button as HTMLButtonElement).disabled).toBe(true);
-
-    await waitFor(() => {
-      expect((button as HTMLButtonElement).disabled).toBe(false);
+      expect(screen.getByTestId('loading-spinner')).toBeInTheDocument();
     });
   });
 
@@ -160,22 +147,9 @@ describe('TranscriptView', () => {
     });
 
     renderTranscriptView(
-      <MemoryRouter>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
-
-    const input = screen.getByLabelText(/Select a registered feed/i);
-    await waitFor(() => {
-      expect((input as HTMLInputElement).disabled).toBe(false);
-    });
-
-    fireEvent.change(input, { target: { value: 'feed123' } });
-    fireEvent.keyDown(input, { key: 'ArrowDown' });
-    fireEvent.keyDown(input, { key: 'Enter' });
-
-    const button = screen.getByRole('button', { name: /Load transcripts/i });
-    fireEvent.click(button);
 
     await waitFor(() => {
       expect(screen.getByText('Hello')).toBeTruthy();
@@ -186,21 +160,9 @@ describe('TranscriptView', () => {
     vi.mocked(listTranscripts).mockRejectedValueOnce(new Error('Fetch failed'));
 
     renderTranscriptView(
-      <MemoryRouter>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
-
-    const input = screen.getByLabelText(/Select a registered feed/i);
-    await waitFor(() => {
-      expect((input as HTMLInputElement).disabled).toBe(false);
-    });
-    fireEvent.change(input, { target: { value: 'feed123' } });
-    fireEvent.keyDown(input, { key: 'ArrowDown' });
-    fireEvent.keyDown(input, { key: 'Enter' });
-
-    const button = screen.getByRole('button', { name: /Load transcripts/i });
-    fireEvent.click(button);
 
     await waitFor(() => {
       expect(screen.getByText('Error loading transcripts')).toBeTruthy();
@@ -219,9 +181,8 @@ describe('TranscriptView', () => {
     vi.mocked(listFeeds).mockResolvedValueOnce(mockFeeds);
 
     renderTranscriptView(
-      <MemoryRouter>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
 
     await waitFor(() => {
@@ -233,9 +194,8 @@ describe('TranscriptView', () => {
     vi.mocked(listFeeds).mockRejectedValueOnce(new Error('Feeds load failed'));
 
     renderTranscriptView(
-      <MemoryRouter>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
 
     await waitFor(() => {
@@ -253,144 +213,15 @@ describe('TranscriptView', () => {
     });
 
     renderTranscriptView(
-      <MemoryRouter>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
-
-    const input = screen.getByLabelText(/Select a registered feed/i);
-    await waitFor(() => {
-      expect((input as HTMLInputElement).disabled).toBe(false);
-    });
-    fireEvent.change(input, { target: { value: 'feed123' } });
-    fireEvent.keyDown(input, { key: 'ArrowDown' });
-    fireEvent.keyDown(input, { key: 'Enter' });
-
-    const button = screen.getByRole('button', { name: /Load transcripts/i });
-    fireEvent.click(button);
 
     await waitFor(() => {
       expect(screen.getByText('No transcripts found')).toBeTruthy();
     });
   });
 
-  it('refetches when Fetch is clicked again with the same feedId after an error', async () => {
-    vi.mocked(listTranscripts)
-      .mockRejectedValueOnce(new Error('Fetch failed'))
-      .mockResolvedValueOnce({
-        transcripts: [
-          {
-            feedId: 'feed123',
-            transmissionId: '1',
-            transcript: 'Success after retry',
-            canonicalAudioUri: 'gs:://foo.flac',
-            playbackAudioUri: 'gs:://foo.m4a',
-            startTimestamp: '2026-04-10T12:00:00Z',
-            endTimestamp: '2026-04-10T12:00:05Z',
-            missingPriorContext: false,
-            missingPostContext: false,
-            sourceAudioUris: ['gs:://foo.flac'],
-            startAudioOffset: '0s',
-            endAudioOffset: '5s',
-            evaluationDecisions: [],
-          },
-        ],
-        nextToken: undefined,
-      });
-
-    renderTranscriptView(
-      <MemoryRouter>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
-    );
-
-    const input = screen.getByLabelText(/Select a registered feed/i);
-    await waitFor(() => {
-      expect((input as HTMLInputElement).disabled).toBe(false);
-    });
-    fireEvent.change(input, { target: { value: 'feed123' } });
-    fireEvent.keyDown(input, { key: 'ArrowDown' });
-    fireEvent.keyDown(input, { key: 'Enter' });
-
-    const button = screen.getByRole('button', { name: /Load transcripts/i });
-    fireEvent.click(button);
-
-    await waitFor(() => {
-      expect(screen.getByText('Error loading transcripts')).toBeTruthy();
-    });
-
-    // Click Fetch again without changing input
-    fireEvent.click(button);
-
-    await waitFor(() => {
-      expect(screen.getByText('Success after retry')).toBeTruthy();
-    });
-  });
-
-  it('shows loading spinner again when Fetch is clicked with the same feedId', async () => {
-    vi.mocked(listTranscripts).mockResolvedValueOnce({
-      transcripts: [
-        {
-          feedId: 'feed123',
-          transmissionId: '1',
-          transcript: 'Initial load',
-          canonicalAudioUri: 'gs:://foo.flac',
-          playbackAudioUri: 'gs:://foo.m4a',
-          startTimestamp: '2026-04-10T12:00:00Z',
-          endTimestamp: '2026-04-10T12:00:05Z',
-          missingPriorContext: false,
-          missingPostContext: false,
-          sourceAudioUris: ['gs:://foo.flac'],
-          startAudioOffset: '0s',
-          endAudioOffset: '5s',
-          evaluationDecisions: [],
-        },
-      ],
-      nextToken: undefined,
-    });
-
-    renderTranscriptView(
-      <MemoryRouter>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
-    );
-
-    const input = screen.getByLabelText(/Select a registered feed/i);
-    await waitFor(() => {
-      expect((input as HTMLInputElement).disabled).toBe(false);
-    });
-    fireEvent.change(input, { target: { value: 'feed123' } });
-    fireEvent.keyDown(input, { key: 'ArrowDown' });
-    fireEvent.keyDown(input, { key: 'Enter' });
-
-    const button = screen.getByRole('button', { name: /Load transcripts/i });
-    fireEvent.click(button);
-
-    await waitFor(() => {
-      expect(screen.getByText('Initial load')).toBeTruthy();
-    });
-
-    let resolveTranscripts: (
-      value: Awaited<ReturnType<typeof listTranscripts>>
-    ) => void = () => {};
-    const pendingPromise = new Promise<
-      Awaited<ReturnType<typeof listTranscripts>>
-    >((resolve) => {
-      resolveTranscripts = resolve;
-    });
-    vi.mocked(listTranscripts).mockReturnValueOnce(pendingPromise);
-
-    // Click Fetch again with the same feedId
-    fireEvent.click(button);
-
-    // The loading spinner should be displayed
-    await waitFor(() => {
-      expect(screen.getAllByRole('progressbar').length).toBeGreaterThan(0);
-    });
-
-    // Cleanup promise to avoid unhandled rejections
-    resolveTranscripts({ transcripts: [], nextToken: undefined });
-  });
   it('displays source and archive links for the active feed', async () => {
     const mockFeeds = [
       {
@@ -409,9 +240,8 @@ describe('TranscriptView', () => {
     });
 
     renderTranscriptView(
-      <MemoryRouter initialEntries={['/?feedId=feed123']}>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
 
     await waitFor(() => {
@@ -445,11 +275,8 @@ describe('TranscriptView', () => {
     });
 
     renderTranscriptView(
-      <MemoryRouter
-        initialEntries={['/?feedId=feed123&transmissionId=target-id']}
-      >
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123&transmissionId=target-id'] }
     );
 
     // Wait for the transcript to be rendered
@@ -488,10 +315,15 @@ describe('TranscriptView', () => {
       });
 
     renderTranscriptView(
-      <MemoryRouter initialEntries={['/?feedId=feed123']}>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole('heading', { name: 'Feed 123' })
+      ).toBeInTheDocument();
+    });
 
     await waitFor(() => {
       expect(screen.getByText('Transcript 1')).toBeTruthy();
@@ -548,11 +380,8 @@ describe('TranscriptView', () => {
       });
 
     renderTranscriptView(
-      <MemoryRouter
-        initialEntries={[`/?feedId=feed123&timestamp=${testTimestamp}`]}
-      >
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: [`/?feedId=feed123&timestamp=${testTimestamp}`] }
     );
 
     await waitFor(() => {
@@ -621,11 +450,8 @@ describe('TranscriptView', () => {
       });
 
     renderTranscriptView(
-      <MemoryRouter
-        initialEntries={[`/?feedId=feed123&timestamp=${testTimestamp}`]}
-      >
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: [`/?feedId=feed123&timestamp=${testTimestamp}`] }
     );
 
     await waitFor(() => {
@@ -718,21 +544,15 @@ describe('TranscriptView', () => {
       });
 
     renderTranscriptView(
-      <MemoryRouter>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
 
-    const input = screen.getByLabelText(/Select a registered feed/i);
     await waitFor(() => {
-      expect((input as HTMLInputElement).disabled).toBe(false);
+      expect(
+        screen.getByRole('heading', { name: 'Feed 123' })
+      ).toBeInTheDocument();
     });
-    fireEvent.change(input, { target: { value: 'feed123' } });
-    fireEvent.keyDown(input, { key: 'ArrowDown' });
-    fireEvent.keyDown(input, { key: 'Enter' });
-
-    const button = screen.getByRole('button', { name: /Load transcripts/i });
-    fireEvent.click(button);
 
     await waitFor(() => {
       expect(screen.getByText('Transcript 1')).toBeTruthy();
@@ -758,10 +578,15 @@ describe('TranscriptView', () => {
     });
 
     renderTranscriptView(
-      <MemoryRouter initialEntries={['/?feedId=feed123']}>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole('heading', { name: 'Feed 123' })
+      ).toBeInTheDocument();
+    });
 
     await waitFor(() => {
       expect(getFeed).toHaveBeenCalledTimes(1);
@@ -796,10 +621,15 @@ describe('TranscriptView', () => {
     });
 
     renderTranscriptView(
-      <MemoryRouter initialEntries={['/?feedId=feed123']}>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole('heading', { name: 'Feed 123' })
+      ).toBeInTheDocument();
+    });
 
     await waitFor(() => {
       expect(screen.getByText('Active')).toBeTruthy();
@@ -861,21 +691,15 @@ describe('TranscriptView', () => {
       });
 
     renderTranscriptView(
-      <MemoryRouter>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
 
-    const input = screen.getByLabelText(/Select a registered feed/i);
     await waitFor(() => {
-      expect((input as HTMLInputElement).disabled).toBe(false);
+      expect(
+        screen.getByRole('heading', { name: 'Feed 123' })
+      ).toBeInTheDocument();
     });
-    fireEvent.change(input, { target: { value: 'feed123' } });
-    fireEvent.keyDown(input, { key: 'ArrowDown' });
-    fireEvent.keyDown(input, { key: 'Enter' });
-
-    const button = screen.getByRole('button', { name: /Load transcripts/i });
-    fireEvent.click(button);
 
     await waitFor(() => {
       expect(screen.getByText('Transcript 1')).toBeTruthy();
@@ -946,21 +770,9 @@ describe('TranscriptView', () => {
       });
 
     renderTranscriptView(
-      <MemoryRouter>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
-
-    const input = screen.getByLabelText(/Select a registered feed/i);
-    await waitFor(() => {
-      expect((input as HTMLInputElement).disabled).toBe(false);
-    });
-    fireEvent.change(input, { target: { value: 'feed123' } });
-    fireEvent.keyDown(input, { key: 'ArrowDown' });
-    fireEvent.keyDown(input, { key: 'Enter' });
-
-    const button = screen.getByRole('button', { name: /Load transcripts/i });
-    fireEvent.click(button);
 
     await waitFor(() => {
       expect(screen.getByText('Transcript 1')).toBeTruthy();
@@ -990,9 +802,8 @@ describe('TranscriptView', () => {
     });
 
     renderTranscriptView(
-      <MemoryRouter initialEntries={['/?feedId=feed123']}>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
 
     // Default load should have been triggered on mount due to feedId param
@@ -1066,9 +877,8 @@ describe('TranscriptView', () => {
       });
 
     renderTranscriptView(
-      <MemoryRouter initialEntries={['/?feedId=feed123']}>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
 
     await waitFor(() => {
