@@ -1800,6 +1800,84 @@ class TestBcfyCallsCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rec.json_fields["produced"], 0)
         self.assertEqual(rec.json_fields["reason"], "downloads_failing")
 
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._create_chunk_from_call",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_repeated_all_failed_pages_remain_evidence_only(
+        self,
+        mock_sleep: AsyncMock,
+        mock_create: AsyncMock,
+        mock_fetch: AsyncMock,
+        mock_jwt: MagicMock,
+    ) -> None:
+        mock_jwt.return_value = "tok"
+        mock_create.return_value = None
+        shutdown = asyncio.Event()
+        threshold = bcfy_calls_collector._MAX_CONSECUTIVE_FAILURES
+        failed_pages = threshold + 1
+        fetch_calls = 0
+
+        async def _fetch_side_effect(*args, **kwargs):
+            nonlocal fetch_calls
+            fetch_calls += 1
+            if fetch_calls <= failed_pages:
+                call_time = 1_700_000_000 + fetch_calls
+                return {
+                    "calls": [
+                        {
+                            "url": f"https://x/{fetch_calls}.mp3",
+                            "start_ts": call_time,
+                            "end_ts": call_time + 10,
+                        }
+                    ],
+                    "lastPos": call_time + 10,
+                }
+            shutdown.set()
+            return {"calls": []}
+
+        mock_fetch.side_effect = _fetch_side_effect
+        mock_sleep.return_value = False
+
+        with self.assertLogs(
+            "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector",
+            level="WARNING",
+        ) as cm:
+            try:
+                chunks = [
+                    c
+                    async for c in bcfy_calls_collector.capture_bcfy_calls(
+                        self.leased_feed,
+                        shutdown,
+                        "https://api.bcfy/",
+                        _default_resources(),
+                    )
+                ]
+            except RuntimeError as exc:
+                self.fail(f"unexpected RuntimeError escaped: {exc}")
+
+        self.assertEqual(chunks, [])
+        self.assertEqual(mock_fetch.call_count, failed_pages + 1)
+        self.assertEqual(mock_create.call_count, failed_pages)
+        emits = self._batch_unproductive_records(cm.records)
+        self.assertEqual(len(emits), failed_pages)
+        for rec in emits:
+            fields = cast("Any", rec).json_fields
+            self.assertEqual(fields["attempted"], 1)
+            self.assertEqual(fields["produced"], 0)
+            self.assertEqual(fields["reason"], "downloads_failing")
+
 
 class TestBcfyCallsHttp01(unittest.IsolatedAsyncioTestCase):
     """HTTP-01: capture_bcfy_calls must NOT construct aiohttp.ClientSession.
