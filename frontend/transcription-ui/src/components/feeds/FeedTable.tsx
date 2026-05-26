@@ -43,16 +43,19 @@ const VirtuosoScroller = React.forwardRef<
   HTMLDivElement,
   React.HTMLAttributes<HTMLDivElement>
 >((props, ref) => <TableContainer {...props} ref={ref} />);
+VirtuosoScroller.displayName = 'VirtuosoScroller';
 
 const VirtuosoTableHead = React.forwardRef<
   HTMLTableSectionElement,
   React.HTMLAttributes<HTMLTableSectionElement>
 >((props, ref) => <TableHead {...props} ref={ref} />);
+VirtuosoTableHead.displayName = 'VirtuosoTableHead';
 
 const VirtuosoTableBody = React.forwardRef<
   HTMLTableSectionElement,
   React.HTMLAttributes<HTMLTableSectionElement>
 >((props, ref) => <TableBody {...props} ref={ref} />);
+VirtuosoTableBody.displayName = 'VirtuosoTableBody';
 
 const VIRTUOSO_COMPONENTS = {
   Scroller: VirtuosoScroller,
