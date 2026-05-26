@@ -4,15 +4,10 @@ import type { VirtuosoHandle } from 'react-virtuoso';
 
 import { Howl } from 'howler';
 
-import {
-  Checkbox,
-  FormControl,
-  FormControlLabel,
-  MenuItem,
-  Select,
-} from '@mui/material';
 import Box from '@mui/material/Box';
+import Checkbox from '@mui/material/Checkbox';
 import CircularProgress from '@mui/material/CircularProgress';
+import FormControlLabel from '@mui/material/FormControlLabel';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import {
@@ -762,26 +757,6 @@ export function TranscriptView({
           mb: 2.5,
         }}
       >
-        <FormControl
-          size="small"
-          sx={{ minWidth: 150 }}
-          disabled={!searchedFeed}
-        >
-          <Select
-            value={alertFilter}
-            onChange={(e) => {
-              const newFilter = e.target.value as AlertFilter;
-              setAlertFilter(newFilter);
-            }}
-            displayEmpty
-            inputProps={{ 'aria-label': 'Transcript Filter' }}
-            sx={{ height: 35, fontSize: '0.875rem' }}
-          >
-            <MenuItem value="all">All transcripts</MenuItem>
-            <MenuItem value="alerts">Alerts only</MenuItem>
-          </Select>
-        </FormControl>
-
         <FormControlLabel
           control={
             <Checkbox
@@ -819,6 +794,8 @@ export function TranscriptView({
           setRedactTranscripts={setRedactTranscripts}
           dateTime={searchedTimestamp}
           setDateTime={handleFilterByDateTime}
+          alertFilter={alertFilter}
+          setAlertFilter={setAlertFilter}
           onClickViewLatest={() => handleFilterByDateTime(null)}
         />
         {transcripts.length > 0 ? (
