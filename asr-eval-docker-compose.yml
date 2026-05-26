@@ -26,11 +26,11 @@ services:
               count: all
               capabilities: [gpu]
 
-  # Lightweight container for simply running Jupyter notebooks (without NeMO) - CPU version
+  # Lightweight ASR experiment runtime (without NeMO) - CPU version
   notebooks-cpu: &notebooks-base
     build:
-      context: ./model/notebook_docker
-      dockerfile: Dockerfile
+      context: ./model
+      dockerfile: notebook_docker/Dockerfile
     network_mode: "host"
     command: ["jupyter", "notebook", "--ip=0.0.0.0", "--allow-root", "--NotebookApp.token=''", "--NotebookApp.password=''"]
     volumes:
@@ -41,7 +41,7 @@ services:
     environment:
       - GOOGLE_APPLICATION_CREDENTIALS=/root/.config/gcloud/application_default_credentials.json
 
-  # Lightweight container with GPU support
+  # Lightweight ASR experiment runtime with GPU support
   notebooks:
     <<: *notebooks-base
     deploy:
