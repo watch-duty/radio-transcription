@@ -41,7 +41,6 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         """Returns the list of received requests or mocks FN API."""
-
         # Default GET behavior for tracking
         self.send_response(200)
         self.send_header("Content-type", "application/json")
