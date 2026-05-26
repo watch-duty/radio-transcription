@@ -1,16 +1,90 @@
 """Manifest I/O and prediction-merge helpers for the transcription eval layer.
 
 Exports:
+  CanonicalRow                  — frozen dataclass, the single per-segment contract
+  DatasetAdapter                — structural Protocol any adapter must satisfy
+  rows_from_manifest            — convert raw manifest dicts to typed CanonicalRow instances
   load_manifest                 — load a JSON array or JSONL manifest from local disk
   merge_predictions_to_manifest — offset-tolerant merge of model predictions onto GT rows
 """
 
+from __future__ import annotations
+
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator, Optional, Protocol
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class CanonicalRow:
+    """Canonical per-segment row — the single contract between dataset adapters and pipeline stages.
+
+    This is a fan-in dependency: sft.build_example, the Phase 3 gcs_manifest /
+    hf_dataset adapters, and the test suite all consume this exact shape.
+    """
+
+    audio_filepath: str  # gs:// URI to the segment audio
+    example_id: str
+    segment_id: str
+    offset: float
+    duration: float
+    text: str
+
+
+class DatasetAdapter(Protocol):
+    """Structural contract every dataset adapter satisfies: it yields CanonicalRows."""
+
+    def iter_rows(self) -> Iterator[CanonicalRow]: ...
+
+
+def rows_from_manifest(manifest: list[dict[str, Any]]) -> list[CanonicalRow]:
+    """Convert raw manifest dicts to typed CanonicalRow instances.
+
+    Derives fields from the NeMo-style manifest schema (audio_filepath, text,
+    offset, duration). example_id and segment_id fall back to stable derived
+    values when absent from the manifest dict.
+
+    Args:
+        manifest: List of raw manifest dicts (as returned by load_manifest).
+
+    Returns:
+        List of CanonicalRow instances. Rows missing audio_filepath or text are
+        skipped with a warning.
+    """
+    rows: list[CanonicalRow] = []
+    for i, entry in enumerate(manifest):
+        audio_filepath: Optional[str] = entry.get("audio_filepath")
+        text: Optional[str] = entry.get("text")
+        if not audio_filepath:
+            logger.warning(f"Skipping manifest row {i}: missing audio_filepath")
+            continue
+        if not text:
+            logger.warning(
+                f"Skipping manifest row {i}: missing text ({audio_filepath!r})"
+            )
+            continue
+        offset: float = float(entry.get("offset") or 0.0)
+        duration: float = float(entry.get("duration") or 0.0)
+        # Derive stable example_id / segment_id from the manifest or fallback to basename
+        example_id: str = str(
+            entry.get("example_id") or Path(audio_filepath).stem
+        )
+        segment_id: str = str(entry.get("segment_id", "001"))
+        rows.append(
+            CanonicalRow(
+                audio_filepath=audio_filepath,
+                example_id=example_id,
+                segment_id=segment_id,
+                offset=offset,
+                duration=duration,
+                text=text,
+            )
+        )
+    return rows
 
 
 def load_manifest(path: str) -> list[dict[str, Any]]:
