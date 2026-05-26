@@ -366,20 +366,11 @@ export function FeedConfigurationView({
       return;
     }
 
-    const finalTags = [...tags];
-    if (newTagKey.trim() && newTagValue.trim()) {
-      const key = newTagKey.trim();
-      const value = newTagValue.trim();
-      if (!finalTags.some((t) => t.key === key)) {
-        finalTags.push({ key, value });
-      }
-    }
-
     if (editingFeed) {
       const payload: FeedUpdate = {
         name: name.trim(),
         externalId: externalId.trim(),
-        tags: finalTags.length > 0 ? finalTags : undefined,
+        tags: tags.length > 0 ? tags : undefined,
       };
       updateMutation.mutate({
         feedId: editingFeed.id,
@@ -391,7 +382,7 @@ export function FeedConfigurationView({
         sourceType,
         sourceFeedId: sourceFeedId.trim(),
         externalId: externalId.trim(),
-        tags: finalTags.length > 0 ? finalTags : undefined,
+        tags: tags.length > 0 ? tags : undefined,
       };
       createMutation.mutate(payload);
     }
@@ -623,7 +614,7 @@ export function FeedConfigurationView({
                     <Stack
                       direction="row"
                       spacing={1.5}
-                      sx={{ mb: 2, alignItems: 'flex-start' }}
+                      sx={{ mb: 2, alignItems: 'center' }}
                     >
                       <TextField
                         size="small"
@@ -649,14 +640,13 @@ export function FeedConfigurationView({
                         variant="outlined"
                         onClick={handleAddTag}
                         disabled={isSubmitting}
+                        startIcon={<AddIcon fontSize="small" />}
                         sx={{
-                          height: 40,
-                          minWidth: 48,
-                          borderRadius: 2,
+                          textTransform: 'none',
                         }}
                         aria-label="Add Tag"
                       >
-                        <AddIcon fontSize="small" />
+                        Add
                       </Button>
                     </Stack>
 

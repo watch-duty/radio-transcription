@@ -375,4 +375,69 @@ describe('FeedConfigurationView', () => {
     expect(screen.getByText('Sonoma Sheriff dispatch')).toBeInTheDocument();
     expect(screen.queryByText('Marin Fire Dispatch')).not.toBeInTheDocument();
   });
+
+  it('does not automatically add the tag if Tag Key and Tag Value are filled in but the Add button is not clicked', async () => {
+    const mockCreatedFeed = {
+      id: 'feed-99',
+      name: 'Napa Ambulance Dispatch',
+      sourceType: 'bcfy_calls' as const,
+      sourceFeedId: '9988-77',
+      externalId: 'ca-nap-amb',
+      status: 'active' as const,
+    };
+    vi.mocked(createFeed).mockResolvedValue(mockCreatedFeed);
+
+    renderView();
+
+    // Input form details
+    fireEvent.change(screen.getByLabelText('Feed Display Name'), {
+      target: { value: 'Napa Ambulance Dispatch' },
+    });
+
+    // Select Source Type dropdown
+    const selectDropdown = screen.getByRole('combobox', {
+      name: /Source Type/i,
+    });
+    fireEvent.mouseDown(selectDropdown);
+    const listbox = await screen.findByRole('listbox');
+    const bcfyCallsOption =
+      await within(listbox).findByText('Broadcastify Calls');
+    fireEvent.click(bcfyCallsOption);
+
+    fireEvent.change(screen.getByLabelText('Source Feed ID'), {
+      target: { value: '9988-77' },
+    });
+    fireEvent.change(screen.getByLabelText('External ID'), {
+      target: { value: 'ca-nap-amb' },
+    });
+
+    // Fill in the tag inputs, but DO NOT click the plus button!
+    fireEvent.change(screen.getByLabelText('Tag Key'), {
+      target: { value: 'county' },
+    });
+    fireEvent.change(screen.getByLabelText('Tag Value'), {
+      target: { value: 'Napa' },
+    });
+
+    // Submit
+    const submitBtn = screen.getByRole('button', {
+      name: /Register feed/i,
+    });
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(createFeed).toHaveBeenCalledTimes(1);
+      // Expect tags to be undefined because they were not explicitly added using the 'Add' button
+      expect(createFeed).toHaveBeenCalledWith(
+        {
+          name: 'Napa Ambulance Dispatch',
+          sourceType: 'bcfy_calls',
+          sourceFeedId: '9988-77',
+          externalId: 'ca-nap-amb',
+          tags: undefined,
+        },
+        'fake-jwt-token-xyz'
+      );
+    });
+  });
 });
