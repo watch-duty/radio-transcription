@@ -134,6 +134,53 @@ def _render_wer_md(metrics: dict[str, Any]) -> str:
                 f"- Empty/Hallucinated rate: {metrics.get(f'{prefix}_empty_rate', 0.0):.2f}%",
             ]
 
+    base_keywords = metrics.get("base_keyword_metrics") or []
+    tuned_keywords = metrics.get("tuned_keyword_metrics") or []
+    if base_keywords or tuned_keywords:
+        base_by_keyword = {row["keyword"]: row for row in base_keywords}
+        tuned_by_keyword = {row["keyword"]: row for row in tuned_keywords}
+        ordered_keywords = sorted(
+            set(base_by_keyword) | set(tuned_by_keyword),
+            key=lambda kw: (
+                -max(
+                    base_by_keyword.get(kw, {}).get("occurrences", 0),
+                    tuned_by_keyword.get(kw, {}).get("occurrences", 0),
+                ),
+                kw,
+            ),
+        )
+
+        def _kw_pct(row: dict[str, Any] | None) -> str:
+            if not row:
+                return "—"
+            return _fmt(row.get("accuracy"))
+
+        lines += [
+            "",
+            "## Keyword Accuracy",
+            "",
+            f"- Base overall: {_fmt(metrics.get('base_keyword_accuracy'))}",
+        ]
+        if has_tuned:
+            lines.append(
+                f"- Tuned overall: {_fmt(metrics.get('tuned_keyword_accuracy'))}"
+            )
+        lines += [
+            "",
+            "| Keyword | Occurrences | Base Accuracy | Tuned Accuracy |",
+            "|---------|-------------|---------------|----------------|",
+        ]
+        for keyword in ordered_keywords:
+            base_row = base_by_keyword.get(keyword)
+            tuned_row = tuned_by_keyword.get(keyword)
+            occurrences = max(
+                base_row.get("occurrences", 0) if base_row else 0,
+                tuned_row.get("occurrences", 0) if tuned_row else 0,
+            )
+            lines.append(
+                f"| {keyword} | {occurrences} | {_kw_pct(base_row)} | {_kw_pct(tuned_row)} |"
+            )
+
     # Bootstrap significance (only when both models present)
     if has_tuned and "bootstrap_p_value" in metrics:
         p = metrics["bootstrap_p_value"]

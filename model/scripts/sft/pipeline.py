@@ -101,6 +101,14 @@ def _load_prompts(args: argparse.Namespace) -> tuple[str, str]:
     return system_prompt, user_prompt
 
 
+def _overall_keyword_accuracy(rows: list[dict]) -> float | None:
+    occurrences = sum(int(row.get("occurrences", 0)) for row in rows)
+    if occurrences == 0:
+        return None
+    correct = sum(int(row.get("correctly_identified", 0)) for row in rows)
+    return round(100 * correct / occurrences, 2)
+
+
 def _make_adapter(
     dataset_cfg: dict, split: str, storage_client: object
 ) -> object:
@@ -557,6 +565,7 @@ def _eval(args: argparse.Namespace) -> int:
         upload_file_to_blob,
     )
     from common.manifest import rows_from_manifest
+    from common.prompts import GEMINI_TRANSCRIBE_KEYWORDS
     from common.scoring import (
         bootstrap_paired,
         build_normalizer,
@@ -564,6 +573,7 @@ def _eval(args: argparse.Namespace) -> int:
         compute_wer,
         duration_bucket_wer,
         hallucination_rate,
+        keyword_metrics,
     )
     from common.vertex import build_request, submit_batch_inference
     from google.cloud import storage
@@ -763,6 +773,14 @@ def _eval(args: argparse.Namespace) -> int:
     # Empty/hallucinated rate
     metrics["base_empty_rate"] = hallucination_rate(base_hyps)
 
+    base_keyword_rows = keyword_metrics(
+        refs, base_hyps, GEMINI_TRANSCRIBE_KEYWORDS
+    )
+    metrics["base_keyword_metrics"] = base_keyword_rows
+    metrics["base_keyword_accuracy"] = _overall_keyword_accuracy(
+        base_keyword_rows
+    )
+
     # Duration bucket WER (D-15)
     try:
         bucket_results = duration_bucket_wer(
@@ -790,6 +808,13 @@ def _eval(args: argparse.Namespace) -> int:
         metrics["tuned_wer"] = tuned_wer
         metrics["tuned_cer"] = tuned_cer
         metrics["tuned_empty_rate"] = hallucination_rate(tuned_hyps)
+        tuned_keyword_rows = keyword_metrics(
+            refs, tuned_hyps, GEMINI_TRANSCRIBE_KEYWORDS
+        )
+        metrics["tuned_keyword_metrics"] = tuned_keyword_rows
+        metrics["tuned_keyword_accuracy"] = _overall_keyword_accuracy(
+            tuned_keyword_rows
+        )
 
         if total_ref_words > 0:
             metrics["tuned_insertions"] = (
