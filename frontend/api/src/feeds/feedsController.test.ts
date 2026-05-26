@@ -261,6 +261,23 @@ describe('FeedsController', () => {
         /Not Found/
       );
     });
+
+    it('should throw on non-404 API error', async () => {
+      const error = new Error('Server Error') as Error & {
+        response?: { status: number; data?: unknown };
+      };
+      error.response = { status: 500, data: 'Internal Server Error' };
+      mockRequest.mockRejectedValueOnce(error);
+
+      const controller = new FeedsController();
+      const payload = {
+        name: 'Updated Feed',
+        externalId: 'ext_123',
+      };
+      await expect(controller.updateFeed('feed_123', payload)).rejects.toThrow(
+        /Server Error/
+      );
+    });
   });
 
   describe('resetFeed', () => {
