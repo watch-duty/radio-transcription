@@ -1,17 +1,21 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 import FilterIcon from '@mui/icons-material/Tune';
+import { FormControl, InputLabel } from '@mui/material';
 import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
 import FormControlLabel from '@mui/material/FormControlLabel';
+import MenuItem from '@mui/material/MenuItem';
 import Popover from '@mui/material/Popover';
+import Select from '@mui/material/Select';
 import Switch from '@mui/material/Switch';
 import Tooltip from '@mui/material/Tooltip';
 import { useTheme } from '@mui/material/styles';
 
 import { DateTimePicker } from '../common/DateTimePicker';
+import type { AlertFilter } from './TranscriptView';
 
 export interface TranscriptActionsBarProps {
   hasNewerTranscripts: boolean;
@@ -20,8 +24,13 @@ export interface TranscriptActionsBarProps {
   setRedactTranscripts: (redact: boolean) => void;
   dateTime: Date | null;
   setDateTime: (dateTime: Date | null) => void;
+  alertFilter: AlertFilter;
+  setAlertFilter: (alertFilter: AlertFilter) => void;
   onClickViewLatest: () => void;
 }
+
+const APPLIED_FILTER_BG_COLOR = '#bbdefb';
+const DEFAULT_FILTER_BG_COLOR = '#f9bf90';
 
 export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   hasNewerTranscripts,
@@ -29,43 +38,62 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   setRedactTranscripts,
   dateTime,
   setDateTime,
+  alertFilter,
+  setAlertFilter,
   onClickViewLatest,
 }) => {
   const theme = useTheme();
   const isDarkTheme = theme.palette.mode === 'dark';
 
-  const [filterAnchorEl, setFilterAnchorEl] =
-    React.useState<HTMLElement | null>(null);
-  const [localDateTime, setLocalDateTime] = React.useState<Date | null>(
-    dateTime
+  const [filterAnchorEl, setFilterAnchorEl] = useState<HTMLElement | null>(
+    null
   );
+  const [localDateTime, setLocalDateTime] = useState<Date | null>(dateTime);
+  const [localAlertFilter, setLocalAlertFilter] = useState<AlertFilter>('all');
 
   React.useEffect(() => {
     setLocalDateTime(dateTime);
-  }, [dateTime]);
+    setLocalAlertFilter(alertFilter);
+  }, [dateTime, alertFilter]);
 
   const handleFilterOpen = (event: React.MouseEvent<HTMLElement>) => {
     setFilterAnchorEl(event.currentTarget);
     setLocalDateTime(dateTime);
+    setLocalAlertFilter(alertFilter);
   };
 
   const handleFilterClose = () => {
     setFilterAnchorEl(null);
     setLocalDateTime(dateTime);
+    setLocalAlertFilter(alertFilter);
   };
 
   const handleFilterApply = () => {
     setDateTime(localDateTime);
+    setAlertFilter(localAlertFilter);
     setFilterAnchorEl(null);
   };
 
   const handleFilterClear = () => {
     setLocalDateTime(null);
+    setLocalAlertFilter('all');
   };
 
   const handleDeleteDateTime = () => {
     setDateTime(null);
   };
+
+  const handleDeleteAlertFilter = () => {
+    setAlertFilter('all');
+  };
+
+  let badgeContent = 0;
+  if (dateTime) {
+    badgeContent++;
+  }
+  if (alertFilter === 'alerts') {
+    badgeContent++;
+  }
 
   return (
     <Box
@@ -88,8 +116,8 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
         <Tooltip title="Filter transcripts">
           <Badge
             color="primary"
-            badgeContent={dateTime ? '1' : '0'}
-            invisible={!dateTime}
+            badgeContent={badgeContent}
+            invisible={badgeContent === 0}
           >
             <Button
               color="primary"
@@ -129,6 +157,22 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
               dateTime={localDateTime}
               setDateTime={setLocalDateTime}
             />
+            <FormControl>
+              <InputLabel id="filter-alerts-label">Show</InputLabel>
+              <Select
+                labelId="filter-alerts-label"
+                size="small"
+                value={localAlertFilter}
+                onChange={(e) => {
+                  const newFilter = e.target.value as AlertFilter;
+                  setLocalAlertFilter(newFilter);
+                }}
+                label="Show"
+              >
+                <MenuItem value="all">All transcripts</MenuItem>
+                <MenuItem value="alerts">Alerts only</MenuItem>
+              </Select>
+            </FormControl>
             <Box
               sx={{
                 display: 'flex',
@@ -169,7 +213,9 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
                   },
                 }
               : {
-                  backgroundColor: dateTime ? '#bbdefb' : '#f9bf90',
+                  backgroundColor: dateTime
+                    ? APPLIED_FILTER_BG_COLOR
+                    : DEFAULT_FILTER_BG_COLOR,
                   color: 'black',
                 }
           }
@@ -189,6 +235,24 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
           size="small"
           onDelete={dateTime ? handleDeleteDateTime : undefined}
         />
+        {alertFilter === 'alerts' && (
+          <Chip
+            sx={{
+              backgroundColor: APPLIED_FILTER_BG_COLOR,
+              color: 'black',
+            }}
+            label={
+              <Box>
+                <b>Show:</b> Alerts only
+              </Box>
+            }
+            variant="filled"
+            size="small"
+            onDelete={
+              alertFilter === 'alerts' ? handleDeleteAlertFilter : undefined
+            }
+          />
+        )}
       </Box>
 
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
