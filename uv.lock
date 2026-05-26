@@ -603,14 +603,17 @@ version = "0.1.0"
 source = { editable = "backend/pipeline/evaluation" }
 dependencies = [
     { name = "asyncpg" },
+    { name = "cachetools" },
     { name = "cloudevents" },
     { name = "functions-framework" },
+    { name = "google-auth" },
     { name = "google-cloud-logging" },
     { name = "google-cloud-pubsub" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-gcp-trace" },
     { name = "opentelemetry-sdk" },
     { name = "protobuf" },
+    { name = "pydantic" },
     { name = "requests" },
     { name = "tenacity" },
 ]
@@ -618,14 +621,17 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "asyncpg", specifier = ">=0.29.0" },
+    { name = "cachetools", specifier = ">=5.5.0" },
     { name = "cloudevents", specifier = ">=1.12.0" },
     { name = "functions-framework", specifier = ">=3.10.1" },
+    { name = "google-auth", specifier = ">=2.0.0" },
     { name = "google-cloud-logging", specifier = ">=3.14.0" },
     { name = "google-cloud-pubsub", specifier = ">=2.35.0" },
     { name = "opentelemetry-api", specifier = ">=1.41.1" },
     { name = "opentelemetry-exporter-gcp-trace", specifier = ">=1.12.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.41.1" },
     { name = "protobuf", specifier = ">=5.29.6" },
+    { name = "pydantic", specifier = ">=2.10.6" },
     { name = "requests", specifier = ">=2.32.5" },
     { name = "tenacity", specifier = ">=9.1.4" },
 ]
@@ -1909,6 +1915,7 @@ name = "notification-function"
 version = "0.1.0"
 source = { editable = "backend/pipeline/notification" }
 dependencies = [
+    { name = "asyncpg" },
     { name = "cloudevents" },
     { name = "functions-framework" },
     { name = "google-auth" },
@@ -1924,6 +1931,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "asyncpg", specifier = ">=0.29.0" },
     { name = "cloudevents", specifier = ">=1.12.0" },
     { name = "functions-framework", specifier = ">=3.10.1" },
     { name = "google-auth", specifier = ">=2.0.0" },
