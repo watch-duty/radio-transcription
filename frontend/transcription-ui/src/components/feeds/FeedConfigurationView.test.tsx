@@ -101,7 +101,7 @@ describe('FeedConfigurationView', () => {
 
     // Verify Creation form is present
     expect(screen.getByText('Register New Feed')).toBeInTheDocument();
-    expect(screen.getByLabelText('Feed Display Name')).toBeInTheDocument();
+    expect(screen.getByLabelText('Display Name')).toBeInTheDocument();
     expect(screen.getByLabelText('Source Type')).toBeInTheDocument();
     expect(screen.getByLabelText('Source Feed ID')).toBeInTheDocument();
     expect(screen.getByLabelText('External ID')).toBeInTheDocument();
@@ -123,9 +123,7 @@ describe('FeedConfigurationView', () => {
     fireEvent.click(submitBtn);
 
     // Verify validation errors are populated on screen
-    expect(
-      screen.getByText('Feed display name is required.')
-    ).toBeInTheDocument();
+    expect(screen.getByText('Display name is required.')).toBeInTheDocument();
     expect(screen.getByText('Source feed ID is required.')).toBeInTheDocument();
     expect(screen.getByText('External ID is required.')).toBeInTheDocument();
 
@@ -194,7 +192,7 @@ describe('FeedConfigurationView', () => {
     renderView();
 
     // Input form details
-    fireEvent.change(screen.getByLabelText('Feed Display Name'), {
+    fireEvent.change(screen.getByLabelText('Display Name'), {
       target: { value: 'Napa Ambulance Dispatch' },
     });
 
@@ -245,7 +243,7 @@ describe('FeedConfigurationView', () => {
       );
 
       // Verify state clears on success
-      expect(screen.getByLabelText('Feed Display Name')).toHaveValue('');
+      expect(screen.getByLabelText('Display Name')).toHaveValue('');
       expect(screen.getByLabelText('Source Feed ID')).toHaveValue('');
       expect(screen.getByLabelText('External ID')).toHaveValue('');
     });
@@ -287,7 +285,7 @@ describe('FeedConfigurationView', () => {
     expect(rowElement).toHaveClass('Mui-selected');
 
     // Verify form details are prepopulated from selected feed definition
-    expect(screen.getByLabelText('Feed Display Name')).toHaveValue(
+    expect(screen.getByLabelText('Display Name')).toHaveValue(
       'Marin Fire Dispatch'
     );
     expect(screen.getByLabelText('Source Feed ID')).toHaveValue('33156');
@@ -312,7 +310,7 @@ describe('FeedConfigurationView', () => {
 
     // Verify transitions smoothly back to Create Mode
     expect(screen.getByText('Register New Feed')).toBeInTheDocument();
-    expect(screen.getByLabelText('Feed Display Name')).toHaveValue('');
+    expect(screen.getByLabelText('Display Name')).toHaveValue('');
     expect(screen.getByLabelText('Source Feed ID')).not.toBeDisabled();
 
     // Verify the row loses selection highlight
@@ -323,7 +321,7 @@ describe('FeedConfigurationView', () => {
     expect(screen.getByText('Edit Feed')).toBeInTheDocument();
 
     // Update modifyable properties
-    fireEvent.change(screen.getByLabelText('Feed Display Name'), {
+    fireEvent.change(screen.getByLabelText('Display Name'), {
       target: { value: 'Marin Unified Fire Dispatch' },
     });
     fireEvent.change(screen.getByLabelText('External ID'), {
@@ -356,7 +354,7 @@ describe('FeedConfigurationView', () => {
 
       // Verify returns back to Create Mode
       expect(screen.getByText('Register New Feed')).toBeInTheDocument();
-      expect(screen.getByLabelText('Feed Display Name')).toHaveValue('');
+      expect(screen.getByLabelText('Display Name')).toHaveValue('');
     });
   });
 
@@ -390,7 +388,7 @@ describe('FeedConfigurationView', () => {
     renderView();
 
     // Input form details
-    fireEvent.change(screen.getByLabelText('Feed Display Name'), {
+    fireEvent.change(screen.getByLabelText('Display Name'), {
       target: { value: 'Napa Ambulance Dispatch' },
     });
 
