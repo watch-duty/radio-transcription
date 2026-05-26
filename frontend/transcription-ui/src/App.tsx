@@ -18,8 +18,8 @@ import { ApiError } from '@transcription/common';
 import AppContainer from './components/AppContainer';
 import Login from './components/Login';
 import LoginModal from './components/common/LoginModal';
+import FeedConfigurationView from './components/feeds/FeedConfigurationView';
 import FeedSearchView from './components/feeds/FeedSearchView';
-import FeedsView from './components/feeds/FeedsView';
 import RulesView from './components/rules/RulesView';
 import TranscriptView from './components/transcripts/TranscriptView';
 import { useAuth } from './context/AuthContext';
@@ -225,7 +225,10 @@ function App() {
               element={
                 <>
                   <title>Feeds - Radio Transcription</title>
-                  <FeedsView />
+                  <FeedConfigurationView
+                    triggerSnackbar={triggerSnackbar}
+                    onError={handleError}
+                  />
                 </>
               }
             />
