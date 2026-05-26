@@ -27,6 +27,7 @@ _DEFAULT_CAPS: dict[SourceType, int] = {
     SourceType.BCFY_FEEDS: 240,
     SourceType.BCFY_CALLS: 600,
     SourceType.OPENMHZ: 900,
+    SourceType.FIRE_NOTIFICATIONS: 300,
 }
 
 
