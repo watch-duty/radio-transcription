@@ -5,7 +5,7 @@ import datetime
 import os
 import unittest
 import uuid
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
@@ -21,6 +21,9 @@ from backend.pipeline.ingestion.slo_contract import (
     EVENT_TYPE_BATCH_UNPRODUCTIVE,
 )
 from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
+
+if TYPE_CHECKING:
+    import logging
 
 
 class TestSleepOrShutdown(unittest.IsolatedAsyncioTestCase):
@@ -1282,7 +1285,9 @@ class TestBcfyCallsCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
         self.leased_feed = cast("LeasedFeed", self.feed)
 
     @staticmethod
-    def _batch_unproductive_records(records: list[Any]) -> list[Any]:
+    def _batch_unproductive_records(
+        records: list[logging.LogRecord],
+    ) -> list[logging.LogRecord]:
         return [
             r
             for r in records
