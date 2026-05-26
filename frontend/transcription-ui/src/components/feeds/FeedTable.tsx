@@ -93,8 +93,17 @@ function ActionsMenu({ feed }: { feed: Feed }) {
   };
 
   const menuOpen = Boolean(anchorEl);
-  const hasSourceUrl = !!feed.sourceUrl;
-  const hasArchiveUrl = !!feed.archiveUrl;
+
+  const customSourceUrl = feed.tags?.find((t) => t.key === 'source_url')?.value;
+  const customArchiveUrl = feed.tags?.find(
+    (t) => t.key === 'archive_url'
+  )?.value;
+
+  const sourceUrl = customSourceUrl || feed.sourceUrl;
+  const archiveUrl = customArchiveUrl || feed.archiveUrl;
+
+  const hasSourceUrl = !!sourceUrl;
+  const hasArchiveUrl = !!archiveUrl;
 
   return (
     <>
@@ -114,7 +123,7 @@ function ActionsMenu({ feed }: { feed: Feed }) {
       >
         <MenuItem
           component={hasSourceUrl ? 'a' : 'li'}
-          href={hasSourceUrl ? feed?.sourceUrl : undefined}
+          href={hasSourceUrl ? sourceUrl : undefined}
           target={hasSourceUrl ? '_blank' : undefined}
           rel="noopener noreferrer"
           disabled={!hasSourceUrl}
@@ -127,7 +136,7 @@ function ActionsMenu({ feed }: { feed: Feed }) {
         </MenuItem>
         <MenuItem
           component={hasArchiveUrl ? 'a' : 'li'}
-          href={hasArchiveUrl ? feed?.archiveUrl : undefined}
+          href={hasArchiveUrl ? archiveUrl : undefined}
           target={hasArchiveUrl ? '_blank' : undefined}
           rel="noopener noreferrer"
           disabled={!hasArchiveUrl}
@@ -333,19 +342,26 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
                 />
               </TableCell>
               <TableCell sx={{ verticalAlign: 'top', width: '100%' }}>
-                {feed.tags && feed.tags.length > 0 ? (
+                {feed.tags &&
+                feed.tags.filter(
+                  (t) => t.key !== 'source_url' && t.key !== 'archive_url'
+                ).length > 0 ? (
                   <Box
                     sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}
                   >
-                    {feed.tags.map((tag, i) => (
-                      <Typography
-                        key={i}
-                        variant="body2"
-                        sx={{ fontFamily: 'monospace' }}
-                      >
-                        <b>{tag.key}</b>: {tag.value}
-                      </Typography>
-                    ))}
+                    {feed.tags
+                      .filter(
+                        (t) => t.key !== 'source_url' && t.key !== 'archive_url'
+                      )
+                      .map((tag, i) => (
+                        <Typography
+                          key={i}
+                          variant="body2"
+                          sx={{ fontFamily: 'monospace' }}
+                        >
+                          <b>{tag.key}</b>: {tag.value}
+                        </Typography>
+                      ))}
                   </Box>
                 ) : (
                   <Typography variant="body2" color="text.secondary">

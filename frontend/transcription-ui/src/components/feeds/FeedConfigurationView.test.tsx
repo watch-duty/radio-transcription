@@ -142,9 +142,7 @@ describe('FeedConfigurationView', () => {
     // Try adding empty tag (should show error)
     fireEvent.click(addTagBtn);
     expect(
-      screen.getByText(
-        'Both Tag Key and Value must be populated to register a tag.'
-      )
+      screen.getByText('Both key and value must be populated to add a tag.')
     ).toBeInTheDocument();
 
     // Fill tag fields
@@ -282,6 +280,12 @@ describe('FeedConfigurationView', () => {
     expect(screen.getByText('Edit Feed')).toBeInTheDocument();
     expect(screen.getByText(/Modifying configuration/i)).toBeInTheDocument();
 
+    // Verify the row is highlighted
+    const rowElement = screen
+      .getByText('Marin Fire Dispatch')
+      .closest('[role="row"]');
+    expect(rowElement).toHaveClass('Mui-selected');
+
     // Verify form details are prepopulated from selected feed definition
     expect(screen.getByLabelText('Feed Display Name')).toHaveValue(
       'Marin Fire Dispatch'
@@ -310,6 +314,9 @@ describe('FeedConfigurationView', () => {
     expect(screen.getByText('Register New Feed')).toBeInTheDocument();
     expect(screen.getByLabelText('Feed Display Name')).toHaveValue('');
     expect(screen.getByLabelText('Source Feed ID')).not.toBeDisabled();
+
+    // Verify the row loses selection highlight
+    expect(rowElement).not.toHaveClass('Mui-selected');
 
     // Enter Edit Mode again to test saving
     fireEvent.click(editBtn);

@@ -62,36 +62,48 @@ VirtuosoScroller.displayName = 'VirtuosoScroller';
 const VirtuosoTableHead = forwardRef<
   HTMLDivElement,
   HTMLAttributes<HTMLDivElement>
->((props, ref) => <TableHead {...props} ref={ref} component="div" sx={{ display: 'block' }} />);
+>((props, ref) => (
+  <TableHead {...props} ref={ref} component="div" sx={{ display: 'block' }} />
+));
 VirtuosoTableHead.displayName = 'VirtuosoTableHead';
 
 const VirtuosoTableBody = forwardRef<
   HTMLDivElement,
   HTMLAttributes<HTMLDivElement>
->((props, ref) => <TableBody {...props} ref={ref} component="div" sx={{ display: 'block' }} />);
+>((props, ref) => (
+  <TableBody {...props} ref={ref} component="div" sx={{ display: 'block' }} />
+));
 VirtuosoTableBody.displayName = 'VirtuosoTableBody';
 
-const VirtuosoTable = forwardRef<
-  HTMLDivElement,
-  ComponentProps<typeof Table>
->((props, ref) => (
-  <Table
-    {...props}
-    ref={ref}
-    component="div"
-    sx={{ display: 'block' }}
-  />
-));
+const VirtuosoTable = forwardRef<HTMLDivElement, ComponentProps<typeof Table>>(
+  (props, ref) => (
+    <Table
+      {...props}
+      ref={ref}
+      component="div"
+      sx={{ display: 'block', width: '100%' }}
+    />
+  )
+);
 VirtuosoTable.displayName = 'VirtuosoTable';
 
-const GRID_TEMPLATE_COLUMNS = '1fr 1fr 1fr 60px';
+const GRID_TEMPLATE_COLUMNS = '1.5fr 1fr 1fr 60px';
 
-function VirtuosoTableRow(props: ComponentProps<typeof TableRow>) {
+function VirtuosoTableRow(
+  props: ComponentProps<typeof TableRow> & {
+    item?: Feed;
+    context?: { editingFeedId?: string };
+  }
+) {
+  const { item, context, ...rest } = props;
+  const isSelected = !!(item && context?.editingFeedId === item.id);
+
   return (
     <TableRow
-      {...props}
+      {...rest}
       component="div"
       hover
+      selected={isSelected}
       sx={{
         display: 'grid',
         gridTemplateColumns: GRID_TEMPLATE_COLUMNS,
@@ -99,7 +111,13 @@ function VirtuosoTableRow(props: ComponentProps<typeof TableRow>) {
         alignItems: 'center',
         borderBottom: '1px solid',
         borderColor: 'divider',
-        ...props.sx,
+        borderLeft: '4px solid transparent',
+        transition: 'background-color 0.2s ease, border-left-color 0.2s ease',
+        ...(isSelected && {
+          bgcolor: 'action.selected',
+          borderLeftColor: 'warning.main',
+        }),
+        ...rest.sx,
       }}
     />
   );
@@ -348,10 +366,9 @@ export function FeedConfigurationView({
       return;
     }
 
-    // Defensive UX: automatically register the builder tag if it has inputs on submit
-    let finalTags = [...tags];
+    const finalTags = [...tags];
     if (newTagKey.trim() && newTagValue.trim()) {
-      const key = newTagKey.trim().toLowerCase();
+      const key = newTagKey.trim();
       const value = newTagValue.trim();
       if (!finalTags.some((t) => t.key === key)) {
         finalTags.push({ key, value });
@@ -387,6 +404,7 @@ export function FeedConfigurationView({
     setSourceFeedId(feed.sourceFeedId || '');
     setExternalId(feed.externalId || '');
     setTags(feed.tags || []);
+
     setValidationErrors({});
     // Smooth scroll operator back to form on small viewports
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -598,9 +616,8 @@ export function FeedConfigurationView({
                       color="text.secondary"
                       sx={{ display: 'block', mb: 2 }}
                     >
-                      Tags (e.g. county, agency, state) allow for
-                      better searchability, grouping, and routing of
-                      notifications.
+                      Tags (e.g. county, agency, state) allow for better
+                      searchability, grouping, and routing of notifications.
                     </Typography>
 
                     <Stack
@@ -879,6 +896,7 @@ export function FeedConfigurationView({
               <TableVirtuoso
                 style={{ flexGrow: 1, marginTop: 12 }}
                 data={filteredFeeds}
+                context={{ editingFeedId: editingFeed?.id }}
                 computeItemKey={(_index, feed) => feed.id}
                 components={VIRTUOSO_COMPONENTS}
                 fixedHeaderContent={() => (
@@ -918,6 +936,7 @@ export function FeedConfigurationView({
                     >
                       Status
                     </TableCell>
+
                     <TableCell
                       component="div"
                       align="right"
@@ -930,7 +949,7 @@ export function FeedConfigurationView({
                 )}
                 itemContent={(_index, feed) => {
                   const isCurrentlyEditingThis = editingFeed?.id === feed.id;
-                  const hasTags = feed.tags && feed.tags.length > 0;
+
                   return (
                     <>
                       {/* Name & ID Metadata */}
@@ -941,6 +960,7 @@ export function FeedConfigurationView({
                           display: 'flex',
                           flexDirection: 'column',
                           borderBottom: 'none',
+                          minWidth: 0,
                         }}
                       >
                         <Typography variant="body2" sx={{ fontWeight: 600 }}>
@@ -957,7 +977,10 @@ export function FeedConfigurationView({
                       </TableCell>
 
                       {/* Source Type Chip */}
-                      <TableCell component="div" sx={{ borderBottom: 'none' }}>
+                      <TableCell
+                        component="div"
+                        sx={{ borderBottom: 'none', minWidth: 0 }}
+                      >
                         <Chip
                           label={feed.sourceType}
                           size="small"
@@ -966,7 +989,10 @@ export function FeedConfigurationView({
                       </TableCell>
 
                       {/* Status Indicator */}
-                      <TableCell component="div" sx={{ borderBottom: 'none' }}>
+                      <TableCell
+                        component="div"
+                        sx={{ borderBottom: 'none', minWidth: 0 }}
+                      >
                         <FeedStatusIndicator
                           status={feed.status}
                           lastHeartbeat={feed.lastHeartbeat}
@@ -974,7 +1000,11 @@ export function FeedConfigurationView({
                       </TableCell>
 
                       {/* Actions Buttons */}
-                      <TableCell align="right" component="div" sx={{ borderBottom: 'none' }}>
+                      <TableCell
+                        align="right"
+                        component="div"
+                        sx={{ borderBottom: 'none' }}
+                      >
                         <IconButton
                           size="small"
                           onClick={() => handleStartEdit(feed)}
@@ -995,7 +1025,7 @@ export function FeedConfigurationView({
                         </IconButton>
                       </TableCell>
 
-                      {hasTags && (
+                      {feed.tags && feed.tags.length > 0 && (
                         <TableCell
                           component="div"
                           sx={{
@@ -1007,7 +1037,7 @@ export function FeedConfigurationView({
                             gap: 0.75,
                           }}
                         >
-                          {feed.tags?.map((tag, i) => (
+                          {feed.tags.map((tag, i) => (
                             <Chip
                               key={i}
                               label={
