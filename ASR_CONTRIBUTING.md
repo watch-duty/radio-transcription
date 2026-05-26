@@ -5,7 +5,7 @@ Each model is developed on its own colab, which is run on a Jupyter notebook. Yo
 
 When developing locally, we have a standard docker-compose.yml file which can be used to spin up a jupyter notebook with all the necessary dependencies. See `asr-eval-docker-compose.yml`.
 
-> Use the `nemo-cli-cpu` or `nemo-cli-gpu` container if you need NeMo/Canary support. Otherwise, use the lightweight `notebooks-cpu` or `notebooks` ASR experiment runtime for notebooks and non-NeMo command-line workflows like Gemini SFT, Whisper, Granite, or Cohere to avoid heavy dependency overhead.
+> Use the `nemo-cli-cpu` or `nemo-cli-gpu` container if you need NeMo/Canary support. Otherwise, default to the lightweight `notebooks-cpu` or `notebooks` ASR experiment runtime for notebooks and non-NeMo command-line workflows like Gemini SFT, Whisper, Granite, or Cohere to avoid heavy dependency overhead.
 
 If you want to run the Docker image with GPUs, you will need to create a GCE instance in your GCP project with a GPU attached. There is a Terraform definition under `/terraform/modules/asr_evaluation` which can create a dedicated instance for you. Running GPUs can be costly, so you will need to manually turn on your instance. When the instance starts, there is an auto shutoff script that runs after a specified number of hours, which you can configure through the `auto_shutdown_hours` Terraform variable.
 
@@ -81,7 +81,7 @@ cd radio-transcription
 # 1. Run Jupyter notebooks in the lightweight ASR experiment runtime (CPU or GPU)
 docker compose -f asr-eval-docker-compose.yml up -d [notebooks-cpu|notebooks]
 
-# 2. Run non-NeMo command-line workflows in the same lightweight runtime
+# 2. Run non-NeMo command-line workflows, such as Gemini SFT, in the same lightweight runtime
 # The container installs the mounted repo package as /workspace/model[scoring,vertex]
 # before executing the command.
 docker compose -f asr-eval-docker-compose.yml run --rm notebooks-cpu \

@@ -1,10 +1,10 @@
-"""Watch Duty radio transcription SFT pipeline CLI.
+"""Watch Duty radio transcription Gemini SFT pipeline CLI.
 
 Commands:
-  build  -- Turn registered datasets into per-dataset and combined Vertex SFT JSONL.
-  tune   -- Submit a Vertex AI SFT tuning job (--confirm gated; PR3 implements fully).
-  eval   -- Batch-infer and score a model on the held-out manifest (PR3 implements fully).
-  all    -- build -> tune -> eval in one invocation (PR3 implements fully).
+  build  -- Turn registered datasets into Vertex AI Gemini SFT JSONL.
+  tune   -- Submit a Vertex AI Gemini SFT tuning job (--confirm gated; PR3 implements fully).
+  eval   -- Batch-infer and score a Gemini model on the held-out manifest (PR3 implements fully).
+  all    -- build -> tune -> eval in one Gemini SFT invocation (PR3 implements fully).
 
 Usage:
   python pipeline.py build --datasets echo --round-id 2026-06-01-echo
@@ -125,7 +125,7 @@ def _build_split_jsonl(
     user_prompt: str,
     round_id: str,
 ) -> tuple[dict[str, str], str, float]:
-    """Build per-dataset + combined SFT JSONL for one split and upload to GCS.
+    """Build per-dataset + combined Gemini SFT JSONL for one split and upload to GCS.
 
     Shared by the required ``train`` split and the optional ``val`` split so both go
     through identical example construction, validation, staging, and upload paths.
@@ -206,7 +206,7 @@ def _build_split_jsonl(
 
 
 def _build(args: argparse.Namespace) -> int:
-    """Build subcommand: adapters -> SFT JSONL -> local staging -> GCS upload.
+    """Build subcommand: adapters -> Gemini SFT JSONL -> local staging -> GCS upload.
 
     Always builds the required ``train`` split. Also builds an optional ``val`` split
     for any dataset declaring a non-empty ``val_manifest_uri`` (D-12/PIPE-09): when set,
@@ -436,27 +436,32 @@ def _add_all_args(p: argparse.ArgumentParser) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="Watch Duty radio transcription SFT pipeline",
+        description="Watch Duty radio transcription Gemini SFT pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = ap.add_subparsers(
         dest="cmd", required=True, metavar="{build,tune,eval,all}"
     )
     _add_build_args(
-        sub.add_parser("build", help="Build SFT JSONL from registered datasets")
+        sub.add_parser(
+            "build", help="Build Gemini SFT JSONL from registered datasets"
+        )
     )
     _add_tune_args(
         sub.add_parser(
-            "tune", help="Submit Vertex AI SFT tuning job (--confirm required)"
+            "tune",
+            help="Submit Vertex AI Gemini SFT tuning job (--confirm required)",
         )
     )
     _add_eval_args(
         sub.add_parser(
-            "eval", help="Batch-infer and score model on held-out manifest"
+            "eval", help="Batch-infer and score Gemini model on held-out manifest"
         )
     )
     _add_all_args(
-        sub.add_parser("all", help="build -> tune -> eval in one invocation")
+        sub.add_parser(
+            "all", help="build -> tune -> eval in one Gemini SFT invocation"
+        )
     )
     args = ap.parse_args()
     dispatch = {"build": _build, "tune": _tune, "eval": _eval, "all": _all}

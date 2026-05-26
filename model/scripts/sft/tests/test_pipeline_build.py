@@ -7,6 +7,8 @@ implementation is complete.
 from __future__ import annotations
 
 import json
+import contextlib
+import io
 import sys
 import tempfile
 import unittest
@@ -53,6 +55,22 @@ class TestPipelineCLI(unittest.TestCase):
         import pipeline
 
         self.assertTrue(callable(pipeline.main))
+
+    def test_help_names_gemini_sft_pipeline(self) -> None:
+        """Main help labels the CLI as Gemini SFT-specific."""
+        import pipeline
+
+        out = io.StringIO()
+        with self.assertRaises(SystemExit) as ctx:
+            with (
+                unittest.mock.patch("sys.argv", ["pipeline.py", "--help"]),
+                contextlib.redirect_stdout(out),
+            ):
+                pipeline.main()
+
+        self.assertEqual(ctx.exception.code, 0)
+        self.assertIn("Gemini SFT pipeline", out.getvalue())
+        self.assertIn("Batch-infer and score Gemini model", out.getvalue())
 
 
 class TestPreflightEmptyTarget(unittest.TestCase):

@@ -1,22 +1,23 @@
 # Watch Duty Radio Transcription Gemini SFT Pipeline
 
-A re-runnable pipeline for supervised fine-tuning (SFT) of Watch Duty's
-emergency-radio transcription model on Vertex AI Gemini.
+A re-runnable pipeline for Gemini supervised fine-tuning (Gemini SFT) of
+Watch Duty's emergency-radio transcription model on Vertex AI.
 
 ## Subcommands
 
 ```
-python pipeline.py build   Build SFT JSONL from registered datasets
-python pipeline.py tune    Submit Vertex AI SFT tuning job (--confirm required; ~$55-175/run)
-python pipeline.py eval    Batch-infer and score a model on the held-out manifest
-python pipeline.py all     build -> tune -> eval in one invocation
+python pipeline.py build   Build Gemini SFT JSONL from registered datasets
+python pipeline.py tune    Submit Vertex AI Gemini SFT tuning job (--confirm required; ~$55-175/run)
+python pipeline.py eval    Batch-infer and score a Gemini model on the held-out manifest
+python pipeline.py all     build -> tune -> eval in one Gemini SFT invocation
 ```
 
 ## Runtime
 
-Preferred local runtime is the repo's lightweight ASR experiment Docker service. It
-mounts the repo at `/workspace` and bootstraps the local `common` package as
-`/workspace/model[scoring,vertex]` on container startup.
+Default local runtime is the repo's lightweight ASR experiment Docker service.
+It mounts the repo at `/workspace` and bootstraps the local `common` package as
+`/workspace/model[scoring,vertex]` on container startup, so the Gemini SFT CLI can
+run without a separate local pip install.
 
 From the repo root:
 
@@ -29,7 +30,7 @@ Use `notebooks-cpu` for Gemini SFT CLI work. The paid tune/eval jobs run remotel
 Vertex AI, so no local GPU is required. The `notebooks` service remains available for
 GPU-backed notebook workflows that need it.
 
-## Local Installation
+## Local Installation Fallback
 
 From this directory (`model/scripts/sft/`):
 
@@ -46,25 +47,26 @@ uv pip install -e "../../.[scoring,vertex]"
 ## Usage
 
 ```bash
-# Build SFT JSONL for the echo dataset
+# Build Gemini SFT JSONL for the echo dataset
 python pipeline.py build --datasets echo --round-id 2026-06-01-echo
 
-# Submit a tuning job (requires --confirm to prevent accidental runs)
+# Submit a Vertex AI Gemini SFT tuning job (requires --confirm)
 python pipeline.py tune --round-id 2026-06-01-echo \
   --base-model gemini-2.5-flash --confirm
 
-# Run evaluation on the tuned model
+# Run evaluation on the tuned Gemini model
 python pipeline.py eval --round-id 2026-06-01-echo
 
-# Full pipeline: build -> tune -> eval
+# Full Gemini SFT pipeline: build -> tune -> eval
 python pipeline.py all --datasets echo --round-id 2026-06-01-echo \
   --base-model gemini-2.5-flash --confirm
 ```
 
 ## Datasets
 
-The pipeline is **Echo-only** — it fine-tunes on Watch Duty's proprietary emergency-radio
-data. The `datasets.toml` registry registers one dataset via the `gcs_manifest` adapter:
+The Gemini SFT pipeline is **Echo-only** - it fine-tunes Gemini on Watch Duty's
+proprietary emergency-radio data. The `datasets.toml` registry registers one dataset
+via the `gcs_manifest` adapter:
 
 | Name   | Adapter      | License          | Notes |
 |--------|--------------|------------------|-------|
@@ -78,9 +80,15 @@ populated after the cluster-split script runs (Phase 4 prerequisite, DESIGN.md #
 
 ## Cost
 
-- `tune` requires `--confirm` to prevent accidental paid runs (~$55-175 per run at
-  Gemini 2.0 Flash rates; actual 2.5 Flash SFT rate is not publicly listed)
-- The `--confirm` gate displays an estimated cost before proceeding
+- `tune` requires `--confirm` to prevent accidental paid runs.
+- The `$55-175/run` planning ballpark came from the Gemini 2.0 Flash supervised tuning
+  rate: training tokens = dataset tokens x epochs, priced at $3 per 1M training tokens
+  for Gemini 2.0 Flash at the time of the estimate. That implies roughly 18-58M
+  billable training tokens for the planned Echo run.
+- Recompute before running with the current
+  [Vertex AI pricing](https://cloud.google.com/vertex-ai/generative-ai/pricing), because
+  Gemini SFT prices vary by model and can change after the README is committed.
+- The `--confirm` gate displays an estimated cost before proceeding.
 
 ## Records
 

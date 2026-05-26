@@ -1,4 +1,4 @@
-# SFT dataset registry — read by pipeline.py via tomllib (stdlib, Python 3.11+).
+# Gemini SFT dataset registry — read by pipeline.py via tomllib (stdlib, Python 3.11+).
 # Each [datasets.<name>] section maps a dataset to its adapter and source location.
 # Per D-17: pipeline.py build always writes per-dataset JSONLs plus one combined JSONL
 # for the exact --datasets set passed. The combined JSONL name is derived at runtime.

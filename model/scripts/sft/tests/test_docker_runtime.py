@@ -1,4 +1,4 @@
-"""Regression tests for the Docker runtime used by the SFT CLI."""
+"""Regression tests for the Docker runtime used by the Gemini SFT CLI."""
 
 from __future__ import annotations
 
