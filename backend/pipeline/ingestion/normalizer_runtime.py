@@ -756,15 +756,24 @@ class NormalizerRuntime:
         _fallback_session_id: str | None = None
         topic_path = self._get_pubsub_topic_path(feed)
 
-        extension = "flac"
-        content_type = "audio/flac"
-
         if feed["source_type"] == SourceType.OPENMHZ:
             extension = "m4a"
             content_type = "audio/mp4"
-        elif feed["source_type"] == SourceType.ECHO:
+        elif feed["source_type"] in (
+            SourceType.ECHO,
+            SourceType.FIRE_NOTIFICATIONS,
+        ):
             extension = "mp3"
             content_type = "audio/mpeg"
+        elif feed["source_type"] in (
+            SourceType.BCFY_FEEDS,
+            SourceType.BCFY_CALLS,
+        ):
+            extension = "flac"
+            content_type = "audio/flac"
+        else:
+            msg = f"Unhandled source type: {feed['source_type']}"
+            raise ValueError(msg)
 
         try:
             async for captured_chunk in self._capture_fn(

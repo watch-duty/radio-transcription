@@ -137,6 +137,18 @@ function App() {
     palette: {
       mode: prefersDarkMode ? 'dark' : 'light',
     },
+    components: {
+      MuiListItem: {
+        styleOverrides: {
+          root: {
+            '&.compactTable': {
+              paddingTop: '6px',
+              paddingBottom: '6px',
+            },
+          },
+        },
+      },
+    },
   });
 
   return (
@@ -180,6 +192,7 @@ function App() {
                 <>
                   <title>Radio Transcription</title>
                   <FeedSearchView
+                    title="Feeds"
                     triggerSnackbar={triggerSnackbar}
                     onError={handleError}
                   />

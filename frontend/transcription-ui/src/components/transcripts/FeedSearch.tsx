@@ -44,9 +44,7 @@ export function FeedSearch({
             option.id.toLowerCase().includes(inputValue.toLowerCase())
         )
       }
-      renderInput={(params) => (
-        <TextField {...params} label="Select a registered feed" />
-      )}
+      renderInput={(params) => <TextField {...params} label="Select feed" />}
       renderOption={(props, option) => {
         const { key, ...optionProps } = props;
         return (

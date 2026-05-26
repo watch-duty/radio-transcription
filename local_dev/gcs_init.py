@@ -63,9 +63,11 @@ if __name__ == "__main__":
 
     staging_bucket = os.environ["AUDIO_STAGING_BUCKET"]
     canonical_bucket = os.environ["AUDIO_CANONICAL_BUCKET"]
+    echo_bucket = os.environ["ECHO_RECORDINGS_BUCKET"]
 
     create_bucket(client, staging_bucket)
     create_bucket(client, canonical_bucket)
+    create_bucket(client, echo_bucket)
 
     upload_file(
         client, staging_bucket, "/app/data/test_bcfy.flac", "test_bcfy.flac"
