@@ -46,7 +46,6 @@ interface FeedCreateBackend extends BaseFeedBackend {
   tags?: Tag[];
 }
 
-
 interface FeedUpdateBackend {
   name: string;
   external_id: string;
