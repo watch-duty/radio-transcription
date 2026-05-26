@@ -450,11 +450,8 @@ describe('TranscriptView', () => {
       });
 
     renderTranscriptView(
-      <MemoryRouter
-        initialEntries={[`/?feedId=feed123&timestamp=${testTimestamp}`]}
-      >
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: [`/?feedId=feed123&timestamp=${testTimestamp}`] }
     );
 
     await waitFor(() => {
@@ -805,9 +802,8 @@ describe('TranscriptView', () => {
     });
 
     renderTranscriptView(
-      <MemoryRouter initialEntries={['/?feedId=feed123']}>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
 
     // Default load should have been triggered on mount due to feedId param
@@ -881,9 +877,8 @@ describe('TranscriptView', () => {
       });
 
     renderTranscriptView(
-      <MemoryRouter initialEntries={['/?feedId=feed123']}>
-        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
-      </MemoryRouter>
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
     );
 
     await waitFor(() => {
