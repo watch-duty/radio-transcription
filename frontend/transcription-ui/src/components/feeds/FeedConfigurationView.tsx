@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { forwardRef, useEffect, useMemo, useState } from 'react';
+import type { ComponentProps, HTMLAttributes } from 'react';
+import { TableVirtuoso } from 'react-virtuoso';
 
 import AddIcon from '@mui/icons-material/Add';
 import AppRegistrationIcon from '@mui/icons-material/AppRegistration';
@@ -50,6 +52,66 @@ import { createFeed } from '../../service/createFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { updateFeed } from '../../service/updateFeed';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
+
+const VirtuosoScroller = forwardRef<
+  HTMLDivElement,
+  HTMLAttributes<HTMLDivElement>
+>((props, ref) => <TableContainer {...props} ref={ref} component="div" />);
+VirtuosoScroller.displayName = 'VirtuosoScroller';
+
+const VirtuosoTableHead = forwardRef<
+  HTMLDivElement,
+  HTMLAttributes<HTMLDivElement>
+>((props, ref) => <TableHead {...props} ref={ref} component="div" sx={{ display: 'block' }} />);
+VirtuosoTableHead.displayName = 'VirtuosoTableHead';
+
+const VirtuosoTableBody = forwardRef<
+  HTMLDivElement,
+  HTMLAttributes<HTMLDivElement>
+>((props, ref) => <TableBody {...props} ref={ref} component="div" sx={{ display: 'block' }} />);
+VirtuosoTableBody.displayName = 'VirtuosoTableBody';
+
+const VirtuosoTable = forwardRef<
+  HTMLDivElement,
+  ComponentProps<typeof Table>
+>((props, ref) => (
+  <Table
+    {...props}
+    ref={ref}
+    component="div"
+    sx={{ display: 'block' }}
+  />
+));
+VirtuosoTable.displayName = 'VirtuosoTable';
+
+const GRID_TEMPLATE_COLUMNS = '1fr 1fr 1fr 60px';
+
+function VirtuosoTableRow(props: ComponentProps<typeof TableRow>) {
+  return (
+    <TableRow
+      {...props}
+      component="div"
+      hover
+      sx={{
+        display: 'grid',
+        gridTemplateColumns: GRID_TEMPLATE_COLUMNS,
+        width: '100%',
+        alignItems: 'center',
+        borderBottom: '1px solid',
+        borderColor: 'divider',
+        ...props.sx,
+      }}
+    />
+  );
+}
+
+const VIRTUOSO_COMPONENTS = {
+  Scroller: VirtuosoScroller,
+  Table: VirtuosoTable,
+  TableHead: VirtuosoTableHead,
+  TableRow: VirtuosoTableRow,
+  TableBody: VirtuosoTableBody,
+};
 
 interface FeedConfigurationViewProps {
   triggerSnackbar?: (message: string) => void;
@@ -150,7 +212,7 @@ export function FeedConfigurationView({
     if (!key || !value) {
       setValidationErrors((prev) => ({
         ...prev,
-        tags: 'Both Tag Key and Value must be populated to register a tag.',
+        tags: 'Both key and value must be populated to add a tag.',
       }));
       return;
     }
@@ -378,8 +440,7 @@ export function FeedConfigurationView({
       </Box>
 
       <Grid container spacing={4} sx={{ width: '100%', m: 0 }}>
-        {/* Left Column - Form Card */}
-        <Grid size={{ xs: 12, sm: 6 }}>
+        <Grid size={{ xs: 12, sm: 4 }}>
           <Card
             elevation={0}
             variant="outlined"
@@ -425,7 +486,7 @@ export function FeedConfigurationView({
                     fullWidth
                     label="Feed Display Name"
                     variant="outlined"
-                    placeholder="e.g. Marin Public Safety - Fire Dispatch"
+                    placeholder="e.g. Ventura Public Safety - Fire Dispatch"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     error={!!validationErrors.name}
@@ -528,7 +589,7 @@ export function FeedConfigurationView({
                     >
                       <TagIcon fontSize="small" color="action" />
                       <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                        Metadata Tags
+                        Tags
                       </Typography>
                     </Box>
 
@@ -537,7 +598,7 @@ export function FeedConfigurationView({
                       color="text.secondary"
                       sx={{ display: 'block', mb: 2 }}
                     >
-                      Metadata tags (e.g. county, agency, state) allow for
+                      Tags (e.g. county, agency, state) allow for
                       better searchability, grouping, and routing of
                       notifications.
                     </Typography>
@@ -560,7 +621,7 @@ export function FeedConfigurationView({
                       <TextField
                         size="small"
                         label="Tag Value"
-                        placeholder="e.g. Marin"
+                        placeholder="e.g. Ventura"
                         value={newTagValue}
                         onChange={(e) => setNewTagValue(e.target.value)}
                         error={!!validationErrors.tags}
@@ -696,8 +757,7 @@ export function FeedConfigurationView({
           </Card>
         </Grid>
 
-        {/* Right Column - Existing Configured Feeds Table */}
-        <Grid size={{ xs: 12, sm: 6 }}>
+        <Grid size={{ xs: 12, sm: 8 }}>
           <Paper
             data-testid="feeds-deck-card"
             variant="outlined"
@@ -707,7 +767,7 @@ export function FeedConfigurationView({
               display: 'flex',
               flexDirection: 'column',
               minHeight: 500,
-              maxHeight: 'calc(100vh - 220px)',
+              height: 'calc(100vh - 220px)',
               overflow: 'hidden',
               boxShadow: '0 4px 20px rgba(0, 0, 0, 0.03)',
             }}
@@ -816,145 +876,154 @@ export function FeedConfigurationView({
                 </Typography>
               </Box>
             ) : (
-              <TableContainer sx={{ flexGrow: 1, overflowY: 'auto', mt: 1.5 }}>
-                <Table stickyHeader size="small">
-                  <TableHead>
-                    <TableRow>
+              <TableVirtuoso
+                style={{ flexGrow: 1, marginTop: 12 }}
+                data={filteredFeeds}
+                computeItemKey={(_index, feed) => feed.id}
+                components={VIRTUOSO_COMPONENTS}
+                fixedHeaderContent={() => (
+                  <TableRow
+                    component="div"
+                    sx={{
+                      display: 'grid',
+                      gridTemplateColumns: GRID_TEMPLATE_COLUMNS,
+                      width: '100%',
+                      bgcolor: 'background.paper',
+                    }}
+                  >
+                    <TableCell
+                      component="div"
+                      sx={{
+                        fontWeight: 'bold',
+                        bgcolor: 'background.paper',
+                      }}
+                    >
+                      Name
+                    </TableCell>
+                    <TableCell
+                      component="div"
+                      sx={{
+                        fontWeight: 'bold',
+                        bgcolor: 'background.paper',
+                      }}
+                    >
+                      Type
+                    </TableCell>
+                    <TableCell
+                      component="div"
+                      sx={{
+                        fontWeight: 'bold',
+                        bgcolor: 'background.paper',
+                      }}
+                    >
+                      Status
+                    </TableCell>
+                    <TableCell
+                      component="div"
+                      align="right"
+                      sx={{
+                        fontWeight: 'bold',
+                        bgcolor: 'background.paper',
+                      }}
+                    />
+                  </TableRow>
+                )}
+                itemContent={(_index, feed) => {
+                  const isCurrentlyEditingThis = editingFeed?.id === feed.id;
+                  const hasTags = feed.tags && feed.tags.length > 0;
+                  return (
+                    <>
+                      {/* Name & ID Metadata */}
                       <TableCell
-                        sx={{ fontWeight: 'bold', bgcolor: 'background.paper' }}
+                        component="div"
+                        sx={{
+                          py: 1,
+                          display: 'flex',
+                          flexDirection: 'column',
+                          borderBottom: 'none',
+                        }}
                       >
-                        Name
+                        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                          {feed.name}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          <b>Source ID:</b> {feed.sourceFeedId}
+                        </Typography>
+                        {feed.externalId && (
+                          <Typography variant="caption" color="text.secondary">
+                            <b>External ID:</b> {feed.externalId}
+                          </Typography>
+                        )}
                       </TableCell>
-                      <TableCell
-                        sx={{ fontWeight: 'bold', bgcolor: 'background.paper' }}
-                      >
-                        Type
+
+                      {/* Source Type Chip */}
+                      <TableCell component="div" sx={{ borderBottom: 'none' }}>
+                        <Chip
+                          label={feed.sourceType}
+                          size="small"
+                          variant="outlined"
+                        />
                       </TableCell>
-                      <TableCell
-                        sx={{ fontWeight: 'bold', bgcolor: 'background.paper' }}
-                      >
-                        Status
+
+                      {/* Status Indicator */}
+                      <TableCell component="div" sx={{ borderBottom: 'none' }}>
+                        <FeedStatusIndicator
+                          status={feed.status}
+                          lastHeartbeat={feed.lastHeartbeat}
+                        />
                       </TableCell>
-                      <TableCell
-                        sx={{ fontWeight: 'bold', bgcolor: 'background.paper' }}
-                      >
-                        Tags
-                      </TableCell>
-                      <TableCell
-                        align="right"
-                        sx={{ fontWeight: 'bold', bgcolor: 'background.paper' }}
-                      ></TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {filteredFeeds.map((feed) => {
-                      const isCurrentlyEditingThis =
-                        editingFeed?.id === feed.id;
-                      return (
-                        <TableRow
-                          key={feed.id}
-                          hover
-                          selected={isCurrentlyEditingThis}
+
+                      {/* Actions Buttons */}
+                      <TableCell align="right" component="div" sx={{ borderBottom: 'none' }}>
+                        <IconButton
+                          size="small"
+                          onClick={() => handleStartEdit(feed)}
+                          disabled={isSubmitting || isCurrentlyEditingThis}
+                          sx={{
+                            border: '1px solid',
+                            borderRadius: 1.5,
+                            p: 0.5,
+                            '&:hover': {
+                              borderColor: 'primary.main',
+                              bgcolor: 'primary.soft',
+                              color: 'primary.main',
+                            },
+                          }}
+                          aria-label={`Edit ${feed.name}`}
                         >
-                          <TableCell
-                            sx={{
-                              py: 1,
-                              display: 'flex',
-                              flexDirection: 'column',
-                            }}
-                          >
-                            <Typography>
-                              <b>{feed.name}</b>
-                            </Typography>
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                            >
-                              <b>Source ID:</b> {feed.sourceFeedId}
-                            </Typography>
-                            {feed.externalId && (
-                              <Typography
-                                variant="caption"
-                                color="text.secondary"
-                              >
-                                <b>External ID:</b> {feed.externalId}
-                              </Typography>
-                            )}
-                          </TableCell>
+                          <EditIcon fontSize="small" />
+                        </IconButton>
+                      </TableCell>
 
-                          <TableCell>
+                      {hasTags && (
+                        <TableCell
+                          component="div"
+                          sx={{
+                            gridColumn: '1 / -1',
+                            borderBottom: 'none',
+                            pt: 0,
+                            display: 'flex',
+                            flexWrap: 'wrap',
+                            gap: 0.75,
+                          }}
+                        >
+                          {feed.tags?.map((tag, i) => (
                             <Chip
-                              label={feed.sourceType}
+                              key={i}
+                              label={
+                                <Box>
+                                  <b>{tag.key}</b>: {tag.value}
+                                </Box>
+                              }
                               size="small"
-                              variant="outlined"
                             />
-                          </TableCell>
-
-                          <TableCell>
-                            <FeedStatusIndicator
-                              status={feed.status}
-                              lastHeartbeat={feed.lastHeartbeat}
-                            />
-                          </TableCell>
-
-                          <TableCell>
-                            {feed.tags && feed.tags.length > 0 ? (
-                              <Box
-                                sx={{
-                                  display: 'flex',
-                                  flexWrap: 'wrap',
-                                  gap: 0.5,
-                                  maxWidth: 220,
-                                }}
-                              >
-                                {feed.tags.map((tag, i) => (
-                                  <Chip
-                                    key={i}
-                                    label={
-                                      <Box>
-                                        <b>{tag.key}</b>: {tag.value}
-                                      </Box>
-                                    }
-                                    size="small"
-                                  />
-                                ))}
-                              </Box>
-                            ) : (
-                              <Typography
-                                variant="caption"
-                                color="text.secondary"
-                              >
-                                -
-                              </Typography>
-                            )}
-                          </TableCell>
-
-                          <TableCell align="right">
-                            <IconButton
-                              size="small"
-                              onClick={() => handleStartEdit(feed)}
-                              disabled={isSubmitting || isCurrentlyEditingThis}
-                              sx={{
-                                border: '1px solid',
-                                borderRadius: 1.5,
-                                p: 0.5,
-                                '&:hover': {
-                                  borderColor: 'primary.main',
-                                  bgcolor: 'primary.soft',
-                                  color: 'primary.main',
-                                },
-                              }}
-                              aria-label={`Edit ${feed.name}`}
-                            >
-                              <EditIcon fontSize="small" />
-                            </IconButton>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </TableContainer>
+                          ))}
+                        </TableCell>
+                      )}
+                    </>
+                  );
+                }}
+              />
             )}
           </Paper>
         </Grid>
