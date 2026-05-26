@@ -226,6 +226,22 @@ class TestPreflightDuplicateUri(unittest.TestCase):
             report.passed, f"Unexpected failures: {report.failures}"
         )
 
+    def test_safe_blob_exists_uses_timeout(self) -> None:
+        from preflight import PREFLIGHT_GCS_TIMEOUT_SECONDS, _safe_blob_exists
+
+        storage_client = object()
+        with unittest.mock.patch(
+            "preflight.blob_exists", return_value=True
+        ) as mock_exists:
+            ok = _safe_blob_exists(storage_client, "gs://b/audio.flac")
+
+        self.assertTrue(ok)
+        mock_exists.assert_called_once_with(
+            storage_client,
+            "gs://b/audio.flac",
+            timeout=PREFLIGHT_GCS_TIMEOUT_SECONDS,
+        )
+
     def test_preflight_batches_gcs_reachability_checks(self) -> None:
         from preflight import run_preflight
 

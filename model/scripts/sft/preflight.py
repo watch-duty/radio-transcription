@@ -27,6 +27,7 @@ PREFLIGHT_TOKEN_CAP: Final = (
 )
 PREFLIGHT_GCS_MAX_WORKERS: Final = 16
 PREFLIGHT_GCS_BATCH_SIZE: Final = 256
+PREFLIGHT_GCS_TIMEOUT_SECONDS: Final = 30.0
 
 
 @dataclass
@@ -49,7 +50,11 @@ def _safe_blob_exists(storage_client: object, uri: str) -> bool:
     validate_example), so the operator still gets a clear, actionable failure.
     """
     try:
-        return blob_exists(storage_client, uri)
+        return blob_exists(
+            storage_client,
+            uri,
+            timeout=PREFLIGHT_GCS_TIMEOUT_SECONDS,
+        )
     except Exception:
         return False
 
