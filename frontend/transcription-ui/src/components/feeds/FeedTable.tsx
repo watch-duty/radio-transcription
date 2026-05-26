@@ -61,7 +61,11 @@ const VirtuosoTable = React.forwardRef<
   HTMLTableElement,
   React.ComponentProps<typeof Table>
 >((props, ref) => (
-  <Table {...props} ref={ref} sx={{ borderCollapse: 'separate', tableLayout: 'fixed' }} />
+  <Table
+    {...props}
+    ref={ref}
+    sx={{ borderCollapse: 'separate', tableLayout: 'fixed' }}
+  />
 ));
 VirtuosoTable.displayName = 'VirtuosoTable';
 

@@ -127,7 +127,9 @@ describe('FeedTable', () => {
       feeds: mockFeeds,
       isLoading: false,
     });
-    const scroller = container.querySelector('[data-testid="virtuoso-scroller"]');
+    const scroller = container.querySelector(
+      '[data-testid="virtuoso-scroller"]'
+    );
     expect(scroller).toBeTruthy();
     if (!scroller) {
       throw new Error('Expected virtuoso scroller to be rendered');
