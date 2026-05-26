@@ -39,6 +39,33 @@ interface SortConfig {
   direction: 'asc' | 'desc';
 }
 
+const VirtuosoScroller = React.forwardRef<
+  HTMLDivElement,
+  React.HTMLAttributes<HTMLDivElement>
+>((props, ref) => <TableContainer {...props} ref={ref} />);
+
+const VirtuosoTableHead = React.forwardRef<
+  HTMLTableSectionElement,
+  React.HTMLAttributes<HTMLTableSectionElement>
+>((props, ref) => <TableHead {...props} ref={ref} />);
+
+const VirtuosoTableBody = React.forwardRef<
+  HTMLTableSectionElement,
+  React.HTMLAttributes<HTMLTableSectionElement>
+>((props, ref) => <TableBody {...props} ref={ref} />);
+
+const VIRTUOSO_COMPONENTS = {
+  Scroller: VirtuosoScroller,
+  Table: (props: React.ComponentProps<typeof Table>) => (
+    <Table {...props} sx={{ borderCollapse: 'separate', tableLayout: 'fixed' }} />
+  ),
+  TableHead: VirtuosoTableHead,
+  TableRow: (props: React.ComponentProps<typeof TableRow>) => (
+    <TableRow {...props} hover />
+  ),
+  TableBody: VirtuosoTableBody,
+};
+
 function ActionsMenu({ feed }: { feed: Feed }) {
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
 
@@ -210,27 +237,7 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
         <TableVirtuoso
           data={filteredAndSortedFeeds}
           computeItemKey={(_index, feed) => feed.id}
-          components={{
-            Scroller: React.forwardRef<
-              HTMLDivElement,
-              React.HTMLAttributes<HTMLDivElement>
-            >((props, ref) => <TableContainer {...props} ref={ref} />),
-            Table: (props) => (
-              <Table
-                {...props}
-                sx={{ borderCollapse: 'separate', tableLayout: 'fixed' }}
-              />
-            ),
-            TableHead: React.forwardRef<
-              HTMLTableSectionElement,
-              React.HTMLAttributes<HTMLTableSectionElement>
-            >((props, ref) => <TableHead {...props} ref={ref} />),
-            TableRow: (props) => <TableRow {...props} hover />,
-            TableBody: React.forwardRef<
-              HTMLTableSectionElement,
-              React.HTMLAttributes<HTMLTableSectionElement>
-            >((props, ref) => <TableBody {...props} ref={ref} />),
-          }}
+          components={VIRTUOSO_COMPONENTS}
           fixedHeaderContent={() => (
             <TableRow>
               <TableCell
