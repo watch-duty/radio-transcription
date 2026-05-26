@@ -48,11 +48,7 @@ export function FeedSearchView({ title, onError }: FeedSearchViewProps) {
       }}
     >
       <Typography variant="h5">{title}</Typography>
-      <FeedTable
-        feeds={feeds ?? []}
-        isLoading={feedsLoading}
-        collapse={false}
-      />
+      <FeedTable feeds={feeds ?? []} isLoading={feedsLoading} />
     </Box>
   );
 }

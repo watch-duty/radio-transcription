@@ -7,10 +7,7 @@ import MoreVertIcon from '@mui/icons-material/MoreVert';
 import OpenInNewOutlinedIcon from '@mui/icons-material/OpenInNewOutlined';
 import SearchIcon from '@mui/icons-material/Search';
 import TuneIcon from '@mui/icons-material/Tune';
-import FilterIcon from '@mui/icons-material/Tune';
-import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
-import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
 import IconButton from '@mui/material/IconButton';
@@ -21,7 +18,6 @@ import ListItemText from '@mui/material/ListItemText';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import Paper from '@mui/material/Paper';
-import Popover from '@mui/material/Popover';
 import Table from '@mui/material/Table';
 import TableBody from '@mui/material/TableBody';
 import TableCell from '@mui/material/TableCell';
@@ -30,7 +26,6 @@ import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import TableSortLabel from '@mui/material/TableSortLabel';
 import TextField from '@mui/material/TextField';
-import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import type { Feed } from '@transcription/common';
 
@@ -40,7 +35,6 @@ import { MultiSelectFilter } from '../common/MultiSelectFilter';
 interface FeedTableProps {
   feeds: Feed[];
   isLoading: boolean;
-  collapse?: boolean;
 }
 
 interface SortConfig {
@@ -166,31 +160,19 @@ function ActionsMenu({ feed }: { feed: Feed }) {
   );
 }
 
-export function FeedTable({
-  feeds,
-  isLoading,
-  collapse = true,
-}: FeedTableProps) {
-  const [filterAnchorEl, setFilterAnchorEl] =
-    React.useState<HTMLElement | null>(null);
-
+export function FeedTable({ feeds, isLoading }: FeedTableProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortConfig, setSortConfig] = useState<SortConfig>({
     column: 'name',
     direction: 'asc',
   });
 
-  const [selectedTags, setSelectedTags] = useState<
-    { key: string; value: string }[]
-  >([]);
   const [appliedTags, setAppliedTags] = useState<
     { key: string; value: string }[]
   >([]);
 
-  const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
   const [appliedStatuses, setAppliedStatuses] = useState<string[]>([]);
 
-  const [selectedSourceTypes, setSelectedSourceTypes] = useState<string[]>([]);
   const [appliedSourceTypes, setAppliedSourceTypes] = useState<string[]>([]);
 
   const tags = useMemo<{ key: string; value: string }[]>(() => {
@@ -224,33 +206,6 @@ export function FeedTable({
       direction:
         prev.column === property && prev.direction === 'asc' ? 'desc' : 'asc',
     }));
-  };
-
-  const handleFilterOpen = (event: React.MouseEvent<HTMLElement>) => {
-    setFilterAnchorEl(event.currentTarget);
-  };
-
-  const handleFilterClose = () => {
-    setSelectedTags(appliedTags);
-    setSelectedStatuses(appliedStatuses);
-    setSelectedSourceTypes(appliedSourceTypes);
-    setFilterAnchorEl(null);
-  };
-
-  const handleFilterApply = () => {
-    setAppliedTags(selectedTags);
-    setAppliedStatuses(selectedStatuses);
-    setAppliedSourceTypes(selectedSourceTypes);
-    setFilterAnchorEl(null);
-  };
-
-  const handleFilterClear = () => {
-    setSelectedTags([]);
-    setAppliedTags([]);
-    setSelectedStatuses([]);
-    setAppliedStatuses([]);
-    setSelectedSourceTypes([]);
-    setAppliedSourceTypes([]);
   };
 
   const filteredAndSortedFeeds = useMemo(() => {
@@ -357,165 +312,45 @@ export function FeedTable({
           }}
         />
 
-        {collapse ? (
-          <>
-            <Tooltip title="Filter feeds">
-              <Badge
-                color="primary"
-                badgeContent={
-                  appliedTags.length +
-                  appliedStatuses.length +
-                  appliedSourceTypes.length
-                }
-                invisible={
-                  appliedTags.length +
-                    appliedStatuses.length +
-                    appliedSourceTypes.length ===
-                  0
-                }
-              >
-                <Button
-                  color="primary"
-                  variant="outlined"
-                  sx={{
-                    minWidth: 0,
-                    p: 0.75,
-                    textTransform: 'none',
-                    display: 'flex',
-                    gap: 1,
-                  }}
-                  aria-label="filter"
-                  onClick={handleFilterOpen}
-                >
-                  <FilterIcon />
-                  Filters
-                </Button>
-              </Badge>
-            </Tooltip>
-            <Popover
-              open={Boolean(filterAnchorEl)}
-              anchorEl={filterAnchorEl}
-              onClose={handleFilterClose}
-              transitionDuration={0}
-              anchorOrigin={{
-                vertical: 'bottom',
-                horizontal: 'left',
-              }}
-              transformOrigin={{
-                vertical: 'top',
-                horizontal: 'left',
-              }}
-              sx={{ zIndex: 1300 }}
-            >
-              <Box
-                sx={{
-                  p: 2,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 2,
-                  width: 320,
-                  maxWidth: '100%',
-                }}
-              >
-                <MultiSelectFilter
-                  label="Source Type"
-                  options={sourceTypes}
-                  value={selectedSourceTypes}
-                  onChange={setSelectedSourceTypes}
-                />
-                <MultiSelectFilter
-                  label="Status"
-                  options={['Active', 'Inactive']}
-                  value={selectedStatuses}
-                  onChange={setSelectedStatuses}
-                />
-                <MultiSelectFilter
-                  label="Tags"
-                  options={tags}
-                  value={selectedTags}
-                  onChange={setSelectedTags}
-                  groupBy={(tag) => tag.key}
-                  getOptionLabel={(tag) => `${tag.key}: ${tag.value}`}
-                  isOptionEqualToValue={(a, b) =>
-                    a.key === b.key && a.value === b.value
-                  }
-                  renderOptionContent={(tag) => tag.value}
-                  renderValueLabel={(tag) => (
-                    <Typography variant="body2">
-                      <b>{tag.key}</b>: {tag.value}
-                    </Typography>
-                  )}
-                />
-                <Box
-                  sx={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                  }}
-                >
-                  <Button size="small" onClick={handleFilterClear}>
-                    Clear
-                  </Button>
-                  <Box sx={{ display: 'flex', gap: 1 }}>
-                    <Button size="small" onClick={handleFilterClose}>
-                      Cancel
-                    </Button>
-                    <Button
-                      size="small"
-                      variant="contained"
-                      color="primary"
-                      onClick={handleFilterApply}
-                    >
-                      Apply
-                    </Button>
-                  </Box>
-                </Box>
-              </Box>
-            </Popover>
-          </>
-        ) : (
-          <>
-            <TuneIcon color="action" sx={{ ml: 1 }} />
-            <Box sx={{ width: 250, maxWidth: '100%' }}>
-              <MultiSelectFilter
-                label="Source Type"
-                options={sourceTypes}
-                value={appliedSourceTypes}
-                onChange={setAppliedSourceTypes}
-                size="small"
-              />
-            </Box>
-            <Box sx={{ width: 250, maxWidth: '100%' }}>
-              <MultiSelectFilter
-                label="Status"
-                options={['Active', 'Inactive']}
-                value={appliedStatuses}
-                onChange={setAppliedStatuses}
-                size="small"
-              />
-            </Box>
-            <Box sx={{ width: 250, maxWidth: '100%' }}>
-              <MultiSelectFilter
-                label="Tags"
-                options={tags}
-                value={appliedTags}
-                onChange={setAppliedTags}
-                size="small"
-                groupBy={(tag) => tag.key}
-                getOptionLabel={(tag) => `${tag.key}: ${tag.value}`}
-                isOptionEqualToValue={(a, b) =>
-                  a.key === b.key && a.value === b.value
-                }
-                renderOptionContent={(tag) => tag.value}
-                renderValueLabel={(tag) => (
-                  <Typography variant="body2">
-                    <b>{tag.key}</b>: {tag.value}
-                  </Typography>
-                )}
-              />
-            </Box>
-          </>
-        )}
+        <TuneIcon color="action" sx={{ ml: 1 }} />
+        <Box sx={{ width: 250, maxWidth: '100%' }}>
+          <MultiSelectFilter
+            label="Source Type"
+            options={sourceTypes}
+            value={appliedSourceTypes}
+            onChange={setAppliedSourceTypes}
+            size="small"
+          />
+        </Box>
+        <Box sx={{ width: 250, maxWidth: '100%' }}>
+          <MultiSelectFilter
+            label="Status"
+            options={['Active', 'Inactive']}
+            value={appliedStatuses}
+            onChange={setAppliedStatuses}
+            size="small"
+          />
+        </Box>
+        <Box sx={{ width: 250, maxWidth: '100%' }}>
+          <MultiSelectFilter
+            label="Tags"
+            options={tags}
+            value={appliedTags}
+            onChange={setAppliedTags}
+            size="small"
+            groupBy={(tag) => tag.key}
+            getOptionLabel={(tag) => `${tag.key}: ${tag.value}`}
+            isOptionEqualToValue={(a, b) =>
+              a.key === b.key && a.value === b.value
+            }
+            renderOptionContent={(tag) => tag.value}
+            renderValueLabel={(tag) => (
+              <Typography variant="body2">
+                <b>{tag.key}</b>: {tag.value}
+              </Typography>
+            )}
+          />
+        </Box>
 
         {filteredAndSortedFeeds.length !== feeds.length && (
           <Typography
