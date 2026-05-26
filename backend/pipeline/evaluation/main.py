@@ -104,9 +104,20 @@ class EvaluationServiceContainer:
         return self._evaluation_service
 
     async def get_processor(self) -> EvaluationEventProcessor:
-        if self._processor is None:
-            if self._pool is None:
-                self._pool = await create_pool_with_retry()
+        # Re-initialize the connection pool if it is None or if the event loop
+        # it was created on has been closed (e.g., between Serverless/Cloud Function invocations).
+        need_reinit = (
+            self._pool is None
+            or self._processor is None
+            or getattr(self._pool, "_loop", None) is None
+            or self._pool._loop.is_closed()  # noqa: SLF001
+        )
+
+        if need_reinit:
+            logger.info(
+                "Initializing or recreating database connection pool..."
+            )
+            self._pool = await create_pool_with_retry()
             store = AudioSegmentStore(self._pool)
 
             output_topic = os.environ.get("RULES_EVALUATION_RESULTS_TOPIC")
@@ -121,6 +132,9 @@ class EvaluationServiceContainer:
                 output_topic_path=output_topic,
                 audio_segment_store=store,
             )
+        if self._processor is None:
+            msg = "Processor was not properly initialized."
+            raise RuntimeError(msg)
         return self._processor
 
 
