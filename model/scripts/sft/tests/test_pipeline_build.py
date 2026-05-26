@@ -93,6 +93,15 @@ class TestPipelineCLI(unittest.TestCase):
         self.assertIn("system prompt file not found", "\n".join(logs.output))
         self.assertIn(str(missing), "\n".join(logs.output))
 
+    def test_dataset_names_are_deduped_in_order(self) -> None:
+        """Repeated --datasets entries should not run adapters twice."""
+        import pipeline
+
+        self.assertEqual(
+            pipeline._parse_dataset_names("echo, echo,bench,echo"),
+            ["echo", "bench"],
+        )
+
 
 class TestPreflightEmptyTarget(unittest.TestCase):
     """run_preflight aborts on empty model text (validate_example returns False)."""

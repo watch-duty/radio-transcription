@@ -55,6 +55,11 @@ def _load_round_config(round_id: str) -> dict:
     return {}
 
 
+def _parse_dataset_names(value: str) -> list[str]:
+    """Parse comma-separated dataset names, preserving first occurrence order."""
+    return list(dict.fromkeys(d.strip() for d in value.split(",")))
+
+
 def _save_round_config(round_id: str, config: dict) -> None:
     cfg_path = RESULTS_DIR / round_id / "config.json"
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
@@ -237,7 +242,7 @@ def _build(args: argparse.Namespace) -> int:
     from google.cloud import storage
 
     registry = _load_registry()
-    dataset_names = [d.strip() for d in args.datasets.split(",")]
+    dataset_names = _parse_dataset_names(args.datasets)
 
     # Validate requested datasets exist in registry
     for ds_name in dataset_names:
