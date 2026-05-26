@@ -17,6 +17,9 @@ from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
 )
 from backend.pipeline.ingestion.models import AudioMimeType
+from backend.pipeline.ingestion.slo_contract import (
+    EVENT_TYPE_BATCH_UNPRODUCTIVE,
+)
 from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 
 
@@ -1278,6 +1281,15 @@ class TestBcfyCallsCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
         }
         self.leased_feed = cast("LeasedFeed", self.feed)
 
+    @staticmethod
+    def _batch_unproductive_records(records: list[Any]) -> list[Any]:
+        return [
+            r
+            for r in records
+            if getattr(r, "json_fields", {}).get("event_type")
+            == EVENT_TYPE_BATCH_UNPRODUCTIVE
+        ]
+
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
     )
@@ -1418,6 +1430,7 @@ class TestBcfyCallsCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
             return True
 
         mock_sleep.side_effect = _sleep_side_effect
+        chunks: list[bcfy_calls_collector.CapturedChunk] = []
 
         with self.assertLogs(
             "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector",
@@ -1425,18 +1438,20 @@ class TestBcfyCallsCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
         ) as cm:
             # Placeholder WARNING so assertLogs captures something regardless of emit.
             bcfy_calls_collector.logger.warning("_test_placeholder_")
-            async for _ in bcfy_calls_collector.capture_bcfy_calls(
+            async for chunk in bcfy_calls_collector.capture_bcfy_calls(
                 self.leased_feed,
                 shutdown,
                 "https://api.bcfy/",
                 _default_resources(),
             ):
-                shutdown.set()
+                chunks.append(chunk)
 
         emits = [
             r for r in cm.records if r.getMessage() == "Call download failed"
         ]
         self.assertEqual(emits, [])
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(self._batch_unproductive_records(cm.records), [])
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
@@ -1500,6 +1515,92 @@ class TestBcfyCallsCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
             r for r in cm.records if r.getMessage() == "Call download failed"
         ]
         self.assertEqual(emits, [])
+        self.assertEqual(self._batch_unproductive_records(cm.records), [])
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._create_chunk_from_call",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_all_failed_page_emits_batch_unproductive_without_raising(
+        self,
+        mock_sleep: AsyncMock,
+        mock_create: AsyncMock,
+        mock_fetch: AsyncMock,
+        mock_jwt: MagicMock,
+    ) -> None:
+        mock_jwt.return_value = "tok"
+        mock_create.return_value = None
+        shutdown = asyncio.Event()
+        fetch_calls = 0
+
+        async def _fetch_side_effect(*args, **kwargs):
+            nonlocal fetch_calls
+            fetch_calls += 1
+            if fetch_calls == 1:
+                return {
+                    "calls": [
+                        {
+                            "url": "https://x/a.mp3",
+                            "start_ts": 1_700_000_000,
+                            "end_ts": 1_700_000_010,
+                        },
+                        {
+                            "url": "https://x/b.mp3",
+                            "start_ts": 1_700_000_020,
+                            "end_ts": 1_700_000_030,
+                        },
+                    ],
+                    "lastPos": 1_700_000_030,
+                }
+            shutdown.set()
+            return {"calls": []}
+
+        async def _sleep_side_effect(*args, **kwargs) -> bool:
+            return shutdown.is_set()
+
+        mock_fetch.side_effect = _fetch_side_effect
+        mock_sleep.side_effect = _sleep_side_effect
+
+        with self.assertLogs(
+            "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector",
+            level="WARNING",
+        ) as cm:
+            chunks = [
+                c
+                async for c in bcfy_calls_collector.capture_bcfy_calls(
+                    self.leased_feed,
+                    shutdown,
+                    "https://api.bcfy/",
+                    _default_resources(),
+                )
+            ]
+
+        self.assertEqual(chunks, [])
+        self.assertEqual(mock_fetch.call_count, 2)
+        self.assertEqual(mock_create.call_count, 2)
+        failed_downloads = [
+            r for r in cm.records if r.getMessage() == "Call download failed"
+        ]
+        self.assertEqual(len(failed_downloads), 2)
+        emits = self._batch_unproductive_records(cm.records)
+        self.assertEqual(len(emits), 1)
+        rec = cast("Any", emits[0])
+        self.assertEqual(rec.json_fields["feed_id"], str(self.feed_uuid))
+        self.assertEqual(rec.json_fields["source_type"], self.feed["source_type"])
+        self.assertEqual(rec.json_fields["attempted"], 2)
+        self.assertEqual(rec.json_fields["produced"], 0)
+        self.assertEqual(rec.json_fields["reason"], "downloads_failing")
 
 
 class TestBcfyCallsHttp01(unittest.IsolatedAsyncioTestCase):
