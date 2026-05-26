@@ -295,7 +295,7 @@ export function FeedConfigurationView({
     const errors: Record<string, string> = {};
 
     if (!name.trim()) {
-      errors.name = 'Feed display name is required.';
+      errors.name = 'Display name is required.';
     }
 
     // Source Feed ID and Source Type are only required when creating.
@@ -528,14 +528,15 @@ export function FeedConfigurationView({
                 <Stack spacing={3}>
                   <TextField
                     fullWidth
-                    label="Feed Display Name"
+                    label="Display Name"
                     variant="outlined"
-                    placeholder="e.g. Ventura Public Safety - Fire Dispatch"
+                    placeholder="Ventura Public Safety - Fire Dispatch"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     error={!!validationErrors.name}
                     helperText={
-                      validationErrors.name || 'Display name of the feed.'
+                      validationErrors.name ||
+                      'Concise and readable name of the feed'
                     }
                     disabled={isSubmitting}
                   />
@@ -566,8 +567,8 @@ export function FeedConfigurationView({
                         </Select>
                         <FormHelperText>
                           {editingFeed
-                            ? 'Source cannot be changed after it has been registered.'
-                            : 'Source of the feed audio.'}
+                            ? 'Source cannot be changed after it has been registered'
+                            : 'Source the audio comes from'}
                         </FormHelperText>
                       </FormControl>
                     </Grid>
@@ -577,15 +578,14 @@ export function FeedConfigurationView({
                         fullWidth
                         label="Source Feed ID"
                         variant="outlined"
-                        placeholder={
-                          sourceType === 'bcfy_feeds'
-                            ? 'e.g. 12345'
-                            : 'e.g. system-slug'
-                        }
+                        placeholder={'12345'}
                         value={sourceFeedId}
                         onChange={(e) => setSourceFeedId(e.target.value)}
                         error={!!validationErrors.sourceFeedId}
-                        helperText={validationErrors.sourceFeedId}
+                        helperText={
+                          validationErrors.sourceFeedId ||
+                          'Unique ID of the source'
+                        }
                         disabled={!!editingFeed || isSubmitting}
                         slotProps={{
                           input: {
@@ -609,13 +609,13 @@ export function FeedConfigurationView({
                     fullWidth
                     label="External ID"
                     variant="outlined"
-                    placeholder="e.g. ca-mrn-fire-10"
+                    placeholder="ca-vnt-fire-10"
                     value={externalId}
                     onChange={(e) => setExternalId(e.target.value)}
                     error={!!validationErrors.externalId}
                     helperText={
                       validationErrors.externalId ||
-                      'Internal identifier tag for systems lookup, e.g. "ca-mrn-fd-1".'
+                      'Unique ID separate from the source ID for lookup'
                     }
                     disabled={isSubmitting}
                   />
@@ -654,7 +654,7 @@ export function FeedConfigurationView({
                       <TextField
                         size="small"
                         label="Tag Key"
-                        placeholder="e.g. county"
+                        placeholder="county"
                         value={newTagKey}
                         onChange={(e) => setNewTagKey(e.target.value)}
                         error={!!validationErrors.tags}
@@ -664,7 +664,7 @@ export function FeedConfigurationView({
                       <TextField
                         size="small"
                         label="Tag Value"
-                        placeholder="e.g. Ventura"
+                        placeholder="Ventura"
                         value={newTagValue}
                         onChange={(e) => setNewTagValue(e.target.value)}
                         error={!!validationErrors.tags}
