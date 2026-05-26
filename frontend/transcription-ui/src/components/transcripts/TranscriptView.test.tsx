@@ -343,7 +343,8 @@ describe('TranscriptView', () => {
         'next-token-123',
         undefined,
         undefined,
-        'desc'
+        'desc',
+        undefined
       );
     });
   });
@@ -401,7 +402,97 @@ describe('TranscriptView', () => {
         undefined,
         testTimestamp,
         undefined,
-        'asc'
+        'asc',
+        undefined
+      );
+    });
+  });
+
+  it('passes correct params to listTranscripts when loading newer transcripts with alerts filter active', async () => {
+    const testTimestamp = new Date('2026-04-10T12:00:00Z').getTime();
+    const initialTranscripts = [
+      {
+        feedId: 'feed123',
+        transmissionId: '1',
+        transcript: 'Transcript 1 (Alert)',
+        canonicalAudioUri: 'gs:://foo.flac',
+        playbackAudioUri: 'gs:://foo.m4a',
+        startTimestamp: '2026-04-10T12:00:00Z',
+        endTimestamp: '2026-04-10T12:00:05Z',
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: ['gs:://foo.flac'],
+        startAudioOffset: '0s',
+        endAudioOffset: '5s',
+        evaluationDecisions: ['Rule A'],
+      },
+    ];
+
+    const alertTranscripts = [
+      {
+        ...initialTranscripts[0],
+        transcript: 'Transcript 2 (Alert only)',
+      },
+    ];
+
+    vi.mocked(listTranscripts)
+      .mockResolvedValueOnce({
+        transcripts: initialTranscripts,
+        nextToken: undefined,
+      })
+      .mockResolvedValueOnce({
+        transcripts: alertTranscripts,
+        nextToken: undefined,
+      })
+      .mockResolvedValueOnce({
+        transcripts: [],
+        nextToken: undefined,
+      });
+
+    renderTranscriptView(
+      <MemoryRouter
+        initialEntries={[`/?feedId=feed123&timestamp=${testTimestamp}`]}
+      >
+        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Transcript 1 (Alert)')).toBeTruthy();
+    });
+
+    // Select "Alerts only" from the select dropdown
+    const selectButton = screen.getByRole('combobox', {
+      name: /Transcript Filter/i,
+    });
+    fireEvent.mouseDown(selectButton);
+
+    const optionElement = await screen.findByRole('option', {
+      name: /Alerts only/i,
+    });
+    fireEvent.click(optionElement);
+
+    // Wait for the query containing isAlert=true to complete and render
+    await waitFor(() => {
+      expect(screen.getByText('Transcript 2 (Alert only)')).toBeTruthy();
+    });
+
+    const loadNewerButton = screen.getByRole('button', {
+      name: /Load newer transcripts/i,
+    });
+    fireEvent.click(loadNewerButton);
+
+    await waitFor(() => {
+      expect(listTranscripts).toHaveBeenCalledTimes(3);
+      expect(listTranscripts).toHaveBeenLastCalledWith(
+        'feed123',
+        'fake-token',
+        undefined,
+        undefined,
+        testTimestamp,
+        undefined,
+        'asc',
+        true
       );
     });
   });
@@ -705,5 +796,124 @@ describe('TranscriptView', () => {
     expect(playSpy).not.toHaveBeenCalled();
 
     vi.useRealTimers();
+  });
+
+  it('applies the isAlert filter when selected in the dropdown', async () => {
+    vi.mocked(listTranscripts).mockResolvedValue({
+      transcripts: [],
+      nextToken: undefined,
+    });
+
+    renderTranscriptView(
+      <MemoryRouter initialEntries={['/?feedId=feed123']}>
+        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    // Default load should have been triggered on mount due to feedId param
+    await waitFor(() => {
+      expect(listTranscripts).toHaveBeenCalledWith(
+        'feed123',
+        expect.any(String),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'desc',
+        undefined
+      );
+    });
+
+    // Select "Alerts only" from the select dropdown
+    const selectButton = screen.getByRole('combobox', {
+      name: /Transcript Filter/i,
+    });
+    fireEvent.mouseDown(selectButton);
+
+    const optionElement = await screen.findByRole('option', {
+      name: /Alerts only/i,
+    });
+    fireEvent.click(optionElement);
+
+    // React query should refetch transcripts using the isAlert filter
+    await waitFor(() => {
+      expect(listTranscripts).toHaveBeenLastCalledWith(
+        'feed123',
+        expect.any(String),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'desc',
+        true
+      );
+    });
+  });
+
+  it('does not set timestamp in query/params when toggling alerts filter', async () => {
+    const testTimestampString = '2026-04-10T12:00:00Z';
+    const initialTranscripts = [
+      {
+        feedId: 'feed123',
+        transmissionId: '1',
+        transcript: 'Transcript 1',
+        canonicalAudioUri: 'gs:://foo.flac',
+        playbackAudioUri: 'gs:://foo.m4a',
+        startTimestamp: testTimestampString,
+        endTimestamp: '2026-04-10T12:00:05Z',
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: ['gs:://foo.flac'],
+        startAudioOffset: '0s',
+        endAudioOffset: '5s',
+        evaluationDecisions: [],
+      },
+    ];
+
+    vi.mocked(listTranscripts)
+      .mockResolvedValueOnce({
+        transcripts: initialTranscripts,
+        nextToken: undefined,
+      })
+      .mockResolvedValueOnce({
+        transcripts: [],
+        nextToken: undefined,
+      });
+
+    renderTranscriptView(
+      <MemoryRouter initialEntries={['/?feedId=feed123']}>
+        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Transcript 1')).toBeTruthy();
+    });
+
+    // Select "Alerts only" from the select dropdown
+    const selectButton = screen.getByRole('combobox', {
+      name: /Transcript Filter/i,
+    });
+    fireEvent.mouseDown(selectButton);
+
+    const optionElement = await screen.findByRole('option', {
+      name: /Alerts only/i,
+    });
+    fireEvent.click(optionElement);
+
+    // React query should refetch transcripts using the isAlert filter and undefined for timestamps
+    await waitFor(() => {
+      expect(listTranscripts).toHaveBeenCalledTimes(2);
+      expect(listTranscripts).toHaveBeenLastCalledWith(
+        'feed123',
+        expect.any(String),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'desc',
+        true
+      );
+    });
   });
 });

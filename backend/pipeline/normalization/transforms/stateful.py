@@ -356,7 +356,9 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
                 transmission_buffer_state.clear()
                 stale_timer_event.clear()
                 stale_timer_proc.clear()
-                curr_context = replace(curr_context, prior_audio_tail=None)
+                curr_context = replace(
+                    curr_context, prior_audio_tail=None, sample_rate=None
+                )
 
             # Commit initial sequence context updates
             transmission_context_state.write(curr_context)
@@ -733,7 +735,9 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
                 transmission_buffer_state.clear()
                 stale_timer_event.clear()
                 stale_timer_proc.clear()
-                curr_context = replace(curr_context, prior_audio_tail=None)
+                curr_context = replace(
+                    curr_context, prior_audio_tail=None, sample_rate=None
+                )
 
             # Commit initial sequence context updates
             transmission_context_state.write(curr_context)

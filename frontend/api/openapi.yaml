@@ -83,6 +83,9 @@ components:
           enum:
             - asc
             - desc
+        isAlert:
+          type: boolean
+          default: false
       type: object
       additionalProperties: false
     ScopeLevel:
@@ -457,6 +460,12 @@ paths:
             enum:
               - asc
               - desc
+        - in: query
+          name: isAlert
+          required: false
+          schema:
+            default: false
+            type: boolean
       x-google-backend: radio-transcription-api
   /api/v1/rules:
     get:
