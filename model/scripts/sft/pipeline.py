@@ -478,7 +478,7 @@ def _tune(args: argparse.Namespace) -> int:
         32  # VERIFIED: inference rate; ASSUMED same for SFT
     )
     COST_PER_MILLION_TOKENS: Final = (
-        3.00  # ASSUMED: 2.0-Flash upper bound (2.5-Flash not public)
+        5.00  # Gemini 2.5 Flash supervised fine-tuning, per 1M training tokens
     )
 
     epochs = args.epochs
@@ -500,12 +500,7 @@ def _tune(args: argparse.Namespace) -> int:
     print(f"  Epochs:            {epochs}")
     print(f"  Est. audio tokens: {estimated_tokens:,.0f} ({basis} x 32 tok/s)")
     print(f"  Est. cost:        ~${estimated_cost:.2f} USD")
-    print(
-        "  NOTE: Using Gemini 2.0 Flash rate ($3.00/M tokens) as upper bound."
-    )
-    print(
-        "        Actual Gemini 2.5 Flash SFT rate is not publicly listed (as of 2026-05-22)."
-    )
+    print("  NOTE: Using Gemini 2.5 Flash SFT rate ($5.00/M training tokens).")
     print(
         "        Actual billing may differ. You accept responsibility for GCP charges.\n"
     )

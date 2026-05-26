@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import inspect
 import io
 import json
 import sys
@@ -101,6 +102,16 @@ class TestPipelineCLI(unittest.TestCase):
             pipeline._parse_dataset_names("echo, echo,bench,echo"),
             ["echo", "bench"],
         )
+
+    def test_tune_cost_estimate_uses_gemini_25_flash_rate(self) -> None:
+        """Tune cost estimate references Gemini 2.5 Flash, not the old 2.0 rate."""
+        import pipeline
+
+        source = inspect.getsource(pipeline._tune)
+
+        self.assertIn("5.00", source)
+        self.assertIn("Gemini 2.5 Flash", source)
+        self.assertNotIn("Gemini 2.0 Flash", source)
 
 
 class TestPreflightEmptyTarget(unittest.TestCase):
