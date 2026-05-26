@@ -57,15 +57,23 @@ const VirtuosoTableBody = React.forwardRef<
 >((props, ref) => <TableBody {...props} ref={ref} />);
 VirtuosoTableBody.displayName = 'VirtuosoTableBody';
 
+const VirtuosoTable = React.forwardRef<
+  HTMLTableElement,
+  React.ComponentProps<typeof Table>
+>((props, ref) => (
+  <Table {...props} ref={ref} sx={{ borderCollapse: 'separate', tableLayout: 'fixed' }} />
+));
+VirtuosoTable.displayName = 'VirtuosoTable';
+
+function VirtuosoTableRow(props: React.ComponentProps<typeof TableRow>) {
+  return <TableRow {...props} hover />;
+}
+
 const VIRTUOSO_COMPONENTS = {
   Scroller: VirtuosoScroller,
-  Table: (props: React.ComponentProps<typeof Table>) => (
-    <Table {...props} sx={{ borderCollapse: 'separate', tableLayout: 'fixed' }} />
-  ),
+  Table: VirtuosoTable,
   TableHead: VirtuosoTableHead,
-  TableRow: (props: React.ComponentProps<typeof TableRow>) => (
-    <TableRow {...props} hover />
-  ),
+  TableRow: VirtuosoTableRow,
   TableBody: VirtuosoTableBody,
 };
 
