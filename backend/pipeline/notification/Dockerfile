@@ -8,7 +8,7 @@ WORKDIR /app
 ENV PYTHONPATH=/app
 
 # 1. Install locked, scoped dependencies
-COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.9.28 /uv /uvx /bin/
 COPY pyproject.toml uv.lock ./
 COPY backend/ ./backend/
 RUN uv export --package notification-function --no-dev --locked --no-emit-project -o requirements.txt && \
