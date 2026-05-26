@@ -3,6 +3,7 @@ import type {
   Feed,
   FeedCreate,
   FeedStatus,
+  FeedUpdate,
   SourceType,
   Tag,
 } from '@transcription/common';
@@ -44,12 +45,7 @@ interface FeedCreateBackend extends BaseFeedBackend {
   external_id: string;
   tags?: Tag[];
 }
-// NOTE: Duplicated from common/src/types/feeds.ts due to TSOA resolution limitations in monorepos.
-export interface FeedUpdate {
-  name: string;
-  externalId: string;
-  tags?: Tag[];
-}
+
 
 interface FeedUpdateBackend {
   name: string;
