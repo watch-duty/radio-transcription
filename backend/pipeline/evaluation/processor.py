@@ -10,8 +10,10 @@ from backend.pipeline.common.tracing_utils import (
     with_tracer_context,
 )
 from backend.pipeline.schema_types import (
-    transcribed_audio_pb2 as transcribed_pb2,
     evaluated_transcribed_audio_pb2 as evaluated_pb2,
+)
+from backend.pipeline.schema_types import (
+    transcribed_audio_pb2 as transcribed_pb2,
 )
 from backend.services.audio_segments.models import AnnotationType
 

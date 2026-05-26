@@ -1,9 +1,15 @@
+from __future__ import annotations
+
 import logging
 import math
 import os
+from typing import TYPE_CHECKING
 
 import functions_framework
-from cloudevents.http import event as cloudevent
+
+if TYPE_CHECKING:
+    import asyncpg
+    from cloudevents.http import event as cloudevent
 
 from backend.pipeline.common.clients import pubsub_client
 from backend.pipeline.common.clients.transcripts_client import TranscriptsClient
@@ -59,7 +65,7 @@ def _get_rules_cache_ttl_seconds() -> float:
 # 2. Container for lazy initialization (for performance on warm starts)
 class EvaluationServiceContainer:
     def __init__(self) -> None:
-        self._pool: "asyncpg.Pool" | None = None
+        self._pool: asyncpg.Pool | None = None
         self._processor: EvaluationEventProcessor | None = None
         self._evaluation_service: service.EvaluationService | None = None
         self._transcripts_client: TranscriptsClient | None = None
@@ -69,9 +75,8 @@ class EvaluationServiceContainer:
         if self._transcripts_client is None:
             url = os.environ.get("TRANSCRIPTS_API_URL")
             if not url:
-                raise ValueError(
-                    "TRANSCRIPTS_API_URL environment variable is not set."
-                )
+                msg = "TRANSCRIPTS_API_URL environment variable is not set."
+                raise ValueError(msg)
             self._transcripts_client = TranscriptsClient(api_url=url)
         return self._transcripts_client
 
@@ -106,9 +111,8 @@ class EvaluationServiceContainer:
 
             output_topic = os.environ.get("RULES_EVALUATION_RESULTS_TOPIC")
             if not output_topic:
-                raise ValueError(
-                    "RULES_EVALUATION_RESULTS_TOPIC environment variable is not set."
-                )
+                msg = "RULES_EVALUATION_RESULTS_TOPIC environment variable is not set."
+                raise ValueError(msg)
 
             self._processor = EvaluationEventProcessor(
                 evaluation_service=self.get_evaluation_service(),
@@ -123,7 +127,7 @@ class EvaluationServiceContainer:
 container = EvaluationServiceContainer()
 
 
-@functions_framework.cloud_event
+@functions_framework.cloud_event  # type: ignore
 async def evaluate_transcribed_audio_segment(
     cloud_event: cloudevent.CloudEvent,
 ) -> None:
