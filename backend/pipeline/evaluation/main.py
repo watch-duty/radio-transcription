@@ -1,5 +1,4 @@
 import logging
-import math
 import os
 
 import functions_framework
@@ -17,41 +16,6 @@ from backend.pipeline.evaluation.rules_evaluation import evaluator
 setup_logging()
 setup_tracing(use_batch=False)
 logger = logging.getLogger(__name__)
-DEFAULT_RULES_CACHE_TTL_SECONDS = 60.0
-
-
-def _get_rules_cache_ttl_seconds() -> float:
-    raw_value = os.environ.get("RULES_CACHE_TTL_SECONDS")
-    if raw_value is None:
-        return DEFAULT_RULES_CACHE_TTL_SECONDS
-
-    try:
-        ttl_seconds = float(raw_value)
-    except ValueError:
-        logger.warning(
-            "Invalid RULES_CACHE_TTL_SECONDS value %r. Defaulting to %.1f.",
-            raw_value,
-            DEFAULT_RULES_CACHE_TTL_SECONDS,
-        )
-        return DEFAULT_RULES_CACHE_TTL_SECONDS
-
-    if math.isnan(ttl_seconds):
-        logger.warning(
-            "NaN RULES_CACHE_TTL_SECONDS value. Defaulting to %.1f.",
-            DEFAULT_RULES_CACHE_TTL_SECONDS,
-        )
-        return DEFAULT_RULES_CACHE_TTL_SECONDS
-
-    if ttl_seconds < 0:
-        logger.warning(
-            "Negative RULES_CACHE_TTL_SECONDS value %r. Defaulting to %.1f.",
-            raw_value,
-            DEFAULT_RULES_CACHE_TTL_SECONDS,
-        )
-        return DEFAULT_RULES_CACHE_TTL_SECONDS
-
-    return ttl_seconds
-
 
 # 2. Global Initialization (for performance on warm starts)
 pubsub_client_instance = pubsub_client.PubSubClient()
@@ -68,13 +32,9 @@ transcripts_client = TranscriptsClient(api_url=TRANSCRIPTS_API_URL)
 
 # 3. Initialize Evaluator
 RULES_API_URL = os.environ.get("RULES_API_URL")
-RULES_CACHE_TTL_SECONDS = _get_rules_cache_ttl_seconds()
 if RULES_API_URL:
     logger.info("Using RemoteTextEvaluator with API: %s", RULES_API_URL)
-    text_evaluator = evaluator.RemoteTextEvaluator(
-        api_url=RULES_API_URL,
-        cache_ttl_seconds=RULES_CACHE_TTL_SECONDS,
-    )
+    text_evaluator = evaluator.RemoteTextEvaluator(api_url=RULES_API_URL)
 else:
     logger.info("Using StaticTextEvaluator (no RULES_API_URL set)")
     text_evaluator = evaluator.StaticTextEvaluator()

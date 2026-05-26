@@ -162,27 +162,16 @@ class RemoteTextEvaluator(BaseTextEvaluator):
     Implementation of text evaluation that fetches rules from a remote API.
     """
 
-    def __init__(self, api_url: str, cache_ttl_seconds: float = 60) -> None:
+    def __init__(self, api_url: str) -> None:
         """
         Initializes the RemoteTextEvaluator.
 
         Args:
             api_url: The URL of the rules management service API.
-            cache_ttl_seconds: How long to cache fetched rules. Use 0 to
-                disable caching for local/integration environments that mutate
-                rules during a run.
         """
-        if cache_ttl_seconds < 0:
-            msg = "cache_ttl_seconds must be non-negative"
-            raise ValueError(msg)
-
         self.api_url = api_url.rstrip("/")
         self.session = requests.Session()
-        self._cache_ttl_seconds = cache_ttl_seconds
-        self._cache = cachetools.TTLCache(
-            maxsize=1,
-            ttl=cache_ttl_seconds,
-        )
+        self._cache = cachetools.TTLCache(maxsize=1, ttl=60)
 
     def evaluate(self, text: str, feed_id: str) -> EvaluationResult:
         """
@@ -224,7 +213,7 @@ class RemoteTextEvaluator(BaseTextEvaluator):
         Returns:
             A list of Rule objects.
         """
-        if self._cache_ttl_seconds > 0 and "rules" in self._cache:
+        if "rules" in self._cache:
             return self._cache["rules"]
 
         # When running on Cloud Run, use the metadata server to get an ID token
@@ -240,6 +229,5 @@ class RemoteTextEvaluator(BaseTextEvaluator):
 
         rules_data = response.json()
         rules = [models.Rule.model_validate(rule) for rule in rules_data]
-        if self._cache_ttl_seconds > 0:
-            self._cache["rules"] = rules
+        self._cache["rules"] = rules
         return rules
