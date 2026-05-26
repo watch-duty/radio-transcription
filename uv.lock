@@ -4,7 +4,9 @@ requires-python = "==3.13.*"
 
 [manifest]
 members = [
+    "evaluation-function",
     "normalization-pipeline",
+    "notification-function",
     "radio-transcription",
     "transcription-function",
 ]
@@ -593,6 +595,37 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/68/67/8be3ece97cdad070a04b9468e1eec1f6a7c7acaee553e6cba0d33660a264/envoy_data_plane-1.0.3.tar.gz", hash = "sha256:5244abb443435e312dbc42657606795071e4c4adeb3aa5779a689facb1a8e77f", size = 1176572, upload-time = "2025-02-26T05:03:14.576Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/09/5f/4098bd839adb7277536b3ac06770bc60534845c39ae66161e33568d0105b/envoy_data_plane-1.0.3-py3-none-any.whl", hash = "sha256:2eabfe0a98e3cf509c13c80798b93d94992a5ba436a4cdd3b5f805f50f40558f", size = 959951, upload-time = "2025-02-26T05:03:12.414Z" },
+]
+
+[[package]]
+name = "evaluation-function"
+version = "0.1.0"
+source = { editable = "backend/pipeline/evaluation" }
+dependencies = [
+    { name = "asyncpg" },
+    { name = "cloudevents" },
+    { name = "functions-framework" },
+    { name = "google-cloud-pubsub" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-gcp-trace" },
+    { name = "opentelemetry-sdk" },
+    { name = "protobuf" },
+    { name = "requests" },
+    { name = "tenacity" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "asyncpg", specifier = ">=0.29.0" },
+    { name = "cloudevents", specifier = ">=1.12.0" },
+    { name = "functions-framework", specifier = ">=3.10.1" },
+    { name = "google-cloud-pubsub", specifier = ">=2.35.0" },
+    { name = "opentelemetry-api", specifier = ">=1.41.1" },
+    { name = "opentelemetry-exporter-gcp-trace", specifier = ">=1.12.0" },
+    { name = "opentelemetry-sdk", specifier = ">=1.41.1" },
+    { name = "protobuf", specifier = ">=5.29.6" },
+    { name = "requests", specifier = ">=2.32.5" },
+    { name = "tenacity", specifier = ">=9.1.4" },
 ]
 
 [[package]]
@@ -1867,6 +1900,37 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "soundfile", specifier = ">=0.13.1" },
     { name = "tenacity", specifier = ">=9.1.4" },
+]
+
+[[package]]
+name = "notification-function"
+version = "0.1.0"
+source = { editable = "backend/pipeline/notification" }
+dependencies = [
+    { name = "cloudevents" },
+    { name = "functions-framework" },
+    { name = "google-auth" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-gcp-trace" },
+    { name = "opentelemetry-sdk" },
+    { name = "protobuf" },
+    { name = "pydantic" },
+    { name = "redis" },
+    { name = "requests" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cloudevents", specifier = ">=1.12.0" },
+    { name = "functions-framework", specifier = ">=3.10.1" },
+    { name = "google-auth", specifier = ">=2.0.0" },
+    { name = "opentelemetry-api", specifier = ">=1.41.1" },
+    { name = "opentelemetry-exporter-gcp-trace", specifier = ">=1.12.0" },
+    { name = "opentelemetry-sdk", specifier = ">=1.41.1" },
+    { name = "protobuf", specifier = ">=5.29.6" },
+    { name = "pydantic", specifier = ">=2.10.6" },
+    { name = "redis", specifier = ">=7.3.0" },
+    { name = "requests", specifier = ">=2.32.5" },
 ]
 
 [[package]]
