@@ -2,6 +2,7 @@
 # ruff: noqa: T201
 import argparse
 import csv
+import json
 import sys
 from typing import Any, TypedDict
 from urllib.parse import urlparse
@@ -93,6 +94,12 @@ def parse_feed_metadata_payload(entry: Entry) -> dict[str, Any]:
             "sourceType": "bcfy_feeds",
             "sourceFeedId": str(feed_id),
         }
+    if "www.broadcastify.com/webPlayerAdv/" in url:
+        _, _, feed_id = url.partition("/webPlayerAdv/")
+        return {
+            "sourceType": "bcfy_feeds",
+            "sourceFeedId": str(feed_id),
+        }
     if "www.broadcastify.com/calls/tg/" in url:
         _, _, tg_info = url.partition("/tg/")
         return {
@@ -136,18 +143,29 @@ def parse_payload(entry: Entry) -> dict[str, Any]:
 
 
 def save_feed(entry: Entry, server: str, token: str) -> None:
-    payload = parse_payload(entry)
+    try:
+        payload = parse_payload(entry)
+    except ValueError as e:
+        print(f"NOTE: Skipping feed: {entry['url']}: {e}")
+        return
+
     if payload["sourceType"] == "fn":
         print(f"NOTE: FN feed skipped: {payload['sourceFeedId']}")
         return
 
-    response = requests.post(
-        f"{server}/api/v1/feeds",
-        json=payload,
-        headers={"Authorization": f"Bearer {token}"},
-        timeout=10,
-    )
-    response.raise_for_status()
+    try:
+        response = requests.post(
+            f"{server}/api/v1/feeds",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        response.raise_for_status()
+    except Exception as e:
+        print(f"ERROR: {e.args}")
+        print("Payload: ")
+        print(json.dumps(payload, indent=2))
+        raise
 
 
 def main() -> None:
