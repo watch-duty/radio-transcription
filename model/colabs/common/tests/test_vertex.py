@@ -77,10 +77,16 @@ class TestSubmitTuningJob(unittest.TestCase):
         )
         mock_genai.Client.return_value.tunings.get.assert_not_called()
 
+    @unittest.mock.patch("common.vertex.types")
     @unittest.mock.patch("common.vertex.genai")
-    def test_wires_validation_dataset_when_val_uri_provided(self, mock_genai):
+    def test_wires_validation_dataset_when_val_uri_provided(
+        self, mock_genai, mock_types
+    ):
         mock_client = _make_mock_client()
         mock_genai.Client.return_value = mock_client
+        mock_types.TuningDataset.return_value = "train-dataset"
+        mock_types.TuningValidationDataset.return_value = "val-dataset"
+        mock_types.CreateTuningJobConfig.side_effect = lambda **kwargs: kwargs
         from common.vertex import submit_tuning_job
 
         submit_tuning_job(
@@ -91,9 +97,16 @@ class TestSubmitTuningJob(unittest.TestCase):
             val_uri="gs://b/val.jsonl",
         )
         call_kwargs = mock_client.tunings.tune.call_args.kwargs
-        cfg = call_kwargs.get("config")
-        # validation_dataset must be present in the config
-        self.assertIsNotNone(cfg)
+        self.assertEqual(call_kwargs["training_dataset"], "train-dataset")
+        self.assertEqual(
+            call_kwargs["config"]["validation_dataset"], "val-dataset"
+        )
+        mock_types.TuningDataset.assert_called_once_with(
+            gcs_uri="gs://b/train.jsonl"
+        )
+        mock_types.TuningValidationDataset.assert_called_once_with(
+            gcs_uri="gs://b/val.jsonl"
+        )
 
 
 class TestPollTuningJob(unittest.TestCase):

@@ -15,7 +15,7 @@ PR3 also fixes ``submit_batch_inference``: ``cur.dest`` is a
 ``cur.dest.gcs_uri if cur.dest else output_uri``.
 
 Key corrections from the frozen autoresearch-gemini-sft source (submit_sft.py):
-- Validation dataset uses ``types.TuningDataset`` (STACK.md §2 corrects the stale type — Pitfall 2)
+- Validation dataset uses ``types.TuningValidationDataset``
 - Hyperparameters (epoch_count, adapter_size, lr_multiplier) are required parameters,
   not hardcoded defaults from the frozen repo (D-08)
 - ``project`` and ``location`` are required keyword parameters — no silent defaults (Pitfall 4)
@@ -201,8 +201,9 @@ def submit_tuning_job(
         "learning_rate_multiplier": lr_multiplier,
     }
     if val_uri:
-        # D-08: use TuningDataset for validation set (STACK.md §2 correction)
-        cfg_kwargs["validation_dataset"] = types.TuningDataset(gcs_uri=val_uri)
+        cfg_kwargs["validation_dataset"] = types.TuningValidationDataset(
+            gcs_uri=val_uri
+        )
 
     job = client.tunings.tune(
         base_model=base_model,
