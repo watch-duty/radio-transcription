@@ -248,9 +248,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
             }
             variant="filled"
             size="small"
-            onDelete={
-              alertFilter === 'alerts' ? handleDeleteAlertFilter : undefined
-            }
+            onDelete={handleDeleteAlertFilter}
           />
         )}
       </Box>
