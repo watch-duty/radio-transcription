@@ -440,4 +440,67 @@ describe('FeedConfigurationView', () => {
       );
     });
   });
+
+  it('supports sorting columns (Name, Type, Status) in both ascending and descending orders', async () => {
+    renderView();
+
+    // Verify initial sort: Name ascending
+    await waitFor(() => {
+      expect(screen.getByText('Marin Fire Dispatch')).toBeInTheDocument();
+      expect(screen.getByText('Sonoma Sheriff dispatch')).toBeInTheDocument();
+    });
+
+    const getRowNames = () => {
+      const bodyRows = screen
+        .getAllByRole('row')
+        .filter((row) => row.getAttribute('data-item-index') !== null);
+      return bodyRows.map(
+        (row) => row.firstElementChild?.querySelector('p')?.textContent
+      );
+    };
+
+    // Initial state check (Name asc: Marin then Sonoma)
+    expect(getRowNames()).toEqual([
+      'Marin Fire Dispatch',
+      'Sonoma Sheriff dispatch',
+    ]);
+
+    // Sort by Name descending (Click Name header again)
+    const nameHeader = screen.getByRole('button', { name: /name/i });
+    fireEvent.click(nameHeader);
+    expect(getRowNames()).toEqual([
+      'Sonoma Sheriff dispatch',
+      'Marin Fire Dispatch',
+    ]);
+
+    // Sort by Type ascending (Click Type header)
+    const typeHeader = screen.getByRole('button', { name: /type/i });
+    fireEvent.click(typeHeader);
+    expect(getRowNames()).toEqual([
+      'Marin Fire Dispatch',
+      'Sonoma Sheriff dispatch',
+    ]);
+
+    // Sort by Type descending (Click Type header again)
+    fireEvent.click(typeHeader);
+    expect(getRowNames()).toEqual([
+      'Sonoma Sheriff dispatch',
+      'Marin Fire Dispatch',
+    ]);
+
+    // Sort by Status ascending (Click Status header)
+    const statusHeader = screen.getByRole('button', { name: /status/i });
+    fireEvent.click(statusHeader);
+    expect(getRowNames()).toEqual([
+      'Marin Fire Dispatch',
+      'Sonoma Sheriff dispatch',
+    ]);
+
+    // Sort by Status descending (Click Status header again)
+    fireEvent.click(statusHeader);
+    expect(getRowNames()).toEqual([
+      'Sonoma Sheriff dispatch',
+      'Marin Fire Dispatch',
+    ]);
+  });
 });

@@ -34,6 +34,7 @@ import TableCell from '@mui/material/TableCell';
 import TableContainer from '@mui/material/TableContainer';
 import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
+import TableSortLabel from '@mui/material/TableSortLabel';
 import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
@@ -191,6 +192,16 @@ export function FeedConfigurationView({
 
   // Search filter query for existing feeds column
   const [feedSearchQuery, setFeedSearchQuery] = useState('');
+
+  // Table sorting states (Default sorting is Feed Name ascending)
+  const [sortBy, setSortBy] = useState<'name' | 'type' | 'status'>('name');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+
+  const handleRequestSort = (property: 'name' | 'type' | 'status') => {
+    const isAsc = sortBy === property && sortDirection === 'asc';
+    setSortDirection(isAsc ? 'desc' : 'asc');
+    setSortBy(property);
+  };
 
   const resetFormState = () => {
     setName('');
@@ -409,19 +420,43 @@ export function FeedConfigurationView({
   // Filter list of existing feeds dynamically
   const filteredFeeds = useMemo(() => {
     const query = feedSearchQuery.toLowerCase().trim();
-    if (!query) return feeds;
-    return feeds.filter((feed) => {
-      const nameMatch = feed.name.toLowerCase().includes(query);
-      const extMatch = feed.externalId?.toLowerCase().includes(query) || false;
-      const tagMatch =
-        feed.tags?.some(
-          (t) =>
-            t.key.toLowerCase().includes(query) ||
-            t.value.toLowerCase().includes(query)
-        ) ?? false;
-      return nameMatch || extMatch || tagMatch;
+    const result = query
+      ? feeds.filter((feed) => {
+          const nameMatch = feed.name.toLowerCase().includes(query);
+          const extMatch =
+            feed.externalId?.toLowerCase().includes(query) || false;
+          const tagMatch =
+            feed.tags?.some(
+              (t) =>
+                t.key.toLowerCase().includes(query) ||
+                t.value.toLowerCase().includes(query)
+            ) ?? false;
+          return nameMatch || extMatch || tagMatch;
+        })
+      : [...feeds];
+
+    result.sort((a, b) => {
+      let valA = '';
+      let valB = '';
+
+      if (sortBy === 'name') {
+        valA = a.name.toLowerCase();
+        valB = b.name.toLowerCase();
+      } else if (sortBy === 'type') {
+        valA = a.sourceType.toLowerCase();
+        valB = b.sourceType.toLowerCase();
+      } else if (sortBy === 'status') {
+        valA = a.status.toLowerCase();
+        valB = b.status.toLowerCase();
+      }
+
+      if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
+      if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
     });
-  }, [feeds, feedSearchQuery]);
+
+    return result;
+  }, [feeds, feedSearchQuery, sortBy, sortDirection]);
 
   const isSubmitting = createMutation.isPending || updateMutation.isPending;
 
@@ -905,8 +940,15 @@ export function FeedConfigurationView({
                         fontWeight: 'bold',
                         bgcolor: 'background.paper',
                       }}
+                      sortDirection={sortBy === 'name' ? sortDirection : false}
                     >
-                      Name
+                      <TableSortLabel
+                        active={sortBy === 'name'}
+                        direction={sortBy === 'name' ? sortDirection : 'asc'}
+                        onClick={() => handleRequestSort('name')}
+                      >
+                        Name
+                      </TableSortLabel>
                     </TableCell>
                     <TableCell
                       component="div"
@@ -914,8 +956,15 @@ export function FeedConfigurationView({
                         fontWeight: 'bold',
                         bgcolor: 'background.paper',
                       }}
+                      sortDirection={sortBy === 'type' ? sortDirection : false}
                     >
-                      Type
+                      <TableSortLabel
+                        active={sortBy === 'type'}
+                        direction={sortBy === 'type' ? sortDirection : 'asc'}
+                        onClick={() => handleRequestSort('type')}
+                      >
+                        Type
+                      </TableSortLabel>
                     </TableCell>
                     <TableCell
                       component="div"
@@ -923,8 +972,17 @@ export function FeedConfigurationView({
                         fontWeight: 'bold',
                         bgcolor: 'background.paper',
                       }}
+                      sortDirection={
+                        sortBy === 'status' ? sortDirection : false
+                      }
                     >
-                      Status
+                      <TableSortLabel
+                        active={sortBy === 'status'}
+                        direction={sortBy === 'status' ? sortDirection : 'asc'}
+                        onClick={() => handleRequestSort('status')}
+                      >
+                        Status
+                      </TableSortLabel>
                     </TableCell>
 
                     <TableCell
