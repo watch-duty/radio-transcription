@@ -1,0 +1,20 @@
+[project]
+name = "evaluation-function"
+version = "0.1.0"
+requires-python = ">=3.13, <3.14"
+
+dependencies = [
+    "functions-framework>=3.10.1",
+    "cloudevents>=1.12.0",
+    "google-cloud-pubsub>=2.35.0",
+    "requests>=2.32.5",
+    "protobuf>=5.29.6",
+    "asyncpg>=0.29.0",
+    "opentelemetry-api>=1.41.1",
+    "opentelemetry-sdk>=1.41.1",
+    "opentelemetry-exporter-gcp-trace>=1.12.0",
+    "tenacity>=9.1.4",
+]
+
+[tool.setuptools]
+packages = []

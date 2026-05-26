@@ -236,11 +236,15 @@ pythonVersion = "3.13"
 members = [
     "backend/pipeline/normalization",
     "backend/pipeline/transcription",
+    "backend/pipeline/evaluation",
+    "backend/pipeline/notification",
 ]
 
 [tool.uv.sources]
 normalization-pipeline = { workspace = true }
 transcription-function = { workspace = true }
+evaluation-function = { workspace = true }
+notification-function = { workspace = true }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
