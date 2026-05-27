@@ -113,11 +113,13 @@ export function FeedConfigurationView({
         textAlign: 'left',
         display: 'flex',
         flexDirection: 'column',
-        gap: 3,
-        py: 1,
+        flexGrow: 1,
+        minHeight: 0,
+        gap: 2,
+        overflow: 'scroll',
       }}
     >
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+      <Box sx={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 1 }}>
         <AppRegistrationIcon
           sx={{
             fontSize: 32,
@@ -129,8 +131,24 @@ export function FeedConfigurationView({
         </Typography>
       </Box>
 
-      <Grid container spacing={4} sx={{ width: '100%', m: 0 }}>
-        <Grid size={{ xs: 12, sm: 4 }}>
+      <Grid
+        container
+        spacing={4}
+        sx={{
+          flexGrow: 1,
+          minHeight: 0,
+          overflow: 'scroll',
+        }}
+      >
+        <Grid
+          size={{ xs: 12, sm: 4 }}
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            height: '100%',
+            minHeight: 0,
+          }}
+        >
           <FeedConfigurationEdit
             editingFeed={editingFeed}
             onCreateFeed={handleCreateFeed}
@@ -140,7 +158,15 @@ export function FeedConfigurationView({
           />
         </Grid>
 
-        <Grid size={{ xs: 12, sm: 8 }}>
+        <Grid
+          size={{ xs: 12, sm: 8 }}
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            height: '100%',
+            minHeight: 0,
+          }}
+        >
           <FeedConfigurationTable
             feeds={feeds}
             feedsLoading={feedsLoading}

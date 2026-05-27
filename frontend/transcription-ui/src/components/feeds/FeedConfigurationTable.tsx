@@ -12,7 +12,7 @@ import CircularProgress from '@mui/material/CircularProgress';
 import Divider from '@mui/material/Divider';
 import IconButton from '@mui/material/IconButton';
 import InputAdornment from '@mui/material/InputAdornment';
-import Paper from '@mui/material/Paper';
+import Card from '@mui/material/Card';
 import Stack from '@mui/material/Stack';
 import Table from '@mui/material/Table';
 import TableBody from '@mui/material/TableBody';
@@ -175,68 +175,73 @@ export function FeedConfigurationTable({
   }, [feeds, feedSearchQuery, sortBy, sortDirection]);
 
   return (
-    <Paper
-      data-testid="feeds-deck-card"
+    <Card
       variant="outlined"
+      data-testid="feeds-deck-card"
       sx={{
-        p: 3,
-        borderRadius: 3,
         display: 'flex',
         flexDirection: 'column',
-        minHeight: 500,
-        height: 'calc(100vh - 220px)',
+        flexGrow: 1,
+        minHeight: 0,
         overflow: 'hidden',
-        boxShadow: '0 4px 20px rgba(0, 0, 0, 0.03)',
       }}
     >
       <Box
         sx={{
+          p: 2,
+          pb: 0,
           display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          mb: 2,
+          flexDirection: 'column',
+          gap: 2,
         }}
       >
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <RssFeedIcon color="primary" fontSize="small" />
-          <Typography variant="h6" sx={{ fontWeight: 600 }}>
-            Registered feeds
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <RssFeedIcon color="primary" fontSize="small" />
+            <Typography variant="h6" sx={{ fontWeight: 600 }}>
+              Registered feeds
+            </Typography>
+          </Box>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ fontWeight: 500 }}
+          >
+            {feeds.length} Feeds
           </Typography>
         </Box>
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{ fontWeight: 500 }}
-        >
-          {feeds.length} Feeds
-        </Typography>
-      </Box>
 
-      {/* Quick Filter Input Bar */}
-      <TextField
-        fullWidth
-        size="small"
-        placeholder="Filter feeds by name, tags, or ID..."
-        value={feedSearchQuery}
-        onChange={(e) => setFeedSearchQuery(e.target.value)}
-        slotProps={{
-          input: {
-            startAdornment: (
-              <InputAdornment position="start">
-                <SearchIcon fontSize="small" color="action" />
-              </InputAdornment>
-            ),
-            endAdornment: feedSearchQuery ? (
-              <InputAdornment position="end">
-                <IconButton size="small" onClick={() => setFeedSearchQuery('')}>
-                  <ClearIcon fontSize="small" />
-                </IconButton>
-              </InputAdornment>
-            ) : null,
-          },
-        }}
-        sx={{ mb: 2.5 }}
-      />
+        <TextField
+          fullWidth
+          size="small"
+          placeholder="Filter feeds by name, tags, or ID..."
+          value={feedSearchQuery}
+          onChange={(e) => setFeedSearchQuery(e.target.value)}
+          slotProps={{
+            input: {
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon fontSize="small" color="action" />
+                </InputAdornment>
+              ),
+              endAdornment: feedSearchQuery ? (
+                <InputAdornment position="end">
+                  <IconButton size="small" onClick={() => setFeedSearchQuery('')}>
+                    <ClearIcon fontSize="small" />
+                  </IconButton>
+                </InputAdornment>
+              ) : null,
+            },
+          }}
+          sx={{ mb: 2 }}
+        />
+      </Box>
 
       <Divider />
 
@@ -287,11 +292,11 @@ export function FeedConfigurationTable({
         </Box>
       ) : (
         <TableVirtuoso
-          style={{ flexGrow: 1, marginTop: 12 }}
           data={filteredFeeds}
           context={{ editingFeedId }}
           computeItemKey={(_index, feed) => feed.id}
           components={VIRTUOSO_COMPONENTS}
+          style={{ flexGrow: 1, minHeight: 0 }}
           fixedHeaderContent={() => (
             <TableRow
               component="div"
@@ -469,7 +474,7 @@ export function FeedConfigurationTable({
           }}
         />
       )}
-    </Paper>
+    </Card>
   );
 }
 

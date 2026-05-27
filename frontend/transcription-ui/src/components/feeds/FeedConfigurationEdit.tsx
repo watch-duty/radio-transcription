@@ -256,17 +256,14 @@ export function FeedConfigurationEdit({
 
   return (
     <Card
-      elevation={0}
       variant="outlined"
       data-testid="feed-config-card"
       sx={{
-        borderRadius: 3,
-        overflow: 'hidden',
-        boxShadow: '0 4px 20px rgba(0, 0, 0, 0.04)',
-        border: 1,
-        borderColor: 'divider',
         display: 'flex',
         flexDirection: 'column',
+        flexGrow: 1,
+        minHeight: 0,
+        overflow: 'hidden',
       }}
     >
       {/* Header with dynamic colors mapping create/edit mode state */}
@@ -279,6 +276,7 @@ export function FeedConfigurationEdit({
           background: editingFeed
             ? theme.palette.warning.main
             : theme.palette.primary.main,
+          flexShrink: 0,
         }}
       >
         <Typography variant="h6" sx={{ fontWeight: 600 }}>
@@ -292,7 +290,15 @@ export function FeedConfigurationEdit({
       </Box>
 
       <CardContent
-        sx={{ p: 3, display: 'flex', flexDirection: 'column', gap: 3 }}
+        sx={{
+          p: 3,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 3,
+          overflowY: 'auto',
+          flexGrow: 1,
+          minHeight: 0,
+        }}
       >
         <Box component="form" onSubmit={handleSubmit} noValidate>
           <Stack spacing={3}>
