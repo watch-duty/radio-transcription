@@ -23,13 +23,13 @@
 
 ### Split And Leakage
 
-- [ ] **SPLT-01**: User can generate an 80:20 train/SFT Eval Split by assigning whole Source Groups to exactly one split.
-- [ ] **SPLT-02**: Split generation is deterministic for the same input manifests, config, and seed.
+- [x] **SPLT-01**: User can generate an 80:20 train/SFT Eval Split by assigning whole Source Groups to exactly one split.
+- [x] **SPLT-02**: Split generation is deterministic for the same input manifests, config, and seed.
 - [ ] **SPLT-03**: Split validation fails if any Source Group appears in both train and SFT Eval Split.
 - [ ] **SPLT-04**: Split validation fails if any original source audio appears in both train and SFT Eval Split.
 - [ ] **SPLT-05**: Split validation fails if any model-ready audio URI appears in both train and SFT Eval Split.
-- [ ] **SPLT-06**: Split validation fails when a configured dataset produces zero valid SFT examples.
-- [ ] **SPLT-07**: Split optimization considers dataset family, source count, row count, duration, month/date/hour where available, duration buckets, and transcript-length buckets.
+- [x] **SPLT-06**: Split validation fails when a configured dataset produces zero valid SFT examples.
+- [x] **SPLT-07**: Split optimization considers dataset family, source count, row count, duration, month/date/hour where available, duration buckets, and transcript-length buckets.
 - [ ] **SPLT-08**: Split reports show requested ratio, actual row ratio, duration ratio, source ratio, and balance deltas by correlated factor.
 
 ### GCS Artifacts
@@ -72,7 +72,7 @@
 ### Tests
 
 - [x] **TEST-01**: Tests cover all dataset-specific source-key extractors.
-- [ ] **TEST-02**: Tests cover deterministic split output for a fixed seed.
+- [x] **TEST-02**: Tests cover deterministic split output for a fixed seed.
 - [ ] **TEST-03**: Tests cover leakage-gate failures for source overlap, original-audio overlap, and model-ready URI overlap.
 - [ ] **TEST-04**: Tests cover balance scoring and report contents.
 - [ ] **TEST-05**: Tests cover NeMo, Whisper, and Gemini model-writer output shapes.
@@ -118,15 +118,15 @@
 | SRC-05 | Phase 1 | Complete |
 | SRC-06 | Phase 1 | Complete |
 | TEST-01 | Phase 1 | Complete |
-| SPLT-01 | Phase 2 | Pending |
-| SPLT-02 | Phase 2 | Pending |
+| SPLT-01 | Phase 2 | Complete |
+| SPLT-02 | Phase 2 | Complete |
 | SPLT-03 | Phase 2 | Pending |
 | SPLT-04 | Phase 2 | Pending |
 | SPLT-05 | Phase 2 | Pending |
-| SPLT-06 | Phase 2 | Pending |
-| SPLT-07 | Phase 2 | Pending |
+| SPLT-06 | Phase 2 | Complete |
+| SPLT-07 | Phase 2 | Complete |
 | SPLT-08 | Phase 2 | Pending |
-| TEST-02 | Phase 2 | Pending |
+| TEST-02 | Phase 2 | Complete |
 | TEST-03 | Phase 2 | Pending |
 | TEST-04 | Phase 2 | Pending |
 | ARTF-01 | Phase 3 | Pending |
