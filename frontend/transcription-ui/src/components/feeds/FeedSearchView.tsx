@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 
-import { Box, Typography } from '@mui/material';
+import { Box } from '@mui/material';
 import { useQuery } from '@tanstack/react-query';
 
 import { useAuth } from '../../context/AuthContext';
@@ -44,11 +44,9 @@ export function FeedSearchView({ title, onError }: FeedSearchViewProps) {
         display: 'flex',
         flexDirection: 'column',
         height: 'calc(100vh - 100px)',
-        gap: 2,
       }}
     >
-      <Typography variant="h5">{title}</Typography>
-      <FeedTable feeds={feeds ?? []} isLoading={feedsLoading} />
+      <FeedTable feeds={feeds ?? []} isLoading={feedsLoading} title={title} />
     </Box>
   );
 }

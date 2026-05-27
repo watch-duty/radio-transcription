@@ -12,7 +12,7 @@ import { createFeed } from '../../service/createFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { updateFeed } from '../../service/updateFeed';
 import { FeedConfigurationEdit } from './FeedConfigurationEdit';
-import { FeedConfigurationTable } from './FeedConfigurationTable';
+import { FeedTable } from './FeedTable';
 
 interface FeedConfigurationViewProps {
   triggerSnackbar?: (message: string) => void;
@@ -173,12 +173,14 @@ export function FeedConfigurationView({
             minHeight: { xs: 'auto', sm: 0 },
           }}
         >
-          <FeedConfigurationTable
+          <FeedTable
             feeds={feeds}
-            feedsLoading={feedsLoading}
+            isLoading={feedsLoading}
+            allowEdit={true}
             editingFeedId={editingFeed?.id}
             onEditFeed={handleStartEdit}
             isSubmitting={isSubmitting}
+            title={'Feeds'}
           />
         </Grid>
       </Grid>
