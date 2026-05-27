@@ -2,3 +2,6 @@
 #
 # Run the following command from the repository root to update the proto types:
 # mise run generate:protos
+
+from .evaluation import EvaluationErrorType
+
