@@ -175,7 +175,21 @@ max-complexity = 10
 [tool.ruff.lint.isort]
 known-first-party = ["backend", "local_dev"]
 
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"docker".msg = "Docker-backed tests must live under integration_tests/ or in test_*_integration.py files so pytest can classify them as requires_docker."
+"integration_tests".msg = "integration_tests helpers are only for resource tests under integration_tests/ or test_*_integration.py files."
+"testcontainers".msg = "testcontainers-backed tests must live under integration_tests/ or in test_*_integration.py files so pytest can classify them as requires_docker."
+
 [tool.ruff.lint.per-file-ignores]
+"conftest.py" = [
+  "TID251", # Root pytest resource preflight is allowed to probe Docker.
+]
+"integration_tests/**/*.py" = [
+  "TID251", # Integration tests may use resource-test helpers.
+]
+"**/*_integration.py" = [
+  "TID251", # Backend component integration tests may use Docker/testcontainers.
+]
 "model/colabs/**/*.ipynb" = [
   "ALL",   # Ignore all linting rules for notebooks
 ]
