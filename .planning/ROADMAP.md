@@ -31,7 +31,7 @@ This roadmap builds the SFT dataset-versioning layer in dependency order: first 
 
 Plans:
 - [x] 01-01: Dataset-version config and manifest loading
-- [ ] 01-02: Source-key extraction and row normalization
+- [x] 01-02: Source-key extraction and row normalization
 - [ ] 01-03: Source identity tests and exclusion reporting
 
 ### Phase 2: Split Engine And Leakage Gates

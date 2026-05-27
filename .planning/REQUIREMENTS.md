@@ -10,15 +10,15 @@
 - [x] **INPT-01**: User can define one dataset-version job with `dataset_version_id`, random seed, train/eval ratio, output GCS prefix, and one or more input datasets.
 - [x] **INPT-02**: User can configure each input dataset with dataset name, dataset family, manifest `gs://` URI, source-key strategy, and optional sidecar source map `gs://` URI.
 - [x] **INPT-03**: The splitter can read configured JSON/JSONL manifests and sidecar source maps from `gs://` URIs using existing repository GCS helpers where practical; tests may use fake readers to cover success and failure classes without real GCS access.
-- [ ] **INPT-04**: Rows with empty or missing normalized text are excluded from SFT examples and counted in the CLI/log validation summary.
+- [x] **INPT-04**: Rows with empty or missing normalized text are excluded from SFT examples and counted in the CLI/log validation summary.
 
 ### Source Identity
 
-- [ ] **SRC-01**: Broadcastify Calls rows resolve Source Group as `bcfy_calls:<groupId>`.
-- [ ] **SRC-02**: Broadcastify Feeds rows resolve Source Group as `bcfy_feeds:<feedId>`.
-- [ ] **SRC-03**: Echo rows resolve Source Group as `echo:<area_code>/<echo_name>` using explicit fields, URL/S3 key parsing, sidecar source map, or unique CSV match.
-- [ ] **SRC-04**: Echo rows fail source-key validation when `area_code` is missing and `echo_name` is ambiguous across area codes.
-- [ ] **SRC-05**: Fire Notification rows resolve Source Group from stream path/location, not collection day UUID.
+- [x] **SRC-01**: Broadcastify Calls rows resolve Source Group as `bcfy_calls:<groupId>`.
+- [x] **SRC-02**: Broadcastify Feeds rows resolve Source Group as `bcfy_feeds:<feedId>`.
+- [x] **SRC-03**: Echo rows resolve Source Group as `echo:<area_code>/<echo_name>` using explicit fields, URL/S3 key parsing, sidecar source map, or unique CSV match.
+- [x] **SRC-04**: Echo rows fail source-key validation when `area_code` is missing and `echo_name` is ambiguous across area codes.
+- [x] **SRC-05**: Fire Notification rows resolve Source Group from stream path/location, not collection day UUID.
 - [ ] **SRC-06**: Every source-key extractor has focused tests for valid, missing, and ambiguous inputs.
 
 ### Split And Leakage
@@ -110,12 +110,12 @@
 | INPT-01 | Phase 1 | Complete |
 | INPT-02 | Phase 1 | Complete |
 | INPT-03 | Phase 1 | Complete |
-| INPT-04 | Phase 1 | Pending |
-| SRC-01 | Phase 1 | Pending |
-| SRC-02 | Phase 1 | Pending |
-| SRC-03 | Phase 1 | Pending |
-| SRC-04 | Phase 1 | Pending |
-| SRC-05 | Phase 1 | Pending |
+| INPT-04 | Phase 1 | Complete |
+| SRC-01 | Phase 1 | Complete |
+| SRC-02 | Phase 1 | Complete |
+| SRC-03 | Phase 1 | Complete |
+| SRC-04 | Phase 1 | Complete |
+| SRC-05 | Phase 1 | Complete |
 | SRC-06 | Phase 1 | Pending |
 | TEST-01 | Phase 1 | Pending |
 | SPLT-01 | Phase 2 | Pending |
