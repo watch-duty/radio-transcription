@@ -56,16 +56,19 @@ docker-compose exec rules-evaluation python /app/test_evaluation_publish.py
 ## Integration and E2E Tests
 We categorize our non-unit tests into three levels to balance speed and coverage. These live under `integration_tests/` and backend `test_*_integration.py` files:
 
-Default local pytest runs are intentionally safe: `uv run pytest` collects backend tests and excludes Docker-backed or service-backed tests. `--include-heavy-tests` permits heavy collection for the paths you pass; it does not discover every heavy test in the repository by itself. Use the existing `mise run test:*` commands below for those heavier lanes; they opt in explicitly and run without pytest-xdist so AlloyDB/testcontainers do not multiply across workers.
+The canonical local pytest command is `uv run pytest`. It collects `backend/` and `integration_tests/` and runs serially by default so Docker/testcontainers tests do not multiply across pytest-xdist workers. Large resource tests are included in that full suite. If Docker or the local service stack is not reachable, pytest fails once with a prerequisite message instead of hiding those tests.
+
+Use `-n 0` for safe local runs of large tests. If you explicitly pass `-n auto` or another xdist worker count, pytest will respect that local override and warn that selected large tests may start multiple Docker/service-stack clients.
 
 1. **Component Tests**: Isolated tests for database stores and collectors using `testcontainers`.
    * Run all: `mise run test:component`
    * Run specific: `mise run test:component:rules` or `mise run test:component:feeds`
-   * Run one heavy test directly: `uv run pytest --include-heavy-tests -n 0 integration_tests/storage/test_rules_store_integration.py -k "test_specific_behavior"`
+   * Run one large test directly: `uv run pytest -n 0 integration_tests/storage/test_rules_store_integration.py -k "test_specific_behavior"`
    * Put backend component test files in `test_*_integration.py`. Shared helpers that import Docker/testcontainers should live under `integration_tests/` or use a non-collected `_integration.py` suffix such as `helpers_integration.py`.
 
 2. **API Tests**: Tests targeting running services via HTTP.
    * Run all: `mise run test:api`
+   * Requires the local service stack and host-side env vars.
 
 3. **End-to-End (E2E) Tests**: Full system flow tests involving multiple services and the Pub/Sub emulator.
    * Run in an isolated environment (Docker handles lifecycle): `mise run test:e2e`

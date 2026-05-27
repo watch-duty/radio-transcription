@@ -159,7 +159,7 @@ jobs:
       - name: Generate Protobuf Python files
         run: mise run generate:protos
       - name: Run tests
-        run: uv run python -m pytest backend/ -q -n auto
+        run: uv run python -m pytest backend/ -q -n auto --ignore-glob='**/test_*_integration.py'
 
   run-frontend-tests:
     needs: [setup]

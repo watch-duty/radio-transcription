@@ -7,8 +7,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-HEAVY_IMPORT_ROOTS = {"docker", "integration_tests", "testcontainers"}
-HEAVY_STRING_MARKERS = ("alloydbomni",)
+RESOURCE_TEST_IMPORT_ROOTS = {"docker", "integration_tests", "testcontainers"}
+RESOURCE_TEST_STRING_MARKERS = ("alloydbomni",)
 SKIP_DIRS = {
     ".git",
     ".mypy_cache",
@@ -24,19 +24,21 @@ SKIP_DIRS = {
 def main() -> int:
     offenders: list[Path] = []
     for path in _python_files():
+        if path == ROOT / "conftest.py":
+            continue
         if not _is_test_like(path):
             continue
-        if _is_allowed_heavy_test_path(path):
+        if _is_allowed_resource_test_path(path):
             continue
-        if _uses_heavy_test_helpers(path):
+        if _uses_resource_test_helpers(path):
             offenders.append(path.relative_to(ROOT))
 
     if not offenders:
-        sys.stdout.write("Heavy test placement check passed\n")
+        sys.stdout.write("Resource test placement check passed\n")
         return 0
 
     sys.stderr.write(
-        "Heavy test helpers are only allowed under integration_tests/ or in "
+        "Resource-heavy test helpers are only allowed under integration_tests/ or in "
         "*_integration.py files:\n"
     )
     for offender in offenders:
@@ -68,14 +70,14 @@ def _is_test_like(path: Path) -> bool:
     )
 
 
-def _is_allowed_heavy_test_path(path: Path) -> bool:
+def _is_allowed_resource_test_path(path: Path) -> bool:
     rel_path = path.relative_to(ROOT)
     return rel_path.parts[0] == "integration_tests" or path.name.endswith(
         "_integration.py"
     )
 
 
-def _uses_heavy_test_helpers(path: Path) -> bool:
+def _uses_resource_test_helpers(path: Path) -> bool:
     try:
         tree = ast.parse(
             path.read_text(encoding="utf-8"),
@@ -87,20 +89,22 @@ def _uses_heavy_test_helpers(path: Path) -> bool:
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            if any(_is_heavy_module(alias.name) for alias in node.names):
+            if any(_is_resource_module(alias.name) for alias in node.names):
                 return True
         elif isinstance(node, ast.ImportFrom):
-            if node.module and _is_heavy_module(node.module):
+            if node.module and _is_resource_module(node.module):
                 return True
         elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-            if any(marker in node.value for marker in HEAVY_STRING_MARKERS):
+            if any(
+                marker in node.value for marker in RESOURCE_TEST_STRING_MARKERS
+            ):
                 return True
 
     return False
 
 
-def _is_heavy_module(module: str) -> bool:
-    return module.split(".", 1)[0] in HEAVY_IMPORT_ROOTS
+def _is_resource_module(module: str) -> bool:
+    return module.split(".", 1)[0] in RESOURCE_TEST_IMPORT_ROOTS
 
 
 if __name__ == "__main__":
