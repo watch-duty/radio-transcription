@@ -34,7 +34,6 @@ class InputDatasetConfig:
 @dataclass(frozen=True)
 class DatasetVersionConfig:
     dataset_version_id: str
-    random_seed: int
     train_ratio: float
     eval_ratio: float
     output_gcs_prefix: str
@@ -53,7 +52,6 @@ def parse_dataset_version_config_toml(
         raw,
         (
             "dataset_version_id",
-            "random_seed",
             "train_ratio",
             "eval_ratio",
             "output_gcs_prefix",
@@ -64,7 +62,6 @@ def parse_dataset_version_config_toml(
     )
 
     dataset_version_id = _require_str(raw, "dataset_version_id", source)
-    random_seed = _require_int(raw, "random_seed", source)
     train_ratio = _require_number(raw, "train_ratio", source)
     eval_ratio = _require_number(raw, "eval_ratio", source)
     output_gcs_prefix = _require_str(raw, "output_gcs_prefix", source)
@@ -151,7 +148,6 @@ def parse_dataset_version_config_toml(
 
     return DatasetVersionConfig(
         dataset_version_id=dataset_version_id,
-        random_seed=random_seed,
         train_ratio=train_ratio,
         eval_ratio=eval_ratio,
         output_gcs_prefix=output_gcs_prefix,
@@ -182,13 +178,6 @@ def _require_str(
         raise ConfigValidationError(
             f"{source}: {_field_name(key, index)} must be a non-empty string"
         )
-    return item
-
-
-def _require_int(value: dict[str, Any], key: str, source: str) -> int:
-    item = value[key]
-    if not isinstance(item, int) or isinstance(item, bool):
-        raise ConfigValidationError(f"{source}: {key} must be an integer")
     return item
 
 

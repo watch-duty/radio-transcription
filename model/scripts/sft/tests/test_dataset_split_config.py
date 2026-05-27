@@ -17,7 +17,6 @@ from dataset_split.config import (  # noqa: E402
 def _valid_config(**overrides: str) -> str:
     values = {
         "dataset_version_id": "radio-v1",
-        "random_seed": "1234",
         "train_ratio": "0.8",
         "eval_ratio": "0.2",
         "output_gcs_prefix": '"gs://wd-transcription-data/sft/radio-v1"',
@@ -34,7 +33,6 @@ def _valid_config(**overrides: str) -> str:
 
     return f"""
 dataset_version_id = "{values["dataset_version_id"]}"
-random_seed = {values["random_seed"]}
 train_ratio = {values["train_ratio"]}
 eval_ratio = {values["eval_ratio"]}
 output_gcs_prefix = {values["output_gcs_prefix"]}
@@ -49,11 +47,10 @@ source_strategy = "{values["source_strategy"]}"
 
 
 class TestDatasetVersionConfig(unittest.TestCase):
-    def test_valid_config_requires_explicit_source_strategy(self) -> None:
+    def test_valid_config_does_not_require_random_seed(self) -> None:
         config = parse_dataset_version_config_toml(_valid_config())
 
         self.assertEqual(config.dataset_version_id, "radio-v1")
-        self.assertEqual(config.random_seed, 1234)
         self.assertEqual(config.train_ratio, 0.8)
         self.assertEqual(config.eval_ratio, 0.2)
         self.assertEqual(
@@ -69,6 +66,16 @@ class TestDatasetVersionConfig(unittest.TestCase):
             dataset.source_map_uri,
             "gs://bucket/source_maps/calls.jsonl",
         )
+
+    def test_legacy_random_seed_is_tolerated_as_extra_key(self) -> None:
+        text = _valid_config().replace(
+            "train_ratio = 0.8\n",
+            "random_seed = 1234\ntrain_ratio = 0.8\n",
+        )
+
+        config = parse_dataset_version_config_toml(text)
+
+        self.assertEqual(config.dataset_version_id, "radio-v1")
 
     def test_missing_source_strategy_fails(self) -> None:
         text = _valid_config().replace('source_strategy = "bcfy_calls"\n', "")

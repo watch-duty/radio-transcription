@@ -38,7 +38,6 @@ class FakeTextReader:
 def _config(*datasets: InputDatasetConfig) -> DatasetVersionConfig:
     return DatasetVersionConfig(
         dataset_version_id="radio-v1",
-        random_seed=42,
         train_ratio=0.8,
         eval_ratio=0.2,
         output_gcs_prefix="gs://bucket/out",
@@ -233,7 +232,6 @@ class TestDatasetVersionValidateCli(unittest.TestCase):
             {
                 config_uri: """
 dataset_version_id = "radio-v1"
-random_seed = 42
 train_ratio = 0.8
 eval_ratio = 0.2
 output_gcs_prefix = "gs://bucket/out"
@@ -291,7 +289,6 @@ source_strategy = "bcfy_calls"
             {
                 config_uri: """
 dataset_version_id = "radio-v1"
-random_seed = 42
 train_ratio = 0.8
 eval_ratio = 0.2
 output_gcs_prefix = "gs://bucket/out"
