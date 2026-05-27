@@ -111,7 +111,7 @@ class EvaluationEventProcessor:
             # 4. Publish to Downstream Topic if flagged or has errors
             if (
                 len(evaluated_payload.evaluation_decisions) > 0
-                or len(evaluated_payload.evaluation_errors) > 0
+                or len(evaluated_payload.errors) > 0
             ):
                 encoded_data = evaluated_payload.SerializeToString()
                 # TODO (https://linear.app/watchduty/issue/GOO-245/): Handle publish failure.

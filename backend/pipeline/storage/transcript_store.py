@@ -77,7 +77,7 @@ class TranscriptStore:
             msg.playback_audio_uri = row["playback_audio_uri"]
 
         if row["evaluation_errors"]:
-            msg.evaluation_errors.extend(row["evaluation_errors"])
+            msg.errors.extend(row["evaluation_errors"])
 
         return msg
 
@@ -141,7 +141,7 @@ class TranscriptStore:
                 end_offset,
                 list(transcript.evaluation_decisions),
                 transcript.playback_audio_uri or None,
-                list(transcript.evaluation_errors),
+                list(transcript.errors),
             )
         except asyncpg.exceptions.UniqueViolationError as e:
             raise AlreadyExistsError(str(transmission_id)) from e
