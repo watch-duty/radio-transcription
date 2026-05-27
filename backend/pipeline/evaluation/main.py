@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import os
@@ -138,10 +139,11 @@ class EvaluationServiceContainer:
 
 
 container = EvaluationServiceContainer()
+_loop = asyncio.new_event_loop()
 
 
 @functions_framework.cloud_event  # type: ignore
-async def evaluate_transcribed_audio_segment(
+def evaluate_transcribed_audio_segment(
     cloud_event: cloudevent.CloudEvent,
 ) -> None:
     """
@@ -150,5 +152,9 @@ async def evaluate_transcribed_audio_segment(
     Args:
         cloud_event: The CloudEvent triggered by Pub/Sub.
     """
-    proc = await container.get_processor()
-    await proc.process_event(cloud_event)
+
+    async def _run() -> None:
+        proc = await container.get_processor()
+        await proc.process_event(cloud_event)
+
+    _loop.run_until_complete(_run())
