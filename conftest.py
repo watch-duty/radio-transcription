@@ -167,6 +167,7 @@ def _running_in_ci() -> bool:
 
 
 def _docker_available() -> bool:
+    """Return False when the Docker SDK is missing or the daemon is unreachable."""
     try:
         import docker  # noqa: PLC0415
 
@@ -232,7 +233,10 @@ def _service_stack_requirements_for_paths(
 
 
 def _host_reachable(raw_host: str) -> bool:
-    host, port = _parse_host_port(raw_host)
+    try:
+        host, port = _parse_host_port(raw_host)
+    except ValueError:
+        return False
     for attempt in range(CONNECT_ATTEMPTS):
         try:
             with socket.create_connection(
@@ -248,7 +252,20 @@ def _host_reachable(raw_host: str) -> bool:
 
 def _parse_host_port(raw_host: str) -> tuple[str, int]:
     parsed = urlparse(raw_host if "://" in raw_host else f"//{raw_host}")
-    if not parsed.hostname or parsed.port is None:
+    if not parsed.hostname:
         msg = f"Expected host:port value, got {raw_host!r}"
         raise ValueError(msg)
-    return parsed.hostname, parsed.port
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        msg = f"Expected host:port value, got {raw_host!r}"
+        raise ValueError(msg) from exc
+    if port is None:
+        if parsed.scheme == "https":
+            port = 443
+        elif parsed.scheme == "http":
+            port = 80
+        else:
+            msg = f"Expected host:port value, got {raw_host!r}"
+            raise ValueError(msg)
+    return parsed.hostname, port

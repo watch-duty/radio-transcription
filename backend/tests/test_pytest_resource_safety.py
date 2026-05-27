@@ -49,10 +49,22 @@ def test_host_port_parser_accepts_urls_and_plain_hostports() -> None:
         "localhost",
         8087,
     )
+    assert conftest._parse_host_port("https://staging-api.watchduty.org") == (
+        "staging-api.watchduty.org",
+        443,
+    )
+    assert conftest._parse_host_port("http://staging-api.watchduty.org") == (
+        "staging-api.watchduty.org",
+        80,
+    )
     assert conftest._parse_host_port("pubsub-emulator:8085") == (
         "pubsub-emulator",
         8085,
     )
+
+
+def test_host_reachable_treats_invalid_host_as_unreachable() -> None:
+    assert not conftest._host_reachable("localhost")
 
 
 def test_api_service_stack_requirements_do_not_include_e2e_only_env() -> None:
