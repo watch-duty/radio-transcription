@@ -9,16 +9,23 @@ import pytest
 
 from integration_tests.feed_utils import create_test_bcfy_feed  # noqa: F401
 
-AUDIO_SEGMENTS_API_HOST = os.environ.get(
-    "AUDIO_SEGMENTS_API_HOST", "localhost:8091"
-)
+def get_audio_segments_api_host() -> str:
+    """Return the Audio Segments API host for the current environment."""
+    configured_host = os.environ.get("AUDIO_SEGMENTS_API_HOST")
+    if configured_host:
+        return configured_host
+
+    if os.path.exists("/.dockerenv"):
+        return "audio-segments-api:8091"
+
+    return "localhost:8091"
 
 
 @pytest.fixture(name="api_client")
 async def create_api_client() -> AsyncIterator[httpx.AsyncClient]:
     """Sets up client for requests."""
     async with httpx.AsyncClient(
-        base_url=f"http://{AUDIO_SEGMENTS_API_HOST}/v1"
+        base_url=f"http://{get_audio_segments_api_host()}/v1"
     ) as client:
         yield client
 
