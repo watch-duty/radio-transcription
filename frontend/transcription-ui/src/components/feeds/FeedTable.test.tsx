@@ -67,7 +67,7 @@ describe('FeedTable', () => {
 
     expect(screen.getByText(/Marin/i)).toBeTruthy();
     expect(screen.getByText(/Fire/i)).toBeTruthy();
-    expect(screen.getByText('-')).toBeTruthy();
+    expect(screen.getAllByText('-')[0]).toBeTruthy();
   });
 
   it('shows loading indicator when isLoading is true', () => {
@@ -156,45 +156,39 @@ describe('FeedTable', () => {
     expect(refreshedScroller?.scrollTop).toBe(200);
   });
 
-  it('opens the three dot menu and disables links if not present', () => {
+  it('renders source and archive links directly in the links column if they exist', () => {
     renderFeedTable({ feeds: mockFeeds, isLoading: false, title: 'Feeds' });
 
-    const actionButtons = screen.getAllByRole('button', {
-      name: /feed actions/i,
+    // Alpha Radio has both URLs
+    const sourceLink = screen.getByRole('link', {
+      name: 'https://example.com/source',
+    });
+    const archiveLink = screen.getByRole('link', {
+      name: 'https://example.com/archive',
     });
 
-    fireEvent.click(actionButtons[1]);
+    expect(sourceLink).toBeTruthy();
+    expect(sourceLink.getAttribute('href')).toBe('https://example.com/source');
+    expect(sourceLink.getAttribute('target')).toBe('_blank');
 
-    const menu = screen.getByRole('menu');
-    expect(menu).toBeTruthy();
-
-    const sourceUrlItem = within(menu).getByText('Source URL').closest('li');
-    const archiveUrlItem = within(menu).getByText('Archive URL').closest('li');
-
-    expect(sourceUrlItem?.getAttribute('aria-disabled')).toBe('true');
-    expect(archiveUrlItem?.getAttribute('aria-disabled')).toBe('true');
-  });
-
-  it('enables links in menu if URLs are present', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false, title: 'Feeds' });
-
-    const actionButtons = screen.getAllByRole('button', {
-      name: /feed actions/i,
-    });
-
-    fireEvent.click(actionButtons[0]);
-
-    const menu = screen.getByRole('menu');
-    const sourceUrlItem = within(menu).getByText('Source URL').closest('a');
-    const archiveUrlItem = within(menu).getByText('Archive URL').closest('a');
-
-    expect(sourceUrlItem?.getAttribute('href')).toBe(
-      'https://example.com/source'
-    );
-    expect(archiveUrlItem?.getAttribute('href')).toBe(
+    expect(archiveLink).toBeTruthy();
+    expect(archiveLink.getAttribute('href')).toBe(
       'https://example.com/archive'
     );
-    expect(sourceUrlItem?.getAttribute('target')).toBe('_blank');
+    expect(archiveLink.getAttribute('target')).toBe('_blank');
+  });
+
+  it('does not render source and archive links if they are not present, and renders a fallback hyphen', () => {
+    renderFeedTable({ feeds: mockFeeds, isLoading: false, title: 'Feeds' });
+
+    // Bravo Scanner has neither URL
+    const links = screen.queryAllByRole('link', {
+      name: /https:\/\/example\.com/i,
+    });
+    expect(links).toHaveLength(2); // Only the 2 links of Alpha Radio exist!
+
+    const hyphens = screen.getAllByText('-');
+    expect(hyphens.length).toBeGreaterThanOrEqual(2);
   });
 
   it('displays grouped tags and applies tag filtering', () => {

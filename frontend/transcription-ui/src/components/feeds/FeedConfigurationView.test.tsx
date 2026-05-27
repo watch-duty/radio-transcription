@@ -455,7 +455,7 @@ describe('FeedConfigurationView', () => {
         .getAllByRole('row')
         .filter((row) => row.getAttribute('data-item-index') !== null);
       return bodyRows.map(
-        (row) => row.firstElementChild?.querySelector('p')?.textContent
+        (row) => row.firstElementChild?.querySelector('p, a')?.textContent
       );
     };
 
