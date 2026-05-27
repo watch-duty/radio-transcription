@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import json
 import uuid
 from typing import TYPE_CHECKING
@@ -13,6 +14,7 @@ from backend.pipeline.storage import audio_segment_queries
 from backend.services.audio_segments.models import (
     Annotation,
     AnnotationType,
+    AudioClassification,
     AudioSegment,
 )
 
@@ -72,6 +74,50 @@ class AudioSegmentStore:
 
         return annotation_adapter.validate_python(
             self._prepare_annotation_row(dict(row))
+        )
+
+    async def create_audio_segment(
+        self,
+        feed_id: str,
+        classification: AudioClassification,
+        start_timestamp: datetime.datetime,
+        end_timestamp: datetime.datetime,
+        missing_prior_context: bool,
+        missing_post_context: bool,
+        source_audio_uris: list[str],
+        canonical_audio_uri: str | None = None,
+        start_audio_offset: datetime.timedelta | None = None,
+        end_audio_offset: datetime.timedelta | None = None,
+        playback_audio_uri: str | None = None,
+    ) -> AudioSegment:
+        """Create a new audio segment."""
+        try:
+            feed_uuid = uuid.UUID(feed_id)
+        except ValueError as e:
+            msg = f"Invalid feed_id UUID: {feed_id}"
+            raise ValueError(msg) from e
+
+        row = await self._pool.fetchrow(
+            audio_segment_queries.CREATE_AUDIO_SEGMENT_SQL,
+            feed_uuid,
+            classification,
+            start_timestamp,
+            end_timestamp,
+            missing_prior_context,
+            missing_post_context,
+            source_audio_uris,
+            canonical_audio_uri,
+            start_audio_offset,
+            end_audio_offset,
+            playback_audio_uri,
+        )
+
+        if row is None:
+            msg = "Unable to create audio segment."
+            raise ValueError(msg)
+
+        return AudioSegment.model_validate(
+            self._prepare_audio_segment_row(row)
         )
 
     async def list_audio_segments(
