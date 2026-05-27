@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 
 from backend.pipeline.common.auth import verify_oidc_token
 from backend.pipeline.storage.audio_segment_store import AudioSegmentStore
@@ -57,7 +57,7 @@ app = FastAPI(
 )
 async def list_audio_segments(
     request: Request,
-    feed_ids: list[str] | None = None,
+    feed_ids: Annotated[list[str] | None, Query()] = None,
 ) -> list[AudioSegment]:
     """List audio segments with their annotations. Optionally filter by feed IDs."""
     service: AudioSegmentService = request.app.state.audio_segment_service
