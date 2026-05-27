@@ -272,13 +272,8 @@ export function FeedConfigurationEdit({
         }}
       >
         <Typography variant="h6" sx={{ fontWeight: 600 }}>
-          {editingFeed ? 'Edit Feed' : 'Register New Feed'}
+          {editingFeed ? `Edit Feed: ${editingFeed.name}` : 'Register New Feed'}
         </Typography>
-        {editingFeed && (
-          <Typography variant="body2" sx={{ opacity: 0.85, mt: 0.5 }}>
-            Modifying configuration for {editingFeed.name}
-          </Typography>
-        )}
       </Box>
 
       <CardContent
