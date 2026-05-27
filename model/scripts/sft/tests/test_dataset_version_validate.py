@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import sys
 import unittest
+import unittest.mock
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 _SFT_DIR = str(Path(__file__).resolve().parent.parent)
@@ -217,6 +220,104 @@ class TestDatasetVersionValidate(unittest.TestCase):
             [summary.dataset_name for summary in summaries],
             ["bcfy_calls", "bcfy_feeds", "echo", "fire_notifications"],
         )
+
+
+class TestDatasetVersionValidateCli(unittest.TestCase):
+    def test_cli_prints_dataset_summary(self) -> None:
+        import validate_dataset_version as cli
+
+        config_uri = "gs://configs/radio.toml"
+        reader = FakeTextReader(
+            {
+                config_uri: """
+dataset_version_id = "radio-v1"
+random_seed = 42
+train_ratio = 0.8
+eval_ratio = 0.2
+output_gcs_prefix = "gs://bucket/out"
+
+[[datasets]]
+name = "calls"
+family = "bcfy_calls"
+manifest_uri = "gs://manifests/calls.jsonl"
+source_strategy = "bcfy_calls"
+""",
+                "gs://manifests/calls.jsonl": (
+                    '{"audio_filepath": "gs://bucket/123_1700000000.mp3", '
+                    '"text": "alpha"}\n'
+                    '{"audio_filepath": "gs://bucket/123_1700000001.mp3", '
+                    '"text": ""}\n'
+                ),
+            }
+        )
+        out = StringIO()
+
+        with (
+            unittest.mock.patch.object(
+                cli, "_make_text_reader", return_value=reader
+            ),
+            redirect_stdout(out),
+        ):
+            rc = cli.main(["--config-uri", config_uri])
+
+        self.assertEqual(rc, 0)
+        self.assertIn(
+            "dataset=calls family=bcfy_calls loaded=2 valid=1 "
+            "excluded_empty_text=1",
+            out.getvalue(),
+        )
+
+    def test_cli_rejects_non_gs_config_uri(self) -> None:
+        import validate_dataset_version as cli
+
+        out = StringIO()
+        with (
+            unittest.mock.patch.object(cli, "_make_text_reader") as make_reader,
+            redirect_stdout(out),
+        ):
+            rc = cli.main(["--config-uri", "./config.toml"])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("config_uri must be a gs:// URI", out.getvalue())
+        make_reader.assert_not_called()
+
+    def test_cli_returns_one_for_validation_error(self) -> None:
+        import validate_dataset_version as cli
+
+        config_uri = "gs://configs/radio.toml"
+        reader = FakeTextReader(
+            {
+                config_uri: """
+dataset_version_id = "radio-v1"
+random_seed = 42
+train_ratio = 0.8
+eval_ratio = 0.2
+output_gcs_prefix = "gs://bucket/out"
+
+[[datasets]]
+name = "calls"
+family = "bcfy_calls"
+manifest_uri = "gs://manifests/calls.jsonl"
+source_strategy = "bcfy_calls"
+""",
+                "gs://manifests/calls.jsonl": (
+                    '{"audio_filepath": "gs://bucket/123_1700000000.mp3", '
+                    '"text": "  "}\n'
+                ),
+            }
+        )
+        out = StringIO()
+
+        with (
+            unittest.mock.patch.object(
+                cli, "_make_text_reader", return_value=reader
+            ),
+            redirect_stdout(out),
+        ):
+            rc = cli.main(["--config-uri", config_uri])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("produced zero valid examples", out.getvalue())
 
 
 if __name__ == "__main__":
