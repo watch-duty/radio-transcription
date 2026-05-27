@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 from backend.pipeline.evaluation import service
 from backend.pipeline.schema_types import (
-    evaluation_error_pb2,
+    evaluated_transcribed_audio_pb2 as evaluated_pb2,
 )
 from backend.pipeline.schema_types import (
     transcribed_audio_pb2 as transcribed_pb2,
@@ -74,7 +74,9 @@ class TestEvaluationService(unittest.TestCase):
         self.mock_evaluator.evaluate.return_value = {
             "is_flagged": False,
             "triggered_rules": [],
-            "errors": [evaluation_error_pb2.ERROR_FEED_ID_MISSING],
+            "errors": [
+                evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_FEED_ID_MISSING
+            ],
         }
 
         result_proto = self.service.evaluate(self.transcribed_audio)
@@ -83,7 +85,9 @@ class TestEvaluationService(unittest.TestCase):
         assert result_proto is not None
         self.assertEqual(
             list(result_proto.evaluation_errors),
-            [evaluation_error_pb2.ERROR_FEED_ID_MISSING],
+            [
+                evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_FEED_ID_MISSING
+            ],
         )
 
 
