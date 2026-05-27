@@ -9,6 +9,8 @@ from backend.pipeline.storage.audio_segment_store import AudioSegmentStore
 from backend.pipeline.storage.tests.connection_util import make_mock_pool
 from backend.services.audio_segments.models import (
     AnnotationType,
+    AudioClassification,
+    AudioSegmentCreate,
 )
 
 _SEGMENT_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
@@ -119,6 +121,37 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError) as cm:
             await self.store.list_audio_segments(["invalid-uuid"])
         self.assertIn("Invalid feed_id UUID in list", str(cm.exception))
+
+    async def test_bulk_add_audio_segments_success(self) -> None:
+        segment1 = AudioSegmentCreate(
+            id=str(_SEGMENT_ID),
+            feed_id=str(_FEED_ID),
+            classification=AudioClassification.SPEECH_DETECTED,
+            start_timestamp=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+            end_timestamp=datetime.datetime(
+                2026, 1, 1, 0, 1, tzinfo=datetime.UTC
+            ),
+            missing_prior_context=False,
+            missing_post_context=False,
+            source_audio_uris=["gs://bucket/audio1.ogg"],
+            canonical_audio_uri="gs://bucket/canonical.ogg",
+            start_audio_offset=datetime.timedelta(seconds=5),
+            end_audio_offset=datetime.timedelta(seconds=10),
+            playback_audio_uri=None,
+        )
+
+        result = await self.store.bulk_add_audio_segments([segment1])
+
+        self.assertEqual(result, 1)
+        self.pool.executemany.assert_called_once()
+        args, _ = self.pool.executemany.call_args
+        self.assertEqual(
+            args[0], audio_segment_queries.BULK_ADD_AUDIO_SEGMENTS_SQL
+        )
+        self.assertEqual(len(args[1]), 1)
+        self.assertEqual(args[1][0][0], _SEGMENT_ID)
+        self.assertEqual(args[1][0][1], _FEED_ID)
+        self.assertEqual(args[1][0][2], "SPEECH_DETECTED")
 
 
 if __name__ == "__main__":
