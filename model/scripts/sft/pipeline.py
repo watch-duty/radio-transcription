@@ -8,9 +8,9 @@ Commands:
 
 Usage:
   python pipeline.py build --datasets echo --round-id 2026-06-01-echo
-  python pipeline.py tune  --round-id 2026-06-01-echo --base-model gemini-2.5-flash --confirm
+  python pipeline.py tune  --round-id 2026-06-01-echo --base-model gemini-3.1-flash-lite --confirm
   python pipeline.py eval  --round-id 2026-06-01-echo
-  python pipeline.py all   --datasets echo --round-id 2026-06-01-echo --base-model gemini-2.5-flash --confirm
+  python pipeline.py all   --datasets echo --round-id 2026-06-01-echo --base-model gemini-3.1-flash-lite --confirm
 """
 
 from __future__ import annotations
@@ -34,6 +34,27 @@ logger = logging.getLogger(__name__)
 GCP_PROJECT: Final = "automatic-hawk-481415-m9"
 GCS_BUCKET: Final = "wd-transcription-data"
 GCS_SFT_PREFIX: Final = f"gs://{GCS_BUCKET}/sft"
+DEFAULT_BASE_MODEL: Final = "gemini-3.1-flash-lite"
+SUPPORTED_SFT_BASE_MODELS: Final = frozenset(
+    {
+        "gemini-3.1-flash-lite",
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+    }
+)
+SFT_MODEL_DISPLAY_NAMES: Final = {
+    "gemini-3.1-flash-lite": "Gemini 3.1 Flash-Lite",
+    "gemini-2.5-pro": "Gemini 2.5 Pro",
+    "gemini-2.5-flash": "Gemini 2.5 Flash",
+    "gemini-2.5-flash-lite": "Gemini 2.5 Flash-Lite",
+}
+SFT_TRAINING_COST_PER_MILLION: Final = {
+    "gemini-3.1-flash-lite": 3.00,
+    "gemini-2.5-pro": 25.00,
+    "gemini-2.5-flash": 5.00,
+    "gemini-2.5-flash-lite": 1.50,
+}
 
 _SCRIPT_DIR: Final = Path(__file__).resolve().parent
 _DATASETS_TOML: Final = _SCRIPT_DIR / "datasets.toml"
@@ -358,7 +379,7 @@ def _tune(args: argparse.Namespace) -> int:
 
     D-10/D-11: Persists job.name to config.json BEFORE entering the poll loop.
     On re-run, re-attaches to an in-flight job by name (no re-submit, no re-pay).
-    PIPE-03: gemini-3-* base models rejected before any GCP call.
+    PIPE-03: unsupported base models rejected before any GCP call.
     --confirm gate: displays estimated token count + cost estimate before submitting.
     """
     import tempfile
@@ -369,12 +390,12 @@ def _tune(args: argparse.Namespace) -> int:
     from preflight import run_preflight
     from records import write_config
 
-    # PIPE-03: gemini-3-* rejection (before any GCP call)
-    if args.base_model.startswith("gemini-3"):
+    # Reject unsupported base models before any GCP call. The supported list is
+    # intentionally narrow and mirrors Google's supervised-tuning model list.
+    if args.base_model not in SUPPORTED_SFT_BASE_MODELS:
         logger.error(
-            f"Base model '{args.base_model}' is rejected. "
-            "gemini-3-* models are not supported by this pipeline. "
-            "Use gemini-2.5-flash or a known-supported base model."
+            f"Base model '{args.base_model}' is not supported for this Gemini SFT pipeline. "
+            f"Use one of: {', '.join(sorted(SUPPORTED_SFT_BASE_MODELS))}."
         )
         return 1
 
@@ -485,9 +506,8 @@ def _tune(args: argparse.Namespace) -> int:
     AUDIO_TOKENS_PER_SEC: Final = (
         32  # VERIFIED: inference rate; ASSUMED same for SFT
     )
-    COST_PER_MILLION_TOKENS: Final = (
-        5.00  # Gemini 2.5 Flash supervised fine-tuning, per 1M training tokens
-    )
+    cost_per_million_tokens = SFT_TRAINING_COST_PER_MILLION[args.base_model]
+    model_display_name = SFT_MODEL_DISPLAY_NAMES[args.base_model]
 
     epochs = args.epochs
     total_secs = config.get("total_train_duration_seconds")
@@ -501,14 +521,17 @@ def _tune(args: argparse.Namespace) -> int:
         total_secs = n_examples * avg_secs
         basis = f"{n_examples} x {avg_secs:.1f}s avg (estimated)"
     estimated_tokens = total_secs * AUDIO_TOKENS_PER_SEC * epochs
-    estimated_cost = (estimated_tokens / 1_000_000) * COST_PER_MILLION_TOKENS
+    estimated_cost = (estimated_tokens / 1_000_000) * cost_per_million_tokens
 
     print("\n--- Tune Cost Estimate ---")
     print(f"  Examples:          {n_examples}")
     print(f"  Epochs:            {epochs}")
     print(f"  Est. audio tokens: {estimated_tokens:,.0f} ({basis} x 32 tok/s)")
     print(f"  Est. cost:        ~${estimated_cost:.2f} USD")
-    print("  NOTE: Using Gemini 2.5 Flash SFT rate ($5.00/M training tokens).")
+    print(
+        f"  NOTE: Using {model_display_name} SFT rate "
+        f"(${cost_per_million_tokens:.2f}/M training tokens)."
+    )
     print(
         "        Actual billing may differ. You accept responsibility for GCP charges.\n"
     )
@@ -592,7 +615,7 @@ def _eval(args: argparse.Namespace) -> int:
     user_prompt = config.get("user_prompt", "")
 
     base_only = getattr(args, "base_only", False)
-    base_model = config.get("base_model", "gemini-2.5-flash")
+    base_model = config.get("base_model", DEFAULT_BASE_MODEL)
     tuned_endpoint = config.get("endpoint")
 
     if not base_only and not tuned_endpoint:
@@ -930,8 +953,9 @@ def _add_tune_args(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument(
         "--base-model",
-        default="gemini-2.5-flash",
-        help="Base model name (gemini-3-* rejected)",
+        default=DEFAULT_BASE_MODEL,
+        choices=sorted(SUPPORTED_SFT_BASE_MODELS),
+        help="Base model name for Gemini supervised tuning",
     )
     p.add_argument(
         "--epochs", type=int, default=1, help="Training epochs (default: 1)"
@@ -971,8 +995,9 @@ def _add_all_args(p: argparse.ArgumentParser) -> None:
     # Tune-specific args (--round-id is already added by _add_build_args above)
     p.add_argument(
         "--base-model",
-        default="gemini-2.5-flash",
-        help="Base model name (gemini-3-* rejected)",
+        default=DEFAULT_BASE_MODEL,
+        choices=sorted(SUPPORTED_SFT_BASE_MODELS),
+        help="Base model name for Gemini supervised tuning",
     )
     p.add_argument(
         "--epochs", type=int, default=1, help="Training epochs (default: 1)"

@@ -25,10 +25,10 @@ class TestGeminiSftReadme(unittest.TestCase):
     def test_cost_estimate_links_pricing_basis(self) -> None:
         readme = _README.read_text()
 
-        self.assertIn("$90-290", readme)
+        self.assertIn("$55-175", readme)
         self.assertIn("training tokens = dataset tokens x epochs", readme)
-        self.assertIn("Gemini 2.5 Flash supervised fine-tuning", readme)
-        self.assertIn("$5 per 1M training tokens", readme)
+        self.assertIn("Gemini 3.1 Flash-Lite supervised fine-tuning", readme)
+        self.assertIn("$3 per 1M training tokens", readme)
         self.assertIn(
             "https://cloud.google.com/vertex-ai/generative-ai/pricing",
             readme,

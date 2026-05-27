@@ -7,7 +7,7 @@ Watch Duty's emergency-radio transcription model on Vertex AI.
 
 ```
 python pipeline.py build   Build Gemini SFT JSONL from registered datasets
-python pipeline.py tune    Submit Vertex AI Gemini SFT tuning job (--confirm required; ~$90-290/run)
+python pipeline.py tune    Submit Vertex AI Gemini SFT tuning job (--confirm required; ~$55-175/run)
 python pipeline.py eval    Batch-infer and score a Gemini model on the held-out manifest
 python pipeline.py all     build -> tune -> eval in one Gemini SFT invocation
 ```
@@ -52,14 +52,14 @@ python pipeline.py build --datasets echo --round-id 2026-06-01-echo
 
 # Submit a Vertex AI Gemini SFT tuning job (requires --confirm)
 python pipeline.py tune --round-id 2026-06-01-echo \
-  --base-model gemini-2.5-flash --confirm
+  --base-model gemini-3.1-flash-lite --confirm
 
 # Run evaluation on the tuned Gemini model
 python pipeline.py eval --round-id 2026-06-01-echo
 
 # Full Gemini SFT pipeline: build -> tune -> eval
 python pipeline.py all --datasets echo --round-id 2026-06-01-echo \
-  --base-model gemini-2.5-flash --confirm
+  --base-model gemini-3.1-flash-lite --confirm
 ```
 
 ## Datasets
@@ -81,8 +81,8 @@ populated after the cluster-split script runs (Phase 4 prerequisite, DESIGN.md #
 ## Cost
 
 - `tune` requires `--confirm` to prevent accidental paid runs.
-- The `$90-290/run` planning ballpark came from the Gemini 2.5 Flash supervised fine-tuning
-  rate: training tokens = dataset tokens x epochs, priced at $5 per 1M training tokens
+- The `$55-175/run` planning ballpark came from the Gemini 3.1 Flash-Lite supervised fine-tuning
+  rate: training tokens = dataset tokens x epochs, priced at $3 per 1M training tokens
   at the time of the estimate. That implies roughly 18-58M billable training tokens for
   the planned Echo run.
 - Recompute before running with the current

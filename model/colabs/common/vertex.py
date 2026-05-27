@@ -156,7 +156,7 @@ def submit_tuning_job(
     display_name: str,
     project: str,
     location: str,
-    base_model: str = "gemini-2.5-flash",
+    base_model: str = "gemini-3.1-flash-lite",
     val_uri: "str | None" = None,
     epoch_count: int = 5,
     adapter_size: str = "ONE",
@@ -173,7 +173,7 @@ def submit_tuning_job(
         display_name: Display name for the tuned model resource (encode round-id here).
         project: GCP project ID (required — no silent default).
         location: GCP region (use 'us-central1' for evaluation feature availability).
-        base_model: Base model name. Defaults to 'gemini-2.5-flash'.
+        base_model: Base model name. Defaults to 'gemini-3.1-flash-lite'.
         val_uri: Optional GCS URI for validation JSONL. Wires eval_total_loss (D-12/PIPE-09).
         epoch_count: Number of training epochs (1-100). SDK default is 5.
         adapter_size: Adapter size key — one of ONE, FOUR, EIGHT, SIXTEEN.
