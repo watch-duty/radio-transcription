@@ -54,8 +54,10 @@ message EvaluatedTranscribedAudio {
   // The list of rule IDs triggered by this transcript during evaluation.
   repeated string evaluation_decisions = 13;
 
+  reserved 14;
+
   // The list of errors encountered during evaluation.
-  repeated string evaluation_errors = 14;
+  repeated string evaluation_errors = 17;
 
   // The human-readable name of the radio feed as stored in the database.
   string feed_name = 15;
