@@ -19,7 +19,7 @@
 - [x] **SRC-03**: Echo rows resolve Source Group as `echo:<area_code>/<echo_name>` using explicit fields, URL/S3 key parsing, sidecar source map, or unique CSV match.
 - [x] **SRC-04**: Echo rows fail source-key validation when `area_code` is missing and `echo_name` is ambiguous across area codes.
 - [x] **SRC-05**: Fire Notification rows resolve Source Group from stream path/location, not collection day UUID.
-- [ ] **SRC-06**: Every source-key extractor has focused tests for valid, missing, and ambiguous inputs.
+- [x] **SRC-06**: Every source-key extractor has focused tests for valid, missing, and ambiguous inputs.
 
 ### Split And Leakage
 
@@ -71,7 +71,7 @@
 
 ### Tests
 
-- [ ] **TEST-01**: Tests cover all dataset-specific source-key extractors.
+- [x] **TEST-01**: Tests cover all dataset-specific source-key extractors.
 - [ ] **TEST-02**: Tests cover deterministic split output for a fixed seed.
 - [ ] **TEST-03**: Tests cover leakage-gate failures for source overlap, original-audio overlap, and model-ready URI overlap.
 - [ ] **TEST-04**: Tests cover balance scoring and report contents.
@@ -116,8 +116,8 @@
 | SRC-03 | Phase 1 | Complete |
 | SRC-04 | Phase 1 | Complete |
 | SRC-05 | Phase 1 | Complete |
-| SRC-06 | Phase 1 | Pending |
-| TEST-01 | Phase 1 | Pending |
+| SRC-06 | Phase 1 | Complete |
+| TEST-01 | Phase 1 | Complete |
 | SPLT-01 | Phase 2 | Pending |
 | SPLT-02 | Phase 2 | Pending |
 | SPLT-03 | Phase 2 | Pending |
