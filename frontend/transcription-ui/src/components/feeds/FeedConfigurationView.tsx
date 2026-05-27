@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import AppRegistrationIcon from '@mui/icons-material/AppRegistration';
 import Box from '@mui/material/Box';
@@ -26,10 +26,9 @@ export function FeedConfigurationView({
   const { token } = useAuth();
   const queryClient = useQueryClient();
 
-  // Mode: null if creating, Feed object if updating/editing
   const [editingFeed, setEditingFeed] = useState<Feed | null>(null);
+  const feedsErrorHandled = useRef<Error | null>(null);
 
-  // Query existing feeds to show on the right panel list
   const {
     data: feeds = [],
     isLoading: feedsLoading,
@@ -41,14 +40,14 @@ export function FeedConfigurationView({
     refetchOnWindowFocus: false,
   });
 
-  // Handle feed query errors in side effects
   useEffect(() => {
-    if (feedsError && onError) {
-      onError(feedsError, 'Loading Configured Feeds');
+    if (feedsError && feedsErrorHandled.current !== feedsError) {
+      feedsErrorHandled.current = feedsError;
+      if (onError) {
+        onError(feedsError, 'Loading Configured Feeds');
+      }
     }
   }, [feedsError, onError]);
-
-  // TanStack Query Mutations
   const createMutation = useMutation({
     mutationFn: (newFeed: FeedCreate) => createFeed(newFeed, token!),
     onSuccess: (data) => {
@@ -156,6 +155,7 @@ export function FeedConfigurationView({
           }}
         >
           <FeedConfigurationEdit
+            key={editingFeed ? `edit-${editingFeed.id}` : 'register'}
             editingFeed={editingFeed}
             onCreateFeed={handleCreateFeed}
             onUpdateFeed={handleUpdateFeed}

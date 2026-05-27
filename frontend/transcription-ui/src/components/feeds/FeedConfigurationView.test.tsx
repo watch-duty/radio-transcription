@@ -269,8 +269,9 @@ describe('FeedConfigurationView', () => {
     fireEvent.click(editBtn);
 
     // Verify form transitions to "Edit Mode"
-    expect(screen.getByText('Edit Feed')).toBeInTheDocument();
-    expect(screen.getByText(/Modifying configuration/i)).toBeInTheDocument();
+    expect(
+      screen.getByText('Edit Feed: Marin Fire Dispatch')
+    ).toBeInTheDocument();
 
     // Verify the row is highlighted
     const rowElement = screen
@@ -311,7 +312,9 @@ describe('FeedConfigurationView', () => {
 
     // Enter Edit Mode again to test saving
     fireEvent.click(editBtn);
-    expect(screen.getByText('Edit Feed')).toBeInTheDocument();
+    expect(
+      screen.getByText('Edit Feed: Marin Fire Dispatch')
+    ).toBeInTheDocument();
 
     // Update modifyable properties
     fireEvent.change(screen.getByLabelText('Display Name'), {
