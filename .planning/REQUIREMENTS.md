@@ -30,7 +30,7 @@
 - [x] **SPLT-05**: Split validation fails if any model-ready audio URI appears in both train and SFT Eval Split.
 - [x] **SPLT-06**: Split validation fails when a configured dataset produces zero valid SFT examples.
 - [x] **SPLT-07**: Split optimization considers dataset family, source count, row count, duration, month/date/hour where available, duration buckets, and transcript-length buckets.
-- [ ] **SPLT-08**: Split reports show requested ratio, actual row ratio, duration ratio, source ratio, and balance deltas by correlated factor.
+- [x] **SPLT-08**: Split reports show requested ratio, actual row ratio, duration ratio, source ratio, and balance deltas by correlated factor.
 
 ### GCS Artifacts
 
@@ -74,7 +74,7 @@
 - [x] **TEST-01**: Tests cover all dataset-specific source-key extractors.
 - [x] **TEST-02**: Tests cover deterministic split output for a fixed seed.
 - [x] **TEST-03**: Tests cover leakage-gate failures for source overlap, original-audio overlap, and model-ready URI overlap.
-- [ ] **TEST-04**: Tests cover balance scoring and report contents.
+- [x] **TEST-04**: Tests cover balance scoring and report contents.
 - [ ] **TEST-05**: Tests cover NeMo, Whisper, and Gemini model-writer output shapes.
 - [ ] **TEST-06**: Tests cover existing-path protection for dataset versions.
 
@@ -125,10 +125,10 @@
 | SPLT-05 | Phase 2 | Complete |
 | SPLT-06 | Phase 2 | Complete |
 | SPLT-07 | Phase 2 | Complete |
-| SPLT-08 | Phase 2 | Pending |
+| SPLT-08 | Phase 2 | Complete |
 | TEST-02 | Phase 2 | Complete |
 | TEST-03 | Phase 2 | Complete |
-| TEST-04 | Phase 2 | Pending |
+| TEST-04 | Phase 2 | Complete |
 | ARTF-01 | Phase 3 | Pending |
 | ARTF-02 | Phase 3 | Pending |
 | ARTF-03 | Phase 3 | Pending |
