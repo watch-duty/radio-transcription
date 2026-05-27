@@ -297,6 +297,7 @@ export function FeedConfigurationEdit({
             <TextField
               fullWidth
               label="Display Name"
+              size="small"
               variant="outlined"
               placeholder="Ventura Public Safety - Fire Dispatch"
               value={name}
@@ -319,6 +320,7 @@ export function FeedConfigurationEdit({
                     id="source-type-select"
                     value={sourceType}
                     label="Source Type"
+                    size="small"
                     onChange={(e) =>
                       setSourceType(e.target.value as SourceType)
                     }
@@ -342,6 +344,7 @@ export function FeedConfigurationEdit({
                   fullWidth
                   label="Source Feed ID"
                   variant="outlined"
+                  size="small"
                   placeholder={'12345'}
                   value={sourceFeedId}
                   onChange={(e) => setSourceFeedId(e.target.value)}
