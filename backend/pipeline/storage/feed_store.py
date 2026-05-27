@@ -242,9 +242,9 @@ class FeedStore:
         Update the feed's bookmark and heartbeat after a successful write.
 
         This is a fenced operation — it only succeeds if the given worker still
-        holds the lease AND the fencing token matches. A ``False`` return
-        indicates the lease was lost and the worker should stop processing
-        this feed.
+        holds the lease AND the fencing token matches. It intentionally remains
+        allowed for deactivated rows so one in-flight bookmark can finish after
+        an admin stop.
 
         Args:
             feed_id: UUID of the feed to update.
@@ -328,7 +328,9 @@ class FeedStore:
         backoff_max_sec) + random(0-10s) jitter``.
 
         This is a fenced operation — it only succeeds if the given worker
-        still holds the lease AND the fencing token matches.
+        still holds an active lease AND the fencing token matches. A
+        deactivated feed is an administrative terminal state until reset, so
+        failure reporting returns ``None`` instead of changing status.
 
         Args:
             feed_id: UUID of the feed that failed.
@@ -400,7 +402,9 @@ class FeedStore:
         the feed if this call fails.
 
         This is a fenced operation — it only succeeds if the given worker
-        still holds the lease AND the fencing token matches.
+        still holds an active lease AND the fencing token matches. A
+        deactivated feed is an administrative terminal state until reset, so
+        release is a no-op for deactivated rows.
 
         Args:
             feed_id: UUID of the feed to release.
@@ -564,9 +568,9 @@ class FeedStore:
         Primary use: ``_shutdown_sequence`` calls this once after
         cancelling all feed tasks. The cancelled tasks return without
         running their normal-completion ``release_feed`` (see the
-        ``_process_feed`` shutdown branch), so this single
-        ``WHERE worker_id = $1`` UPDATE is what actually flips them
-        back to ``unclaimed``.
+        ``_process_feed`` shutdown branch), so this single UPDATE flips
+        active rows back to ``unclaimed``. Deactivated rows stay deactivated
+        even if they still carry this worker's metadata.
 
         Secondary defensive role: catches any straggler row where an
         earlier per-feed ``release_feed`` call failed mid-lifetime
@@ -715,7 +719,11 @@ class FeedStore:
         return [self._row_to_feed(row) for row in rows]
 
     async def deactivate_feed(self, feed_id: uuid.UUID) -> bool:
-        """Deactivate a feed by ID (soft delete).
+        """Deactivate a feed by ID.
+
+        Deactivation is an administrative terminal state until reset. The
+        active worker metadata is intentionally preserved so the heartbeat
+        path can cancel any running task gracefully.
 
         Returns True if the feed status was set to deactivated, False otherwise.
         """
@@ -725,7 +733,8 @@ class FeedStore:
     async def reset_feed(self, feed_id: uuid.UUID) -> Feed | None:
         """Reset a feed to an unclaimed, unassigned state.
 
-        Sets ``status = 'unclaimed'``, ``failure_count = 0``, clears
+        This is the explicit reactivation path for deactivated or quarantined
+        feeds. Sets ``status = 'unclaimed'``, ``failure_count = 0``, clears
         ``worker_id``, and updates ``last_heartbeat`` for the given feed.
         Returns the updated feed, or ``None`` if no feed with that ID exists.
 

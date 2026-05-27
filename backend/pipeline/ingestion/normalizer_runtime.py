@@ -1276,6 +1276,12 @@ class NormalizerRuntime:
                     logger.info(
                         "Feed %s deactivated; cancelling task",
                         fid,
+                        extra={
+                            "json_fields": {
+                                "event_type": "feed_deactivated_task_cancelled",
+                                "feed_id": str(fid),
+                            },
+                        },
                     )
                     active[fid].cancel()
 

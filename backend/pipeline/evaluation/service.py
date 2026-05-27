@@ -67,6 +67,12 @@ class EvaluationService:
 
             # 3. Handle Errors
             errors = evaluation_result.get("errors", [])
+            if errors:
+                logger.warning(
+                    "Evaluation encountered errors for transmission %s: %s",
+                    transmission_id,
+                    [str(e) for e in errors],
+                )
 
             # 4. Create Evaluation Result Payload
             evaluated_payload = evaluated_pb2.EvaluatedTranscribedAudio(

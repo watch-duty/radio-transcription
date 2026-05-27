@@ -9,9 +9,7 @@ import requests
 from backend.pipeline.common.auth_client import get_id_token
 from backend.pipeline.common.env import is_gcp_env
 from backend.pipeline.common.rules import models
-from backend.pipeline.schema_types import (
-    evaluated_transcribed_audio_pb2 as evaluated_pb2,
-)
+from backend.pipeline.schema_types import EvaluationErrorType
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +17,7 @@ logger = logging.getLogger(__name__)
 class EvaluationResult(TypedDict):
     is_flagged: bool
     triggered_rules: list[str]
-    errors: list[int]  # Using proto enum integer values
+    errors: list[EvaluationErrorType]
 
 
 class OrganizedRules:
@@ -162,16 +160,27 @@ class RemoteTextEvaluator(BaseTextEvaluator):
     Implementation of text evaluation that fetches rules from a remote API.
     """
 
-    def __init__(self, api_url: str) -> None:
+    def __init__(self, api_url: str, cache_ttl_seconds: float = 60) -> None:
         """
         Initializes the RemoteTextEvaluator.
 
         Args:
             api_url: The URL of the rules management service API.
+            cache_ttl_seconds: How long to cache fetched rules. Use 0 to
+                disable caching for local/integration environments that mutate
+                rules during a run.
         """
+        if cache_ttl_seconds < 0:
+            msg = "cache_ttl_seconds must be non-negative"
+            raise ValueError(msg)
+
         self.api_url = api_url.rstrip("/")
         self.session = requests.Session()
-        self._cache = cachetools.TTLCache(maxsize=1, ttl=60)
+        self._cache_ttl_seconds = cache_ttl_seconds
+        self._cache = cachetools.TTLCache(
+            maxsize=1,
+            ttl=cache_ttl_seconds,
+        )
 
     def evaluate(self, text: str, feed_id: str) -> EvaluationResult:
         """
@@ -188,9 +197,7 @@ class RemoteTextEvaluator(BaseTextEvaluator):
             return {
                 "is_flagged": False,
                 "triggered_rules": [],
-                "errors": [
-                    evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_FEED_ID_MISSING
-                ],
+                "errors": [EvaluationErrorType.ERROR_FEED_ID_MISSING],
             }
         try:
             rules = self._fetch_rules()
@@ -199,9 +206,7 @@ class RemoteTextEvaluator(BaseTextEvaluator):
             return {
                 "is_flagged": False,
                 "triggered_rules": [],
-                "errors": [
-                    evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_RULES_FETCH_FAILED
-                ],
+                "errors": [EvaluationErrorType.ERROR_RULES_FETCH_FAILED],
             }
 
         return self._evaluate_ruleset(rules, text, feed_id)
@@ -213,7 +218,7 @@ class RemoteTextEvaluator(BaseTextEvaluator):
         Returns:
             A list of Rule objects.
         """
-        if "rules" in self._cache:
+        if self._cache_ttl_seconds > 0 and "rules" in self._cache:
             return self._cache["rules"]
 
         # When running on Cloud Run, use the metadata server to get an ID token
@@ -229,5 +234,6 @@ class RemoteTextEvaluator(BaseTextEvaluator):
 
         rules_data = response.json()
         rules = [models.Rule.model_validate(rule) for rule in rules_data]
-        self._cache["rules"] = rules
+        if self._cache_ttl_seconds > 0:
+            self._cache["rules"] = rules
         return rules
