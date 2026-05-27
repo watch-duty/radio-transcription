@@ -130,7 +130,7 @@ export function FeedConfigurationView({
         <AppRegistrationIcon
           sx={{
             fontSize: 32,
-            color: 'primary.main'
+            color: 'primary.main',
           }}
         />
         <Typography variant="h4" sx={{ fontWeight: 600 }}>
