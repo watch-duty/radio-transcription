@@ -65,6 +65,12 @@ VirtuosoTable.displayName = 'VirtuosoTable';
 
 const GRID_TEMPLATE_COLUMNS = '1.5fr 1fr 1fr 60px';
 
+const sortProperties: Record<string, keyof Feed> = {
+  name: 'name',
+  type: 'sourceType',
+  status: 'status',
+};
+
 function VirtuosoTableRow(
   props: ComponentProps<typeof TableRow> & {
     item?: Feed;
@@ -155,22 +161,16 @@ export function FeedConfigurationTable({
       : [...feeds];
 
     result.sort((a, b) => {
-      let valA = '';
-      let valB = '';
+      const prop = sortProperties[sortBy];
+      if (!prop) return 0;
 
-      if (sortBy === 'name') {
-        valA = a.name.toLowerCase();
-        valB = b.name.toLowerCase();
-      } else if (sortBy === 'type') {
-        valA = a.sourceType.toLowerCase();
-        valB = b.sourceType.toLowerCase();
-      } else if (sortBy === 'status') {
-        valA = a.status.toLowerCase();
-        valB = b.status.toLowerCase();
-      }
+      const valA = String(a[prop]).toLowerCase();
+      const valB = String(b[prop]).toLowerCase();
 
-      if (valA < valB) return sortDirection === 'asc' ? -1 : 1;
-      if (valA > valB) return sortDirection === 'asc' ? 1 : -1;
+      const modifier = sortDirection === 'asc' ? 1 : -1;
+
+      if (valA < valB) return -1 * modifier;
+      if (valA > valB) return 1 * modifier;
       return 0;
     });
 
