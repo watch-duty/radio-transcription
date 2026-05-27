@@ -75,4 +75,6 @@ async def test_audio_segments_api_routes(
         f"Failed bulk add retry: {response.text}"
     )
     added_data = response.json()
-    assert added_data["inserted_count"] == 0  # Duplicate segment, nothing inserted
+    assert (
+        added_data["inserted_count"] == 0
+    )  # Duplicate segment, nothing inserted
