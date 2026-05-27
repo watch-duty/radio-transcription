@@ -6,7 +6,9 @@ import InventoryIcon from '@mui/icons-material/Inventory';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import OpenInNewOutlinedIcon from '@mui/icons-material/OpenInNewOutlined';
 import SearchIcon from '@mui/icons-material/Search';
+import TuneIcon from '@mui/icons-material/Tune';
 import Box from '@mui/material/Box';
+import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
 import IconButton from '@mui/material/IconButton';
 import InputAdornment from '@mui/material/InputAdornment';
@@ -28,6 +30,7 @@ import Typography from '@mui/material/Typography';
 import type { Feed } from '@transcription/common';
 
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
+import { MultiSelectFilter } from '../common/MultiSelectFilter';
 
 interface FeedTableProps {
   feeds: Feed[];
@@ -80,6 +83,20 @@ const VIRTUOSO_COMPONENTS = {
   TableRow: VirtuosoTableRow,
   TableBody: VirtuosoTableBody,
 };
+
+function FeedFilterChip({ tag }: { tag: { key: string; value: string } }) {
+  return (
+    <Chip
+      label={
+        <Typography variant="body2">
+          <b>{tag.key}</b>: {tag.value}
+        </Typography>
+      }
+      size="small"
+      variant="filled"
+    />
+  );
+}
 
 function ActionsMenu({ feed }: { feed: Feed }) {
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
@@ -159,6 +176,39 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
     direction: 'asc',
   });
 
+  const [appliedTags, setAppliedTags] = useState<
+    { key: string; value: string }[]
+  >([]);
+
+  const [appliedStatuses, setAppliedStatuses] = useState<string[]>([]);
+
+  const [appliedSourceTypes, setAppliedSourceTypes] = useState<string[]>([]);
+
+  const tags = useMemo<{ key: string; value: string }[]>(() => {
+    const seen = new Set<string>();
+    const uniqueTags: { key: string; value: string }[] = [];
+    feeds.forEach((feed) => {
+      feed.tags?.forEach((tag) => {
+        const identifier = `${tag.key}:${tag.value}`;
+        if (!seen.has(identifier)) {
+          seen.add(identifier);
+          uniqueTags.push({ key: tag.key, value: tag.value });
+        }
+      });
+    });
+    return uniqueTags;
+  }, [feeds]);
+
+  const sourceTypes = useMemo<string[]>(() => {
+    const seen = new Set<string>();
+    feeds.forEach((feed) => {
+      if (feed.sourceType) {
+        seen.add(feed.sourceType);
+      }
+    });
+    return Array.from(seen).sort();
+  }, [feeds]);
+
   const handleRequestSort = (property: 'name' | 'status') => {
     setSortConfig((prev) => ({
       column: property,
@@ -169,17 +219,45 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
 
   const filteredAndSortedFeeds = useMemo(() => {
     const query = searchQuery.toLowerCase().trim();
-    const filtered = feeds.filter((feed) => {
-      if (!query) return true;
-      const nameMatches = feed.name.toLowerCase().includes(query);
-      const tagMatches =
-        feed.tags?.some(
-          (tag) =>
-            tag.key.toLowerCase().includes(query) ||
-            tag.value.toLowerCase().includes(query)
-        ) ?? false;
-      return nameMatches || tagMatches;
-    });
+    let filtered = feeds;
+
+    if (query) {
+      filtered = filtered.filter((feed) => {
+        const nameMatches = feed.name.toLowerCase().includes(query);
+        const tagMatches =
+          feed.tags?.some(
+            (tag) =>
+              tag.key.toLowerCase().includes(query) ||
+              tag.value.toLowerCase().includes(query)
+          ) ?? false;
+        return nameMatches || tagMatches;
+      });
+    }
+
+    if (appliedTags.length > 0) {
+      filtered = filtered.filter((feed) => {
+        return appliedTags.every((appliedTag) =>
+          feed.tags?.some(
+            (tag) =>
+              tag.key === appliedTag.key && tag.value === appliedTag.value
+          )
+        );
+      });
+    }
+
+    if (appliedStatuses.length > 0) {
+      filtered = filtered.filter((feed) => {
+        const capitalizedStatus =
+          feed.status.charAt(0).toUpperCase() + feed.status.slice(1);
+        return appliedStatuses.includes(capitalizedStatus);
+      });
+    }
+
+    if (appliedSourceTypes.length > 0) {
+      filtered = filtered.filter((feed) =>
+        appliedSourceTypes.includes(feed.sourceType)
+      );
+    }
 
     return filtered.sort((a, b) => {
       let comparison = 0;
@@ -190,7 +268,14 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
       }
       return sortConfig.direction === 'asc' ? comparison : -comparison;
     });
-  }, [feeds, searchQuery, sortConfig]);
+  }, [
+    feeds,
+    searchQuery,
+    appliedTags,
+    appliedStatuses,
+    appliedSourceTypes,
+    sortConfig,
+  ]);
 
   return (
     <Paper
@@ -235,6 +320,47 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
             maxWidth: 600,
           }}
         />
+
+        <TuneIcon color="action" sx={{ ml: 1 }} />
+        <Box sx={{ width: 250, maxWidth: '100%' }}>
+          <MultiSelectFilter
+            label="Source Type"
+            options={sourceTypes}
+            value={appliedSourceTypes}
+            onChange={setAppliedSourceTypes}
+            size="small"
+          />
+        </Box>
+        <Box sx={{ width: 250, maxWidth: '100%' }}>
+          <MultiSelectFilter
+            label="Status"
+            options={['Active', 'Inactive']}
+            value={appliedStatuses}
+            onChange={setAppliedStatuses}
+            size="small"
+          />
+        </Box>
+        <Box sx={{ width: 250, maxWidth: '100%' }}>
+          <MultiSelectFilter
+            label="Tags"
+            options={tags}
+            value={appliedTags}
+            onChange={setAppliedTags}
+            size="small"
+            groupBy={(tag) => tag.key}
+            getOptionLabel={(tag) => `${tag.key}: ${tag.value}`}
+            isOptionEqualToValue={(a, b) =>
+              a.key === b.key && a.value === b.value
+            }
+            renderOptionContent={(tag) => tag.value}
+            renderValueLabel={(tag) => (
+              <Typography variant="body2">
+                <b>{tag.key}</b>: {tag.value}
+              </Typography>
+            )}
+          />
+        </Box>
+
         {filteredAndSortedFeeds.length !== feeds.length && (
           <Typography
             variant="body2"
@@ -325,7 +451,7 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
                   sx={{
                     fontWeight: 500,
                     textOverflow: 'ellipsis',
-                    width: '100%',
+                    maxWidth: '100%',
                   }}
                   noWrap
                 >
@@ -347,25 +473,20 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
                   (t) => t.key !== 'source_url' && t.key !== 'archive_url'
                 ).length > 0 ? (
                   <Box
-                    sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}
+                    sx={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 0.5,
+                      alignItems: 'flex-start',
+                    }}
                   >
-                    {feed.tags
-                      .filter(
-                        (t) => t.key !== 'source_url' && t.key !== 'archive_url'
-                      )
-                      .map((tag, i) => (
-                        <Typography
-                          key={i}
-                          variant="body2"
-                          sx={{ fontFamily: 'monospace' }}
-                        >
-                          <b>{tag.key}</b>: {tag.value}
-                        </Typography>
-                      ))}
+                    {feed.tags.map((tag) => (
+                      <FeedFilterChip key={tag.key} tag={tag} />
+                    ))}
                   </Box>
                 ) : (
                   <Typography variant="body2" color="text.secondary">
-                    None
+                    -
                   </Typography>
                 )}
               </TableCell>
