@@ -45,7 +45,7 @@ Source:
 
 ### Gemini Supervised Tuning on Vertex AI
 
-Current Google documentation for Vertex AI Gemini supervised tuning supports Gemini 2.5 Pro, Gemini 2.5 Flash, and Gemini 2.5 Flash-Lite. It does not list a "Gemini 3.1 Flash-Lite" model as supported in the referenced tuning docs. Treat any 3.1 target as a model-name/config input that must be validated at run time against current Vertex availability.
+Current Gemini Enterprise Agent Platform documentation for supervised tuning supports Gemini 3.1 Flash-Lite, Gemini 2.5 Pro, Gemini 2.5 Flash, and Gemini 2.5 Flash-Lite. The older Vertex AI page previously checked had a stale supported-model list, so implementation should treat the Agent Platform model list as the current source of truth while keeping the base model configurable.
 
 Gemini SFT datasets are JSONL files in Cloud Storage. Each line is a tuning example with optional `systemInstruction` and required `contents`; `parts` may contain text or `fileData` with `mimeType` and `fileUri`. Vertex tuning accepts training and optional validation dataset GCS URIs; the SDK examples use `TuningDataset(gcs_uri=...)` and `validation_dataset`.
 
@@ -57,6 +57,7 @@ Sources:
 - Prepare Gemini SFT data: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/models/gemini-supervised-tuning-prepare
 - Use Gemini supervised tuning: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/models/gemini-use-supervised-tuning
 - Gemini SFT supported models/limits: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/models/gemini-supervised-tuning
+- Gemini Enterprise Agent Platform supervised tuning supported models: https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini-use-supervised-tuning
 
 ## Recommended Implementation Stack
 

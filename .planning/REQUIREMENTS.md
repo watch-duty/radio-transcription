@@ -58,7 +58,7 @@
 - [ ] **MODL-04**: Whisper writer records or enforces the sub-30-second example constraint needed to avoid Whisper feature-extractor truncation.
 - [ ] **MODL-05**: Gemini writer emits Vertex SFT JSONL with `systemInstruction`, `contents`, `fileData`, `mimeType`, and target transcript text.
 - [ ] **MODL-06**: Gemini writer emits a tuning config with train dataset URI, validation dataset URI, base model name, region, adapter size, epoch count, and learning-rate multiplier.
-- [ ] **MODL-07**: Gemini base model is configurable and not hard-coded to an unsupported model name.
+- [ ] **MODL-07**: Gemini writer supports Gemini 3.1 Flash-Lite as a documented supervised-tuning target while keeping the base model configurable.
 - [ ] **MODL-08**: Existing benchmark/eval manifests remain unchanged.
 
 ### CLI And Reports

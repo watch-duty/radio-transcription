@@ -56,11 +56,11 @@ Warning sign: optimizer allows a source group to be split to improve duration/mo
 
 Prevention: leakage gates are hard constraints; balance is best-effort and reported.
 
-### Gemini Model Name Assumption
+### Gemini Model List Drift
 
-Warning sign: code hard-codes "Gemini 3.1 Flash-Lite" because the request mentioned it.
+Warning sign: code relies on the older Vertex AI supervised-tuning supported-model page and rejects Gemini 3.1 Flash-Lite.
 
-Prevention: current Vertex docs list Gemini 2.5 Flash-Lite for supervised tuning. Treat model name as config and validate availability during tuning-job creation.
+Prevention: use the current Gemini Enterprise Agent Platform supervised-tuning docs as the source of truth. They list Gemini 3.1 Flash-Lite as supported, while the base model should still remain configurable and validated during tuning-job creation.
 
 ## Phase Placement
 

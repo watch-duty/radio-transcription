@@ -10,7 +10,7 @@
 
 **Echo:** `area_code` and `echo_name` matter because `echo_name` alone is not globally unique. Rows that cannot resolve a unique `area_code/echo_name` should fail source-key validation.
 
-**Gemini target:** Current Google docs list Gemini 2.5 Pro, 2.5 Flash, and 2.5 Flash-Lite for supervised tuning. They do not list "Gemini 3.1 Flash-Lite"; keep base model configurable and validate it when a tuning job is submitted.
+**Gemini target:** Current Gemini Enterprise Agent Platform docs list Gemini 3.1 Flash-Lite, Gemini 2.5 Pro, Gemini 2.5 Flash, and Gemini 2.5 Flash-Lite for supervised tuning. Keep the base model configurable, but Gemini 3.1 Flash-Lite is a documented supported target.
 
 ## Recommended Roadmap Shape
 
@@ -37,3 +37,4 @@
 - Vertex Gemini SFT data prep: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/models/gemini-supervised-tuning-prepare
 - Vertex Gemini SFT job creation: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/models/gemini-use-supervised-tuning
 - Vertex Gemini SFT models/limits: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/models/gemini-supervised-tuning
+- Gemini Enterprise Agent Platform supervised tuning: https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini-use-supervised-tuning

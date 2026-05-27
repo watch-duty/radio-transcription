@@ -53,7 +53,7 @@ None yet.
 
 ### Blockers/Concerns
 
-- Current Vertex docs list Gemini 2.5 Flash-Lite for supervised tuning, not "Gemini 3.1 Flash-Lite"; keep the base model configurable and validate at tuning time.
+- Older Vertex AI tuning docs had a stale supported-model list, but current Gemini Enterprise Agent Platform docs list Gemini 3.1 Flash-Lite as supported for supervised tuning; keep the base model configurable and validate at tuning time.
 
 ## Deferred Items
 
