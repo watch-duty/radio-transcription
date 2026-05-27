@@ -7,9 +7,9 @@
 
 ### Input Registry
 
-- [ ] **INPT-01**: User can define one dataset-version job with `dataset_version_id`, random seed, train/eval ratio, output GCS prefix, and one or more input datasets.
-- [ ] **INPT-02**: User can configure each input dataset with dataset name, dataset family, manifest `gs://` URI, source-key strategy, and optional sidecar source map `gs://` URI.
-- [ ] **INPT-03**: The splitter can read configured JSON/JSONL manifests and sidecar source maps from `gs://` URIs using existing repository GCS helpers where practical; tests may use fake readers to cover success and failure classes without real GCS access.
+- [x] **INPT-01**: User can define one dataset-version job with `dataset_version_id`, random seed, train/eval ratio, output GCS prefix, and one or more input datasets.
+- [x] **INPT-02**: User can configure each input dataset with dataset name, dataset family, manifest `gs://` URI, source-key strategy, and optional sidecar source map `gs://` URI.
+- [x] **INPT-03**: The splitter can read configured JSON/JSONL manifests and sidecar source maps from `gs://` URIs using existing repository GCS helpers where practical; tests may use fake readers to cover success and failure classes without real GCS access.
 - [ ] **INPT-04**: Rows with empty or missing normalized text are excluded from SFT examples and counted in the CLI/log validation summary.
 
 ### Source Identity
@@ -107,9 +107,9 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INPT-01 | Phase 1 | Pending |
-| INPT-02 | Phase 1 | Pending |
-| INPT-03 | Phase 1 | Pending |
+| INPT-01 | Phase 1 | Complete |
+| INPT-02 | Phase 1 | Complete |
+| INPT-03 | Phase 1 | Complete |
 | INPT-04 | Phase 1 | Pending |
 | SRC-01 | Phase 1 | Pending |
 | SRC-02 | Phase 1 | Pending |
