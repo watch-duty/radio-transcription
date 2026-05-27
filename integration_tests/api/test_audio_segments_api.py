@@ -3,11 +3,13 @@
 import os
 import uuid
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import httpx
 import pytest
 
 from integration_tests.feed_utils import create_test_bcfy_feed  # noqa: F401
+
 
 def get_audio_segments_api_host() -> str:
     """Return the Audio Segments API host for the current environment."""
@@ -15,7 +17,7 @@ def get_audio_segments_api_host() -> str:
     if configured_host:
         return configured_host
 
-    if os.path.exists("/.dockerenv"):
+    if Path("/.dockerenv").exists():
         return "audio-segments-api:8091"
 
     return "localhost:8091"
