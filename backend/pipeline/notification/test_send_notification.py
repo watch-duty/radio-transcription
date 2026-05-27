@@ -6,6 +6,7 @@ from unittest import TestCase, main, mock
 
 from cloudevents.http import CloudEvent
 
+from backend.pipeline.schema_types import evaluation_error_pb2
 from backend.pipeline.schema_types.alert_notification_pb2 import (
     AlertNotification,
 )
@@ -136,9 +137,7 @@ class TestSendNotification(TestCase):
             source_audio_uris=["gs://foo/bar.flac"],
             feed_name="asdf",
             external_id="ext-id",
-            evaluation_errors=[
-                EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_RULES_FETCH_FAILED
-            ],
+            evaluation_errors=[evaluation_error_pb2.ERROR_RULES_FETCH_FAILED],
         )
         evaluated_payload.start_audio_offset.seconds = 10
         evaluated_payload.end_audio_offset.seconds = 20
@@ -163,9 +162,7 @@ class TestSendNotification(TestCase):
             feed_name="asdf",
             external_id="ext-id",
             app_url="https://app.example.com/transcripts?feedId=&transmissionId=5678&timestamp=1000000",
-            evaluation_errors=[
-                AlertNotification.EvaluationErrorType.ERROR_RULES_FETCH_FAILED
-            ],
+            evaluation_errors=[evaluation_error_pb2.ERROR_RULES_FETCH_FAILED],
         )
         expected_notification.start_audio_offset.seconds = 10
         expected_notification.end_audio_offset.seconds = 20

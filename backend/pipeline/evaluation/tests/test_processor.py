@@ -9,6 +9,9 @@ from backend.pipeline.schema_types import (
     evaluated_transcribed_audio_pb2 as evaluated_pb2,
 )
 from backend.pipeline.schema_types import (
+    evaluation_error_pb2,
+)
+from backend.pipeline.schema_types import (
     transcribed_audio_pb2 as transcribed_pb2,
 )
 
@@ -107,7 +110,7 @@ class TestEvaluationEventProcessor(unittest.TestCase):
     def test_process_event_has_errors_publishes(self) -> None:
         # Setup
         self.evaluated_payload.evaluation_errors.append(
-            evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_FEED_ID_MISSING
+            evaluation_error_pb2.ERROR_FEED_ID_MISSING
         )
         self.mock_service.evaluate.return_value = self.evaluated_payload
 

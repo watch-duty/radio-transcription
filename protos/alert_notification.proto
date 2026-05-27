@@ -1,6 +1,9 @@
 syntax = "proto3";
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/duration.proto";
+import "evaluation_error.proto";
+
+
 
 // Notification sent to the endpoint after the transcription is evaluated.
 message AlertNotification {
@@ -71,12 +74,6 @@ message AlertNotification {
 
   // Tags associated with the feed.
   repeated Tag tags = 17;
-
-  enum EvaluationErrorType {
-    ERROR_UNSPECIFIED = 0;
-    ERROR_FEED_ID_MISSING = 1;
-    ERROR_RULES_FETCH_FAILED = 2;
-  }
 
   // The list of errors encountered during evaluation.
   repeated EvaluationErrorType evaluation_errors = 18;

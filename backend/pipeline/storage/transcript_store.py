@@ -10,6 +10,7 @@ import asyncpg
 import asyncpg.exceptions
 
 from backend.pipeline.common.exceptions import AlreadyExistsError
+from backend.pipeline.schema_types import evaluation_error_pb2
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
@@ -79,7 +80,7 @@ class TranscriptStore:
         if row["evaluation_errors"]:
             msg.evaluation_errors.extend(
                 [
-                    EvaluatedTranscribedAudio.EvaluationErrorType.Value(e)
+                    evaluation_error_pb2.EvaluationErrorType.Value(e)
                     for e in row["evaluation_errors"]
                 ]
             )
@@ -147,7 +148,7 @@ class TranscriptStore:
                 list(transcript.evaluation_decisions),
                 transcript.playback_audio_uri or None,
                 [
-                    EvaluatedTranscribedAudio.EvaluationErrorType.Name(e)
+                    evaluation_error_pb2.EvaluationErrorType.Name(e)
                     for e in transcript.evaluation_errors
                 ],
             )
