@@ -8,9 +8,9 @@
 ### Input Registry
 
 - [ ] **INPT-01**: User can define one dataset-version job with `dataset_version_id`, random seed, train/eval ratio, output GCS prefix, and one or more input datasets.
-- [ ] **INPT-02**: User can configure each input dataset with dataset name, dataset family, manifest URI/path, source-key strategy, and optional sidecar source map.
-- [ ] **INPT-03**: The splitter can read existing JSON/JSONL manifests from local disk or GCS using existing repository GCS helpers where practical.
-- [ ] **INPT-04**: Rows with empty or missing normalized text are excluded from SFT examples and counted in an exclusion report.
+- [ ] **INPT-02**: User can configure each input dataset with dataset name, dataset family, manifest `gs://` URI, source-key strategy, and optional sidecar source map `gs://` URI.
+- [ ] **INPT-03**: The splitter can read configured JSON/JSONL manifests and sidecar source maps from `gs://` URIs using existing repository GCS helpers where practical; tests may use fake readers to cover success and failure classes without real GCS access.
+- [ ] **INPT-04**: Rows with empty or missing normalized text are excluded from SFT examples and counted in the CLI/log validation summary.
 
 ### Source Identity
 
