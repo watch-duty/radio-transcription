@@ -67,20 +67,7 @@ async def test_audio_segments_api_routes(
     found = any(item["id"] == segment_id for item in data)
     assert found, f"Created segment {segment_id} not found in /audio_segments"
 
-    # 3. List audio segments using /list_audio_segments route
-    response = await api_client.get(
-        "/list_audio_segments", params={"feed_ids": [feed_id]}, timeout=10.0
-    )
-    assert response.status_code == 200, (
-        f"Failed to list via /list_audio_segments: {response.text}"
-    )
-    data = response.json()
-    found = any(item["id"] == segment_id for item in data)
-    assert found, (
-        f"Created segment {segment_id} not found in /list_audio_segments"
-    )
-
-    # 4. Idempotency Check: Post duplicate segment
+    # 3. Idempotency Check: Post duplicate segment
     response = await api_client.post(
         "/audio_segments", json=payload, timeout=10.0
     )
@@ -88,6 +75,4 @@ async def test_audio_segments_api_routes(
         f"Failed bulk add retry: {response.text}"
     )
     added_data = response.json()
-    assert (
-        added_data["inserted_count"] == 1
-    )  # Should still process/return 1 without conflicts or errors
+    assert added_data["inserted_count"] == 0  # Duplicate segment, nothing inserted

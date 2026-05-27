@@ -46,11 +46,6 @@ app = FastAPI(
 
 
 @app.get(
-    "/v1/list_audio_segments",
-    response_model=list[AudioSegment],
-    tags=["audio_segments"],
-)
-@app.get(
     "/v1/audio_segments",
     response_model=list[AudioSegment],
     tags=["audio_segments"],

@@ -31,10 +31,7 @@ class AudioSegmentStore:
         if row_dict.get("audio_segment_id"):
             row_dict["audio_segment_id"] = str(row_dict["audio_segment_id"])
         if isinstance(row_dict.get("data"), str):
-            try:
-                row_dict["data"] = json.loads(row_dict["data"])
-            except ValueError:
-                pass
+            row_dict["data"] = json.loads(row_dict["data"])
         return row_dict
 
     def _prepare_audio_segment_row(self, row: asyncpg.Record) -> dict:
@@ -48,10 +45,7 @@ class AudioSegmentStore:
         annotations = data.get("annotations")
         if annotations:
             if isinstance(annotations, str):
-                try:
-                    annotations = json.loads(annotations)
-                except ValueError:
-                    pass
+                annotations = json.loads(annotations)
             data["annotations"] = [
                 self._prepare_annotation_row(ann) for ann in annotations
             ]
@@ -145,9 +139,15 @@ class AudioSegmentStore:
                 )
             )
 
-        # executemany returns standard result command tag like "INSERT 0 10", but we return length
-        await self._pool.executemany(
-            audio_segment_queries.BULK_ADD_AUDIO_SEGMENTS_SQL,
-            params,
-        )
-        return len(segments)
+        # Use fetchrow per segment to capture RETURNING id, counting only rows actually inserted
+        count = 0
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                for p in params:
+                    row = await conn.fetchrow(
+                        audio_segment_queries.BULK_ADD_AUDIO_SEGMENTS_SQL,
+                        *p,
+                    )
+                    if row is not None:
+                        count += 1
+        return count

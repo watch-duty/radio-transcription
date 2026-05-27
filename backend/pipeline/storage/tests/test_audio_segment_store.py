@@ -140,18 +140,49 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             playback_audio_uri=None,
         )
 
+        # Simulate the row being returned (i.e., the insert succeeded)
+        conn = self.pool.acquire.return_value.__aenter__.return_value
+        conn.fetchrow.return_value = {"id": _SEGMENT_ID}
+
         result = await self.store.bulk_add_audio_segments([segment1])
 
         self.assertEqual(result, 1)
-        self.pool.executemany.assert_called_once()
-        args, _ = self.pool.executemany.call_args
+        conn.fetchrow.assert_called_once()
+        call_args = conn.fetchrow.call_args
         self.assertEqual(
-            args[0], audio_segment_queries.BULK_ADD_AUDIO_SEGMENTS_SQL
+            call_args[0][0], audio_segment_queries.BULK_ADD_AUDIO_SEGMENTS_SQL
         )
-        self.assertEqual(len(args[1]), 1)
-        self.assertEqual(args[1][0][0], _SEGMENT_ID)
-        self.assertEqual(args[1][0][1], _FEED_ID)
-        self.assertEqual(args[1][0][2], "SPEECH_DETECTED")
+        self.assertEqual(call_args[0][1], _SEGMENT_ID)
+        self.assertEqual(call_args[0][2], _FEED_ID)
+        self.assertEqual(call_args[0][3], "SPEECH_DETECTED")
+
+    async def test_bulk_add_audio_segments_duplicate_returns_zero(
+        self,
+    ) -> None:
+        segment1 = AudioSegmentCreate(
+            id=str(_SEGMENT_ID),
+            feed_id=str(_FEED_ID),
+            classification=AudioClassification.SPEECH_DETECTED,
+            start_timestamp=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+            end_timestamp=datetime.datetime(
+                2026, 1, 1, 0, 1, tzinfo=datetime.UTC
+            ),
+            missing_prior_context=False,
+            missing_post_context=False,
+            source_audio_uris=[],
+            canonical_audio_uri=None,
+            start_audio_offset=None,
+            end_audio_offset=None,
+            playback_audio_uri=None,
+        )
+
+        # Simulate ON CONFLICT DO NOTHING: fetchrow returns None
+        conn = self.pool.acquire.return_value.__aenter__.return_value
+        conn.fetchrow.return_value = None
+
+        result = await self.store.bulk_add_audio_segments([segment1])
+
+        self.assertEqual(result, 0)
 
 
 if __name__ == "__main__":

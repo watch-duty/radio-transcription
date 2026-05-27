@@ -56,7 +56,6 @@ class TestAudioSegmentsAPI(unittest.TestCase):
         )
         self.mock_service.list_audio_segments.return_value = [mock_segment]
 
-        # Test path 1: /v1/audio_segments
         response = self.client.get(
             "/v1/audio_segments", params={"feed_ids": [feed_id]}
         )
@@ -65,13 +64,6 @@ class TestAudioSegmentsAPI(unittest.TestCase):
         self.assertEqual(len(data), 1)
         self.assertEqual(data[0]["id"], segment_id)
         self.mock_service.list_audio_segments.assert_called_once_with([feed_id])
-
-        # Test path 2: /v1/list_audio_segments
-        self.mock_service.list_audio_segments.reset_mock()
-        response = self.client.get("/v1/list_audio_segments")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.json()), 1)
-        self.mock_service.list_audio_segments.assert_called_once_with(None)
 
     def test_bulk_add_audio_segments_success(self) -> None:
         """Test bulk adding audio segments successfully."""

@@ -14,4 +14,23 @@ def make_mock_pool(
     pool.fetchrow.return_value = fetchrow_result
     pool.execute.return_value = execute_result
     pool.fetch.return_value = fetch_result or []
+
+    # Set up a connection mock returned by pool.acquire() used as an async context manager.
+    # pool.acquire() must return a sync object with __aenter__/__aexit__, not a coroutine.
+    conn = mock.AsyncMock()
+    conn.fetchrow.return_value = fetchrow_result
+    conn.execute.return_value = execute_result
+    conn.fetch.return_value = fetch_result or []
+
+    acquire_cm = mock.MagicMock()
+    acquire_cm.__aenter__ = mock.AsyncMock(return_value=conn)
+    acquire_cm.__aexit__ = mock.AsyncMock(return_value=False)
+    pool.acquire = mock.MagicMock(return_value=acquire_cm)
+
+    # Set up conn.transaction() as a sync-callable async context manager
+    transaction_cm = mock.MagicMock()
+    transaction_cm.__aenter__ = mock.AsyncMock(return_value=None)
+    transaction_cm.__aexit__ = mock.AsyncMock(return_value=False)
+    conn.transaction = mock.MagicMock(return_value=transaction_cm)
+
     return pool

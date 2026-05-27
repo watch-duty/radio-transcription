@@ -257,6 +257,26 @@ services:
     networks:
       - pipeline-network
 
+  audio-segments-api:
+    build:
+      context: .
+      dockerfile: backend/services/audio_segments/Dockerfile
+    ports:
+      - "8091:8091"
+    env_file:
+      - ./local_dev/LOCAL.env
+    command: ["uvicorn", "backend.services.audio_segments.main:app", "--host", "0.0.0.0", "--port", "8091"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8091))"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - pipeline-network
+
   mock-server:
     image: python:3.13-slim
     ports:
@@ -311,6 +331,8 @@ services:
       rules-management:
         condition: service_healthy
       feeds-api:
+        condition: service_healthy
+      audio-segments-api:
         condition: service_healthy
       rules-evaluation:
         condition: service_healthy
