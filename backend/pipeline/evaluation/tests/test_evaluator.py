@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from backend.pipeline.evaluation.rules_evaluation import evaluator
+from backend.pipeline.schema_types import EvaluationErrorType
 
 
 class TestTextEvaluator(unittest.TestCase):
@@ -316,7 +317,7 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         result = self.remote_evaluator.evaluate("Some text", feed_id="")
         self.assertFalse(result["is_flagged"])
         self.assertIn(
-            evaluator.evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_FEED_ID_MISSING,
+            EvaluationErrorType.ERROR_FEED_ID_MISSING,
             result["errors"],
         )
 
@@ -330,7 +331,7 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         )
         self.assertFalse(result["is_flagged"])
         self.assertIn(
-            evaluator.evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_RULES_FETCH_FAILED,
+            EvaluationErrorType.ERROR_RULES_FETCH_FAILED,
             result["errors"],
         )
 

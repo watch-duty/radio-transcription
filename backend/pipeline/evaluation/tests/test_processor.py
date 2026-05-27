@@ -6,6 +6,9 @@ from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.evaluation.processor import EvaluationEventProcessor
 from backend.pipeline.schema_types import (
+    EvaluationErrorType,
+)
+from backend.pipeline.schema_types import (
     evaluated_transcribed_audio_pb2 as evaluated_pb2,
 )
 from backend.pipeline.schema_types import (
@@ -107,7 +110,7 @@ class TestEvaluationEventProcessor(unittest.TestCase):
     def test_process_event_has_errors_publishes(self) -> None:
         # Setup
         self.evaluated_payload.evaluation_errors.append(
-            evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_FEED_ID_MISSING
+            EvaluationErrorType.ERROR_FEED_ID_MISSING
         )
         self.mock_service.evaluate.return_value = self.evaluated_payload
 

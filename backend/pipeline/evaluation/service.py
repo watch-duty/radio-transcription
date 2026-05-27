@@ -71,10 +71,7 @@ class EvaluationService:
                 logger.warning(
                     "Evaluation encountered errors for transmission %s: %s",
                     transmission_id,
-                    [
-                        evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.Name(e)
-                        for e in errors
-                    ],
+                    [str(e) for e in errors],
                 )
 
             # 4. Create Evaluation Result Payload
