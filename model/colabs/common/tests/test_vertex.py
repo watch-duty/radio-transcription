@@ -35,6 +35,23 @@ class TestSubmitTuningJob(unittest.TestCase):
     """Tests for common.vertex.submit_tuning_job (PR3: submit-only, returns job.name)."""
 
     @unittest.mock.patch("common.vertex.genai")
+    def test_defaults_to_gemini_31_flash_lite(self, mock_genai):
+        """submit_tuning_job defaults to the current supervised-tuning model."""
+        mock_client = _make_mock_client()
+        mock_genai.Client.return_value = mock_client
+        from common.vertex import submit_tuning_job
+
+        submit_tuning_job(
+            train_uri="gs://b/train.jsonl",
+            display_name="test",
+            project="p",
+            location="us-central1",
+        )
+
+        call_kwargs = mock_client.tunings.tune.call_args.kwargs
+        self.assertEqual(call_kwargs["base_model"], "gemini-3.1-flash-lite")
+
+    @unittest.mock.patch("common.vertex.genai")
     def test_returns_job_name_not_endpoint(self, mock_genai):
         """PR3: submit_tuning_job now returns job.name (str), not endpoint."""
         mock_genai.Client.return_value = _make_mock_client()

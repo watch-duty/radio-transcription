@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import inspect
 import io
 import json
 import sys
@@ -103,15 +102,59 @@ class TestPipelineCLI(unittest.TestCase):
             ["echo", "bench"],
         )
 
-    def test_tune_cost_estimate_uses_gemini_25_flash_rate(self) -> None:
-        """Tune cost estimate references Gemini 2.5 Flash, not the old 2.0 rate."""
+    def test_tune_defaults_to_gemini_31_flash_lite(self) -> None:
+        """Tune CLI defaults to the current supported Gemini SFT model."""
         import pipeline
 
-        source = inspect.getsource(pipeline._tune)
+        with unittest.mock.patch("pipeline._tune") as mock_tune:
+            mock_tune.return_value = 0
+            with unittest.mock.patch(
+                "sys.argv",
+                ["pipeline.py", "tune", "--round-id", "2026-06-01-echo"],
+            ):
+                pipeline.main()
 
-        self.assertIn("5.00", source)
-        self.assertIn("Gemini 2.5 Flash", source)
-        self.assertNotIn("Gemini 2.0 Flash", source)
+        args = mock_tune.call_args.args[0]
+        self.assertEqual(args.base_model, "gemini-3.1-flash-lite")
+
+    def test_tune_accepts_gemini_31_flash_lite_before_gcp_calls(self) -> None:
+        """Gemini 3.1 Flash-Lite is supported for SFT and must not hit old gemini-3 rejection."""
+        import pipeline
+
+        args = argparse.Namespace(
+            round_id="2026-06-01-echo",
+            base_model="gemini-3.1-flash-lite",
+            location="us-central1",
+            epochs=1,
+            adapter_size="EIGHT",
+            lr_multiplier=1.0,
+            confirm=True,
+        )
+
+        with (
+            unittest.mock.patch("pipeline._load_round_config", return_value={}),
+            self.assertLogs("pipeline", level="ERROR") as logs,
+        ):
+            rc = pipeline._tune(args)
+
+        self.assertEqual(rc, 1)
+        joined = "\n".join(logs.output)
+        self.assertNotIn("rejected", joined)
+        self.assertIn("Run `build` first", joined)
+
+    def test_tune_cost_estimate_uses_gemini_31_flash_lite_rate(self) -> None:
+        """Tune cost estimate references Gemini 3.1 Flash-Lite SFT pricing."""
+        import pipeline
+
+        self.assertEqual(pipeline.DEFAULT_BASE_MODEL, "gemini-3.1-flash-lite")
+        self.assertEqual(
+            pipeline.SFT_TRAINING_COST_PER_MILLION["gemini-3.1-flash-lite"],
+            3.00,
+        )
+        self.assertEqual(
+            pipeline.SFT_MODEL_DISPLAY_NAMES["gemini-3.1-flash-lite"],
+            "Gemini 3.1 Flash-Lite",
+        )
 
 
 class TestPreflightEmptyTarget(unittest.TestCase):
