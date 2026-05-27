@@ -18,11 +18,11 @@ Every SFT run must train and compare models on the same auditable dataset versio
 - [x] Existing GCS-backed manifest patterns support raw and segmented audio references for Broadcastify calls and feeds - existing
 - [x] Existing SFT scripts can consume GCS manifests and build canonical/model-oriented JSONL rows for Gemini-style tuning inputs - existing
 - [x] Existing codebase has reusable manifest/scoring helpers that should be extended instead of replaced - existing
+- [x] Phase 1 validates dataset-version TOML configs, strict `gs://` JSON/JSONL inputs, source-key extraction for all four initial dataset families, and empty-text exclusion counts - Phase 1
 
 ### Active
 
 - [ ] Build a split script that creates an 80:20 train/SFT Eval Split from existing manifests while assigning every source group wholly to one split.
-- [ ] Support source-key extraction for `bcfy_calls`, `bcfy_feeds`, `echo`, and `fire_notifications`, with hard failures for unresolved or ambiguous source identity.
 - [ ] Validate leakage prevention with actual manifest data, including source-group overlap, original-audio overlap, duplicate URI overlap, missing text rows, and parse failures.
 - [ ] Balance the split across factors that can correlate with model performance: dataset family, source count, row count, audio duration, time/month/hour, transcript length, and duration buckets.
 - [ ] Generate immutable GCS artifacts under `gs://wd-transcription-data/sft/{dataset_version_id}/` for canonical train/eval data, dataset-specific slices, model-specific inputs, reports, and derived clips.
@@ -77,13 +77,13 @@ Glossary:
 | Use `dataset_version_id` as the primary artifact identifier | Dataset artifacts are reused across model runs and should not be coupled to one training run | Pending |
 | Split Source Groups before slicing or deriving SFT examples | Prevents same-feed leakage even when multiple clips come from one long source recording | Pending |
 | Call the evaluation side `SFT Eval Split` | It may be used for validation and selection, so "holdout" would overstate isolation | Pending |
-| Use `area_code` + `echo_name` for Echo source identity | `echo_name` alone is ambiguous; validated CSV has duplicate names across areas | Pending |
-| Use `bcfy_calls:<groupId>` for Broadcastify Calls | Filenames and metadata expose stable group IDs, and actual manifests parse cleanly | Pending |
-| Use `bcfy_feeds:<feedId>` for Broadcastify Feeds | Archive URLs include feed IDs, and actual manifests parse cleanly | Pending |
-| Use Fire Notification stream path/location as source identity | Per-day UUIDs are sampling artifacts and would allow same stream across splits | Pending |
+| Use `area_code` + `echo_name` for Echo source identity | `echo_name` alone is ambiguous; validated CSV has duplicate names across areas | Validated in Phase 1 |
+| Use `bcfy_calls:<groupId>` for Broadcastify Calls | Filenames and metadata expose stable group IDs, and actual manifests parse cleanly | Validated in Phase 1 |
+| Use `bcfy_feeds:<feedId>` for Broadcastify Feeds | Archive URLs include feed IDs, and actual manifests parse cleanly | Validated in Phase 1 |
+| Use Fire Notification stream path/location as source identity | Per-day UUIDs are sampling artifacts and would allow same stream across splits | Validated in Phase 1 |
 | Store generated artifacts in GCS, not GitHub | Artifacts can be large/proprietary and should be immutable runtime data | Pending |
 | Reuse supported standalone audio clips before deriving new clips | Reduces unnecessary audio transforms and preserves provenance | Pending |
-| Exclude empty or missing normalized-text rows | Existing eval behavior already skips rows without usable ground truth | Pending |
+| Exclude empty or missing normalized-text rows | Existing eval behavior already skips rows without usable ground truth | Validated in Phase 1 |
 
 ## Evolution
 
@@ -103,4 +103,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-27 after initialization*
+*Last updated: 2026-05-27 after Phase 1 completion*
