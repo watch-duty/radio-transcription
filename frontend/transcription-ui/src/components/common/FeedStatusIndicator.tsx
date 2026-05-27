@@ -68,7 +68,6 @@ export function FeedStatusIndicator({
             textOverflow: 'ellipsis',
             minWidth: 0,
           }}
-          title={`Last updated: ${getRelativeTimeString(lastHeartbeat)}`}
         >
           Last updated: {getRelativeTimeString(lastHeartbeat)}
         </Typography>
