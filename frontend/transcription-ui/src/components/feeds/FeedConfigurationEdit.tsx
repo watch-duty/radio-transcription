@@ -81,7 +81,6 @@ export function FeedConfigurationEdit({
   const [name, setName] = useState('');
   const [sourceType, setSourceType] = useState<SourceType>('bcfy_feeds');
   const [sourceFeedId, setSourceFeedId] = useState('');
-  const [externalId, setExternalId] = useState('');
   const [tags, setTags] = useState<Tag[]>([]);
 
   // Subform dynamic fields for Tags
@@ -97,7 +96,6 @@ export function FeedConfigurationEdit({
     setName('');
     setSourceType('bcfy_feeds');
     setSourceFeedId('');
-    setExternalId('');
     setTags([]);
     setNewTagKey('');
     setNewTagValue('');
@@ -112,13 +110,11 @@ export function FeedConfigurationEdit({
       setName(editingFeed.name);
       setSourceType(editingFeed.sourceType);
       setSourceFeedId(editingFeed.sourceFeedId || '');
-      setExternalId(editingFeed.externalId || '');
       setTags(editingFeed.tags || []);
     } else {
       setName('');
       setSourceType('bcfy_feeds');
       setSourceFeedId('');
-      setExternalId('');
       setTags([]);
     }
     setNewTagKey('');
@@ -199,10 +195,6 @@ export function FeedConfigurationEdit({
       }
     }
 
-    if (!externalId.trim()) {
-      errors.externalId = 'External ID is required.';
-    }
-
     // Verify tags data integrity
     const duplicateKeys = tags.filter(
       (tag, idx) => tags.findIndex((t) => t.key === tag.key) !== idx
@@ -234,7 +226,7 @@ export function FeedConfigurationEdit({
       if (editingFeed) {
         const payload: FeedUpdate = {
           name: name.trim(),
-          externalId: externalId.trim(),
+          externalId: '',
           tags: tags.length > 0 ? tags : undefined,
         };
         await onUpdateFeed(editingFeed.id, payload);
@@ -243,7 +235,7 @@ export function FeedConfigurationEdit({
           name: name.trim(),
           sourceType,
           sourceFeedId: sourceFeedId.trim(),
-          externalId: externalId.trim(),
+          externalId: '',
           tags: tags.length > 0 ? tags : undefined,
         };
         await onCreateFeed(payload);
@@ -380,21 +372,6 @@ export function FeedConfigurationEdit({
                 />
               </Grid>
             </Grid>
-
-            <TextField
-              fullWidth
-              label="External ID"
-              variant="outlined"
-              placeholder="ca-vnt-fire-10"
-              value={externalId}
-              onChange={(e) => setExternalId(e.target.value)}
-              error={!!validationErrors.externalId}
-              helperText={
-                validationErrors.externalId ||
-                'Unique ID separate from the source ID for lookup'
-              }
-              disabled={isSubmitting}
-            />
 
             <Divider sx={{ my: 1 }} />
 

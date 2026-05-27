@@ -139,15 +139,13 @@ export function FeedConfigurationTable({
     const result = query
       ? feeds.filter((feed) => {
           const nameMatch = feed.name.toLowerCase().includes(query);
-          const extMatch =
-            feed.externalId?.toLowerCase().includes(query) || false;
           const tagMatch =
             feed.tags?.some(
               (t) =>
                 t.key.toLowerCase().includes(query) ||
                 t.value.toLowerCase().includes(query)
             ) ?? false;
-          return nameMatch || extMatch || tagMatch;
+          return nameMatch || tagMatch;
         })
       : [...feeds];
 
@@ -388,11 +386,6 @@ export function FeedConfigurationTable({
                   <Typography variant="caption" color="text.secondary">
                     <b>Source ID:</b> {feed.sourceFeedId}
                   </Typography>
-                  {feed.externalId && (
-                    <Typography variant="caption" color="text.secondary">
-                      <b>External ID:</b> {feed.externalId}
-                    </Typography>
-                  )}
                 </TableCell>
 
                 {/* Source Type Chip */}
