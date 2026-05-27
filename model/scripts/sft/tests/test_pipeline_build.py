@@ -12,6 +12,7 @@ import io
 import json
 import sys
 import tempfile
+import types
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -155,6 +156,53 @@ class TestPipelineCLI(unittest.TestCase):
             pipeline.SFT_MODEL_DISPLAY_NAMES["gemini-3.1-flash-lite"],
             "Gemini 3.1 Flash-Lite",
         )
+
+    def test_tune_resume_path_checks_vertex_extra(self) -> None:
+        """Resume path should use common.vertex's friendly dependency guard."""
+        import pipeline
+
+        fake_cur = unittest.mock.MagicMock()
+        fake_cur.state.name = "JOB_STATE_SUCCEEDED"
+        fake_client = unittest.mock.MagicMock()
+        fake_client.tunings.get.return_value = fake_cur
+        fake_genai = types.SimpleNamespace(
+            Client=unittest.mock.MagicMock(return_value=fake_client)
+        )
+        fake_google = types.SimpleNamespace(genai=fake_genai)
+        real_import = __import__
+
+        def _fake_import(
+            name, global_vars=None, local_vars=None, fromlist=(), level=0
+        ):
+            if name == "google" and "genai" in fromlist:
+                return fake_google
+            return real_import(name, global_vars, local_vars, fromlist, level)
+
+        args = argparse.Namespace(
+            round_id="2026-06-01-echo",
+            base_model="gemini-3.1-flash-lite",
+            location="us-central1",
+            epochs=1,
+            adapter_size="EIGHT",
+            lr_multiplier=1.0,
+            confirm=True,
+        )
+
+        with (
+            unittest.mock.patch(
+                "pipeline._load_round_config",
+                return_value={
+                    "job_name": "projects/p/locations/l/tuningJobs/123",
+                    "endpoint": "projects/p/locations/l/endpoints/456",
+                },
+            ),
+            unittest.mock.patch("common.vertex._require_vertex") as require,
+            unittest.mock.patch("builtins.__import__", new=_fake_import),
+        ):
+            rc = pipeline._tune(args)
+
+        self.assertEqual(rc, 0)
+        require.assert_called_once_with()
 
 
 class TestPreflightEmptyTarget(unittest.TestCase):

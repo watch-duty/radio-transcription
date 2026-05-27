@@ -385,7 +385,11 @@ def _tune(args: argparse.Namespace) -> int:
     import tempfile
 
     from common.gcs_utils import download_blob_to_file, parse_gcs_uri
-    from common.vertex import poll_tuning_job, submit_tuning_job
+    from common.vertex import (
+        _require_vertex,
+        poll_tuning_job,
+        submit_tuning_job,
+    )
     from google.cloud import storage
     from preflight import run_preflight
     from records import write_config
@@ -404,6 +408,7 @@ def _tune(args: argparse.Namespace) -> int:
 
     # D-11: Resume — re-attach to an in-flight job if job_name already recorded
     if job_name := config.get("job_name"):
+        _require_vertex()
         from google import genai
 
         client = genai.Client(
@@ -648,9 +653,7 @@ def _eval(args: argparse.Namespace) -> int:
         f"Combined eval manifest: {len(eval_rows)} rows from {len(eval_uris)} dataset(s)"
     )
 
-    def _build_batch_jsonl(
-        model_id: str, label: str, tmp: str
-    ) -> tuple[str, str]:
+    def _build_batch_jsonl(label: str, tmp: str) -> tuple[str, str]:
         """Write batch input JSONL, upload to GCS, return (input_gcs_uri, output_gcs_uri)."""
         batch_input_path = Path(tmp) / f"batch_input_{label}.jsonl"
         lines = []
@@ -682,11 +685,20 @@ def _eval(args: argparse.Namespace) -> int:
             if not line.strip():
                 continue
             obj = json.loads(line)
-            if (
-                obj.get("status") or "request" not in obj
+            if obj.get("status") or not isinstance(
+                obj.get("request"), dict
             ):  # error / non-prediction
                 continue
-            parts = obj["request"]["contents"][0]["parts"]
+            contents = obj["request"].get("contents", [])
+            if (
+                not isinstance(contents, list)
+                or not contents
+                or not isinstance(contents[0], dict)
+            ):
+                continue
+            parts = contents[0].get("parts", [])
+            if not isinstance(parts, list):
+                continue
             # Vertex echoes the request back in camelCase even though we send
             # snake_case, so accept BOTH fileData/fileUri and file_data/file_uri.
             uri = None
@@ -710,9 +722,7 @@ def _eval(args: argparse.Namespace) -> int:
     def _batch_infer(model_id: str, label: str) -> dict[str, str]:
         """Build batch JSONL, submit, download, parse -> {audio_uri: pred_text}."""
         with tempfile.TemporaryDirectory() as tmp:
-            batch_input_gcs, batch_output_gcs = _build_batch_jsonl(
-                model_id, label, tmp
-            )
+            batch_input_gcs, batch_output_gcs = _build_batch_jsonl(label, tmp)
 
             output_loc = submit_batch_inference(
                 input_uri=batch_input_gcs,
