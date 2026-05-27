@@ -181,13 +181,13 @@ known-first-party = ["backend", "local_dev"]
 "testcontainers".msg = "testcontainers-backed tests must live under integration_tests/ or in test_*_integration.py files so pytest can classify them as requires_docker."
 
 [tool.ruff.lint.per-file-ignores]
-"conftest.py" = [
+"./conftest.py" = [
   "TID251", # Root pytest resource preflight is allowed to probe Docker.
 ]
 "integration_tests/**/*.py" = [
   "TID251", # Integration tests may use resource-test helpers.
 ]
-"**/*_integration.py" = [
+"backend/**/*_integration.py" = [
   "TID251", # Backend component integration tests may use Docker/testcontainers.
 ]
 "model/colabs/**/*.ipynb" = [
