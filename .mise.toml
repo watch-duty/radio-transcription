@@ -191,19 +191,19 @@ run = "uv run pytest integration_tests/storage/test_feed_store_integration.py"
 description = "Run all component tests"
 run = "uv run pytest integration_tests/storage/"
 
-[tasks."test:e2e"]
+[tasks."test:api"]
+description = "Run API integration tests"
+run = "uv run pytest integration_tests/api/"
+
+[tasks."e2e:local"]
+description = "Run E2E tests on host (Requires running environment)"
+depends = ["generate:protos"]
+run = "uv run pytest integration_tests/e2e/"
+
+[tasks."e2e:docker"]
 description = "Run all E2E tests in Docker Compose"
 run = """
 docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env down -v --remove-orphans
 docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env build
 docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run --rm integration-tests
 """
-
-[tasks."test:api"]
-description = "Run API integration tests"
-run = "uv run pytest integration_tests/api/"
-
-[tasks."test:e2e:local"]
-description = "Run E2E tests on host (Requires running environment)"
-depends = ["generate:protos"]
-run = "uv run pytest integration_tests/e2e/"
