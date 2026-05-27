@@ -226,7 +226,7 @@ describe('FeedConfigurationView', () => {
           name: 'Napa Ambulance Dispatch',
           sourceType: 'bcfy_calls',
           sourceFeedId: '9988-77',
-          externalId: '',
+          externalId: '9988-77',
           tags: undefined,
         },
         'fake-jwt-token-xyz'
@@ -334,7 +334,7 @@ describe('FeedConfigurationView', () => {
         'feed-1',
         {
           name: 'Marin Unified Fire Dispatch',
-          externalId: '',
+          externalId: '33156',
           tags: [{ key: 'county', value: 'Marin' }],
         },
         'fake-jwt-token-xyz'
@@ -421,7 +421,7 @@ describe('FeedConfigurationView', () => {
           name: 'Napa Ambulance Dispatch',
           sourceType: 'bcfy_calls',
           sourceFeedId: '9988-77',
-          externalId: '',
+          externalId: '9988-77',
           tags: undefined,
         },
         'fake-jwt-token-xyz'
