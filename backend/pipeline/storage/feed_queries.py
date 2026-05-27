@@ -48,15 +48,15 @@ SET worker_id = NULL,
     status = 'unclaimed'::feed_status,
     unclaimed_since = NOW()
 WHERE id = $1 AND worker_id = $2 AND fencing_token = $3
+  AND status = 'active'::feed_status
 """
 
-# SIGTERM drain: release every lease still owned by this worker in one
-# UPDATE. Primary use is _shutdown_sequence — after cancelling all feed
-# tasks (whose CancelledError path skips the normal-completion
-# release_feed), this single statement is what flips every active row
-# back to unclaimed. Secondary defensive role: catches stragglers where
-# an earlier per-feed release_feed call failed mid-lifetime and left
-# worker_id = us in the DB.
+# SIGTERM drain: release every active lease still owned by this worker in
+# one UPDATE. Primary use is _shutdown_sequence — after cancelling all
+# feed tasks (whose CancelledError path skips the normal-completion
+# release_feed), this single statement is what flips active rows back to
+# unclaimed. Deactivated rows are terminal admin stops until reset, so
+# release must not make them claimable.
 #
 # WHERE worker_id = $1 is authoritative for both cases — symmetric with
 # count_held_by_type's DB-truth stance. unclaimed_since = NOW() matches
@@ -70,6 +70,7 @@ SET worker_id = NULL,
     status = 'unclaimed'::feed_status,
     unclaimed_since = NOW()
 WHERE worker_id = $1
+  AND status = 'active'::feed_status
 """
 
 # Authoritative per-cycle replacement for the worker's in-memory
@@ -322,6 +323,7 @@ SET status = CASE WHEN failure_count + 1 >= $3
     -- rather than overwriting it with NULL. A real reason still wins.
     quarantine_reason = CASE WHEN failure_count + 1 >= $3 THEN COALESCE($7, quarantine_reason) ELSE quarantine_reason END
 WHERE id = $1 AND worker_id = $2 AND fencing_token = $4
+  AND status = 'active'::feed_status
 RETURNING status::text, failure_count, retry_after
 """
 

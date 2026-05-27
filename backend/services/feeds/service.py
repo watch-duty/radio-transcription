@@ -75,10 +75,21 @@ class FeedService:
             uid = uuid.UUID(feed_id)
         except ValueError:
             return False
-        return await self._store.deactivate_feed(uid)
+        success = await self._store.deactivate_feed(uid)
+        if success:
+            logger.info(
+                "Feed deactivated",
+                extra={
+                    "json_fields": {
+                        "event_type": "feed_deactivated",
+                        "feed_id": str(uid),
+                    },
+                },
+            )
+        return success
 
     async def reset_feed(self, feed_id: str) -> Feed | None:
-        """Reset a failed or quarantined feed to an unclaimed state.
+        """Reset a failed, quarantined, or deactivated feed to an unclaimed state.
 
         This clears the claim state, resets the failure count, clears
         `worker_id`, and updates `last_heartbeat`.
@@ -90,4 +101,13 @@ class FeedService:
         store_feed = await self._store.reset_feed(uid)
         if not store_feed:
             return None
+        logger.info(
+            "Feed reset",
+            extra={
+                "json_fields": {
+                    "event_type": "feed_reset",
+                    "feed_id": str(uid),
+                },
+            },
+        )
         return Feed.model_validate(store_feed)
