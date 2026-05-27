@@ -191,7 +191,14 @@ def _resolve_fire_notifications(row: Mapping[str, object]) -> str:
 
 def _candidate_uris(row: Mapping[str, object]) -> list[str]:
     uris: list[str] = []
-    for key in ("audio_filepath", "url", "s3_url", "original_audio_uri"):
+    for key in (
+        "audio_filepath",
+        "audio_uri",
+        "fileUri",
+        "url",
+        "s3_url",
+        "original_audio_uri",
+    ):
         value = row.get(key)
         if value is None:
             continue

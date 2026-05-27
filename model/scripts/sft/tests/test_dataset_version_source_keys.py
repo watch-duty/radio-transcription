@@ -116,6 +116,24 @@ class TestDatasetVersionSourceKeys(unittest.TestCase):
             source_group, "echo:ca_red_bluff/Tehama_Sheriff_Disp"
         )
 
+    def test_echo_source_map_uses_audio_uri_field(self) -> None:
+        uri = "gs://bucket/echo/file.mp3"
+        source_group = resolve_source_group(
+            {"audio_uri": uri},
+            dataset_family="echo",
+            source_strategy="echo",
+            source_map={
+                uri: {
+                    "area_code": "ca_red_bluff",
+                    "echo_name": "Tehama_Sheriff_Disp",
+                }
+            },
+        )
+
+        self.assertEqual(
+            source_group, "echo:ca_red_bluff/Tehama_Sheriff_Disp"
+        )
+
     def test_echo_ambiguous_name_without_area_fails(self) -> None:
         with self.assertRaisesRegex(SourceIdentityError, "ambiguous echo_name"):
             resolve_source_group(

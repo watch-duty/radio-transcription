@@ -69,7 +69,9 @@ def validate_dataset_version(
         valid_rows = len(result.segments)
         if valid_rows == 0:
             raise DatasetValidationError(
-                f"dataset={dataset.name} produced zero valid examples after exclusions"
+                f"dataset={dataset.name} manifest={dataset.manifest_uri} "
+                f"source_strategy={dataset.source_strategy} produced zero "
+                "valid examples after exclusions"
             )
 
         summaries.append(

@@ -175,7 +175,9 @@ class TestDatasetVersionValidate(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(
-            DatasetValidationError, "produced zero valid examples"
+            DatasetValidationError,
+            "dataset=calls .*manifest=gs://manifests/calls.jsonl "
+            ".*source_strategy=bcfy_calls .*produced zero valid examples",
         ):
             validate_dataset_version(config, reader=reader)
 
