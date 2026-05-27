@@ -41,7 +41,6 @@ def _get_compiled_keyword_regex(
     return [re.compile(_to_pattern(k), flags) for k in keywords]
 
 
-
 class EvaluationResult(TypedDict):
     is_flagged: bool
     triggered_rules: list[str]
@@ -118,7 +117,6 @@ class BaseTextEvaluator(ABC):
             if conditions.operator == models.LogicalOperator.ALL:
                 # compiled is a list of compiled Patterns
                 return all(bool(p.search(text)) for p in compiled)
-
 
         # For now, we skip GroupConditions as it requires a rule lookup
         return False

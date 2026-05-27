@@ -532,13 +532,16 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         # Should NOT match Fairfield Fire because "field fire" is inside a word
         text = "Fairfield Fire, Fairfield Fire, Tavolack and Flower Hill Road"
         result = self.remote_evaluator.evaluate(text, feed_id="test_feed")
-        self.assertFalse(result["is_flagged"], "Should not match substring 'Fairfield Fire'")
+        self.assertFalse(
+            result["is_flagged"], "Should not match substring 'Fairfield Fire'"
+        )
 
         # Should match standalone "field fire"
         text2 = "There is a field fire on Flower Hill Road"
         result2 = self.remote_evaluator.evaluate(text2, feed_id="test_feed")
-        self.assertTrue(result2["is_flagged"], "Should match standalone 'field fire'")
-
+        self.assertTrue(
+            result2["is_flagged"], "Should match standalone 'field fire'"
+        )
 
 if __name__ == "__main__":
     unittest.main()
